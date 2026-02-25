@@ -22,15 +22,6 @@ The migration to PyTango represents a transition toward a stable, extensible con
 
 ---
 
-# Core Principles(tldr):
-
-This project prioritizes:
-- Clarity over abstraction
-- Contracts over assumptions
-- Modularity over coupling
-- Stability over rapid feature growth
-- Infrastructure-grade reliability over experimental code
-
 
 # Core Principles(Elaborated)
 
