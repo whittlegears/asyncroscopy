@@ -34,6 +34,9 @@ from tango.server import Device, attribute, command, device_property
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import DetectorType, ImageSize
+    from autoscript_tem_microscope_client.structures import Region, Rectangle
+    from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem
+    from autoscript_tem_microscope_client.structures import StemAcquisitionSettings
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
@@ -177,11 +180,6 @@ class ThermoMicroscope(Microscope):
                 elif name == "bf":
                     detector_types.append(DetectorType.BF)
                 # Add more detector types as needed
-            
-            # Create scan region
-            from autoscript_tem_microscope_client.structures import Region, Rectangle
-            from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem
-            from autoscript_tem_microscope_client.structures import StemAcquisitionSettings
 
             # Create scan region
             custom_region = Region(
