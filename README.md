@@ -43,18 +43,39 @@ See - docs/dev_guide.md
 
 ## Requirements and Installation
 
-See - pyproject.toml
+### Core installation (simulation mode)
 
 ```bash
-uv sync .
+pip install .
 ```
 
+or with `uv`:
+
+```bash
+uv sync
+```
+
+This installs `asyncroscopy` and all core dependencies. AutoScript is not required—the
+framework will fall back to simulated acquisition automatically.
+
+### Hardware installation (Thermo Fisher AutoScript)
+
+By default, the project uses **stubs** (metadata-only wheels) in the `stubs/` directory to satisfy
+dependency resolution. These stubs do **not** contain any proprietary code.
+
+If you have access to the real proprietary AutoScript wheels, place them in a local directory
+(e.g., `./hardware_wheels/`) and install them over the stubs:
+
+```bash
+uv pip install ./hardware_wheels/*.whl --force-reinstall
+```
+
+> [!WARNING]
+> Never place your real wheels in the `stubs/` directory, as they would be tracked by Git.
+> Always use a separate, ignored directory for real hardware files.
 
 ## Running tests
 
 ```bash
 uv run pytest tests/ -v
 ```
-
-
-

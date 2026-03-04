@@ -5,12 +5,6 @@ description = "Asyncroscopy: asynchronous control framework for STEM automation"
 readme = "README.md"
 requires-python = ">3.11"
 dependencies = [
-    # AutoScript / Thermo Fisher wheels — resolved from AS_1.15_wheels/
-    "autoscript-core",
-    "autoscript-tem-microscope-client",
-    "autoscript-tem-microscope-client-tests",
-    "autoscript-tem-snippets-tests",
-    "autoscript-tem-toolkit",
     # Other project dependencies
     "colorama>=0.4.6",
     "defusedxml>=0.7.1",
@@ -29,6 +23,15 @@ dependencies = [
     "pytest>=9.0.2",
     "ruff>=0.15.2",
     "sidpy>=0.12.8",
+]
+
+[project.optional-dependencies]
+autoscript = [
+    "autoscript-core",
+    "autoscript-tem-microscope-client",
+    "autoscript-tem-microscope-client-tests",
+    "autoscript-tem-snippets-tests",
+    "autoscript-tem-toolkit",
     "thermoscientific-logging",
 ]
 
@@ -39,9 +42,9 @@ package-dir = { "" = "." }
 include = ["asyncroscopy*"]
 
 [tool.uv.sources]
-autoscript-core = { path = "PythonPackages-AS-1.15/autoscript_core-1.0.0-py3-none-any.whl" }
-autoscript-tem-microscope-client-tests = { path = "PythonPackages-AS-1.15/autoscript_tem_microscope_client_tests-1.15.0-py3-none-any.whl" }
-autoscript-tem-microscope-client = { path = "PythonPackages-AS-1.15/autoscript_tem_microscope_client-1.15.0-py3-none-any.whl" }
-autoscript-tem-snippets-tests = { path = "PythonPackages-AS-1.15/autoscript_tem_snippets_tests-1.15.0-py3-none-any.whl" }
-autoscript-tem-toolkit = { path = "PythonPackages-AS-1.15/autoscript_tem_toolkit-1.15.0-py3-none-any.whl" }
-thermoscientific-logging = { path = "PythonPackages-AS-1.15/thermoscientific_logging-1.0.0-py3-none-any.whl" }
+autoscript-core = { path = "stubs/autoscript_core-1.0.0-py3-none-any.whl" }
+autoscript-tem-microscope-client-tests = { path = "stubs/autoscript_tem_microscope_client_tests-1.15.0-py3-none-any.whl" }
+autoscript-tem-microscope-client = { path = "stubs/autoscript_tem_microscope_client-1.15.0-py3-none-any.whl" }
+autoscript-tem-snippets-tests = { path = "stubs/autoscript_tem_snippets_tests-1.15.0-py3-none-any.whl" }
+autoscript-tem-toolkit = { path = "stubs/autoscript_tem_toolkit-1.15.0-py3-none-any.whl" }
+thermoscientific-logging = { path = "stubs/thermoscientific_logging-1.0.0-py3-none-any.whl" }

@@ -5,6 +5,11 @@ Owns the AutoScript connection and all acquisition commands.
 Detector settings are read from the corresponding detector DeviceProxy
 so that each detector device is the single source of truth for its own params.
 
+AutoScript is an optional dependency; this module imports cleanly without it
+and falls back to simulated acquisition. To enable real hardware:
+
+    pip install asyncroscopy[autoscript]
+
 Return convention for image commands
 -------------------------------------
 All image commands return DevEncoded = (str, bytes) where:
