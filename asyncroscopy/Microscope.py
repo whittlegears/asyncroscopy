@@ -1,7 +1,6 @@
 """
 Microscope Tango device.
 
-Owns the AutoScript connection and all acquisition commands.
 Detector settings are read from the corresponding detector DeviceProxy
 so that each detector device is the single source of truth for its own params.
 
@@ -23,13 +22,16 @@ import json
 import time
 from typing import Optional
 
+from abc import abstractmethod
+from abc import ABC
+
 import numpy as np
 import tango
 from tango import AttrWriteType, DevEncoded, DevState
 from tango.server import Device, attribute, command, device_property
 
 
-class Microscope(Device):
+class Microscope(Device, ABC):
     """
     Top-level TEM microscope device.
     Detector-specific settings (dwell time, resolution) are stored in
@@ -83,13 +85,22 @@ class Microscope(Device):
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
-
     def init_device(self) -> None:
         """Placeholder for more specific device init to be inheritted"""
-        # below should only run if the class is instantiated directly, not when inherited by ThermoMicroscope
-        self.error_stream(f"Must define a class-specific init_device() method")
+        print(f"Must define a class-specific init_device() method")
         pass
 
+    def _connect(self):
+        "Placeholder to be replaced by inheritted class"
+        print(f"Must define a class-specific _connect() method")
+    
+    def _connect_hardware(self) -> None:
+        "Placeholder to be replaced by inheritted class"
+        print(f"Must define a class-specific _connect_hardware() method")
+
+    def _connect_detector_proxies(self) -> None:
+        "Placeholder to be replaced by inheritted class"
+        print(f"Must define a class-specific _connect_detector_proxies() method")  
 
     # ------------------------------------------------------------------
     # Attribute read methods
@@ -247,11 +258,10 @@ class Microscope(Device):
     # ------------------------------------------------------------------
     # Internal acquisition helpers
     # ------------------------------------------------------------------
-
-    def _connect(self):
-        "Placeholder to be replaced by inheritted class"
-        self.error_stream(f"Must define a class-specific _connect() method")
-
+    
+    def _acquire_stem_image():
+        # define in the inherit class
+        pass
 
 
 

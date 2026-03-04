@@ -144,50 +144,32 @@ class CORRECTOR(Device):
             proxy.run_tableau("Full 0")
         """
         parts = args.strip().split()
-        if len(parts) != 2:
-            tango.Except.throw_exception(
-                "InvalidArgs",
-                f"run_tableau expects 'tabType angle', got: {args!r}",
-                "CeosCorrector.run_tableau()",
-            )
         tab_type, angle_str = parts
-        try:
-            angle = float(angle_str)
-        except ValueError:
-            tango.Except.throw_exception(
-                "InvalidArgs",
-                f"angle must be a number, got: {angle_str!r}",
-                "CeosCorrector.run_tableau()",
-            )
+        angle = float(angle_str)
+
         return self._call("acquireTableau", {"tabType": tab_type, "angle": angle})
+
+    @command(dtype_out=DevString)
+    def measure_c1a1(self) -> str:
+        return self._call("measureC1A1")
 
     @command(dtype_in=str, dtype_out=DevString)
     def correct_aberration(self, args: str) -> str:
         """
         Set a single aberration to the given value.
 
-        Parameters are packed into one space-separated string::
-
-            proxy.correct_aberration("A1 0.0")
-            proxy.correct_aberration("C3 -0.5")
+        Parameters are packed into one space-separated string.
+        Some aberrations (C3) take one value:
+            proxy.correct_aberration("C3 -0.00034e-6")
+        Some aberrations take two values:
+            proxy.correct_aberration("A1 0.00078 0.00027")
         """
         parts = args.strip().split()
-        if len(parts) != 2:
-            tango.Except.throw_exception(
-                "InvalidArgs",
-                f"correct_aberration expects 'name value', got: {args!r}",
-                "CeosCorrector.correct_aberration()",
-            )
-        name, value_str = parts
-        try:
-            value = float(value_str)
-        except ValueError:
-            tango.Except.throw_exception(
-                "InvalidArgs",
-                f"value must be a number, got: {value_str!r}",
-                "CeosCorrector.correct_aberration()",
-            )
-        return self._call("CorrectAberration", {"name": name, "value": value})
+        name = parts[0]
+        values = [float(p) for p in parts[1:]]
+
+        # Send as list — matches what the TCP hardware server expects
+        return self._call("correctAberration", {"name": name, "value": values})
 
     @command
     def reconnect(self) -> None:
