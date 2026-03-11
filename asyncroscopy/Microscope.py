@@ -20,18 +20,12 @@ Client-side reconstruction example::
 
 import json
 import time
-from typing import Optional
-
-from abc import abstractmethod
-from abc import ABC
-
-import numpy as np
 import tango
 from tango import AttrWriteType, DevEncoded, DevState
 from tango.server import Device, attribute, command, device_property
 
 
-class Microscope(Device, ABC):
+class Microscope(Device):
     """
     Top-level TEM microscope device.
     Detector-specific settings (dwell time, resolution) are stored in
@@ -87,20 +81,18 @@ class Microscope(Device, ABC):
     # ------------------------------------------------------------------
     def init_device(self) -> None:
         """Placeholder for more specific device init to be inheritted"""
-        print(f"Must define a class-specific init_device() method")
-        pass
+        raise NotImplementedError(f"Must define a class-specific init_device() method")
 
     def _connect(self):
-        "Placeholder to be replaced by inheritted class"
-        print(f"Must define a class-specific _connect() method")
+        raise NotImplementedError(
+            "Subclasses must implement _connect()"
+        )
     
     def _connect_hardware(self) -> None:
-        "Placeholder to be replaced by inheritted class"
-        print(f"Must define a class-specific _connect_hardware() method")
+        raise NotImplementedError(f"Must define a class-specific _connect_hardware() method")
 
     def _connect_detector_proxies(self) -> None:
-        "Placeholder to be replaced by inheritted class"
-        print(f"Must define a class-specific _connect_detector_proxies() method")  
+        raise NotImplementedError(f"Must define a class-specific _connect_detector_proxies() method")  
 
     # ------------------------------------------------------------------
     # Attribute read methods
@@ -261,11 +253,10 @@ class Microscope(Device, ABC):
     
     def _acquire_stem_image():
         # define in the inherit class
-        pass
+        raise NotImplementedError
 
     def _acquire_stem_image_advanced():
-        # define in the inherit class
-        pass
+        raise NotImplementedError
 
 
 
