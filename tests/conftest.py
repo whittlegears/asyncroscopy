@@ -17,20 +17,12 @@ from tango.test_context import MultiDeviceTestContext
 
 # Import device classes to test
 from asyncroscopy.detectors.HAADF import HAADF
-from asyncroscopy.Microscope import Microscope as RealMicroscope
+from asyncroscopy.ThermoDigitalTwin import ThermoDigitalTwin
 
 
-# ---- Test-only microscope subclass ----
-# Your Microscope._connect_autoscript() currently references self.autoscript_host
-# but you only defined autoscript_host_ip/autoscript_host_port.
-# In CI you don't want AutoScript anyway, so we bypass it here.
-class TestMicroscope(RealMicroscope):
-    def _connect_autoscript(self) -> None:
-        self.warn_stream("AutoScript disabled in tests (forcing simulation mode)")
-        self._microscope = None
+# We use ThermoDigitalTwin as our simulated microscope for all tests.
 
-
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def tango_ctx():
     """
     One Tango device server hosting HAADF + Microscope together.
@@ -51,16 +43,12 @@ def tango_ctx():
             ],
         },
         {
-            "class": TestMicroscope,
+            "class": ThermoDigitalTwin,
             "devices": [
                 {
-                    "name": "test/nodb/microscope",
+                    "name": "test/nodb/twin",
                     "properties": {
-                        # IMPORTANT: address must match the HAADF device name above
                         "haadf_device_address": "test/nodb/haadf",
-                        # you can also set these if you later fix autoscript_host usage
-                        "autoscript_host_ip": "localhost",
-                        "autoscript_host_port": "9090",
                     },
                 }
             ],
@@ -75,11 +63,16 @@ def tango_ctx():
         yield ctx
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def haadf_proxy(tango_ctx) -> tango.DeviceProxy:
     return tango.DeviceProxy("test/nodb/haadf")
 
 
-@pytest.fixture(scope="module")
-def microscope_proxy(tango_ctx) -> tango.DeviceProxy:
-    return tango.DeviceProxy("test/nodb/microscope")
+@pytest.fixture(scope="session")
+def twin_proxy(tango_ctx) -> tango.DeviceProxy:
+    return tango.DeviceProxy("test/nodb/twin")
+
+
+@pytest.fixture(scope="session")
+def microscope_proxy(twin_proxy):
+    return twin_proxy

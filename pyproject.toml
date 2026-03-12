@@ -18,7 +18,6 @@ dependencies = [
     "numpy>=2.3.5",
     "opencv-python>=4.13.0.92",
     "pillow>=12.1.0",
-    "pyside6>=6.10.2",
     "pytango==10.1.2",
     "pytest>=9.0.2",
     "ruff>=0.15.2",
