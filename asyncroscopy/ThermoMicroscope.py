@@ -280,38 +280,44 @@ class ThermoMicroscope(Microscope):
     def _get_stage(self):
         """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
         position = self._microscope.specimen.stage.position
-
+        position = np.array(position)
+        
         # set proxy attributes with current stage position
-        proxy = self._detector_proxies.get('stage')
-        proxy.x = position[0]
-        proxy.y = position[1]
-        proxy.z = position[2]
-        proxy.alpha = position[3]
-        proxy.beta = position[4]
-      
-        return position
-    
+        stage = self._detector_proxies['stage']
+        beta_tilt_enabled = stage.read_attribute("beta_tilt_enabled").value
+
+        stage.x = float(position[1])
+        stage.y = float(position[0])
+        stage.z = float(position[2])
+        stage.alpha = float(math.degrees(position[3]))
+
+        if beta_tilt_enabled:
+            stage.beta = float(math.degrees(position[4]))
+        beta_tilt_enabled = False
+        if beta_tilt_enabled:
+            return position
+        else:
+            return position[:-1]
+
     def _move_stage(self, position) -> None:
         """Move stage to specified position [x, y, z, alpha, beta]."""
-        proxy = self._detector_proxies.get('stage')
-
-        beta_enabled = proxy.read_beta_tilt_enabled()
-
         x = float(position[0])
         y = float(position[1])
         z = float(position[2])
         alpha = float(position[3])
-        beta = float(position[4])
+        
+        stage = self._detector_proxies['stage']
+        beta_enabled = stage.beta_tilt_enabled
 
         if beta_enabled:
+            beta = float(position[4])
             self._microscope.specimen.stage.absolute_move((x, y, z, math.radians(alpha), math.radians(beta)))
         else:
+            print('moving')
             self._microscope.specimen.stage.absolute_move((x, y, z, math.radians(alpha), None))
 
-        # TODO: not sure how this will work with beta if that tilt is diabled - we will test
-        # there are many other ways to impu this, using the TF StagePosition class, see their docs
-
-        self._get_stage() # link the proxy with real state
+        # link the proxy with real state
+        self._get_stage()
 
 
 # ----------------------------------------------------------------------

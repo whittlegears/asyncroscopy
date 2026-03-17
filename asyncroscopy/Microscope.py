@@ -26,7 +26,7 @@ from abc import abstractmethod, ABC, ABCMeta
 
 import numpy as np
 import tango
-from tango import AttrWriteType, DevEncoded, DevState, DevVarFloatArray
+from tango import AttrWriteType, DevEncoded, DevState, DevVarFloatArray, DevVarCharArray
 from tango.server import Device, DeviceMeta, attribute, command, device_property
 
 class CombinedMeta(DeviceMeta, ABCMeta):
@@ -321,14 +321,7 @@ class Microscope(Device, metaclass=CombinedMeta):
         DevVarFloatArray = [x, y, z, alpha, beta]
 
         """
-        proxy = self._detector_proxies.get('stage')
-
-        x = proxy.x
-        y = proxy.y
-        z = proxy.z
-        alpha = proxy.alpha
-        beta = proxy.beta
-        position = [x, y, z, alpha, beta]
+        position = self._get_stage()
 
         return position
 
@@ -372,6 +365,10 @@ class Microscope(Device, metaclass=CombinedMeta):
     @abstractmethod
     def _move_stage():
         # define in the inherit class
+        pass
+
+    @abstractmethod
+    def _get_stage():
         pass
 # ----------------------------------------------------------------------
 # Server entry point

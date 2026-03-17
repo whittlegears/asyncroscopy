@@ -34,7 +34,7 @@ class STAGE(Device):
         label="Position",
         dtype=float,
         access=AttrWriteType.READ_WRITE,
-        units="m",
+        unit="m",
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Stage X position in meters",
@@ -44,7 +44,7 @@ class STAGE(Device):
         label="Position",
         dtype=float,
         access=AttrWriteType.READ_WRITE,
-        units="m",
+        unit="m",
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Stage Y position in meters",
@@ -54,7 +54,7 @@ class STAGE(Device):
         label="Position",
         dtype=float,
         access=AttrWriteType.READ_WRITE,
-        units="m",
+        unit="m",
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Stage Z position in meters",
@@ -64,7 +64,7 @@ class STAGE(Device):
         label="Alpha tilt",
         dtype=float,
         access=AttrWriteType.READ_WRITE,
-        units="degrees",
+        unit="degrees",
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Stage alpha tilt in degrees",
@@ -74,7 +74,7 @@ class STAGE(Device):
         label="Beta tilt",
         dtype=float,
         access=AttrWriteType.READ_WRITE,
-        units="degrees",
+        unit="degrees",
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Stage beta tilt in degrees",
@@ -89,12 +89,12 @@ class STAGE(Device):
         self.set_state(DevState.ON)
 
         # Start with zeros, TODO: get real numbers during initialization
-        self.beta_tilt_enabled: bool = False
-        self.x: float = 0.0
-        self.y: float = 0.0
-        self.z: float = 0.0
-        self.alpha: float = 0.0
-        self.beta: float = 0.0
+        self._beta_tilt_enabled: bool = False
+        self._x: float = 0.0
+        self._y: float = 0.0
+        self._z: float = 0.0
+        self._alpha: float = 0.0
+        self._beta: float = 0.0
 
 
         self.info_stream("STAGE device initialised")
@@ -104,40 +104,40 @@ class STAGE(Device):
     # ------------------------------------------------------------------
 
     def read_beta_tilt_enabled(self) -> bool:
-        return self.beta_tilt_enabled
+        return self._beta_tilt_enabled
     
     def write_beta_tilt_enabled(self, value: bool) -> None:
-        self.beta_tilt_enabled = value
+        self._beta_tilt_enabled = value
 
     def read_x(self) -> float:
-        return self.x
+        return self._x
 
     def write_x(self, value: float) -> None:
-        self.x = value
+        self._x = value
     
     def read_y(self) -> float:
-        return self.y
+        return self._y
 
     def write_y(self, value: float) -> None:
-        self.y = value
+        self._y = value
     
     def read_z(self) -> float:
-        return self.z
+        return self._z
 
     def write_z(self, value: float) -> None:
-        self.z = value
+        self._z = value
     
     def read_alpha(self) -> float:
-        return self.alpha
+        return self._alpha
 
     def write_alpha(self, value: float) -> None:
-        self.alpha = value
+        self._alpha = value
 
     def read_beta(self) -> float:
-        return self.beta
+        return self._beta
 
     def write_beta(self, value: float) -> None:
-        self.beta = value
+        self._beta = value
 
 # ----------------------------------------------------------------------
 # Server entry point
