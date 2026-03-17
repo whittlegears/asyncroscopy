@@ -304,6 +304,39 @@ class Microscope(Device, metaclass=CombinedMeta):
         self._unblank_beam()
 
 
+    @command(dtype_out=DevVarFloatArray)
+    def get_stage(self):
+        """
+        Get the current stage position as a list of floats [x, y, z, alpha, beta].
+
+        Returns
+        -------
+        DevVarFloatArray = [x, y, z, alpha, beta]
+
+        """
+        proxy = self._detector_proxies.get('stage')
+
+        x = proxy.x
+        y = proxy.y
+        z = proxy.z
+        alpha = proxy.alpha
+        beta = proxy.beta
+        position = [x, y, z, alpha, beta]
+
+        return position
+
+    @command(dtype_in=DevVarFloatArray)
+    def move_stage(self, position):
+        """
+        Move the the stage
+        to an absolute position  [x, y, z, alpha, beta]
+
+        Parameters
+        position: an absolute reference frame move position (not relative)
+
+        """
+        self._move_stage(position)
+
     # ------------------------------------------------------------------
     # Internal acquisition helpers
     # ------------------------------------------------------------------
@@ -329,7 +362,10 @@ class Microscope(Device, metaclass=CombinedMeta):
         # define in the inherit class
         pass
 
-
+    @abstractmethod
+    def _move_stage():
+        # define in the inherit class
+        pass
 # ----------------------------------------------------------------------
 # Server entry point
 # ----------------------------------------------------------------------

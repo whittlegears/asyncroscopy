@@ -1,7 +1,7 @@
 """
-HAADF (High-Angle Annular Dark-Field) detector Tango device.
+SCAN Tango device.
 
-This device holds acquisition settings for the HAADF detector.
+This device holds params for the scan.
 It does NOT talk to AutoScript directly — the Microscope device
 reads these attributes via DeviceProxy before acquiring.
 """
@@ -18,7 +18,6 @@ class SCAN(Device):
     # ------------------------------------------------------------------
 
     # (no hardware connection properties needed — SCAN is settings-only)
-
 
     # ------------------------------------------------------------------
     # Attributes

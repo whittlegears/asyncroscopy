@@ -26,6 +26,7 @@ Client-side reconstruction example::
 
 import json
 import time
+import math
 from typing import Optional
 
 import numpy as np
@@ -93,6 +94,7 @@ class ThermoMicroscope(Microscope):
     def _connect(self):
         self._connect_hardware()
         self._connect_detector_proxies()
+        self._link_hardware_attributes()
         self.set_state(DevState.ON)
 
     def _connect_hardware(self) -> None:
@@ -129,7 +131,9 @@ class ThermoMicroscope(Microscope):
             except tango.DevFailed as e:
                 self.error_stream(f"Failed to connect to {name} proxy at {address}: {e}")
 
-
+    def _link_hardware_attributes(self) -> None:
+        # TODO: read off stage position and beta tilt enabled or not, set proxy attributes with these values.
+        pass
     # ------------------------------------------------------------------
     # Attribute read methods
     # ------------------------------------------------------------------
@@ -276,6 +280,44 @@ class ThermoMicroscope(Microscope):
         unblank beam
         """
         self._microscope.optics.blanker.unblank()
+
+    def _get_stage(self):
+        """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
+        position = self._microscope.specimen.stage.position
+
+        # set proxy attributes with current stage position
+        proxy = self._detector_proxies.get('stage')
+        proxy.x = position[0]
+        proxy.y = position[1]
+        proxy.z = position[2]
+        proxy.alpha = position[3]
+        proxy.beta = position[4]
+      
+        return position
+    
+    def _move_stage(self, position) -> None:
+        """Move stage to specified position [x, y, z, alpha, beta]."""
+        proxy = self._detector_proxies.get('stage')
+
+        beta_enabled = proxy.read_beta_tilt_enabled()
+
+        x = float(position[0])
+        y = float(position[1])
+        z = float(position[2])
+        alpha = float(position[3])
+        beta = float(position[4])
+
+        if beta_enabled:
+            self._microscope.specimen.stage.absolute_move((x, y, z, math.radians(alpha), math.radians(beta)))
+        else:
+            self._microscope.specimen.stage.absolute_move((x, y, z, math.radians(alpha), None))
+
+        # TODO: not sure how this will work with beta if that tilt is diabled - we will test
+        # there are many other ways to impu this, using the TF StagePosition class, see their docs
+
+        self._get_stage() # link the proxy with real state
+
+
 # ----------------------------------------------------------------------
 # Server entry point
 # ----------------------------------------------------------------------
