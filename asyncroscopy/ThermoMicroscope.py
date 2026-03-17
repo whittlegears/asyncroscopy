@@ -161,16 +161,18 @@ class ThermoMicroscope(Microscope):
                 detector_type = DetectorType.HAADF # :TODO --> make it general and check
                 dwell_time = haadf.read_attribute("dwell_time").value
                 image_width = haadf.read_attribute("image_width").value
-                if image_width == 256:
-                    imsize = ImageSize.PRESET_256
-                elif image_width == 512:
-                    imsize = ImageSize.PRESET_512
-                elif image_width == 1024:
-                    imsize = ImageSize.PRESET_1024
-                elif image_width == 2048:
-                    imsize = ImageSize.PRESET_2048
-                elif image_width == 4096:
-                    imsize = ImageSize.PRESET_4096
+                imsize = int(image_width)
+                # print(ImageSize.PRESET_256)
+                # if image_width == 256:
+                    # imsize = ImageSize.PRESET_256
+                # elif image_width == 512:
+                #     imsize = ImageSize.PRESET_512
+                # elif image_width == 1024:
+                #     imsize = ImageSize.PRESET_1024
+                # elif image_width == 2048:
+                #     imsize = ImageSize.PRESET_2048
+                # elif image_width == 4096:
+                #     imsize = ImageSize.PRESET_4096
 
                 # take image
                 adorned = self._microscope.acquisition.acquire_stem_image(
@@ -265,6 +267,9 @@ class ThermoMicroscope(Microscope):
         print(x,y)
         self._microscope.optics.paused_scan_beam_position = [x, y]
 
+    def _set_fov(self, fov) -> None:
+        """set field of view in meters"""
+        self._microscope.optics.scan_field_of_view = fov
 
     def _blank_beam(self) -> None:
         """blank beam"""
@@ -281,7 +286,7 @@ class ThermoMicroscope(Microscope):
         """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
         position = self._microscope.specimen.stage.position
         position = np.array(position)
-        
+
         # set proxy attributes with current stage position
         stage = self._detector_proxies['stage']
         beta_tilt_enabled = stage.read_attribute("beta_tilt_enabled").value

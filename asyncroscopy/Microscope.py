@@ -26,7 +26,7 @@ from abc import abstractmethod, ABC, ABCMeta
 
 import numpy as np
 import tango
-from tango import AttrWriteType, DevEncoded, DevState, DevVarFloatArray, DevVarCharArray
+from tango import AttrWriteType, DevEncoded, DevState, DevVarFloatArray, DevFloat
 from tango.server import Device, DeviceMeta, attribute, command, device_property
 
 class CombinedMeta(DeviceMeta, ABCMeta):
@@ -310,6 +310,13 @@ class Microscope(Device, metaclass=CombinedMeta):
         """
         self._unblank_beam()
 
+    @command(dtype_in=DevFloat)
+    def set_fov(self, fov):
+        """
+        set the field of view for the next acquisition, [0:1]
+        """
+        print(fov)
+        self._set_fov(fov)
 
     @command(dtype_out=DevVarFloatArray)
     def get_stage(self):
@@ -369,6 +376,10 @@ class Microscope(Device, metaclass=CombinedMeta):
 
     @abstractmethod
     def _get_stage():
+        pass
+
+    @abstractmethod
+    def _set_fov():
         pass
 # ----------------------------------------------------------------------
 # Server entry point
