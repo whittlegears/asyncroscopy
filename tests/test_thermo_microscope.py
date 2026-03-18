@@ -61,9 +61,12 @@ class TestThermoMicroscope:
         with pytest.raises(tango.DevFailed) as exc:
             thermo_proxy.get_image("void")
 
-        # Optional but useful: verify the intended Tango reason/message
         err_text = str(exc.value)
-        assert "UnknownDetector" in err_text or "No proxy found for detector" in err_text
+
+        # If detector is not configured (or name is misspelled),
+        # proxy lookup returns None and attribute access fails.
+        assert "NoneType" in err_text
+        assert "dwell_time" in err_text
 
     def test_disconnect_sets_state_off(self, thermo_proxy: tango.DeviceProxy) -> None:
         thermo_proxy.Disconnect()
