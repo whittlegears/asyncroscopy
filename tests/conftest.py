@@ -6,7 +6,7 @@ test device server using MultiDeviceTestContext, so the Microscope can
 create DeviceProxy connections to detectors by device name.
 
 This avoids:
-- "No proxy found for detector 'haadf'. Available: []"
+- "No proxy found for detector 'scan'. Available: []"
 - Needing a real Tango DB
 - Flaky multi-context issues from spinning up multiple separate servers
 """
@@ -17,7 +17,7 @@ import tango
 from tango.test_context import MultiDeviceTestContext
 
 # Import device classes to test
-from asyncroscopy.detectors.HAADF import HAADF
+from asyncroscopy.hardware.SCAN import SCAN
 from asyncroscopy.ThermoDigitalTwin import ThermoDigitalTwin
 from asyncroscopy.ThermoMicroscope import ThermoMicroscope
 
@@ -27,18 +27,18 @@ from asyncroscopy.ThermoMicroscope import ThermoMicroscope
 @pytest.fixture(scope="session")
 def tango_ctx():
     """
-    One Tango device server hosting HAADF + Microscope together.
+    One Tango device server hosting SCAN + Microscope together.
 
     Device names here MUST match what you put into Microscope properties.
     """
     devices_info = [
         {
-            "class": HAADF,
+            "class": SCAN,
             "devices": [
                 {
-                    "name": "test/nodb/haadf",
+                    "name": "test/nodb/scan",
                     "properties": {
-                        # put HAADF defaults here if you want
+                        # put SCAN defaults here if you want
                         # e.g. "dwell_time": 2e-6  (only if it's a device_property)
                     },
                 }
@@ -50,7 +50,7 @@ def tango_ctx():
                 {
                     "name": "test/nodb/twin",
                     "properties": {
-                        "haadf_device_address": "test/nodb/haadf",
+                        "scan_device_address": "test/nodb/scan",
                     },
                 }
             ],
@@ -62,8 +62,8 @@ def tango_ctx():
                 {
                     "name": "test/nodb/thermomicroscope",
                     "properties": {
-                        "simulate_hardware_for_tests": True,
-                        "haadf_device_address": "test/nodb/haadf",
+                        # "simulate_hardware_for_tests": True,
+                        "scan_device_address": "test/nodb/scan",
                     },
                 }
             ],
@@ -80,8 +80,8 @@ def tango_ctx():
 
 
 @pytest.fixture(scope="session")
-def haadf_proxy(tango_ctx):
-    return tango.DeviceProxy(tango_ctx.get_device_access("test/nodb/haadf"))
+def scan_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("test/nodb/scan"))
 
 
 @pytest.fixture(scope="session")
@@ -101,10 +101,10 @@ def patched_single_image(monkeypatch: pytest.MonkeyPatch) -> None:
     Patch ThermoMicroscope._acquire_stem_image so get_image() works
     without AutoScript/hardware.
     """
-    def fake_acquire(self, detector_name : str, image_width: int, image_height: int, dwell_time: float):
+    def fake_acquire(self, detector_name : str, imsize: int, dwell_time: float):
         # Deterministic image makes tests stable
-        arr = np.arange(image_height * image_width, dtype=np.uint16)
-        return arr.reshape(image_height, image_width)
+        arr = np.arange(imsize * imsize, dtype=np.uint16)
+        return arr.reshape(imsize, imsize)
 
     monkeypatch.setattr(
         ThermoMicroscope,

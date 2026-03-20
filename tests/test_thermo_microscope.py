@@ -8,21 +8,21 @@ class TestThermoMicroscope:
     def test_startup_state_is_on(self, thermo_proxy: tango.DeviceProxy) -> None:
         assert thermo_proxy.state() == tango.DevState.ON
 
-    def test_haadf_defaults_are_visible_through_proxy(self, haadf_proxy: tango.DeviceProxy) -> None:
-        haadf_proxy.dwell_time = 1e-6
-        haadf_proxy.image_width = 1024
-        haadf_proxy.image_height = 1024
-        assert haadf_proxy.state() == tango.DevState.ON
-        assert haadf_proxy.dwell_time == pytest.approx(1e-6)
-        assert haadf_proxy.image_width == 1024
-        assert haadf_proxy.image_height == 1024
+    def test_scan_defaults_are_visible_through_proxy(self, scan_proxy: tango.DeviceProxy) -> None:
+        scan_proxy.dwell_time = 1e-6
+        scan_proxy.image_width = 1024
+        scan_proxy.image_height = 1024
+        assert scan_proxy.state() == tango.DevState.ON
+        assert scan_proxy.dwell_time == pytest.approx(1e-6)
+        assert scan_proxy.image_width == 1024
+        assert scan_proxy.image_height == 1024
 
     def test_get_image_returns_valid_encoded_data(
         self,
         thermo_proxy: tango.DeviceProxy,
         patched_single_image: pytest.MonkeyPatch,
     ) -> None:
-        json_meta, raw_bytes = thermo_proxy.get_image("haadf")
+        json_meta, raw_bytes = thermo_proxy.get_image()
         meta = json.loads(json_meta)
 
         assert meta["detector"] == "haadf"
@@ -38,14 +38,13 @@ class TestThermoMicroscope:
     def test_detector_settings_propagate_into_get_image(
         self,
         thermo_proxy: tango.DeviceProxy,
-        haadf_proxy: tango.DeviceProxy,
+        scan_proxy: tango.DeviceProxy,
         patched_single_image: pytest.MonkeyPatch,
     ) -> None:
-        haadf_proxy.dwell_time = 2e-6
-        haadf_proxy.image_width = 256
-        haadf_proxy.image_height = 512
+        scan_proxy.dwell_time = 2e-6
+        scan_proxy.imsize = 256
 
-        json_meta, raw_bytes = thermo_proxy.get_image("haadf")
+        json_meta, raw_bytes = thermo_proxy.get_image()
         meta = json.loads(json_meta)
 
         assert meta["detector"] == "haadf"

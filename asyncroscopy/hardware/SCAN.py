@@ -1,23 +1,16 @@
 """
-SCAN Tango device.
-
-This device holds params for the scan.
+ALL SCANNING DETECTORS
+This device holds acquisition settings for the HAADF and BF detectors.
 It does NOT talk to AutoScript directly — the Microscope device
 reads these attributes via DeviceProxy before acquiring.
 """
-
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute
+from tango.server import Device, attribute, command
+from tango import DevVarStringArray
 
 
 class SCAN(Device):
-    """Beam settings device."""
-
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
-
-    # (no hardware connection properties needed — SCAN is settings-only)
+    """SCAN detector settings device."""
 
     # ------------------------------------------------------------------
     # Attributes
@@ -34,20 +27,26 @@ class SCAN(Device):
         doc="Per-pixel dwell time in seconds (e.g. 1e-6 = 1 µs)",
     )
 
-    width = attribute(
-        label="Width",
+    imsize = attribute(
+        label="Image Size",
         dtype=int,
         access=AttrWriteType.READ_WRITE,
         unit="px",
         doc="Acquisition width in pixels (should match an AutoScript ImageSize preset)",
     )
 
-    height = attribute(
-        label="Height",
-        dtype=int,
+    haadf = attribute(
+        label="HAADF Detector",
+        dtype=bool,
         access=AttrWriteType.READ_WRITE,
-        unit="px",
-        doc="Acquisition height in pixels",
+        doc="HAADF detector state: True = active, False = inactive",
+    )
+
+    bf = attribute(
+        label="BF Detector",
+        dtype=bool,
+        access=AttrWriteType.READ_WRITE,
+        doc="Bright Field detector state: True = active, False = inactive",
     )
 
     # ------------------------------------------------------------------
@@ -57,13 +56,11 @@ class SCAN(Device):
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.ON)
-
-        # Sensible defaults — operators override via Tango DB or client writes
-        self._dwell_time: float = 1e-6   # 1 µs
-        self._image_width: int = 1024
-        self._image_height: int = 1024
-
-        self.info_stream("HAADF device initialised")
+        self._dwell_time: float = 1e-6
+        self._imsize: int = 512
+        self._haadf: bool = False
+        self._bf: bool = False
+        self.info_stream("SCAN device initialised")
 
     # ------------------------------------------------------------------
     # Attribute read / write
@@ -75,22 +72,48 @@ class SCAN(Device):
     def write_dwell_time(self, value: float) -> None:
         self._dwell_time = value
 
-    def read_image_width(self) -> int:
-        return self._image_width
+    def read_imsize(self) -> int:
+        return self._imsize
 
-    def write_image_width(self, value: int) -> None:
-        self._image_width = value
+    def write_imsize(self, value: int) -> None:
+        self._imsize = value
 
-    def read_image_height(self) -> int:
-        return self._image_height
+    def read_haadf(self) -> bool:
+        return self._haadf
 
-    def write_image_height(self, value: int) -> None:
-        self._image_height = value
+    def write_haadf(self, value: bool) -> None:
+        self._haadf = value
+        self.info_stream(f"HAADF detector set to {'active' if value else 'inactive'}")
+
+    def read_bf(self) -> bool:
+        return self._bf
+
+    def write_bf(self, value: bool) -> None:
+        self._bf = value
+        self.info_stream(f"BF detector set to {'active' if value else 'inactive'}")
+
+    # ------------------------------------------------------------------
+    # Commands
+    # ------------------------------------------------------------------
+
+    VALID_DETECTORS = {"haadf", "bf"}
+
+    @command(dtype_in=DevVarStringArray, doc_in="List of detectors to activate, e.g. ['haadf', 'bf']. All others are deactivated.")
+    def Activate(self, detectors) -> None:
+        """Activate the named detectors and deactivate all others."""
+        requested = {d.lower() for d in detectors}
+        unknown = requested - self.VALID_DETECTORS
+        if unknown:
+            raise ValueError(f"Unknown detector(s): {unknown}. Valid options: {self.VALID_DETECTORS}")
+
+        self._haadf = "haadf" in requested
+        self._bf    = "bf"    in requested
+
+        self.info_stream(f"Active detectors: {requested or 'none'}")
 
 
 # ----------------------------------------------------------------------
 # Server entry point
 # ----------------------------------------------------------------------
-
 if __name__ == "__main__":
     SCAN.run_server()

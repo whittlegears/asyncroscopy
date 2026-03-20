@@ -22,12 +22,12 @@
 # class TestGetImage:
 
 #     def test_get_haadf_image_returns_encoded(self, microscope_proxy):
-#         result = microscope_proxy.get_image("haadf")
+#         result = microscope_proxy.get_image()
 #         # DevEncoded comes back as a two-element sequence
 #         assert len(result) == 2
 
 #     def test_metadata_is_valid_json(self, microscope_proxy):
-#         json_meta, _ = microscope_proxy.get_image("haadf")
+#         json_meta, _ = microscope_proxy.get_image()
 #         meta = json.loads(json_meta)
 #         assert "shape" in meta
 #         assert "dtype" in meta
@@ -35,7 +35,7 @@
 #         assert "timestamp" in meta
 
 #     def test_image_shape_matches_metadata(self, microscope_proxy):
-#         json_meta, raw_bytes = microscope_proxy.get_image("haadf")
+#         json_meta, raw_bytes = microscope_proxy.get_image()
 #         meta = json.loads(json_meta)
 #         image = np.frombuffer(raw_bytes, dtype=meta["dtype"]).reshape(meta["shape"])
 #         assert image.shape == tuple(meta["shape"])
