@@ -18,19 +18,12 @@ class TestSCANAttributes:
         scan_proxy.dwell_time = 5e-6
         assert scan_proxy.dwell_time == pytest.approx(5e-6)
 
-    def test_default_image_width(self, scan_proxy):
-        assert scan_proxy.image_width == 1024
+    def test_default_imsize(self, scan_proxy):
+        assert scan_proxy.imsize == 512
 
-    def test_write_image_width(self, scan_proxy):
-        scan_proxy.image_width = 512
-        assert scan_proxy.image_width == 512
-
-    def test_default_image_height(self, scan_proxy):
-        assert scan_proxy.image_height == 1024
-
-    def test_write_image_height(self, scan_proxy):
-        scan_proxy.image_height = 512
-        assert scan_proxy.image_height == 512
+    def test_write_imsize(self, scan_proxy):
+        scan_proxy.imsize = 256
+        assert scan_proxy.imsize == 256
 
 
 class TestSCANState:

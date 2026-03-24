@@ -169,7 +169,17 @@ class Microscope(Device, metaclass=CombinedMeta):
 
         detector_name = detector_name.lower().strip()
         proxy = self._detector_proxies.get(detector_name)
-        
+        if proxy is None:
+            available = ", ".join(sorted(self._detector_proxies.keys())) or "none"
+            tango.Except.throw_exception(
+                "UnknownDetector",
+                (
+                    f"Detector '{detector_name}' is not configured or connected. "
+                    f"Available detectors: {available}"
+                ),
+                "get_spectrum()",
+            )
+
         # Read acquisition settings from the detector device
         exposure_time = proxy.exposure_time # float
 
