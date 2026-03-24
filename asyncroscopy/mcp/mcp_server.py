@@ -1,14 +1,21 @@
 import os
+import inspect
+import importlib
+import pkgutil
+import base64
 from inspect import signature, getdoc
-from typing import Any, Dict, Callable
+from typing import Any, Dict, Callable, Annotated
+from pydantic import Field
 
 from fastmcp import FastMCP
 from tango import Database, DeviceProxy, CommandInfo, CmdArgType
+from tango.utils import TO_TANGO_TYPE
+from tango.server import Device
 from fastmcp.tools import tool, Tool
 
-DEFAULT_BLOCKED_CLASSES = ["DataBase", "DServer"]
-
 class MCPServer:
+    DEFAULT_BLOCKED_CLASSES = ["DataBase", "DServer"]
+
     def __init__(
         self,
         name: str,
@@ -16,16 +23,21 @@ class MCPServer:
         tango_port: int,
         blocked_functions: list[str] | None = None,
         blocked_classes: list[str] | None = None,
+        search_packages: list[str] | None = None,
         verbose: bool = True,
     ):
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
+
         self.blocked_functions = blocked_functions or []
-        self.blocked_classes = blocked_classes or DEFAULT_BLOCKED_CLASSES.copy()
-        self.verbose = verbose
+        self.blocked_classes = blocked_classes or self.DEFAULT_BLOCKED_CLASSES.copy()
         self._blocked_classes_normalized = {
             cls_name.lower() for cls_name in self.blocked_classes
         }
+
+        self.search_packages = search_packages if search_packages is not None else ["asyncroscopy"]
+        
+        self.verbose = verbose
 
         # Tools are keyed by Tango class, then command name, with the value being the wrapped function
         self.tools: Dict[str, Dict[str, Callable]] = {}
@@ -68,6 +80,107 @@ class MCPServer:
         """Return a readable Tango command type name."""
         return cmd_type.name
 
+    @staticmethod
+    def _is_dev_encoded_type(cmd_type: CmdArgType) -> bool:
+        """Handle enum/int variants."""
+        if cmd_type == CmdArgType.DevEncoded:
+            return True
+        name = cmd_type.name
+        return name == "DevEncoded"
+
+    @staticmethod
+    def _tango_type_to_python(cmd_type: CmdArgType) -> type:
+        if cmd_type == CmdArgType.DevVoid:
+            return type(None)
+        if MCPServer._is_dev_encoded_type(cmd_type):
+            return dict
+
+        for py_type, t_cmd in TO_TANGO_TYPE.items():
+            if t_cmd == cmd_type and isinstance(py_type, type) and py_type.__module__ == 'builtins':
+                return py_type
+
+        name = cmd_type.name
+        if 'Array' in name: return list
+        if 'String' in name: return str
+        if 'Float' in name or 'Double' in name: return float
+        if 'Long' in name or 'Short' in name or 'Int' in name: return int
+        if 'Boolean' in name: return bool
+        return Any
+
+    @staticmethod
+    def _normalize_command_result(out_type: CmdArgType, result: Any) -> Any:
+        """Convert Tango command output into JSON-safe data for MCP transport."""
+        if not MCPServer._is_dev_encoded_type(out_type):
+            return result
+
+        if not isinstance(result, tuple) or len(result) != 2:
+            return result
+
+        metadata_raw, payload_raw = result
+        if isinstance(metadata_raw, bytes):
+            metadata = metadata_raw.decode("utf-8", errors="replace")
+        else:
+            metadata = str(metadata_raw)
+
+        if isinstance(payload_raw, memoryview):
+            payload_bytes = payload_raw.tobytes()
+        elif isinstance(payload_raw, bytearray):
+            payload_bytes = bytes(payload_raw)
+        elif isinstance(payload_raw, bytes):
+            payload_bytes = payload_raw
+        else:
+            payload_bytes = str(payload_raw).encode("utf-8")
+
+        payload_b64 = base64.b64encode(payload_bytes).decode("ascii")
+        return {
+            "encoding": "base64",
+            "metadata": metadata,
+            "payload": payload_b64,
+        }
+
+    def _get_tango_device_class(self, dev_class: str) -> type[Device] | None:
+        """Find or import the Tango Device class for a given class name."""
+        # Existing loaded subclasses
+        for cls in Device.__subclasses__():
+            if cls.__name__ == dev_class:
+                return cls
+
+        # Try direct import
+        try:
+            mod = importlib.import_module(dev_class)
+            for _, cls in inspect.getmembers(mod, inspect.isclass):
+                if issubclass(cls, Device) and cls.__name__ == dev_class:
+                    return cls
+        except Exception:
+            pass
+
+        # Search packages
+        for pkg_name in self.search_packages or []:
+            try:
+                pkg = importlib.import_module(pkg_name)
+                if not hasattr(pkg, "__path__"):
+                    continue
+
+                for _, modname, _ in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
+                    try:
+                        mod = importlib.import_module(modname)
+                        for _, cls in inspect.getmembers(mod, inspect.isclass):
+                            if issubclass(cls, Device) and cls.__name__ == dev_class:
+                                return cls
+                    except Exception:
+                        continue
+            except ImportError:
+                continue
+
+        return None
+
+    def _get_docstring(self, dev_class: str, command_name: str) -> str | None:
+        cls = self._get_tango_device_class(dev_class)
+        if not cls:
+            return None
+        func = getattr(cls, command_name, None)
+        return inspect.getdoc(func) if func else None
+
     def _build_command_docstring(
         self,
         func: Callable,
@@ -75,30 +188,55 @@ class MCPServer:
         command_name: str,
         dev_class: str,
     ) -> str:
-        """Build a tool description from function doc or Tango metadata."""
-        func_doc = getdoc(func)
-        if func_doc:
-            return func_doc
+        """Build a tool description combining source docstrings with Tango metadata."""
+        # Preference: Actual source docstring, then proxy docstring, then command name
+        header_doc = self._get_docstring(dev_class, command_name) or getdoc(func)
 
-        in_type = cmd_info.in_type
-        out_type = cmd_info.out_type
-        in_desc = cmd_info.in_type_desc
-        out_desc = cmd_info.out_type_desc
+        lines = []
+        if header_doc:
+            lines.append(header_doc)
+            lines.append("")
+        
+        lines.append(f"Tango Device Class: {dev_class}")
+        lines.append(f"Tango Command: {command_name}")
 
-        lines = [
-            f"{dev_class}.{command_name}",
-            "",
-            f"Input: {self._cmd_type_name(in_type)}",
-        ]
-        if in_desc:
-            lines.append(f"Input description: {in_desc}")
+        if not header_doc:
+            in_type = cmd_info.in_type
+            out_type = cmd_info.out_type
+            in_desc = cmd_info.in_type_desc
+            out_desc = cmd_info.out_type_desc
 
-        lines.append(f"Output: {self._cmd_type_name(out_type)}")
-        if out_desc:
-            lines.append(f"Output description: {out_desc}")
+            lines.append(f"Input Type: {self._cmd_type_name(in_type)}")
+            if in_desc:
+                lines.append(f"Input Description: {in_desc}")
 
-        return "\n".join(lines)
+            lines.append(f"Output Type: {self._cmd_type_name(out_type)}")
+            if out_desc:
+                lines.append(f"Output Description: {out_desc}")
+
+        return "\n".join(lines).strip()
     
+    def _get_param_name(self, dev_class: str, command_name: str) -> str:
+        """Pull the first non-self parameter name from the source method signature."""
+        cls = self._get_tango_device_class(dev_class)
+        if not cls:
+            return "arg"
+
+        method = getattr(cls, command_name, None)
+        if method is None:
+            return "arg"
+
+        try:
+            params = list(inspect.signature(method).parameters.values())
+            # Skip 'self' if present
+            for p in params:
+                if p.name != "self":
+                    return p.name
+        except (ValueError, TypeError):
+            pass
+
+        return "arg"
+
     def _create_wrapper(
         self,
         func: Callable,
@@ -125,13 +263,42 @@ class MCPServer:
         )
 
         in_type = cmd_info.in_type
+        py_type = self._tango_type_to_python(in_type)
+        in_desc = cmd_info.in_type_desc
+        
+        out_type = cmd_info.out_type
+        py_return_type = self._tango_type_to_python(out_type)
+
+        if in_desc and in_desc.lower() not in ("uninitialised", "none", "", "uninitialized"):
+            arg_type = Annotated[py_type, Field(description=in_desc)]
+        else:
+            arg_type = py_type
 
         if in_type == CmdArgType.DevVoid:
-            def wrapper() -> Any:
-                return func()
+            def wrapper() -> py_return_type:
+                result = func()
+                return self._normalize_command_result(out_type, result)
+            wrapper.__annotations__ = {"return": py_return_type}
         else:
-            def wrapper(arg: Any) -> Any:
-                return func(arg)
+            param_name = self._get_param_name(dev_class, command_name)
+
+            # Build the wrapper with the real param name so pydantic/FastMCP
+            # advertises the correct keyword in the tool schema.
+            ns: dict = {
+                "func": func,
+                "arg_type": arg_type,
+                "py_return_type": py_return_type,
+                "self": self,
+                "out_type": out_type,
+            }
+            exec(
+                f"def wrapper({param_name}: arg_type) -> py_return_type:\n"
+                f"    result = func({param_name})\n"
+                f"    return self._normalize_command_result(out_type, result)\n",
+                ns,
+            )
+            wrapper = ns["wrapper"]
+            wrapper.__annotations__ = {param_name: arg_type, "return": py_return_type}
 
         wrapper.__doc__ = doc
         
@@ -250,11 +417,13 @@ class MCPServer:
                         stripped = line.strip()
                         if stripped:
                             print(f"{stripped}")
+                print("")
+            print("")
 
     def start(self):
         """Setup and start the MCP server."""
         self.setup()
-        self.mcp.run()
+        self.mcp.run(transport="streamable-http", host="127.0.0.1", port=8000)
 
 if __name__ == "__main__":
     tango_host = os.environ.get("TANGO_HOST", "localhost:9094")

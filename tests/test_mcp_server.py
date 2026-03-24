@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
@@ -351,3 +352,21 @@ class TestMCPServerDBMode:
             assert (
                 blocked_class not in tools
             ), f"Blocked class {blocked_class} was exposed"
+
+
+class TestMCPSerialization:
+    def test_devencoded_type_maps_to_object_schema(self) -> None:
+        mapped = MCPServer._tango_type_to_python(tango.CmdArgType.DevEncoded)
+        assert mapped is dict
+
+    def test_devencoded_payload_is_json_safe(self) -> None:
+        normalized = MCPServer._normalize_command_result(
+            tango.CmdArgType.DevEncoded,
+            ('{"shape":[2,2],"dtype":"uint8"}', b"\x00\x01\xff\x10"),
+        )
+
+        assert isinstance(normalized, dict)
+        assert normalized["encoding"] == "base64"
+        assert normalized["metadata"] == '{"shape":[2,2],"dtype":"uint8"}'
+        assert isinstance(normalized["payload"], str)
+        assert base64.b64decode(normalized["payload"]) == b"\x00\x01\xff\x10"

@@ -60,9 +60,8 @@ class TestThermoMicroscope:
 
         err_text = str(exc.value)
 
-        # If detector is not configured (or name is misspelled),
-        # proxy lookup returns None and attribute access fails.
-        assert "NoneType" in err_text
+        assert "UnknownDetector" in err_text
+        assert "void" in err_text
 
     def test_disconnect_sets_state_off(self, thermo_proxy: tango.DeviceProxy) -> None:
         thermo_proxy.Disconnect()

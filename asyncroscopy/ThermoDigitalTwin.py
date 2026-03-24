@@ -68,6 +68,10 @@ class ThermoDigitalTwin(Microscope):
         self._stem_mode = True
         self._detector_proxies = {}
         self._manufacturer = "UTKTeam"
+        self._beam_pos_x = 0.5
+        self._beam_pos_y = 0.5
+        self._particle_records = []
+        self._imsize = 512
         
         self._connect()
         
