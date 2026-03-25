@@ -113,8 +113,6 @@ class ThermoMicroscope(Microscope):
         # Extend this dict as more detectors are added
         # later, we want to do this automatically, not with a dictionary.
         addresses: dict[str, str] = {
-            "haadf": self.haadf_device_address,
-            "AdvancedAcquistion": self.advanced_acquisition_device_address,
             "eds":  self.eds_device_address,
             "stage": self.stage_device_address,
             "scan": self.scan_device_address,

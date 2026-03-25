@@ -44,12 +44,6 @@ class Microscope(Device, metaclass=CombinedMeta):
     # Device properties — configure in Tango DB per deployment
     # ------------------------------------------------------------------
 
-    haadf_device_address = device_property(
-        dtype=str,
-        doc="Tango device address for the HAADF settings device. "
-            "DB mode: 'test/detector/haadf' "
-            "No-DB mode: 'tango://127.0.0.1:8888/test/nodb/haadf#dbase=no'",
-    )
 
     scan_device_address = device_property(
         dtype=str,
@@ -63,13 +57,6 @@ class Microscope(Device, metaclass=CombinedMeta):
         doc="Tango device address for the EDS settings device. "
             "DB mode: 'test/detector/eds' "
             "No-DB mode: 'tango://127.0.0.1:8887/test/nodb/haadf#dbase=no'",
-    )
-
-    advanced_acquisition_device_address = device_property(
-        dtype=str,
-        doc="Tango device address for the HAADF settings device. "
-            "DB mode: 'test/detector/advancedacquisition' "
-            "No-DB mode: 'tango://127.0.0.1:8888/test/nodb/advancedacquisition#dbase=no'",
     )
 
     stage_device_address = device_property(
