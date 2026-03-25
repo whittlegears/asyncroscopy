@@ -22,8 +22,8 @@ class TestSCANAttributes:
         assert scan_proxy.imsize == 512
 
     def test_write_imsize(self, scan_proxy):
-        scan_proxy.imsize = 512
-        assert scan_proxy.imsize == 512
+        scan_proxy.imsize = 256
+        assert scan_proxy.imsize == 256
 
 
 class TestSCANState:

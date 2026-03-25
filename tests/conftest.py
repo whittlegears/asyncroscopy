@@ -101,13 +101,18 @@ def patched_single_image(monkeypatch: pytest.MonkeyPatch) -> None:
     Patch ThermoMicroscope._acquire_stem_image so get_image() works
     without AutoScript/hardware.
     """
-    def fake_acquire(self, detector_name : str, imsize: int, dwell_time: float):
+    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list):
         # Deterministic image makes tests stable
         arr = np.arange(imsize * imsize, dtype=np.uint16)
         return arr.reshape(imsize, imsize)
 
     monkeypatch.setattr(
         ThermoMicroscope,
+        "_acquire_stem_image",
+        fake_acquire,
+    )
+    monkeypatch.setattr(
+        ThermoDigitalTwin,
         "_acquire_stem_image",
         fake_acquire,
     )

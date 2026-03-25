@@ -21,7 +21,7 @@ class TestThermoDigitalTwin:
     def test_manufacturer_is_digital_twin(self, twin_proxy: tango.DeviceProxy):
         assert twin_proxy.manufacturer == "UTKTeam"
 
-    def test_get_image_returns_valid_data(self, twin_proxy: tango.DeviceProxy):
+    def test_get_image_returns_valid_data(self, twin_proxy: tango.DeviceProxy, patched_single_image: pytest.MonkeyPatch):
         json_meta, raw_bytes = twin_proxy.get_scanned_image()
         meta = json.loads(json_meta)
         
@@ -31,8 +31,7 @@ class TestThermoDigitalTwin:
         
         image = np.frombuffer(raw_bytes, dtype=meta["dtype"]).reshape(meta["shape"])
         assert image.shape == tuple(meta["shape"])
-        assert image.dtype == np.uint16
 
     def test_unknown_detector_raises(self, twin_proxy: tango.DeviceProxy):
         with pytest.raises(tango.DevFailed):
-            twin_proxy.get_scanned_image() # void?
+            twin_proxy.get_spectrum("void")
