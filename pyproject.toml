@@ -5,7 +5,6 @@ description = "Asyncroscopy: asynchronous control framework for STEM automation"
 readme = "README.md"
 requires-python = ">3.11"
 dependencies = [
-    # Other project dependencies
     "colorama>=0.4.6",
     "defusedxml>=0.7.1",
     "gevent>=25.9.1",
@@ -24,13 +23,9 @@ dependencies = [
     "ase>=3.27.0",
     "pyTEMlib>=0.2024.1.0",
     "sidpy>=0.12.8",
-    # MCP server dependencies
     "fastmcp>=0.1.0",
     "anyio>=4.0.0",
-]
-
-[project.optional-dependencies]
-autoscript = [
+    # AutoScript (local wheels)
     "autoscript-core",
     "autoscript-tem-microscope-client",
     "autoscript-tem-microscope-client-tests",
@@ -47,8 +42,8 @@ include = ["asyncroscopy*"]
 
 [tool.uv.sources]
 autoscript-core = { path = "stubs/autoscript_core-1.0.0-py3-none-any.whl" }
-autoscript-tem-microscope-client-tests = { path = "stubs/autoscript_tem_microscope_client_tests-1.15.0-py3-none-any.whl" }
 autoscript-tem-microscope-client = { path = "stubs/autoscript_tem_microscope_client-1.15.0-py3-none-any.whl" }
+autoscript-tem-microscope-client-tests = { path = "stubs/autoscript_tem_microscope_client_tests-1.15.0-py3-none-any.whl" }
 autoscript-tem-snippets-tests = { path = "stubs/autoscript_tem_snippets_tests-1.15.0-py3-none-any.whl" }
 autoscript-tem-toolkit = { path = "stubs/autoscript_tem_toolkit-1.15.0-py3-none-any.whl" }
 thermoscientific-logging = { path = "stubs/thermoscientific_logging-1.0.0-py3-none-any.whl" }
