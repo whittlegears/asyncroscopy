@@ -255,7 +255,7 @@ def main():
         wait_for_device_ready(twin_device_name, timeout=10.0)
         log_stderr("[startup] ThermoDigitalTwin is fully accessible")
 
-        # 6. Start MCPServer
+        # Start MCPServer
         log_stderr("[startup] Initializing MCP Server...")
         server = MCPServer(
             name="MCPServer_Twin",

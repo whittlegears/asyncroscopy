@@ -1,16 +1,13 @@
 """
 Bridge between a Tango control system and an MCP (Model Context Protocol) server.
 
-Tango is a distributed hardware-control framework used in scientific instruments.
 This module queries a Tango database for exported devices, introspects their
-commands, and dynamically registers each command as an MCP tool — making physical
-hardware controllable via LLM tool-calls.
+commands, and dynamically registers each command as an MCP tool to make physical
+hardware controllable via LLM agents.
 
 Usage:
     server = MCPServer("MyServer", tango_host="localhost", tango_port=9094)
     server.start()   # discovers devices, registers tools, starts HTTP server
-
-Dependencies: tango-controls, fastmcp
 """
 import os
 import inspect
@@ -81,15 +78,20 @@ class MCPServer:
         devices = self.database.get_device_exported("*")
         return list(devices.value_string)
 
-    # This method is registered directly via @tool() because it runs on the
-    # MCPServer instance itself (not on a Tango device proxy). All Tango device
-    # commands are registered dynamically in setup() via Tool.from_function().
+    @staticmethod
+    def _is_admin_device(device_name: str) -> bool:
+        """Return True for Tango admin (dserver) devices."""
+        return device_name.lower().startswith("dserver/")
+
+    # @tool cannot register instance methods, but it still adds metadata
     @tool()
     def list_devices(self) -> list[str]:
         """List available devices filtered by blocked classes."""
         all_devices = self._list_all_devices()
         available = []
         for device_name in all_devices:
+            if self._is_admin_device(device_name):
+                continue
             try:
                 # Create a DeviceProxy from the found name
                 dev = DeviceProxy(device_name)
@@ -107,6 +109,36 @@ class MCPServer:
     def get_blocked_classes(self) -> list[str]:
         """Get the list of blocked Tango classes."""
         return self.blocked_classes
+
+    def _register_tool_methods(self) -> int:
+        """Discover and register all methods decorated with @tool.
+        
+        Returns:
+            Number of methods successfully registered.
+        """
+        registered_count = 0
+        
+        # Get all members from this instance's class (including inherited)
+        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+            # Skip private/internal methods
+            if name.startswith('_'):
+                continue
+            
+            # Check if the method has tool decorator metadata
+            # The @tool decorator from fastmcp attaches a __fastmcp__ attribute
+            try:
+                func = method.__func__
+                
+                if hasattr(func, '__fastmcp__'):
+                    self.mcp.add_tool(method)
+                    registered_count += 1
+                    if self.verbose:
+                        print(f"Auto-registered tool: {name}")
+            except Exception as e:
+                if self.verbose:
+                    print(f"Failed to auto-register {name}: {e}")
+        
+        return registered_count
 
     @staticmethod
     def _cmd_type_name(cmd_type: CmdArgType) -> str:
@@ -354,6 +386,8 @@ class MCPServer:
         devices = self._list_all_devices()
         tools: Dict[str, Dict[str, tuple[Callable, CommandInfo]]] = {}
         for device_name in devices:
+            if self._is_admin_device(device_name):
+                continue
             try:
                 dev = DeviceProxy(device_name)
                 info = dev.info()
@@ -391,7 +425,12 @@ class MCPServer:
                 tools[dev_class][command_name] = (func, cmd)
         return tools
 
-    def _print_tools(self, tools: Dict[str, Dict[str, tuple[Callable, CommandInfo]]]) -> None:
+    def _print_discovered_tools(self, tools: Dict[str, Dict[str, tuple[Callable, CommandInfo]]]) -> None:
+        """Print discovered tools before registration.
+        
+        Args:
+            tools: Dictionary of discovered tools by class and command name.
+        """
         if not self.verbose:
             return
         print("Discovered tools by Tango class:")
@@ -419,30 +458,42 @@ class MCPServer:
         
         self.tools = wrapped_tools
         if print_summary:
-            self._print_tools(raw_tools)
+            self._print_discovered_tools(raw_tools)
 
+        # Auto-register all @tool decorated instance methods
+        num_instance_tools = self._register_tool_methods()
+        
         # Register wrapped tools with MCP
-        num_tools = 0
+        num_device_tools = 0
         for dev_class in wrapped_tools:
             for command_name, wrapped_func in wrapped_tools[dev_class].items():
                 try:
                     tool_obj = Tool.from_function(wrapped_func)
                     self.mcp.add_tool(tool_obj)
-                    num_tools += 1
+                    num_device_tools += 1
                 except Exception as e:
                     if self.verbose:
                         print(f"Failed to wrap {dev_class}.{command_name}: {e}")
         
         # Print all registered MCP tools
         if print_summary:
-            self._print_mcp_tools(num_tools)
+            self._print_registration_summary(num_device_tools, num_instance_tools)
     
-    def _print_mcp_tools(self, num_registered: int) -> None:
-        """Print all registered MCP tools."""
+    def _print_registration_summary(self, num_device_tools: int, num_instance_tools: int) -> None:
+        """Print all registered MCP tools.
+        
+        Args:
+            num_device_tools: Number of Tango device command tools registered
+            num_instance_tools: Number of instance method tools registered
+        """
         if not self.verbose:
             return
-        print(f"\nRegistered {num_registered} Tango device tools")
-        print("All MCP tools available:")
+        
+        print(f"\nRegistered {num_instance_tools} instance method tool(s)")
+        print(f"Registered {num_device_tools} Tango device command tool(s)")
+        print(f"Total: {num_instance_tools + num_device_tools} tools")
+        print("\nAll MCP tools available:")
+        
         for dev_class in sorted(self.tools.keys()):
             command_names = sorted(self.tools[dev_class].keys())
             for command_name in command_names:
@@ -457,10 +508,10 @@ class MCPServer:
                 print("")
             print("")
 
-    def start(self):
+    def start(self, host: str = "127.0.0.1", port: int = 8000):
         """Setup and start the MCP server."""
         self.setup()
-        self.mcp.run(transport="streamable-http", host="127.0.0.1", port=8000)
+        self.mcp.run(transport="streamable-http", host=host, port=port)
 
 if __name__ == "__main__":
     tango_host = os.environ.get("TANGO_HOST", "localhost:9094")

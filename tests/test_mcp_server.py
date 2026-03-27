@@ -16,6 +16,8 @@ from typing import Generator
 import pytest
 import tango
 
+import asyncio
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asyncroscopy.mcp.mcp_server import MCPServer
@@ -261,6 +263,12 @@ class TestMCPServerDBMode:
         server.setup(print_summary=True)
         tools = server.tools
 
+        mcp_tools = asyncio.run(server.mcp.list_tools())
+        mcp_tool_names = {tool.name for tool in mcp_tools}
+        assert "list_devices" in mcp_tool_names, (
+            "list_devices should be auto-registered as an MCP tool"
+        )
+
         # Verify ThermoDigitalTwin was discovered
         assert "ThermoDigitalTwin" in tools, (
             "ThermoDigitalTwin class not found in MCP tool discovery"
@@ -352,7 +360,6 @@ class TestMCPServerDBMode:
             assert (
                 blocked_class not in tools
             ), f"Blocked class {blocked_class} was exposed"
-
 
 class TestMCPSerialization:
     def test_devencoded_type_maps_to_object_schema(self) -> None:

@@ -13,6 +13,7 @@ This avoids:
 
 import numpy as np
 import pytest
+import os
 import tango
 from tango.test_context import MultiDeviceTestContext
 
@@ -23,7 +24,7 @@ from asyncroscopy.ThermoMicroscope import ThermoMicroscope
 
 
 # We use ThermoDigitalTwin as our simulated microscope for all tests.
-
+    
 @pytest.fixture(scope="session")
 def tango_ctx():
     """
@@ -62,7 +63,7 @@ def tango_ctx():
                 {
                     "name": "test/nodb/thermomicroscope",
                     "properties": {
-                        # "simulate_hardware_for_tests": True,
+                        "testing_mode_bool": True,
                         "scan_device_address": "test/nodb/scan",
                     },
                 }

@@ -24,8 +24,7 @@ Client-side reconstruction example::
     image   = np.frombuffer(encoded[1], dtype=meta["dtype"]).reshape(meta["shape"])
 """
 
-import json
-import time
+import os
 import math
 from typing import Optional
 
@@ -96,7 +95,7 @@ class ThermoMicroscope(Microscope):
 
     def _connect_hardware(self) -> None:
         """Establish AutoScript connection from MPC -> hardware."""
-        if not _AUTOSCRIPT_AVAILABLE:
+        if not _AUTOSCRIPT_AVAILABLE or self.testing_mode_bool:
             self.warn_stream("AutoScript not available")
             return
         try:
@@ -113,8 +112,6 @@ class ThermoMicroscope(Microscope):
         # Extend this dict as more detectors are added
         # later, we want to do this automatically, not with a dictionary.
         addresses: dict[str, str] = {
-            "haadf": self.haadf_device_address,
-            "AdvancedAcquistion": self.advanced_acquisition_device_address,
             "eds":  self.eds_device_address,
             "stage": self.stage_device_address,
             "scan": self.scan_device_address,
