@@ -18,7 +18,6 @@ from inspect import signature, getdoc
 from typing import Any, Dict, Callable, Annotated
 from pydantic import Field
 
-from fastmcp import FastMCP
 from tango import Database, DeviceProxy, CommandInfo, CmdArgType
 from tango.utils import (
     TO_TANGO_TYPE,
@@ -30,7 +29,14 @@ from tango.utils import (
     is_str_type,
 )
 from tango.server import Device
+
+from fastmcp import FastMCP
 from fastmcp.tools import tool, Tool
+from fastmcp.resources import resource
+from fastmcp.prompts import prompt
+from fastmcp.tools.function_tool import ToolMeta
+from fastmcp.resources.function_resource import ResourceMeta
+from fastmcp.prompts.function_prompt import PromptMeta
 
 
 class MCPServer:
@@ -140,8 +146,8 @@ class MCPServer:
         """Get the list of blocked Tango classes."""
         return self.blocked_classes
 
-    def _register_tool_methods(self) -> int:
-        """Discover and register all methods decorated with @tool.
+    def _register_instance_methods(self) -> int:
+        """Discover and register all methods decorated with @tool, @resource, or @prompt.
         
         Returns:
             Number of methods successfully registered.
@@ -149,21 +155,37 @@ class MCPServer:
         registered_count = 0
         
         # Get all members from this instance's class (including inherited)
-        for name, method in inspect.getmembers(self, predicate=inspect.ismethod):
+        methods = inspect.getmembers(self, predicate=inspect.ismethod)
+        
+        for name, method in methods:
             # Skip private/internal methods
             if name.startswith('_'):
                 continue
             
-            # Check if the method has tool decorator metadata
-            # The @tool decorator from fastmcp attaches a __fastmcp__ attribute
+            func = method.__func__
+            
+            # decorators attach a __fastmcp__ metadata object
             try:
-                func = method.__func__
-                
                 if hasattr(func, '__fastmcp__'):
-                    self.mcp.add_tool(method)
+                    meta = func.__fastmcp__
+                    
+                    if isinstance(meta, ToolMeta):
+                        self.mcp.add_tool(method)
+                        mcp_type = "tool"
+                    elif isinstance(meta, ResourceMeta):
+                        self.mcp.add_resource(method)
+                        mcp_type = "resource"
+                    elif isinstance(meta, PromptMeta):
+                        self.mcp.add_prompt(method)
+                        mcp_type = "prompt"
+                    else:
+                        if self.verbose:
+                            print(f"Unknown MCP type for {name}")
+                        continue
+                        
                     registered_count += 1
                     if self.verbose:
-                        print(f"Auto-registered tool: {name}")
+                        print(f"Auto-registered {mcp_type}: {name}")
             except Exception as e:
                 if self.verbose:
                     print(f"Failed to auto-register {name}: {e}")
@@ -525,8 +547,8 @@ class MCPServer:
         if print_summary:
             self._print_discovered_tools(raw_tools)
 
-        # Auto-register all @tool decorated instance methods
-        num_instance_tools = self._register_tool_methods()
+        # Auto-register all @tool, @resource, and @prompt decorated instance methods
+        num_instance_tools = self._register_instance_methods()
         
         # Register wrapped tools with MCP
         num_device_tools = 0
