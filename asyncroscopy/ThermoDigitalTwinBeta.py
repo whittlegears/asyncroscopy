@@ -88,6 +88,7 @@ class ThermoDigitalTwin(Microscope):
         # Extend this dict as more detectors are added
         # later, we want to do this automatically, not with a dictionary.
         addresses: dict[str, str] = {
+            "AdvancedAcquistion": self.advanced_acquisition_device_address,
             "eds":  self.eds_device_address,
             "stage": self.stage_device_address,
             "scan": self.scan_device_address,
@@ -355,6 +356,27 @@ class ThermoDigitalTwin(Microscope):
 
         return sim_im
 
+    def _make_sample_recipie(self):
+        """This is called once at the beginning, and then every time we call _cook_sample_recipie, we will
+        Generate three things:
+        1. lookup table (dict) structured: {label: {element: fraction, ...}, ...} for each particle
+        2. a 3D array, same size as the world, with integer labels for each particle at each voxel (0 for background). This will be used for building the nanoparticles
+        3a. make empty atoms object with cell calculated fro the 3D array size and pixel size
+        3b. populate it with all NP atoms by looping through the labels (for each, get the region and add atoms according to the lookup table)
+        save all 3 for later as self._particle_lookup, self._particle_label_map, self._atoms_object
+        """
+        pass
+
+    def _cook_sample_recipie(self):
+        """this will use the stage position (read from proxy), atoms object, and the 3D label map
+        to create a shifted + rotated map and atoms object. Both map and atoms will be shifted and rotated the same way (challenge)
+        all rotations happen around the center of the world, map.shape / 2 and atoms.cell / 2, which are both in different units (pixels vs angstroms)
+        """
+
+        stage = self._detector_proxies.get("stage")
+        position = [stage.x, stage.y, stage.z, stage.alpha, stage.beta]  # (x, y, z, a, b), relative to 0
+
+        pass
 
     def _acquire_spectrum(self, detector_name: str, exposure_time: float):
         px, py = self.read_beam_pos()   # fractional [0, 1]
