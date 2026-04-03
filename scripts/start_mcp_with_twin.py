@@ -266,7 +266,7 @@ def main():
         )
 
         log_stderr(f"[startup] Starting MCP Server. Exported devices: {server.list_devices()}")
-        server.start()
+        server.start_http()
 
     except KeyboardInterrupt:
         log_stderr("\n[shutdown] KeyboardInterrupt received. Shutting down...")
