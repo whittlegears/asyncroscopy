@@ -32,6 +32,7 @@ dependencies = [
     "autoscript-tem-snippets-tests",
     "autoscript-tem-toolkit",
     "thermoscientific-logging",
+    "aicspylibczi>=3.3.1",
 ]
 
 [tool.setuptools]

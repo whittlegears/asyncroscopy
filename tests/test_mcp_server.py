@@ -18,6 +18,8 @@ import tango
 
 import asyncio
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asyncroscopy.mcp.mcp_server import MCPServer
@@ -256,8 +258,6 @@ class TestMCPServerDBMode:
             name="MCPServerTest",
             tango_host=host,
             tango_port=port,
-            blocked_classes=["DataBase", "DServer"],
-            blocked_functions=[],
         )
 
         server.setup(print_summary=True)
@@ -377,3 +377,10 @@ class TestMCPSerialization:
         assert normalized["metadata"] == '{"shape":[2,2],"dtype":"uint8"}'
         assert isinstance(normalized["payload"], str)
         assert base64.b64decode(normalized["payload"]) == b"\x00\x01\xff\x10"
+
+class TestMCPServerTypeMapping:
+    def test_tango_types_map_to_python(self) -> None:
+        assert MCPServer._tango_type_to_python(tango.CmdArgType.DevString) is str
+        assert MCPServer._tango_type_to_python(tango.CmdArgType.DevVarDoubleArray) == list[float]
+        assert MCPServer._tango_type_to_python(tango.CmdArgType.DevUChar) == np.uint8
+        assert MCPServer._tango_type_to_python(tango.CmdArgType.DevEncoded) is dict

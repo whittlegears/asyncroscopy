@@ -45,7 +45,7 @@ def main() -> None:
     print(f"Connected to Tango DB at {tango_db_host}:{tango_db_port}")
     print("Starting MCP server on 127.0.0.1:8000")
     print("Exported devices:", server.list_devices())
-    server.start(host="127.0.0.1", port=8000)
+    server.start_http(host="127.0.0.1", port=8000)
 
 
 if __name__ == "__main__":
