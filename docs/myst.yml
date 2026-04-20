@@ -1,0 +1,34 @@
+# See docs at: https://mystmd.org/guide/frontmatter
+version: 1
+project:
+  id: 00c581f9-e9f0-4bb6-94fa-773c880a9953
+  title: Asyncroscopy Documentation
+  description: Coordination platform for asynchronous microscopy and spectroscopy data analysis
+  keywords: [imaging, microscopy, spectrascopy, TEM]
+  authors:
+    - name: Austin Houston
+      email: ahouston@utk.edu
+    - name: Utkarsh Pratisuh
+      email: upratisuh@utk.edu
+    - name: Dominick Pelaia
+      email: dpelaia@utk.edu
+    - name: Levi Dunn
+      email: ldunn21@utk.edu
+    - name: Gerd Duscher
+      email: gduscher@utk.edu
+  github: https://github.com/whittlegears/pystemllmgui
+  toc:
+    - file: dev_guide.md
+    - title: Microscopy
+      children:
+        - file: modify_base_microscope.md
+        - file: modify_thermo_microscope.md
+    - title: Adding New Hardware
+      children:
+         - file: Adding_New_Hardware/add_detector.md
+    - title: Future Goals
+      children:
+        - file: upcoming_changes.md
+    
+site:
+  template: book-theme
