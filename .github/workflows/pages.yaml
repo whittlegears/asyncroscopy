@@ -28,7 +28,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "20"
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
@@ -37,11 +37,20 @@ jobs:
         working-directory: docs
         run: |
           npx mystmd build --html --ci
+          if [ -d "_build/html" ]; then
+            echo "DOCS_OUTPUT=_build/html" >> "$GITHUB_ENV"
+          elif [ -d "_build/site" ]; then
+            echo "DOCS_OUTPUT=_build/site" >> "$GITHUB_ENV"
+          else
+            echo "Could not find MyST HTML output directory under docs/_build"
+            find _build -maxdepth 3 -type d || true
+            exit 1
+          fi
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/_build/html
+          path: docs/${{ env.DOCS_OUTPUT }}
 
   deploy:
     environment:
