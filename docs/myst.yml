@@ -18,17 +18,19 @@ project:
       email: gduscher@utk.edu
   github: https://github.com/whittlegears/asyncroscopy
   toc:
-    - file: dev_guide.md
+    - file: index.md
+    - title: Contributor Guides
+      children:
+        - file: dev_guide.md
     - title: Microscopy
       children:
         - file: modify_base_microscope.md
         - file: modify_thermo_microscope.md
     - title: Adding New Hardware
       children:
-         - file: Adding_New_Hardware/add_detector.md
-    - title: Future Goals
-      children:
-        - file: upcoming_changes.md
+        - file: Adding_New_Hardware/add_detector.md
+    - file: mcp_server.md
+    - file: upcoming_changes.md
     
 site:
   template: book-theme
