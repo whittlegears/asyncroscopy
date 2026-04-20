@@ -18,7 +18,6 @@ project:
       email: gduscher@utk.edu
   github: https://github.com/whittlegears/asyncroscopy
   toc:
-    - file: index.md
     - file: dev_guide.md
     - title: Microscopy
       children:
