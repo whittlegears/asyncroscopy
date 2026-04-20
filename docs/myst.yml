@@ -4,7 +4,7 @@ project:
   id: 00c581f9-e9f0-4bb6-94fa-773c880a9953
   title: Asyncroscopy Documentation
   description: Coordination platform for asynchronous microscopy and spectroscopy data analysis
-  keywords: [imaging, microscopy, spectrascopy, TEM]
+  keywords: [imaging, microscopy, spectroscopy, TEM]
   authors:
     - name: Austin Houston
       email: ahouston@utk.edu
@@ -16,8 +16,9 @@ project:
       email: ldunn21@utk.edu
     - name: Gerd Duscher
       email: gduscher@utk.edu
-  github: https://github.com/whittlegears/pystemllmgui
+  github: https://github.com/whittlegears/asyncroscopy
   toc:
+    - file: index.md
     - file: dev_guide.md
     - title: Microscopy
       children:
