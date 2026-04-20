@@ -35,6 +35,8 @@ jobs:
 
       - name: Build docs with MyST
         working-directory: docs
+        env:
+          BASE_URL: /${{ github.event.repository.name }}
         run: |
           npx mystmd build --html --ci
           if [ -d "_build/html" ]; then
