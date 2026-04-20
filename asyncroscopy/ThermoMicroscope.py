@@ -93,6 +93,7 @@ class ThermoMicroscope(Microscope):
         self._connect_hardware()
         self._connect_detector_proxies()
         self.set_state(DevState.ON)
+        self.screen_current_calibration = None
 
     def _connect_hardware(self) -> None:
         """Establish AutoScript connection from MPC -> hardware."""
@@ -267,13 +268,13 @@ class ThermoMicroscope(Microscope):
 
     def _caibrate_screen_current(self) -> None:
         original_gun_lens = self._microscope.optics.monochromator.focus
-        gun_lens_series = np.linspace(5, 100, 7)
+        gun_lens_series = np.linspace(-40, 100, 15)
 
         # series of measurements
         current_series = []
         for val in gun_lens_series:
             self._microscope.optics.monochromator.focus = val # original_gun_lens + val
-            time.sleep(1)
+            time.sleep(2)
             screen_current = self._microscope.detectors.screen.measure_current()
             current_series.append(screen_current)
         current_series = np.array(current_series) * 1e12
@@ -292,7 +293,7 @@ class ThermoMicroscope(Microscope):
             x_candidates = adjusted_poly.r
             x_real = x_candidates[np.isreal(x_candidates)].real
             x_real = np.max(x_real) # choose the largest real root as the gun lens value
-            self._microscope.monochromator.focus = float(x_real)
+            self._microscope.optics.monochromator.focus = float(x_real)
         else:
             self.warn_stream("Screen current calibration not available. running calibration (should take 15 seconds).")
             self._caibrate_screen_current()
@@ -302,7 +303,12 @@ class ThermoMicroscope(Microscope):
             x_candidates = adjusted_poly.r
             x_real = x_candidates[np.isreal(x_candidates)].real
             x_real = np.max(x_real) # choose the largest real root as the gun lens value
-            self._microscope.monochromator.focus = float(x_real)
+            self._microscope.optics.monochromator.focus = float(x_real)
+
+    def _get_screen_current(self) -> float:
+        """get screen current in pA"""
+        screen_current = self._microscope.detectors.screen.measure_current() * 1e12
+        return screen_current
 
     def _get_stage(self):
         """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
@@ -316,9 +322,11 @@ class ThermoMicroscope(Microscope):
         stage.y = float(position[0])
         stage.z = float(position[2])
         stage.alpha = float(math.degrees(position[3]))
-        stage.beta = float(math.degrees(position[4]))
 
-        return position
+        if position[4] is not None:
+            return position
+        else:
+            return position[:4]
 
     def _move_stage(self, position) -> None:
         """Move stage to specified position [x, y, z, alpha, beta]."""

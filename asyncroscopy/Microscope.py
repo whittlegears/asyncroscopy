@@ -189,6 +189,14 @@ class Microscope(Device, metaclass=CombinedMeta):
 
         return json.dumps(metadata), raw_bytes
 
+    @command(dtype_out=DevEncoded)
+    def get_camera_image(self) -> tuple[str, bytes]:
+        """
+        get image on the camera
+        """
+
+        camera = self._detector_proxies.get("camera")
+        # use this to get params
 
     @command(dtype_out=DevEncoded)#In PyTango, DevEncoded is a special Tango data type designed to send binary data + a small description string together as a single return value.
     def get_scanned_image(self) -> tuple[str, bytes]:
@@ -338,6 +346,13 @@ class Microscope(Device, metaclass=CombinedMeta):
         """
         self._set_screen_current(current)
 
+    @command(dtype_out=DevFloat)
+    def get_screen_current(self):
+        """
+        get the screen current in pA
+        """
+        return self._get_screen_current()
+
     @command(dtype_out=DevVarFloatArray)
     def get_stage(self):
         """
@@ -412,6 +427,10 @@ class Microscope(Device, metaclass=CombinedMeta):
         pass
 
     @abstractmethod
+    def _get_screen_current():
+        pass
+
+    @abstractmethod
     def _move_stage():
         # define in the inherit class
         pass
@@ -432,7 +451,7 @@ class Microscope(Device, metaclass=CombinedMeta):
     def _auto_focus():
         pass
 
-    @abstracatmethod
+    @abstractmethod
     def _set_image_shift():
         pass
 # ----------------------------------------------------------------------
