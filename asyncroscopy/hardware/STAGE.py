@@ -65,8 +65,8 @@ class STAGE(Device):
         dtype=float,
         access=AttrWriteType.READ_WRITE,
         unit="degrees",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
+        min_value = -35,
+        max_value = 35,
         doc="Stage alpha tilt in degrees",
     )
 
@@ -75,8 +75,8 @@ class STAGE(Device):
         dtype=float,
         access=AttrWriteType.READ_WRITE,
         unit="degrees",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
+        min_value = -15,
+        max_value = 15,
         doc="Stage beta tilt in degrees",
     )
 

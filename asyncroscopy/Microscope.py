@@ -189,6 +189,14 @@ class Microscope(Device, metaclass=CombinedMeta):
 
         return json.dumps(metadata), raw_bytes
 
+    @command(dtype_out=DevEncoded)
+    def get_camera_image(self) -> tuple[str, bytes]:
+        """
+        get image on the camera
+        """
+
+        camera = self._detector_proxies.get("camera")
+        # use this to get params
 
     @command(dtype_out=DevEncoded)#In PyTango, DevEncoded is a special Tango data type designed to send binary data + a small description string together as a single return value.
     def get_scanned_image(self) -> tuple[str, bytes]:
@@ -319,10 +327,31 @@ class Microscope(Device, metaclass=CombinedMeta):
     @command(dtype_in=DevFloat)
     def set_fov(self, fov):
         """
-        set the field of view for the next acquisition, [0:1]
+        set the field of view for the next acquisition
         """
         print(fov)
         self._set_fov(fov)
+
+    @command(dtype_out=DevFloat)
+    def get_fov(self):
+        """
+        read the field of view for the next acquisition
+        """
+        return self._get_fov()
+    
+    @command(dtype_in=DevFloat)
+    def set_screen_current(self, current):
+        """
+        set the screen current in pA
+        """
+        self._set_screen_current(current)
+
+    @command(dtype_out=DevFloat)
+    def get_screen_current(self):
+        """
+        get the screen current in pA
+        """
+        return self._get_screen_current()
 
     @command(dtype_out=DevVarFloatArray)
     def get_stage(self):
@@ -350,6 +379,23 @@ class Microscope(Device, metaclass=CombinedMeta):
         """
         self._move_stage(position)
 
+    @command()
+    def auto_focus(self):
+        """
+        Run the microscope's autofocus routine.
+        """
+        self._auto_focus()
+
+    @command(dtype_in=DevVarFloatArray)
+    def set_image_shift(self, shift):
+        """
+        Set the image shift to the specified values [x_shift, y_shift].
+
+        Parameters
+        ----------
+        shift: list of two floats [x_shift, y_shift] specifying the desired image shift in meters.
+        """
+        self._set_image_shift(shift)
     # ------------------------------------------------------------------
     # Internal acquisition helpers
     # ------------------------------------------------------------------
@@ -376,6 +422,15 @@ class Microscope(Device, metaclass=CombinedMeta):
         pass
 
     @abstractmethod
+    def _set_screen_current():
+        # define in the inherit class
+        pass
+
+    @abstractmethod
+    def _get_screen_current():
+        pass
+
+    @abstractmethod
     def _move_stage():
         # define in the inherit class
         pass
@@ -386,6 +441,18 @@ class Microscope(Device, metaclass=CombinedMeta):
 
     @abstractmethod
     def _set_fov():
+        pass
+
+    @abstractmethod
+    def _get_fov():
+        pass
+
+    @abstractmethod
+    def _auto_focus():
+        pass
+
+    @abstractmethod
+    def _set_image_shift():
         pass
 # ----------------------------------------------------------------------
 # Server entry point
