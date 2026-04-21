@@ -9,6 +9,9 @@ on:
       - ".github/workflows/pages.yaml"
   workflow_dispatch:
 
+env:
+  MYSTMD_VERSION: "1.8.3"
+
 permissions:
   contents: read
   pages: write
@@ -38,7 +41,8 @@ jobs:
         env:
           BASE_URL: /${{ github.event.repository.name }}
         run: |
-          npx mystmd build --html --ci
+          npx --yes mystmd@${MYSTMD_VERSION} --version
+          npx --yes mystmd@${MYSTMD_VERSION} build --html --ci
           if [ -d "_build/html" ]; then
             echo "DOCS_OUTPUT=_build/html" >> "$GITHUB_ENV"
           elif [ -d "_build/site" ]; then
