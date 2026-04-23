@@ -1,0 +1,22 @@
+format: jb-book
+root: index
+chapters:
+  - file: dev_guide.md
+    title: Contributing Guide
+
+  - file: null
+    title: Microscopy
+    chapters:
+      - file: modify_base_microscope.md
+      - file: modify_thermo_microscope.md
+
+  - file: null
+    title: Adding New Hardware
+    chapters:
+      - file: Adding_New_Hardware/add_detector.md
+
+  - file: mcp_server.md
+    title: MCP Server Documentation
+
+  - file: upcoming_changes.md
+    title: Upcoming Changes

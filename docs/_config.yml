@@ -1,0 +1,40 @@
+# Jupyter Book Configuration
+project:
+  title: Asyncroscopy Documentation
+  description: Coordination platform for asynchronous microscopy and spectroscopy data analysis
+
+author: Asyncroscopy Team
+copyright: 2024-2026
+
+# Execution settings
+execute:
+  execute_notebooks: off
+  allow_errors: false
+  timeout: 30
+  cache: null
+
+# Parse settings
+parse:
+  myst_enable_extensions:
+    - dollarmath
+    - linkify
+    - colon_fence
+    - smartquotes
+    - substitution
+    - html_admonition
+    - html_image
+
+# HTML and output
+html:
+  theme: sphinx_book_theme
+  logo:
+    image: null
+  use_issues_button: true
+  use_repository_button: true
+  repository_url: https://github.com/whittlegears/asyncroscopy
+  
+bibtex_bibfiles:
+  - references.bib
+
+# Internationalization
+language: en
