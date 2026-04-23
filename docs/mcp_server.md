@@ -16,7 +16,7 @@ On startup, the server queries the Tango Database to find all exported devices v
 Each discovered Tango command is wrapped into an MCP tool via [`_create_wrapper()`](../asyncroscopy/mcp/mcp_server.py#L393). The server:
 - Maps Tango types to Python types for parameter validation — see [`_tango_type_to_python()`](../asyncroscopy/mcp/mcp_server.py#L247).
 - **Source-Level Introspection**: Uses [`_get_tango_device_class()`](../asyncroscopy/mcp/mcp_server.py#L294) to search specified Python packages (default: `["asyncroscopy"]`) and `inspect` to retrieve real parameter names via [`_get_param_name()`](../asyncroscopy/mcp/mcp_server.py#L372) and docstrings via [`_get_docstring()`](../asyncroscopy/mcp/mcp_server.py#L330) from the source implementation.
-- Handles `DevEncoded` data by base64-encoding the payload for [JSON-safe transport](#data-transport--encoding) — see [`_normalize_command_result()`](../asyncroscopy/mcp/mcp_server.py#L264).
+- Handles `DevEncoded` data by base64-encoding the payload for [JSON-safe transport](#data-transport-encoding) — see [`_normalize_command_result()`](../asyncroscopy/mcp/mcp_server.py#L264).
 
 ---
 
@@ -79,6 +79,7 @@ class MyCustomMCPServer(MCPServer):
 
 ---
 
+(data-transport-encoding)=
 ## Data Transport & Encoding
 
 Tango `DevEncoded` commands often return binary data (like images). The [`_normalize_command_result()`](../asyncroscopy/mcp/mcp_server.py#L264) method normalizes these into a standard JSON structure:

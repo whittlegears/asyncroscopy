@@ -31,6 +31,10 @@ project:
         - file: Adding_New_Hardware/add_detector.md
     - file: mcp_server.md
     - file: upcoming_changes.md
-    
+
 site:
   template: book-theme
+  nav: []
+  options:
+    logo: null
+    404: 404.md
