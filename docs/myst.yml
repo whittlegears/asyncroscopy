@@ -29,7 +29,11 @@ project:
     - title: Adding New Hardware
       children:
         - file: Adding_New_Hardware/add_detector.md
-    - file: mcp_server.md
+    - title: MCP Server
+      children:
+        - file: mcp_server.md
+        - file: BUILD_MCP_SERVER.md
+        - file: ASYNCROSCOPY_MCP_IMPLEMENTATION.md
     - file: upcoming_changes.md
 
 site:
