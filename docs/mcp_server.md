@@ -2,7 +2,27 @@
 
 The [`MCPServer`](../asyncroscopy/mcp/mcp_server.py#L43) is a bridge between a Tango control system and the Model Context Protocol (MCP). It allows LLM agents to interact directly with hardware by exposing Tango device commands as MCP tools.
 
+
 ---
+## What is MCP?
+
+The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) is an open standard 
+that lets AI agents connect to 
+external tools and data sources through a unified interface. Think of it as a standardized 
+API layer specifically designed for LLM interactions.
+
+MCP defines three core primitives that servers can expose:
+- **Tools**: Executable functions the LLM can invoke (like Tango device commands)
+- **Resources**: Read-only data sources (like configuration or device state)  
+- **Prompts**: Reusable message templates that guide LLM interactions
+
+## Why MCP + Asyncroscopy?
+
+Asyncroscopy uses PyTango to control microscope hardware. The MCPServer automatically 
+discovers every Tango device command in your system and exposes them as MCP tools. This 
+means an LLM agent can query detector settings, move the stage, acquire images, and 
+adjust beam parameters — all through natural language.
+The Asyncroscopy MCP server exposes microscopy hardware (via pyTango) to language models. This enables LLM-driven microscopy workflows without direct hardware knowledge.
 
 ## Core Functionality
 

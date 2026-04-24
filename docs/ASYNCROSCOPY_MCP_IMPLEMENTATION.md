@@ -35,7 +35,7 @@ Core microscope control:
 - `get_spectrum()` - Acquire spectrum
 - Attributes: voltage, magnification, probe_current
 
-### Thermal Microscope: `ThermoMicroscope` (asyncroscopy/ThermoMicroscope.py)
+### Thermo Fisher Microscope: `ThermoMicroscope` (asyncroscopy/ThermoMicroscope.py)
 
 Extends Microscope with multi-detector orchestration:
 - Connects detector proxies (HAADF, EELS, EDS)
