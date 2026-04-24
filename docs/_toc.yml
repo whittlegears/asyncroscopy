@@ -7,8 +7,8 @@ chapters:
   - file: null
     title: Microscopy
     chapters:
-      - file: modify_base_microscope.md
-      - file: modify_thermo_microscope.md
+      - file: Microscopy/modify_base_microscope.md
+      - file: Microscopy/modify_thermo_microscope.md
 
   - file: null
     title: Adding New Hardware
