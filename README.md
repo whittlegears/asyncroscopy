@@ -49,7 +49,7 @@ See - docs/dev_guide.md
 ### Core installation (simulation mode)
 
 ```bash
-pip install .
+pip install --find-links ./stubs -e .
 ```
 
 or with `uv`:
