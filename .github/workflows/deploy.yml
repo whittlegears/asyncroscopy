@@ -27,9 +27,12 @@ jobs:
           node-version: '20'
       - name: Setup MyST
         run: npm install -g mystmd
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v4
+
       - name: Build site
         env:
-          BASE_URL: /asyncroscopy
+          BASE_URL: /${{ github.event.repository.name }}
         run: |
           cd docs
           myst build --html
@@ -41,3 +44,4 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        
