@@ -1,0 +1,19 @@
+# Standalone mapping/stitching MCP server config. No Tango dependency - this
+# can run on a different (and more powerful) machine than the instrument
+# stack. Connect it to the GUI as a second MCP server alongside mcp.yaml.
+#
+#   uv run startup_scripts/run_mapping_mcp.py --yaml configs/mapping_mcp.yaml
+#
+# Set mapping.http_host to 0.0.0.0 when other machines need to connect.
+# output_root is where finalized map bundles are written (one subdirectory
+# per map name); it does not need to be on the instrument's filesystem, but
+# add_tiles/register_overview need image_path arguments to be readable from
+# wherever this process runs (or pass image_b64 instead of image_path).
+
+mapping:
+  name: Mapping
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8001
+  output_root: ./outputs/maps
+  quiet: true

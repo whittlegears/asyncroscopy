@@ -34,6 +34,7 @@ project:
         - file: Microscopy/modify_base_electron_microscope.md
         - file: Microscopy/modify_auto_script_microscope.md
         - file: Adding_New_Hardware/add_detector.md
+        - file: Microscopy/sample_mapping.md
     - title: Data
       children:
         - file: Tiled_server/data_integration.md
