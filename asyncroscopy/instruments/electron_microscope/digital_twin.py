@@ -598,6 +598,10 @@ class DigitalTwin(ElectronMicroscope):
         """Set the field of view in meters."""
         self._fov = float(fov)
 
+    def _get_fov(self) -> float:
+        """Get the field of view in meters."""
+        return self._fov
+
     def _set_defocus(self, defocus) -> None:
         """Set defocus in meters."""
         self._defocus = float(defocus)

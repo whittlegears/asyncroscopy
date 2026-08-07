@@ -15,7 +15,7 @@ dependencies = [
     "matplotlib>=3.10.7",
     "multiprocess>=0.70.19",
     "numpy>=2.3.5",
-    "opencv-python>=4.13.0.92",
+    "opencv-python-headless>=4.13.0.92",
     "pillow>=12.1.0",
     "pytango==10.1.2",
     "pytest>=9.0.2",

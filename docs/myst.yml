@@ -26,6 +26,7 @@ project:
       children:
         - file: Microscopy/modify_auto_script_microscope.md
         - file: Microscopy/modify_base_electron_microscope.md
+        - file: Microscopy/sample_mapping.md
     - title: Adding New Hardware
       children:
         - file: Adding_New_Hardware/add_detector.md

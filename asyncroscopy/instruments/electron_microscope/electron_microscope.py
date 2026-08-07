@@ -11,6 +11,7 @@ implementation, typically a DATA/Tiled unique id.
 """
 
 import json
+import time
 from abc import abstractmethod
 from typing import Optional
 
@@ -281,7 +282,102 @@ class ElectronMicroscope(Instrument):
         """Run the microscope's autofocus routine."""
         self._auto_focus()
 
-    
+    @command(
+        dtype_in=str,
+        doc_in=':param spec: JSON object with keys: rows (int), cols (int), '
+        'overlap (float 0-0.5, default 0.15), detectors (list, default ["haadf"]), '
+        'eds (bool, acquire an EDS point spectrum at each tile centre, default false), '
+        'settle_s (float, pause after each stage move, default 0), '
+        'snake (bool, serpentine traversal, default true), '
+        'flip_x / flip_y (bool, invert stage step direction, default false), '
+        'return_to_start (bool, default true). Example: {"rows": 3, "cols": 3}',
+        dtype_out=str,
+        doc_out='JSON grid manifest: {"grid": [rows, cols], "overlap", "fov_m", '
+        '"pixel_size_nm", "stage_origin_m", "tiles": [{"row", "col", "key", '
+        '"stage_xy_m", "eds_key"}]}. Pass the tiles to the mapping MCP server '
+        '(a separate MCP connection - see start_map/add_tiles) to stitch a '
+        'zoomable sample map; this command only drives the stage and camera.',
+    )
+    def acquire_map_grid(self, spec: str) -> str:
+        """Acquire an N x M grid of overlapping images by stepping the stage, for building a zoomable sample map. Returns a JSON manifest of DATA keys; stitch it on the mapping MCP server (start_map/add_tiles/finalize_map)."""
+        from asyncroscopy.mapping.grid_math import plan_grid
+
+        cfg = json.loads(spec) if spec and spec.strip() else {}
+        rows = int(cfg.get('rows', 3))
+        cols = int(cfg.get('cols', 3))
+        overlap = float(cfg.get('overlap', 0.15))
+        detectors = list(cfg.get('detectors', ['haadf']))
+        want_eds = bool(cfg.get('eds', False))
+        settle_s = float(cfg.get('settle_s', 0.0))
+        if rows < 1 or cols < 1 or rows * cols > 400:
+            raise ValueError('rows*cols must be between 1 and 400')
+        if not 0.0 < overlap < 0.6:
+            raise ValueError('overlap must be between 0 and 0.6')
+
+        scan = self._detector_proxies.get('scan')
+        eds_proxy = self._detector_proxies.get('eds') if want_eds else None
+        if want_eds and eds_proxy is None:
+            raise ValueError('EDS requested but no EDS device is configured')
+
+        fov_raw = self._get_fov()
+        if fov_raw is None or float(fov_raw) <= 0:
+            raise ValueError('Field of view is not set; call set_fov before acquire_map_grid')
+        fov = float(fov_raw)
+        step = fov * (1.0 - overlap)
+        order = plan_grid(
+            rows,
+            cols,
+            step,
+            step,
+            snake=bool(cfg.get('snake', True)),
+            flip_x=bool(cfg.get('flip_x', False)),
+            flip_y=bool(cfg.get('flip_y', False)),
+        )
+
+        start = [float(v) for v in self._get_stage()]
+        tiles = []
+        try:
+            for cell in order:
+                target = list(start)
+                target[0] = start[0] + cell['offset_m'][0]
+                target[1] = start[1] + cell['offset_m'][1]
+                self._move_stage(target)
+                if settle_s > 0:
+                    time.sleep(settle_s)
+                key = self._acquire_scanned_image(
+                    scan.imsize,
+                    scan.dwell_time,
+                    detectors,
+                    list(scan.scan_region),
+                    scan.output_format,
+                )
+                entry = {
+                    'row': cell['row'],
+                    'col': cell['col'],
+                    'key': key,
+                    'stage_xy_m': [target[0], target[1]],
+                }
+                if eds_proxy is not None:
+                    self._place_beam([0.5, 0.5])
+                    entry['eds_key'] = self._acquire_spectrum('eds', eds_proxy.exposure_time)
+                tiles.append(entry)
+        finally:
+            if bool(cfg.get('return_to_start', True)):
+                self._move_stage(start)
+
+        pixel_size_nm = fov / float(scan.imsize) * 1e9 if scan is not None else None
+        return json.dumps(
+            {
+                'grid': [rows, cols],
+                'overlap': overlap,
+                'fov_m': fov,
+                'pixel_size_nm': pixel_size_nm,
+                'stage_origin_m': start[:2],
+                'tiles': tiles,
+            }
+        )
+
+
     @abstractmethod
     def _acquire_scanned_image(
         self,
