@@ -5,7 +5,10 @@ tango:
   port: 9094
 
 mcp_url: "http://127.0.0.1:8000/mcp"
+agent_backend: langgraph
 local_model_path: C:\Users\Public\Desktop\Agents\Gemma4-31B-4bit
+model_provider: ollama
+ollama_model: gemma4:31b
 
 startup_agents:
   - name: "base"

@@ -1,0 +1,10 @@
+# Hermes Agent gateway startup config for LLM Tango device.
+
+tango:
+  host: localhost
+  port: 9094
+
+mcp_url: ""
+agent_backend: hermes
+hermes_url: "http://127.0.0.1:8642"
+hermes_model: hermes-agent

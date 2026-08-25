@@ -16,7 +16,6 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
-from asyncroscopy.mcp.llm import Agent
 
 DEVICE_NAME = "asyncroscopy/llm/default"
 INSTANCE_NAME = "llm_instance"
@@ -34,19 +33,20 @@ class LLMConfig:
     local_model_path: str | None = None
     model_provider: str | None = None
     model_name: str | None = None
+    ollama_model: str | None = None
+    ollama_host: str | None = None
     api_key: str | None = None
-    startup_agents: list[Agent] | None = None
+    use_init_chat_model: bool | None = None
+    agent_backend: str | None = None
+    hermes_url: str | None = None
+    hermes_model: str | None = None
+    hermes_api_key: str | None = None
+    startup_agents: list[dict] | None = None
 
     def __post_init__(self):
         # Convert tango dict to TangoConfig
         if isinstance(self.tango, dict):
             self.tango = TangoConfig(**self.tango)
-
-def _require(mapping: dict, key: str, where: str):
-    if not isinstance(mapping, dict) or key not in mapping:
-        raise KeyError(f"Config section '{where}' is missing required key '{key}'")
-    return mapping[key]
-
 
 def load_config(path: Path) -> LLMConfig:
     if not path.exists():
@@ -102,14 +102,25 @@ def register_device(config: LLMConfig):
 
     if config:
         properties = {}
+        unset_keys = []
         for key, value in config.__dict__.items():
-            if key != "tango":
-                properties[key] = value
-                if key == "startup_agents":
-                    properties[key] = [json.dumps(agent) for agent in value]
-        
+            if key == "tango":
+                continue
+            if value is None:
+                unset_keys.append(key)
+                continue
+            properties[key] = value
+            if key == "startup_agents":
+                properties[key] = [json.dumps(agent) for agent in value]
+
+        if unset_keys:
+            database.delete_device_property(DEVICE_NAME, unset_keys)
         database.put_device_property(DEVICE_NAME, properties)
-        print(f"Set device properties: {properties}")
+        printable = {
+            key: ("****" if key in ("api_key", "hermes_api_key") and value else value)
+            for key, value in properties.items()
+        }
+        print(f"Set device properties: {printable}")
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -121,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         config = load_config(args.yaml)
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+    except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
         print(f'Config error: {exc}', file=sys.stderr)
         return 1
 
