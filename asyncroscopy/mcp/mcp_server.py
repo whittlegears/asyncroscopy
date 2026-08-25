@@ -35,6 +35,8 @@ from fastmcp import FastMCP
 from fastmcp.tools import tool, Tool, ToolResult
 from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 
@@ -765,7 +767,35 @@ def main(argv: list[str] | None = None) -> int:
             f"for Tango DB {args.tango_host}:{args.tango_port}",
             flush=True,
         )
-        server.start(transport="streamable-http", host=args.http_host, port=args.http_port)
+        # Browser clients (the SciAgentGUI vite preview) need CORS headers; fastmcp 3 sends
+        # none by default. Loopback dev origins only — a hostile web page must never be able
+        # to drive instrument tools cross-origin, so this is deliberately not "*".
+        browser_dev_origins = [
+            "http://localhost:1420",
+            "http://127.0.0.1:1420",
+            "http://localhost:1421",
+            "http://127.0.0.1:1421",
+        ]
+        cors = Middleware(
+            CORSMiddleware,
+            allow_origins=browser_dev_origins,
+            allow_methods=["GET", "POST", "DELETE"],
+            allow_headers=[
+                "content-type",
+                "accept",
+                "authorization",
+                "mcp-session-id",
+                "mcp-protocol-version",
+                "last-event-id",
+            ],
+            expose_headers=["mcp-session-id"],
+        )
+        server.start(
+            transport="streamable-http",
+            host=args.http_host,
+            port=args.http_port,
+            middleware=[cors],
+        )
     else:
         server.start(transport=args.transport)
     return 0
