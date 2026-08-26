@@ -137,6 +137,16 @@ def _make_llm(**kwargs) -> LLM:
     return device
 
 
+def _stub_backend(name="hermes", supports_connect_mcp=False) -> MagicMock:
+    """Return a backend double for SetBackend switches, initialize() already stubbed."""
+    backend = MagicMock()
+    backend.name = name
+    backend.supports_connect_mcp = supports_connect_mcp
+    backend.initialize = AsyncMock()
+    backend.connect_mcp = AsyncMock(return_value=2)
+    return backend
+
+
 def _make_tool(name: str) -> MagicMock:
     t = MagicMock()
     t.name = name
@@ -597,14 +607,6 @@ class TestDeviceConnectMCP:
 
 
 class TestSetBackend:
-    def _stub_backend(self, name="hermes", supports_connect_mcp=False):
-        backend = MagicMock()
-        backend.name = name
-        backend.supports_connect_mcp = supports_connect_mcp
-        backend.initialize = AsyncMock()
-        backend.connect_mcp = AsyncMock(return_value=2)
-        return backend
-
     def test_same_name_is_a_no_op(self):
         current = _make_backend()
         device = _make_llm(backend=current)
@@ -617,7 +619,7 @@ class TestSetBackend:
     def test_successful_switch_replaces_the_backend(self):
         current = _make_backend()
         device = _make_llm(backend=current)
-        replacement = self._stub_backend()
+        replacement = _stub_backend()
         with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
             result = asyncio.run(device.SetBackend("hermes"))
         assert result is True
@@ -627,7 +629,7 @@ class TestSetBackend:
     def test_failed_initialize_keeps_the_current_backend(self):
         current = _make_backend()
         device = _make_llm(backend=current)
-        replacement = self._stub_backend()
+        replacement = _stub_backend()
         replacement.initialize = AsyncMock(side_effect=RuntimeError("gateway down"))
         with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
             result = asyncio.run(device.SetBackend("hermes"))
@@ -648,8 +650,8 @@ class TestSetBackend:
         assert device._backend is current
 
     def test_switch_reconnects_mcp_when_the_backend_supports_it(self):
-        device = _make_llm(backend=self._stub_backend(), mcp_url="http://127.0.0.1:8000/mcp")
-        replacement = self._stub_backend(name="langgraph", supports_connect_mcp=True)
+        device = _make_llm(backend=_stub_backend(), mcp_url="http://127.0.0.1:8000/mcp")
+        replacement = _stub_backend(name="langgraph", supports_connect_mcp=True)
         with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
             result = asyncio.run(device.SetBackend("LangGraph"))
         assert result is True

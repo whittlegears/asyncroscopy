@@ -176,8 +176,9 @@ class LLM(Device):
             self.set_status(f"Agent backend: {self._backend.name}")
             return True
         except Exception as e:
-            self.error_stream(f"Backend switch to '{name}' failed: {e}")
-            self.set_status(f"Backend switch to '{name}' failed: {e}")
+            message = f"Backend switch to '{name}' failed: {e}"
+            self.error_stream(message)
+            self.set_status(message)
             return False
         finally:
             self.set_state(tango.DevState.ON if self._backend is not None else tango.DevState.FAULT)
