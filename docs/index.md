@@ -35,6 +35,7 @@ Use this site to navigate contributor guidance, microscope architecture notes, h
 
 - [Starting Servers - CLI](Operation/run-servers.md)
 - [Starting Servers - GUI](Operation/run-server-gui.md)
+- [Hermes Agent Setup](Operation/hermes_setup.md): install the Hermes gateway and switch the LLM device to the hermes backend.
 
 ## Roadmap
 

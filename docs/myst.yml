@@ -38,6 +38,7 @@ project:
       children:
         - file: Operation/run-servers.md
         - file: Operation/run-server-gui.md
+        - file: Operation/hermes_setup.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
     - title: Tiled Server
