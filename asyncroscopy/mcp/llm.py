@@ -25,7 +25,10 @@ class LLM(Device):
     api_key = device_property(dtype=str, default_value="")
     use_init_chat_model = device_property(dtype=bool, default_value=False)
     agent_backend = device_property(dtype=str, default_value="langgraph")
-    hermes_url = device_property(dtype=str, default_value="")
+    # Defaults to the Hermes gateway's standard local address so SetBackend('hermes')
+    # works from a config that never mentions hermes (e.g. gemma-llm.yaml); the hermes
+    # backend still verifies the gateway is actually reachable before going live.
+    hermes_url = device_property(dtype=str, default_value="http://127.0.0.1:8642")
     hermes_model = device_property(dtype=str, default_value="hermes-agent")
     hermes_api_key = device_property(dtype=str, default_value="")
     skills_dir = device_property(dtype=str, default_value="outputs/agent_skills")

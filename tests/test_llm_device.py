@@ -80,6 +80,9 @@ def setup_llm_stubs():
     lg_graph.START = "__start__"
     lg_graph.StateGraph = MagicMock()
     lg.graph = lg_graph
+    lg_errors = types.ModuleType("langgraph.errors")
+    lg_errors.GraphRecursionError = type("GraphRecursionError", (RecursionError,), {})
+    lg.errors = lg_errors
 
     sys.modules.update({
         "langchain_core": langchain_core,
@@ -92,6 +95,7 @@ def setup_llm_stubs():
         "langchain_mcp_adapters.client": lc_mcp_client,
         "langgraph": lg,
         "langgraph.graph": lg_graph,
+        "langgraph.errors": lg_errors,
     })
 
 
@@ -307,6 +311,35 @@ class TestParseRoutingDecision:
         content = '{"next": "worker"}'
         _, subtask = backend._parse_routing_decision(content, ["worker"], "worker")
         assert subtask == ""
+
+
+class TestSwarmIsLooping:
+    """The supervisor forces FINISH when an agent repeats itself verbatim."""
+
+    def _messages(self, *reports: tuple[str, str]):
+        msgs = [HumanMessage(content="acquire a scanned image")]
+        for agent_name, content in reports:
+            msgs.append(HumanMessage(content=f"[{agent_name}]: {content}", name=agent_name))
+        return msgs
+
+    def test_identical_consecutive_reports_from_same_agent_loop(self):
+        msgs = self._messages(("image", "timeout error"), ("image", "timeout error"))
+        assert LangGraphBackend._swarm_is_looping(msgs) is True
+
+    def test_different_reports_from_same_agent_do_not_loop(self):
+        msgs = self._messages(("image", "timeout error"), ("image", "image acquired: key abc"))
+        assert LangGraphBackend._swarm_is_looping(msgs) is False
+
+    def test_identical_reports_from_different_agents_do_not_loop(self):
+        msgs = self._messages(("image", "timeout error"), ("base", "timeout error"))
+        assert LangGraphBackend._swarm_is_looping(msgs) is False
+
+    def test_single_report_does_not_loop(self):
+        msgs = self._messages(("image", "timeout error"))
+        assert LangGraphBackend._swarm_is_looping(msgs) is False
+
+    def test_bare_prompt_does_not_loop(self):
+        assert LangGraphBackend._swarm_is_looping(self._messages()) is False
 
 
 class TestRunSwarm:

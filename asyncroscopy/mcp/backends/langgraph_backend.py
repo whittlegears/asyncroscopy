@@ -24,6 +24,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.skills.usage import task_hash
@@ -405,6 +406,24 @@ class LangGraphBackend(AgentBackend):
             print(f"{prefix}[FINAL ANSWER RETURNED]:\n{final_content}\n{'=' * 50}")
         return final_content
 
+    @staticmethod
+    def _swarm_is_looping(messages: Sequence[BaseMessage]) -> bool:
+        """True when the two newest messages are the same agent giving the same answer.
+
+        A verbatim repeat means the previous dispatch made no progress (e.g. the
+        same tool failure twice), so routing the task out again would only burn
+        recursion steps until the graph dies on GraphRecursionError.
+        """
+        if len(messages) < 3:
+            return False
+        prev, last = messages[-2], messages[-1]
+        last_agent = getattr(last, "name", None)
+        return (
+            last_agent is not None
+            and last_agent == getattr(prev, "name", None)
+            and last.content == prev.content
+        )
+
     async def _run_swarm(self, prompt: str, max_steps: int) -> str:
         """Run the agent swarm with a given prompt, returning the final response."""
         if not self.agents:
@@ -448,6 +467,13 @@ class LangGraphBackend(AgentBackend):
         async def supervisor_node(state: AgentState):
             print("\n[Supervisor] Evaluating routing...")
 
+            if self._swarm_is_looping(state["messages"]):
+                print(
+                    "[Supervisor] The last agent returned the same response twice in a row; "
+                    "finishing with that response instead of re-dispatching.\n"
+                )
+                return {"next_agent": "FINISH", "current_task": ""}
+
             has_delegated = len(state["messages"]) > 1
 
             instructions = (
@@ -455,7 +481,9 @@ class LangGraphBackend(AgentBackend):
                 "Based on the conversation, decide which agent should act next to progress the user's request. "
                 "Only output FINISH if the user's request has been fully and concretely answered — "
                 "not if an agent asked a question, refused, said it lacks the ability, or otherwise failed to "
-                "complete the task; in that case, route to a different, more suitable agent instead."
+                "complete the task; in that case, route to a different, more suitable agent instead. "
+                "Never re-assign a task to an agent that already failed it: if no other agent is more "
+                "suitable, output FINISH so the failure is reported to the user."
             )
 
             if not has_delegated:
@@ -502,13 +530,25 @@ class LangGraphBackend(AgentBackend):
         print(f"\n{'='*50}\n[NEW REQUEST]: {prompt}\n{'=' * 50}")
 
         last_response = None
-        async for chunk in graph.astream(
-            {"messages": [HumanMessage(content=prompt)]},
-            config={"recursion_limit": max_steps}
-        ):
-            for node_name, state_update in chunk.items():
-                if node_name != "Supervisor" and "messages" in state_update:
-                    msg = state_update["messages"][-1]
-                    last_response = msg.content
+        try:
+            async for chunk in graph.astream(
+                {"messages": [HumanMessage(content=prompt)]},
+                config={"recursion_limit": max_steps}
+            ):
+                for node_name, state_update in chunk.items():
+                    if node_name != "Supervisor" and "messages" in state_update:
+                        msg = state_update["messages"][-1]
+                        last_response = msg.content
+        except GraphRecursionError:
+            # The supervisor never chose FINISH within max_steps. The last agent
+            # response is still the best answer we have — return it instead of
+            # discarding the whole run as a crash.
+            print(f"\n[Supervisor] Step limit ({max_steps}) reached; returning the last agent response.")
+            if last_response is not None:
+                return (
+                    f"{last_response}\n\n[Note: the supervisor hit its step limit of {max_steps} "
+                    "before finishing, so this is the most recent agent response.]"
+                )
+            return f"Swarm Error: Hit the step limit of {max_steps} before any agent produced a response."
 
         return last_response if last_response is not None else "Swarm Error: No agent produced a response before routing finished."
