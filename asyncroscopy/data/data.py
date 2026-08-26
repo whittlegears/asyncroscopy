@@ -213,15 +213,40 @@ class DATA(Device):
 
     @command(dtype_out=str)
     def register_save_path(self) -> str:
-        """Register the configured save directory with Tiled once."""
-        save_path = str(Path(self._save_path).expanduser())
+        """Register files from the save directory that Tiled does not already serve.
 
-        async def register_directory_with_tiled_client() -> None:
+        Registration is incremental and file-by-file: existing catalog entries
+        are left untouched. Registering the directory in one tiled ``register``
+        call is NOT safe here — tiled first deletes every existing catalog
+        entry one HTTP request at a time, which on a large catalog holds this
+        device's serialization monitor for minutes and, if it races another
+        registration, loses entries whose files still exist on disk.
+        """
+        save_path = Path(self._save_path).expanduser()
+
+        async def register_missing_files() -> tuple[int, int]:
             client = from_uri(self._uri(), api_key=self._api_key)
-            await register(client, save_path, walkers=[ONE_NODE_PER_FILE_WALKER], key_from_filename=identity)
+            existing = set(client.keys()) if hasattr(client, "keys") else set()
+            # Dotfiles are the managed catalog database and its sqlite side
+            # files, not acquisitions.
+            files = sorted(
+                entry for entry in save_path.iterdir()
+                if entry.is_file() and not entry.name.startswith(".")
+            )
+            registered = 0
+            for entry in files:
+                if entry.name in existing:
+                    continue
+                await register(
+                    client, str(entry), walkers=[ONE_NODE_PER_FILE_WALKER], key_from_filename=identity
+                )
+                registered += 1
+            return registered, len(files) - registered
 
         try:
-            asyncio.run(asyncio.wait_for(register_directory_with_tiled_client(), REGISTER_SAVE_PATH_TIMEOUT_SECONDS))
+            registered, already_registered = asyncio.run(
+                asyncio.wait_for(register_missing_files(), REGISTER_SAVE_PATH_TIMEOUT_SECONDS)
+            )
         except Exception as exc:
             message = (
                 f"Save path registration failed: {exc}\n\n"
@@ -232,7 +257,9 @@ class DATA(Device):
             raise RuntimeError(message) from exc
 
         result = {
-            "registered_path": save_path,
+            "registered_path": str(save_path),
+            "registered_files": registered,
+            "already_registered": already_registered,
             "tiled_server": self._tiled_server,
             "tiled_server_status": "running; registered save path",
             "tiled_server_serving": self._tiled_serve_path,

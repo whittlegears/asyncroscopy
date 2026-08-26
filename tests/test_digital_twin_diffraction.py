@@ -25,6 +25,24 @@ def twin_for_path(tmp_path: Path) -> DigitalTwinDiffraction:
     twin._beam_pos_x = 0.5
     twin._beam_pos_y = 0.5
     twin._fov = FOV_M
+    # Environment/realism state normally set up in DigitalTwin.init_device;
+    # bare instances disable the realism layer entirely.
+    twin._commanded_stage = np.zeros(5, dtype=np.float64)
+    twin._image_shift = np.zeros(2, dtype=np.float64)
+    twin._last_move_direction = np.zeros(3, dtype=np.float64)
+    twin._settle_vector = np.zeros(3, dtype=np.float64)
+    twin._drift_direction = np.array([1.0, 0.0, 0.0])
+    twin._last_move_time = 0.0
+    twin._session_start_time = 0.0
+    twin._beam_blanked = False
+    twin.stage_move_noise_std = 0.0
+    twin.stage_drift_rate = 0.0
+    twin.stage_settle_time_s = 0.0
+    twin.stage_settle_amplitude = 0.0
+    twin.stage_backlash = 0.0
+    twin.stage_limit_xy = 1e-3
+    twin.stage_limit_z = 375e-6
+    twin.enforce_beam_state = False
     twin.sample_seed = 12345
     twin.map_size = 256
     twin.overview_image_size = 64

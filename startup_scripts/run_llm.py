@@ -92,9 +92,27 @@ def ensure_database_running(config: LLMConfig) -> tango.Database:
 
 def register_device(config: LLMConfig):
     database = ensure_database_running(config)
+
+    server_name = f"LLM/{INSTANCE_NAME}"
+    try:
+        exported = database.get_device_exported(DEVICE_NAME)
+        if exported and len(exported.value_string) > 0:
+            try:
+                proxy = DeviceProxy(DEVICE_NAME)
+                proxy.set_timeout_millis(1000)
+                proxy.ping()
+                print(f"[SYSTEM]: Tango device {DEVICE_NAME} is actively running.")
+            except Exception:
+                print(f"[SYSTEM]: Device {DEVICE_NAME} is not responsive. Cleaning up stale registration for {server_name}...")
+                database.unexport_server(server_name)
+        else:
+            database.unexport_server(server_name)
+    except Exception as e:
+        print(f"[SYSTEM]: Warning checking device export status: {e}")
+
     try:
         device_info = tango.DbDevInfo()
-        device_info.server = f"LLM/{INSTANCE_NAME}"
+        device_info.server = server_name
         device_info._class = "LLM"
         device_info.name = DEVICE_NAME
         database.add_device(device_info)

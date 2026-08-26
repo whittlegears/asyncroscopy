@@ -2,6 +2,7 @@
 
 import argparse
 import base64
+import functools
 import inspect
 import io
 import re
@@ -55,6 +56,34 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # 60 s per MCP HTTP request, so 30 s lets slow commands finish while still failing
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
+
+# Failure signatures after which the rebuild-and-retry in _create_wrapper must NOT
+# re-execute the command. Timeouts and monitor contention mean the first attempt is
+# likely still running server-side: a retry then executes the command a second time
+# and queues behind the device's serialization monitor (observed live: a retried
+# DATA.register_save_path raced its own first attempt and deleted Tiled catalog
+# entries). PyDs_PythonError means the device's own code raised — deterministic, so
+# a retry only re-runs a command that already executed and failed.
+NON_RETRYABLE_SIGNATURES = {
+    "API_DeviceTimedOut": (
+        "the call timed out, so the command is likely still running on the device; "
+        "invoking it again would execute it a second time. Wait, then check the "
+        "device's state before calling again"
+    ),
+    "TRANSIENT_CallTimedout": (
+        "the call timed out, so the command is likely still running on the device; "
+        "invoking it again would execute it a second time. Wait, then check the "
+        "device's state before calling again"
+    ),
+    "not able to acquire serialization": (
+        "another command is still executing on this device (its serialization "
+        "monitor is held); wait for that command to finish before calling again"
+    ),
+    "PyDs_PythonError": (
+        "the device's own code rejected the command, so retrying would just "
+        "execute it again with the same outcome"
+    ),
+}
 
 
 class MCPServer:
@@ -470,6 +499,7 @@ class MCPServer:
         cmd_info: CommandInfo,
         command_name: str,
         dev_class: str,
+        device_name: str,
     ) -> Callable:
         """Create a wrapper function with a proper signature for a Tango command.
 
@@ -478,10 +508,60 @@ class MCPServer:
             cmd_info: The CommandInfo object from Tango
             command_name: The name of the command
             dev_class: The Tango device class name
+            device_name: The Tango device address, used to rebuild a stale proxy
 
         Returns:
             A wrapper function with a proper signature
         """
+
+        # The bound command method captures the DeviceProxy built at discovery
+        # time. If the device server restarts after this bridge starts, that
+        # proxy goes stale and every call fails (often as an opaque pybind11
+        # "Caught an unknown exception!"). _invoke rebuilds the proxy and
+        # retries once, and turns any remaining failure into a readable error
+        # naming the device and command. Failures matching
+        # NON_RETRYABLE_SIGNATURES are never retried: re-executing a command
+        # that timed out or that the device itself rejected is not recovery.
+        proxy_state = {"func": func}
+
+        def _describe(exc: Exception) -> str:
+            return f"{type(exc).__name__}: {exc}".strip()
+
+        def _no_retry_reason(exc: Exception) -> str | None:
+            description = _describe(exc)
+            for signature, reason in NON_RETRYABLE_SIGNATURES.items():
+                if signature in description:
+                    return reason
+            return None
+
+        def _invoke(*call_args):
+            try:
+                return proxy_state["func"](*call_args)
+            except Exception as first_exc:
+                no_retry_reason = _no_retry_reason(first_exc)
+                if no_retry_reason is not None:
+                    raise RuntimeError(
+                        f"Tango command {device_name}.{command_name} failed: "
+                        f"{_describe(first_exc)}\nNot retrying: {no_retry_reason}."
+                    ) from first_exc
+                try:
+                    dev = DeviceProxy(device_name)
+                    dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+                    proxy_state["func"] = functools.partial(dev.command_inout, command_name)
+                except Exception as rebuild_exc:
+                    raise RuntimeError(
+                        f"Tango command {device_name}.{command_name} failed "
+                        f"({_describe(first_exc)}) and the device proxy could not "
+                        f"be rebuilt ({_describe(rebuild_exc)}). Is the device "
+                        f"server running?"
+                    ) from first_exc
+                try:
+                    return proxy_state["func"](*call_args)
+                except Exception as retry_exc:
+                    raise RuntimeError(
+                        f"Tango command {device_name}.{command_name} failed even "
+                        f"after rebuilding the device proxy: {_describe(retry_exc)}"
+                    ) from retry_exc
 
         in_type = cmd_info.in_type
         py_type = self._tango_type_to_python(in_type)
@@ -522,7 +602,7 @@ class MCPServer:
 
         if in_type == CmdArgType.DevVoid:
             def wrapper():
-                result = func()
+                result = _invoke()
                 normalized = self._normalize_command_result(out_type, result)
                 return self._augment_with_preview(command_name, normalized)
 
@@ -536,7 +616,7 @@ class MCPServer:
                 else:
                     arg_input = kwargs
                 
-                result = func(arg_input)
+                result = _invoke(arg_input)
                 normalized = self._normalize_command_result(out_type, result)
                 return self._augment_with_preview(command_name, normalized)
 
@@ -548,7 +628,7 @@ class MCPServer:
             def wrapper(*args, **kwargs):
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
-                result = func(arg)
+                result = _invoke(arg)
                 normalized = self._normalize_command_result(out_type, result)
                 return self._augment_with_preview(command_name, normalized)
 
@@ -567,10 +647,10 @@ class MCPServer:
 
         return wrapper
 
-    def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo]]]:
+    def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo, str]]]:
         """Discover tools by querying Tango DB for devices and their commands.
 
-        Returns a dict mapping dev_class -> command_name -> (func, cmd_info)
+        Returns a dict mapping dev_class -> command_name -> (func, cmd_info, device_name)
         """
         devices = self._list_all_devices()
         tools: dict[str, dict[str, tuple[Callable, CommandInfo]]] = {}
@@ -611,18 +691,14 @@ class MCPServer:
                     )
                     if not allowed:
                         continue
-                try:
-                    func = getattr(dev, command_name)
-                except Exception as exc:
-                    if self.verbose:
-                        print(
-                            f"Skipping {device_name}.{command_name}: "
-                            f"failed to resolve command ({exc})"
-                        )
-                    continue
+                # command_inout, not getattr: DeviceProxy defines client-side
+                # methods (reconnect, ping, ...) that shadow same-named Tango
+                # commands, and getattr silently returns the client method with
+                # a different signature instead of invoking the command.
+                func = functools.partial(dev.command_inout, command_name)
                 if dev_class not in tools:
                     tools[dev_class] = {}
-                tools[dev_class][command_name] = (func, cmd)
+                tools[dev_class][command_name] = (func, cmd, device_name)
         return tools
 
     def setup(self, print_summary: bool = True):
@@ -636,8 +712,8 @@ class MCPServer:
         wrapped_tools: dict[str, dict[str, Callable]] = {}
         for dev_class in raw_tools:
             wrapped_tools[dev_class] = {}
-            for command_name, (func, cmd_info) in raw_tools[dev_class].items():
-                wrapped = self._create_wrapper(func, cmd_info, command_name, dev_class)
+            for command_name, (func, cmd_info, device_name) in raw_tools[dev_class].items():
+                wrapped = self._create_wrapper(func, cmd_info, command_name, dev_class, device_name)
                 wrapped_tools[dev_class][command_name] = wrapped
 
         self.tools = wrapped_tools

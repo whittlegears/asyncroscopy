@@ -135,6 +135,7 @@ class LLM(Device):
             raise RuntimeError("No agent backend initialized.")
         return json.dumps(self._backend.capabilities())
 
+
     @command(dtype_in=str, dtype_out=str)
     async def Query(self, prompt: str) -> str:
         """Query the agent backend with a prompt, returning the final response."""
@@ -378,6 +379,7 @@ class LLM(Device):
         except Exception as e:
             self.error_stream(f"Failed to spawn agent: {e}")
             return False
+
 
 
 if __name__ == "__main__":

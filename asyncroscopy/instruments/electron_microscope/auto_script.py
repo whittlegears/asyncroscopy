@@ -17,7 +17,6 @@ DATA/Tiled unique id for that saved acquisition.
 """
 
 import json
-import math
 import time
 
 import numpy as np
@@ -237,11 +236,12 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
     @command
     def register_stage(self):
-        """Read the live stage position from hardware and publish it onto the
-        STAGE child device.
+        """Verify the STAGE child device can read the live hardware position.
 
-        Call this from the notebook before reading the STAGE device so its
-        x/y/z/alpha attributes reflect the current hardware position.
+        The AutoScript-backed STAGE device reads hardware directly on every
+        attribute access, so there is nothing to publish; this command exists
+        for notebook compatibility with the digital twin and raises if the
+        stage read path is broken.
         """
         self._get_stage()
 
@@ -445,26 +445,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         screen_current = self._microscope.detectors.screen.measure_current() * 1e12
         return screen_current
 
-    def _get_stage(self):
-        """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
-        # set proxy attributes with current stage position
-        stage = self._detector_proxies["stage"]
-
-        # TODO: add beta value check
-        position = self._microscope.specimen.stage.position
-        position = np.array(position)
-
-        stage.x = float(position[1])
-        stage.y = float(position[0])
-        stage.z = float(position[2])
-        stage.alpha = float(math.degrees(position[3]))
-
-        if position[4] is not None:
-            return position
-        else:
-            return position[:4]
-        
-    
     def _get_parameters(self):
         status = {'system': self._microscope.service.system.name,
                 'vacuum': self._microscope.vacuum.state,

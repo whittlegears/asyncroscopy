@@ -20,7 +20,8 @@ devices:
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: TestStage
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
     
 tango:
   host: localhost

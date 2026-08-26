@@ -20,8 +20,10 @@ If you're editing this class, you're usually doing one of these:
    Expose device state clients can read. The live-state reads
    (`fov`, `defocus`, `camera_length`, `acceleration_voltage`, `beam_state`)
    pull from `self._microscope` and must return `nan`/`False` when it is `None`
-   (testing mode) — guard every such read. `register_stage` is the matching
-   command: it pushes the live stage position onto the STAGE child device.
+   (testing mode) — guard every such read. `register_stage` exists for
+   notebook compatibility with the digital twin: the AutoScript-backed STAGE
+   device reads hardware directly on every attribute access, so the command
+   just verifies that read path works.
    The public stage vector is `[x, y, z, alpha, beta]`, with x/y/z in meters
    and alpha/beta in degrees. Convert tilts to radians only when sending values
    to AutoScript.

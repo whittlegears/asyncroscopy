@@ -22,8 +22,11 @@ from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.detectors.eds import EDS
 from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
 from asyncroscopy.instruments.electron_microscope.hardware.TestStage import TestStage
+from asyncroscopy.instruments.electron_microscope.hardware.TestAperture import TestAperture
+from asyncroscopy.instruments.electron_microscope.hardware.TestCorrector import TestCorrector
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
+from asyncroscopy.instruments.electron_microscope.digital_twin_beta import DigitalTwinBeta
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
 
@@ -88,7 +91,13 @@ def tango_ctx(data_save_dir):
                 {
                     "name": "asyncroscopy/stage/default",
                     "properties": {},
-                }
+                },
+                {
+                    # Dedicated stage for the realism-enabled twin, so its noisy
+                    # moves don't perturb tests that use the ideal twin.
+                    "name": "asyncroscopy/stage/realistic",
+                    "properties": {},
+                },
             ],
         },
         {
@@ -96,6 +105,24 @@ def tango_ctx(data_save_dir):
             "devices": [
                 {
                     "name": "asyncroscopy/data/default",
+                    "properties": {},
+                }
+            ],
+        },
+        {
+            "class": TestAperture,
+            "devices": [
+                {
+                    "name": "asyncroscopy/aperture/default",
+                    "properties": {},
+                }
+            ],
+        },
+        {
+            "class": TestCorrector,
+            "devices": [
+                {
+                    "name": "asyncroscopy/corrector/default",
                     "properties": {},
                 }
             ],
@@ -110,9 +137,32 @@ def tango_ctx(data_save_dir):
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/default",
                         "camera_device_address": "asyncroscopy/camera/default",
+                        "aperture_device_address": "asyncroscopy/aperture/default",
+                        "corrector_device_address": "asyncroscopy/corrector/default",
                         "acquisition_save_directory": str(data_save_dir),
                     },
-                }
+                },
+                {
+                    # Same class with the realism layer enabled, mirroring
+                    # configs/DigitalTwin.yaml but with values large enough to
+                    # observe in fast tests.
+                    "name": "asyncroscopy/digitaltwin/realistic",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/realistic",
+                        "camera_device_address": "asyncroscopy/camera/default",
+                        "acquisition_save_directory": str(data_save_dir),
+                        # Scaled to the twin's nanometer-sized sample world so
+                        # the sample stays inside the FOV after imperfect moves.
+                        "stage_move_noise_std": 2e-9,
+                        "stage_drift_rate": 1e-9,
+                        "stage_settle_time_s": 1.0,
+                        "stage_settle_amplitude": 2e-9,
+                        "stage_backlash": 2e-9,
+                        "enforce_beam_state": True,
+                    },
+                },
             ],
         },
         {
@@ -127,6 +177,21 @@ def tango_ctx(data_save_dir):
                         "acquisition_save_directory": str(data_save_dir),
                         "diffraction_image_size": 16,
                         "randomness_scale": 0.0,
+                    },
+                }
+            ],
+        },
+
+        {
+            "class": DigitalTwinBeta,
+            "devices": [
+                {
+                    "name": "asyncroscopy/digitaltwinbeta/default",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/default",
+                        "acquisition_save_directory": str(data_save_dir),
                     },
                 }
             ],
@@ -171,9 +236,21 @@ def twin_proxy(tango_ctx):
 
 
 @pytest.fixture(scope="session")
+def realistic_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/realistic"))
+
+
+@pytest.fixture(scope="session")
 def tilt_twin_proxy(tango_ctx):
     return tango.DeviceProxy(
         tango_ctx.get_device_access("asyncroscopy/digitaltwintilt/default")
+    )
+
+
+@pytest.fixture(scope="session")
+def beta_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(
+        tango_ctx.get_device_access("asyncroscopy/digitaltwinbeta/default")
     )
 
 
@@ -190,6 +267,16 @@ def camera_proxy(tango_ctx):
 @pytest.fixture(scope="session")
 def stage_proxy(tango_ctx):
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/default"))
+
+
+@pytest.fixture(scope="session")
+def aperture_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/aperture/default"))
+
+
+@pytest.fixture(scope="session")
+def corrector_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/corrector/default"))
 
 
 @pytest.fixture(scope="session")

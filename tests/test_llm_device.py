@@ -138,6 +138,7 @@ def _make_llm(**kwargs) -> LLM:
     device.hermes_api_key = ""
     device.skills_dir = kwargs.get("skills_dir", "outputs/agent_skills")
     device.embedding_model = "stub-embed"
+    device.reflection_min_tool_steps = 4
     device._skills_service = kwargs.get("skills_service", None)
     device._skill_sync_buffers = {}
 

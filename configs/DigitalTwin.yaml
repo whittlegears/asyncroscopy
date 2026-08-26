@@ -3,10 +3,28 @@ instrument:
   file: asyncroscopy/instruments/electron_microscope/digital_twin.py
   description: "Digital Twin Simulation Environment"
   timeout_seconds: 120
+  properties:
+    # Realism layer: make the twin behave like the physical Spectra 300
+    # instead of an ideal simulator. Set a value to 0 (or false) to disable.
+    # Values are scaled to the twin's nanometer-sized sample world (default
+    # sample_size_xy is 6 nm with a 20 nm FOV); a real stage errs 10-100x
+    # more, so scale these up together with sample_size_xy.
+    stage_move_noise_std: 2.0e-9      # moves land within ~2 nm of the target
+    stage_drift_rate: 5.0e-11         # ~3 nm/min thermal drift on reads and images
+    stage_settle_time_s: 2.0          # post-move relaxation time constant
+    stage_settle_amplitude: 2.0e-9    # initial post-move displacement (2 nm)
+    stage_backlash: 5.0e-9            # 5 nm undershoot when an axis reverses
+    enforce_beam_state: true          # closed valves / blanked beam -> dark frames
 
 devices:
+  aperture:
+    class_name: TestAperture
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestAperture
   camera:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.camera
+  corrector:
+    class_name: TestCorrector
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestCorrector
   data:
     module_name: asyncroscopy.data.data
   eds:
@@ -14,7 +32,8 @@ devices:
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: TestStage
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
 
 tango:
   host: localhost

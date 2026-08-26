@@ -223,31 +223,74 @@ class TestDataDevice:
         assert result == "frame.h5"
         assert registrations == [str(saved)]
 
-    def test_register_save_path_registers_configured_directory(
+    def test_register_save_path_registers_only_missing_files(
         self,
         data_proxy: tango.DeviceProxy,
         monkeypatch,
         tmp_path,
     ) -> None:
+        """register_save_path registers file-by-file and skips existing catalog
+        entries — it must never hand tiled the whole directory, because
+        directory-level register() deletes every existing catalog entry first."""
         registrations = []
+        (tmp_path / "already.h5").write_bytes(b"fake-h5")
+        (tmp_path / "missing_a.h5").write_bytes(b"fake-h5")
+        (tmp_path / "missing_b.h5").write_bytes(b"fake-h5")
+        # The managed catalog database is a dotfile inside the save path and
+        # must never be registered as data.
+        (tmp_path / ".asyncroscopy_tiled_catalog.db").write_bytes(b"sqlite")
         data_proxy.host = "127.0.0.1"
         data_proxy.port = 9091
         data_proxy.save_path = str(tmp_path)
 
-        def fake_from_uri(*args, **kwargs):
-            return object()
+        class FakeClient:
+            def keys(self):
+                return ["already.h5", "unrelated_older_entry.h5"]
 
         async def fake_register(client, path, **kwargs):
             registrations.append(path)
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", fake_from_uri)
+        monkeypatch.setattr("asyncroscopy.data.data.from_uri", lambda *args, **kwargs: FakeClient())
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
 
         result = json.loads(data_proxy.register_save_path())
 
         assert result["registered_path"] == str(tmp_path)
+        assert result["registered_files"] == 2
+        assert result["already_registered"] == 1
         assert result["tiled_server_status"] == "running; registered save path"
-        assert registrations == [str(tmp_path)]
+        assert registrations == [
+            str(tmp_path / "missing_a.h5"),
+            str(tmp_path / "missing_b.h5"),
+        ]
+
+    def test_register_save_path_reports_failure_and_keeps_status(
+        self,
+        data_proxy: tango.DeviceProxy,
+        monkeypatch,
+        tmp_path,
+    ) -> None:
+        (tmp_path / "frame.h5").write_bytes(b"fake-h5")
+        data_proxy.host = "127.0.0.1"
+        data_proxy.port = 9091
+        data_proxy.save_path = str(tmp_path)
+
+        class FakeClient:
+            def keys(self):
+                return []
+
+        async def failing_register(client, path, **kwargs):
+            raise ConnectionError("tiled is down")
+
+        monkeypatch.setattr("asyncroscopy.data.data.from_uri", lambda *args, **kwargs: FakeClient())
+        monkeypatch.setattr("asyncroscopy.data.data.register", failing_register)
+
+        with pytest.raises(tango.DevFailed):
+            data_proxy.register_save_path()
+
+        status = json.loads(data_proxy.get_config())["tiled_server_status"]
+        assert "Save path registration failed:" in status
+        assert "tiled is down" in status
 
     def test_register_path_returns_windows_tiled_key(
         self,

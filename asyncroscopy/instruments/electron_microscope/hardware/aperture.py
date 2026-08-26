@@ -5,6 +5,8 @@ This device defines the public aperture API. Hardware-specific subclasses
 implement the private read, write, and command helpers.
 """
 
+import json
+import math
 from abc import abstractmethod
 
 from tango import AttrWriteType, DevState
@@ -114,7 +116,7 @@ class APERTURE(Device):
         return self._mechanism
 
     def write_mechanism(self, value: str) -> None:
-        self._mechanism = value
+        self._mechanism = self._validated_mechanism(value)
 
     def read_available_apertures(self) -> list[str]:
         return self._read_available_apertures()
@@ -149,6 +151,65 @@ class APERTURE(Device):
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
+
+    # insert/retract/enable/disable act on the mechanism selected through the
+    # ``mechanism`` attribute. Remote bridges that expose only Tango commands
+    # (e.g. the MCP server) cannot write attributes, so mechanism selection is
+    # also available as commands here — without set_mechanism, retract could
+    # never succeed through MCP because devices boot with a non-retractable
+    # condenser mechanism selected.
+
+    @command(dtype_out=(str,))
+    def get_available_mechanisms(self) -> list[str]:
+        """List the motorized aperture mechanisms available on the microscope."""
+        return self._read_available_mechanisms()
+
+    @command(dtype_in=str, doc_in=":param mechanism: Mechanism name, e.g. 'OBJ'")
+    def set_mechanism(self, value: str) -> None:
+        """Select the mechanism targeted by the other aperture attributes and commands."""
+        self._mechanism = self._validated_mechanism(value)
+
+    def _validated_mechanism(self, value: str) -> str:
+        """Reject unknown mechanism names before they poison every later read."""
+        value = value.strip()
+        available = list(self._read_available_mechanisms())
+        if value not in available:
+            raise ValueError(f"Unknown mechanism {value!r}. Available: {available}")
+        return value
+
+    @command(dtype_out=str)
+    def get_mechanism(self) -> str:
+        """Return the currently selected mechanism."""
+        return self._mechanism
+
+    @command(dtype_out=(str,))
+    def get_available_apertures(self) -> list[str]:
+        """List the apertures available on the selected mechanism."""
+        return self._read_available_apertures()
+
+    @command(dtype_in=str, doc_in=":param aperture: Aperture name, e.g. '70 um'")
+    def set_selected_aperture(self, value: str) -> None:
+        """Select an aperture on the current mechanism."""
+        self._write_selected_aperture(value)
+
+    @command(dtype_out=str)
+    def get_aperture_info(self) -> str:
+        """Return the full state of the selected mechanism as JSON."""
+        diameter = self._read_aperture_diameter()
+        return json.dumps(
+            {
+                "mechanism": self._mechanism,
+                "available_mechanisms": list(self._read_available_mechanisms()),
+                "available_apertures": list(self._read_available_apertures()),
+                "selected_aperture": self._read_selected_aperture(),
+                "aperture_type": self._read_aperture_type(),
+                "aperture_diameter_m": None if math.isnan(diameter) else diameter,
+                "insertion_state": self._read_insertion_state(),
+                "enabled": self._read_enabled(),
+                "retractable": self._read_retractable(),
+                "position": list(self._read_position()),
+            }
+        )
 
     @command
     def insert(self) -> None:

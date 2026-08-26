@@ -492,7 +492,7 @@ class TestMCPToolInvocation:
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
-        wrapper = server._create_wrapper(mock_func, cmd_info, "MyCmd", "MyClass")
+        wrapper = server._create_wrapper(mock_func, cmd_info, "MyCmd", "MyClass", "test/dev/1")
 
         # 1. Positional call
         assert wrapper("hello") == "hello"
@@ -523,9 +523,138 @@ class TestMCPToolInvocation:
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
-        wrapper = server._create_wrapper(mock_func, cmd_info, "VoidCmd", "MyClass")
+        wrapper = server._create_wrapper(mock_func, cmd_info, "VoidCmd", "MyClass", "test/dev/1")
 
         assert wrapper() == "done"
+
+    def test_wrapper_rebuilds_stale_proxy_and_retries(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        def stale_func():
+            raise RuntimeError("Caught an unknown exception!")
+
+        class FreshProxy:
+            def set_timeout_millis(self, ms):
+                pass
+
+            def command_inout(self, name, *args):
+                assert name == "VoidCmd"
+                return "recovered"
+
+        monkeypatch.setattr(
+            "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: FreshProxy()
+        )
+
+        cmd_info = type(
+            "CommandInfo",
+            (),
+            {
+                "in_type": tango.CmdArgType.DevVoid,
+                "out_type": tango.CmdArgType.DevString,
+                "in_type_desc": "",
+                "out_type_desc": "",
+            },
+        )
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
+        wrapper = server._create_wrapper(stale_func, cmd_info, "VoidCmd", "MyClass", "test/dev/1")
+
+        assert wrapper() == "recovered"
+        # The rebuilt proxy is cached: subsequent calls succeed directly.
+        assert wrapper() == "recovered"
+
+    @pytest.mark.parametrize(
+        ("failure_text", "reason_fragment"),
+        [
+            (
+                "DevFailed: API_DeviceTimedOut: Device timed out (30000 ms)",
+                "likely still running",
+            ),
+            (
+                "TRANSIENT CORBA system exception: TRANSIENT_CallTimedout",
+                "likely still running",
+            ),
+            (
+                'Thread 30 is not able to acquire serialization monitor "a/b/c"',
+                "serialization",
+            ),
+            (
+                "ValueError: Mechanism 'C1' is not retractable (reason = PyDs_PythonError)",
+                "rejected the command",
+            ),
+        ],
+    )
+    def test_wrapper_never_reexecutes_after_nonretryable_failures(
+        self, monkeypatch, failure_text, reason_fragment
+    ) -> None:
+        """Timeouts, monitor contention, and device-raised errors must not be
+        retried: the first execution may still be running (or already ran), so a
+        retry executes the command twice and piles up behind the device's
+        serialization monitor."""
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        rebuilds = []
+        monkeypatch.setattr(
+            "asyncroscopy.mcp.mcp_server.DeviceProxy",
+            lambda name: rebuilds.append(name),
+        )
+
+        calls = []
+
+        def failing_func():
+            calls.append(None)
+            raise RuntimeError(failure_text)
+
+        cmd_info = type(
+            "CommandInfo",
+            (),
+            {
+                "in_type": tango.CmdArgType.DevVoid,
+                "out_type": tango.CmdArgType.DevString,
+                "in_type_desc": "",
+                "out_type_desc": "",
+            },
+        )
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
+        wrapper = server._create_wrapper(failing_func, cmd_info, "VoidCmd", "MyClass", "test/dev/1")
+
+        with pytest.raises(RuntimeError, match=r"Not retrying"):
+            wrapper()
+
+        assert len(calls) == 1, "the command must execute exactly once"
+        assert rebuilds == [], "the proxy must not be rebuilt for a non-retryable failure"
+
+        with pytest.raises(RuntimeError, match=reason_fragment):
+            wrapper()
+
+    def test_wrapper_raises_readable_error_when_rebuild_fails(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        def stale_func():
+            raise RuntimeError("Caught an unknown exception!")
+
+        def broken_proxy(name):
+            raise RuntimeError("device not exported")
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", broken_proxy)
+
+        cmd_info = type(
+            "CommandInfo",
+            (),
+            {
+                "in_type": tango.CmdArgType.DevVoid,
+                "out_type": tango.CmdArgType.DevString,
+                "in_type_desc": "",
+                "out_type_desc": "",
+            },
+        )
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
+        wrapper = server._create_wrapper(stale_func, cmd_info, "VoidCmd", "MyClass", "test/dev/1")
+
+        with pytest.raises(RuntimeError, match=r"test/dev/1\.VoidCmd.*could not be rebuilt"):
+            wrapper()
 
 
 class TestMCPRegistration:
@@ -544,6 +673,50 @@ class TestMCPRegistration:
         server.setup(print_summary=False)
 
         assert set(calls) == {"get_data_from_key", "list_devices"}
+
+
+class TestMCPCommandResolution:
+    def test_discovery_invokes_commands_via_command_inout(self, monkeypatch) -> None:
+        """DeviceProxy defines client-side methods (reconnect, ping, ...) that
+        shadow same-named Tango commands; discovery must bind command_inout so
+        the Tango command runs, not the client method."""
+
+        class FakeDb:
+            def get_device_exported(self, pattern):
+                return type("Result", (), {"value_string": ["asyncroscopy/corrector/default"]})()
+
+        invocations = []
+
+        class FakeProxy:
+            def __init__(self, name):
+                pass
+
+            def set_timeout_millis(self, millis):
+                pass
+
+            def info(self):
+                return type("Info", (), {"dev_class": "CORRECTOR"})()
+
+            def command_list_query(self):
+                return [type("Cmd", (), {"cmd_name": "reconnect"})()]
+
+            def reconnect(self, db_used):
+                raise AssertionError("client-side DeviceProxy.reconnect must not be used")
+
+            def command_inout(self, name, *args):
+                invocations.append((name, args))
+                return None
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: FakeDb())
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FakeProxy)
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        tools = server._find_tools()
+
+        func, _, device_name = tools["CORRECTOR"]["reconnect"]
+        assert device_name == "asyncroscopy/corrector/default"
+        func()
+        assert invocations == [("reconnect", ())]
 
 
 class TestMCPCommandTimeout:

@@ -26,6 +26,56 @@ class TestDigitalTwin:
 
         assert twin_proxy.get_defocus() == pytest.approx(8e-9)
 
+    def test_column_valves_round_trip(self, twin_proxy: tango.DeviceProxy):
+        import json
+
+        twin_proxy.set_column_valves("open")
+        assert json.loads(twin_proxy.get_parameters())["column_valves_state"] == "open"
+
+        twin_proxy.set_column_valves("close")
+        assert json.loads(twin_proxy.get_parameters())["column_valves_state"] == "close"
+
+    def test_column_valves_rejects_invalid_state(self, twin_proxy: tango.DeviceProxy):
+        with pytest.raises(tango.DevFailed):
+            twin_proxy.set_column_valves("sideways")
+
+    def test_fov_commands_round_trip(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.set_fov(5e-8)
+
+        assert twin_proxy.get_fov() == pytest.approx(5e-8)
+
+    def test_image_shift_commands_round_trip(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.set_image_shift([1e-9, -2e-9])
+
+        assert twin_proxy.get_image_shift() == pytest.approx([1e-9, -2e-9])
+
+    def test_beam_tilt_commands_round_trip(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.set_beam_tilt([0.01, -0.02])
+
+        assert twin_proxy.get_beam_tilt() == pytest.approx([0.01, -0.02])
+
+    def test_diffraction_shift_commands_round_trip(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.set_diffraction_shift([0.03, -0.04])
+
+        assert twin_proxy.get_diffraction_shift() == pytest.approx([0.03, -0.04])
+
+    def test_screen_commands_round_trip(self, twin_proxy: tango.DeviceProxy):
+        import json
+
+        twin_proxy.set_screen("in")
+        twin_proxy.set_screen_current(75.0)
+        twin_proxy.calibrate_screen_current()
+
+        assert twin_proxy.get_screen_current() == pytest.approx(75.0)
+        assert json.loads(twin_proxy.get_parameters())["screen_position"] == "in"
+
+    def test_auto_focus_zeroes_defocus(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.set_defocus(1e-7)
+
+        twin_proxy.auto_focus()
+
+        assert twin_proxy.get_defocus() == pytest.approx(0.0)
+
     def test_get_parameters_returns_status_json(self, twin_proxy: tango.DeviceProxy):
         import json
 
@@ -34,6 +84,7 @@ class TestDigitalTwin:
         assert parameters["manufacturer"] == "UTKTeam"
         assert parameters["stem_mode"] is True
         assert "defocus_m" in parameters
+        assert parameters["column_valves_state"] == "close"
         assert "stage_position" in parameters
         assert "fov_m" in parameters
         assert parameters["scan_detectors"] == ["haadf"]

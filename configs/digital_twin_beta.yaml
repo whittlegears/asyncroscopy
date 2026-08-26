@@ -1,0 +1,30 @@
+instrument:
+  class_name: DigitalTwinBeta
+  file: asyncroscopy/instruments/electron_microscope/digital_twin_beta.py
+  description: "Double-tilt digital twin simulation environment"
+  timeout_seconds: 120
+
+devices:
+  eds:
+    module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
+  data:
+    module_name: asyncroscopy.data.data
+  scan:
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  stage:
+    class_name: TestStage
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+
+tango:
+  host: localhost
+  port: 9094
+  reset_database_file: true
+
+tiled:
+  host: localhost
+  port: 9091
+  acquisition_dir: outputs/tiled_acquisitions
+  autostart: true
+  register_on_startup: false
+
+device_timeout_seconds: 120
