@@ -30,6 +30,7 @@ class LLM(Device):
     hermes_api_key = device_property(dtype=str, default_value="")
     skills_dir = device_property(dtype=str, default_value="outputs/agent_skills")
     embedding_model = device_property(dtype=str, default_value="nomic-embed-text")
+    reflection_min_tool_steps = device_property(dtype=int, default_value=4)
 
     max_steps = attribute(label="Max Steps", dtype=int, access=tango.AttrWriteType.READ_WRITE)
     agents = attribute(dtype=(str,), max_dim_x=100)
@@ -81,6 +82,7 @@ class LLM(Device):
             hermes_url=self.hermes_url or "",
             hermes_model=self.hermes_model or "hermes-agent",
             hermes_api_key=self.hermes_api_key or "",
+            reflection_min_tool_steps=int(self.reflection_min_tool_steps),
         )
 
     async def _start_backend(self, name: str):
@@ -255,6 +257,40 @@ class LLM(Device):
             k = int(request.get("k", 5))
             results = await asyncio.to_thread(self._skills_service.find_skills, query, k)
             return json.dumps({"results": results})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
+
+    @command(
+        dtype_out=str,
+        doc_out="JSON {'proposals': [{'id', 'name', 'content', 'created_at'}, ...]} or {'error': ...}",
+    )
+    async def ListSkillProposals(self) -> str:
+        """List agent-written skill drafts waiting for the GUI to pull into review."""
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            proposals = await asyncio.to_thread(self._skills_service.list_proposals)
+            return json.dumps({"proposals": proposals})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
+
+    @command(
+        dtype_in=str,
+        doc_in="Proposal id from ListSkillProposals",
+        dtype_out=str,
+        doc_out="JSON {'status': 'removed'} or {'error': {'message': ...}}",
+    )
+    async def RemoveSkillProposal(self, proposal_id: str) -> str:
+        """Delete one skill proposal, called by the GUI after it has imported it."""
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            removed = await asyncio.to_thread(
+                self._skills_service.remove_proposal, proposal_id.strip()
+            )
+            if not removed:
+                return json.dumps({"error": {"message": f"No proposal has the id '{proposal_id}'."}})
+            return json.dumps({"status": "removed"})
         except Exception as e:
             return json.dumps({"error": {"message": str(e)}})
 

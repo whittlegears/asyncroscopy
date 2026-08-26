@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,9 @@ class SkillStore:
     The GUI is authoritative: ``replace_all`` makes the store match its payload
     exactly. Files directly under the root (the search index database among
     them) are never touched — only skill subdirectories are created or removed.
+    Directories starting with ``_`` are the store's own state (``_proposals``
+    holds agent-written skill drafts awaiting pickup by the GUI) and survive a
+    sync untouched.
     """
 
     def __init__(self, root: Path):
@@ -117,8 +121,58 @@ class SkillStore:
 
         removed = 0
         for entry in self.root.iterdir():
-            if entry.is_dir() and entry.name not in wanted:
+            if entry.is_dir() and not entry.name.startswith("_") and entry.name not in wanted:
                 shutil.rmtree(entry)
                 removed += 1
 
         return {"written": len(wanted), "removed": removed}
+
+    @property
+    def proposals_dir(self) -> Path:
+        return self.root / "_proposals"
+
+    def add_proposal(self, name: str, content: str) -> str:
+        """Persist an agent-written skill draft for the GUI to pick up and review.
+
+        Proposals never touch the live skill directories; the GUI pulls them,
+        routes them through its own review gate, and removes them.
+        """
+        cleaned_name = str(name).strip()
+        cleaned_content = str(content).strip()
+        if not cleaned_name or not cleaned_content:
+            raise ValueError("A skill proposal needs both a name and content.")
+        proposal_id = uuid.uuid4().hex
+        self.proposals_dir.mkdir(exist_ok=True)
+        payload = {
+            "id": proposal_id,
+            "name": cleaned_name,
+            "content": cleaned_content,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        (self.proposals_dir / f"{proposal_id}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        return proposal_id
+
+    def list_proposals(self) -> list[dict]:
+        if not self.proposals_dir.is_dir():
+            return []
+        proposals = []
+        for entry in sorted(self.proposals_dir.glob("*.json")):
+            try:
+                payload = json.loads(entry.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            if payload.get("id") and payload.get("name") and payload.get("content"):
+                proposals.append(payload)
+        return proposals
+
+    def remove_proposal(self, proposal_id: str) -> bool:
+        cleaned = str(proposal_id).strip()
+        if not cleaned.isalnum():
+            raise ValueError(f"'{proposal_id}' is not a proposal id")
+        target = self.proposals_dir / f"{cleaned}.json"
+        if not target.is_file():
+            return False
+        target.unlink()
+        return True

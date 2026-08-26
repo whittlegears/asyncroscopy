@@ -52,6 +52,22 @@ class SkillsService:
             )
         return enriched
 
+    def propose_skill(self, name: str, content: str) -> str:
+        return self.store.add_proposal(name, content)
+
+    def list_proposals(self) -> list[dict]:
+        return self.store.list_proposals()
+
+    def remove_proposal(self, proposal_id: str) -> bool:
+        return self.store.remove_proposal(proposal_id)
+
+    def enabled_skill_summaries(self) -> list[dict]:
+        return [
+            {"id": record.id, "name": record.name, "description": record.description}
+            for record in self.store.list_skills()
+            if record.enabled
+        ]
+
     def load_skill(self, skill_id: str) -> str:
         records = {record.id: record for record in self.store.list_skills()}
         record = records.get(skill_id)

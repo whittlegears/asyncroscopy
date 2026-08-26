@@ -27,6 +27,14 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph import END, START, StateGraph
 
 from .base import Agent, AgentBackend, BackendConfig
+from .reflection import (
+    propose_skill_tool,
+    proposals_from_tool_calls,
+    record_trace,
+    reflection_system_prompt,
+    reflection_task_message,
+    should_reflect,
+)
 
 
 class AgentState(TypedDict):
@@ -116,6 +124,8 @@ class LangGraphBackend(AgentBackend):
         self._model = None
         self._tools: list[BaseTool] = []
         self._mcp_clients: list[MultiServerMCPClient] = []
+        self._run_tool_steps = 0
+        self._run_trace: list[str] = []
 
     async def initialize(self) -> None:
         model_name_clean = _clean_prop(self.config.model_name)
@@ -155,7 +165,50 @@ class LangGraphBackend(AgentBackend):
         print(f"[SYSTEM]: Model pre-warmed in {time.time() - start_warmup:.2f}s!")
 
     async def query(self, prompt: str, max_steps: int) -> str:
-        return await self._run_swarm(prompt, max_steps)
+        self._run_tool_steps = 0
+        self._run_trace = []
+        answer = await self._run_swarm(prompt, max_steps)
+        await self._maybe_reflect(prompt, answer)
+        return answer
+
+    async def _maybe_reflect(self, prompt: str, answer: str) -> None:
+        """One extra model turn after a heavy run: propose a skill draft, or nothing.
+
+        Proposals land in the skill store's holding area for the GUI to pull
+        into its review gate; the live skills are never touched from here. Any
+        failure is printed and swallowed — reflection must never cost an answer.
+        """
+        if not should_reflect(
+            self._run_tool_steps,
+            self.config.reflection_min_tool_steps,
+            self._skills_service is not None,
+        ):
+            return
+        try:
+            print(
+                f"\n[REFLECTION]: Run used {self._run_tool_steps} tool steps — "
+                "considering whether it is worth a skill..."
+            )
+            skills = self._skills_service.enabled_skill_summaries()
+            messages = [
+                SystemMessage(content=reflection_system_prompt()),
+                HumanMessage(
+                    content=reflection_task_message(prompt, answer, self._run_trace, skills)
+                ),
+            ]
+            response = await self._model.bind_tools([propose_skill_tool]).ainvoke(messages)
+            proposals = proposals_from_tool_calls(getattr(response, "tool_calls", None) or [])
+            if not proposals:
+                print("[REFLECTION]: Nothing worth keeping from this run.")
+                return
+            for name, content in proposals:
+                proposal_id = self._skills_service.propose_skill(name, content)
+                print(
+                    f"[REFLECTION]: Proposed skill '{name}' "
+                    f"(proposal {proposal_id}) — pending operator review in the GUI."
+                )
+        except Exception as exc:
+            print(f"[REFLECTION ERROR]: {exc}")
 
     async def complete(self, request: dict) -> dict:
         messages = self._openai_messages_to_langchain(request.get("messages") or [])
@@ -314,10 +367,13 @@ class LangGraphBackend(AgentBackend):
             elif kind == "on_tool_start":
                 tool_name = event["name"]
                 tool_input = event["data"].get("input")
+                self._run_tool_steps += 1
+                record_trace(self._run_trace, f"{prefix}{tool_name}({tool_input})")
                 print(f"{prefix}[EXECUTING TOOL]: {tool_name}({tool_input})")
 
             elif kind == "on_tool_end":
                 output = event["data"].get("output")
+                record_trace(self._run_trace, f"{prefix}-> {output}")
                 print(f"{prefix}[TOOL RESULT]: {output}")
 
         if final_content:

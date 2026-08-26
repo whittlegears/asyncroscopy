@@ -50,6 +50,53 @@ class TestReplaceAll:
         assert "synced_at" in provenance
 
 
+class TestProposals:
+    def test_add_list_round_trips(self, tmp_path):
+        store = SkillStore(tmp_path)
+        proposal_id = store.add_proposal("Focus Recovery", "---\nname: Focus Recovery\n---\n# Steps")
+        [proposal] = store.list_proposals()
+        assert proposal["id"] == proposal_id
+        assert proposal["name"] == "Focus Recovery"
+        assert proposal["content"].startswith("---")
+        assert proposal["created_at"]
+
+    def test_remove_deletes_exactly_one(self, tmp_path):
+        store = SkillStore(tmp_path)
+        first = store.add_proposal("A", "# a")
+        store.add_proposal("B", "# b")
+        assert store.remove_proposal(first) is True
+        remaining = store.list_proposals()
+        assert [p["name"] for p in remaining] == ["B"]
+
+    def test_remove_of_unknown_id_returns_false(self, tmp_path):
+        store = SkillStore(tmp_path)
+        assert store.remove_proposal("0" * 32) is False
+
+    def test_remove_refuses_a_traversing_id(self, tmp_path):
+        store = SkillStore(tmp_path)
+        with pytest.raises(ValueError):
+            store.remove_proposal("../escape")
+
+    def test_empty_name_or_content_is_refused(self, tmp_path):
+        store = SkillStore(tmp_path)
+        with pytest.raises(ValueError):
+            store.add_proposal("", "# body")
+        with pytest.raises(ValueError):
+            store.add_proposal("Name", "  ")
+
+    def test_replace_all_leaves_proposals_untouched(self, tmp_path):
+        store = SkillStore(tmp_path)
+        store.add_proposal("Survivor", "# survives the sync")
+        report = store.replace_all([_payload("only-skill")])
+        assert report == {"written": 1, "removed": 0}
+        assert [p["name"] for p in store.list_proposals()] == ["Survivor"]
+
+    def test_proposals_never_appear_as_skills(self, tmp_path):
+        store = SkillStore(tmp_path)
+        store.add_proposal("Hidden", "# not a skill yet")
+        assert store.list_skills() == []
+
+
 class TestFrontmatter:
     def test_the_synced_name_and_description_win_over_frontmatter(self, tmp_path):
         store = SkillStore(tmp_path)

@@ -27,6 +27,7 @@ class BackendConfig:
     hermes_url: str = ""
     hermes_model: str = "hermes-agent"
     hermes_api_key: str = ""
+    reflection_min_tool_steps: int = 4
 
 
 class BackendUnsupported(RuntimeError):
