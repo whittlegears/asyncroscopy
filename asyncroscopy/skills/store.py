@@ -82,8 +82,8 @@ class SkillStore:
                 provenance = {}
         return SkillRecord(
             id=skill_id,
-            name=name or skill_id.replace("-", " "),
-            description=description or first_meaningful_line(text),
+            name=str(provenance.get("name") or name or skill_id.replace("-", " ")),
+            description=str(provenance.get("description") or description or first_meaningful_line(text)),
             text=text,
             enabled=bool(provenance.get("enabled", True)),
             version=int(provenance.get("version", 1)),
@@ -105,6 +105,8 @@ class SkillStore:
             skill_dir.mkdir(exist_ok=True)
             (skill_dir / "SKILL.md").write_text(str(skill.get("text", "")), encoding="utf-8")
             provenance = {
+                "name": str(skill.get("name", "")),
+                "description": str(skill.get("description", "")),
                 "enabled": bool(skill.get("enabled", True)),
                 "version": int(skill.get("version", 1)),
                 "agent_authored": bool(skill.get("agent_authored", False)),

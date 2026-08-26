@@ -52,9 +52,6 @@ class SkillsService:
             )
         return enriched
 
-    def close(self) -> None:
-        self.index.close()
-
     def load_skill(self, skill_id: str) -> str:
         records = {record.id: record for record in self.store.list_skills()}
         record = records.get(skill_id)

@@ -94,19 +94,27 @@ class SkillIndex:
         self.db_path = Path(db_path)
         self.embedder = embedder
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.db_path)
-        self._ensure_schema()
-
-    def _ensure_schema(self) -> None:
+        connection = self._connect()
         try:
-            self._connection.execute(
+            self._ensure_schema(connection)
+        finally:
+            connection.close()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Open a fresh connection; each operation opens and closes its own, so the
+        index can be used from any thread and its file is never held open."""
+        return sqlite3.connect(self.db_path)
+
+    def _ensure_schema(self, connection: sqlite3.Connection) -> None:
+        try:
+            connection.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(chunk_id UNINDEXED, skill_id UNINDEXED, text)"
             )
         except sqlite3.OperationalError as exc:
             raise SkillIndexUnavailable(
                 f"This python's sqlite3 has no FTS5 support, which hybrid skill search requires: {exc}"
             ) from exc
-        self._connection.executescript(
+        connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS chunks (
                 id INTEGER PRIMARY KEY,
@@ -124,30 +132,37 @@ class SkillIndex:
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
             """
         )
-        self._connection.commit()
+        connection.commit()
 
-    def _meta(self, key: str) -> str | None:
-        row = self._connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    def _meta(self, connection: sqlite3.Connection, key: str) -> str | None:
+        row = connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
 
-    def _set_meta(self, key: str, value: str) -> None:
-        self._connection.execute(
+    def _set_meta(self, connection: sqlite3.Connection, key: str, value: str) -> None:
+        connection.execute(
             "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
 
     def sync(self, records: list[SkillRecord]) -> dict:
-        if self._meta("embedding_model") not in (None, self.embedder.model) or self._meta(
-            "schema_version"
+        connection = self._connect()
+        try:
+            return self._sync(connection, records)
+        finally:
+            connection.close()
+
+    def _sync(self, connection: sqlite3.Connection, records: list[SkillRecord]) -> dict:
+        if self._meta(connection, "embedding_model") not in (None, self.embedder.model) or self._meta(
+            connection, "schema_version"
         ) not in (None, schema_version):
-            self._connection.execute("DELETE FROM chunks")
-            self._connection.execute("DELETE FROM chunks_fts")
-            self._connection.execute("DELETE FROM skills")
+            connection.execute("DELETE FROM chunks")
+            connection.execute("DELETE FROM chunks_fts")
+            connection.execute("DELETE FROM skills")
 
         wanted_ids = {record.id for record in records}
-        for (skill_id,) in self._connection.execute("SELECT id FROM skills").fetchall():
+        for (skill_id,) in connection.execute("SELECT id FROM skills").fetchall():
             if skill_id not in wanted_ids:
-                self._delete_skill(skill_id)
+                self._delete_skill(connection, skill_id)
 
         embedded = 0
         for record in records:
@@ -155,41 +170,48 @@ class SkillIndex:
             hashes = [_content_hash(f"{section}\n{text}") for section, text in chunks]
             existing = {
                 row[0]
-                for row in self._connection.execute(
+                for row in connection.execute(
                     "SELECT content_hash FROM chunks WHERE skill_id = ?", (record.id,)
                 ).fetchall()
             }
             if existing != set(hashes):
-                self._delete_skill(record.id)
+                self._delete_skill(connection, record.id)
                 vectors = self.embedder.embed([text for _, text in chunks])
                 for (section, text), content_hash, vector in zip(chunks, hashes, vectors):
-                    cursor = self._connection.execute(
+                    cursor = connection.execute(
                         "INSERT INTO chunks (skill_id, section, text, content_hash, embedding) VALUES (?, ?, ?, ?, ?)",
                         (record.id, section, text, content_hash, np.asarray(vector, dtype=np.float32).tobytes()),
                     )
-                    self._connection.execute(
+                    connection.execute(
                         "INSERT INTO chunks_fts (chunk_id, skill_id, text) VALUES (?, ?, ?)",
                         (cursor.lastrowid, record.id, text),
                     )
                 embedded += len(chunks)
-            self._connection.execute(
+            connection.execute(
                 "INSERT INTO skills (id, enabled, version) VALUES (?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, version = excluded.version",
                 (record.id, int(record.enabled), record.version),
             )
 
-        self._set_meta("embedding_model", self.embedder.model)
-        self._set_meta("schema_version", schema_version)
-        self._connection.commit()
+        self._set_meta(connection, "embedding_model", self.embedder.model)
+        self._set_meta(connection, "schema_version", schema_version)
+        connection.commit()
         return {"skills": len(records), "chunks_embedded": embedded}
 
-    def _delete_skill(self, skill_id: str) -> None:
-        self._connection.execute("DELETE FROM chunks WHERE skill_id = ?", (skill_id,))
-        self._connection.execute("DELETE FROM chunks_fts WHERE skill_id = ?", (skill_id,))
-        self._connection.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
+    def _delete_skill(self, connection: sqlite3.Connection, skill_id: str) -> None:
+        connection.execute("DELETE FROM chunks WHERE skill_id = ?", (skill_id,))
+        connection.execute("DELETE FROM chunks_fts WHERE skill_id = ?", (skill_id,))
+        connection.execute("DELETE FROM skills WHERE id = ?", (skill_id,))
 
     def search(self, query: str, k: int = 5) -> list[dict]:
-        rows = self._connection.execute(
+        connection = self._connect()
+        try:
+            return self._search(connection, query, k)
+        finally:
+            connection.close()
+
+    def _search(self, connection: sqlite3.Connection, query: str, k: int) -> list[dict]:
+        rows = connection.execute(
             "SELECT c.id, c.skill_id, c.section, c.embedding FROM chunks c "
             "JOIN skills s ON s.id = c.skill_id WHERE s.enabled = 1"
         ).fetchall()
@@ -210,7 +232,7 @@ class SkillIndex:
         keyword_ranks = {}
         fts = _fts_query(query)
         if fts:
-            keyword_rows = self._connection.execute(
+            keyword_rows = connection.execute(
                 "SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?",
                 (fts, candidate_pool),
             ).fetchall()
@@ -238,13 +260,14 @@ class SkillIndex:
             results.append({"id": skill_id, "score": round(float(score), 6), "matched_section": section})
         return results
 
-    def close(self) -> None:
-        self._connection.close()
-
     def rebuild(self, records: list[SkillRecord]) -> dict:
-        self._connection.execute("DELETE FROM chunks")
-        self._connection.execute("DELETE FROM chunks_fts")
-        self._connection.execute("DELETE FROM skills")
-        self._connection.execute("DELETE FROM meta")
-        self._connection.commit()
+        connection = self._connect()
+        try:
+            connection.execute("DELETE FROM chunks")
+            connection.execute("DELETE FROM chunks_fts")
+            connection.execute("DELETE FROM skills")
+            connection.execute("DELETE FROM meta")
+            connection.commit()
+        finally:
+            connection.close()
         return self.sync(records)

@@ -51,10 +51,18 @@ class TestReplaceAll:
 
 
 class TestFrontmatter:
-    def test_frontmatter_supplies_name_and_description(self, tmp_path):
+    def test_the_synced_name_and_description_win_over_frontmatter(self, tmp_path):
+        store = SkillStore(tmp_path)
+        text = "---\nname: Frontmatter Name\ndescription: Frontmatter blurb.\n---\n# Steps"
+        store.replace_all([_payload("probe-alignment", text, name="GUI Name", description="GUI blurb.")])
+        record = store.read("probe-alignment")
+        assert record.name == "GUI Name"
+        assert record.description == "GUI blurb."
+
+    def test_frontmatter_supplies_name_and_description_when_the_sync_carries_none(self, tmp_path):
         store = SkillStore(tmp_path)
         text = "---\nname: Probe Alignment\ndescription: Align before acquiring.\n---\n# Steps"
-        store.replace_all([_payload("probe-alignment", text)])
+        store.replace_all([_payload("probe-alignment", text, name="", description="")])
         record = store.read("probe-alignment")
         assert record.name == "Probe Alignment"
         assert record.description == "Align before acquiring."
