@@ -261,6 +261,45 @@ class LLM(Device):
             return json.dumps({"error": {"message": str(e)}})
 
     @command(
+        dtype_in=str,
+        doc_in="JSON {'skill_ids': [...], 'task_hash': '...', 'success': true|false}",
+        dtype_out=str,
+        doc_out="JSON {'status': 'recorded', 'rows': n} or {'error': {'message': ...}}",
+    )
+    async def RecordSkillUsage(self, request_json: str) -> str:
+        """Log which skills a client-side run loaded and whether it succeeded."""
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            request = json.loads(request_json)
+            skill_ids = request.get("skill_ids") or []
+            if not isinstance(skill_ids, list) or not skill_ids:
+                return json.dumps({"error": {"message": "Send {'skill_ids': [...]} with at least one id."}})
+            rows = await asyncio.to_thread(
+                self._skills_service.record_usage,
+                skill_ids,
+                str(request.get("task_hash", "")),
+                bool(request.get("success")),
+            )
+            return json.dumps({"status": "recorded", "rows": rows})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
+
+    @command(
+        dtype_out=str,
+        doc_out="JSON {'skills': [{'id', 'name', 'enabled', 'loads', 'successes', 'failures', 'last_used_at'}, ...]}",
+    )
+    async def SkillUsageReport(self) -> str:
+        """Per-skill usage statistics for the GUI's skills-by-usage view."""
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            report = await asyncio.to_thread(self._skills_service.usage_report)
+            return json.dumps({"skills": report})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
+
+    @command(
         dtype_out=str,
         doc_out="JSON {'proposals': [{'id', 'name', 'content', 'created_at'}, ...]} or {'error': ...}",
     )

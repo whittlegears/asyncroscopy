@@ -26,6 +26,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from langgraph.graph import END, START, StateGraph
 
+from asyncroscopy.skills.usage import task_hash
+
 from .base import Agent, AgentBackend, BackendConfig
 from .reflection import (
     propose_skill_tool,
@@ -126,6 +128,7 @@ class LangGraphBackend(AgentBackend):
         self._mcp_clients: list[MultiServerMCPClient] = []
         self._run_tool_steps = 0
         self._run_trace: list[str] = []
+        self._run_skill_loads: list[str] = []
 
     async def initialize(self) -> None:
         model_name_clean = _clean_prop(self.config.model_name)
@@ -167,9 +170,28 @@ class LangGraphBackend(AgentBackend):
     async def query(self, prompt: str, max_steps: int) -> str:
         self._run_tool_steps = 0
         self._run_trace = []
+        self._run_skill_loads = []
         answer = await self._run_swarm(prompt, max_steps)
+        self._record_skill_usage(prompt, answer)
         await self._maybe_reflect(prompt, answer)
         return answer
+
+    def _record_skill_usage(self, prompt: str, answer: str) -> None:
+        """Log which skills this run loaded and whether it ended in an answer.
+
+        Feeds the capped usage prior in ranking and the GUI's pruning report.
+        Failures here are printed and swallowed — bookkeeping must never cost
+        an answer.
+        """
+        if self._skills_service is None or not self._run_skill_loads:
+            return
+        try:
+            success = bool(answer) and not answer.startswith("Swarm Error")
+            self._skills_service.record_usage(
+                self._run_skill_loads, task_hash(prompt), success
+            )
+        except Exception as exc:
+            print(f"[USAGE LOG ERROR]: {exc}")
 
     async def _maybe_reflect(self, prompt: str, answer: str) -> None:
         """One extra model turn after a heavy run: propose a skill draft, or nothing.
@@ -248,9 +270,12 @@ class LangGraphBackend(AgentBackend):
         def load_skill(skill_id: str) -> str:
             """Return the full text of one skill by its id."""
             try:
-                return service.load_skill(skill_id)
+                text = service.load_skill(skill_id)
             except KeyError as exc:
                 return str(exc)
+            if skill_id not in self._run_skill_loads:
+                self._run_skill_loads.append(skill_id)
+            return text
 
         self._tools.append(StructuredTool.from_function(find_skills))
         self._tools.append(StructuredTool.from_function(load_skill))
