@@ -5,7 +5,7 @@ import json
 import sys
 import types
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -121,6 +121,7 @@ def _make_llm(**kwargs) -> LLM:
     device.api_key = ""
     device.use_init_chat_model = False
     device.agent_backend = "langgraph"
+    device.mcp_url = kwargs.get("mcp_url", "")
     device.hermes_url = ""
     device.hermes_model = "hermes-agent"
     device.hermes_api_key = ""
@@ -593,3 +594,63 @@ class TestDeviceConnectMCP:
         device = _make_llm(backend=backend)
         result = asyncio.run(device.ConnectMCP(json.dumps({"url": "http://127.0.0.1:8000/mcp"})))
         assert result is False
+
+
+class TestSetBackend:
+    def _stub_backend(self, name="hermes", supports_connect_mcp=False):
+        backend = MagicMock()
+        backend.name = name
+        backend.supports_connect_mcp = supports_connect_mcp
+        backend.initialize = AsyncMock()
+        backend.connect_mcp = AsyncMock(return_value=2)
+        return backend
+
+    def test_same_name_is_a_no_op(self):
+        current = _make_backend()
+        device = _make_llm(backend=current)
+        with patch("asyncroscopy.mcp.llm.create_backend") as factory:
+            result = asyncio.run(device.SetBackend("langgraph"))
+        assert result is True
+        assert device._backend is current
+        factory.assert_not_called()
+
+    def test_successful_switch_replaces_the_backend(self):
+        current = _make_backend()
+        device = _make_llm(backend=current)
+        replacement = self._stub_backend()
+        with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
+            result = asyncio.run(device.SetBackend("hermes"))
+        assert result is True
+        assert device._backend is replacement
+        replacement.initialize.assert_awaited_once()
+
+    def test_failed_initialize_keeps_the_current_backend(self):
+        current = _make_backend()
+        device = _make_llm(backend=current)
+        replacement = self._stub_backend()
+        replacement.initialize = AsyncMock(side_effect=RuntimeError("gateway down"))
+        with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
+            result = asyncio.run(device.SetBackend("hermes"))
+        assert result is False
+        assert device._backend is current
+        status = device.set_status.call_args[0][0]
+        assert "gateway down" in status
+
+    def test_unknown_name_keeps_the_current_backend(self):
+        current = _make_backend()
+        device = _make_llm(backend=current)
+        with patch(
+            "asyncroscopy.mcp.llm.create_backend",
+            side_effect=RuntimeError("Unknown agent_backend 'nope'"),
+        ):
+            result = asyncio.run(device.SetBackend("nope"))
+        assert result is False
+        assert device._backend is current
+
+    def test_switch_reconnects_mcp_when_the_backend_supports_it(self):
+        device = _make_llm(backend=self._stub_backend(), mcp_url="http://127.0.0.1:8000/mcp")
+        replacement = self._stub_backend(name="langgraph", supports_connect_mcp=True)
+        with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
+            result = asyncio.run(device.SetBackend("LangGraph"))
+        assert result is True
+        replacement.connect_mcp.assert_awaited_once_with("http://127.0.0.1:8000/mcp", "streamable_http")

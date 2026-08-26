@@ -45,7 +45,18 @@ class LLM(Device):
             self._agents = [Agent(**json.loads(agent_json)) for agent_json in self.startup_agents]
             print(f"[SYSTEM]: Loaded startup agents: {self._agents}")
 
-        config = BackendConfig(
+        try:
+            self._backend = await self._start_backend(self.agent_backend)
+            print(f"[SYSTEM]: Using agent backend '{self._backend.name}'")
+            self.set_state(tango.DevState.ON)
+        except Exception as e:
+            self.set_state(tango.DevState.FAULT)
+            self.set_status(f"Initialization failed: {e}")
+            self.error_stream(f"Failed to start: {e}")
+
+    def _backend_config(self) -> BackendConfig:
+        """Snapshot the device properties a backend needs at creation time."""
+        return BackendConfig(
             model_name=self.model_name or "",
             model_provider=self.model_provider or "ollama",
             ollama_model=self.ollama_model or "",
@@ -58,21 +69,22 @@ class LLM(Device):
             hermes_api_key=self.hermes_api_key or "",
         )
 
-        try:
-            self._backend = create_backend(self.agent_backend, config, self._agents)
-            print(f"[SYSTEM]: Using agent backend '{self._backend.name}'")
-            await self._backend.initialize()
+    async def _start_backend(self, name: str):
+        """Build and initialize the named backend, connecting MCP before it goes live.
 
-            if self.mcp_url and self._backend.supports_connect_mcp:
-                mcp_config = json.dumps({"url": self.mcp_url, "transport": "streamable_http"})
-                if not await self.ConnectMCP(mcp_config):
-                    print(f"[SYSTEM]: Failed to connect to MCP Server at {self.mcp_url}.")
+        Raises on any failure, leaving ``self._backend`` untouched so the caller
+        decides whether the device keeps its current backend or goes FAULT.
+        """
+        backend = create_backend(name, self._backend_config(), self._agents)
+        await backend.initialize()
 
-            self.set_state(tango.DevState.ON)
-        except Exception as e:
-            self.set_state(tango.DevState.FAULT)
-            self.set_status(f"Initialization failed: {e}")
-            self.error_stream(f"Failed to start: {e}")
+        if self.mcp_url and backend.supports_connect_mcp:
+            try:
+                await backend.connect_mcp(self.mcp_url, "streamable_http")
+            except Exception as e:
+                print(f"[SYSTEM]: Failed to connect to MCP Server at {self.mcp_url}: {e}")
+
+        return backend
 
     def read_max_steps(self) -> int:
         return self._max_steps
@@ -138,6 +150,37 @@ class LLM(Device):
             return json.dumps({"message": message})
         except Exception as e:
             return json.dumps({"error": {"message": str(e)}})
+
+    @command(
+        dtype_in=str,
+        doc_in="Backend name: langgraph | hermes",
+        dtype_out=bool,
+        doc_out="True when the named backend is now live",
+    )
+    async def SetBackend(self, name: str) -> bool:
+        """Switch the agent backend at runtime.
+
+        The new backend is fully built, initialized and MCP-connected before it
+        replaces the old one, so a failed switch (an unreachable hermes gateway,
+        an unknown name) leaves the current backend running and returns False
+        with the reason in the device status.
+        """
+        normalized = (name or "").strip().lower()
+        if self._backend is not None and self._backend.name == normalized:
+            return True
+
+        self.set_state(tango.DevState.INIT)
+        try:
+            self._backend = await self._start_backend(normalized)
+            print(f"[SYSTEM]: Switched agent backend to '{self._backend.name}'")
+            self.set_status(f"Agent backend: {self._backend.name}")
+            return True
+        except Exception as e:
+            self.error_stream(f"Backend switch to '{name}' failed: {e}")
+            self.set_status(f"Backend switch to '{name}' failed: {e}")
+            return False
+        finally:
+            self.set_state(tango.DevState.ON if self._backend is not None else tango.DevState.FAULT)
 
     @command(
         dtype_in=str,
