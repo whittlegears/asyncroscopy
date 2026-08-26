@@ -49,6 +49,11 @@ class AgentBackend(ABC):
     def __init__(self, config: BackendConfig, agents: list[Agent]):
         self.config = config
         self.agents = agents
+        self._skills_service = None
+
+    def set_skills_service(self, service) -> None:
+        """Receive the device's skill store handle; backends override to grow tools from it."""
+        self._skills_service = service
 
     @abstractmethod
     async def initialize(self) -> None:

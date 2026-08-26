@@ -1,12 +1,15 @@
 """Tango device exposing a pluggable AI agent backend (langgraph or hermes) over Tango commands."""
 
+import asyncio
 import json
+from pathlib import Path
 
 import tango
 from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.mcp.backends import create_backend
 from asyncroscopy.mcp.backends.base import Agent, BackendConfig, BackendUnsupported
+from asyncroscopy.skills import SkillsService
 
 __all__ = ["Agent", "LLM"]
 
@@ -25,6 +28,8 @@ class LLM(Device):
     hermes_url = device_property(dtype=str, default_value="")
     hermes_model = device_property(dtype=str, default_value="hermes-agent")
     hermes_api_key = device_property(dtype=str, default_value="")
+    skills_dir = device_property(dtype=str, default_value="outputs/agent_skills")
+    embedding_model = device_property(dtype=str, default_value="nomic-embed-text")
 
     max_steps = attribute(label="Max Steps", dtype=int, access=tango.AttrWriteType.READ_WRITE)
     agents = attribute(dtype=(str,), max_dim_x=100)
@@ -44,6 +49,15 @@ class LLM(Device):
         if self.startup_agents:
             self._agents = [Agent(**json.loads(agent_json)) for agent_json in self.startup_agents]
             print(f"[SYSTEM]: Loaded startup agents: {self._agents}")
+
+        self._skills_service = None
+        self._skill_sync_buffers: dict[str, dict[int, list]] = {}
+        try:
+            self._skills_service = SkillsService.at(
+                Path(self.skills_dir), self.ollama_host, self.embedding_model
+            )
+        except Exception as e:
+            print(f"[SYSTEM]: Skill store unavailable: {e}")
 
         try:
             self._backend = await self._start_backend(self.agent_backend)
@@ -83,6 +97,9 @@ class LLM(Device):
                 await backend.connect_mcp(self.mcp_url, "streamable_http")
             except Exception as e:
                 print(f"[SYSTEM]: Failed to connect to MCP Server at {self.mcp_url}: {e}")
+
+        if self._skills_service is not None:
+            backend.set_skills_service(self._skills_service)
 
         return backend
 
@@ -182,6 +199,64 @@ class LLM(Device):
             return False
         finally:
             self.set_state(tango.DevState.ON if self._backend is not None else tango.DevState.FAULT)
+
+    @command(
+        dtype_in=str,
+        doc_in="Chunked skill sync envelope: {'version', 'sync_id', 'seq', 'total', 'skills': [...]}",
+        dtype_out=str,
+        doc_out="JSON {'status': 'applied'|'buffered', ...} or {'error': {'message': ...}}",
+    )
+    async def SyncSkills(self, payload_json: str) -> str:
+        """Replace the device's skill store with the GUI's skills and reindex.
+
+        Large payloads arrive as multiple calls sharing a sync_id; the full
+        replacement runs only once every chunk of the newest sync_id is here.
+        """
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            envelope = json.loads(payload_json)
+            sync_id = str(envelope.get("sync_id", "single"))
+            seq = int(envelope.get("seq", 0))
+            total = int(envelope.get("total", 1))
+            skills = envelope.get("skills") or []
+
+            if sync_id not in self._skill_sync_buffers:
+                self._skill_sync_buffers = {sync_id: {}}
+            self._skill_sync_buffers[sync_id][seq] = skills
+
+            received = self._skill_sync_buffers[sync_id]
+            if len(received) < total:
+                return json.dumps({"status": "buffered", "received": len(received), "of": total})
+
+            merged = [skill for _, chunk in sorted(received.items()) for skill in chunk]
+            self._skill_sync_buffers = {}
+            report = await asyncio.to_thread(self._skills_service.sync_from_payload, merged)
+            print(f"[SYSTEM]: Skill sync applied: {report}")
+            return json.dumps({"status": "applied", **report})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
+
+    @command(
+        dtype_in=str,
+        doc_in="JSON {'query': '...', 'k': 5}",
+        dtype_out=str,
+        doc_out="JSON {'results': [...]} or {'error': {'message': ...}}",
+    )
+    async def SearchSkills(self, request_json: str) -> str:
+        """Hybrid search over the synced skill store, refusing with the reason when it cannot run."""
+        if self._skills_service is None:
+            return json.dumps({"error": {"message": "The skill store is unavailable on this device."}})
+        try:
+            request = json.loads(request_json)
+            query = str(request.get("query", "")).strip()
+            if not query:
+                return json.dumps({"error": {"message": "No query given."}})
+            k = int(request.get("k", 5))
+            results = await asyncio.to_thread(self._skills_service.find_skills, query, k)
+            return json.dumps({"results": results})
+        except Exception as e:
+            return json.dumps({"error": {"message": str(e)}})
 
     @command(
         dtype_in=str,

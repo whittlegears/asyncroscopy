@@ -19,7 +19,7 @@ import json
 import re
 
 from langchain.chat_models import init_chat_model
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -179,6 +179,28 @@ class LangGraphBackend(AgentBackend):
 
     def tool_names(self) -> list[str]:
         return [t.name for t in self._tools]
+
+    def set_skills_service(self, service) -> None:
+        """Wrap the skill store as find_skills / load_skill tools every agent can use."""
+        super().set_skills_service(service)
+        self._tools = [t for t in self._tools if t.name not in ("find_skills", "load_skill")]
+
+        def find_skills(query: str, k: int = 5) -> str:
+            """Search the operator's skill library by meaning and keyword; returns ranked skill ids."""
+            try:
+                return json.dumps(service.find_skills(query, k))
+            except Exception as exc:
+                return f"Skill search is unavailable: {exc}"
+
+        def load_skill(skill_id: str) -> str:
+            """Return the full text of one skill by its id."""
+            try:
+                return service.load_skill(skill_id)
+            except KeyError as exc:
+                return str(exc)
+
+        self._tools.append(StructuredTool.from_function(find_skills))
+        self._tools.append(StructuredTool.from_function(load_skill))
 
     @staticmethod
     def _openai_messages_to_langchain(messages: list[dict]) -> list[BaseMessage]:

@@ -40,6 +40,17 @@ def setup_llm_stubs():
     langchain_core = types.ModuleType("langchain_core")
     lc_tools = types.ModuleType("langchain_core.tools")
     lc_tools.BaseTool = type("BaseTool", (), {})
+
+    class _StubStructuredTool:
+        def __init__(self, func):
+            self.name = func.__name__
+            self.func = func
+
+        @staticmethod
+        def from_function(func):
+            return _StubStructuredTool(func)
+
+    lc_tools.StructuredTool = _StubStructuredTool
     lc_messages = types.ModuleType("langchain_core.messages")
     lc_messages.BaseMessage = base_msg_cls
     lc_messages.HumanMessage = human_msg_cls
@@ -125,6 +136,10 @@ def _make_llm(**kwargs) -> LLM:
     device.hermes_url = ""
     device.hermes_model = "hermes-agent"
     device.hermes_api_key = ""
+    device.skills_dir = kwargs.get("skills_dir", "outputs/agent_skills")
+    device.embedding_model = "stub-embed"
+    device._skills_service = kwargs.get("skills_service", None)
+    device._skill_sync_buffers = {}
 
     # Mock C++ Tango logging methods that would otherwise segfault
     # when called on an uninitialized C++ object
@@ -656,3 +671,92 @@ class TestSetBackend:
             result = asyncio.run(device.SetBackend("LangGraph"))
         assert result is True
         replacement.connect_mcp.assert_awaited_once_with("http://127.0.0.1:8000/mcp", "streamable_http")
+
+
+class TestSkillTools:
+    def test_set_skills_service_adds_find_and_load_tools(self):
+        backend = _make_backend()
+        backend.set_skills_service(MagicMock())
+        assert "find_skills" in backend.tool_names()
+        assert "load_skill" in backend.tool_names()
+
+    def test_skill_tools_are_absent_without_a_service(self):
+        assert _make_backend().tool_names() == []
+
+    def test_resetting_the_service_does_not_duplicate_tools(self):
+        backend = _make_backend()
+        backend.set_skills_service(MagicMock())
+        backend.set_skills_service(MagicMock())
+        assert backend.tool_names().count("find_skills") == 1
+
+    def test_find_skills_tool_reports_unavailability_honestly(self):
+        backend = _make_backend()
+        service = MagicMock()
+        service.find_skills.side_effect = RuntimeError("index empty")
+        backend.set_skills_service(service)
+        tool = next(t for t in backend._tools if t.name == "find_skills")
+        assert "index empty" in tool.func("focus the probe")
+
+
+class TestDeviceSkillCommands:
+    def _service(self, **kwargs):
+        service = MagicMock()
+        service.sync_from_payload.return_value = kwargs.get(
+            "report", {"written": 1, "removed": 0, "skills": 1, "chunks_embedded": 3}
+        )
+        service.find_skills.return_value = kwargs.get(
+            "results", [{"id": "probe-alignment", "score": 0.5}]
+        )
+        return service
+
+    def test_sync_skills_applies_a_single_chunk_payload(self):
+        service = self._service()
+        device = _make_llm(skills_service=service)
+        body = json.dumps({"version": 1, "sync_id": "s1", "seq": 0, "total": 1, "skills": [{"id": "a"}]})
+        result = json.loads(asyncio.run(device.SyncSkills(body)))
+        assert result["status"] == "applied"
+        assert result["chunks_embedded"] == 3
+        service.sync_from_payload.assert_called_once_with([{"id": "a"}])
+
+    def test_sync_skills_reassembles_a_chunked_envelope(self):
+        service = self._service()
+        device = _make_llm(skills_service=service)
+        first = json.loads(asyncio.run(device.SyncSkills(
+            json.dumps({"sync_id": "s2", "seq": 1, "total": 2, "skills": [{"id": "b"}]})
+        )))
+        assert first == {"status": "buffered", "received": 1, "of": 2}
+        second = json.loads(asyncio.run(device.SyncSkills(
+            json.dumps({"sync_id": "s2", "seq": 0, "total": 2, "skills": [{"id": "a"}]})
+        )))
+        assert second["status"] == "applied"
+        service.sync_from_payload.assert_called_once_with([{"id": "a"}, {"id": "b"}])
+
+    def test_sync_skills_reports_errors_as_json(self):
+        service = self._service()
+        service.sync_from_payload.side_effect = RuntimeError("disk full")
+        device = _make_llm(skills_service=service)
+        body = json.dumps({"sync_id": "s3", "seq": 0, "total": 1, "skills": []})
+        result = json.loads(asyncio.run(device.SyncSkills(body)))
+        assert "disk full" in result["error"]["message"]
+
+    def test_sync_without_a_service_reports_unavailable(self):
+        device = _make_llm()
+        result = json.loads(asyncio.run(device.SyncSkills(json.dumps({"skills": []}))))
+        assert "unavailable" in result["error"]["message"]
+
+    def test_search_skills_returns_results(self):
+        device = _make_llm(skills_service=self._service())
+        result = json.loads(asyncio.run(device.SearchSkills(json.dumps({"query": "focus"}))))
+        assert result["results"][0]["id"] == "probe-alignment"
+
+    def test_search_skills_relays_the_index_refusal(self):
+        service = self._service()
+        service.find_skills.side_effect = RuntimeError("embedding model not reachable")
+        device = _make_llm(skills_service=service)
+        result = json.loads(asyncio.run(device.SearchSkills(json.dumps({"query": "focus"}))))
+        assert "not reachable" in result["error"]["message"]
+
+    def test_search_skills_without_a_query_is_an_error(self):
+        device = _make_llm(skills_service=self._service())
+        result = json.loads(asyncio.run(device.SearchSkills(json.dumps({}))))
+        assert "query" in result["error"]["message"].lower()

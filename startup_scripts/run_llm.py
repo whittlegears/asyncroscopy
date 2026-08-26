@@ -41,6 +41,8 @@ class LLMConfig:
     hermes_url: str | None = None
     hermes_model: str | None = None
     hermes_api_key: str | None = None
+    skills_dir: str | None = None
+    embedding_model: str | None = None
     startup_agents: list[dict] | None = None
 
     def __post_init__(self):
