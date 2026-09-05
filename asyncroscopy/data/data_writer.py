@@ -51,6 +51,17 @@ def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
         tifffile.imwrite(str(path), np.asarray(array), description=json.dumps(attrs) if attrs else None)
 
 
+def device_metadata(device) -> dict:
+    """Instrument-state snapshot the device offers for every acquisition, if any."""
+    snapshot = getattr(device, "acquisition_metadata", None)
+    if not callable(snapshot):
+        return {}
+    try:
+        return dict(snapshot() or {})
+    except Exception:
+        return {}
+
+
 def save_acquisition(
     device,
     data_server,
@@ -64,8 +75,13 @@ def save_acquisition(
 ) -> str:
     """Save one acquisition and return its DATA/Tiled key.
 
-    ``.h5`` writes all detectors into one stacked file; ``.tiff`` writes one
-    file per detector sharing a timestamp (TIFF cannot stack), registering each.
+    ``.h5`` writes all detectors into one stacked file and returns one key;
+    ``.tiff`` writes one file per detector sharing a timestamp (TIFF cannot
+    stack), registers each, and returns a JSON list of their keys.
+
+    File-level attributes are ``device.acquisition_metadata()`` (instrument
+    state at acquisition time) overlaid with ``file_attrs``; Tiled exposes
+    them as the node's metadata.
     """
     if output_format not in (".h5", ".tiff"):
         raise ValueError(f"Unsupported output_format {output_format!r}; expected '.h5' or '.tiff'")
@@ -74,18 +90,20 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
+    file_attrs = {**device_metadata(device), "acquisition_type": acquisition_type, **(file_attrs or {})}
 
     if output_format == ".tiff":
         save_dir = data_server.save_path if data_server is not None else DEFAULT_ACQUISITION_DIR
         directory = Path(save_dir).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
         stem = f"{acquisition_type}_{datetime.now().strftime('%Y%m%dT%H%M%S%f')}"
+        keys = []
         for index, (source, detector) in enumerate(zip(data_list, detector_list)):
             path = directory / f"{stem}_{detector}.tiff"
-            _write_tiff(source, path, attrs_list[index])
-            if data_server is not None:
-                data_server.register_path(str(path))
-        return stem
+            attrs = {**file_attrs, "detector": str(detector), **(attrs_list[index] or {})}
+            _write_tiff(source, path, attrs)
+            keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
+        return json.dumps(keys)
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
     detector_label = "_".join([str(detector) for detector in detector_list])

@@ -27,8 +27,30 @@ What a command returns — and how you read it back — depends on the format:
 - **`.h5`** (default): returns one Tiled key, read nested.
   `client[key]["image"]["HAADF"]` (one sub-dataset per detector), `["spectrum"]`,
   or `["stem_data"]`; single camera frames use `image`.
-- **`.tiff`**: returns a shared *stem*. Rebuild one key per detector as
-  `client[f"{stem}_{DET}.tiff"]`; `.read()` returns the array directly (no nesting).
+- **`.tiff`**: returns a JSON list with one key per detector, e.g.
+  `["stem_image_<stamp>_HAADF.tiff", "stem_image_<stamp>_BF-S.tiff"]`;
+  `client[key].read()` returns the array directly (no nesting).
+
+## Acquisition metadata
+
+Every file carries the instrument state at acquisition time as root attributes
+(Tiled node metadata), taken from `ElectronMicroscope.acquisition_metadata()`:
+`instrument_class`, `device_name`, `acquisition_time`, `acquisition_id`,
+`stem_mode`, `stage_{x,y,z,alpha,beta}`, `defocus_m`, `fov_m`,
+`image_shift_{x,y}_m`, `beam_tilt_{x,y}_rad`, and the detector device settings
+prefixed by device (`scan_dwell_time`, `scan_imsize`, `scan_scan_region`,
+`camera_exposure_time`, `eds_exposure_time`, ...). Entries a backend cannot read
+are omitted; a `file_attrs` argument to `save_acquisition` overlays them.
+For TIFF the same dict is json-encoded into the `ImageDescription` tag.
+
+CORRECTOR archives `acquire_tableau` and `measure_c1a1` results to Tiled when
+its `data_device_address` property is set (`tableau_corrector_*.h5`,
+`c1a1_corrector_*.h5`, dataset `coefficients` with the CEOS result as a
+json-encoded `result` attribute); the command return values are unchanged and
+`get_last_archived_key` gives the key.
+
+Through MCP, `list_acquisitions(acquisition_type, since, limit)` lists recent
+keys with this metadata and `get_data_from_key(key)` describes one.
 
 ## Notebook setup
 
@@ -49,18 +71,21 @@ data.save_path = "/path/served/by/tiled"
 
 Changing `data.save_path` creates the directory and restarts a DATA-managed
 Tiled HTTP server. Each acquisition is registered explicitly after it is
-written; DATA does not run a filesystem watcher. `startup_scripts/run_servers.py` sets
+written; DATA does not run a filesystem watcher. If no Tiled server is
+reachable the file is still saved and its key returned (the digital twin runs
+without Tiled); `get_config()["tiled_server_status"]` counts the unregistered
+files and `register_save_path` registers them once a server is up. `startup_scripts/run_servers.py` sets
 the extended Tango timeout automatically.
 
 Acquire as usual. With the default `.h5` the return value is the Tiled key; with
-`.tiff` it is the shared stem (see the format contract above):
+`.tiff` it is a JSON list of keys (see the format contract above):
 
 ```python
 key = mic.acquire_scanned_image(["HAADF", "BF-S"])   # .h5  → client[key]["image"]["HAADF"]
-# scan.output_format = ".tiff"                        # .tiff → client[f"{key}_HAADF.tiff"].read()
+# scan.output_format = ".tiff"                        # .tiff → client[json.loads(keys)[0]].read()
 
 camera_key = mic.acquire_camera_image()               # .h5  → client[camera_key]["image"]
-# camera.output_format = ".tiff"                      # .tiff → client[f"{stem}_BM-Ceta.tiff"].read()
+# camera.output_format = ".tiff"                      # .tiff → client[json.loads(keys)[0]].read()
 
 # Select Flucam through the same CAMERA device and acquisition command:
 # camera.camera_detector = "Flucam"
@@ -90,10 +115,39 @@ during shutdown.
 
 ## Direct Tiled access
 
-We currently access the server in the notebook like this:
+`asyncroscopy.data.tiled_client` is the one place that knows the URI and API
+key; every reader (DATA device, MCP bridge, instrument devices) goes through it.
 
-from tiled.client import from_uri
+```python
+from asyncroscopy.data.tiled_client import open_client, list_acquisitions
 
-client = from_uri("http://10.46.217.241:9091")
+client = open_client("http://10.46.217.241:9091")
+list(client)                                   # keys
+list_acquisitions(client, "stem_image", limit=5)  # newest first, with metadata
+```
 
-list(client) # should print out some folders and files
+Environment: `ASYNCROSCOPY_TILED_URI` (default `http://10.46.217.241:9091`),
+`ASYNCROSCOPY_TILED_API_KEY` (default `secret`, must match the key the DATA
+device starts the server with), `ASYNCROSCOPY_ACQUISITION_DIR`.
+
+GUIs and the LLM never use Tango for data: the LLM reads previews through the
+MCP tools above, and a GUI reads arrays straight from the Tiled HTTP server
+using the URI from the `DATA_get_config` tool.
+
+## Browser access
+
+A web GUI needs no client library; Tiled's REST API serves everything:
+
+| Need | Request |
+|---|---|
+| acquisitions with metadata | `GET /api/v1/search/?fields=metadata&fields=structure_family&page[limit]=200` (sort client-side by the timestamp in the key) |
+| filter by metadata | `GET /api/v1/search/?filter[eq][condition][key]=instrument_class&filter[eq][condition][value]="DigitalTwin"` |
+| one key's metadata | `GET /api/v1/metadata/<key>` |
+| datasets under a key | `GET /api/v1/search/<key>` (nested: `/search/<key>/image`) |
+| image as PNG | `GET /api/v1/array/full/<key>/image/HAADF?format=image/png` |
+| raw values | `GET /api/v1/array/full/<key>/spectrum?format=application/json` |
+
+The managed Tiled server only answers cross-origin requests from
+`ASYNCROSCOPY_TILED_ALLOW_ORIGINS` (space or comma separated; default is the
+loopback SciAgentGUI dev origins, the same list the MCP bridge allows).
+`DATA_get_config` reports the active list as `allow_origins`.

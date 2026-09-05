@@ -32,6 +32,10 @@ from startup_guis.qt_compat import (  # noqa: E402
     app_exec,
 )
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, GENERATED_CONFIG_DIR, TITLE_FONT, CheckBox, CollapsibleSection, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, write_yaml  # noqa: E402
+# The GUI is a front-end for startup_scripts/run_servers.py: it launches that
+# script and validates generated configs with the script's own loader, so the
+# script stays the single source of truth for what a valid config is.
+from startup_scripts import run_servers  # noqa: E402
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'DigitalTwin.yaml'
@@ -53,7 +57,21 @@ INSTRUMENT_FILES = [
 ] 
 
 
-def project_path_text(path: Path | str) -> str: 
+def is_server_config(path: Path) -> bool:
+    """True when a YAML file looks like a run_servers config.
+
+    configs/ also holds MCP and LLM configs; loading one of those here used to
+    leave the GUI with no 'instrument' section, so the Start/Save buttons
+    crashed with a KeyError instead of doing anything.
+    """
+    try:
+        config = load_yaml(Path(path))
+    except Exception:
+        return False
+    return isinstance(config, dict) and 'instrument' in config and 'devices' in config
+
+
+def project_path_text(path: Path | str) -> str:
     path = Path(path) 
     if path.is_absolute(): 
         try: 
@@ -224,7 +242,11 @@ class ServerGui(QMainWindow):
         layout.addLayout(actions)
         layout.addStretch()
 
-        config_files = sorted([p.name for p in CONFIG_DIR.glob('*.yaml')] + [p.name for p in CONFIG_DIR.glob('*.yml')])
+        config_files = sorted(
+            p.name
+            for p in list(CONFIG_DIR.glob('*.yaml')) + list(CONFIG_DIR.glob('*.yml'))
+            if is_server_config(p)
+        )
         self.config_combo.addItems(config_files)
         self.config_combo.setCurrentText(DEFAULT_CONFIG_PATH.name)
         self.config_combo.currentTextChanged.connect(self.config_changed)
@@ -298,8 +320,9 @@ class ServerGui(QMainWindow):
         widget.setText(text) 
 
     def current_config(self) -> dict:
+        default_instrument = self.default_config.get('instrument', {})
         values = {
-            'instrument_file': project_path_text(self.default_config['instrument'].get('file', INSTRUMENT_FILES[0])),
+            'instrument_file': project_path_text(default_instrument.get('file', INSTRUMENT_FILES[0])),
             'hardware_host': self.input_text('hardware_host'),
             'hardware_port': self.input_text('hardware_port'), 
             'hardware_timeout_seconds': self.input_text('hardware_timeout_seconds'), 
@@ -312,11 +335,11 @@ class ServerGui(QMainWindow):
             'tiled_autostart': self.inputs['tiled_autostart'].isChecked(), 
             'tiled_register_on_startup': self.inputs['tiled_register_on_startup'].isChecked(), 
             'device_timeout_seconds': self.input_text('device_timeout_seconds'), 
-            'enabled_devices': {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}, 
-            'devices': {key: self.device_config.get(key, {'module_name': DEVICE_MODULES[key]}) for key in DEVICE_MODULES}, 
-            'instrument': self.default_config['instrument'], 
-        } 
-        return server_config_from_values(values) 
+            'enabled_devices': {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()},
+            'devices': {key: self.device_config.get(key, {'module_name': DEVICE_MODULES[key]}) for key in DEVICE_MODULES},
+            'instrument': default_instrument,
+        }
+        return server_config_from_values(values)
 
     def refresh_yaml(self) -> None: 
         pass 
@@ -331,9 +354,14 @@ class ServerGui(QMainWindow):
         if filename: 
             self.load_config_from_path(CONFIG_DIR / filename) 
 
-    def load_config_from_path(self, path: Path | str) -> None: 
-        config = load_yaml(Path(path)) 
-        self.default_config = config 
+    def load_config_from_path(self, path: Path | str) -> None:
+        if not is_server_config(Path(path)):
+            self.enqueue_output(
+                f"Not a server config (missing 'instrument'/'devices' sections): {path}\n"
+            )
+            return
+        config = load_yaml(Path(path))
+        self.default_config = config
         self.device_config = config.get('devices', {}) 
         instrument = config.get('instrument', {})
         tango = config.get('tango', {})
@@ -366,9 +394,16 @@ class ServerGui(QMainWindow):
             return 
         self.load_config_from_path(path) 
 
-    def start(self) -> None: 
-        config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config()) 
-        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_servers.py', '--yaml', str(config_path)]) 
+    def start(self) -> None:
+        config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config())
+        # Validate with run_servers' own loader before launching, so a bad
+        # config fails here with a readable message instead of a dead process.
+        try:
+            run_servers.load_config(Path(config_path))
+        except Exception as exc:
+            self.enqueue_output(f'Config error (not starting): {exc}\n')
+            return
+        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_servers.py', '--yaml', str(config_path)])
 
     def enqueue_output(self, text: str) -> None: 
         append_terminal_text(self.output, text) 

@@ -10,6 +10,7 @@ from tango.server import Device, attribute, command, device_property
 from asyncroscopy.mcp.backends import create_backend
 from asyncroscopy.mcp.backends.base import Agent, BackendConfig, BackendUnsupported
 from asyncroscopy.skills import SkillsService
+from asyncroscopy.skills.hermes_bridge import export_skills, resolve_hermes_home
 
 __all__ = ["Agent", "LLM"]
 
@@ -31,6 +32,9 @@ class LLM(Device):
     hermes_url = device_property(dtype=str, default_value="http://127.0.0.1:8642")
     hermes_model = device_property(dtype=str, default_value="hermes-agent")
     hermes_api_key = device_property(dtype=str, default_value="")
+    # Hermes install root for the skills round-trip and gateway MCP registration.
+    # Empty = resolve from HERMES_HOME, then ~/.hermes.
+    hermes_home = device_property(dtype=str, default_value="")
     skills_dir = device_property(dtype=str, default_value="outputs/agent_skills")
     embedding_model = device_property(dtype=str, default_value="nomic-embed-text")
     reflection_min_tool_steps = device_property(dtype=int, default_value=4)
@@ -40,6 +44,7 @@ class LLM(Device):
     tools = attribute(dtype=str)
     backend = attribute(dtype=str)
     backend_capabilities = attribute(dtype=str)
+    last_trace = attribute(dtype=str)
 
     green_mode = tango.GreenMode.Asyncio
 
@@ -63,13 +68,17 @@ class LLM(Device):
         except Exception as e:
             print(f"[SYSTEM]: Skill store unavailable: {e}")
 
+        # Seed the Hermes skill library from the store on every restart.
+        await asyncio.to_thread(self._export_skills_to_hermes)
+
         try:
             self._backend = await self._start_backend(self.agent_backend)
             print(f"[SYSTEM]: Using agent backend '{self._backend.name}'")
+            self.set_status(f"Agent backend: {self._backend.name}")
             self.set_state(tango.DevState.ON)
         except Exception as e:
             self.set_state(tango.DevState.FAULT)
-            self.set_status(f"Initialization failed: {e}")
+            self.set_status(f"Initialization of agent backend '{self.agent_backend}' failed: {e}")
             self.error_stream(f"Failed to start: {e}")
 
     def _backend_config(self) -> BackendConfig:
@@ -85,6 +94,7 @@ class LLM(Device):
             hermes_url=self.hermes_url or "",
             hermes_model=self.hermes_model or "hermes-agent",
             hermes_api_key=self.hermes_api_key or "",
+            hermes_home=self.hermes_home or "",
             reflection_min_tool_steps=int(self.reflection_min_tool_steps),
         )
 
@@ -138,16 +148,56 @@ class LLM(Device):
             raise RuntimeError("No agent backend initialized.")
         return json.dumps(self._backend.capabilities())
 
+    def read_last_trace(self) -> str:
+        """JSON list of the most recent Query's tool calls and results, oldest first.
+
+        Empty for backends whose agent loop runs out-of-process (hermes), and
+        before the first query.
+        """
+        if self._backend is None:
+            return json.dumps([])
+        return json.dumps(self._backend.last_trace())
+
+
+    def _export_skills_to_hermes(self) -> dict | None:
+        """Mirror the enabled store skills into the Hermes skill library, if one exists."""
+        if self._skills_service is None:
+            return None
+        try:
+            home = resolve_hermes_home(self.hermes_home)
+            if home is None or not (home / "skills").is_dir():
+                return None
+            report = export_skills(self._skills_service.store.list_skills(), home / "skills")
+            print(f"[SYSTEM]: Exported skills to Hermes at {home / 'skills'}: {report}")
+            return report
+        except Exception as e:
+            print(f"[SYSTEM]: Hermes skill export failed: {e}")
+            return {"error": str(e)}
+
+    @staticmethod
+    def _latin1_safe(text: str) -> str:
+        """Tango DEV_STRING is Latin-1; unencodable chars crash the reply."""
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
+    def _no_backend_message(self) -> str:
+        """One clear sentence for callers when no backend survived initialization."""
+        return (
+            "No agent backend is initialized (device is FAULT). "
+            f"{self.get_status()} "
+            "Fix the backend (e.g. start the Hermes gateway) and use SetBackend to retry."
+        )
 
     @command(dtype_in=str, dtype_out=str)
     async def Query(self, prompt: str) -> str:
         """Query the agent backend with a prompt, returning the final response."""
+        if self._backend is None:
+            return self._no_backend_message()
         self.set_state(tango.DevState.RUNNING)
         try:
-            return await self._backend.query(prompt, self._max_steps)
+            return self._latin1_safe(await self._backend.query(prompt, self._max_steps))
         except Exception as e:
             print(f"\n[CRITICAL ERROR]: {e}")
-            return str(e)
+            return self._latin1_safe(str(e))
         finally:
             self.set_state(tango.DevState.ON)
 
@@ -167,6 +217,8 @@ class LLM(Device):
         turn (hermes) return an error payload here; callers should consult the
         backend_capabilities attribute and fall back to Query.
         """
+        if self._backend is None:
+            return json.dumps({"error": {"message": self._no_backend_message()}})
         try:
             request = json.loads(request_json)
             message = await self._backend.complete(request)
@@ -238,6 +290,9 @@ class LLM(Device):
             merged = [skill for _, chunk in sorted(received.items()) for skill in chunk]
             self._skill_sync_buffers = {}
             report = await asyncio.to_thread(self._skills_service.sync_from_payload, merged)
+            hermes_report = await asyncio.to_thread(self._export_skills_to_hermes)
+            if hermes_report is not None:
+                report["hermes_export"] = hermes_report
             print(f"[SYSTEM]: Skill sync applied: {report}")
             return json.dumps({"status": "applied", **report})
         except Exception as e:
@@ -345,6 +400,9 @@ class LLM(Device):
     )
     async def ConnectMCP(self, config: str) -> bool:
         """Connect to an MCP server and inherit its tools. Returns true for success."""
+        if self._backend is None:
+            self.error_stream(self._no_backend_message())
+            return False
         try:
             args = json.loads(config)
             url = args.get("url")

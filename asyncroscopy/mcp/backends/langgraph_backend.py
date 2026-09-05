@@ -256,6 +256,10 @@ class LangGraphBackend(AgentBackend):
     def tool_names(self) -> list[str]:
         return [t.name for t in self._tools]
 
+    def last_trace(self) -> list[str]:
+        """The tool calls and results recorded during the most recent query."""
+        return list(self._run_trace)
+
     def set_skills_service(self, service) -> None:
         """Wrap the skill store as find_skills / load_skill tools every agent can use."""
         super().set_skills_service(service)

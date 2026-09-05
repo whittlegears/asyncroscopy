@@ -675,7 +675,7 @@ class DigitalTwinBeta(ElectronMicroscope):
             'projected_thickness': projected_thickness_ang,  # (nx, ny) – Å of material
         }
 
-    def _acquire_spectrum(self, detector_name: str, exposure_time: float):
+    def _simulate_spectrum(self, detector_name: str, exposure_time: float) -> dict[str, float]:
         px, py = self.read_beam_pos()   # fractional [0, 1]
         px_pix = px * self._imsize
         py_pix = py * self._imsize
@@ -686,10 +686,24 @@ class DigitalTwinBeta(ElectronMicroscope):
             if (px_pix - cx)**2 + (py_pix - cy)**2 <= r**2:
                 raw   = {el: frac for el, frac in rec['composition'].items()}
                 total = sum(raw.values())
-                return json.dumps({el: v / total + np.random.normal(0.01, 0.1) for el, v in raw.items()})
+                return {el: float(v / total + np.random.normal(0.01, 0.1)) for el, v in raw.items()}
 
-        all_elements = {el for rec in self._particle_records for el in rec['composition']}
-        return json.dumps({el: np.abs(np.random.normal(0, 0.05)) for el in all_elements})
+        all_elements = sorted({el for rec in self._particle_records for el in rec['composition']})
+        return {el: float(np.abs(np.random.normal(0, 0.05))) for el in all_elements}
+
+    def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
+        """Simulate a spectrum, save it through the DATA device, and return its Tiled key."""
+        spectrum = self._simulate_spectrum(detector_name, exposure_time)
+        data_server = self._detector_proxies.get("data")
+        return save_acquisition(
+            self,
+            data_server,
+            "spectrum",
+            detector_name,
+            np.array(list(spectrum.values()), dtype=np.float64),
+            dataset_name="spectrum",
+            dataset_attrs={"elements": list(spectrum.keys())},
+        )
 
 
     def _place_beam(self, position) -> None:

@@ -91,6 +91,7 @@ class TestDigitalTwin:
         assert parameters["spectrum_detectors"] == ["eds"]
         assert "BM-Ceta" in parameters["camera_detectors"]
         assert "scan" in parameters["device_proxies"]
+        assert "corrector" in parameters["device_proxies"]
         assert "detectors" not in parameters, "device roles must not be published as detectors"
 
     def test_get_image_returns_saved_hdf5(self, twin_proxy: tango.DeviceProxy, scan_proxy: tango.DeviceProxy):
@@ -106,6 +107,30 @@ class TestDigitalTwin:
             assert image.shape == (32, 32)
             assert h5["image/HAADF"].attrs["acquisition_type"] == "stem_image"
             assert h5["image/HAADF"].attrs["detector"] == "HAADF"
+
+    def test_acquire_scanned_image_rejects_unknown_detector(
+        self, twin_proxy: tango.DeviceProxy, scan_proxy: tango.DeviceProxy
+    ):
+        # Observed live: an agent passed 'STEM' (a mode, not a detector) and got
+        # an opaque AutoScript server error. The device must reject unknown
+        # names itself with the valid vocabulary in the message.
+        scan_proxy.imsize = 32
+        scan_proxy.dwell_time = 1e-6
+
+        with pytest.raises(tango.DevFailed) as excinfo:
+            twin_proxy.acquire_scanned_image(["STEM"])
+        message = str(excinfo.value)
+        assert "STEM" in message
+        assert "HAADF" in message
+
+    def test_acquire_scanned_image_accepts_underscore_alias(
+        self, twin_proxy: tango.DeviceProxy, scan_proxy: tango.DeviceProxy
+    ):
+        scan_proxy.imsize = 32
+        scan_proxy.dwell_time = 1e-6
+
+        with h5py.File(twin_proxy.acquire_scanned_image(["bf_s"]), "r") as h5:
+            assert h5["image/BF-S"][()].shape == (32, 32)
 
     def test_stage_navigation_changes_and_restores_view(
         self,

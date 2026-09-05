@@ -209,6 +209,8 @@ def tango_ctx(data_save_dir):
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/default",
                         "data_device_address": "asyncroscopy/data/default",
+                        "aperture_device_address": "asyncroscopy/aperture/default",
+                        "corrector_device_address": "asyncroscopy/corrector/default",
                     },
                 }
             ],

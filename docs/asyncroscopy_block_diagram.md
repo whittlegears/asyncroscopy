@@ -66,11 +66,14 @@ end
 
 %% Edges
 UI --> LLM
+UI --> MCP
+UI --> TiledServer
 UI --> Notebook
 UI --> Script
 
 LLM --> MCP
 MCP --> Tango
+MCP --> TiledServer
 Notebook --> Tango
 Script --> Tango
 

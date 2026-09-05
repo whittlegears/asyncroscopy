@@ -43,6 +43,9 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.set_state(tango.DevState.INIT)
+        # Cached so acquisition metadata never calls into the C++ device layer
+        # (which is unsafe on instances tests build with __new__).
+        self._tango_device_name = self.get_name()
 
         self._init_device_attributes()
         self._connect()

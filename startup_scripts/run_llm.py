@@ -41,6 +41,7 @@ class LLMConfig:
     hermes_url: str | None = None
     hermes_model: str | None = None
     hermes_api_key: str | None = None
+    hermes_home: str | None = None
     skills_dir: str | None = None
     embedding_model: str | None = None
     startup_agents: list[dict] | None = None
@@ -159,6 +160,9 @@ def main(argv: list[str] | None = None) -> int:
     tango_host = f'{config.tango.host}:{config.tango.port}'
     os.environ['TANGO_HOST'] = tango_host
 
+    backend = config.agent_backend or 'langgraph'
+    print(f"{'=' * 60}\n[SYSTEM]: Config: {args.yaml}\n[SYSTEM]: Agent backend: {backend}\n{'=' * 60}")
+
     register_device(config)
     
     command = ["uv", "run", "--extra", "agent", "--extra", "ollama", "python", "-m", "asyncroscopy.mcp.llm", INSTANCE_NAME]
@@ -192,14 +196,14 @@ def main(argv: list[str] | None = None) -> int:
                         break
                     elif state == tango.DevState.FAULT:
                         print(f"Device initialization failed. Status: {proxy.status()}")
-                        return
+                        return 1
                 except Exception:
                     proxy = None
-                
+
                 time.sleep(1)
             else:
                 print("Timeout waiting for device to initialize.")
-                return
+                return 1
 
             if args.interactive:
                 print("Entering interactive mode. Type 'exit' to quit.")
@@ -222,9 +226,11 @@ def main(argv: list[str] | None = None) -> int:
                     except subprocess.TimeoutExpired:
                         pass    
 
-    except KeyboardInterrupt:    
+    except KeyboardInterrupt:
         print("\nShutting down server...")
         return 0
 
+    return 0
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

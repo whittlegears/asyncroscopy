@@ -32,13 +32,30 @@ Client-side example::
 import json
 import logging
 import socket
+from datetime import datetime
 from typing import Optional
 
+import numpy as np
 import tango
 from tango import AttrWriteType, DevState, DevEncoded, DevString
 from tango.server import Device, attribute, command, device_property
 
+from asyncroscopy.data.data_writer import save_acquisition
+
 log = logging.getLogger("CEOS_corrector")
+
+
+def _numeric_leaves(obj) -> list[float]:
+    """Flatten every number in a nested JSON structure, in document order."""
+    if isinstance(obj, bool):
+        return []
+    if isinstance(obj, (int, float)):
+        return [float(obj)]
+    if isinstance(obj, dict):
+        return [v for value in obj.values() for v in _numeric_leaves(value)]
+    if isinstance(obj, (list, tuple)):
+        return [v for value in obj for v in _numeric_leaves(value)]
+    return []
 log.setLevel(logging.INFO)
 
 
@@ -73,6 +90,13 @@ class CORRECTOR(Device):
         doc="Socket timeout in seconds for CEOS communication",
     )
 
+    data_device_address = device_property(
+        dtype=str,
+        default_value="",
+        doc="Optional DATA device, e.g. 'asyncroscopy/data/default'. When set, tableau "
+        "and C1/A1 measurements are also archived to Tiled; see get_last_archived_key.",
+    )
+
     # ------------------------------------------------------------------
     # Attributes
     # ------------------------------------------------------------------
@@ -95,8 +119,52 @@ class CORRECTOR(Device):
         self._message_id: int = 1
         self._last_status: str = "Uninitialised"
         self.ab = None
+        self._data_proxy = None
+        self._last_archived_key: str = ""
+        self._tango_device_name = self.get_name()
 
         self._connect()
+
+    def _get_data_proxy(self):
+        if self._data_proxy is None and self.data_device_address:
+            try:
+                self._data_proxy = tango.DeviceProxy(self.data_device_address)
+                self._data_proxy.set_timeout_millis(120_000)
+            except tango.DevFailed as exc:
+                self.warn_stream(f"Could not connect to DATA device {self.data_device_address}: {exc}")
+        return self._data_proxy
+
+    def acquisition_metadata(self) -> dict:
+        return {
+            "instrument_class": type(self).__name__,
+            "device_name": getattr(self, "_tango_device_name", ""),
+            "acquisition_time": datetime.now().isoformat(timespec="microseconds"),
+        }
+
+    def _archive(self, acquisition_type: str, payload_json: str) -> Optional[str]:
+        """Save a CEOS JSON result to the DATA/Tiled server; returns the key or None.
+
+        The command's return value stays the raw JSON-RPC payload so existing
+        callers are unaffected; archiving is a side effect that never fails the
+        measurement itself.
+        """
+        data_server = self._get_data_proxy()
+        if data_server is None:
+            return None
+        try:
+            result = json.loads(payload_json)
+            if isinstance(result, dict) and "result" in result:
+                result = result["result"]
+            values = np.asarray(_numeric_leaves(result), dtype=np.float64)
+            key = save_acquisition(
+                self, data_server, acquisition_type, "corrector", values,
+                dataset_name="coefficients", dataset_attrs={"result": result},
+            )
+        except Exception as exc:
+            self.warn_stream(f"Could not archive {acquisition_type} to Tiled: {exc}")
+            return None
+        self._last_archived_key = key
+        return key
 
     def _connect(self) -> None:
         """Verify TCP connectivity to the CEOS server and transition to ON."""
@@ -148,11 +216,20 @@ class CORRECTOR(Device):
         parts = args.strip().split()
         tab_type, angle_str = parts
         angle = float(angle_str)
-        return self._call("acquireTableau", {"tabType": tab_type, "angle": angle})
+        payload = self._call("acquireTableau", {"tabType": tab_type, "angle": angle})
+        self._archive("tableau", payload)
+        return payload
 
     @command(dtype_out=DevString)
     def measure_c1a1(self) -> str:
-        return self._call("measureC1A1")
+        payload = self._call("measureC1A1")
+        self._archive("c1a1", payload)
+        return payload
+
+    @command(dtype_out=DevString)
+    def get_last_archived_key(self) -> str:
+        """DATA/Tiled key of the most recent archived tableau or C1/A1 result ('' if none)."""
+        return self._last_archived_key
 
     @command(dtype_in=str, dtype_out=DevString)
     def correct_aberration(self, args: str) -> str:

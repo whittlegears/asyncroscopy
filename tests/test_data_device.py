@@ -115,7 +115,9 @@ class TestDataDevice:
         assert Path(actual_command[7]) == Path(expected_command[7])
         assert actual_command[8:] == expected_command[8:]
 
-        assert popen_calls[0]["kwargs"] == {
+        kwargs = dict(popen_calls[0]["kwargs"])
+        assert "TILED_ALLOW_ORIGINS" in kwargs.pop("env")
+        assert kwargs == {
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.STDOUT,
             "text": True,
@@ -215,7 +217,8 @@ class TestDataDevice:
         async def fake_register(client, path, **kwargs):
             registrations.append(path)
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", fake_from_uri)
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", fake_from_uri)
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
 
         result = data_proxy.register_path(str(saved))
@@ -250,7 +253,8 @@ class TestDataDevice:
         async def fake_register(client, path, **kwargs):
             registrations.append(path)
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", lambda *args, **kwargs: FakeClient())
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", lambda *args, **kwargs: FakeClient())
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
 
         result = json.loads(data_proxy.register_save_path())
@@ -282,7 +286,8 @@ class TestDataDevice:
         async def failing_register(client, path, **kwargs):
             raise ConnectionError("tiled is down")
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", lambda *args, **kwargs: FakeClient())
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", lambda *args, **kwargs: FakeClient())
         monkeypatch.setattr("asyncroscopy.data.data.register", failing_register)
 
         with pytest.raises(tango.DevFailed):
@@ -307,7 +312,8 @@ class TestDataDevice:
         async def fake_register(*args, **kwargs):
             return None
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", fake_from_uri)
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", fake_from_uri)
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
 
         assert data_proxy.register_path(windows_path) == "frame.h5"
@@ -345,7 +351,8 @@ class TestDataDevice:
         async def fake_sleep(seconds):
             sleeps.append(seconds)
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", fake_from_uri)
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", fake_from_uri)
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
         monkeypatch.setattr("asyncroscopy.data.data.asyncio.sleep", fake_sleep)
 
@@ -430,7 +437,8 @@ class TestDataDevice:
         async def fake_register(*args, **kwargs):
             raise FileNotFoundError(requested_path)
 
-        monkeypatch.setattr("asyncroscopy.data.data.from_uri", lambda *args, **kwargs: object())
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", lambda *args, **kwargs: object())
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
 
         with pytest.raises(tango.DevFailed) as exc_info:
@@ -442,3 +450,63 @@ class TestDataDevice:
         assert f"Requested file:\n    {requested_path}" in status
         assert f"Data save path:\n    {save_path}" in status
         assert "Tiled server serving:\n    " in status
+
+
+class TestTiledBrowserOrigins:
+    def test_managed_tiled_server_gets_allowed_origins(self, data_proxy: tango.DeviceProxy, monkeypatch, tmp_path) -> None:
+        from asyncroscopy.data import tiled_client
+
+        popen_calls = []
+
+        class FakeProcess:
+            def poll(self):
+                return None
+
+            def terminate(self):
+                pass
+
+            def wait(self, timeout):
+                return 0
+
+            def kill(self):
+                pass
+
+        monkeypatch.setenv(tiled_client.TILED_ALLOW_ORIGINS_ENV, "http://localhost:1420, http://gui.lab:5173")
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: bool(popen_calls))
+        monkeypatch.setattr(DATA, "_tiled_command", lambda self: ["python", "-m", "tiled"])
+        monkeypatch.setattr("asyncroscopy.data.data.subprocess.Popen", lambda command, **kwargs: popen_calls.append(kwargs) or FakeProcess())
+        monkeypatch.setattr("asyncroscopy.data.data.subprocess.run", lambda command, **_: type("R", (), {"returncode": 0, "stdout": ""})())
+
+        data_proxy.save_path = str(tmp_path)
+        config = json.loads(data_proxy.start_tiled_server())
+        data_proxy.stop_tiled_server()
+
+        assert json.loads(popen_calls[0]["env"]["TILED_ALLOW_ORIGINS"]) == ["http://localhost:1420", "http://gui.lab:5173"]
+        assert config["allow_origins"] == ["http://localhost:1420", "http://gui.lab:5173"]
+
+    def test_default_origins_are_loopback_only(self, monkeypatch) -> None:
+        from asyncroscopy.data import tiled_client
+
+        monkeypatch.delenv(tiled_client.TILED_ALLOW_ORIGINS_ENV, raising=False)
+        assert tiled_client.allowed_origins() == tiled_client.DEFAULT_BROWSER_ORIGINS
+        assert all(origin.startswith(("http://localhost", "http://127.0.0.1")) for origin in tiled_client.allowed_origins())
+
+
+class TestRegisterWithoutTiled:
+    def test_register_path_returns_key_when_tiled_is_down(self, data_proxy: tango.DeviceProxy, monkeypatch, tmp_path) -> None:
+        """The digital twin must acquire with no Tiled server at all."""
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: False)
+        opened = []
+        monkeypatch.setattr("asyncroscopy.data.data.open_client", lambda *a, **k: opened.append(a))
+
+        acquisition = tmp_path / "stem_image_HAADF_20260904T120000000000.h5"
+        acquisition.write_bytes(b"h5")
+        data_proxy.set_timeout_millis(10_000)
+
+        key = data_proxy.register_path(str(acquisition))
+
+        assert key == acquisition.name
+        assert opened == [], "no Tiled client may be opened while the server is down"
+        config = json.loads(data_proxy.get_config())
+        assert config["tiled_server"] == "no"
+        assert "1 acquisition(s) saved but not registered" in config["tiled_server_status"]

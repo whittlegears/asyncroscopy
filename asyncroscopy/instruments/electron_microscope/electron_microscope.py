@@ -11,12 +11,14 @@ implementation, typically a DATA/Tiled unique id.
 """
 
 import json
+import uuid
 from abc import abstractmethod
+from datetime import datetime
 from typing import Optional
 
 import numpy as np
 import tango
-from tiled.client import from_uri
+from asyncroscopy.data.tiled_client import open_client
 from tango import AttrWriteType, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, command, device_property
 
@@ -24,6 +26,19 @@ from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.instruments.instrument import Instrument
 
 MAX_CACHED_IMAGE_KEYS = 64
+
+
+def _plain(value):
+    """JSON/HDF5-safe scalar or list for a metadata value."""
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 class ElectronMicroscope(Instrument):
@@ -139,12 +154,16 @@ class ElectronMicroscope(Instrument):
     @command(
         dtype_in=DevVarStringArray,
         dtype_out=str,
-        doc_in=":param detector_list: Scanning detector names, e.g. ['haadf']. "
+        doc_in=":param detector_list: STEM scanning detector names, e.g. ['haadf']. "
+               "Valid names are 'haadf', 'bf', 'df2', 'df4', 'bf-s', 'df-s' "
+               "(availability depends on the instrument; 'STEM' is a mode, not a "
+               "detector). Requires the microscope to be in STEM optical mode; "
+               "cameras like 'BM-Ceta' use acquire_camera_image instead. "
                "An empty list uses ['haadf'].",
     )
     def acquire_scanned_image(self, detector_list: list[str] = ['haadf']) -> str:
         """
-        Acquire an image with scanning detectors and return its DATA/Tiled key.
+        Acquire an image with STEM scanning detectors and return its DATA/Tiled key.
         The default detector list is ['haadf'].
         """
         # Tango's wire protocol has no concept of "omitted", so remote callers (e.g. the
@@ -180,12 +199,76 @@ class ElectronMicroscope(Instrument):
         ))
 
     def _remember_acquired_key(self, key: str) -> str:
-        """Remember a DATA/Tiled key so get_image_data_cached() can look it up by index."""
+        """Remember a DATA/Tiled key so get_image_data_cached() can look it up by index.
+
+        TIFF acquisitions return a JSON list of keys (one per detector); each is
+        remembered individually.
+        """
         if not hasattr(self, '_cached_images'):
             self._cached_images: list[str] = []
-        self._cached_images.append(key)
+        keys = [key]
+        if isinstance(key, str) and key.startswith('['):
+            try:
+                parsed = json.loads(key)
+                if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                    keys = parsed
+            except json.JSONDecodeError:
+                pass
+        self._cached_images.extend(keys)
         del self._cached_images[:-MAX_CACHED_IMAGE_KEYS]
         return key
+
+    # Attribute names read from each detector device for the metadata snapshot.
+    _METADATA_DEVICE_ATTRIBUTES = {
+        'scan': ('imsize', 'dwell_time', 'scan_region', 'output_format'),
+        'camera': ('imsize', 'exposure_time', 'camera_detector', 'readout_area', 'frame_combining', 'electron_counting', 'output_format'),
+        'eds': ('exposure_time',),
+    }
+
+    def acquisition_metadata(self) -> dict:
+        """Instrument state to record with every acquisition (data_writer merges it).
+
+        Every read is best-effort: a backend that lacks an optic or a detector
+        device simply omits that entry rather than failing the acquisition.
+        Only Python-level state and the vendor getters are touched, never the
+        C++ device layer.
+        """
+        meta: dict = {
+            'instrument_class': type(self).__name__,
+            'device_name': getattr(self, '_tango_device_name', None),
+            'acquisition_time': datetime.now().isoformat(timespec='microseconds'),
+            'acquisition_id': uuid.uuid4().hex,
+            'stem_mode': bool(getattr(self, '_stem_mode', False)),
+        }
+        stage = self._safe(self._get_stage)
+        if stage is not None:
+            for axis, value in zip(('x', 'y', 'z', 'alpha', 'beta'), list(stage)):
+                meta[f'stage_{axis}'] = value
+        meta['defocus_m'] = self._safe(self._get_defocus)
+        meta['fov_m'] = self._safe(self._get_fov)
+        shift = self._safe(self._get_image_shift)
+        if shift is not None:
+            meta['image_shift_x_m'], meta['image_shift_y_m'] = list(shift)[:2]
+        tilt = self._safe(self._get_beam_tilt)
+        if tilt is not None:
+            meta['beam_tilt_x_rad'], meta['beam_tilt_y_rad'] = list(tilt)[:2]
+        proxies = getattr(self, '_detector_proxies', None) or {}
+        for name, attributes in self._METADATA_DEVICE_ATTRIBUTES.items():
+            proxy = proxies.get(name) if hasattr(proxies, 'get') else None
+            if proxy is None:
+                continue
+            for attribute_name in attributes:
+                value = self._safe(lambda: getattr(proxy, attribute_name))
+                if value is not None:
+                    meta[f'{name}_{attribute_name}'] = value
+        return {key: _plain(value) for key, value in meta.items() if value is not None}
+
+    @staticmethod
+    def _safe(getter):
+        try:
+            return getter()
+        except Exception:
+            return None
 
     @command(dtype_in=int, dtype_out=DevEncoded)
     def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
@@ -222,7 +305,7 @@ class ElectronMicroscope(Instrument):
                 'NoTiledUri', 'The DATA device did not provide a Tiled URI.', 'get_image_data_cached()',
             )
 
-        client = from_uri(uri)
+        client = open_client(uri)
         try:
             node = client[key]
         except KeyError:

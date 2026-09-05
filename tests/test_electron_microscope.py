@@ -44,7 +44,7 @@ def test_get_image_data_cached_reads_metadata_from_tiled(monkeypatch):
     twin._remember_acquired_key("frame.h5")
 
     tiled_node = FakeContainer(image=FakeContainer(HAADF=FakeArray()))
-    monkeypatch.setattr(electron_microscope, "from_uri", lambda uri: {"frame.h5": tiled_node})
+    monkeypatch.setattr(electron_microscope, "open_client", lambda uri, api_key=None: {"frame.h5": tiled_node})
 
     metadata_json, preview_bytes = twin.get_image_data_cached(0)
     metadata = json.loads(metadata_json)
@@ -82,8 +82,8 @@ def test_get_image_data_cached_index_zero_is_most_recent(monkeypatch):
     tiled_node = FakeContainer(image=FakeContainer(HAADF=FakeArray()))
     monkeypatch.setattr(
         electron_microscope,
-        "from_uri",
-        lambda uri: {name: tiled_node for name in ["oldest.h5", "middle.h5", "newest.h5"]},
+        "open_client",
+        lambda uri, api_key=None: {name: tiled_node for name in ["oldest.h5", "middle.h5", "newest.h5"]},
     )
 
     for index, expected in [(0, "newest.h5"), (1, "middle.h5"), (2, "oldest.h5")]:

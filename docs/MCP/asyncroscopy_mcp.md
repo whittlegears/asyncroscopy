@@ -35,38 +35,56 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 1. Connects to the Tango database.
 2. Lists exported devices.
 3. Skips blocked Tango classes.
-4. Queries each device's commands.
-5. Skips blocked commands.
-6. Registers the remaining commands as FastMCP tools.
-7. Registers native helper tools such as `list_devices` and
-   `get_data_from_key`.
+4. Queries each device's commands and attributes.
+5. Skips blocked names.
+6. Registers the remaining commands and attribute accessors as FastMCP tools.
+7. Registers the native tools `list_devices`, `refresh_devices`,
+   `get_data_from_key` and `list_acquisitions`.
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
 
-## Command Names
+## Tool Names
 
-Tango commands are exposed as MCP tools using the device class and command name.
-For example:
+Tools are named `<TangoClass>_<name>`. Commands keep their command name;
+attributes become `get_<attr>` and, when writable, `set_<attr>` (the setter's
+single parameter is named after the attribute). `State`/`Status` attributes are
+skipped because the commands already exist.
 
 ```text
-SCAN.State
-SCAN.Status
-AutoScriptMicroscope.acquire_scanned_image
+SCAN_State
+SCAN_get_dwell_time
+SCAN_set_dwell_time        (dwell_time: float)
+STAGE_get_x
+AutoScriptMicroscope_acquire_scanned_image
+DATA_get_config
 ```
 
-The exact tool set depends on which devices are exported in the Tango database
-when MCP starts.
+Attribute tools are what let a GUI or agent change dwell time, image size,
+exposure or a stage axis without a Tango client. The blocklist and
+`include_only_functions` apply to attribute tool names (`set_output_format`)
+exactly as to commands.
+
+Discovery runs at startup; call `refresh_devices` after starting a device server
+later. Every proxy uses a 30 s Tango timeout except the long DATA registration
+commands, which get their own longer timeouts.
 
 ## Data Access
 
-`get_data_from_key` is the required MCP-native data helper. It reads a key from
-the Tiled HTTP URI reported by the remote DATA device and returns JSON-safe
-metadata plus a small preview. MCP does not need the microscope filesystem to
-be mounted locally.
+The bridge reads Tiled through `asyncroscopy.data.tiled_client` using the URI
+from the DATA device; MCP does not need the microscope filesystem.
 
-Use this helper when a model needs to inspect acquisition results without
-learning the full Tiled/HDF5 access pattern.
+- `list_acquisitions(acquisition_type=None, since=None, limit=20, with_metadata=True)`:
+  recent keys newest first, each with the instrument-state metadata recorded at
+  acquisition.
+- `get_data_from_key(key, max_values=64)`: shape/dtype/attrs and a small
+  flattened preview of one key.
+- `acquire_scanned_image`, `acquire_camera_image` and `acquire_spectrum` results
+  additionally carry an inline PNG preview. TIFF acquisitions return a JSON
+  list of keys; the first one is previewed.
+
+Full arrays are not routed through MCP; a GUI reads them from the Tiled HTTP
+server directly (`DATA_get_config` gives the URI).
 
 ## Safety Boundary
 

@@ -92,11 +92,49 @@ def test_save_acquisition_tiff_writes_one_registered_file_per_detector(tmp_path)
     # json-encoded into each TIFF's ImageDescription (nested dicts included).
     attrs = [{"GainIndex": index, "ImagingArea": {"Width": 512}} for index in range(len(detectors))]
 
-    stem = save_acquisition(object(), data_server, "stem_image", detectors, images, dataset_attrs=attrs, output_format=".tiff")
+    keys = json.loads(save_acquisition(object(), data_server, "stem_image", detectors, images, dataset_attrs=attrs, output_format=".tiff"))
 
+    assert len(keys) == len(detectors)
     for index, detector in enumerate(detectors):
-        path = tmp_path / f"{stem}_{detector}.tiff"
+        path = tmp_path / keys[index]
+        assert path.name.endswith(f"_{detector}.tiff")
         assert path.exists()
         assert np.array_equal(tifffile.imread(path), images[index])
         with tifffile.TiffFile(path) as tif:
-            assert json.loads(tif.pages[0].description) == attrs[index]
+            description = json.loads(tif.pages[0].description)
+        assert description["acquisition_type"] == "stem_image"
+        assert description["detector"] == detector
+        for key, value in attrs[index].items():
+            assert description[key] == value
+
+
+class MetadataDevice:
+    """Device that offers an instrument-state snapshot, like ElectronMicroscope."""
+
+    def acquisition_metadata(self):
+        return {"instrument_class": "DigitalTwin", "stage_x": 1e-6, "scan_region": [0, 0, 1, 1]}
+
+
+def test_device_metadata_lands_as_file_attrs(tmp_path):
+    data_server = FakeDataServer(tmp_path)
+    image = np.zeros((2, 2), dtype=np.uint8)
+
+    path = save_acquisition(MetadataDevice(), data_server, "stem_image", ["HAADF"], [image], file_attrs={"operator": "me"})
+
+    with h5py.File(path, "r") as h5:
+        assert h5.attrs["instrument_class"] == "DigitalTwin"
+        assert h5.attrs["stage_x"] == 1e-6
+        assert json.loads(h5.attrs["scan_region"]) == [0, 0, 1, 1]
+        assert h5.attrs["acquisition_type"] == "stem_image"
+        assert h5.attrs["operator"] == "me"
+
+
+def test_broken_metadata_hook_does_not_block_saving(tmp_path):
+    class Broken:
+        def acquisition_metadata(self):
+            raise RuntimeError("hardware unreachable")
+
+    path = save_acquisition(Broken(), FakeDataServer(tmp_path), "stem_image", ["HAADF"], [np.zeros((2, 2))])
+
+    with h5py.File(path, "r") as h5:
+        assert h5.attrs["acquisition_type"] == "stem_image"

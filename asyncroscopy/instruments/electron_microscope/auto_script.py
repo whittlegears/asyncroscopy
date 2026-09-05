@@ -34,7 +34,7 @@ try:
     import autoscript_tem_microscope_client
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
-    from autoscript_tem_microscope_client.enumerations import CameraType, FixedReadoutArea, RegionCoordinateSystem, ExposureTimeType
+    from autoscript_tem_microscope_client.enumerations import CameraType, DetectorType, FixedReadoutArea, RegionCoordinateSystem, ExposureTimeType
     from autoscript_tem_microscope_client.structures import Region, Rectangle
     from autoscript_tem_microscope_client.structures import StemAcquisitionSettings, EdsAcquisitionSettings, RunOptiStemSettings, CameraAcquisitionSettings, StemDataSettings
 
@@ -82,6 +82,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
         dtype=str,
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
+    )
+    aperture_device_address = device_property(
+        dtype=str,
+        default_value="",
+        doc="Optional Tango device address for the APERTURE device, e.g. 'asyncroscopy/aperture/default'.",
     )
 
     # ------------------------------------------------------------------
@@ -179,6 +184,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
             "scan": self.scan_device_address,
             "camera": self.camera_device_address,
             "data": self.data_device_address,
+            # Same proxy roster as the DigitalTwin, so instrument-level code
+            # can reach the CEOS corrector and aperture on both backends.
+            "corrector": self.corrector_device_address,
+            "aperture": self.aperture_device_address,
         }
         for name, address in addresses.items():
             if not address:  # <-- minimal fix
@@ -249,6 +258,22 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
     # Internal acquisition helpers
     # ------------------------------------------------------------------
+    def _scanning_detector_names(self) -> list[str]:
+        """Scanning detector names installed on this instrument, e.g. ['HAADF', 'BF-S'].
+
+        Falls back to the full AutoScript DetectorType vocabulary when the live
+        query fails, so validation still rejects nonsense names like 'STEM'.
+        """
+        # No logging here: this may run on a partially-constructed instance in
+        # unit tests, where Tango stream logging is not set up yet.
+        try:
+            names = list(self._microscope.detectors.scanning_detectors)
+            if names:
+                return names
+        except Exception:
+            pass
+        return DetectorType.get_all_items() if _AUTOSCRIPT_AVAILABLE else []
+
     def _acquire_scanned_image(
         self,
         imsize: int,
@@ -260,7 +285,32 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
-        detector_list = [d.upper() for d in detector_list]
+        # AutoScript detector names use hyphens ('BF-S'); accept 'bf_s' too.
+        detector_list = [d.upper().strip().replace("_", "-") for d in detector_list]
+        # getattr chain: unit-test fakes model only .acquisition, and the mode
+        # check should never mask the acquisition itself when mode is unknowable.
+        optical_mode = getattr(getattr(self._microscope, "optics", None), "optical_mode", None)
+        if optical_mode is not None and optical_mode != 'Stem':
+            tango.Except.throw_exception(
+                'NotInStemMode',
+                f"Cannot acquire a scanned image: the microscope is in "
+                f"'{optical_mode}' mode, not 'Stem'. Switch the optical mode "
+                "to STEM first, or use acquire_camera_image for TEM/camera "
+                "acquisitions.",
+                '_acquire_scanned_image()',
+            )
+        available = self._scanning_detector_names()
+        unknown = [d for d in detector_list if available and d not in available]
+        if unknown:
+            tango.Except.throw_exception(
+                'UnknownScanDetector',
+                f"Unknown scanning detector(s) {unknown}. This instrument's "
+                f"scanning detectors are {available}. Note these are STEM "
+                "scanning detector names (e.g. 'HAADF'), not modes: 'STEM' is "
+                "not a detector. Cameras (e.g. 'BM-Ceta') are acquired with "
+                "acquire_camera_image instead.",
+                '_acquire_scanned_image()',
+            )
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
         if not isinstance(adorned, list):
@@ -472,9 +522,12 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 status[mechanism_type] = 'Retracted'
             else:
                 status[mechanism_type] = mechanism.aperture.name  
-        for deflector in self._microscope.optics.deflectors.get_available_deflectors():  
-            defl = self._microscope.optics.deflectors.get_deflector_value(deflector) 
-            status[deflector] = [defl.x, defl.y]              
+        for deflector in self._microscope.optics.deflectors.get_available_deflectors():
+            defl = self._microscope.optics.deflectors.get_deflector_value(deflector)
+            status[deflector] = [defl.x, defl.y]
+        # Same key as the DigitalTwin: lets agents see which support devices
+        # (corrector, aperture, ...) are reachable without a separate query.
+        status['device_proxies'] = sorted(self._detector_proxies.keys())
 
         return json.dumps(status)
 

@@ -441,8 +441,8 @@ class TestMCPSerialization:
 
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy())
         monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri",
-            lambda uri: {"frame.h5": tiled_node},
+            "asyncroscopy.mcp.mcp_server.open_client",
+            lambda uri, api_key=None: {"frame.h5": tiled_node},
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
@@ -672,7 +672,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"get_data_from_key", "list_devices"}
+        assert set(calls) == {"get_data_from_key", "list_acquisitions", "list_devices", "refresh_devices"}
 
 
 class TestMCPCommandResolution:
@@ -791,7 +791,7 @@ class TestMCPSpectrumPreview:
             "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy()
         )
         monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri", lambda uri: {"spectrum_eds.h5": node}
+            "asyncroscopy.mcp.mcp_server.open_client", lambda uri, api_key=None: {"spectrum_eds.h5": node}
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
@@ -819,8 +819,8 @@ class TestMCPSpectrumPreview:
             "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy()
         )
         monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri",
-            lambda uri: {"spectrum_eds.h5": FakeContainer()},
+            "asyncroscopy.mcp.mcp_server.open_client",
+            lambda uri, api_key=None: {"spectrum_eds.h5": FakeContainer()},
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
@@ -840,3 +840,100 @@ class TestMCPSpectrumPreview:
         assert server._augment_with_preview("get_stage", "[0.0,0.0]") == "[0.0,0.0]"
         assert server._augment_with_preview("acquire_spectrum", "") == ""
         assert server._augment_with_preview("acquire_spectrum", 42) == 42
+
+
+class TestDiscoveryResilience:
+    """Tool discovery retries transient device failures and reports what it
+    still had to skip, so a short tool count is never silent."""
+
+    def _make_server(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.time", type("T", (), {"sleep": staticmethod(lambda s: None)}))
+        return MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+
+    def test_transient_failure_is_retried_and_recovers(self, monkeypatch) -> None:
+        attempts = {"count": 0}
+
+        class FlakyProxy:
+            def __init__(self, device_name):
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    raise ConnectionError("device server still initializing")
+                self.device_name = device_name
+
+            def set_timeout_millis(self, millis):
+                pass
+
+            def info(self):
+                return type("Info", (), {"dev_class": "SCAN"})()
+
+            def command_list_query(self):
+                return []
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FlakyProxy)
+        server = self._make_server(monkeypatch)
+        monkeypatch.setattr(server, "_list_all_devices", lambda: ["asyncroscopy/scan/default"])
+
+        server._find_tools()
+
+        assert attempts["count"] == 2
+        assert server.skipped_devices == {}
+
+    def test_persistent_failure_is_recorded_with_reason(self, monkeypatch) -> None:
+        attempts = {"count": 0}
+
+        def always_fails(device_name):
+            attempts["count"] += 1
+            raise ConnectionError("no route to device")
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", always_fails)
+        server = self._make_server(monkeypatch)
+        monkeypatch.setattr(server, "_list_all_devices", lambda: ["asyncroscopy/scan/default"])
+
+        server._find_tools()
+
+        from asyncroscopy.mcp.mcp_server import DISCOVERY_ATTEMPTS
+
+        assert attempts["count"] == DISCOVERY_ATTEMPTS
+        assert list(server.skipped_devices) == ["asyncroscopy/scan/default"]
+        assert "no route to device" in server.skipped_devices["asyncroscopy/scan/default"]
+
+    def test_setup_prints_unconditional_warning_for_skipped_devices(self, monkeypatch, capsys) -> None:
+        server = self._make_server(monkeypatch)
+        monkeypatch.setattr(server, "_find_tools", lambda: {})
+        server.skipped_devices = {"asyncroscopy/eds/default": "ConnectionError: no route"}
+
+        server.setup(print_summary=False)
+
+        out = capsys.readouterr().out
+        assert "MCP WARNING: 1 device(s) failed tool discovery" in out
+        assert "asyncroscopy/eds/default: ConnectionError: no route" in out
+        assert "MCP ready:" in out
+
+    def test_setup_stays_quiet_when_nothing_was_skipped(self, monkeypatch, capsys) -> None:
+        server = self._make_server(monkeypatch)
+        monkeypatch.setattr(server, "_find_tools", lambda: {})
+
+        server.setup(print_summary=False)
+
+        out = capsys.readouterr().out
+        assert "MCP WARNING" not in out
+        assert "MCP ready:" in out
+
+
+class TestPortCheck:
+    def test_loopback_bind_on_same_port_is_reported(self) -> None:
+        """Binding 0.0.0.0 succeeds beside a 127.0.0.1 listener, but that listener
+        would shadow the bridge for every local client; the check must say so."""
+        import socket
+
+        from asyncroscopy.mcp.mcp_server import check_port_free
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as other:
+            other.bind(("127.0.0.1", 0))
+            other.listen(1)
+            port = other.getsockname()[1]
+            message = check_port_free("0.0.0.0", port)
+            assert message is not None and f"127.0.0.1:{port}" in message
+
+        assert check_port_free("0.0.0.0", port) is None

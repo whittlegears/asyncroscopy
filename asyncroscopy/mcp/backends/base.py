@@ -27,6 +27,7 @@ class BackendConfig:
     hermes_url: str = ""
     hermes_model: str = "hermes-agent"
     hermes_api_key: str = ""
+    hermes_home: str = ""
     reflection_min_tool_steps: int = 4
 
 
@@ -79,8 +80,17 @@ class AgentBackend(ABC):
     def tool_names(self) -> list[str]:
         return []
 
+    def last_trace(self) -> list[str]:
+        """Tool-call trace of the most recent query, oldest step first.
+
+        Backends whose agent loop runs out-of-process (hermes) cannot see the
+        tool calls and return an empty list.
+        """
+        return []
+
     def capabilities(self) -> dict:
         return {
             "complete": self.supports_complete,
             "connect_mcp": self.supports_connect_mcp,
+            "skills": self._skills_service is not None,
         }

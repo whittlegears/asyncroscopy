@@ -34,6 +34,10 @@ from startup_guis.qt_compat import (  # noqa: E402
     app_exec,
 )
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, DIGITAL_TWIN_HOST, GENERATED_CONFIG_DIR, SPECTRA300_HOST, TEXT_FONT, TITLE_FONT, CheckBox, CollapsibleSection, HostToggle, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, set_tool_count_badge, tool_count_badge, write_yaml, yaml_text  # noqa: E402
+# The GUI is a front-end for startup_scripts/run_mcp.py: it launches that
+# script and validates generated configs with the script's own loader, so the
+# script stays the single source of truth for what a valid config is.
+from startup_scripts import run_mcp  # noqa: E402
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'mcp.yaml'
@@ -44,6 +48,10 @@ TOOL_COUNT_PATTERN = re.compile(r'MCP ready: (\d+) tool')
 # Matches the fatal "MCP ERROR: ..." line mcp_server.py prints when it cannot
 # start (e.g. the port is already held by another server instance).
 MCP_ERROR_PATTERN = re.compile(r'MCP ERROR: (.+)')
+# Matches the unconditional "MCP WARNING: N device(s) failed tool discovery"
+# line mcp_server.py prints (before "MCP ready") when devices were skipped, so
+# a short tool count is flagged on the badge instead of passing silently.
+MCP_WARNING_PATTERN = re.compile(r'MCP WARNING: (\d+) device')
 
 
 def parse_int_safe(val: str, default: int) -> int:
@@ -81,6 +89,7 @@ class McpGui(QMainWindow):
         self.setMinimumSize(880, 560)
         self.command = ManagedCommand(self.enqueue_output, self.process_done)
         self.badge_error = False
+        self.skipped_device_count = 0
         self.default_config = load_yaml(DEFAULT_CONFIG_PATH)
         self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {}
         self.build()
@@ -297,8 +306,16 @@ class McpGui(QMainWindow):
 
     def start(self) -> None:
         self.badge_error = False
+        self.skipped_device_count = 0
         set_tool_count_badge(self.tool_badge, None)
         config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config())
+        # Validate with run_mcp's own loader before launching, so a bad config
+        # fails here with a readable message instead of a dead process.
+        try:
+            run_mcp.load_config(Path(config_path))
+        except Exception as exc:
+            self.enqueue_output(f'Config error (not starting): {exc}\n')
+            return
         self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_mcp.py', '--yaml', str(config_path)])
 
     def enqueue_output(self, text: str) -> None:
@@ -309,9 +326,20 @@ class McpGui(QMainWindow):
             message = error_match.group(1)
             set_tool_count_badge(self.tool_badge, None, error='port in use' if 'in use' in message else 'server error')
             return
+        warning_match = MCP_WARNING_PATTERN.search(text)
+        if warning_match:
+            self.skipped_device_count = int(warning_match.group(1))
         match = TOOL_COUNT_PATTERN.search(text)
         if match:
-            set_tool_count_badge(self.tool_badge, int(match.group(1)))
+            count = int(match.group(1))
+            if self.skipped_device_count:
+                set_tool_count_badge(
+                    self.tool_badge,
+                    None,
+                    error=f'{count} tools, {self.skipped_device_count} device(s) skipped',
+                )
+            else:
+                set_tool_count_badge(self.tool_badge, count)
 
     def process_done(self, returncode: int | None) -> None:
         self.enqueue_output(f'\nProcess exited with return code {returncode}.\n')

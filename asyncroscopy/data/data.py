@@ -28,10 +28,10 @@ from urllib.request import urlopen
 
 from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, command
-from tiled.client import from_uri
 from tiled.client.register import identity, register
 
-DEFAULT_TILED_URI = "http://10.46.217.241:9091"
+from asyncroscopy.data.tiled_client import DEFAULT_TILED_URI, TILED_URI_ENV, allowed_origins, default_api_key, open_client
+
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 REGISTER_TIMEOUT_SECONDS = 120
@@ -50,13 +50,14 @@ class DATA(Device):
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.ON)
-        self._host, self._port = self._parse_uri(os.environ.get("ASYNCROSCOPY_TILED_URI", DEFAULT_TILED_URI))
+        self._host, self._port = self._parse_uri(os.environ.get(TILED_URI_ENV, DEFAULT_TILED_URI))
         self._save_path = os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", DEFAULT_ACQUISITION_DIR)
-        self._api_key = "secret"
+        self._api_key = default_api_key()
         self._tiled_process = None
         self._tiled_serve_path = None
         self._tiled_server = "yes" if self._tiled_alive() else "no"
         self._tiled_server_status = ""
+        self._unregistered = 0
         self.info_stream("DATA device initialised")
 
     def delete_device(self) -> None:
@@ -105,6 +106,7 @@ class DATA(Device):
             "host": self._host,
             "port": self._port,
             "uri": self._uri(),
+            "allow_origins": allowed_origins(),
             "save_path": self._save_path,
             "tiled_server": self._tiled_server,
             "tiled_server_status": self._tiled_server_status,
@@ -155,7 +157,10 @@ class DATA(Device):
             "--read", self._save_path, "--public", "--api-key", self._api_key,
             "--host", self._host, "--port", str(self._port),
         ]
-        self._tiled_process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, text=True)
+        # Browser GUIs read Tiled directly; the server only answers cross-origin
+        # requests from origins in this JSON list (Tiled's own setting name).
+        env = {**os.environ, "TILED_ALLOW_ORIGINS": json.dumps(allowed_origins())}
+        self._tiled_process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, text=True)
         self._tiled_serve_path = self._save_path
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline and not self._tiled_alive():
@@ -178,12 +183,28 @@ class DATA(Device):
 
     @command(dtype_in=str, dtype_out=str)
     def register_path(self, path: str) -> str:
-        """Register one acquisition file explicitly; no filesystem watcher is used."""
+        """Register one acquisition file explicitly; no filesystem watcher is used.
+
+        Without a reachable Tiled server the file is still saved and its key
+        returned: the digital twin must work with no Tiled at all. The skipped
+        files are counted in ``tiled_server_status`` and ``register_save_path``
+        picks them up once a server is running.
+        """
         path = path.strip()
         key = PureWindowsPath(path).name if _is_windows_drive_path(path) else Path(path).name
 
+        if not self._tiled_alive():
+            self._unregistered += 1
+            self._tiled_server = "no"
+            self._tiled_server_status = (
+                f"not running; {self._unregistered} acquisition(s) saved but not registered "
+                f"(call register_save_path once Tiled is up)"
+            )
+            self.warn_stream(f"Tiled at {self._uri()} is not reachable; saved {key} without registering it")
+            return key
+
         async def register_with_tiled_client() -> None:
-            client = from_uri(self._uri(), api_key=self._api_key)
+            client = open_client(self._uri(), self._api_key)
             await register(client, path, walkers=[ONE_NODE_PER_FILE_WALKER], key_from_filename=identity)
             if not hasattr(client, "__getitem__"):
                 return
@@ -225,7 +246,7 @@ class DATA(Device):
         save_path = Path(self._save_path).expanduser()
 
         async def register_missing_files() -> tuple[int, int]:
-            client = from_uri(self._uri(), api_key=self._api_key)
+            client = open_client(self._uri(), self._api_key)
             existing = set(client.keys()) if hasattr(client, "keys") else set()
             # Dotfiles are the managed catalog database and its sqlite side
             # files, not acquisitions.
@@ -256,6 +277,7 @@ class DATA(Device):
             self._tiled_server_status = message
             raise RuntimeError(message) from exc
 
+        self._unregistered = 0
         result = {
             "registered_path": str(save_path),
             "registered_files": registered,

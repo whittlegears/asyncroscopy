@@ -693,7 +693,22 @@ class DigitalTwin(ElectronMicroscope):
         output_format: str = ".h5",
     ) -> str:
         """Simulate STEM acquisition, save the data with metadata, and return its DATA/Tiled key."""
-        detector_list = [detector.upper() for detector in detector_list]
+        # Same detector vocabulary and rejection behavior as the AutoScript
+        # backend, so agents exercised against the twin learn the real
+        # constraint (e.g. 'STEM' is a mode, not a detector).
+        valid_detectors = ["BF", "DF2", "DF4", "HAADF", "BF-S", "DF-S"]
+        detector_list = [detector.upper().strip().replace("_", "-") for detector in detector_list]
+        unknown = [d for d in detector_list if d not in valid_detectors]
+        if unknown:
+            tango.Except.throw_exception(
+                'UnknownScanDetector',
+                f"Unknown scanning detector(s) {unknown}. This instrument's "
+                f"scanning detectors are {valid_detectors}. Note these are STEM "
+                "scanning detector names (e.g. 'HAADF'), not modes: 'STEM' is "
+                "not a detector. Cameras (e.g. 'BM-Ceta') are acquired with "
+                "acquire_camera_image instead.",
+                '_acquire_scanned_image()',
+            )
         data_server = self._detector_proxies.get("data")
         images = []
         for detector in detector_list:

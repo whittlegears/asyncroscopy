@@ -140,6 +140,9 @@ def _make_llm(**kwargs) -> LLM:
     device.hermes_url = ""
     device.hermes_model = "hermes-agent"
     device.hermes_api_key = ""
+    # A nonexistent explicit path pins resolve_hermes_home to None so tests
+    # never touch a real install via the HERMES_HOME fallback.
+    device.hermes_home = kwargs.get("hermes_home", "__no_hermes_install__")
     device.skills_dir = kwargs.get("skills_dir", "outputs/agent_skills")
     device.embedding_model = "stub-embed"
     device.reflection_min_tool_steps = 4
@@ -153,6 +156,9 @@ def _make_llm(**kwargs) -> LLM:
     device.debug_stream = MagicMock()
     device.set_state = MagicMock()
     device.set_status = MagicMock()
+    device.get_status = MagicMock(
+        return_value="Initialization of agent backend 'hermes' failed: gateway down"
+    )
 
     return device
 
@@ -205,7 +211,12 @@ class TestCreateBackend:
 
     def test_capabilities_reported(self):
         backend = create_backend("langgraph", BackendConfig(), [])
-        assert backend.capabilities() == {"complete": True, "connect_mcp": True}
+        assert backend.capabilities() == {"complete": True, "connect_mcp": True, "skills": False}
+
+    def test_capabilities_report_skills_once_service_is_set(self):
+        backend = create_backend("langgraph", BackendConfig(), [])
+        backend.set_skills_service(MagicMock())
+        assert backend.capabilities()["skills"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -571,7 +582,11 @@ class TestDeviceBackendAttributes:
 
     def test_backend_capabilities_reported_as_json(self):
         device = _make_llm(backend=_make_backend())
-        assert json.loads(device.read_backend_capabilities()) == {"complete": True, "connect_mcp": True}
+        assert json.loads(device.read_backend_capabilities()) == {
+            "complete": True,
+            "connect_mcp": True,
+            "skills": False,
+        }
 
     def test_backend_raises_when_uninitialized(self):
         device = _make_llm()
@@ -590,6 +605,30 @@ class TestDeviceBackendAttributes:
     def test_agents_reports_spawned_names(self):
         device = _make_llm(agents=[_make_agent(name="Solo")])
         assert device.read_agents() == ["Solo"]
+
+    def test_last_trace_empty_when_uninitialized(self):
+        device = _make_llm()
+        assert json.loads(device.read_last_trace()) == []
+
+    def test_last_trace_empty_before_the_first_query(self):
+        device = _make_llm(backend=_make_backend())
+        assert json.loads(device.read_last_trace()) == []
+
+    def test_last_trace_reports_the_backend_run_trace(self):
+        backend = _make_backend()
+        backend._run_trace = ["acquire_image({'detector': 'haadf'})", "-> stem_image_HAADF_x.h5"]
+        device = _make_llm(backend=backend)
+        assert json.loads(device.read_last_trace()) == [
+            "acquire_image({'detector': 'haadf'})",
+            "-> stem_image_HAADF_x.h5",
+        ]
+
+    def test_last_trace_returns_a_copy_not_the_live_list(self):
+        backend = _make_backend()
+        backend._run_trace = ["step one"]
+        trace = backend.last_trace()
+        trace.append("tampered")
+        assert backend._run_trace == ["step one"]
 
 
 class TestDeviceComplete:
@@ -629,6 +668,54 @@ class TestDeviceComplete:
         result = json.loads(asyncio.run(device.Complete(json.dumps(request))))
 
         assert result["error"]["message"] == "no raw model turn"
+
+
+class TestNoBackendDegradation:
+    """A failed initialization (e.g. Hermes gateway down) must degrade with a
+    clear error on every entry point, never an AttributeError on None."""
+
+    def test_query_returns_a_clear_error(self):
+        device = _make_llm(backend=None)
+        result = asyncio.run(device.Query("where is the stage?"))
+        assert "No agent backend is initialized" in result
+        assert "gateway down" in result
+        assert "SetBackend" in result
+
+    def test_query_does_not_flip_the_fault_state_to_on(self):
+        device = _make_llm(backend=None)
+        asyncio.run(device.Query("hello"))
+        device.set_state.assert_not_called()
+
+    def test_complete_returns_an_error_payload(self):
+        device = _make_llm(backend=None)
+        result = json.loads(asyncio.run(device.Complete(json.dumps({"messages": []}))))
+        assert "No agent backend is initialized" in result["error"]["message"]
+
+    def test_connect_mcp_returns_false(self):
+        device = _make_llm(backend=None)
+        result = asyncio.run(device.ConnectMCP(json.dumps({"url": "http://127.0.0.1:8000/mcp"})))
+        assert result is False
+
+    def test_set_backend_can_recover_from_no_backend(self):
+        device = _make_llm(backend=None)
+        replacement = _stub_backend()
+        with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
+            result = asyncio.run(device.SetBackend("hermes"))
+        assert result is True
+        assert device._backend is replacement
+
+    def test_failed_set_backend_leaves_the_device_fault(self):
+        device = _make_llm(backend=None)
+        replacement = _stub_backend()
+        replacement.initialize = AsyncMock(side_effect=RuntimeError("still down"))
+        with patch("asyncroscopy.mcp.llm.create_backend", return_value=replacement):
+            result = asyncio.run(device.SetBackend("hermes"))
+        assert result is False
+        assert device._backend is None
+        # The finally clause must re-assert FAULT, not ON, when nothing is live.
+        import tango
+
+        assert device.set_state.call_args[0][0] == tango.DevState.FAULT
 
 
 class TestDeviceConnectMCP:
@@ -751,6 +838,21 @@ class TestDeviceSkillCommands:
         assert result["status"] == "applied"
         assert result["chunks_embedded"] == 3
         service.sync_from_payload.assert_called_once_with([{"id": "a"}])
+
+    def test_sync_skills_exports_to_a_hermes_install(self, tmp_path):
+        from asyncroscopy.skills.store import SkillRecord
+
+        (tmp_path / "skills").mkdir()
+        service = self._service()
+        service.store.list_skills.return_value = [
+            SkillRecord(id="focus-sweep", name="Focus sweep", description="d",
+                        text="---\nname: focus-sweep\n---\nBody.")
+        ]
+        device = _make_llm(skills_service=service, hermes_home=str(tmp_path))
+        body = json.dumps({"sync_id": "s1", "seq": 0, "total": 1, "skills": [{"id": "a"}]})
+        result = json.loads(asyncio.run(device.SyncSkills(body)))
+        assert result["hermes_export"] == {"exported": 1, "removed": 0}
+        assert (tmp_path / "skills" / "asyncroscopy" / "focus-sweep" / "SKILL.md").is_file()
 
     def test_sync_skills_reassembles_a_chunked_envelope(self):
         service = self._service()

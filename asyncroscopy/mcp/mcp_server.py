@@ -8,7 +8,9 @@ import io
 import re
 import json
 import socket
+import time
 import traceback
+from dataclasses import dataclass
 from typing import Annotated, Any, Callable
 
 import matplotlib
@@ -19,9 +21,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image as PILImage
 from pydantic import Field
-from tiled.client import from_uri
 
-from tango import Database, DeviceProxy, CommandInfo, CmdArgType
+import tango
+from tango import Database, DeviceProxy, CommandInfo, CmdArgType, AttrDataFormat, AttrWriteType
 from tango.utils import (
     TO_TANGO_TYPE,
     is_array_type,
@@ -40,6 +42,8 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
 from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.data.tiled_client import list_acquisitions as _list_tiled_acquisitions
+from asyncroscopy.data.tiled_client import allowed_origins, open_client, uri_from_data_proxy
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
 # plain string. Their tool wrappers additionally fetch the array back from Tiled and
@@ -56,6 +60,26 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # 60 s per MCP HTTP request, so 30 s lets slow commands finish while still failing
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
+
+# Commands known to outlive the default cap get their own proxy with a longer
+# timeout (DATA registration walks the Tiled catalog file by file). The MCP HTTP
+# client's own request timeout still applies; the point is that Tango does not
+# abandon a call that is legitimately still running.
+COMMAND_TIMEOUT_OVERRIDES_MILLIS = {
+    "register_save_path": 3_600_000,
+    "register_path": 120_000,
+    "start_tiled_server": 120_000,
+}
+
+# Attributes every Tango device carries that duplicate the State/Status commands.
+SKIPPED_ATTRIBUTES = {"state", "status"}
+
+# A device can fail discovery transiently (its server still initializing, a
+# slow first connect) and was previously skipped silently, so the registered
+# tool count came up short with no explanation. Retry each device briefly, and
+# report anything still skipped in an unconditional "MCP WARNING" line.
+DISCOVERY_ATTEMPTS = 3
+DISCOVERY_RETRY_DELAY_SECONDS = 2.0
 
 # Failure signatures after which the rebuild-and-retry in _create_wrapper must NOT
 # re-execute the command. Timeouts and monitor contention mean the first attempt is
@@ -84,6 +108,110 @@ NON_RETRYABLE_SIGNATURES = {
         "execute it again with the same outcome"
     ),
 }
+
+
+def command_timeout_millis(command_name: str) -> int:
+    return COMMAND_TIMEOUT_OVERRIDES_MILLIS.get(command_name, COMMAND_TIMEOUT_MILLIS)
+
+
+_SPECTRUM_TYPES = {
+    CmdArgType.DevDouble: CmdArgType.DevVarDoubleArray,
+    CmdArgType.DevFloat: CmdArgType.DevVarFloatArray,
+    CmdArgType.DevLong: CmdArgType.DevVarLongArray,
+    CmdArgType.DevLong64: CmdArgType.DevVarLong64Array,
+    CmdArgType.DevShort: CmdArgType.DevVarShortArray,
+    CmdArgType.DevULong: CmdArgType.DevVarULongArray,
+    CmdArgType.DevULong64: CmdArgType.DevVarULong64Array,
+    CmdArgType.DevUShort: CmdArgType.DevVarUShortArray,
+    CmdArgType.DevUChar: CmdArgType.DevVarCharArray,
+    CmdArgType.DevString: CmdArgType.DevVarStringArray,
+    CmdArgType.DevBoolean: CmdArgType.DevVarBooleanArray,
+}
+
+
+@dataclass
+class AttributeToolInfo:
+    """CommandInfo look-alike for a tool that reads or writes one Tango attribute.
+
+    Attribute devices (SCAN, STAGE, CAMERA, EDS) carry their settings as
+    attributes and define no commands, so without these the bridge could
+    trigger an acquisition but never change dwell time, image size, exposure or
+    a stage axis. ``mode`` is "read" (a get_<attr> tool) or "write" (set_<attr>).
+    """
+
+    attribute_name: str
+    mode: str
+    in_type: CmdArgType
+    out_type: CmdArgType
+    in_type_desc: str
+    out_type_desc: str
+
+
+def attribute_value_type(info: Any) -> CmdArgType:
+    """Map an AttributeInfoEx to the CmdArgType its value travels as."""
+    data_type = CmdArgType(info.data_type)
+    if info.data_format == AttrDataFormat.SCALAR:
+        return data_type
+    if info.data_format == AttrDataFormat.SPECTRUM:
+        return _SPECTRUM_TYPES.get(data_type, CmdArgType.DevVarDoubleArray)
+    return CmdArgType.DevEncoded  # IMAGE: nested list, schema left open
+
+
+def attribute_tool_infos(info: Any) -> list[AttributeToolInfo]:
+    """Build the get_/set_ tool descriptions for one attribute."""
+    name = str(info.name)
+    value_type = attribute_value_type(info)
+    parts = [str(info.description or "").strip()]
+    if info.unit and info.unit.lower() not in ("", "no unit"):
+        parts.append(f"unit: {info.unit}")
+    if info.min_value and info.min_value.lower() != "not specified":
+        parts.append(f"min: {info.min_value}")
+    if info.max_value and info.max_value.lower() != "not specified":
+        parts.append(f"max: {info.max_value}")
+    description = "; ".join(part for part in parts if part)
+    tools = [
+        AttributeToolInfo(
+            attribute_name=name, mode="read", in_type=CmdArgType.DevVoid, out_type=value_type,
+            in_type_desc="", out_type_desc=description,
+        )
+    ]
+    if info.writable in (AttrWriteType.READ_WRITE, AttrWriteType.WRITE, AttrWriteType.READ_WITH_WRITE):
+        tools.append(
+            AttributeToolInfo(
+                attribute_name=name, mode="write", in_type=value_type, out_type=CmdArgType.DevVoid,
+                in_type_desc=f":param {name}: {description}" if description else f":param {name}:",
+                out_type_desc="",
+            )
+        )
+    return tools
+
+
+def plain_attribute_value(value: Any) -> Any:
+    """Make an attribute value JSON-safe (DevState and enums become strings)."""
+    if isinstance(value, tango.DevState):
+        return str(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple)):
+        return [plain_attribute_value(item) for item in value]
+    return value
+
+
+def bind_tool(dev: Any, info: Any, name: str) -> Callable:
+    """Bind a tool to a (possibly rebuilt) DeviceProxy.
+
+    Commands go through command_inout, not getattr: DeviceProxy defines
+    client-side methods (reconnect, ping, ...) that shadow same-named Tango
+    commands, and getattr silently returns the client method instead.
+    """
+    attribute_name = getattr(info, "attribute_name", None)
+    if attribute_name is None:
+        return functools.partial(dev.command_inout, name)
+    if info.mode == "read":
+        return lambda: plain_attribute_value(dev.read_attribute(attribute_name).value)
+    return lambda value: dev.write_attribute(attribute_name, value)
 
 
 class MCPServer:
@@ -121,6 +249,8 @@ class MCPServer:
         self.include_only_functions = list(include_only_functions) if include_only_functions else []
         self.verbose = verbose
         self.tools: dict[str, dict[str, Callable]] = {}
+        # Devices whose tools could not be discovered, name -> failure reason.
+        self.skipped_devices: dict[str, str] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -162,13 +292,9 @@ class MCPServer:
     ) -> dict[str, Any]:
         """Read a remote DATA/Tiled key and return dataset metadata plus small previews."""
         address = data_device_address or self.data_device_address
-        data = DeviceProxy(address)
-        config = json.loads(data.get_config())
-        uri = config.get("uri")
-        if not uri:
-            raise RuntimeError(f"DATA device {address!r} did not provide a Tiled URI")
+        uri = uri_from_data_proxy(DeviceProxy(address))
 
-        client = from_uri(uri)
+        client = open_client(uri)
         try:
             node = client[key]
         except KeyError as exc:
@@ -177,6 +303,39 @@ class MCPServer:
             ) from exc
 
         return describe_tiled_node(key, uri, node, max_values=max_values)
+
+    @tool()
+    def list_acquisitions(
+        self,
+        acquisition_type: str | None = None,
+        since: str | None = None,
+        limit: int = 20,
+        with_metadata: bool = True,
+    ) -> list[dict[str, Any]]:
+        """List recent acquisitions on the DATA/Tiled server, newest first.
+
+        acquisition_type filters by key prefix (stem_image, camera_image,
+        spectrum, stem_data, diffraction); since is an ISO-8601 timestamp.
+        Each entry carries the key to pass to get_data_from_key and, when
+        with_metadata is true, the instrument state recorded at acquisition.
+        """
+        uri = uri_from_data_proxy(DeviceProxy(self.data_device_address))
+        return _list_tiled_acquisitions(
+            open_client(uri), acquisition_type=acquisition_type, since=since, limit=limit, with_metadata=with_metadata
+        )
+
+    @tool()
+    def refresh_devices(self) -> dict[str, Any]:
+        """Re-run Tango device discovery and register tools for devices started after this bridge.
+
+        Existing tools are replaced with fresh bindings. Returns the tool count
+        per Tango class and any devices that still failed discovery.
+        """
+        registered = self._register_device_tools(print_summary=False)
+        return {
+            "tools": {dev_class: sorted(names) for dev_class, names in registered.items()},
+            "skipped_devices": dict(self.skipped_devices),
+        }
 
     @staticmethod
     def _find_first_2d_array(node: Any, prefer_key: str | None = None) -> np.ndarray | None:
@@ -235,12 +394,8 @@ class MCPServer:
 
     def _resolve_tiled_node(self, key: str) -> Any:
         """Resolve a DATA/Tiled key to its Tiled node via the DATA device's config."""
-        data = DeviceProxy(self.data_device_address)
-        config = json.loads(data.get_config())
-        uri = config.get("uri")
-        if not uri:
-            raise RuntimeError("the DATA device's config carries no Tiled uri")
-        return from_uri(uri)[key]
+        uri = uri_from_data_proxy(DeviceProxy(self.data_device_address))
+        return open_client(uri)[key]
 
     def _fetch_image_preview(self, key: str) -> tuple[MCPImage | None, str | None]:
         """Fetch a captured image from Tiled and render it as a PNG preview.
@@ -385,12 +540,22 @@ class MCPServer:
         """
         if not isinstance(result, str) or not result:
             return result
-        if command_name in IMAGE_PREVIEW_COMMANDS:
-            preview, failure = self._fetch_image_preview(result)
-        elif command_name in SPECTRUM_PREVIEW_COMMANDS:
-            preview, failure = self._fetch_spectrum_preview(result)
-        else:
+        if command_name not in IMAGE_PREVIEW_COMMANDS and command_name not in SPECTRUM_PREVIEW_COMMANDS:
             return result
+        # TIFF acquisitions return a JSON list of keys (one file per detector);
+        # preview the first one and keep the full list as the text result.
+        preview_key = result
+        if result.startswith("["):
+            try:
+                keys = json.loads(result)
+            except json.JSONDecodeError:
+                keys = []
+            if keys and all(isinstance(item, str) for item in keys):
+                preview_key = keys[0]
+        if command_name in IMAGE_PREVIEW_COMMANDS:
+            preview, failure = self._fetch_image_preview(preview_key)
+        else:
+            preview, failure = self._fetch_spectrum_preview(preview_key)
         if preview is None:
             return ToolResult(
                 content=[result, f"image preview unavailable: {failure}"],
@@ -546,8 +711,8 @@ class MCPServer:
                     ) from first_exc
                 try:
                     dev = DeviceProxy(device_name)
-                    dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-                    proxy_state["func"] = functools.partial(dev.command_inout, command_name)
+                    dev.set_timeout_millis(command_timeout_millis(command_name))
+                    proxy_state["func"] = bind_tool(dev, cmd_info, command_name)
                 except Exception as rebuild_exc:
                     raise RuntimeError(
                         f"Tango command {device_name}.{command_name} failed "
@@ -569,11 +734,14 @@ class MCPServer:
 
         out_type = cmd_info.out_type
         py_return_type = self._tango_type_to_python(out_type)
-        doc_lines = [
-            f"Tango Device Class: {dev_class}",
-            f"Tango Command: {command_name}",
-            f"Input Type: {in_type.name}",
-        ]
+        attribute_name = getattr(cmd_info, "attribute_name", None)
+        doc_lines = [f"Tango Device Class: {dev_class}"]
+        if attribute_name is None:
+            doc_lines.append(f"Tango Command: {command_name}")
+        else:
+            verb = "Reads" if cmd_info.mode == "read" else "Writes"
+            doc_lines.append(f"Tango Attribute: {attribute_name} ({verb} the attribute)")
+        doc_lines.append(f"Input Type: {in_type.name}")
         if in_desc:
             doc_lines.append(f"Input Description: {in_desc}")
         doc_lines.append(f"Output Type: {out_type.name}")
@@ -594,9 +762,9 @@ class MCPServer:
             "",
             "uninitialized",
         ):
-            # Sanitize description
-            clean_desc = in_desc.replace("\n", " ").strip()
-            arg_type = Annotated[py_type, Field(description=clean_desc)]
+            # Sanitize description; the ":param name:" prefix only names the parameter.
+            clean_desc = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", in_desc.replace("\n", " ").strip())
+            arg_type = Annotated[py_type, Field(description=clean_desc)] if clean_desc else py_type
         else:
             arg_type = py_type
 
@@ -647,66 +815,88 @@ class MCPServer:
 
         return wrapper
 
-    def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo, str]]]:
-        """Discover tools by querying Tango DB for devices and their commands.
+    def _is_tool_allowed(self, dev_class: str, name: str) -> bool:
+        global_blocks = self.blocked_functions.get("*", [])
+        if name in global_blocks or f"{dev_class}.{name}" in global_blocks or name in self.blocked_functions.get(dev_class, []):
+            return False
+        if self.include_only_functions:
+            return (
+                name in self.include_only_functions
+                or f"{dev_class}.{name}" in self.include_only_functions
+                or any(item.endswith(f".{name}") for item in self.include_only_functions)
+            )
+        return True
 
-        Returns a dict mapping dev_class -> command_name -> (func, cmd_info, device_name)
+    def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo, str]]]:
+        """Discover tools by querying Tango DB for devices, their commands and attributes.
+
+        Returns a dict mapping dev_class -> tool_name -> (func, info, device_name),
+        where info is a CommandInfo or an AttributeToolInfo.
         """
         devices = self._list_all_devices()
         tools: dict[str, dict[str, tuple[Callable, CommandInfo]]] = {}
+        self.skipped_devices = {}
         for device_name in devices:
             if self._is_admin_device(device_name):
                 continue
-            try:
-                dev = DeviceProxy(device_name)
-                dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-                info = dev.info()
-                dev_class = info.dev_class
-            except Exception as exc:
-                if self.verbose:
-                    print(f"Skipping {device_name}: failed to open proxy ({exc})")
-                continue
+            dev = None
+            dev_class = None
+            commands = None
+            attributes: list = []
+            last_error = ""
+            for attempt in range(1, DISCOVERY_ATTEMPTS + 1):
+                try:
+                    dev = DeviceProxy(device_name)
+                    dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+                    dev_class = dev.info().dev_class
+                    if self._is_blocked_class(dev_class):
+                        break
+                    commands = dev.command_list_query()
+                    query = getattr(dev, "attribute_list_query_ex", None)
+                    attributes = list(query()) if callable(query) else []
+                    break
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}".strip()
+                    commands = None
+                    if attempt < DISCOVERY_ATTEMPTS:
+                        if self.verbose:
+                            print(
+                                f"Discovery attempt {attempt}/{DISCOVERY_ATTEMPTS} failed for "
+                                f"{device_name} ({last_error}); retrying in "
+                                f"{DISCOVERY_RETRY_DELAY_SECONDS}s"
+                            )
+                        time.sleep(DISCOVERY_RETRY_DELAY_SECONDS)
 
-            if self._is_blocked_class(dev_class):
+            if dev_class is not None and self._is_blocked_class(dev_class):
                 continue
-
-            try:
-                commands = dev.command_list_query()
-            except Exception as exc:
+            if commands is None:
+                self.skipped_devices[device_name] = last_error
                 if self.verbose:
-                    print(f"Skipping {device_name}: failed to query commands ({exc})")
+                    print(f"Skipping {device_name}: {last_error}")
                 continue
 
             for cmd in commands:
                 command_name = cmd.cmd_name
-                global_blocks = self.blocked_functions.get("*", [])
-                if command_name in global_blocks or f"{dev_class}.{command_name}" in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
+                if not self._is_tool_allowed(dev_class, command_name):
                     continue
+                proxy = dev
+                if command_name in COMMAND_TIMEOUT_OVERRIDES_MILLIS:
+                    proxy = DeviceProxy(device_name)
+                    proxy.set_timeout_millis(command_timeout_millis(command_name))
+                tools.setdefault(dev_class, {})[command_name] = (bind_tool(proxy, cmd, command_name), cmd, device_name)
 
-                if self.include_only_functions:
-                    allowed = (
-                        command_name in self.include_only_functions
-                        or f"{dev_class}.{command_name}" in self.include_only_functions
-                        or any(item.endswith(f".{command_name}") for item in self.include_only_functions)
-                    )
-                    if not allowed:
+            for attr in attributes:
+                if str(attr.name).lower() in SKIPPED_ATTRIBUTES:
+                    continue
+                for info in attribute_tool_infos(attr):
+                    tool_name = f"{'get' if info.mode == 'read' else 'set'}_{info.attribute_name}"
+                    if not self._is_tool_allowed(dev_class, tool_name):
                         continue
-                # command_inout, not getattr: DeviceProxy defines client-side
-                # methods (reconnect, ping, ...) that shadow same-named Tango
-                # commands, and getattr silently returns the client method with
-                # a different signature instead of invoking the command.
-                func = functools.partial(dev.command_inout, command_name)
-                if dev_class not in tools:
-                    tools[dev_class] = {}
-                tools[dev_class][command_name] = (func, cmd, device_name)
+                    tools.setdefault(dev_class, {})[tool_name] = (bind_tool(dev, info, tool_name), info, device_name)
         return tools
 
-    def setup(self, print_summary: bool = True):
-        """Configure tools and add them to the MCP instance.
-
-        Args:
-            print_summary: If True, print tool discovery and registration summary.
-        """
+    def _register_device_tools(self, print_summary: bool) -> dict[str, dict[str, Callable]]:
+        """Discover device tools and (re)register them on the MCP instance."""
         raw_tools = self._find_tools()
 
         wrapped_tools: dict[str, dict[str, Callable]] = {}
@@ -716,7 +906,6 @@ class MCPServer:
                 wrapped = self._create_wrapper(func, cmd_info, command_name, dev_class, device_name)
                 wrapped_tools[dev_class][command_name] = wrapped
 
-        self.tools = wrapped_tools
         if print_summary and self.verbose:
             print("Discovered tools by Tango class:")
             for dev_class in sorted(raw_tools):
@@ -725,23 +914,52 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices]
+        registered: dict[str, dict[str, Callable]] = {}
+        for dev_class in wrapped_tools:
+            for command_name, wrapped_func in wrapped_tools[dev_class].items():
+                try:
+                    tool_obj = Tool.from_function(wrapped_func)
+                    provider = getattr(self.mcp, "local_provider", self.mcp)
+                    try:
+                        provider.remove_tool(tool_obj.name)
+                    except Exception:
+                        pass
+                    self.mcp.add_tool(tool_obj)
+                    registered.setdefault(dev_class, {})[command_name] = wrapped_func
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Failed to wrap {dev_class}.{command_name}: {e}")
+                        traceback.print_exc()
+        self.tools = registered
+        return registered
+
+    def setup(self, print_summary: bool = True):
+        """Configure tools and add them to the MCP instance.
+
+        Args:
+            print_summary: If True, print tool discovery and registration summary.
+        """
+        native_tools = [self.get_data_from_key, self.list_acquisitions, self.list_devices, self.refresh_devices]
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
                 print(f"Registered native tool: {native_tool.__name__}")
 
-        num_device_tools = 0
-        for dev_class in wrapped_tools:
-            for command_name, wrapped_func in wrapped_tools[dev_class].items():
-                try:
-                    tool_obj = Tool.from_function(wrapped_func)
-                    self.mcp.add_tool(tool_obj)
-                    num_device_tools += 1
-                except Exception as e:
-                    if self.verbose:
-                        print(f"Failed to wrap {dev_class}.{command_name}: {e}")
-                        traceback.print_exc()
+        registered = self._register_device_tools(print_summary)
+        num_device_tools = sum(len(names) for names in registered.values())
+
+        # Printed unconditionally (unlike the verbose summary below) so GUIs and
+        # operators see missing tools even in quiet mode: a device that failed
+        # discovery means every one of its commands is absent from the tool list.
+        if self.skipped_devices:
+            print(
+                f"MCP WARNING: {len(self.skipped_devices)} device(s) failed tool "
+                f"discovery after {DISCOVERY_ATTEMPTS} attempts - their commands "
+                f"are NOT registered as tools:",
+                flush=True,
+            )
+            for name, reason in sorted(self.skipped_devices.items()):
+                print(f"  - {name}: {reason}", flush=True)
 
         # Printed unconditionally (unlike the verbose summary below) so GUIs can
         # parse the final count from stdout even when quiet mode is on.
@@ -809,6 +1027,17 @@ def check_port_free(host: str, port: int) -> str | None:
         return str(exc)
     finally:
         probe.close()
+    # Binding 0.0.0.0 succeeds even while another server holds 127.0.0.1 on the
+    # same port, and that loopback bind then wins every local connection: clients
+    # dialing 127.0.0.1 silently reach the other server (observed: a stale bridge
+    # for the real instrument shadowing the digital twin's). Connecting tells.
+    for candidate in {host, "127.0.0.1"}:
+        if candidate == "0.0.0.0":
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as check:
+            check.settimeout(0.5)
+            if check.connect_ex((candidate, port)) == 0:
+                return f"something already accepts connections on {candidate}:{port}"
     return None
 
 
@@ -844,14 +1073,9 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         # Browser clients (the SciAgentGUI vite preview) need CORS headers; fastmcp 3 sends
-        # none by default. Loopback dev origins only — a hostile web page must never be able
-        # to drive instrument tools cross-origin, so this is deliberately not "*".
-        browser_dev_origins = [
-            "http://localhost:1420",
-            "http://127.0.0.1:1420",
-            "http://localhost:1421",
-            "http://127.0.0.1:1421",
-        ]
+        # none by default. Same loopback list the DATA device hands to Tiled — a hostile
+        # web page must never be able to drive instrument tools cross-origin, so never "*".
+        browser_dev_origins = allowed_origins()
         cors = Middleware(
             CORSMiddleware,
             allow_origins=browser_dev_origins,

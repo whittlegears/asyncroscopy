@@ -55,3 +55,18 @@ class TestDigitalTwinBeta:
         with h5py.File(saved_path, "r") as h5:
             image = h5["image/HAADF"][()]
             assert image.shape == (16, 16)
+
+
+class TestBetaTwinSpectrumGoesThroughDataWriter:
+    def test_acquire_spectrum_returns_saved_spectrum_key(self, beta_twin_proxy: tango.DeviceProxy) -> None:
+        import h5py
+
+        key = beta_twin_proxy.acquire_spectrum("eds")
+
+        # No DATA device is configured in the test context, so the key is the local file path.
+        assert key.endswith(".h5") and "spectrum_eds_" in key
+        with h5py.File(key, "r") as h5:
+            elements = json.loads(h5["spectrum"].attrs["elements"])
+            assert len(elements) == h5["spectrum"].shape[0] > 0
+            assert h5.attrs["instrument_class"] == "DigitalTwinBeta"
+            assert "acquisition_id" in h5.attrs

@@ -1,3 +1,4 @@
+import json
 import types
 from pathlib import Path
 
@@ -320,16 +321,17 @@ class TestAutoScriptMicroscope:
         )
         microscope._detector_proxies = {"data": FakeDataServer(tmp_path)}
 
-        stem = AutoScriptMicroscope._acquire_camera_image(
+        keys = json.loads(AutoScriptMicroscope._acquire_camera_image(
             microscope,
             imsize=512,
             exposure_time=0.1,
             detector="BM-Ceta",
             readout_area="Full",
             output_format=".tiff",
-        )
+        ))
 
-        assert (tmp_path / f"{stem}_BM-Ceta.tiff").exists()
+        assert len(keys) == 1 and keys[0].endswith("_BM-Ceta.tiff")
+        assert (tmp_path / keys[0]).exists()
 
     def test_camera_device_can_select_flucam(
         self,

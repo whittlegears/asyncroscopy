@@ -245,3 +245,6 @@ output_tango_devices_logs/
 aws-use/
 
 .processes/
+
+# Local LLM configs carrying the Hermes gateway api key
+configs/langgraph-llm.yaml
