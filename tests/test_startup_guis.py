@@ -1,4 +1,38 @@
-from startup_guis import mcp_gui, server_gui
+import os
+import sys
+import time
+
+import pytest
+
+from startup_guis import mcp_gui, server_gui, shared
+
+
+def _values(**overrides):
+    """Minimal server_config_from_values input; tests override only what they exercise."""
+    values = {
+        'instrument': {
+            'class_name': 'DigitalTwin',
+            'file': 'asyncroscopy/instruments/electron_microscope/digital_twin.py',
+            'description': 'Digital twin',
+        },
+        'instrument_file': 'asyncroscopy/instruments/electron_microscope/digital_twin.py',
+        'hardware_host': '',
+        'hardware_port': '',
+        'hardware_timeout_seconds': '120',
+        'devices': {},
+        'enabled_devices': {},
+        'tango_host': 'localhost',
+        'tango_port': '9094',
+        'reset_database_file': False,
+        'tiled_host': 'localhost',
+        'tiled_port': '9091',
+        'acquisition_dir': 'outputs/tiled_acquisitions',
+        'tiled_autostart': True,
+        'tiled_register_on_startup': False,
+        'device_timeout_seconds': '120',
+    }
+    values.update(overrides)
+    return values
 
 
 def test_server_gui_builds_server_yaml():
@@ -38,6 +72,103 @@ def test_server_gui_builds_server_yaml():
     assert config['tango'] == {'host': 'localhost', 'port': 9094, 'reset_database_file': True}
     assert config['tiled']['register_on_startup'] is False
     assert config['device_timeout_seconds'] == 120
+
+
+def test_server_gui_keeps_class_name_and_properties_of_enabled_devices():
+    """A device's full YAML spec survives the round trip, not just its module."""
+    spec = {
+        'class_name': 'AutoScriptSTAGE',
+        'module_name': 'asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript',
+        'properties': {'hardware_host': '10.0.0.1', 'hardware_port': 9095},
+    }
+    config = server_gui.server_config_from_values(_values(devices={'stage': spec}, enabled_devices={'stage': True}))
+
+    assert config['devices']['stage'] == spec
+
+
+def test_server_gui_writes_no_device_the_config_did_not_declare():
+    """Only declared, ticked devices reach the generated YAML."""
+    config = server_gui.server_config_from_values(
+        _values(
+            devices={'data': {'module_name': 'asyncroscopy.data.data'}},
+            enabled_devices={'data': True},
+        )
+    )
+
+    assert list(config['devices']) == ['data']
+
+
+def test_server_gui_treats_a_device_without_a_checkbox_as_disabled():
+    """Explicit opt-in: a device with no checkbox state is left out, not assumed on."""
+    config = server_gui.server_config_from_values(
+        _values(
+            devices={'data': {'module_name': 'asyncroscopy.data.data'}},
+            enabled_devices={},
+        )
+    )
+
+    assert config['devices'] == {}
+
+
+def test_server_gui_does_not_mutate_the_loaded_device_config():
+    """The GUI writes a copy, so editing the generated config cannot corrupt the source YAML."""
+    spec = {'module_name': 'asyncroscopy.data.data', 'properties': {'port': 9091}}
+    devices = {'data': spec}
+    config = server_gui.server_config_from_values(_values(devices=devices, enabled_devices={'data': True}))
+
+    config['devices']['data']['properties']['port'] = 1234
+
+    assert spec['properties']['port'] == 9091
+
+
+def test_server_gui_populates_devices_from_the_loaded_config():
+    """Checkboxes come from the config's devices mapping, in its own order."""
+    added: list[tuple[str, int, int]] = []
+
+    class FakeGrid:
+        def count(self):
+            return 0
+
+        def addWidget(self, widget, row, column):  # Qt API
+            added.append((getattr(widget, 'label', ''), row, column))
+
+    class FakeCheckBox:
+        def __init__(self, label):
+            self.label = label
+            self.checked = False
+
+        def setChecked(self, value):  # Qt API
+            self.checked = value
+
+        @property
+        def stateChanged(self):  # Qt API
+            return type('Signal', (), {'connect': lambda _self, _slot: None})()
+
+    class FakeSection:
+        form = FakeGrid()
+
+    class FakeGui:
+        populate_devices = server_gui.ServerGui.populate_devices
+
+    gui = FakeGui()
+    gui.devices_section = FakeSection()
+    gui.device_checks = {}
+    gui.device_config = {
+        'corrector': {'module_name': 'asyncroscopy.instruments.electron_microscope.hardware.corrector'},
+        'data': {'module_name': 'asyncroscopy.data.data'},
+    }
+    gui.refresh_yaml = lambda: None
+
+    original_checkbox = server_gui.CheckBox
+    server_gui.CheckBox = FakeCheckBox
+    try:
+        gui.populate_devices()
+    finally:
+        server_gui.CheckBox = original_checkbox
+
+    assert list(gui.device_checks) == ['corrector', 'data']
+    assert all(checkbox.checked for checkbox in gui.device_checks.values())
+    assert added == [('corrector', 0, 0), ('data', 0, 1)]
 
 
 def test_server_gui_omits_hardware_host_port_for_digital_twin_file():
@@ -128,3 +259,50 @@ def test_mcp_gui_builds_mcp_yaml():
     assert config['mcp']['http_host'] == '0.0.0.0'
     assert config['mcp']['blocked_classes'] == ['DataBase', 'DServer']
     assert config['mcp']['blocked_functions'] == {'*': ['Init', 'Kill']}
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX process-group semantics')
+def test_managed_command_stop_lets_the_launcher_shut_its_own_children_down(tmp_path):
+    """Stop must reach device servers that live in their own sessions.
+
+    ProcessManager gives every device server its own session, so signalling the
+    launcher's process group never reaches them; only the launcher's SIGTERM
+    handler stops them. This stands in a fake launcher that behaves the same way
+    and asserts the grandchild dies with it.
+    """
+    marker = tmp_path / 'grandchild.pid'
+    launcher = tmp_path / 'launcher.py'
+    launcher.write_text(
+        'import os, signal, subprocess, sys, time\n'
+        'child = subprocess.Popen(\n'
+        '    [sys.executable, "-c", "import time\\nwhile True: time.sleep(0.05)"],\n'
+        '    start_new_session=True,\n'
+        ')\n'
+        f'open({str(marker)!r}, "w").write(str(child.pid))\n'
+        'def shutdown(_signum, _frame):\n'
+        '    child.terminate()\n'
+        '    child.wait(timeout=5)\n'
+        '    sys.exit(0)\n'
+        'signal.signal(signal.SIGTERM, shutdown)\n'
+        'print("ready", flush=True)\n'
+        'while True: time.sleep(0.05)\n',
+        encoding='utf-8',
+    )
+
+    command = shared.ManagedCommand(lambda _text: None, lambda _code: None)
+    command.start([sys.executable, '-u', str(launcher)])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not marker.exists():
+        time.sleep(0.05)
+    assert marker.exists(), 'fake launcher never started its child'
+    grandchild = int(marker.read_text())
+
+    command.stop_and_wait(timeout=15)
+
+    assert command.process.poll() is not None, 'launcher still running'
+    # The launcher exited 0, so it ran its handler rather than being killed.
+    assert command.process.returncode == 0
+    with pytest.raises(ProcessLookupError):
+        for _ in range(100):
+            os.kill(grandchild, 0)
+            time.sleep(0.05)

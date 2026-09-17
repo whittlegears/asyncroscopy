@@ -295,6 +295,11 @@ class McpGui(QMainWindow):
         self.refresh_yaml()
         self.enqueue_output(f'Loaded {path}\n')
 
+    def closeEvent(self, event) -> None:  # Qt override
+        """Closing the window stops the MCP server it started, so its HTTP port frees up."""
+        self.command.stop_and_wait()
+        super().closeEvent(event)
+
     def start(self) -> None:
         self.badge_error = False
         set_tool_count_badge(self.tool_badge, None)

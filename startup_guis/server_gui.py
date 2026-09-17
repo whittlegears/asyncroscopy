@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast 
 import sys 
+from copy import deepcopy
 from pathlib import Path 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1] 
@@ -36,15 +37,11 @@ from startup_guis.shared import BODY_FONT, CONFIG_DIR, GENERATED_CONFIG_DIR, TIT
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'DigitalTwin.yaml'
 GENERATED_CONFIG_PATH = GENERATED_CONFIG_DIR / 'server_gui.yaml' 
-DEVICE_MODULES = { 
-    'aperture': 'asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript',
-    'camera': 'asyncroscopy.instruments.electron_microscope.detectors.camera', 
-    'corrector': 'asyncroscopy.instruments.electron_microscope.hardware.corrector', 
-    'data': 'asyncroscopy.data.data', 
-    'eds': 'asyncroscopy.instruments.electron_microscope.detectors.eds', 
-    'scan': 'asyncroscopy.instruments.electron_microscope.hardware.scan', 
-    'stage': 'asyncroscopy.instruments.electron_microscope.hardware.stage', 
-} 
+# Devices are never hardcoded here: the Devices section is built from the
+# `devices:` mapping of whichever YAML is loaded, so a config that declares a
+# corrector or an aperture gets a checkbox for it without touching this file,
+# and a device the config does not declare can never be started.
+DEVICES_PER_ROW = 3
 INSTRUMENT_FILES = [ 
     'asyncroscopy/instruments/electron_microscope/auto_script.py', 
     'asyncroscopy/instruments/electron_microscope/jeol.py', 
@@ -82,7 +79,13 @@ def uses_hardware_connection(path_text: str) -> bool:
 
 
 def server_config_from_values(values: dict) -> dict: 
-    devices = {key: spec for key, spec in values['devices'].items() if values['enabled_devices'][key]} 
+    # A device is written out only when the config declared it AND its checkbox
+    # is ticked, so run_servers.py starts exactly what the user can see.
+    devices = { 
+        key: deepcopy(spec) 
+        for key, spec in values['devices'].items() 
+        if values['enabled_devices'].get(key, False) 
+    } 
     instrument = dict(values['instrument']) 
     selected_file = project_path_text(values['instrument_file']) 
     previous_file = project_path_text(instrument.get('file', selected_file)) 
@@ -125,7 +128,7 @@ class ServerGui(QMainWindow):
         self.setMinimumSize(720, 560)
         self.command = ManagedCommand(self.enqueue_output, self.process_done) 
         self.default_config = load_yaml(DEFAULT_CONFIG_PATH) 
-        self.device_config = self.default_config.get('devices', {}) 
+        self.device_config = self.default_config.get('devices') or {} 
         self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {} 
         self.device_checks: dict[str, QCheckBox] = {} 
         self.build() 
@@ -198,14 +201,9 @@ class ServerGui(QMainWindow):
         data_server.form.addRow('', register_on_startup)
         layout.addWidget(data_server)
 
-        devices = self.section('Devices', layout_cls=QGridLayout, expanded=False)
-        for index, key in enumerate(DEVICE_MODULES):
-            checkbox = CheckBox(key)
-            checkbox.setChecked(key in self.device_config)
-            checkbox.stateChanged.connect(self.refresh_yaml)
-            self.device_checks[key] = checkbox
-            devices.form.addWidget(checkbox, index // 3, index % 3)
-        layout.addWidget(devices)
+        self.devices_section = self.section('Devices', layout_cls=QGridLayout, expanded=False)
+        self.populate_devices()
+        layout.addWidget(self.devices_section)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -313,7 +311,7 @@ class ServerGui(QMainWindow):
             'tiled_register_on_startup': self.inputs['tiled_register_on_startup'].isChecked(), 
             'device_timeout_seconds': self.input_text('device_timeout_seconds'), 
             'enabled_devices': {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}, 
-            'devices': {key: self.device_config.get(key, {'module_name': DEVICE_MODULES[key]}) for key in DEVICE_MODULES}, 
+            'devices': self.device_config, 
             'instrument': self.default_config['instrument'], 
         } 
         return server_config_from_values(values) 
@@ -334,7 +332,7 @@ class ServerGui(QMainWindow):
     def load_config_from_path(self, path: Path | str) -> None: 
         config = load_yaml(Path(path)) 
         self.default_config = config 
-        self.device_config = config.get('devices', {}) 
+        self.device_config = config.get('devices') or {} 
         instrument = config.get('instrument', {})
         tango = config.get('tango', {})
         tiled = config.get('tiled', {})
@@ -350,8 +348,7 @@ class ServerGui(QMainWindow):
         self.inputs['tiled_autostart'].setChecked(bool(tiled.get('autostart', True))) 
         self.inputs['tiled_register_on_startup'].setChecked(bool(tiled.get('register_on_startup', False))) 
         self.set_input_text('device_timeout_seconds', config.get('device_timeout_seconds', 120)) 
-        for key, checkbox in self.device_checks.items(): 
-            checkbox.setChecked(key in self.device_config) 
+        self.populate_devices() 
         self.refresh_yaml() 
         self.enqueue_output(f'Loaded {path}\n') 
         filename = Path(path).name 
@@ -365,6 +362,38 @@ class ServerGui(QMainWindow):
         if not path: 
             return 
         self.load_config_from_path(path) 
+
+    def populate_devices(self) -> None: 
+        """Rebuild the Devices checkboxes from the loaded config's `devices:` mapping.
+
+        Every declared device starts ticked, because declaring it in the YAML is
+        what asks for it; unticking one leaves it out of the generated config.
+        """ 
+        grid = self.devices_section.form 
+        while grid.count(): 
+            item = grid.takeAt(0) 
+            widget = item.widget() 
+            if widget is not None: 
+                widget.deleteLater() 
+        self.device_checks.clear() 
+        if not self.device_config: 
+            grid.addWidget(QLabel('This config declares no devices.'), 0, 0) 
+            return 
+        for index, key in enumerate(self.device_config): 
+            checkbox = CheckBox(key) 
+            checkbox.setChecked(True) 
+            checkbox.stateChanged.connect(self.refresh_yaml) 
+            self.device_checks[key] = checkbox 
+            grid.addWidget(checkbox, index // DEVICES_PER_ROW, index % DEVICES_PER_ROW) 
+
+    def closeEvent(self, event) -> None:  # Qt override 
+        """Closing the window stops the servers it started. 
+
+        Without this the device servers outlive the GUI and keep holding their 
+        Tango and Tiled ports, so the next launch fails on a port conflict. 
+        """ 
+        self.command.stop_and_wait() 
+        super().closeEvent(event) 
 
     def start(self) -> None: 
         config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config()) 

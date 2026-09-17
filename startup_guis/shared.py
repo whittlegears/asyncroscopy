@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -575,6 +576,13 @@ def append_terminal_text(widget: QTextEdit, text: str) -> None:
     widget.ensureCursorVisible()
 
 
+# How long a Stop waits for run_servers.py to unwind its device servers before
+# the process tree is killed outright, and how long a kill itself is given.
+GRACEFUL_STOP_SECONDS = 20.0
+FORCE_KILL_SECONDS = 5.0
+POLL_SECONDS = 0.1
+
+
 class ManagedCommand(QObject):
     output_ready = pyqtSignal(str)
     done = pyqtSignal(object)
@@ -604,32 +612,77 @@ class ManagedCommand(QObject):
         threading.Thread(target=self._read_output, daemon=True).start()
 
     def stop(self) -> None:
-        """Immediately kill the managed process and every subprocess it spawned.
+        """Shut the launcher down gracefully, then make sure nothing survives.
 
-        The startup scripts launch whole trees (uv -> python -> device servers,
-        Tiled, ...), so a polite terminate of the root leaves orphans holding
-        ports. Kill the full tree instead.
+        ProcessManager starts every device server in its OWN session
+        (start_new_session=True), so signalling this process group never reaches
+        them: they are only stopped by run_servers' own shutdown_all(), which
+        runs off SIGTERM. Killing the launcher outright therefore orphans the
+        whole device stack holding its ports. Ask politely first, and escalate
+        to SIGKILL only if the launcher will not leave.
+
+        The wait runs on a worker thread so the Qt event loop keeps painting
+        terminal output while the servers unwind.
         """
         if not self.running:
             self.output_ready.emit('No process is running.\n')
             return
-        assert self.process is not None
-        if os.name == 'nt':
-            # /T walks the child tree, /F force-kills without waiting.
-            subprocess.run(
-                ['taskkill', '/PID', str(self.process.pid), '/T', '/F'],
-                capture_output=True,
-            )
-        else:
-            try:
-                # start_new_session=True in start() put the whole tree in one
-                # process group, so SIGKILL to the group takes everything down.
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
+        self.output_ready.emit('Stopping servers...\n')
+        threading.Thread(target=self._stop_tree, args=(GRACEFUL_STOP_SECONDS,), daemon=True).start()
+
+    def stop_and_wait(self, timeout: float = GRACEFUL_STOP_SECONDS) -> None:
+        """Stop on the calling thread and block until the tree is gone.
+
+        Used when the window is closing: there is no event loop left to come
+        back to, so the shutdown has to finish before the GUI exits.
+        """
+        if not self.running:
+            return
+        self._stop_tree(timeout)
+
+    def _stop_tree(self, timeout: float) -> None:
+        process = self.process
+        if process is None:
+            return
+        self._signal_tree(process, graceful=True)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                self.output_ready.emit('All servers stopped.\n')
                 return
-            except OSError:
-                self.process.kill()
-        self.output_ready.emit('Killed process tree.\n')
+            time.sleep(POLL_SECONDS)
+        # The launcher ignored SIGTERM or wedged mid-shutdown. Kill the tree so
+        # the GUI is usable again; ProcessManager.scour_ports() on the next
+        # start clears any device server this leaves behind.
+        self.output_ready.emit(
+            f'Launcher did not exit within {timeout:.0f}s; killing process tree.\n'
+        )
+        self._signal_tree(process, graceful=False)
+        try:
+            process.wait(timeout=FORCE_KILL_SECONDS)
+        except subprocess.TimeoutExpired:
+            self.output_ready.emit('Process tree did not respond to kill.\n')
+
+    def _signal_tree(self, process: subprocess.Popen[str], graceful: bool) -> None:
+        if os.name == 'nt':
+            # /T walks the child tree; /F force-kills instead of requesting exit.
+            command = ['taskkill', '/PID', str(process.pid), '/T']
+            if not graceful:
+                command.append('/F')
+            subprocess.run(command, capture_output=True)
+            return
+        # start_new_session=True in start() put the launcher and its direct
+        # children in one process group, so signal the group rather than the pid
+        # alone: `uv run` sits between the GUI and run_servers.py.
+        try:
+            os.killpg(process.pid, signal.SIGTERM if graceful else signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except OSError:
+            if graceful:
+                process.terminate()
+            else:
+                process.kill()
 
     def _read_output(self) -> None:
         assert self.process is not None
