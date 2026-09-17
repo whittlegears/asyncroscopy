@@ -489,6 +489,22 @@ def print_summary(
     print(color("All asyncroscopy servers are ready.", Style.bold + Style.green))
 
 
+def final_sweep(ports: list[int]) -> None:
+    """Last pass before the script exits: nothing it started may outlive it.
+
+    ProcessManager.shutdown_all() has already stopped everything it tracks, so
+    this only catches strays - a device server that survived its group signal,
+    or a port still held by a process from an earlier crashed run.
+    """
+    try:
+        stopped = ProcessManager.reap_all(ports=tuple(ports))
+    except Exception as exc:
+        print(color(f"Final cleanup failed: {exc}", Style.yellow))
+        return
+    if stopped > 0:
+        status_line("OK", "final cleanup", f"stopped {stopped} leftover process(es)")
+
+
 def main(argv: list[str] | None = None) -> int:
     shutdown_requested = False
 
@@ -592,13 +608,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {color('DEBUG LOGS', Style.bold):<18} {log_dir}")
     print_inventory(devices)
 
+    ports_to_clear = [port]
+    if should_start_tiled:
+        ports_to_clear.append(tiled_port)
+
     try:
         with ProcessManager() as manager:
             print_section(1, total_steps, "Clearing old processes")
             if clear_first:
-                ports_to_clear = [port]
-                if should_start_tiled:
-                    ports_to_clear.append(tiled_port)
                 manager.scour_ports(ports_to_clear)
             else:
                 status_line("SKIP", "old process cleanup")
@@ -702,6 +719,7 @@ def main(argv: list[str] | None = None) -> int:
                 stop_tiled_server() 
                 print(color("Stopping managed processes...", Style.yellow))
                 
+        final_sweep(ports_to_clear)
         status_line("OK", "shutdown complete")
         return 0
 
@@ -728,7 +746,8 @@ def main(argv: list[str] | None = None) -> int:
             stop_tiled_server() 
         except Exception:
             pass
-            
+
+        final_sweep(ports_to_clear)
         return 1
 
 if __name__ == "__main__":

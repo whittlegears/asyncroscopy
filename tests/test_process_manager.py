@@ -2,6 +2,9 @@ import json
 import os
 import signal
 import subprocess
+import sys
+
+import pytest
 
 from asyncroscopy.utils import process_manager
 from asyncroscopy.utils.process_manager import ProcessManager, ManagedProcess
@@ -215,3 +218,83 @@ def test_stop_processes_on_port(tmp_path, monkeypatch):
         assert count == 2
         assert 1001 in killed_pids
         assert 1002 in killed_pids
+
+def _spawn_orphan() -> subprocess.Popen:
+    """A process in its own session, like every device server ProcessManager starts."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time\nwhile True: time.sleep(0.05)"],
+        start_new_session=True,
+    )
+
+
+def _died_from_signal(proc: subprocess.Popen, timeout: float = 10.0) -> bool:
+    """True when the process was terminated by a signal.
+
+    Checked with wait() rather than os.kill(pid, 0): a killed direct child stays
+    a zombie until its parent reaps it, so the PID still answers signal 0 long
+    after the process is dead. A negative returncode is -signal number.
+    """
+    try:
+        return proc.wait(timeout=timeout) < 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+def test_reap_recorded_processes_kills_orphans_from_a_dead_launcher(tmp_path):
+    """The whole point of the state file: reap children whose launcher is gone."""
+    orphan = _spawn_orphan()
+    (tmp_path / "run_servers.json").write_text(json.dumps([orphan.pid]), encoding="utf-8")
+
+    stopped = ProcessManager.reap_recorded_processes(state_dir=tmp_path)
+
+    assert stopped == 1
+    assert _died_from_signal(orphan), "recorded orphan survived the reap"
+    assert not (tmp_path / "run_servers.json").exists(), "state file should be cleared"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group semantics")
+def test_reap_recorded_processes_reads_every_launcher_state_file(tmp_path):
+    """Stopping from one GUI clears servers started by any launcher."""
+    orphans = [_spawn_orphan(), _spawn_orphan()]
+    (tmp_path / "run_servers.json").write_text(json.dumps([orphans[0].pid]), encoding="utf-8")
+    (tmp_path / "run_mcp.json").write_text(json.dumps([orphans[1].pid]), encoding="utf-8")
+
+    assert ProcessManager.reap_recorded_processes(state_dir=tmp_path) == 2
+    assert all(_died_from_signal(orphan) for orphan in orphans)
+
+
+def test_reap_recorded_processes_never_kills_the_caller(tmp_path):
+    """A stale file naming this very process must not make the reaper suicide."""
+    (tmp_path / "run_servers.json").write_text(json.dumps([os.getpid()]), encoding="utf-8")
+
+    assert ProcessManager.reap_recorded_processes(state_dir=tmp_path) == 0
+
+
+def test_reap_recorded_processes_survives_a_corrupt_state_file(tmp_path):
+    (tmp_path / "run_servers.json").write_text("{not json", encoding="utf-8")
+
+    assert ProcessManager.reap_recorded_processes(state_dir=tmp_path) == 0
+    assert not (tmp_path / "run_servers.json").exists()
+
+
+def test_reap_recorded_processes_tolerates_a_missing_state_dir(tmp_path):
+    assert ProcessManager.reap_recorded_processes(state_dir=tmp_path / "absent") == 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ps line format")
+def test_stale_device_server_matching_spares_launchers_and_the_caller():
+    """Device servers are reaped; the launchers and GUIs doing the reaping are not."""
+    skip = {4242}
+    device_server = "  101 python -u -m asyncroscopy.instruments.electron_microscope.hardware.scan scan_instance"
+    launcher = "  102 python -u startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml"
+    gui = "  103 python startup_guis/server_gui.py"
+    unrelated = "  104 python -m http.server"
+    myself = "  4242 python -u -m asyncroscopy.data.data data_instance"
+
+    assert ProcessManager._pid_of_stale_device_server(device_server, skip) == 101
+    assert ProcessManager._pid_of_stale_device_server(launcher, skip) is None
+    assert ProcessManager._pid_of_stale_device_server(gui, skip) is None
+    assert ProcessManager._pid_of_stale_device_server(unrelated, skip) is None
+    assert ProcessManager._pid_of_stale_device_server(myself, skip) is None
+    assert ProcessManager._pid_of_stale_device_server("", skip) is None

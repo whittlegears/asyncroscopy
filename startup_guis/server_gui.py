@@ -126,7 +126,7 @@ class ServerGui(QMainWindow):
         self.setWindowTitle('Asyncroscopy Server Startup')
         self.resize(1020, 960)
         self.setMinimumSize(720, 560)
-        self.command = ManagedCommand(self.enqueue_output, self.process_done) 
+        self.command = ManagedCommand(self.enqueue_output, self.process_done, self.stack_ports) 
         self.default_config = load_yaml(DEFAULT_CONFIG_PATH) 
         self.device_config = self.default_config.get('devices') or {} 
         self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {} 
@@ -362,6 +362,18 @@ class ServerGui(QMainWindow):
         if not path: 
             return 
         self.load_config_from_path(path) 
+
+    def stack_ports(self) -> list[int]: 
+        """Ports this server stack owns, so a stop can clear whatever still holds them.""" 
+        ports = [] 
+        for key, needed in (('tango_port', True), ('tiled_port', self.inputs['tiled_autostart'].isChecked())): 
+            if not needed: 
+                continue 
+            try: 
+                ports.append(int(self.input_text(key))) 
+            except (TypeError, ValueError): 
+                continue 
+        return ports 
 
     def populate_devices(self) -> None: 
         """Rebuild the Devices checkboxes from the loaded config's `devices:` mapping.

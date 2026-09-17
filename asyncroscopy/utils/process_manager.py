@@ -9,11 +9,28 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 
-TANGO_DATABASE_FILES = ("tango_database.db", "Tango_database.db")
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
+
+TANGO_DATABASE_FILES = ("tango_database.db", "Tango_database.db")
+# Anchored to the project rather than the working directory: the launcher runs
+# with cwd=PROJECT_DIR while a GUI or a terminal may not, and all three have to
+# resolve the same state files for reaping to find anything.
+DEFAULT_STATE_DIR = PROJECT_DIR / ".processes"
+# A process running one of these modules is a device server, not a launcher.
+DEVICE_SERVER_MODULES = ("asyncroscopy.instruments", "asyncroscopy.data", "asyncroscopy.mcp")
+# ...unless its command line also names one of these, which are the processes
+# that do the reaping and must never reap themselves.
+LAUNCHER_COMMANDS = (
+    "run_servers.py",
+    "run_mcp.py",
+    "run_llm.py",
+    "run_segmentation.py",
+    "server_gui.py",
+    "mcp_gui.py",
+)
 
 
 @dataclass
@@ -50,7 +67,7 @@ class ProcessManager:
     def __init__(
         self,
         name: str = None,
-        state_dir: str | Path = ".processes",
+        state_dir: str | Path | None = None,
         timeout: float = 5.0,
         max_output_lines: int = 200,
     ):
@@ -60,7 +77,7 @@ class ProcessManager:
             name = Path(name).stem
 
         self.name = name
-        self.state_dir = Path(state_dir)
+        self.state_dir = Path(DEFAULT_STATE_DIR if state_dir is None else state_dir)
         self.state_file = self.state_dir / f"{self.name}.json"
         self.timeout = timeout
         self.max_output_lines = max_output_lines
@@ -264,6 +281,49 @@ class ProcessManager:
                     proc.kill()
                 proc.wait()
 
+    @classmethod
+    def reap_recorded_processes(cls, state_dir: str | Path | None = None) -> int:
+        """Kills every PID any launcher recorded under state_dir, then clears the files.
+
+        start_process() persists its children's PIDs immediately, so this reaps
+        them without owning them: a GUI that only ever held the launcher handle
+        can still stop the device servers the launcher spawned.
+        """
+        directory = Path(DEFAULT_STATE_DIR if state_dir is None else state_dir)
+        if not directory.is_dir():
+            return 0
+        stopped = 0
+        for state_file in sorted(directory.glob("*.json")):
+            try:
+                recorded = json.loads(state_file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                recorded = []
+            if isinstance(recorded, list):
+                for pid in recorded:
+                    if isinstance(pid, int) and pid != os.getpid():
+                        cls._kill_stale_pid(pid)
+                        stopped += 1
+            try:
+                state_file.unlink()
+            except OSError:
+                pass
+        return stopped
+
+    @classmethod
+    def reap_all(cls, state_dir: str | Path | None = None, ports: tuple[int, ...] = ()) -> int:
+        """Stops everything this project may have left running, from any caller.
+
+        This is the whole shutdown contract in one call, so a GUI, a launcher and
+        a terminal all reap identically: recorded child PIDs first (the precise
+        list), then anything squatting the ports the stack needs, then any
+        device server still running without a launcher.
+        """
+        stopped = cls.reap_recorded_processes(state_dir)
+        for port in ports:
+            stopped += cls.stop_processes_on_port(port)
+        stopped += cls.stop_stale_device_servers()
+        return stopped
+
     def _cleanup_stale_state(self):
         """Reads state file on startup, terminates surviving PIDs, and deletes the file."""
         if not self.state_file.exists():
@@ -282,7 +342,8 @@ class ProcessManager:
         finally:
             self._remove_state_file()
 
-    def _kill_stale_pid(self, pid: int):
+    @staticmethod
+    def _kill_stale_pid(pid: int):
         """Best-effort termination of orphan process IDs from a previous crash.
 
         Recorded PIDs are process-group leaders (start_process uses
@@ -346,26 +407,63 @@ class ProcessManager:
             count = self.stop_processes_on_port(port)
             if count > 0:
                 print(f"Cleared {count} stale process(es) on port {port}")
-        self.stop_stale_device_servers()
+        stale = self.stop_stale_device_servers()
+        if stale > 0:
+            print(f"Cleared {stale} orphaned device server process(es)")
 
-    def stop_stale_device_servers(self):
-        """Finds and kills orphaned Python processes running asyncroscopy device servers."""
-        current_pid = os.getpid()
+    @classmethod
+    def stop_stale_device_servers(cls) -> int:
+        """Kills orphaned device servers this project left running, on any OS.
+
+        A device server that outlived its launcher still owns its Tango
+        server-instance name and its port, so the next start fails. Match on the
+        module a device server is launched with, and never on a launcher or GUI:
+        those are the processes doing the reaping.
+        """
+        skip_pids = {os.getpid(), os.getppid()}
         if os.name == "nt":
-            try:
-                cmd = ["wmic", "process", "where", "name='python.exe'", "get", "ProcessId,CommandLine"]
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                for line in res.stdout.splitlines():
-                    if ("asyncroscopy.instruments" in line or "asyncroscopy.data" in line) and "run_servers.py" not in line:
-                        parts = line.strip().split()
-                        if parts and parts[-1].isdigit():
-                            pid = int(parts[-1])
-                            if pid != current_pid:
-                                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-            except Exception:
-                pass
+            command = ["wmic", "process", "where", "name='python.exe'", "get", "ProcessId,CommandLine"]
+        else:
+            command = ["ps", "-eo", "pid=,args="]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True)
+        except (FileNotFoundError, OSError):
+            return 0
 
-    def stop_processes_on_port(self, port: int) -> int:
+        stopped = 0
+        for line in result.stdout.splitlines():
+            pid = cls._pid_of_stale_device_server(line, skip_pids)
+            if pid is None:
+                continue
+            cls._kill_stale_pid(pid)
+            stopped += 1
+        return stopped
+
+    @staticmethod
+    def _pid_of_stale_device_server(line: str, skip_pids: set[int]) -> int | None:
+        """Returns the PID on a `ps`/`wmic` line when it is an orphaned device server."""
+        line = line.strip()
+        if not line:
+            return None
+        if os.name == "nt":
+            # wmic prints "CommandLine  ProcessId", so the PID is the last field.
+            parts = line.split()
+            pid_text, command = (parts[-1], line) if parts else ("", line)
+        else:
+            # ps -eo "pid=,args=" prints "<pid> <command line>".
+            pid_text, _, command = line.partition(" ")
+        if not pid_text.isdigit():
+            return None
+        pid = int(pid_text)
+        if pid in skip_pids:
+            return None
+        if not any(module in command for module in DEVICE_SERVER_MODULES):
+            return None
+        if any(owner in command for owner in LAUNCHER_COMMANDS):
+            return None
+        return pid
+
+    def stop_processes_on_port(cls, port: int) -> int:
         """Identifies and kills processes occupying a specific TCP port."""
         if os.name == "nt":
             try:
@@ -409,6 +507,6 @@ class ProcessManager:
         stopped = 0
         for pid_str in result.stdout.splitlines():
             if pid_str.strip().isdigit():
-                self._kill_stale_pid(int(pid_str.strip()))
+                cls._kill_stale_pid(int(pid_str.strip()))
                 stopped += 1
         return stopped

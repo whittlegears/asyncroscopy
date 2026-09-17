@@ -1,9 +1,12 @@
+import json
 import os
+import signal
 import sys
 import time
 
 import pytest
 
+from asyncroscopy.utils import process_manager
 from startup_guis import mcp_gui, server_gui, shared
 
 
@@ -306,3 +309,59 @@ def test_managed_command_stop_lets_the_launcher_shut_its_own_children_down(tmp_p
         for _ in range(100):
             os.kill(grandchild, 0)
             time.sleep(0.05)
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX process-group semantics')
+def test_managed_command_reaps_device_servers_a_wedged_launcher_left_behind(tmp_path):
+    """The force-kill path must still clear the stack.
+
+    A launcher that ignores SIGTERM gets killed, so it never runs shutdown_all(),
+    and its device servers sit in their own sessions where no group signal
+    reaches them. The GUI has to reap them through the recorded PIDs, which is
+    what ProcessManager.reap_all() does for the launcher too.
+    """
+    state_dir = tmp_path / '.processes'
+    state_dir.mkdir()
+    launcher = tmp_path / 'wedged.py'
+    launcher.write_text(
+        'import json, signal, subprocess, sys, time\n'
+        'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+        'child = subprocess.Popen(\n'
+        '    [sys.executable, "-c", "import time\\nwhile True: time.sleep(0.05)"],\n'
+        '    start_new_session=True,\n'
+        ')\n'
+        f'open({str(state_dir / "run_servers.json")!r}, "w").write(json.dumps([child.pid]))\n'
+        'print("ready", flush=True)\n'
+        'while True: time.sleep(0.05)\n',
+        encoding='utf-8',
+    )
+
+    command = shared.ManagedCommand(lambda _text: None, lambda _code: None)
+    original_state_dir = process_manager.DEFAULT_STATE_DIR
+    process_manager.DEFAULT_STATE_DIR = state_dir
+    try:
+        command.start([sys.executable, '-u', str(launcher)])
+        state_file = state_dir / 'run_servers.json'
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not state_file.exists():
+            time.sleep(0.05)
+        assert state_file.exists(), 'fake launcher never recorded its child'
+        orphan = int(json.loads(state_file.read_text())[0])
+
+        command.stop_and_wait(timeout=2)
+    finally:
+        process_manager.DEFAULT_STATE_DIR = original_state_dir
+
+    assert command.process.poll() is not None, 'wedged launcher survived'
+    # SIGTERM was ignored, so it had to be killed -- and the device server it
+    # spawned is only reachable through the recorded PID.
+    assert command.process.returncode == -signal.SIGKILL
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(orphan, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        raise AssertionError('orphaned device server survived the GUI stop')

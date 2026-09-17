@@ -79,7 +79,7 @@ class McpGui(QMainWindow):
         self.setWindowTitle('Asyncroscopy MCP Startup')
         self.resize(1280, 960)
         self.setMinimumSize(880, 560)
-        self.command = ManagedCommand(self.enqueue_output, self.process_done)
+        self.command = ManagedCommand(self.enqueue_output, self.process_done, self.stack_ports)
         self.badge_error = False
         self.default_config = load_yaml(DEFAULT_CONFIG_PATH)
         self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {}
@@ -294,6 +294,13 @@ class McpGui(QMainWindow):
         self.blocked_functions.setPlainText(yaml.safe_dump(mcp.get('blocked_functions', {}), sort_keys=False))
         self.refresh_yaml()
         self.enqueue_output(f'Loaded {path}\n')
+
+    def stack_ports(self) -> list[int]:
+        """The MCP server's HTTP port, so a stop clears whatever still holds it."""
+        try:
+            return [int(self.inputs['http_port'].text())]
+        except (KeyError, TypeError, ValueError):
+            return []
 
     def closeEvent(self, event) -> None:  # Qt override
         """Closing the window stops the MCP server it started, so its HTTP port frees up."""

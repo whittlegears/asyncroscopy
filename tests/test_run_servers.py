@@ -145,3 +145,27 @@ def test_run_mcp_builds_server_command():
         '{"*": ["Init"], "DATA": ["stop_tiled_server"]}'
     )
     assert "--search-packages-json" not in command
+
+
+def test_final_sweep_clears_the_ports_this_run_owns(monkeypatch):
+    """The script's own exit sweep reaps through the same API the GUI uses."""
+    calls = []
+    monkeypatch.setattr(
+        run_servers.ProcessManager,
+        "reap_all",
+        classmethod(lambda cls, ports=(): calls.append(ports) or 3),
+    )
+
+    run_servers.final_sweep([9094, 9091])
+
+    assert calls == [(9094, 9091)]
+
+
+def test_final_sweep_never_raises_out_of_a_shutdown(monkeypatch):
+    """A failed cleanup must not turn an orderly shutdown into a crash."""
+    def boom(cls, ports=()):
+        raise OSError('no ps on this box')
+
+    monkeypatch.setattr(run_servers.ProcessManager, "reap_all", classmethod(boom))
+
+    run_servers.final_sweep([9094])

@@ -8,9 +8,14 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import yaml
+
+if str(Path(__file__).resolve().parents[1]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from asyncroscopy.utils.process_manager import ProcessManager  # noqa: E402
 
 from startup_guis.qt_compat import (
     FIELDS_STAY_AT_SIZE_HINT,
@@ -587,11 +592,19 @@ class ManagedCommand(QObject):
     output_ready = pyqtSignal(str)
     done = pyqtSignal(object)
 
-    def __init__(self, output: OutputCallback, done: DoneCallback):
+    def __init__(
+        self,
+        output: OutputCallback,
+        done: DoneCallback,
+        reap_ports: Callable[[], Sequence[int]] | None = None,
+    ):
         super().__init__()
         self.output_ready.connect(output)
         self.done.connect(done)
         self.process: subprocess.Popen[str] | None = None
+        # Ports this command's stack owns, read at stop time so edits to the
+        # form are picked up. Without it a stop still reaps recorded PIDs.
+        self.reap_ports = reap_ports or (lambda: ())
 
     @property
     def running(self) -> bool:
@@ -649,6 +662,7 @@ class ManagedCommand(QObject):
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 self.output_ready.emit('All servers stopped.\n')
+                self._reap()
                 return
             time.sleep(POLL_SECONDS)
         # The launcher ignored SIGTERM or wedged mid-shutdown. Kill the tree so
@@ -662,6 +676,23 @@ class ManagedCommand(QObject):
             process.wait(timeout=FORCE_KILL_SECONDS)
         except subprocess.TimeoutExpired:
             self.output_ready.emit('Process tree did not respond to kill.\n')
+        self._reap()
+
+    def _reap(self) -> None:
+        """Stop anything the launcher left behind, through the launcher's own code.
+
+        A killed launcher never ran its shutdown, and its device servers each
+        live in their own session, so they survive any signal aimed at this
+        process group. ProcessManager.reap_all() is what run_servers.py sweeps
+        with on exit: the GUI calls the same thing rather than reimplementing it.
+        """
+        try:
+            stopped = ProcessManager.reap_all(ports=tuple(self.reap_ports()))
+        except Exception as exc:  # cleanup must never take the GUI down with it
+            self.output_ready.emit(f'Cleanup failed: {exc}\n')
+            return
+        if stopped > 0:
+            self.output_ready.emit(f'Cleaned up {stopped} leftover process(es).\n')
 
     def _signal_tree(self, process: subprocess.Popen[str], graceful: bool) -> None:
         if os.name == 'nt':
