@@ -7,7 +7,6 @@ import argparse
 import ast
 import json
 import os
-import signal
 import sys
 import threading
 import time
@@ -31,7 +30,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
+from asyncroscopy.utils.process_manager import (  # noqa: E402
+    ManagedProcess,
+    ProcessManager,
+    install_shutdown_signal_handler,
+    watch_parent_from_environment,
+)
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
 # selects a different config AND runs headlessly (no prompts).
@@ -490,23 +494,13 @@ def print_summary(
 
 
 def main(argv: list[str] | None = None) -> int:
-    shutdown_requested = False
-
-    def request_shutdown(_signum, _frame) -> None:
-        # A GUI's Stop button (or a wrapper like `uv run` forwarding its own
-        # copy of the same signal) can deliver SIGTERM more than once for a
-        # single stop request. Only the first should raise: re-raising while
-        # ProcessManager.shutdown_all() is already unwinding interrupts that
-        # cleanup mid-flight and can leave child device servers orphaned.
-        nonlocal shutdown_requested
-        if shutdown_requested:
-            return
-        shutdown_requested = True
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGTERM, request_shutdown)
-    if hasattr(signal, "SIGHUP"):
-        signal.signal(signal.SIGHUP, request_shutdown)
+    # A GUI's Stop button, a closed terminal or `kill <pid>` all unwind through
+    # the same KeyboardInterrupt path as Ctrl+C, so ProcessManager always gets
+    # to stop the device servers it started. If a startup GUI launched us, also
+    # shut down the moment that GUI disappears, even when it is force-killed
+    # and no signal ever arrives.
+    install_shutdown_signal_handler()
+    watch_parent_from_environment()
 
     args = parse_args(argv)
     config_path = args.yaml or DEFAULT_CONFIG_PATH
