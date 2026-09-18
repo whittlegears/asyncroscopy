@@ -9,7 +9,7 @@ QT_API_ENV = os.environ.get('ASYNCROSCOPY_QT_API', '').lower()
 try:
     if QT_API_ENV == 'pyqt5':
         raise ImportError('PyQt5 requested by ASYNCROSCOPY_QT_API')
-    from PyQt6.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, pyqtSignal as pyqtSignal
+    from PyQt6.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, QTimer as QTimer, pyqtSignal as pyqtSignal
     from PyQt6.QtGui import (
         QColor as QColor,
         QFont as QFont,
@@ -70,7 +70,7 @@ try:
         return app.palette().color(PALETTE_WINDOW_ROLE)
 
 except ImportError:
-    from PyQt5.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, pyqtSignal as pyqtSignal
+    from PyQt5.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, QTimer as QTimer, pyqtSignal as pyqtSignal
     from PyQt5.QtGui import (
         QColor as QColor,
         QFont as QFont,

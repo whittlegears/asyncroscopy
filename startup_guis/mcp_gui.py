@@ -31,13 +31,39 @@ from startup_guis.qt_compat import (  # noqa: E402
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    app_exec,
 )
-from startup_guis.shared import BODY_FONT, CONFIG_DIR, DIGITAL_TWIN_HOST, GENERATED_CONFIG_DIR, SPECTRA300_HOST, TEXT_FONT, TITLE_FONT, CheckBox, CollapsibleSection, HostToggle, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, set_tool_count_badge, tool_count_badge, write_yaml, yaml_text  # noqa: E402
+from startup_guis.shared import (  # noqa: E402
+    BODY_FONT,
+    CONFIG_DIR,
+    DIGITAL_TWIN_HOST,
+    GENERATED_CONFIG_DIR,
+    SPECTRA300_HOST,
+    TEXT_FONT,
+    TITLE_FONT,
+    CheckBox,
+    CollapsibleSection,
+    HostToggle,
+    ManagedCommand,
+    action_button,
+    append_terminal_text,
+    apply_theme,
+    configure_splitter,
+    configure_terminal,
+    load_yaml,
+    request_close,
+    run_app,
+    scrollable,
+    section_label,
+    set_tool_count_badge,
+    tool_count_badge,
+    write_yaml,
+    yaml_text,
+)
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'mcp.yaml'
 GENERATED_CONFIG_PATH = GENERATED_CONFIG_DIR / 'mcp_gui.yaml'
+LAUNCHER = 'startup_scripts/run_mcp.py'
 # Matches the unconditional "MCP ready: N tool(s) registered" line mcp_server.py
 # prints once tool discovery finishes, even in quiet mode.
 TOOL_COUNT_PATTERN = re.compile(r'MCP ready: (\d+) tool')
@@ -88,6 +114,11 @@ class McpGui(QMainWindow):
         # names, so a fresh launch never points at the real instrument.
         self.apply_host_preset(DIGITAL_TWIN_HOST)
         self.refresh_yaml()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        # Stop the MCP server this window started before the window goes away.
+        if request_close(self, self.command, event):
+            super().closeEvent(event)
 
     def build(self) -> None:
         apply_theme(self)
@@ -185,7 +216,7 @@ class McpGui(QMainWindow):
         load = QPushButton('Load config file')
         save = QPushButton('Save current config')
         start.clicked.connect(self.start)
-        stop.clicked.connect(self.command.stop)
+        stop.clicked.connect(self.stop)
         load.clicked.connect(self.read_config)
         save.clicked.connect(self.save_config)
         for button in (start, stop, load, save):
@@ -299,7 +330,10 @@ class McpGui(QMainWindow):
         self.badge_error = False
         set_tool_count_badge(self.tool_badge, None)
         config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config())
-        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_mcp.py', '--yaml', str(config_path)])
+        self.command.start(['uv', 'run', 'python', '-u', LAUNCHER, '--yaml', str(config_path)], state_name='run_mcp')
+
+    def stop(self) -> None:
+        self.command.stop_async()
 
     def enqueue_output(self, text: str) -> None:
         append_terminal_text(self.output, text)
@@ -325,4 +359,4 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = McpGui()
     window.show()
-    sys.exit(app_exec(app))
+    sys.exit(run_app(app, window, window.command))

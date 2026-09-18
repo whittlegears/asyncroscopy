@@ -1,13 +1,15 @@
+import _thread
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from pathlib import Path
-import threading
 
 TANGO_DATABASE_FILES = ("tango_database.db", "Tango_database.db")
 PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -233,37 +235,6 @@ class ProcessManager:
             except (ProcessLookupError, PermissionError):
                 proc.kill()
 
-    def _terminate_popen(self, proc: subprocess.Popen):
-        """Terminates a process via SIGTERM, waits, and escalates to SIGKILL if necessary."""
-        if proc.poll() is not None:
-            return
-
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-            )
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                pass
-        else:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                proc.terminate()
-
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
-                proc.wait()
-
     def _cleanup_stale_state(self):
         """Reads state file on startup, terminates surviving PIDs, and deletes the file."""
         if not self.state_file.exists():
@@ -412,3 +383,398 @@ class ProcessManager:
                 self._kill_stale_pid(int(pid_str.strip()))
                 stopped += 1
         return stopped
+
+# ---------------------------------------------------------------------------
+# Whole-tree lifecycle helpers shared by the startup GUIs and launcher scripts.
+#
+# A launcher such as run_servers.py spawns `uv run` -> python -> N device
+# servers (each in its own session so they can be signalled individually) ->
+# Tiled. Killing only the top of that tree orphans everything below it, which
+# is exactly what the GUI's Stop button and window close must never do.
+# ---------------------------------------------------------------------------
+
+PARENT_PID_ENV = "ASYNCROSCOPY_PARENT_PID"
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
+def pid_alive(pid: int) -> bool:
+    """Best-effort liveness check that works for processes we did not spawn."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            process_query_limited_information = 0x1000
+            handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+            if not handle:
+                return False
+            try:
+                exit_code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                still_active = 259
+                return exit_code.value == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A zombie still answers os.kill(pid, 0) until it is reaped; treat one as gone
+    # so a caller waiting on its own child does not wait forever.
+    if sys.platform.startswith("linux"):
+        try:
+            with open(f"/proc/{pid}/stat", "r", encoding="utf-8", errors="replace") as handle:
+                state = handle.read().rsplit(")", 1)[-1].split()[0]
+            return state != "Z"
+        except OSError:
+            return True
+    return True
+
+
+def process_table() -> list[tuple[int, int, int | None]]:
+    """(pid, parent pid, process group id or None) for every process on the machine."""
+    if os.name == "nt":
+        return [(pid, ppid, None) for pid, ppid in _windows_process_table()]
+    try:
+        result = subprocess.run(
+            ["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid="],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    table = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and all(part.isdigit() for part in parts[:3]):
+            table.append((int(parts[0]), int(parts[1]), int(parts[2])))
+    return table
+
+
+def _windows_process_table() -> list[tuple[int, int]]:
+    commands = [
+        [
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }",
+        ],
+        ["wmic", "process", "get", "ProcessId,ParentProcessId"],
+    ]
+    for command in commands:
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                creationflags=_WINDOWS_NO_WINDOW,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            continue
+        table = []
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and all(part.isdigit() for part in parts):
+                first, second = int(parts[0]), int(parts[1])
+                # PowerShell prints "pid ppid"; wmic prints "ParentProcessId ProcessId".
+                table.append((first, second) if command[0] == "powershell" else (second, first))
+        if table:
+            return table
+    return []
+
+
+def list_descendant_pids(root_pid: int, table: list[tuple[int, int, int | None]] | None = None) -> list[int]:
+    """Every process below `root_pid`, breadth first, however deeply nested."""
+    if table is None:
+        table = process_table()
+    children: dict[int, list[int]] = {}
+    for pid, ppid, _pgid in table:
+        children.setdefault(ppid, []).append(pid)
+    found: list[int] = []
+    queue = [root_pid]
+    seen = {root_pid}
+    while queue:
+        parent = queue.pop(0)
+        for child in children.get(parent, []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                queue.append(child)
+    return found
+
+
+def _signal_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _taskkill(pid: int, tree: bool = True) -> None:
+    command = ["taskkill", "/F", "/PID", str(pid)]
+    if tree:
+        command.insert(1, "/T")
+    try:
+        subprocess.run(command, capture_output=True, timeout=30, check=False, creationflags=_WINDOWS_NO_WINDOW)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _wait_for_exit(root: subprocess.Popen | int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if isinstance(root, subprocess.Popen):
+            if root.poll() is not None:
+                return True
+        elif not pid_alive(root):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+def kill_process_tree(
+    root: subprocess.Popen | int,
+    grace: float = 10.0,
+    log: Callable[[str], None] | None = None,
+) -> list[int]:
+    """Stop a launcher and everything it spawned, however deeply nested.
+
+    1. Snapshot every descendant first. Once the root exits, orphaned children
+       are re-parented to init and the tree information is gone for good.
+    2. Ask the root's process group to shut down (SIGTERM, or Ctrl+Break on
+       Windows) so a launcher such as run_servers.py can unwind its own
+       ProcessManager and stop Tiled cleanly.
+    3. After `grace` seconds, force-kill every survivor: each descendant, the
+       process group each descendant leads, and the root itself.
+
+    Returns the PIDs that were still alive after the grace period and had to be
+    force-killed. `log`, if given, receives one-line progress messages.
+    """
+    say = log or (lambda _message: None)
+    root_pid = root.pid if isinstance(root, subprocess.Popen) else int(root)
+    table = process_table()
+    descendants = list_descendant_pids(root_pid, table)
+    groups = {pgid for pid, _ppid, pgid in table if pgid is not None and (pid == root_pid or pid in descendants)}
+    say(f"Stopping pid {root_pid} and {len(descendants)} descendant process(es)...")
+
+    if os.name == "nt":
+        ctrl_break = getattr(signal, "CTRL_BREAK_EVENT", None)
+        # A Ctrl+Break reaches the launcher and lets it unwind, but it also
+        # reaches any wrapper (uv) which may exit first and drop the tree link.
+        # Only attempt it when the descendant snapshot is available to fall
+        # back on; otherwise go straight to the hard tree kill.
+        if ctrl_break is not None and descendants and grace > 0:
+            _signal_pid(root_pid, ctrl_break)
+            _wait_for_exit(root, grace)
+        _taskkill(root_pid, tree=True)
+    else:
+        if grace > 0:
+            _signal_group(root_pid, signal.SIGTERM)
+            _signal_pid(root_pid, signal.SIGTERM)
+            if not _wait_for_exit(root, grace):
+                say(f"pid {root_pid} did not exit within {grace:.0f}s; force-killing.")
+        _signal_group(root_pid, signal.SIGKILL)
+        _signal_pid(root_pid, signal.SIGKILL)
+
+    # Anything spawned during the grace period is caught by a second snapshot.
+    late = list_descendant_pids(root_pid)
+    survivors = [pid for pid in dict.fromkeys([*descendants, *late]) if pid_alive(pid)]
+    for pid in survivors:
+        if os.name == "nt":
+            _taskkill(pid, tree=True)
+        else:
+            _signal_pid(pid, signal.SIGKILL)
+    if os.name != "nt":
+        for pgid in groups:
+            _signal_group(pgid, signal.SIGKILL)
+
+    if isinstance(root, subprocess.Popen):
+        try:
+            root.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    if survivors:
+        say(f"Force-killed {len(survivors)} process(es): {', '.join(str(pid) for pid in survivors)}")
+    else:
+        say("All processes stopped.")
+    return survivors
+
+
+def install_shutdown_signal_handler() -> None:
+    """Route SIGTERM/SIGHUP/SIGBREAK to a single KeyboardInterrupt.
+
+    Launcher scripts run their real work inside `with ProcessManager() as
+    manager:` and rely on KeyboardInterrupt (normally Ctrl+C) to unwind that
+    block so `manager.shutdown_all()` runs. This makes an external stop request
+    (the GUI's Stop button, a closed terminal, `kill <pid>`) unwind the same
+    way instead of the launcher dying instantly and leaving its children behind.
+
+    Wrappers such as `uv run` can forward the same signal more than once for a
+    single stop request; only the first raises, because re-raising while
+    shutdown_all() is already unwinding would interrupt that cleanup mid-flight.
+    """
+    shutdown_requested = False
+
+    def request_shutdown(_signum, _frame) -> None:
+        nonlocal shutdown_requested
+        if shutdown_requested:
+            return
+        shutdown_requested = True
+        raise KeyboardInterrupt
+
+    for name in ("SIGTERM", "SIGHUP", "SIGBREAK"):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            signal.signal(signum, request_shutdown)
+        except (ValueError, OSError):
+            pass
+
+
+def watch_parent_process(
+    parent_pid: int,
+    on_exit: Callable[[], None] | None = None,
+    interval: float = 0.5,
+    alive: Callable[[int], bool] = pid_alive,
+) -> threading.Thread:
+    """Trigger a shutdown of this process as soon as `parent_pid` disappears.
+
+    The default action raises KeyboardInterrupt in the main thread, which a
+    launcher script handles exactly like Ctrl+C. This covers the cases no
+    signal can: the GUI being force-killed, or its terminal window being
+    closed on a platform that does not deliver SIGHUP to a new session.
+    """
+    action = on_exit or _thread.interrupt_main
+
+    def watch() -> None:
+        while alive(parent_pid):
+            time.sleep(interval)
+        action()
+
+    thread = threading.Thread(target=watch, name=f"parent-watchdog-{parent_pid}", daemon=True)
+    thread.start()
+    return thread
+
+
+def watch_parent_from_environment(environ: dict[str, str] | None = None) -> threading.Thread | None:
+    """Start watch_parent_process() if a launcher GUI put its PID in the environment."""
+    raw = (environ if environ is not None else os.environ).get(PARENT_PID_ENV, "")
+    if not raw.strip().isdigit():
+        return None
+    parent_pid = int(raw)
+    if parent_pid <= 0 or parent_pid == os.getpid():
+        return None
+    return watch_parent_process(parent_pid)
+
+
+def assign_to_kill_on_close_job(pid: int):
+    """Put `pid` (and everything it goes on to spawn) in a Windows job object.
+
+    The job carries KILL_ON_JOB_CLOSE, so when the handle returned here is
+    closed - including by the owning process dying for any reason - Windows
+    terminates every process in the job. The caller must keep the returned
+    handle referenced for as long as the tree should stay alive. Returns None
+    on non-Windows platforms or if the assignment fails.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
+
+        class BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", BasicLimitInformation),
+                ("IoInfo", IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        job_object_extended_limit_information = 9
+        job_object_limit_kill_on_job_close = 0x2000
+        process_set_quota = 0x0100
+        process_terminate = 0x0001
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = ExtendedLimitInformation()
+        info.BasicLimitInformation.LimitFlags = job_object_limit_kill_on_job_close
+        if not kernel32.SetInformationJobObject(
+            job, job_object_extended_limit_information, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            kernel32.CloseHandle(job)
+            return None
+        process = kernel32.OpenProcess(process_set_quota | process_terminate, False, pid)
+        if not process:
+            kernel32.CloseHandle(job)
+            return None
+        assigned = kernel32.AssignProcessToJobObject(job, process)
+        kernel32.CloseHandle(process)
+        if not assigned:
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:
+        return None

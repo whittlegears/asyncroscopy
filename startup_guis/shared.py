@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 import re
 import signal
@@ -11,7 +12,17 @@ from typing import Callable
 
 import yaml
 
-from startup_guis.qt_compat import (
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from asyncroscopy.utils.process_manager import (  # noqa: E402
+    PARENT_PID_ENV,
+    ProcessManager,
+    assign_to_kill_on_close_job,
+    kill_process_tree,
+)
+from startup_guis.qt_compat import (  # noqa: E402
     FIELDS_STAY_AT_SIZE_HINT,
     FONT_BOLD,
     FONT_MEDIUM,
@@ -42,14 +53,15 @@ from startup_guis.qt_compat import (
     QStyleOptionButton,
     QTextCharFormat,
     QTextEdit,
+    QTimer,
     QVBoxLayout,
     QWidget,
+    app_exec,
     pyqtSignal,
     window_palette_color,
 )
 
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_DIR / 'configs'
 GENERATED_CONFIG_DIR = PROJECT_DIR / 'outputs' / 'startup_configs'
 
@@ -575,25 +587,61 @@ def append_terminal_text(widget: QTextEdit, text: str) -> None:
     widget.ensureCursorVisible()
 
 
+# How long Stop waits for the launcher to unwind its own ProcessManager before
+# force-killing whatever is left. Closing the window uses the shorter value so
+# the window never appears to hang.
+STOP_GRACE_SECONDS = 10.0
+CLOSE_GRACE_SECONDS = 6.0
+
+
+def launcher_state_name(command: list[str]) -> str | None:
+    """The ProcessManager state-file name a launcher command will use.
+
+    ProcessManager names its state file after `sys.argv[0]`, so for
+    `uv run python startup_scripts/run_servers.py ...` that is `run_servers`.
+    """
+    for part in command:
+        if part.endswith('.py'):
+            return Path(part).stem
+    return None
+
+
 class ManagedCommand(QObject):
+    """Runs one launcher command for a startup GUI and guarantees it dies with it.
+
+    The launchers spawn whole trees (uv -> python -> device servers, each in its
+    own session -> Tiled). Stop therefore never signals just the root: it lets
+    the launcher unwind its own ProcessManager first, then force-kills every
+    process that was below the root, and finally reaps anything the launcher's
+    ProcessManager state file still lists. The launched tree is also told this
+    GUI's PID (so it shuts itself down if the GUI vanishes), is placed in a
+    kill-on-close job object on Windows, and is stopped again from atexit as a
+    last resort.
+    """
+
     output_ready = pyqtSignal(str)
     done = pyqtSignal(object)
+    stopped = pyqtSignal()
 
     def __init__(self, output: OutputCallback, done: DoneCallback):
         super().__init__()
         self.output_ready.connect(output)
         self.done.connect(done)
         self.process: subprocess.Popen[str] | None = None
+        self.state_name: str | None = None
+        self._job = None
+        self._stop_lock = threading.Lock()
+        atexit.register(self.shutdown)
 
     @property
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def start(self, command: list[str]) -> None:
+    def start(self, command: list[str], state_name: str | None = None) -> None:
         if self.running:
             self.output_ready.emit('A process is already running.\n')
             return
-        env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
+        env = {**os.environ, 'PYTHONUNBUFFERED': '1', PARENT_PID_ENV: str(os.getpid())}
         popen_kwargs = {'cwd': PROJECT_DIR, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT, 'text': True, 'bufsize': 1}
         if os.name == 'nt':
             popen_kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
@@ -601,35 +649,68 @@ class ManagedCommand(QObject):
             popen_kwargs['start_new_session'] = True
         self.output_ready.emit(f'$ {" ".join(command)}\n')
         self.process = subprocess.Popen(command, **popen_kwargs)
+        self.state_name = state_name or launcher_state_name(command)
+        self._job = assign_to_kill_on_close_job(self.process.pid)
         threading.Thread(target=self._read_output, daemon=True).start()
 
-    def stop(self) -> None:
-        """Immediately kill the managed process and every subprocess it spawned.
+    def stop(self, grace: float = STOP_GRACE_SECONDS, quiet: bool = False, notify: bool = True) -> None:
+        """Stop the launched tree and block until it is gone (up to `grace` seconds)."""
+        with self._stop_lock:
+            process = self.process
+            if process is None or process.poll() is not None:
+                if not quiet:
+                    self._say('No process is running.\n')
+            else:
+                kill_process_tree(process, grace=grace, log=lambda message: self._say(f'{message}\n'))
+            self._reap_state_file()
+            if notify:
+                self._emit(self.stopped)
 
-        The startup scripts launch whole trees (uv -> python -> device servers,
-        Tiled, ...), so a polite terminate of the root leaves orphans holding
-        ports. Kill the full tree instead.
+    def stop_async(self, grace: float = STOP_GRACE_SECONDS) -> None:
+        """Stop from the GUI thread without freezing the window during the grace wait.
+
+        `stopped` is emitted once everything is down.
         """
         if not self.running:
-            self.output_ready.emit('No process is running.\n')
+            self.stop(grace=grace)
             return
-        assert self.process is not None
-        if os.name == 'nt':
-            # /T walks the child tree, /F force-kills without waiting.
-            subprocess.run(
-                ['taskkill', '/PID', str(self.process.pid), '/T', '/F'],
-                capture_output=True,
-            )
-        else:
-            try:
-                # start_new_session=True in start() put the whole tree in one
-                # process group, so SIGKILL to the group takes everything down.
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                return
-            except OSError:
-                self.process.kill()
-        self.output_ready.emit('Killed process tree.\n')
+        self.output_ready.emit('Stopping all processes...\n')
+        threading.Thread(target=self.stop, kwargs={'grace': grace}, daemon=True).start()
+
+    def shutdown(self) -> None:
+        """Final cleanup for window close and interpreter exit; safe to call repeatedly.
+
+        Nothing is emitted afterwards: at interpreter exit the Qt side of this
+        object may already be gone, and on window close a `stopped` signal
+        would re-enter the close path.
+        """
+        self.stop(grace=CLOSE_GRACE_SECONDS, quiet=True, notify=False)
+
+    def _say(self, text: str) -> None:
+        self._emit(self.output_ready, text)
+
+    @staticmethod
+    def _emit(signal_, *args) -> None:
+        # From atexit the C++ object behind this QObject can already be
+        # destroyed; the kill itself must still go ahead, only the reporting
+        # is dropped.
+        try:
+            signal_.emit(*args)
+        except RuntimeError:
+            pass
+
+    def _reap_state_file(self) -> None:
+        """Kill anything the launcher's ProcessManager still lists as alive.
+
+        A launcher that was force-killed never removed its `.processes/<name>.json`,
+        so its device servers may still be running with their PIDs recorded there.
+        """
+        if self.state_name is None:
+            return
+        try:
+            ProcessManager(name=self.state_name, state_dir=PROJECT_DIR / '.processes')._cleanup_stale_state()
+        except Exception as exc:  # best effort: never let cleanup raise into Qt
+            self._say(f'Could not clean up leftover processes: {exc}\n')
 
     def _read_output(self) -> None:
         assert self.process is not None
@@ -646,6 +727,60 @@ class ManagedCommand(QObject):
                     break
                 threading.Event().wait(0.05)
         self.done.emit(self.process.wait())
+
+
+def request_close(window: QWidget, command: ManagedCommand, event) -> bool:
+    """Shared closeEvent body: stop the launched tree first, then let the window close.
+
+    Returns True when the window may close now. While the tree is still being
+    stopped the event is ignored and the window closes itself again (through
+    the `stopped` signal) once everything is down, so the terminal pane keeps
+    showing what is being killed instead of the window freezing.
+    """
+    if command.running and not getattr(window, '_close_pending', False):
+        window._close_pending = True
+        command.stopped.connect(window.close)
+        command.output_ready.emit('Stopping all processes before closing...\n')
+        command.stop_async(grace=CLOSE_GRACE_SECONDS)
+        event.ignore()
+        return False
+    if getattr(window, '_close_pending', False):
+        try:
+            command.stopped.disconnect(window.close)
+        except (TypeError, RuntimeError):
+            pass
+    command.shutdown()
+    event.accept()
+    return True
+
+
+def run_app(app: QApplication, window: QWidget, command: ManagedCommand) -> int:
+    """Run the event loop so Ctrl+C, SIGTERM and a closed terminal (SIGHUP) close the window.
+
+    Closing goes through the window's closeEvent, which stops the launched
+    tree. A timer keeps the interpreter ticking so Python-level signal handlers
+    fire while Qt's C++ event loop is blocking.
+    """
+
+    def close_window(_signum, _frame) -> None:
+        window.close()
+
+    for name in ('SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            signal.signal(signum, close_window)
+        except (ValueError, OSError):
+            pass
+    ticker = QTimer()
+    ticker.timeout.connect(lambda: None)
+    ticker.start(200)
+    try:
+        return app_exec(app)
+    finally:
+        ticker.stop()
+        command.shutdown()
 
 
 def _format(color: str) -> QTextCharFormat:

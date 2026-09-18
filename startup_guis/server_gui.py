@@ -1,16 +1,18 @@
-#!/usr/bin/env python 
-from __future__ import annotations 
+#!/usr/bin/env python
+from __future__ import annotations
 
-import ast 
-import sys 
-from pathlib import Path 
+import ast
+import sys
+from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parents[1] 
-if str(PROJECT_DIR) not in sys.path: 
-    sys.path.insert(0, str(PROJECT_DIR)) 
+import yaml
 
-# Import Qt through qt_compat so this GUI can use PyQt6 normally and PyQt5 on 
-# legacy Windows 10 systems that cannot load Qt6. 
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+# Import Qt through qt_compat so this GUI can use PyQt6 normally and PyQt5 on
+# legacy Windows 10 systems that cannot load Qt6.
 from startup_guis.qt_compat import (  # noqa: E402
     POINTING_HAND_CURSOR,
     VERTICAL,
@@ -29,106 +31,162 @@ from startup_guis.qt_compat import (  # noqa: E402
     QTextEdit,
     QVBoxLayout,
     QWidget,
-    app_exec,
 )
-from startup_guis.shared import BODY_FONT, CONFIG_DIR, GENERATED_CONFIG_DIR, TITLE_FONT, CheckBox, CollapsibleSection, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, write_yaml  # noqa: E402
+from startup_guis.shared import (  # noqa: E402
+    BODY_FONT,
+    CONFIG_DIR,
+    GENERATED_CONFIG_DIR,
+    LABEL_FONT,
+    TITLE_FONT,
+    CheckBox,
+    CollapsibleSection,
+    ManagedCommand,
+    action_button,
+    append_terminal_text,
+    apply_theme,
+    configure_splitter,
+    configure_terminal,
+    load_yaml,
+    request_close,
+    run_app,
+    scrollable,
+    section_label,
+    write_yaml,
+)
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'DigitalTwin.yaml'
-GENERATED_CONFIG_PATH = GENERATED_CONFIG_DIR / 'server_gui.yaml' 
-DEVICE_MODULES = { 
-    'aperture': 'asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript',
-    'camera': 'asyncroscopy.instruments.electron_microscope.detectors.camera', 
-    'corrector': 'asyncroscopy.instruments.electron_microscope.hardware.corrector', 
-    'data': 'asyncroscopy.data.data', 
-    'eds': 'asyncroscopy.instruments.electron_microscope.detectors.eds', 
-    'scan': 'asyncroscopy.instruments.electron_microscope.hardware.scan', 
-    'stage': 'asyncroscopy.instruments.electron_microscope.hardware.stage', 
-} 
-INSTRUMENT_FILES = [ 
-    'asyncroscopy/instruments/electron_microscope/auto_script.py', 
-    'asyncroscopy/instruments/electron_microscope/jeol.py', 
-    'asyncroscopy/instruments/electron_microscope/digital_twin.py', 
-    'asyncroscopy/instruments/scanning_probe_microscope/jupyter_api.py', 
-] 
+GENERATED_CONFIG_PATH = GENERATED_CONFIG_DIR / 'server_gui.yaml'
+LAUNCHER = 'startup_scripts/run_servers.py'
+DEFAULT_INSTRUMENT_FILE = 'asyncroscopy/instruments/electron_microscope/digital_twin.py'
+DEVICE_COLUMNS = 3
 
 
-def project_path_text(path: Path | str) -> str: 
-    path = Path(path) 
-    if path.is_absolute(): 
-        try: 
-            return path.relative_to(PROJECT_DIR).as_posix() 
-        except ValueError: 
-            return path.as_posix() 
-    return path.as_posix() 
+def project_path_text(path: Path | str) -> str:
+    path = Path(path)
+    if path.is_absolute():
+        try:
+            return path.relative_to(PROJECT_DIR).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
 
 
-def class_name_from_file(path_text: str, fallback: str = 'Instrument') -> str: 
-    path = Path(path_text).expanduser() 
-    if not path.is_absolute(): 
-        path = PROJECT_DIR / path 
-    try: 
-        tree = ast.parse(path.read_text(encoding='utf-8')) 
-    except OSError: 
-        return fallback 
-    for node in tree.body: 
-        if isinstance(node, ast.ClassDef): 
-            return node.name 
-    return fallback 
+def class_name_from_file(path_text: str, fallback: str = 'Instrument') -> str:
+    path = Path(path_text).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_DIR / path
+    try:
+        tree = ast.parse(path.read_text(encoding='utf-8'))
+    except OSError:
+        return fallback
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            return node.name
+    return fallback
 
 
-def uses_hardware_connection(path_text: str) -> bool: 
-    return 'digital_twin' not in Path(path_text).stem 
+def uses_hardware_connection(path_text: str) -> bool:
+    return 'digital_twin' not in Path(path_text).stem
 
 
-def server_config_from_values(values: dict) -> dict: 
-    devices = {key: spec for key, spec in values['devices'].items() if values['enabled_devices'][key]} 
-    instrument = dict(values['instrument']) 
-    selected_file = project_path_text(values['instrument_file']) 
-    previous_file = project_path_text(instrument.get('file', selected_file)) 
-    instrument['file'] = selected_file 
-    if selected_file != previous_file or not instrument.get('class_name'): 
-        instrument['class_name'] = class_name_from_file(selected_file) 
-    instrument.pop('hardware_host', None) 
-    instrument.pop('hardware_port', None) 
-    uses_hardware = uses_hardware_connection(selected_file) 
-    if uses_hardware and values['hardware_host']: 
-        instrument['hardware_host'] = values['hardware_host'] 
-    if uses_hardware and values['hardware_port']: 
-        instrument['hardware_port'] = int(values['hardware_port']) 
-    if values['hardware_timeout_seconds']: 
-        instrument['timeout_seconds'] = int(values['hardware_timeout_seconds']) 
-    return { 
-        'instrument': instrument, 
-        'devices': devices, 
-        'tango': { 
-            'host': values['tango_host'], 
-            'port': int(values['tango_port']), 
-            'reset_database_file': values['reset_database_file'], 
-        }, 
-        'tiled': { 
-            'host': values['tiled_host'], 
-            'port': int(values['tiled_port']), 
-            'acquisition_dir': values['acquisition_dir'], 
-            'autostart': values['tiled_autostart'], 
-            'register_on_startup': values['tiled_register_on_startup'], 
-        }, 
-        'device_timeout_seconds': int(values['device_timeout_seconds']), 
-    } 
+def is_server_config(config: object) -> bool:
+    """True for a YAML document run_servers.py can start: it names an instrument and its devices."""
+    return isinstance(config, dict) and isinstance(config.get('instrument'), dict) and 'devices' in config
 
 
-class ServerGui(QMainWindow): 
-    def __init__(self): 
-        super().__init__() 
+def server_config_files(config_dir: Path = CONFIG_DIR) -> list[str]:
+    """Filenames of the server-style configs in `config_dir`, so MCP/LLM configs never show up."""
+    names = []
+    for path in sorted([*config_dir.glob('*.yaml'), *config_dir.glob('*.yml')], key=lambda p: p.name):
+        try:
+            config = load_yaml(path)
+        except (OSError, yaml.YAMLError):
+            continue
+        if is_server_config(config):
+            names.append(path.name)
+    return names
+
+
+def device_rows_from_config(config: dict) -> list[tuple[str, dict]]:
+    """(key, spec) for every support device the YAML declares, in file order.
+
+    This is the single source of the Devices checklist: the GUI never adds
+    devices the file does not mention, and a bare `camera:` with no mapping is
+    tolerated the same way run_servers.load_config tolerates it.
+    """
+    devices = config.get('devices') or {}
+    if not isinstance(devices, dict):
+        return []
+    return [(str(key), dict(spec or {})) for key, spec in devices.items()]
+
+
+def device_summary(key: str, spec: dict) -> str:
+    """One line describing what starting `key` would run, for tooltips."""
+    class_name = spec.get('class_name', key.upper())
+    module_name = spec.get('module_name', 'module_name missing')
+    return f'{class_name}  ({module_name})'
+
+
+def server_config_from_values(values: dict) -> dict:
+    """Build the YAML run_servers.py will be started with.
+
+    Only devices whose checkbox is ticked survive into `devices`, so an
+    unchecked device is never registered in the Tango database nor started.
+    """
+    enabled = values.get('enabled_devices', {})
+    devices = {key: spec for key, spec in values['devices'].items() if enabled.get(key, True)}
+    instrument = dict(values['instrument'])
+    selected_file = project_path_text(values['instrument_file'])
+    previous_file = project_path_text(instrument.get('file', selected_file))
+    instrument['file'] = selected_file
+    if selected_file != previous_file or not instrument.get('class_name'):
+        instrument['class_name'] = class_name_from_file(selected_file)
+    instrument.pop('hardware_host', None)
+    instrument.pop('hardware_port', None)
+    uses_hardware = uses_hardware_connection(selected_file)
+    if uses_hardware and values['hardware_host']:
+        instrument['hardware_host'] = values['hardware_host']
+    if uses_hardware and values['hardware_port']:
+        instrument['hardware_port'] = int(values['hardware_port'])
+    if values['hardware_timeout_seconds']:
+        instrument['timeout_seconds'] = int(values['hardware_timeout_seconds'])
+    return {
+        'instrument': instrument,
+        'devices': devices,
+        'tango': {
+            'host': values['tango_host'],
+            'port': int(values['tango_port']),
+            'reset_database_file': values['reset_database_file'],
+        },
+        'tiled': {
+            'host': values['tiled_host'],
+            'port': int(values['tiled_port']),
+            'acquisition_dir': values['acquisition_dir'],
+            'autostart': values['tiled_autostart'],
+            'register_on_startup': values['tiled_register_on_startup'],
+        },
+        'device_timeout_seconds': int(values['device_timeout_seconds']),
+    }
+
+
+class ServerGui(QMainWindow):
+    def __init__(self):
+        super().__init__()
         self.setWindowTitle('Asyncroscopy Server Startup')
         self.resize(1020, 960)
         self.setMinimumSize(720, 560)
-        self.command = ManagedCommand(self.enqueue_output, self.process_done) 
-        self.default_config = load_yaml(DEFAULT_CONFIG_PATH) 
-        self.device_config = self.default_config.get('devices', {}) 
-        self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {} 
-        self.device_checks: dict[str, QCheckBox] = {} 
-        self.build() 
+        self.command = ManagedCommand(self.enqueue_output, self.process_done)
+        self.config_path = DEFAULT_CONFIG_PATH
+        self.default_config = load_yaml(DEFAULT_CONFIG_PATH)
+        self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {}
+        self.device_checks: dict[str, QCheckBox] = {}
+        self.build()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        # Stop every server this window started before the window goes away.
+        if request_close(self, self.command, event):
+            super().closeEvent(event)
 
     def build(self) -> None:
         apply_theme(self)
@@ -142,7 +200,7 @@ class ServerGui(QMainWindow):
         root.addWidget(terminal)
         root.setStretchFactor(0, 0)
         root.setStretchFactor(1, 1)
-        root.setSizes([380, 580])
+        root.setSizes([420, 540])
         container = QWidget()
         container.setObjectName('appRoot')
         wrapper = QVBoxLayout(container)
@@ -167,23 +225,23 @@ class ServerGui(QMainWindow):
         title_layout.addWidget(self.config_combo)
         layout.addLayout(title_layout)
 
+        tango = self.default_config.get('tango', {})
         database = self.section('Database', expanded=False)
-        self.add_row(database, 'Tango host', self.line_input('tango_host', self.default_config['tango'].get('host', 'localhost')))
-        self.add_row(database, 'Tango port', self.line_input('tango_port', self.default_config['tango'].get('port', 9094)))
-        reset_database = self.check_input('reset_database_file', 'Delete tango_database.db before start', bool(self.default_config['tango'].get('reset_database_file', False)))
+        self.add_row(database, 'Tango host', self.line_input('tango_host', tango.get('host', 'localhost')))
+        self.add_row(database, 'Tango port', self.line_input('tango_port', tango.get('port', 9094)))
+        reset_database = self.check_input('reset_database_file', 'Delete tango_database.db before start', bool(tango.get('reset_database_file', False)))
         database.form.addRow('', reset_database)
         layout.addWidget(database)
 
         instrument = self.section('Instrument', expanded=False)
-        default_instrument = self.default_config['instrument']
+        default_instrument = self.default_config.get('instrument', {})
         self.add_row(instrument, 'Hardware host', self.line_input('hardware_host', default_instrument.get('hardware_host', '')))
         self.add_row(instrument, 'Hardware port', self.line_input('hardware_port', default_instrument.get('hardware_port', 9095)))
         self.add_row(instrument, 'Timeout (seconds)', self.line_input('hardware_timeout_seconds', default_instrument.get('timeout_seconds', 120)))
         self.add_row(instrument, 'Device startup timeout', self.line_input('device_timeout_seconds', self.default_config.get('device_timeout_seconds', 120)))
         layout.addWidget(instrument)
 
-        tiled = self.default_config['tiled']
-
+        tiled = self.default_config.get('tiled', {})
         data_server = self.section('Data server', expanded=False)
         self.add_row(data_server, 'Tiled host', self.line_input('tiled_host', tiled.get('host', 'localhost')))
         self.add_row(data_server, 'Tiled port', self.line_input('tiled_port', tiled.get('port', 9091)))
@@ -198,14 +256,22 @@ class ServerGui(QMainWindow):
         data_server.form.addRow('', register_on_startup)
         layout.addWidget(data_server)
 
-        devices = self.section('Devices', layout_cls=QGridLayout, expanded=False)
-        for index, key in enumerate(DEVICE_MODULES):
-            checkbox = CheckBox(key)
-            checkbox.setChecked(key in self.device_config)
-            checkbox.stateChanged.connect(self.refresh_yaml)
-            self.device_checks[key] = checkbox
-            devices.form.addWidget(checkbox, index // 3, index % 3)
+        # The device list comes straight from the selected YAML and is rebuilt
+        # whenever another config is loaded; it stays open because it is the
+        # one section that decides what actually gets started.
+        devices = self.section('Devices', layout_cls=QVBoxLayout, expanded=True)
+        self.instrument_caption = self.caption('')
+        devices.form.addWidget(self.instrument_caption)
+        self.device_grid_widget = QWidget()
+        self.device_grid = QGridLayout(self.device_grid_widget)
+        self.device_grid.setContentsMargins(0, 4, 0, 4)
+        self.device_grid.setHorizontalSpacing(18)
+        self.device_grid.setVerticalSpacing(6)
+        devices.form.addWidget(self.device_grid_widget)
+        self.device_caption = self.caption('')
+        devices.form.addWidget(self.device_caption)
         layout.addWidget(devices)
+        self.rebuild_device_checks()
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -214,7 +280,7 @@ class ServerGui(QMainWindow):
         load = QPushButton('Load config file')
         save = QPushButton('Save current config')
         start.clicked.connect(self.start)
-        stop.clicked.connect(self.command.stop)
+        stop.clicked.connect(self.stop)
         load.clicked.connect(self.read_config)
         save.clicked.connect(self.save_config)
         for button in (start, stop, load, save):
@@ -224,8 +290,7 @@ class ServerGui(QMainWindow):
         layout.addLayout(actions)
         layout.addStretch()
 
-        config_files = sorted([p.name for p in CONFIG_DIR.glob('*.yaml')] + [p.name for p in CONFIG_DIR.glob('*.yml')])
-        self.config_combo.addItems(config_files)
+        self.config_combo.addItems(server_config_files())
         self.config_combo.setCurrentText(DEFAULT_CONFIG_PATH.name)
         self.config_combo.currentTextChanged.connect(self.config_changed)
 
@@ -244,20 +309,25 @@ class ServerGui(QMainWindow):
     def add_row(self, group: CollapsibleSection, label: str, widget: QWidget) -> None:
         group.form.addRow(label, widget)
 
-    def line_input(self, key: str, value) -> QLineEdit: 
-        widget = QLineEdit(str(value)) 
-        widget.textChanged.connect(self.refresh_yaml) 
-        self.inputs[key] = widget 
-        return widget 
+    def caption(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setFont(LABEL_FONT)
+        label.setProperty('role', 'caption')
+        label.setWordWrap(True)
+        return label
+
+    def line_input(self, key: str, value) -> QLineEdit:
+        widget = QLineEdit(str(value))
+        self.inputs[key] = widget
+        return widget
 
     def check_input(self, key: str, label: str, checked: bool) -> QCheckBox:
         widget = CheckBox(label)
         widget.setChecked(checked)
-        widget.stateChanged.connect(self.refresh_yaml)
         self.inputs[key] = widget
         return widget
 
-    def path_input(self, key: str, value, files: list[str] | None = None, directory: bool = False) -> QWidget: 
+    def path_input(self, key: str, value, files: list[str] | None = None, directory: bool = False) -> QWidget:
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -266,119 +336,170 @@ class ServerGui(QMainWindow):
         combo.setEditable(True)
         combo.addItems(files or [str(value)])
         combo.setCurrentText(project_path_text(value))
-        combo.currentTextChanged.connect(self.refresh_yaml)
         browse = QPushButton('Browse')
         browse.setCursor(POINTING_HAND_CURSOR)
         browse.clicked.connect(lambda: self.browse_path(combo, directory))
         layout.addWidget(combo, 1)
         layout.addWidget(browse, 0)
-        self.inputs[key] = combo 
-        return row 
+        self.inputs[key] = combo
+        return row
 
-    def browse_path(self, combo: QComboBox, directory: bool) -> None: 
-        if directory: 
-            path = QFileDialog.getExistingDirectory(self, 'Select directory', combo.currentText()) 
-        else: 
-            path, _ = QFileDialog.getOpenFileName(self, 'Select Python file', str(PROJECT_DIR), 'Python (*.py);;All files (*)') 
-        if path: 
-            combo.setCurrentText(project_path_text(path)) 
+    def browse_path(self, combo: QComboBox, directory: bool) -> None:
+        if directory:
+            path = QFileDialog.getExistingDirectory(self, 'Select directory', combo.currentText())
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, 'Select Python file', str(PROJECT_DIR), 'Python (*.py);;All files (*)')
+        if path:
+            combo.setCurrentText(project_path_text(path))
 
-    def input_text(self, key: str) -> str: 
-        widget = self.inputs[key] 
-        if hasattr(widget, 'currentText'): 
-            return widget.currentText() 
-        return widget.text() 
+    def input_text(self, key: str) -> str:
+        widget = self.inputs[key]
+        if hasattr(widget, 'currentText'):
+            return widget.currentText()
+        return widget.text()
 
-    def set_input_text(self, key: str, value) -> None: 
-        widget = self.inputs[key] 
-        text = str(value) 
-        if hasattr(widget, 'setCurrentText'): 
-            widget.setCurrentText(project_path_text(text)) 
-            return 
-        widget.setText(text) 
+    def set_input_text(self, key: str, value) -> None:
+        widget = self.inputs[key]
+        text = str(value)
+        if hasattr(widget, 'setCurrentText'):
+            widget.setCurrentText(project_path_text(text))
+            return
+        widget.setText(text)
+
+    # -- devices -----------------------------------------------------------
+
+    def rebuild_device_checks(self) -> None:
+        """Replace the Devices checklist with the devices the current YAML declares."""
+        while self.device_grid.count():
+            item = self.device_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.device_checks.clear()
+
+        instrument = self.default_config.get('instrument', {})
+        instrument_name = instrument.get('class_name') or class_name_from_file(instrument.get('file', DEFAULT_INSTRUMENT_FILE))
+        self.instrument_caption.setText(f'Instrument {instrument_name} is always started. Tick the support devices to start with it:')
+
+        rows = device_rows_from_config(self.default_config)
+        for index, (key, spec) in enumerate(rows):
+            checkbox = CheckBox(key)
+            checkbox.setChecked(True)
+            checkbox.setToolTip(device_summary(key, spec))
+            checkbox.stateChanged.connect(self.refresh_device_caption)
+            self.device_checks[key] = checkbox
+            self.device_grid.addWidget(checkbox, index // DEVICE_COLUMNS, index % DEVICE_COLUMNS)
+        self.refresh_device_caption()
+
+    def enabled_devices(self) -> dict[str, bool]:
+        return {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}
+
+    def refresh_device_caption(self) -> None:
+        enabled = [key for key, checked in self.enabled_devices().items() if checked]
+        total = len(self.device_checks)
+        if total == 0:
+            self.device_caption.setText(f'{self.config_path.name} declares no support devices; only the instrument will start.')
+        elif not enabled:
+            self.device_caption.setText(f'0 of {total} devices selected: only the instrument will start.')
+        else:
+            self.device_caption.setText(f'{len(enabled)} of {total} devices will start: {", ".join(enabled)}. Unchecked devices are not registered or started.')
+
+    # -- config ------------------------------------------------------------
 
     def current_config(self) -> dict:
+        instrument = self.default_config.get('instrument', {})
         values = {
-            'instrument_file': project_path_text(self.default_config['instrument'].get('file', INSTRUMENT_FILES[0])),
+            'instrument_file': project_path_text(instrument.get('file', DEFAULT_INSTRUMENT_FILE)),
             'hardware_host': self.input_text('hardware_host'),
-            'hardware_port': self.input_text('hardware_port'), 
-            'hardware_timeout_seconds': self.input_text('hardware_timeout_seconds'), 
-            'tango_host': self.input_text('tango_host'), 
-            'tango_port': self.input_text('tango_port'), 
-            'reset_database_file': self.inputs['reset_database_file'].isChecked(), 
-            'tiled_host': self.input_text('tiled_host'), 
-            'tiled_port': self.input_text('tiled_port'), 
-            'acquisition_dir': self.input_text('acquisition_dir'), 
-            'tiled_autostart': self.inputs['tiled_autostart'].isChecked(), 
-            'tiled_register_on_startup': self.inputs['tiled_register_on_startup'].isChecked(), 
-            'device_timeout_seconds': self.input_text('device_timeout_seconds'), 
-            'enabled_devices': {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}, 
-            'devices': {key: self.device_config.get(key, {'module_name': DEVICE_MODULES[key]}) for key in DEVICE_MODULES}, 
-            'instrument': self.default_config['instrument'], 
-        } 
-        return server_config_from_values(values) 
+            'hardware_port': self.input_text('hardware_port'),
+            'hardware_timeout_seconds': self.input_text('hardware_timeout_seconds'),
+            'tango_host': self.input_text('tango_host'),
+            'tango_port': self.input_text('tango_port'),
+            'reset_database_file': self.inputs['reset_database_file'].isChecked(),
+            'tiled_host': self.input_text('tiled_host'),
+            'tiled_port': self.input_text('tiled_port'),
+            'acquisition_dir': self.input_text('acquisition_dir'),
+            'tiled_autostart': self.inputs['tiled_autostart'].isChecked(),
+            'tiled_register_on_startup': self.inputs['tiled_register_on_startup'].isChecked(),
+            'device_timeout_seconds': self.input_text('device_timeout_seconds'),
+            'enabled_devices': self.enabled_devices(),
+            'devices': dict(device_rows_from_config(self.default_config)),
+            'instrument': instrument,
+        }
+        return server_config_from_values(values)
 
-    def refresh_yaml(self) -> None: 
-        pass 
+    def save_config(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, 'Save config', str(CONFIG_DIR / 'server_config.yaml'), 'YAML (*.yaml *.yml);;All files (*)')
+        if path:
+            write_yaml(Path(path), self.current_config())
+            self.enqueue_output(f'Saved {path}\n')
 
-    def save_config(self) -> None: 
-        path, _ = QFileDialog.getSaveFileName(self, 'Save config', str(CONFIG_DIR / 'server_config.yaml'), 'YAML (*.yaml *.yml);;All files (*)') 
-        if path: 
-            write_yaml(Path(path), self.current_config()) 
-            self.enqueue_output(f'Saved {path}\n') 
+    def config_changed(self, filename: str) -> None:
+        if filename:
+            self.load_config_from_path(CONFIG_DIR / filename)
 
-    def config_changed(self, filename: str) -> None: 
-        if filename: 
-            self.load_config_from_path(CONFIG_DIR / filename) 
-
-    def load_config_from_path(self, path: Path | str) -> None: 
-        config = load_yaml(Path(path)) 
-        self.default_config = config 
-        self.device_config = config.get('devices', {}) 
+    def load_config_from_path(self, path: Path | str) -> None:
+        path = Path(path)
+        try:
+            config = load_yaml(path)
+        except (OSError, yaml.YAMLError) as exc:
+            self.enqueue_output(f'Could not read {path}: {exc}\n')
+            return
+        if not is_server_config(config):
+            self.enqueue_output(f'{path.name} is not a server config (it needs `instrument` and `devices` sections); nothing loaded.\n')
+            return
+        self.config_path = path
+        self.default_config = config
         instrument = config.get('instrument', {})
         tango = config.get('tango', {})
         tiled = config.get('tiled', {})
         self.set_input_text('hardware_host', instrument.get('hardware_host', ''))
-        self.set_input_text('hardware_port', instrument.get('hardware_port', '')) 
-        self.set_input_text('hardware_timeout_seconds', instrument.get('timeout_seconds', 120)) 
-        self.set_input_text('tango_host', tango.get('host', 'localhost')) 
-        self.set_input_text('tango_port', tango.get('port', 9094)) 
-        self.inputs['reset_database_file'].setChecked(bool(tango.get('reset_database_file', False))) 
-        self.set_input_text('tiled_host', tiled.get('host', 'localhost')) 
-        self.set_input_text('tiled_port', tiled.get('port', 9091)) 
-        self.set_input_text('acquisition_dir', tiled.get('acquisition_dir', 'outputs/tiled_acquisitions')) 
-        self.inputs['tiled_autostart'].setChecked(bool(tiled.get('autostart', True))) 
-        self.inputs['tiled_register_on_startup'].setChecked(bool(tiled.get('register_on_startup', False))) 
-        self.set_input_text('device_timeout_seconds', config.get('device_timeout_seconds', 120)) 
-        for key, checkbox in self.device_checks.items(): 
-            checkbox.setChecked(key in self.device_config) 
-        self.refresh_yaml() 
-        self.enqueue_output(f'Loaded {path}\n') 
-        filename = Path(path).name 
-        if self.config_combo.findText(filename) != -1: 
-            self.config_combo.blockSignals(True) 
-            self.config_combo.setCurrentText(filename) 
-            self.config_combo.blockSignals(False) 
+        self.set_input_text('hardware_port', instrument.get('hardware_port', ''))
+        self.set_input_text('hardware_timeout_seconds', instrument.get('timeout_seconds', 120))
+        self.set_input_text('tango_host', tango.get('host', 'localhost'))
+        self.set_input_text('tango_port', tango.get('port', 9094))
+        self.inputs['reset_database_file'].setChecked(bool(tango.get('reset_database_file', False)))
+        self.set_input_text('tiled_host', tiled.get('host', 'localhost'))
+        self.set_input_text('tiled_port', tiled.get('port', 9091))
+        self.set_input_text('acquisition_dir', tiled.get('acquisition_dir', 'outputs/tiled_acquisitions'))
+        self.inputs['tiled_autostart'].setChecked(bool(tiled.get('autostart', True)))
+        self.inputs['tiled_register_on_startup'].setChecked(bool(tiled.get('register_on_startup', False)))
+        self.set_input_text('device_timeout_seconds', config.get('device_timeout_seconds', 120))
+        self.rebuild_device_checks()
+        self.enqueue_output(f'Loaded {path}\n')
+        filename = path.name
+        if self.config_combo.findText(filename) != -1:
+            self.config_combo.blockSignals(True)
+            self.config_combo.setCurrentText(filename)
+            self.config_combo.blockSignals(False)
 
-    def read_config(self) -> None: 
-        path, _ = QFileDialog.getOpenFileName(self, 'Load config', str(CONFIG_DIR), 'YAML (*.yaml *.yml);;All files (*)') 
-        if not path: 
-            return 
-        self.load_config_from_path(path) 
+    def read_config(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, 'Load config', str(CONFIG_DIR), 'YAML (*.yaml *.yml);;All files (*)')
+        if not path:
+            return
+        self.load_config_from_path(path)
 
-    def start(self) -> None: 
-        config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config()) 
-        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_servers.py', '--yaml', str(config_path)]) 
+    # -- process -----------------------------------------------------------
 
-    def enqueue_output(self, text: str) -> None: 
-        append_terminal_text(self.output, text) 
+    def start(self) -> None:
+        config = self.current_config()
+        config_path = write_yaml(GENERATED_CONFIG_PATH, config)
+        selected = ', '.join(config['devices']) or 'none'
+        self.enqueue_output(f'Starting {config["instrument"].get("class_name", "instrument")} with devices: {selected}\n')
+        self.command.start(['uv', 'run', 'python', '-u', LAUNCHER, '--yaml', str(config_path)], state_name='run_servers')
 
-    def process_done(self, returncode: int | None) -> None: 
-        self.enqueue_output(f'\nProcess exited with return code {returncode}.\n') 
+    def stop(self) -> None:
+        self.command.stop_async()
+
+    def enqueue_output(self, text: str) -> None:
+        append_terminal_text(self.output, text)
+
+    def process_done(self, returncode: int | None) -> None:
+        self.enqueue_output(f'\nProcess exited with return code {returncode}.\n')
 
 
-if __name__ == '__main__': 
-    app = QApplication(sys.argv) 
-    window = ServerGui() 
-    window.show() 
-    sys.exit(app_exec(app))
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = ServerGui()
+    window.show()
+    sys.exit(run_app(app, window, window.command))

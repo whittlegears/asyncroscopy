@@ -17,7 +17,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
+from asyncroscopy.utils.process_manager import (  # noqa: E402
+    ManagedProcess,
+    ProcessManager,
+    install_shutdown_signal_handler,
+    watch_parent_from_environment,
+)
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
 
@@ -113,6 +118,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Stop requests from a GUI, a closed terminal or `kill <pid>` unwind
+    # through KeyboardInterrupt so ProcessManager stops the MCP server, and
+    # a launching GUI that disappears takes the server down with it.
+    install_shutdown_signal_handler()
+    watch_parent_from_environment()
+
     args = parse_args(argv)
     try:
         config = load_config(args.yaml)
@@ -151,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nShutting down MCP server...")
         
+    print('MCP server stopped.')
     return 0
 
 
