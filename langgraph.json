@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "react_agent": "./asyncroscopy/agent/studio.py:make_react_graph",
+    "supervisor": "./asyncroscopy/agent/studio.py:make_supervisor_graph",
+    "image_eds_survey": "./asyncroscopy/agent/studio.py:make_image_eds_survey_graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

@@ -1,6 +1,7 @@
 """Tests for LLM Device with mocked imports"""
 
 import asyncio
+import importlib.util
 import json
 import sys
 import types
@@ -9,13 +10,36 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-def setup_llm_stubs():
-    """Stub every import in llm.py's try block so the module loads without the real agent deps."""
+def real_agent_deps_installed() -> bool:
+    """True when the real langgraph/langchain packages are importable (not our stubs)."""
+    for name in ("langgraph", "langchain_core", "langchain"):
+        module = sys.modules.get(name)
+        if module is not None:
+            if getattr(module, "__spec__", None) is None:
+                return False  # one of our stub modules
+            continue
+        try:
+            if importlib.util.find_spec(name) is None:
+                return False
+        except (ImportError, ValueError):
+            return False
+    return True
+
+
+def setup_llm_stubs() -> bool:
+    """Stub every import in llm.py's try block so the module loads without the real agent deps.
+
+    Returns True when stubs were installed. When the real packages are
+    installed (``uv sync --extra agent``) nothing is stubbed so the tests run
+    against the genuine libraries.
+    """
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     if "langgraph.graph" in sys.modules:
-        return
+        return getattr(sys.modules["langgraph.graph"], "__spec__", None) is None
+    if real_agent_deps_installed():
+        return False
 
     base_msg_cls = type("BaseMessage", (), {})
     human_msg_cls = type("HumanMessage", (base_msg_cls,), {
@@ -40,6 +64,9 @@ def setup_llm_stubs():
     langchain_core = types.ModuleType("langchain_core")
     lc_tools = types.ModuleType("langchain_core.tools")
     lc_tools.BaseTool = type("BaseTool", (), {})
+    lc_tools.StructuredTool = MagicMock()
+    lc_tools.ToolException = type("ToolException", (Exception,), {})
+    lc_tools.tool = MagicMock()
     lc_messages = types.ModuleType("langchain_core.messages")
     lc_messages.BaseMessage = base_msg_cls
     lc_messages.HumanMessage = human_msg_cls
@@ -82,6 +109,7 @@ def setup_llm_stubs():
         "langgraph": lg,
         "langgraph.graph": lg_graph,
     })
+    return True
 
 
 setup_llm_stubs()
@@ -101,7 +129,8 @@ def _make_llm(**kwargs) -> LLM:
     device._agents: list[Agent] = kwargs.get("agents", [])
     device._tools = kwargs.get("tools", [])
     device._model = kwargs.get("model", None)
-    device._mcp_clients = []
+    device._mcp_targets = []
+    device._registry = None
     
     device._tango_properties = {}
     device.ollama_model = "mock-model"
@@ -365,7 +394,8 @@ class TestOpenAIMessagesToLangchain:
             }],
         }])
         assert isinstance(msg, AIMessage)
-        assert msg.tool_calls == [{"name": "acquire_image", "args": {"detector": "haadf"}, "id": "call_1"}]
+        tool_calls = [{k: v for k, v in call.items() if k != "type"} for call in msg.tool_calls]
+        assert tool_calls == [{"name": "acquire_image", "args": {"detector": "haadf"}, "id": "call_1"}]
 
     def test_tool_message_becomes_tool_message(self):
         [msg] = LLM._openai_messages_to_langchain([{
@@ -450,3 +480,54 @@ class TestComplete:
         result = json.loads(asyncio.run(device.Complete(json.dumps(request))))
 
         assert result["error"]["message"] == "model unavailable"
+
+class TestAgentPackageIntegration:
+    def test_agent_dataclass_is_shared_with_agent_package(self):
+        from asyncroscopy.agent.config import Agent as PackageAgent
+        assert Agent is PackageAgent
+
+    def test_get_agent_tools_delegates_to_filter_tools(self, monkeypatch):
+        import asyncroscopy.mcp.llm as llm_module
+        calls = []
+
+        def fake_filter(tools, patterns):
+            calls.append((tools, patterns))
+            return ["filtered"]
+
+        monkeypatch.setattr(llm_module, "filter_tools", fake_filter)
+        device = _make_llm(tools=[_make_tool("a")])
+        assert device._get_agent_tools(["a*"]) == ["filtered"]
+        assert calls[0][1] == ["a*"]
+
+    def test_multi_agent_uses_supervisor_graph(self, monkeypatch):
+        import asyncroscopy.mcp.llm as llm_module
+        agents = [_make_agent(name="image"), _make_agent(name="eds")]
+        device = _make_llm(agents=agents, max_steps=7)
+        device._model = MagicMock()
+
+        built = {}
+
+        def fake_build(model, agent_list, build_worker, run_worker):
+            built["agents"] = agent_list
+            built["build_worker"] = build_worker
+            return "GRAPH"
+
+        async def fake_run(graph, prompt, max_steps):
+            built["run"] = (graph, prompt, max_steps)
+            return "swarm answer"
+
+        monkeypatch.setattr(llm_module, "build_supervisor_graph", fake_build)
+        monkeypatch.setattr(llm_module, "run_supervisor", fake_run)
+
+        result = asyncio.run(device._run_swarm("do things"))
+        assert result == "swarm answer"
+        assert built["agents"] == agents
+        assert built["build_worker"] == device._build_agent_executor
+        assert built["run"] == ("GRAPH", "do things", 7)
+
+    def test_run_workflow_unknown_name_returns_error(self):
+        device = _make_llm()
+        device._registry = None
+        result = json.loads(asyncio.run(device.RunWorkflow(json.dumps({"name": "does_not_exist"}))))
+        assert "error" in result
+        assert "does_not_exist" in result["error"]

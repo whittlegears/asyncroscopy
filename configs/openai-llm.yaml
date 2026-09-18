@@ -1,0 +1,32 @@
+# LLM Tango device using an API-key provider through init_chat_model.
+#
+#   uv sync --extra agent
+#   export OPENAI_API_KEY=...            # or put it in .env at the repo root
+#   uv run startup_scripts/run_llm.py --yaml configs/openai-llm.yaml
+#
+# Never write the key itself into this file; api_key_env names the variable.
+# For Anthropic use: model_provider: anthropic, model_name: claude-sonnet-4-5,
+# api_key_env: ANTHROPIC_API_KEY.
+
+tango:
+  host: localhost
+  port: 9094
+
+mcp_url: "http://127.0.0.1:8000/mcp"
+
+model_provider: openai
+model_name: gpt-4o-mini
+api_key_env: OPENAI_API_KEY
+
+skills_dirs: ["skills"]
+max_steps: 10
+
+startup_agents:
+  - name: "image"
+    system_prompt: "You are an image acquiring assistant. Use the *_acquire_scanned_image tool with detector_list=['haadf']."
+    tools: ["*_acquire_scanned_image", "*_acquire_camera_image", "get_data_from_key"]
+    description: "Acquires HAADF and camera images."
+  - name: "eds"
+    system_prompt: "You are an EDS assistant. Use the *_acquire_spectrum tool with detector_name='eds'."
+    tools: ["*_acquire_spectrum", "get_data_from_key"]
+    description: "Acquires EDS spectra and reports composition."

@@ -55,15 +55,27 @@ diffraction = [
     "quantem>=0.1.9",
 ]
 
+# LangGraph agent package (asyncroscopy/agent) and the LLM Tango device:
+#     uv sync --extra agent
 agent = [
-    "langchain",
-    "langchain-openai",
-    "langgraph",
-    "langchain-mcp-adapters",    
+    "langchain>=1.0,<2",
+    "langchain-core>=1.0,<2",
+    "langgraph>=1.0,<2",
+    "langchain-openai>=1.0,<2",
+    "langchain-anthropic>=1.0,<2",
+    "python-dotenv>=1.0",
 ]
 
+# Local models through Ollama (requires --extra agent):
+#     uv sync --extra agent --extra ollama
 ollama = [
-    "langchain_ollama"
+    "langchain-ollama>=1.0,<2",
+]
+
+# LangGraph Studio / `langgraph dev` (requires --extra agent):
+#     uv sync --extra agent --extra studio
+studio = [
+    "langgraph-cli[inmem]>=0.4",
 ]
 
 [tool.setuptools]

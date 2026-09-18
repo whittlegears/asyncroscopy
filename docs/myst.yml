@@ -34,6 +34,14 @@ project:
         - file: MCP/mcp_server.md
         - file: MCP/building_an_mcp.md
         - file: MCP/asyncroscopy_mcp.md
+    - title: AI Agent
+      children:
+        - file: Agent/overview.md
+        - file: Agent/model_providers.md
+        - file: Agent/langgraph_studio.md
+        - file: Agent/skills.md
+        - file: Agent/workflows.md
+        - file: Agent/llm_device.md
     - title: Operation
       children:
         - file: Operation/run-servers.md

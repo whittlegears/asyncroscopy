@@ -42,3 +42,41 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+  test-agent:
+    name: Test agent extras (ubuntu)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtango-dev
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies with the agent extras
+        run: uv sync --dev --extra agent --extra ollama --extra studio
+
+      - name: Run agent tests against the real LangGraph/LangChain packages
+        run: uv run pytest tests/test_agent_skills.py tests/test_agent_graphs.py tests/test_agent_models.py tests/test_llm_device.py
+
+      - name: Check langgraph.json graphs import
+        run: |
+          uv run python -c "
+          import asyncio
+          from asyncroscopy.agent.studio import make_image_eds_survey_graph, make_react_graph, make_supervisor_graph
+          cfg = {'configurable': {'mcp_url': 'http://127.0.0.1:1/mcp', 'provider': 'tango', 'model': 'asyncroscopy/llm/default'}}
+          for factory in (make_react_graph, make_supervisor_graph, make_image_eds_survey_graph):
+              graph = asyncio.run(factory(cfg))
+              print(factory.__name__, sorted(graph.get_graph().nodes))
+          "

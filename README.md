@@ -35,9 +35,12 @@ uv run startup_guis/mcp_gui.py
 
 ```text
 asyncroscopy/
+├── agent/             # LangGraph graphs, skills registry, model providers
 ├── data/              # Data management device
 ├── instruments/       # Hardware device implementations
-└── mcp/               # FastMCP server for AI agents
+└── mcp/               # FastMCP server and the LLM Tango device
+skills/                # Hermes-style SKILL.md files used by the agent
+langgraph.json         # LangGraph Studio entry points
 ```
 
 ## Configuration Files (`configs/`)
@@ -58,12 +61,32 @@ These are some examples of the available configs, which define the instrument cl
 # Diffraction and tilt-twin multislice simulation (abTEM-based)
 uv sync --extra diffraction
 
-# AI agent support (LangChain/OpenAI)
+# AI agent support: LangGraph + LangChain (OpenAI/Anthropic clients included)
 uv sync --extra agent
 
-# Local AI models via HuggingFace transformers (requires --extra agent)
-uv sync --extra agent --extra localagent
+# Local models through Ollama (requires --extra agent)
+uv sync --extra agent --extra ollama
+
+# LangGraph Studio (`uv run langgraph dev`, requires --extra agent)
+uv sync --extra agent --extra studio
 ```
+
+## AI Agent
+
+`asyncroscopy/agent/` holds the LangGraph layer shared by the notebook, LangGraph Studio, and the LLM Tango device:
+
+```bash
+cp .env.example .env                      # provider, model, MCP URL, API keys (never in YAML)
+uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
+uv run jupyter lab notebooks/11_Test_AI_Agent.ipynb   # Ollama, API key, or LLM device
+uv run langgraph dev                                  # visualise/run the graphs in Studio
+uv run startup_scripts/run_llm.py --yaml configs/gemma-llm.yaml   # optional LLM Tango device
+```
+
+- Deterministic workflows (fixed graphs, e.g. `image_eds_survey`) live in `asyncroscopy/agent/graphs/workflows/`.
+- Skills (`skills/<name>/SKILL.md`) give the ReAct agent searchable, versioned procedures; see `skills/README.md`.
+- Docs: `docs/Agent/`.
 
 ## Running Tests
 
@@ -93,7 +116,7 @@ Various example workflows in `notebooks/`, including:
 - `04_Image_EDS_Point_Spectra.ipynb` - EDS spectrum acquisition
 - `05_Digital_Twin_EDS.ipynb` - DigitalTwin EDS simulation
 - `06_Digital_Twin_Tilt.ipynb` - DigitalTwin tilt control
-- `11_Test_AI_Agent.ipynb` - MCP agent testing
+- `11_Test_AI_Agent.ipynb` - LangGraph agent, skills, and workflow demo (Ollama / API key / LLM device)
 - `15_MAPED.ipynb` - Multi-angle precession electron diffraction
 - `16_Alpha_Tilt_Diffraction_Map.ipynb` - Tracked alpha-tilt diffraction mapping
 

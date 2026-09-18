@@ -46,14 +46,17 @@ AutoScript-specific MCP class.
 
 ## Command Names
 
-Tango commands are exposed as MCP tools using the device class and command name.
+Tango commands are exposed as MCP tools named `<DeviceClass>_<command>`.
 For example:
 
 ```text
-SCAN.State
-SCAN.Status
-AutoScriptMicroscope.acquire_scanned_image
+SCAN_State
+SCAN_Status
+AutoScriptMicroscope_acquire_scanned_image
+DigitalTwin_acquire_spectrum
 ```
+
+The native helpers `list_devices` and `get_data_from_key` keep their plain names.
 
 The exact tool set depends on which devices are exported in the Tango database
 when MCP starts.

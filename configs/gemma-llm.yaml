@@ -1,16 +1,36 @@
-# Gemma4 31B local model startup config for LLM Tango device.
+# LLM Tango device using a local Ollama model.
+#
+#   uv sync --extra agent --extra ollama
+#   uv run startup_scripts/run_llm.py --yaml configs/gemma-llm.yaml
+#
+# The model must support tool calling in Ollama (gemma4, qwen3, llama3.1, ...).
 
 tango:
   host: localhost
   port: 9094
 
 mcp_url: "http://127.0.0.1:8000/mcp"
-local_model_path: C:\Users\Public\Desktop\Agents\Gemma4-31B-4bit
 
+model_provider: ollama
+model_name: "gemma4:31b"
+# base_url: http://localhost:11434    # only if Ollama runs elsewhere
+
+# Folders holding <name>/SKILL.md files (relative to the repository root).
+skills_dirs: ["skills"]
+max_steps: 10
+
+# Worker agents. Tool entries are glob patterns over MCP tool names
+# ("<DeviceClass>_<command>", plus list_devices and get_data_from_key).
 startup_agents:
   - name: "base"
-    system_prompt: "You are a helpful assistant that can answer questions and provide information."
-    tools: ["list_devices"]
+    system_prompt: "You are a helpful assistant that can answer questions and provide information about the microscope."
+    tools: ["list_devices", "get_data_from_key"]
+    description: "Answers questions and inspects saved data."
   - name: "image"
-    system_prompt: "You are an image acquiring assistant."
-    tools: ["*image"]
+    system_prompt: "You are an image acquiring assistant. Use the *_acquire_scanned_image tool with detector_list=['haadf']."
+    tools: ["*_acquire_scanned_image", "*_acquire_camera_image", "get_data_from_key"]
+    description: "Acquires HAADF and camera images."
+  - name: "eds"
+    system_prompt: "You are an EDS assistant. Use the *_acquire_spectrum tool with detector_name='eds'."
+    tools: ["*_acquire_spectrum", "get_data_from_key"]
+    description: "Acquires EDS spectra and reports composition."
