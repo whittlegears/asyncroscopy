@@ -83,6 +83,15 @@ def test_build_devices_adds_selected_instrument():
     assert devices[-1].device_name == "asyncroscopy/instrument/default"
 
 
+def test_load_digital_twin_config_uses_stateful_test_stage():
+    config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / "DigitalTwin.yaml")
+    stage = next(device for device in config.support_devices if device.key == "stage")
+
+    assert config.instrument.class_name == "DigitalTwin"
+    assert stage.class_name == "TestStage"
+    assert stage.module_name == "asyncroscopy.instruments.electron_microscope.hardware.TestStage"
+
+
 def test_load_tilt_twin_config_includes_simulation_properties():
     config = run_servers.load_config(
         run_servers.PROJECT_DIR / "configs" / "digital_twin_tilt.yaml"

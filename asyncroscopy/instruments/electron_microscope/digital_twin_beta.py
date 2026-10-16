@@ -13,9 +13,13 @@ import pyTEMlib.image_tools as it
 
 import tango
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute
+from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+from asyncroscopy.data.data_writer import save_acquisition
+
+DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
+
 
 class DigitalTwinBeta(ElectronMicroscope):
     """
@@ -26,7 +30,21 @@ class DigitalTwinBeta(ElectronMicroscope):
     # ------------------------------------------------------------------
     # Device properties — configure in Tango DB per deployment
     # ------------------------------------------------------------------
-
+    data_device_address = device_property(
+        dtype=str,
+        default_value="",
+        doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
+    )
+    acquisition_save_directory = device_property(
+        dtype=str,
+        default_value=DEFAULT_ACQUISITION_DIR,
+        doc="Directory where simulated acquisitions are saved before the Tiled server serves them.",
+    )
+    acquisition_file_format = device_property(
+        dtype=str,
+        default_value="h5",
+        doc="Acquisition file format. HDF5 stores simulated acquisition data and metadata.",
+    )
 
     # ------------------------------------------------------------------
     # Attributes
@@ -56,7 +74,7 @@ class DigitalTwinBeta(ElectronMicroscope):
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.INIT)
-        
+
         # Internal state
         self._stem_mode = True
         self._detector_proxies = {}
@@ -64,13 +82,19 @@ class DigitalTwinBeta(ElectronMicroscope):
         self._beam_pos_x = 0.5
         self._beam_pos_y = 0.5
         self._defocus = 0.0
+        self._column_valves_state = "close"
+        self._image_shift = np.zeros(2, dtype=np.float64)
+        self._beam_tilt = np.zeros(2, dtype=np.float64)
+        self._diffraction_shift = np.zeros(2, dtype=np.float64)
+        self._screen_position = "out"
+        self._screen_current_pa = 50.0
         self._particle_records = []
         self._imsize = 512
         self._fov = 200e-10  # meters, i.e. 200 angstroms
-        self._stage_position = np.random.rand(3) * 1e-6  # random initial stage position in meters
-        
+        self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
+
         self._connect()
-        
+
     def _connect(self):
         """Simulate connection by connecting to detector proxies."""
         self._connect_detector_proxies()
@@ -82,12 +106,11 @@ class DigitalTwinBeta(ElectronMicroscope):
         # Extend this dict as more detectors are added
         # later, we want to do this automatically, not with a dictionary.
         addresses: dict[str, str] = {
-            "AdvancedAcquistion": self.advanced_acquisition_device_address,
             "eds":  self.eds_device_address,
             "stage": self.stage_device_address,
             "scan": self.scan_device_address,
+            "data": self.data_device_address,
         }
-        print(addresses)
         for name, address in addresses.items():
             if not address:   # <-- minimal fix
                 self.info_stream(f"Skipping {name}: no address configured")
@@ -138,9 +161,29 @@ class DigitalTwinBeta(ElectronMicroscope):
         dwell_time: float,
         detector_list: list[str] = ["haadf"],
         scan_region: list[float] = [0.0, 0.0, 1.0, 1.0],
+        output_format: str = ".h5",
+    ) -> str:
+        """Simulate STEM acquisition, save the data with metadata, and return its DATA/Tiled key."""
+        self._imsize = int(imsize)
+        if not hasattr(self, "_particle_lookup"):
+            # Built lazily (and sized from the first requested image) rather than at
+            # device connect: _make_sample_recipe does full-volume rotation math over
+            # every particle, which is far too slow to run synchronously on startup.
+            self._make_sample_recipe()
+        self._sync_stage_from_proxy()
+        self._cook_sample_recipe()
+        detector_list = [detector.upper() for detector in detector_list]
+        image = self._render_scanned_image(imsize, dwell_time)
+        data_server = self._detector_proxies.get("data")
+        return save_acquisition(self, data_server, "stem_image", detector_list, [image], output_format=output_format)
+
+    def _render_scanned_image(
+        self,
+        imsize: int,
+        dwell_time: float,
     ) -> np.ndarray:
         """
-        Acquire a simulated STEM image using the pre-cooked sample state.
+        Render a simulated STEM image using the pre-cooked sample state.
         Requires _cook_sample_recipe() to have been called immediately before this.
         """
         size = imsize
@@ -302,6 +345,23 @@ class DigitalTwinBeta(ElectronMicroscope):
         noisy_image += blur_noise * blur_noise_level
 
         return np.array(noisy_image, dtype=np.float32)
+
+    def _acquire_camera_image(
+        self,
+        imsize: int,
+        exposure_time: float,
+        detector: str,
+        readout_area: str,
+        frame_combining: int = 1,
+        electron_counting: bool = True,
+        output_format: str = ".h5",
+    ) -> str:
+        """
+        DigitalTwinBeta only models STEM-probe imaging, not a separate TEM-mode
+        camera; reuse the same renderer as acquire_scanned_image, matching
+        DigitalTwin's own workaround for the same limitation.
+        """
+        return self._acquire_scanned_image(int(imsize), float(exposure_time), ["haadf"], [0.0, 0.0, 1.0, 1.0], output_format)
 
     def _make_sample_recipe(self):
         """
@@ -501,9 +561,12 @@ class DigitalTwinBeta(ElectronMicroscope):
         """
         import numpy as np
 
-        stage    = self._detector_proxies.get("stage")
-        x_m, y_m, z_m  = stage.x, stage.y, stage.z      # metres
-        alpha_deg, beta_deg = stage.alpha, stage.beta     # degrees
+        stage = self._detector_proxies.get("stage")
+        if stage is not None:
+            x_m, y_m, z_m = stage.x, stage.y, stage.z          # metres
+            alpha_deg, beta_deg = stage.alpha, stage.beta       # degrees
+        else:
+            x_m, y_m, z_m, alpha_deg, beta_deg = self._stage_position
 
         # Convert translation to Angstroms
         x_ang = x_m * 1e10
@@ -640,7 +703,11 @@ class DigitalTwinBeta(ElectronMicroscope):
     def _set_fov(self, fov) -> None:
         """set field of view in meters"""
         # For the digital twin, we can just store this as a property and use it in acquisition simulations.
-        self._fov = fov
+        self._fov = float(fov)
+
+    def _get_fov(self) -> float:
+        """Get field of view in meters."""
+        return float(self._fov)
 
     def _set_defocus(self, defocus) -> None:
         """Set defocus in meters."""
@@ -650,19 +717,123 @@ class DigitalTwinBeta(ElectronMicroscope):
         """Get defocus in meters."""
         return self._defocus
 
+    def _set_column_valves(self, state: str) -> None:
+        """Open or close the simulated column valves."""
+        state = state.lower().strip()
+        if state not in ("open", "close"):
+            raise ValueError(f"Invalid valve state '{state}'. Use 'open' or 'close'.")
+        self._column_valves_state = state
+
+    def _set_image_shift(self, shift) -> None:
+        """Set the image shift to [x, y] in meters."""
+        value = np.asarray(shift, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Image shift must be [x, y] in meters")
+        self._image_shift = value
+
+    def _get_image_shift(self):
+        """Get the image shift as [x, y] in meters."""
+        return self._image_shift
+
+    def _set_beam_tilt(self, tilt) -> None:
+        """Set the beam tilt to [x, y] in radians."""
+        value = np.asarray(tilt, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Beam tilt must be [x, y] in radians")
+        self._beam_tilt = value
+
+    def _get_beam_tilt(self):
+        """Get the current beam tilt as [x, y] in radians."""
+        return self._beam_tilt
+
+    def _set_diffraction_shift(self, shift) -> None:
+        """Set the diffraction shift to [x, y] in radians."""
+        value = np.asarray(shift, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Diffraction shift must be [x, y] in radians")
+        self._diffraction_shift = value
+
+    def _get_diffraction_shift(self):
+        """Get the current diffraction shift as [x, y] in radians."""
+        return self._diffraction_shift
+
+    def _auto_focus(self) -> None:
+        """Simulate an ideal autofocus routine by zeroing the defocus."""
+        self._defocus = 0.0
+
+    def _set_screen(self, position: str) -> None:
+        """Set the fluorescent screen position."""
+        self._screen_position = str(position)
+
+    def _set_screen_current(self, current) -> None:
+        """Set the screen current in pA."""
+        self._screen_current_pa = float(current)
+
+    def _calibrate_screen_current(self) -> None:
+        """Calibrate the screen current. No-op in simulation."""
+        return None
+
+    def _get_screen_current(self) -> float:
+        """Get the screen current in pA."""
+        return float(self._screen_current_pa)
+
+    def _get_parameters(self) -> str:
+        """Return all simulated status parameters as a JSON string."""
+        self._sync_stage_from_proxy()
+        parameters = {
+            "manufacturer": self._manufacturer,
+            "stem_mode": bool(self._stem_mode),
+            "defocus_m": float(self._defocus),
+            "column_valves_state": self._column_valves_state,
+            "image_shift_m": [float(v) for v in self._image_shift],
+            "beam_tilt_rad": [float(v) for v in self._beam_tilt],
+            "diffraction_shift_rad": [float(v) for v in self._diffraction_shift],
+            "screen_position": self._screen_position,
+            "screen_current_pa": float(self._screen_current_pa),
+            "stage_position": [float(v) for v in self._stage_position],
+            "beam_position": [float(self._beam_pos_x), float(self._beam_pos_y)],
+            "fov_m": float(self._fov),
+            "imsize": int(self._imsize),
+            "device_proxies": sorted(self._detector_proxies.keys()),
+            "particle_count": len(self._particle_lookup) if hasattr(self, "_particle_lookup") else 0,
+        }
+        return json.dumps(parameters)
+
+    def _sync_stage_from_proxy(self) -> None:
+        """Fetch the current stage position from the stage device proxy."""
+        stage = self._detector_proxies.get("stage")
+        if stage is None:
+            return
+        try:
+            self._stage_position = np.array(
+                [stage.x, stage.y, stage.z, stage.alpha, stage.beta],
+                dtype=np.float64,
+            )
+        except tango.DevFailed:
+            self.error_stream("Failed to read stage proxy position; using internal stage state.")
 
     def _get_stage(self):
         """Return current stage position as [x, y, z, alpha, beta], with tilts in degrees."""
+        self._sync_stage_from_proxy()
         return self._stage_position
-    
+
     def _move_stage(self, position):
         """Move stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
-        self.old_pos = self._stage_position
+        target = np.asarray(position, dtype=np.float64)
+        if target.shape != (5,):
+            raise ValueError("Stage position must be [x, y, z, alpha, beta]")
 
-        # shift the particle records/ atoms object positions by this much, negative
+        stage = self._detector_proxies.get("stage")
+        if stage is not None:
+            stage.x = float(target[0])
+            stage.y = float(target[1])
+            stage.z = float(target[2])
+            stage.alpha = float(target[3])
+            stage.beta = float(target[4])
 
-        random_shift = np.random.normal(0, 5e-8, size=5) 
-        self._stage_position = position + random_shift
+        self._stage_position = target
+        if hasattr(self, "_particle_lookup"):
+            self._cook_sample_recipe()
 
 # ----------------------------------------------------------------------
 # Server entry point

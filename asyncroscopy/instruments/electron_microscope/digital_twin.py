@@ -5,6 +5,7 @@ Useful for testing and development without requiring AutoScript hardware.
 """
 
 import json
+import time
 
 import numpy as np
 import pyTEMlib.image_tools as it
@@ -13,7 +14,7 @@ import tango
 from ase import Atoms
 from ase.build import bulk
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, device_property
+from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
@@ -56,6 +57,41 @@ class DigitalTwin(ElectronMicroscope):
         default_value=0.0,
         doc="Gaussian move noise standard deviation in meters (applied to x,y,z).",
     )
+    stage_drift_rate = device_property(
+        dtype=float,
+        default_value=0.0,
+        doc="Continuous stage drift speed in m/s applied to x,y,z reads and rendering (0 disables).",
+    )
+    stage_settle_time_s = device_property(
+        dtype=float,
+        default_value=0.0,
+        doc="Time constant in seconds of the post-move settling transient (0 disables).",
+    )
+    stage_settle_amplitude = device_property(
+        dtype=float,
+        default_value=0.0,
+        doc="Initial displacement in meters of the post-move settling transient (0 disables).",
+    )
+    stage_backlash = device_property(
+        dtype=float,
+        default_value=0.0,
+        doc="Mechanical backlash in meters: an axis that reverses travel direction undershoots by this amount (0 disables).",
+    )
+    stage_limit_xy = device_property(
+        dtype=float,
+        default_value=1e-3,
+        doc="Absolute stage travel limit in meters for x and y; moves beyond it are rejected like on the real stage.",
+    )
+    stage_limit_z = device_property(
+        dtype=float,
+        default_value=375e-6,
+        doc="Absolute stage travel limit in meters for z; moves beyond it are rejected like on the real stage.",
+    )
+    enforce_beam_state = device_property(
+        dtype=bool,
+        default_value=False,
+        doc="When true, acquiring with the column valves closed or the beam blanked returns detector noise only, like the real instrument.",
+    )
     acquisition_save_directory = device_property(
         dtype=str,
         default_value=DEFAULT_ACQUISITION_DIR,
@@ -71,11 +107,57 @@ class DigitalTwin(ElectronMicroscope):
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
     )
+    aperture_device_address = device_property(
+        dtype=str,
+        default_value="",
+        doc="Optional Tango device address for the APERTURE device, e.g. 'asyncroscopy/aperture/default'.",
+    )
 
     manufacturer = attribute(
         label="DigitalTwin",
         dtype=str,
         doc="Simulation backend",
+    )
+
+    # Mirror AutoScriptMicroscope's read-only attribute surface so notebooks
+    # and GUIs written against the real instrument work on the twin unchanged.
+    fov = attribute(
+        label="Field of View",
+        dtype=float,
+        access=AttrWriteType.READ,
+        unit="m",
+        doc="Current field of view in meters",
+    )
+
+    defocus = attribute(
+        label="Defocus",
+        dtype=float,
+        access=AttrWriteType.READ,
+        unit="m",
+        doc="Current defocus in meters",
+    )
+
+    camera_length = attribute(
+        label="Camera Length",
+        dtype=float,
+        access=AttrWriteType.READ,
+        unit="m",
+        doc="Current camera length in meters",
+    )
+
+    beam_state = attribute(
+        label="Beam State",
+        dtype=bool,
+        access=AttrWriteType.READ,
+        doc="Current beam state: True when blanked, False when unblanked",
+    )
+
+    acceleration_voltage = attribute(
+        label="Acceleration Voltage",
+        dtype=float,
+        access=AttrWriteType.READ,
+        unit="V",
+        doc="Current acceleration voltage in volts",
     )
 
     beam_pos = attribute(
@@ -100,9 +182,31 @@ class DigitalTwin(ElectronMicroscope):
         self._beam_pos_x = 0.5
         self._beam_pos_y = 0.5
         self._defocus = 0.0
+        self._column_valves_state = "close"
         self._imsize = 512
         self._fov = 200e-10  # meters
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
+        self._image_shift = np.zeros(2, dtype=np.float64)
+        self._beam_tilt = np.zeros(2, dtype=np.float64)
+        self._diffraction_shift = np.zeros(2, dtype=np.float64)
+        self._screen_position = "out"
+        self._screen_current_pa = 50.0
+        self._beam_blanked = False
+        self._acceleration_voltage = 200e3
+        self._camera_length = 0.145
+
+        # Environment/realism state: the commanded pose is what the operator
+        # asked for; reads and rendering add time-dependent drift and settling
+        # on top so the twin behaves like a physical stage.
+        self._commanded_stage = np.zeros(5, dtype=np.float64)
+        self._last_move_direction = np.zeros(3, dtype=np.float64)
+        self._settle_vector = np.zeros(3, dtype=np.float64)
+        self._last_move_time = time.monotonic()
+        self._session_start_time = time.monotonic()
+        drift_rng = np.random.default_rng(int(self.sample_seed) + 1)
+        direction = drift_rng.normal(size=3)
+        direction[2] *= 0.2  # thermal drift is mostly lateral
+        self._drift_direction = direction / np.linalg.norm(direction)
 
         self._sample_atoms_base = Atoms()
         self._sample_atoms_view = Atoms()
@@ -136,6 +240,7 @@ class DigitalTwin(ElectronMicroscope):
             "scan": self.scan_device_address,
             "corrector": self.corrector_device_address,
             "data": self.data_device_address,
+            "aperture": self.aperture_device_address,
         }
         for name, address in addresses.items():
             if not address:
@@ -149,28 +254,48 @@ class DigitalTwin(ElectronMicroscope):
             except tango.DevFailed as e:
                 self.error_stream(f"Failed to connect to {name} proxy at {address}: {e}")
 
+    def _stage_environment_offset(self) -> np.ndarray:
+        """Time-dependent x/y/z offset from thermal drift and post-move settling."""
+        offset = np.zeros(3, dtype=np.float64)
+        now = time.monotonic()
+        rate = float(self.stage_drift_rate)
+        if rate > 0.0:
+            offset += self._drift_direction * rate * (now - self._session_start_time)
+        tau = float(self.stage_settle_time_s)
+        if tau > 0.0 and np.any(self._settle_vector):
+            offset += self._settle_vector * np.exp(-(now - self._last_move_time) / tau)
+        return offset
+
     def _sync_stage_from_proxy(self) -> None:
-        """Fetch the current stage position from the stage device proxy."""
+        """Fetch the commanded stage position and overlay the simulated environment."""
         stage = self._detector_proxies.get("stage")
-        if stage is None:
-            return
-        try:
-            self._stage_position = np.array(
-                [stage.x, stage.y, stage.z, stage.alpha, stage.beta],
-                dtype=np.float64,
-            )
-            self._update_view_cache(force=False)
-        except tango.DevFailed:
-            self.error_stream("Failed to read stage proxy position; using internal stage state.")
+        if stage is not None:
+            try:
+                self._commanded_stage = np.array(
+                    [stage.x, stage.y, stage.z, stage.alpha, stage.beta],
+                    dtype=np.float64,
+                )
+            except tango.DevFailed:
+                self.error_stream("Failed to read stage proxy position; using internal stage state.")
+        position = self._commanded_stage.copy()
+        position[:3] += self._stage_environment_offset()
+        self._stage_position = position
+        self._update_view_cache(force=False)
 
     def _update_view_cache(self, force: bool = False) -> None:
         """Update the viewed sample positions by applying current stage rotations and translations."""
-        pose_key = tuple(np.round(self._stage_position, 12))
+        pose_key = (
+            tuple(np.round(self._stage_position, 12)),
+            tuple(np.round(self._image_shift, 15)),
+        )
         if not force and pose_key == self._cached_pose_key:
             return
 
         alpha_deg, beta_deg = self._stage_position[3], self._stage_position[4]
+        # Image shift moves the viewport just like a stage translation, without
+        # touching the mechanical stage — same as on the real instrument.
         stage_xyz_ang = self._stage_position[:3] * 1e10
+        stage_xyz_ang[:2] += self._image_shift * 1e10
 
         self._sample_atoms_view = self._sample_atoms_base.copy()
         if len(self._sample_atoms_view) > 0:
@@ -439,6 +564,37 @@ class DigitalTwin(ElectronMicroscope):
         """Read method for the beam position attribute."""
         return [self._beam_pos_x, self._beam_pos_y]
 
+    def read_fov(self) -> float:
+        """Field of view in meters (STEM mode only)."""
+        return float(self._fov)
+
+    def read_defocus(self) -> float:
+        """Defocus in meters."""
+        return float(self._defocus)
+
+    def read_camera_length(self) -> float:
+        """Camera length in meters (only meaningful in DIFFRACTION mode)."""
+        return float(self._camera_length)
+
+    def read_beam_state(self) -> bool:
+        """Beam blanked state: True when blanked, False when unblanked."""
+        return bool(self._beam_blanked)
+
+    def read_acceleration_voltage(self) -> float:
+        """Accelerating voltage in volts."""
+        return float(self._acceleration_voltage)
+
+    @command
+    def register_stage(self):
+        """Publish the current stage position onto the STAGE child device.
+
+        Mirrors AutoScriptMicroscope.register_stage so notebooks written
+        against the real instrument work on the twin unchanged.
+        """
+        stage = self._detector_proxies.get("stage")
+        if stage is not None:
+            stage.position = [float(v) for v in self._commanded_stage]
+
     def write_beam_pos(self, value):
         """Write method for the beam position attribute."""
         x, y = value[0], value[1]
@@ -450,6 +606,7 @@ class DigitalTwin(ElectronMicroscope):
     def _viewport_metadata(self) -> dict:
         fov_ang = self._fov * 1e10
         stage_xyz_ang = self._stage_position[:3] * 1e10
+        stage_xyz_ang[:2] += self._image_shift * 1e10
         return {
             "stage_position": [float(v) for v in self._stage_position],
             "beam_position": [float(self._beam_pos_x), float(self._beam_pos_y)],
@@ -470,11 +627,21 @@ class DigitalTwin(ElectronMicroscope):
             "particle_count": len(self._particle_records_base),
         }
 
+    def _beam_reaches_sample(self) -> bool:
+        """Whether electrons reach the sample: valves open and beam unblanked (when enforcement is on)."""
+        if not bool(self.enforce_beam_state):
+            return True
+        return self._column_valves_state == "open" and not self._beam_blanked
+
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list) -> np.ndarray:
         """Simulate STEM image acquisition using convolutions of the pseudo-potential and electron probe."""
         self._sync_stage_from_proxy()
         self._imsize = imsize
         self._update_view_cache(force=False)
+
+        if not self._beam_reaches_sample():
+            rng = np.random.default_rng(int(self.sample_seed))
+            return np.abs(rng.normal(0.0, 0.01, (imsize, imsize))).astype(np.float32)
 
         size = imsize
         fov_ang = self._fov * 1e10
@@ -495,10 +662,13 @@ class DigitalTwin(ElectronMicroscope):
         )
 
         ab = pt.get_target_aberrations("Spectra300", 200000)
-        ab["acceleration_voltage"] = 200e3
+        ab["acceleration_voltage"] = float(self._acceleration_voltage)
         ab["FOV"] = fov_ang / 10.0  # nm
         ab["convergence_angle"] = 30
         ab["wavelength"] = it.get_wavelength(ab["acceleration_voltage"])
+        # Feed the twin's defocus state into the probe so set_defocus visibly
+        # blurs the image; pyTEMlib aberration coefficients are in nm.
+        ab["C10"] = float(ab.get("C10", 0.0)) + self._defocus * 1e9
 
         probe, _a_k, _chi = pt.get_probe(ab, size + 2 * edge_crop, size + 2 * edge_crop, verbose=False)
         psf_shifted = np.fft.ifftshift(probe)
@@ -555,6 +725,13 @@ class DigitalTwin(ElectronMicroscope):
         self._sync_stage_from_proxy()
         self._update_view_cache(force=False)
 
+        if not self._beam_reaches_sample():
+            rng = np.random.default_rng(int(self.sample_seed))
+            return {
+                element: float(np.abs(rng.normal(0.0, 0.02)))
+                for element in (self._all_sample_elements or ["Au", "Pt", "Fe"])
+            }
+
         px, py = self.read_beam_pos()
         fov_ang = self._fov * 1e10
         beam_x = (px - 0.5) * fov_ang
@@ -603,6 +780,19 @@ class DigitalTwin(ElectronMicroscope):
             return noisy
         return {el: val / total for el, val in noisy.items()}
 
+    def _acquire_scanned_data_advanced(self, imsize: int, dwell_time: float, detector: str, scan_region: list[float]) -> str:
+        """Simulate the advanced scanned-data acquisition path.
+
+        The real AutoScript command triggers a 4D Ceta acquisition whose bulk
+        storage is offloaded by AutoScript; the twin renders the scan signal
+        and stores it under the same stem_data acquisition type so the command
+        surface (and MCP tool) behaves the same. Per-pixel diffraction
+        patterns are not simulated.
+        """
+        image = self._render_stem_image(int(imsize), float(dwell_time), [str(detector)])
+        data_server = self._detector_proxies.get("data")
+        return save_acquisition(self, data_server, "stem_data", str(detector), image, dataset_name="stem_data")
+
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
         """Simulate spectrum acquisition, save HDF5 data, and return its DATA/Tiled key."""
         spectrum = self._simulate_spectrum(detector_name, exposure_time)
@@ -627,9 +817,81 @@ class DigitalTwin(ElectronMicroscope):
         """Set the field of view in meters."""
         self._fov = float(fov)
 
+    def _get_fov(self) -> float:
+        """Get the field of view in meters."""
+        return float(self._fov)
+
+    def _set_image_shift(self, shift) -> None:
+        """Set the image shift to [x, y] in meters."""
+        value = np.asarray(shift, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Image shift must be [x, y] in meters")
+        self._image_shift = value
+
+    def _get_image_shift(self):
+        """Get the image shift as [x, y] in meters."""
+        return self._image_shift
+
+    def _set_beam_tilt(self, tilt) -> None:
+        """Set the beam tilt to [x, y] in radians."""
+        value = np.asarray(tilt, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Beam tilt must be [x, y] in radians")
+        self._beam_tilt = value
+
+    def _get_beam_tilt(self):
+        """Get the current beam tilt as [x, y] in radians."""
+        return self._beam_tilt
+
+    def _set_diffraction_shift(self, shift) -> None:
+        """Set the diffraction shift to [x, y] in radians."""
+        value = np.asarray(shift, dtype=np.float64)
+        if value.shape != (2,):
+            raise ValueError("Diffraction shift must be [x, y] in radians")
+        self._diffraction_shift = value
+
+    def _get_diffraction_shift(self):
+        """Get the current diffraction shift as [x, y] in radians."""
+        return self._diffraction_shift
+
+    def _auto_focus(self) -> None:
+        """Simulate an ideal autofocus routine by zeroing the defocus."""
+        self._defocus = 0.0
+
+    def _blank_beam(self) -> None:
+        """Blank the beam; with enforce_beam_state, acquisitions return detector noise only."""
+        self._beam_blanked = True
+
+    def _unblank_beam(self) -> None:
+        """Unblank the beam."""
+        self._beam_blanked = False
+
+    def _set_screen(self, position: str) -> None:
+        """Set the fluorescent screen position."""
+        self._screen_position = str(position)
+
+    def _set_screen_current(self, current) -> None:
+        """Set the screen current in pA."""
+        self._screen_current_pa = float(current)
+
+    def _calibrate_screen_current(self) -> None:
+        """Calibrate the screen current. No-op in simulation."""
+        return None
+
+    def _get_screen_current(self) -> float:
+        """Get the screen current in pA."""
+        return float(self._screen_current_pa)
+
     def _set_defocus(self, defocus) -> None:
         """Set defocus in meters."""
         self._defocus = float(defocus)
+
+    def _set_column_valves(self, state: str) -> None:
+        """Open or close the simulated column valves."""
+        state = state.lower().strip()
+        if state not in ("open", "close"):
+            raise ValueError(f"Invalid valve state '{state}'. Use 'open' or 'close'.")
+        self._column_valves_state = state
 
     def _get_defocus(self) -> float:
         """Get defocus in meters."""
@@ -641,16 +903,33 @@ class DigitalTwin(ElectronMicroscope):
         return self._stage_position
 
     def _move_stage(self, position):
-        """Move the stage to the requested 5-axis vector with optional simulated precision noise."""
+        """Move the stage like the real instrument: reject out-of-range targets, then land near (not exactly on) the requested pose."""
         if len(position) != 5:
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
         target = np.array(position, dtype=np.float64)
 
+        for axis, name, limit in (
+            (0, "x", float(self.stage_limit_xy)),
+            (1, "y", float(self.stage_limit_xy)),
+            (2, "z", float(self.stage_limit_z)),
+        ):
+            if limit > 0.0 and abs(target[axis]) > limit:
+                raise ValueError(
+                    f"Stage {name}={target[axis]:.3e} m exceeds the ±{limit:.3e} m travel limit"
+                )
+
+        delta = target[:3] - self._commanded_stage[:3]
+
+        backlash = float(self.stage_backlash)
+        if backlash > 0.0:
+            reversal = (np.sign(delta) != 0.0) & (np.sign(delta) == -self._last_move_direction)
+            target[:3] -= np.sign(delta) * backlash * reversal
+        moved = np.abs(delta) > 0.0
+        self._last_move_direction = np.where(moved, np.sign(delta), self._last_move_direction)
+
         std = float(self.stage_move_noise_std)
         if std > 0:
-            noise = np.zeros(5, dtype=np.float64)
-            noise[:3] = np.random.normal(0.0, std, size=3)
-            target = target + noise
+            target[:3] += np.random.normal(0.0, std, size=3)
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
@@ -660,8 +939,39 @@ class DigitalTwin(ElectronMicroscope):
             stage.alpha = float(target[3])
             stage.beta = float(target[4])
 
-        self._stage_position = target
+        amp = float(self.stage_settle_amplitude)
+        distance = float(np.linalg.norm(delta))
+        if amp > 0.0 and distance > 0.0:
+            self._settle_vector = -(delta / distance) * min(amp, distance)
+        else:
+            self._settle_vector = np.zeros(3, dtype=np.float64)
+        self._last_move_time = time.monotonic()
+
+        self._commanded_stage = target
+        self._stage_position = target.copy()
+        self._stage_position[:3] += self._stage_environment_offset()
         self._update_view_cache(force=False)
+
+    def _aperture_status(self) -> dict:
+        """Per-mechanism aperture report matching AutoScriptMicroscope._get_parameters."""
+        aperture = self._detector_proxies.get("aperture")
+        if aperture is None:
+            return {}
+        status: dict[str, str] = {}
+        try:
+            original = aperture.mechanism
+            for mechanism in aperture.available_mechanisms:
+                aperture.mechanism = mechanism
+                if not aperture.enabled:
+                    status[mechanism] = "Disabled"
+                elif aperture.insertion_state == "Retracted":
+                    status[mechanism] = "Retracted"
+                else:
+                    status[mechanism] = aperture.selected_aperture
+            aperture.mechanism = original
+        except tango.DevFailed:
+            self.error_stream("Failed to read aperture device state")
+        return status
 
     def _get_parameters(self) -> str:
         """Return all simulated status parameters as a JSON string.
@@ -684,6 +994,20 @@ class DigitalTwin(ElectronMicroscope):
             "manufacturer": self._manufacturer,
             "stem_mode": bool(self._stem_mode),
             "defocus_m": float(self._defocus),
+            "column_valves_state": self._column_valves_state,
+            "beam_blanked": bool(self._beam_blanked),
+            "acceleration_voltage": float(self._acceleration_voltage),
+            "camera_length_m": float(self._camera_length),
+            "apertures": self._aperture_status(),
+            "stage_limits_m": {
+                "xy": float(self.stage_limit_xy),
+                "z": float(self.stage_limit_z),
+            },
+            "image_shift_m": [float(v) for v in self._image_shift],
+            "beam_tilt_rad": [float(v) for v in self._beam_tilt],
+            "diffraction_shift_rad": [float(v) for v in self._diffraction_shift],
+            "screen_position": self._screen_position,
+            "screen_current_pa": float(self._screen_current_pa),
             "device_proxies": sorted(self._detector_proxies.keys()),
             "scan_detectors": ["haadf"],
             "spectrum_detectors": ["eds"],

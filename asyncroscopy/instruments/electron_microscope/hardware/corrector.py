@@ -94,6 +94,7 @@ class CORRECTOR(Device):
 
         self._message_id: int = 1
         self._last_status: str = "Uninitialised"
+        self.ab = None
 
         self._connect()
 
@@ -188,8 +189,8 @@ class CORRECTOR(Device):
 
     @command(dtype_out=str)
     def get_aberrations_coeff_sim(self):
-        if self.ab == None:
-            return
+        # json "null" (not Python None) when unset: a DevString command cannot
+        # return None, and callers can still json.loads the result either way.
         return json.dumps(self.ab)
 
     # ------------------------------------------------------------------

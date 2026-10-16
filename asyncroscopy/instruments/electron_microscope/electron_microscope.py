@@ -14,11 +14,16 @@ import json
 from abc import abstractmethod
 from typing import Optional
 
+import numpy as np
 import tango
+from tiled.client import from_uri
 from tango import AttrWriteType, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, command, device_property
 
+from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.instruments.instrument import Instrument
+
+MAX_CACHED_IMAGE_KEYS = 64
 
 
 class ElectronMicroscope(Instrument):
@@ -129,7 +134,7 @@ class ElectronMicroscope(Instrument):
                 f"Configured detector devices: {sorted(self._detector_proxies.keys())}.",
                 'acquire_spectrum()',
             )
-        return self._acquire_spectrum(detector_name, proxy.exposure_time)
+        return self._remember_acquired_key(self._acquire_spectrum(detector_name, proxy.exposure_time))
 
     @command(
         dtype_in=DevVarStringArray,
@@ -148,19 +153,23 @@ class ElectronMicroscope(Instrument):
         if not detector_list:
             detector_list = ['haadf']
         scan = self._detector_proxies.get('scan')
-        return self._acquire_scanned_image(scan.imsize, scan.dwell_time, detector_list, list(scan.scan_region), scan.output_format)
+        return self._remember_acquired_key(
+            self._acquire_scanned_image(scan.imsize, scan.dwell_time, detector_list, list(scan.scan_region), scan.output_format)
+        )
 
     @command(dtype_out=str)
     def acquire_scanned_data_advanced(self) -> str:
         """Trigger an advanced 4D scanned data acquisition with the Ceta camera."""
         scan = self._detector_proxies.get('scan')
-        return self._acquire_scanned_data_advanced(scan.imsize, scan.dwell_time, 'BM-Ceta', list(scan.scan_region))
+        return self._remember_acquired_key(
+            self._acquire_scanned_data_advanced(scan.imsize, scan.dwell_time, 'BM-Ceta', list(scan.scan_region))
+        )
 
     @command(dtype_out=str)
     def acquire_camera_image(self) -> str:
         """Acquire a camera image using settings from the camera device."""
         camera = self._detector_proxies.get('camera')
-        return self._acquire_camera_image(
+        return self._remember_acquired_key(self._acquire_camera_image(
             camera.imsize,
             camera.exposure_time,
             camera.camera_detector,
@@ -168,21 +177,62 @@ class ElectronMicroscope(Instrument):
             camera.frame_combining,
             camera.electron_counting,
             camera.output_format,
-        )
+        ))
+
+    def _remember_acquired_key(self, key: str) -> str:
+        """Remember a DATA/Tiled key so get_image_data_cached() can look it up by index."""
+        if not hasattr(self, '_cached_images'):
+            self._cached_images: list[str] = []
+        self._cached_images.append(key)
+        del self._cached_images[:-MAX_CACHED_IMAGE_KEYS]
+        return key
 
     @command(dtype_in=int, dtype_out=DevEncoded)
     def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
-        """Retrieve cached image by index."""
-        if not hasattr(self, '_cached_images'):
-            tango.Except.throw_exception('NoCache', 'Call acquire_scanned_image() first', 'get_image_data()')
-        if index >= len(self._cached_images):
-            tango.Except.throw_exception('InvalidIndex', f'Index {index} out of range', 'get_image_data()')
+        """
+        Retrieve dataset metadata and a small preview for a previously acquired
+        image, by index into the keys returned by the acquire_* commands (most
+        recent first up to MAX_CACHED_IMAGE_KEYS). Reads from the DATA/Tiled
+        server, the same source get_data_from_key (MCP) reads from.
+        """
+        if not hasattr(self, '_cached_images') or not self._cached_images:
+            tango.Except.throw_exception('NoCache', 'Call an acquire_* command first', 'get_image_data_cached()')
+        if index < 0 or index >= len(self._cached_images):
+            tango.Except.throw_exception(
+                'InvalidIndex',
+                f'Index {index} out of range for {len(self._cached_images)} cached key(s)',
+                'get_image_data_cached()',
+            )
 
-        cached_image = self._cached_images[index]
-        img_data = cached_image.data if hasattr(cached_image, 'data') else cached_image
+        # _cached_images appends in acquisition order; index 0 is documented as
+        # the MOST RECENT acquisition, so index from the end.
+        key = self._cached_images[-(index + 1)]
+        data_proxy = self._detector_proxies.get('data')
+        if data_proxy is None:
+            tango.Except.throw_exception(
+                'NoDataDevice',
+                'No DATA device is configured for this instrument; cannot resolve cached keys.',
+                'get_image_data_cached()',
+            )
 
-        meta = {'shape': list(img_data.shape), 'dtype': str(img_data.dtype)}
-        return json.dumps(meta), img_data.tobytes()
+        config = json.loads(data_proxy.get_config())
+        uri = config.get('uri')
+        if not uri:
+            tango.Except.throw_exception(
+                'NoTiledUri', 'The DATA device did not provide a Tiled URI.', 'get_image_data_cached()',
+            )
+
+        client = from_uri(uri)
+        try:
+            node = client[key]
+        except KeyError:
+            tango.Except.throw_exception(
+                'KeyNotFound', f"Cached key '{key}' could not be resolved from Tiled server '{uri}'.", 'get_image_data_cached()',
+            )
+
+        description = describe_tiled_node(key, uri, node)
+        preview = np.asarray(description['datasets'][0]['preview']) if description['datasets'] else np.asarray([])
+        return json.dumps(description), preview.tobytes()
 
     @command(dtype_in=DevVarFloatArray, dtype_out=None)
     def place_beam(self, position) -> None:
@@ -307,6 +357,14 @@ class ElectronMicroscope(Instrument):
 
     
     @abstractmethod
+    def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
+        """Vendor-specific spectrum acquisition implementation."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _acquire_spectrum; "
+            "this vendor backend is missing the override"
+        )
+
+    @abstractmethod
     def _acquire_scanned_image(
         self,
         imsize: int,
@@ -348,6 +406,13 @@ class ElectronMicroscope(Instrument):
 
     def _place_beam(self, position):
         pass
+
+    @abstractmethod
+    def _set_column_valves(self, state: str):
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _set_column_valves; "
+            "this vendor backend is missing the override"
+        )
 
     def _blank_beam(self):
         pass

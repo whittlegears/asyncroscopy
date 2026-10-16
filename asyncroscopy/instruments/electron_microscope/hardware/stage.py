@@ -116,15 +116,24 @@ class STAGE(Device):
 
     @abstractmethod
     def _read_position(self):
-        pass
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _read_position; "
+            "this vendor backend is missing the override"
+        )
 
     @abstractmethod
     def _write_position(self, value):
-        pass
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _write_position; "
+            "this vendor backend is missing the override"
+        )
 
     @abstractmethod
     def _read_beta_tilt_enabled(self):
-        pass
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _read_beta_tilt_enabled; "
+            "this vendor backend is missing the override"
+        )
 
     def read_x(self) -> float:
         return self.read_position()[0]
