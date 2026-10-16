@@ -423,3 +423,78 @@ class TestAutoScriptMicroscope:
 
         auto_script_proxy.Connect()
         assert auto_script_proxy.state() == tango.DevState.ON
+
+
+class TestAutoScriptConnectionErrors:
+    def _device(self, error):
+        device = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        device._microscope = None
+        device._connect_error = error
+        return device
+
+    @pytest.mark.parametrize("available, advice", [
+        (True, "Call Connect once"),
+        (False, "Calling Connect again will not help"),
+    ])
+    def test_hardware_command_without_client_names_the_reason(self, monkeypatch, available, advice) -> None:
+        import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
+
+        monkeypatch.setattr(auto_script_module, "_AUTOSCRIPT_AVAILABLE", available)
+        device = self._device("connecting to 10.0.0.1:9095 failed: refused")
+        with pytest.raises(tango.DevFailed) as excinfo:
+            AutoScriptMicroscope._acquire_scanned_image(device, 512, 1e-6, ["haadf"], [0, 0, 1, 1])
+        error = excinfo.value.args[0]
+        assert error.reason == "NotConnected"
+        assert "10.0.0.1:9095 failed: refused" in error.desc
+        assert advice in error.desc
+
+    def test_get_parameters_is_guarded(self) -> None:
+        with pytest.raises(tango.DevFailed) as excinfo:
+            AutoScriptMicroscope._get_parameters(self._device(None))
+        assert excinfo.value.args[0].reason == "NotConnected"
+
+    def test_testing_mode_keeps_dry_run_no_ops(self) -> None:
+        from types import SimpleNamespace
+
+        # A plain stand-in: assigning a device property on a bare Tango device crashes.
+        device = SimpleNamespace(_microscope=None, _connect_error=None, testing_mode_bool=True)
+        AutoScriptMicroscope._blank_beam(device)  # no client by design: still a no-op, no NotConnected
+
+    def test_silent_setters_now_raise_when_disconnected(self) -> None:
+        with pytest.raises(tango.DevFailed):
+            AutoScriptMicroscope._set_fov(self._device(None), 1e-8)
+
+    def test_failed_hardware_connect_records_the_reason(self, monkeypatch) -> None:
+        import asyncroscopy.instruments.electron_microscope.auto_script as module
+
+        class RefusingClient:
+            def connect(self, host, port):
+                raise ConnectionRefusedError("refused")
+
+        monkeypatch.setattr(module, "_AUTOSCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(module, "TemMicroscopeClient", RefusingClient)
+        device = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        device._tango_properties = {}
+        device.testing_mode_bool = False
+        device.hardware_host, device.hardware_port = "10.0.0.1", 9095
+        device._connect_error = None
+        device.info_stream = device.error_stream = device.warn_stream = lambda *a: None
+
+        AutoScriptMicroscope._connect_hardware(device)
+
+        assert device._microscope is None
+        assert "10.0.0.1:9095 failed" in device._connect_error
+
+    def test_missing_package_records_the_reason(self, monkeypatch) -> None:
+        import asyncroscopy.instruments.electron_microscope.auto_script as module
+
+        monkeypatch.setattr(module, "_AUTOSCRIPT_AVAILABLE", False)
+        device = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        device._tango_properties = {}
+        device.testing_mode_bool = False
+        device._connect_error = None
+        device.warn_stream = lambda *a: None
+
+        AutoScriptMicroscope._connect_hardware(device)
+
+        assert "not installed" in device._connect_error

@@ -81,8 +81,12 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     def Connect(self) -> None:
         """
         Explicitly (re)connect to microscope hardware. Useful after a fault.
+        Raises with the reason when a backend reports the connection failed.
         """
         self._connect()
+        error = getattr(self, "_connect_error", None)
+        if error:
+            tango.Except.throw_exception("ConnectFailed", f"Connect failed: {error}", "Connect()")
 
     @tango.server.command
     def Disconnect(self) -> None:

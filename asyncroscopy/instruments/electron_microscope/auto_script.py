@@ -16,6 +16,7 @@ Real AutoScript image commands save the adorned object on disk and return the
 DATA/Tiled unique id for that saved acquisition.
 """
 
+import functools
 import json
 import math
 import time
@@ -152,15 +153,29 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
 
     def _connect(self):
+        self._connect_error = None
         self._connect_hardware()
         self._connect_detector_proxies()
-        self.set_state(DevState.ON)
         self.screen_current_calibration = None
+        # A missing client used to leave the device ON, so Connect looked like it
+        # worked and every hardware command then died on a NoneType attribute.
+        if self._connect_error:
+            self.set_state(DevState.FAULT)
+            self.set_status(f"Not connected to AutoScript: {self._connect_error}")
+        else:
+            self.set_state(DevState.ON)
+            self.set_status("Connected to AutoScript" if self._microscope is not None else "Connected (testing mode)")
 
     def _connect_hardware(self) -> None:
         """Establish AutoScript connection from MPC -> hardware."""
-        if not _AUTOSCRIPT_AVAILABLE or self.testing_mode_bool:
-            self.warn_stream("AutoScript not available")
+        if self.testing_mode_bool:
+            return
+        if not _AUTOSCRIPT_AVAILABLE:
+            self._connect_error = (
+                "the autoscript_tem_microscope_client package is not installed in this "
+                "device server's Python environment, so it cannot reach the microscope"
+            )
+            self.warn_stream(f"AutoScript not available: {self._connect_error}")
             return
         try:
             self._microscope = TemMicroscopeClient()
@@ -168,8 +183,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self.info_stream(f"Connected to AutoScript at {self.hardware_host}:{self.hardware_port}")
             self.is_autoscript = True
         except Exception as e:
+            self._connect_error = f"connecting to {self.hardware_host}:{self.hardware_port} failed: {e}"
             self.error_stream(f"AutoScript connection failed: {e}")
-            self.set_state(DevState.FAULT)
             self._microscope = None
             self.is_autoscript = False
 
@@ -623,7 +638,40 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope.optics.deflectors.beam_tilt = (x_tilt, y_tilt)
         except Exception as e:
             self.error_stream(f"Failed to set beam tilt: {e}")
-    
+
+
+def _requires_microscope(method):
+    """Raise one readable NotConnected error instead of an AttributeError on a missing client."""
+
+    @functools.wraps(method)
+    def guarded(self, *args, **kwargs):
+        # Testing mode has no client by design; keep its old behaviour for dry-run scripts.
+        if self._microscope is None and not getattr(self, "testing_mode_bool", False):
+            reason = getattr(self, "_connect_error", None) or "the device has not connected"
+            if not _AUTOSCRIPT_AVAILABLE:
+                advice = "Calling Connect again will not help until that is fixed; report it to the operator."
+            else:
+                advice = "Call Connect once; if it fails again, report it to the operator."
+            tango.Except.throw_exception(
+                "NotConnected",
+                f"Not connected to the microscope through AutoScript: {reason}. {advice}",
+                f"{method.__name__}()",
+            )
+        return method(self, *args, **kwargs)
+
+    return guarded
+
+
+for _name in (
+    "_acquire_scanned_image", "_acquire_camera_image", "_acquire_scanned_data_advanced", "_acquire_spectrum",
+    "_place_beam", "_set_fov", "_get_fov", "_set_column_valves", "_blank_beam", "_unblank_beam",
+    "_set_defocus", "_get_defocus", "_set_screen", "_calibrate_screen_current", "_set_screen_current",
+    "_get_screen_current", "_auto_focus", "_set_image_shift", "_get_image_shift",
+    "_set_diffraction_shift", "_get_diffraction_shift", "_get_beam_tilt", "_set_beam_tilt",
+    "_get_parameters",
+):
+    setattr(AutoScriptMicroscope, _name, _requires_microscope(getattr(AutoScriptMicroscope, _name)))
+
 # ----------------------------------------------------------------------
 # Server entry point
 # ----------------------------------------------------------------------
