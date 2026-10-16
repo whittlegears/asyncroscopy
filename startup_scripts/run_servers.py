@@ -240,6 +240,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Stream each server's output (stdout+stderr) live to a per-device log "
         "file under output_tango_devices_logs/<timestamp>/ for troubleshooting.",
     )
+    parser.add_argument(
+        "--isolated",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Run a second, independent stack beside an existing one: the Tango database "
+        "file lives in DIR, process state is tracked per port, and nothing outside this "
+        "stack is cleared (no port scouring, no killing other device servers, no shared "
+        "database file deletion). Use distinct tango/tiled ports in the YAML.",
+    )
     return parser.parse_args(argv)
 
 
@@ -592,8 +602,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {color('DEBUG LOGS', Style.bold):<18} {log_dir}")
     print_inventory(devices)
 
+    isolated_dir = args.isolated.resolve() if args.isolated else None
+    manager_kwargs = {}
+    if isolated_dir is not None:
+        isolated_dir.mkdir(parents=True, exist_ok=True)
+        clear_first = False
+        environment["PYTANGO_DATABASE_NAME"] = str(isolated_dir / "tango_database.db")
+        manager_kwargs = {"name": f"run_servers_{port}", "state_dir": isolated_dir / ".processes"}
+
     try:
-        with ProcessManager() as manager:
+        with ProcessManager(**manager_kwargs) as manager:
             print_section(1, total_steps, "Clearing old processes")
             if clear_first:
                 ports_to_clear = [port]
@@ -603,7 +621,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 status_line("SKIP", "old process cleanup")
                 
-            if reset_database_file and start_database:
+            if reset_database_file and start_database and isolated_dir is not None:
+                (isolated_dir / "tango_database.db").unlink(missing_ok=True)
+            elif reset_database_file and start_database:
                 manager.wipe_databases()
             elif reset_database_file:
                 status_line("SKIP", "Tango database file", "database startup is disabled")

@@ -7,6 +7,8 @@ import io
 import re
 import json
 import socket
+import threading
+import time
 import traceback
 from typing import Annotated, Any, Callable
 
@@ -20,6 +22,7 @@ from PIL import Image as PILImage
 from pydantic import Field
 from tiled.client import from_uri
 
+import tango
 from tango import Database, DeviceProxy, CommandInfo, CmdArgType
 from tango.utils import (
     TO_TANGO_TYPE,
@@ -37,6 +40,7 @@ from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.mcp.tool_log import ToolCallLog
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
 # plain string. Their tool wrappers additionally fetch the array back from Tiled and
@@ -54,6 +58,25 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
 
+# Agents loop on a failing call (connect, retry, reconnect, retry...). From the
+# second identical failure in a row the error tells the model to stop and report.
+REPEAT_FAILURE_WARN_AT = 2
+# Identical failures further apart than this count as a new run, not a loop.
+REPEAT_FAILURE_WINDOW_S = 120.0
+
+
+def describe_error(exc: Exception) -> str:
+    """One line for a failure: a DevFailed's reasons and descriptions, without the C++/Python stack.
+
+    The full DevFailed repr runs to kilobytes of origins and tracebacks that the
+    model re-reads on every later step. The first error carries the cause; the
+    last one usually names the device (e.g. "Failed to connect to device ...").
+    """
+    if isinstance(exc, tango.DevFailed) and exc.args:
+        errors = [exc.args[0]] + ([exc.args[-1]] if len(exc.args) > 1 else [])
+        return " | ".join(f"{e.reason}: {' '.join(str(e.desc).split())}" for e in errors)
+    return f"{type(exc).__name__}: {exc}".strip()
+
 
 class MCPServer:
     def __init__(
@@ -66,6 +89,7 @@ class MCPServer:
         data_device_address: str,
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
+        tool_log_path: str | None = None,
     ):
         """
         Args:
@@ -79,6 +103,8 @@ class MCPServer:
             include_only_functions (list[str], optional): Command names/patterns to allow exclusively.
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
+            tool_log_path (str, optional): JSONL file receiving one line per device tool call
+                (arguments, duration, outcome, result). Off when empty.
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -89,6 +115,10 @@ class MCPServer:
         self.data_device_address = data_device_address
         self.include_only_functions = list(include_only_functions) if include_only_functions else []
         self.verbose = verbose
+        self.tool_log = ToolCallLog(tool_log_path) if tool_log_path else None
+        # tool name -> (arguments + error signature, consecutive count, time of last failure)
+        self._failures: dict[str, tuple[str, int, float]] = {}
+        self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
@@ -486,6 +516,29 @@ class MCPServer:
         in_desc = cmd_info.in_type_desc
 
         out_type = cmd_info.out_type
+        unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
+
+        def _run(arguments: dict, *call_args):
+            started, t0 = time.time(), time.perf_counter()
+            try:
+                normalized = self._normalize_command_result(out_type, func(*call_args))
+                result = self._augment_with_preview(command_name, normalized)
+            except Exception as exc:
+                if self.tool_log is not None:
+                    self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
+                message = describe_error(exc)
+                repeats = self._note_failure(unique_name, arguments, message)
+                if repeats >= REPEAT_FAILURE_WARN_AT:
+                    message += (
+                        f"\nThis exact call has now failed {repeats} times in a row with the same "
+                        "error. Do not call it again with the same arguments: report the error to the user."
+                    )
+                raise RuntimeError(message) from exc
+            with self._failures_lock:
+                self._failures.pop(unique_name, None)
+            if self.tool_log is not None:
+                self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized)
+            return result
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [
             f"Tango Device Class: {dev_class}",
@@ -520,9 +573,7 @@ class MCPServer:
 
         if in_type == CmdArgType.DevVoid:
             def wrapper():
-                result = func()
-                normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return _run({})
 
             params = []
             
@@ -533,10 +584,7 @@ class MCPServer:
                     arg_input = kwargs["arg"]
                 else:
                     arg_input = kwargs
-                
-                result = func(arg_input)
-                normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return _run({"arg": arg_input}, arg_input)
 
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
@@ -546,9 +594,7 @@ class MCPServer:
             def wrapper(*args, **kwargs):
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
-                result = func(arg)
-                normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return _run({param_name: self._numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -558,12 +604,24 @@ class MCPServer:
 
         wrapper.__signature__ = inspect.Signature(parameters=params, return_annotation=py_return_type)
         wrapper.__doc__ = doc
-
-        unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
         wrapper.__name__ = unique_name
         wrapper.__qualname__ = unique_name
 
         return wrapper
+
+    def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
+        """Count consecutive identical failures of one tool within REPEAT_FAILURE_WINDOW_S.
+
+        A success, a different failure or a long pause resets the count.
+        """
+        signature = json.dumps(arguments, sort_keys=True, default=str) + "\n" + error
+        now = time.monotonic()
+        with self._failures_lock:
+            previous, count, last = self._failures.get(tool_name, ("", 0, 0.0))
+            repeat = previous == signature and now - last <= REPEAT_FAILURE_WINDOW_S
+            count = count + 1 if repeat else 1
+            self._failures[tool_name] = (signature, count, now)
+        return count
 
     def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo]]]:
         """Discover tools by querying Tango DB for devices and their commands.
@@ -714,6 +772,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--include-only-functions-json", default="[]")
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
     return parser.parse_args(argv)
 
 
@@ -758,6 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         include_only_functions=json.loads(args.include_only_functions_json),
         data_device_address=args.data_device_address,
         verbose=not args.quiet,
+        tool_log_path=args.tool_log or None,
     )
     if args.transport == "streamable-http":
         print(
