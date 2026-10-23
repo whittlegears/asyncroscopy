@@ -1,3 +1,5 @@
+"""Register and start the asyncroscopy LLM Tango device from a YAML config."""
+
 import json
 import sys
 import argparse
@@ -16,11 +18,29 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
-from asyncroscopy.mcp.llm import Agent
+from startup_scripts.config_schema import ConfigError, Setting, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers
 
 DEVICE_NAME = "asyncroscopy/llm/default"
 INSTANCE_NAME = "llm_instance"
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
+
+TITLE = 'Asyncroscopy LLM Startup'
+LAUNCHER = 'startup_scripts/run_llm.py'
+SETTINGS = [
+    Setting('tango.host', required=True, section='Database', label='Tango host'),
+    Setting('tango.port', 'int', required=True, section='Database', label='Tango port'),
+    Setting('mcp_url', required=True, section='Model', label='MCP URL'),
+    Setting('model_provider', section='Model', choices=('ollama', 'anthropic', 'openai'), help='Blank: the device default.'),
+    Setting('model_name', section='Model'),
+    Setting('local_model_path', 'path', section='Model', label='Local model path'),
+    Setting('api_key', section='Model', label='API key'),
+    Setting('startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
+]
+
+
+def is_config(raw) -> bool:
+    return isinstance(raw, dict) and 'mcp_url' in raw
 
 @dataclass 
 class TangoConfig:
@@ -35,24 +55,37 @@ class LLMConfig:
     model_provider: str | None = None
     model_name: str | None = None
     api_key: str | None = None
-    startup_agents: list[Agent] | None = None
+    startup_agents: list[dict] | None = None  # Agent configs, as asyncroscopy.mcp.llm.Agent reads them
 
     def __post_init__(self):
         # Convert tango dict to TangoConfig
         if isinstance(self.tango, dict):
             self.tango = TangoConfig(**self.tango)
 
-def _require(mapping: dict, key: str, where: str):
-    if not isinstance(mapping, dict) or key not in mapping:
-        raise KeyError(f"Config section '{where}' is missing required key '{key}'")
-    return mapping[key]
-
-
 def load_config(path: Path) -> LLMConfig:
     if not path.exists():
         raise FileNotFoundError(f'Config file not found: {path}')
-    raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
-    return LLMConfig(**raw)
+    try:
+        raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
+    values = read_settings(raw, SETTINGS)
+    known = {setting.path.split('.')[0] for setting in SETTINGS}
+    unknown = sorted(set(raw) - known)
+    if unknown:
+        raise ConfigError([f"unknown key(s) {', '.join(unknown)}; expected {', '.join(sorted(known))}"])
+    agents = values['startup_agents'] or []
+    if not all(isinstance(agent, dict) and agent.get('name') for agent in agents):
+        raise ConfigError(['every startup agent needs at least a name'])
+    return LLMConfig(
+        tango=TangoConfig(host=values['tango.host'], port=values['tango.port']),
+        mcp_url=values['mcp_url'],
+        local_model_path=values['local_model_path'] or None,
+        model_provider=values['model_provider'] or None,
+        model_name=values['model_name'] or None,
+        api_key=values['api_key'] or None,
+        startup_agents=agents,
+    )
 
 def ensure_database_running(config: LLMConfig) -> tango.Database:
     host = config.tango.host
@@ -116,6 +149,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--yaml', type=Path, default=DEFAULT_CONFIG_PATH, metavar='PATH', help='LLM YAML config to start from.')
     parser.add_argument('--interactive', action='store_true', default=False, help='Run in interactive mode, allowing user to send prompts to the LLM device.')
     parser.add_argument('--name', default='default', help='Run as asyncroscopy/llm/<name>, beside the default LLM device.')
+    add_lifecycle_args(parser)
     return parser.parse_args(argv)
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,11 +158,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.name != 'default':
         DEVICE_NAME = f"asyncroscopy/llm/{args.name}"
         INSTANCE_NAME = f"llm_{args.name}_instance"
+    install_shutdown_handlers(args.parent_pid)
     try:
         config = load_config(args.yaml)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(f'Config error: {exc}', file=sys.stderr)
         return 1
+    # One state file per device so a second LLM never reaps the first.
+    state_name = "run_llm" if args.name == "default" else f"run_llm_{INSTANCE_NAME}"
+    if args.cleanup:
+        with ProcessManager(name=state_name):
+            pass
+        print('Stopped processes left by an earlier run.')
+        return 0
 
     tango_host = f'{config.tango.host}:{config.tango.port}'
     os.environ['TANGO_HOST'] = tango_host
@@ -139,8 +181,6 @@ def main(argv: list[str] | None = None) -> int:
     env = {**os.environ, 'TANGO_HOST': tango_host, 'PYTHONUNBUFFERED': '1'}
 
     try:
-        # One state file per device so a second LLM never reaps the first.
-        state_name = "run_llm" if args.name == "default" else f"run_llm_{INSTANCE_NAME}"
         with ProcessManager(name=state_name) as manager:
             managed: ManagedProcess = manager.start_process(
                 key="llm",
@@ -203,4 +243,4 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
