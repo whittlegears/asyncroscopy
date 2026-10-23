@@ -198,7 +198,7 @@ class LLM(Device):
 
         temperature and seed apply to this call only. sequential=True needs exactly one agent,
         runs its tool calls one at a time in order, records last_metrics, and caps model calls
-        at max_steps. Otherwise the swarm runs and max_steps is LangGraph's recursion limit.
+        at max_steps. Otherwise the swarm runs with max_steps as LangGraph's recursion limit.
         """
         query_id = None
         base_model, base_steps = self._model, self._max_steps
@@ -234,7 +234,9 @@ class LLM(Device):
                 answer = await self._run_sequential_agent(self._agents[0], prompt, max_steps)
             else:
                 self._max_steps = max_steps
-                answer = await self._run_swarm(prompt)
+                answer = await self._run_swarm(prompt, limit_single_agent=True)
+                if not answer or answer.startswith("Swarm Error:"):
+                    raise RuntimeError(answer or "the swarm finished without an answer")
             self._run_metrics["answer"] = answer
             return json.dumps({"query_id": query_id, "answer": answer, "error": None})
         except Exception as e:
@@ -408,14 +410,15 @@ class LLM(Device):
             print(f"[SUPERVISOR ERROR]: {e}")
             return fallback, ""
 
-    async def _stream_agent(self, agent_executor, messages, agent_label: str = "") -> str:
+    async def _stream_agent(self, agent_executor, messages, agent_label: str = "", recursion_limit: int | None = None) -> str:
         """Run a create_agent executor while streaming tokens and tool calls to stdout."""
         prefix = f"[{agent_label}] " if agent_label else ""
         start_time = time.time()
         first_token_received = False
         final_content = ""
 
-        async for event in agent_executor.astream_events({"messages": messages}, version="v2"):
+        config = {"recursion_limit": recursion_limit} if recursion_limit else None
+        async for event in agent_executor.astream_events({"messages": messages}, config=config, version="v2"):
             kind = event["event"]
 
             if kind == "on_chat_model_start":
@@ -524,8 +527,11 @@ class LLM(Device):
             )
         return "" if content is None else str(content)
 
-    async def _run_swarm(self, prompt: str) -> str:
-        """Run the agent swarm with a given prompt, returning the final response."""
+    async def _run_swarm(self, prompt: str, limit_single_agent: bool = False) -> str:
+        """Run the agent swarm with a given prompt, returning the final response.
+
+        max_steps always bounds the multi-agent graph; limit_single_agent also applies it to a lone agent.
+        """
         if not self._agents:
             return "Swarm Error: No agents available. Please use the SpawnAgent command to create at least one worker before querying."
 
@@ -534,8 +540,9 @@ class LLM(Device):
             agent = self._agents[0]
             agent_executor = self._build_agent_executor(agent)
             print(f"\n[{agent.name}] is working...")
+            limit = {"recursion_limit": self._max_steps} if limit_single_agent else {}
             return await self._stream_agent(
-                agent_executor, [HumanMessage(content=prompt)], agent_label=agent.name
+                agent_executor, [HumanMessage(content=prompt)], agent_label=agent.name, **limit
             )
 
         builder = StateGraph(AgentState)

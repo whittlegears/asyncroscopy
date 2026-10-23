@@ -50,7 +50,7 @@ class ToolCallLog:
 
 
 def read_tool_log(path: str | Path, start: float | None = None, end: float | None = None) -> list[dict[str, Any]]:
-    """Rows whose start time falls in [start, end]; a missing file reads as empty."""
+    """Rows whose start time falls in [start, end]; a missing file reads as empty, a damaged line is skipped."""
     path = Path(path)
     if not path.exists():
         return []
@@ -58,7 +58,10 @@ def read_tool_log(path: str | Path, start: float | None = None, end: float | Non
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:  # a line cut short by a crash or a concurrent write
+            continue
         if start is not None and row["ts"] < start:
             continue
         if end is not None and row["ts"] > end:
