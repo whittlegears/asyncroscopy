@@ -173,7 +173,7 @@ def _instrument_file(raw_path: str) -> Path:
 
 
 def module_source(module_name: str) -> Path:
-    """The .py file a module name resolves to, without importing it."""
+    """The .py file `python -m module_name` would run (finding it may import parent packages)."""
     if not MODULE_NAME_PATTERN.match(module_name):
         raise ValueError(f"'{module_name}' is not a valid Python module name")
     relative = Path(*module_name.split("."))
@@ -182,8 +182,15 @@ def module_source(module_name: str) -> Path:
             return candidate
     try:
         spec = importlib.util.find_spec(module_name)
-    except (ImportError, ValueError):
+    except ModuleNotFoundError:
         spec = None
+    except Exception as exc:  # importing a parent package can fail in any way
+        raise ValueError(f"module '{module_name}' could not be located: {type(exc).__name__}: {exc}") from None
+    if spec is not None and spec.submodule_search_locations:  # a package: -m runs its __main__.py
+        for location in spec.submodule_search_locations:
+            if (Path(location) / "__main__.py").is_file():
+                return Path(location) / "__main__.py"
+        raise ValueError(f"package '{module_name}' has no __main__.py to run")
     if spec is not None and spec.origin and spec.origin.endswith(".py"):
         return Path(spec.origin)
     raise ValueError(f"module '{module_name}' not found")
@@ -207,6 +214,7 @@ def find_device_class(path: Path, requested: str | None = None, fallback: str | 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         and node.func.attr == "run_server" and isinstance(node.func.value, ast.Name)
     }
+    served &= set(classes) | set(imported)  # e.g. `device_class.run_server()` names a variable, not a class
     if len(served) == 1:
         return served.pop()
     if fallback in classes:
@@ -231,6 +239,10 @@ def _instrument_config(raw: dict, values: dict) -> InstrumentConfig:
     instrument_file = _instrument_file(values["instrument.file"])
     if not instrument_file.is_file():
         raise ValueError(f"instrument.file: {instrument_file} not found")
+    try:
+        python_file_to_module(instrument_file)
+    except ValueError:
+        raise ValueError(f"instrument.file: {instrument_file} must be inside {PROJECT_DIR}") from None
     return InstrumentConfig(
         class_name=find_device_class(instrument_file, values["instrument.class_name"]),
         file=instrument_file,
@@ -291,17 +303,21 @@ def load_config(path: Path) -> Config:
     if not isinstance(devices, dict):
         problems.append("devices must be a mapping of device name to its settings")
         devices = {}
-    support_devices, disabled = [], []
+    support_devices, disabled, broken = [], [], set()
     for key, spec in devices.items():
         try:
             device, enabled = device_config(key, spec)
         except ValueError as exc:
             problems.append(str(exc))
+            broken.add(key)
             continue
         if enabled:
             support_devices.append(device)
         else:
             disabled.append(key)
+    # The DATA device starts Tiled (get_data_proxy), so autostart without it fails after everything is up.
+    if values["tiled.autostart"] and "data" not in broken and not any(d.key == "data" for d in support_devices):
+        problems.append("tiled.autostart needs the data device; enable data or turn off tiled.autostart")
     if problems:
         raise ConfigError(problems)
 

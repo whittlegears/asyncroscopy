@@ -16,7 +16,7 @@ from startup_guis.qt_compat import QApplication  # noqa: E402
 from startup_guis.script_gui import ScriptGui  # noqa: E402
 from startup_guis.shared import ManagedCommand  # noqa: E402
 from startup_scripts import run_llm, run_mcp, run_servers  # noqa: E402
-from startup_scripts.config_schema import DeviceTable, Setting, get_path, read_settings  # noqa: E402
+from startup_scripts.config_schema import DeviceTable, Setting, read_settings  # noqa: E402
 
 CONFIGS = run_servers.PROJECT_DIR / "configs"
 SCRIPTS = (run_servers, run_mcp, run_llm)
@@ -28,12 +28,12 @@ def app():
 
 
 @pytest.fixture
-def gui(app, tmp_path):
+def gui(app, tmp_path, monkeypatch):
+    monkeypatch.setattr("startup_guis.script_gui.GENERATED_CONFIG_DIR", tmp_path)  # keep outputs/ clean
     windows = []
 
     def make(script, path=None):
         window = ScriptGui(script, path)
-        window.generated_path = tmp_path / "generated.yaml"
         windows.append(window)
         return window
 
@@ -48,10 +48,6 @@ def write(tmp_path, raw, name="config.yaml"):
     return path
 
 
-def preset_paths(script):
-    return {s.path for s in script.SETTINGS if s.presets}
-
-
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda m: m.__name__.rsplit(".", 1)[-1])
 def test_every_config_round_trips_unchanged(gui, script):
     """Loading a shipped config and generating with no edits keeps every key, including ones with no widget."""
@@ -60,8 +56,6 @@ def test_every_config_round_trips_unchanged(gui, script):
     window = gui(script, names[0])
     for path in names:
         window.load_config_from_path(path)
-        for preset in preset_paths(script):  # undo the safe-default preset applied on open
-            window.set_shown(preset, get_path(window.raw, preset))
         assert window.current_config() == yaml.safe_load(path.read_text()), path.name
 
 
@@ -142,11 +136,35 @@ def test_edits_write_only_what_changed(gui, tmp_path):
     assert "missing required setting 'mcp.http_port'" in window.validity.text()
 
 
-def test_mcp_gui_opens_on_the_digital_twin_host(gui, tmp_path):
-    raw = yaml.safe_load((CONFIGS / "mcp_dt.yaml").read_text())
-    raw["tango"]["host"] = "10.46.217.241"
-    window = gui(run_mcp, write(tmp_path, raw))
+def test_mcp_gui_opens_on_the_digital_twin_host_and_says_so(gui, tmp_path):
+    window = gui(run_mcp)  # default config, mcp.yaml, names the real instrument's host
+    assert yaml.safe_load(run_mcp.DEFAULT_CONFIG_PATH.read_text())["tango"]["host"] != "localhost"
     assert window.current_config()["tango"]["host"] == "localhost"
+    assert "Digital twin preset" in window.output.toPlainText()
+    raw = yaml.safe_load((CONFIGS / "mcp_dt.yaml").read_text())
+    raw["tango"]["host"] = "10.0.0.5"
+    assert gui(run_mcp, write(tmp_path, raw)).current_config()["tango"]["host"] == "10.0.0.5"  # explicit file: as written
+
+
+def test_string_booleans_show_as_the_script_reads_them(gui, tmp_path):
+    raw = yaml.safe_load((CONFIGS / "DigitalTwin.yaml").read_text())
+    raw["devices"]["eds"]["enabled"] = "False"
+    raw["devices"]["camera"]["enabled"] = "0"
+    raw["tiled"]["autostart"] = "false"
+    window = gui(run_servers, write(tmp_path, raw))
+    assert not window.device_checks["eds"].isChecked() and not window.device_checks["camera"].isChecked()
+    assert window.get_shown("tiled.autostart") is False
+    window.device_checks["camera"].setChecked(True)
+    config = run_servers.load_config(window.check_config(window.generated_path)[0])
+    assert "camera" in {d.key for d in config.support_devices} and "eds" in config.disabled_devices
+
+
+def test_failed_config_write_is_reported_not_a_crash(gui, tmp_path):
+    window = gui(run_servers, CONFIGS / "DigitalTwin.yaml")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    _, error = window.check_config(blocker / "cannot.yaml")
+    assert error
 
 
 def test_a_setting_added_to_a_script_appears_without_gui_changes(gui, tmp_path):
@@ -174,6 +192,19 @@ def test_a_setting_added_to_a_script_appears_without_gui_changes(gui, tmp_path):
     window.device_checks["b"].setChecked(True)
     assert window.current_config() == {
         "stack": {"port": 1, "mode": "fast", "dry_run": True}, "units": {"a": {"x": 1}, "b": {"enabled": True}}}
+
+
+def test_start_waits_for_a_previous_stop_to_finish(app):
+    import threading
+
+    lines = []
+    command = ManagedCommand(lines.append, lambda code: None)
+    release = threading.Event()
+    command._stopping = threading.Thread(target=release.wait)
+    command._stopping.start()
+    command.start([sys.executable, "-c", "pass"])
+    release.set()
+    assert command.process is None and "Still stopping" in lines[-1]
 
 
 def test_non_matching_yaml_is_not_loaded(gui):

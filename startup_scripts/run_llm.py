@@ -208,14 +208,14 @@ def main(argv: list[str] | None = None) -> int:
                         break
                     elif state == tango.DevState.FAULT:
                         print(f"Device initialization failed. Status: {proxy.status()}")
-                        return
+                        return 1
                 except Exception:
                     proxy = None
                 
                 time.sleep(1)
             else:
                 print("Timeout waiting for device to initialize.")
-                return
+                return 1
 
             if args.interactive:
                 print("Entering interactive mode. Type 'exit' to quit.")
@@ -238,9 +238,9 @@ def main(argv: list[str] | None = None) -> int:
                     except subprocess.TimeoutExpired:
                         pass    
 
-    except KeyboardInterrupt:    
+    except KeyboardInterrupt:
         print("\nShutting down server...")
-        return 0
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -160,8 +160,14 @@ def yaml_text(config: dict) -> str:
 
 
 def write_yaml(path: Path, config: dict) -> Path:
+    """Write atomically, so a script never reads a half-written config (e.g. on a full disk)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml_text(config), encoding='utf-8')
+    temporary = path.with_name(f'.{path.name}.tmp')
+    try:
+        temporary.write_text(yaml_text(config), encoding='utf-8')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
 
 
@@ -558,13 +564,21 @@ class ManagedCommand(QObject):
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
+    @property
+    def stopping(self) -> bool:
+        return self._stopping is not None and self._stopping.is_alive()
+
     def start(self, command: list[str], cleanup: list[str] | None = None) -> None:
         """Start command; cleanup is run if the script has to be force-killed, to stop what it left behind."""
         if self.running:
             self.output_ready.emit('A process is already running.\n')
             return
+        if self.stopping:
+            # A cleanup still to come would read the same state file and stop the new run.
+            self.output_ready.emit('Still stopping the previous run; try again in a moment.\n')
+            return
         env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
-        popen_kwargs = {'cwd': PROJECT_DIR, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT, 'text': True, 'bufsize': 1}
+        popen_kwargs = {'cwd': PROJECT_DIR, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT, 'text': True, 'errors': 'replace', 'bufsize': 1}
         if os.name == 'nt':
             popen_kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
         else:
@@ -614,7 +628,7 @@ class ManagedCommand(QObject):
         except (ProcessLookupError, OSError):
             self.process.kill()
         if self.cleanup:
-            result = subprocess.run(self.cleanup, cwd=PROJECT_DIR, capture_output=True, text=True)
+            result = subprocess.run(self.cleanup, cwd=PROJECT_DIR, capture_output=True, text=True, errors='replace')
             self.output_ready.emit(result.stdout + result.stderr)
 
     def _emit(self, name: str, value) -> None:

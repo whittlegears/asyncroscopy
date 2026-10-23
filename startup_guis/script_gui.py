@@ -65,7 +65,7 @@ from startup_guis.shared import (  # noqa: E402
     write_yaml,
     yaml_text,
 )
-from startup_scripts.config_schema import MISSING, Setting, get_path, set_path  # noqa: E402
+from startup_scripts.config_schema import MISSING, Setting, coerce, get_path, set_path  # noqa: E402
 
 
 def project_path_text(path: Path | str) -> str:
@@ -78,10 +78,19 @@ def project_path_text(path: Path | str) -> str:
     return path.as_posix()
 
 
+def as_bool(value, default: bool) -> bool:
+    """A YAML boolean as the scripts read it ("False", "0", "off" are false); unreadable values show the default."""
+    try:
+        result = coerce(Setting("value", "bool"), value)
+    except ValueError:
+        return default
+    return default if result is None else result
+
+
 def display_text(setting: Setting, value) -> str | bool:
     """What a widget shows for a YAML value."""
     if setting.kind == "bool":
-        return bool(value)
+        return as_bool(value, bool(setting.default))
     if value is None or value is MISSING:
         return ""
     if setting.kind == "list":
@@ -150,10 +159,17 @@ class ScriptGui(QMainWindow):
         self.build()
         default_path = getattr(script, "GUI_DEFAULT_CONFIG_PATH", script.DEFAULT_CONFIG_PATH)
         self.load_config_from_path(Path(config_path) if config_path else default_path)
-        # Open on each setting's first preset, e.g. the digital twin rather than the real instrument.
-        for path, toggle in self.presets.items():
+        if config_path is None:
+            self.apply_safe_presets()
+
+    def apply_safe_presets(self) -> None:
+        """Open on each setting's first preset (e.g. the digital twin, not the real instrument), and say so."""
+        for path in self.presets:
             setting, _ = self.fields[path]
-            self.set_shown(path, next(iter(setting.presets.values())))
+            name, value = next(iter(setting.presets.items()))
+            if str(self.get_shown(path)).strip() != value:
+                self.enqueue_output(f"{setting.title} set to the {name} preset ({value}); the config says {self.get_shown(path)}.\n")
+                self.set_shown(path, value)
 
     # ---------------------------------------------------------------- layout
 
@@ -351,7 +367,7 @@ class ScriptGui(QMainWindow):
             spec = spec if isinstance(spec, dict) else {}
             summary = self.devices.summary(key, spec) if self.devices.summary else ""
             checkbox = CheckBox(f"{key}  ·  {summary}" if summary else str(key))
-            enabled = spec.get(self.devices.enabled_key, True) not in (False, "false", "no", "off", 0)
+            enabled = as_bool(spec.get(self.devices.enabled_key, True), True)
             checkbox.setChecked(enabled)
             checkbox.stateChanged.connect(self.changed)
             grid.addWidget(checkbox, index // 2, index % 2)
@@ -408,7 +424,8 @@ class ScriptGui(QMainWindow):
         if self.devices is not None:
             entries = get_path(config, self.devices.path, {})
             for key, checkbox in self.device_checks.items():
-                if checkbox.isChecked() == self.device_shown.get(key):
+                raw_enabled = entries[key].get(self.devices.enabled_key, True) if isinstance(entries.get(key), dict) else True
+                if checkbox.isChecked() == self.device_shown.get(key) and raw_enabled in (True, False):
                     continue
                 if not isinstance(entries.get(key), dict):
                     entries[key] = {}
@@ -420,8 +437,9 @@ class ScriptGui(QMainWindow):
 
         Live checks use a side file so they never rewrite the file a running script was started from.
         """
-        path = write_yaml(path or self.generated_path.with_suffix(".check.yaml"), self.current_config())
+        path = path or self.generated_path.with_suffix(".check.yaml")
         try:
+            write_yaml(path, self.current_config())
             self.script.load_config(path)
         except Exception as exc:  # the script decides what is invalid
             return path, str(exc)

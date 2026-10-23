@@ -126,18 +126,53 @@ def test_bad_device_entries_are_refused_before_anything_starts(tmp_path, devices
 
 
 def test_all_problems_are_listed_together(tmp_path):
-    path = server_yaml(tmp_path, {"a": {"module_name": "nope.a"}, "b": {"module_name": "nope.b"}})
+    path = server_yaml(tmp_path, {"data": {"module_name": "asyncroscopy.data.data"},
+                                  "a": {"module_name": "nope.a"}, "b": {"module_name": "nope.b"}})
     with pytest.raises(ConfigError) as excinfo:
         run_servers.load_config(path)
     assert len(excinfo.value.problems) == 2
 
 
 def test_instrument_class_is_checked_against_its_file(tmp_path):
-    path = server_yaml(tmp_path, {}, instrument={"file": "asyncroscopy/instruments/electron_microscope/digital_twin.py", "class_name": "Typo"})
+    path = server_yaml(tmp_path, {"data": {"module_name": "asyncroscopy.data.data"}}, instrument={"file": "asyncroscopy/instruments/electron_microscope/digital_twin.py", "class_name": "Typo"})
     with pytest.raises(ConfigError, match="class 'Typo' is not defined in digital_twin.py"):
         run_servers.load_config(path)
-    path = server_yaml(tmp_path, {}, instrument={"file": "asyncroscopy/instruments/electron_microscope/auto_script.py"})
+    path = server_yaml(tmp_path, {"data": {"module_name": "asyncroscopy.data.data"}}, instrument={"file": "asyncroscopy/instruments/electron_microscope/auto_script.py"})
     assert run_servers.load_config(path).instrument.class_name == "AutoScriptMicroscope"
+
+
+def test_class_inference_ignores_a_variable_passed_to_run_server(tmp_path):
+    path = server_yaml(tmp_path, {"data": {"module_name": "asyncroscopy.data.data"},
+                                  "feedback": {"module_name": "asyncroscopy.instruments.scanning_probe_microscope.jupiter_api"}})
+    with pytest.raises(ConfigError, match="feedback: cannot tell which class"):
+        run_servers.load_config(path)
+
+
+def test_external_package_runs_its_main(tmp_path, monkeypatch):
+    package = tmp_path / "ext_lab"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "__main__.py").write_text("class Robot:\n    pass\n\nRobot.run_server()\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    config = run_servers.load_config(server_yaml(tmp_path, {
+        "data": {"module_name": "asyncroscopy.data.data"}, "robot": {"module_name": "ext_lab"}}))
+    assert [(d.key, d.class_name) for d in config.support_devices][-1] == ("robot", "Robot")
+
+
+def test_instrument_file_outside_the_project_is_refused(tmp_path):
+    outside = tmp_path / "outside.py"
+    outside.write_text("class Outside:\n    pass\n")
+    with pytest.raises(ConfigError, match="must be inside"):
+        run_servers.load_config(server_yaml(tmp_path, {"data": {"module_name": "asyncroscopy.data.data"}},
+                                            instrument={"file": str(outside)}))
+
+
+def test_tiled_autostart_needs_the_data_device(tmp_path):
+    devices = {"data": {"module_name": "asyncroscopy.data.data", "enabled": False}}
+    with pytest.raises(ConfigError, match="tiled.autostart needs the data device"):
+        run_servers.load_config(server_yaml(tmp_path, devices))
+    tiled = yaml.safe_load((CONFIGS / "DigitalTwin.yaml").read_text())["tiled"] | {"autostart": False}
+    assert run_servers.load_config(server_yaml(tmp_path, devices, tiled=tiled)).disabled_devices == ("data",)
 
 
 def test_register_devices_removes_disabled_devices_from_a_kept_database(monkeypatch):
@@ -221,6 +256,7 @@ def test_process_alive():
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
 def test_repeated_stop_signals_raise_once():
+    previous = {name: signal.getsignal(getattr(signal, name)) for name in ("SIGTERM", "SIGHUP")}
     install_shutdown_handlers()
     try:
         with pytest.raises(KeyboardInterrupt):
@@ -229,7 +265,8 @@ def test_repeated_stop_signals_raise_once():
         os.kill(os.getpid(), signal.SIGTERM)  # a forwarded duplicate must not interrupt cleanup
         time.sleep(0.1)
     finally:
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        for name, handler in previous.items():
+            signal.signal(getattr(signal, name), handler)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
