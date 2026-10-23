@@ -124,7 +124,7 @@ class LLM(Device):
         self._max_steps = value
 
     def read_last_metrics(self) -> str:
-        """JSON record of the most recent QueryJSON: per-model-call timing and tokens, per-tool-call outcome."""
+        """JSON metrics of the last QueryJSON: timing and tokens per model call, outcome per tool call."""
         return json.dumps(self._run_metrics, default=str)
 
     @attribute(dtype=(str,), max_dim_x=100)
@@ -194,13 +194,11 @@ class LLM(Device):
         doc_out="JSON {'query_id', 'answer', 'error'}: error is null on success, answer is null on failure",
     )
     async def QueryJSON(self, request_json: str) -> str:
-        """Query with reproducibility options; unlike Query, a failure is reported as an error, never as an answer.
+        """Query with per-call options; failures come back in 'error', never as an answer.
 
-        temperature and seed override the model's sampling for this call only. sequential=True
-        needs exactly one agent: it runs tool calls one at a time in the order the model issued
-        them, records per-step metrics (see last_metrics), and max_steps bounds the model calls.
-        Without sequential the request runs the normal swarm, where max_steps is LangGraph's
-        recursion limit for multi-agent graphs and no per-step metrics are recorded.
+        temperature and seed apply to this call only. sequential=True needs exactly one agent,
+        runs its tool calls one at a time in order, records last_metrics, and caps model calls
+        at max_steps. Otherwise the swarm runs and max_steps is LangGraph's recursion limit.
         """
         query_id = None
         base_model, base_steps = self._model, self._max_steps
@@ -349,7 +347,7 @@ class LLM(Device):
 
     @command(dtype_out=bool, doc_out="Success status")
     async def DisconnectMCP(self) -> bool:
-        """Drop every MCP connection and its tools, e.g. before ConnectMCP to a differently filtered server."""
+        """Drop all MCP connections and their tools."""
         self._mcp_clients = []
         self._tools = []
         print("[SYSTEM]: Disconnected from all MCP servers.")
@@ -458,11 +456,9 @@ class LLM(Device):
         return final_content
 
     async def _run_sequential_agent(self, agent: Agent, prompt: str, max_steps: int) -> str:
-        """Single-agent tool loop that executes tool calls one at a time, in the order the model issued them.
+        """Single-agent loop that runs tool calls one at a time, in issued order.
 
-        LangGraph's ToolNode runs a step's tool calls concurrently, so a move and an
-        acquisition requested together race on the instrument. Here every call
-        finishes before the next starts, and max_steps bounds the model calls.
+        LangGraph's ToolNode runs a step's calls concurrently, so a move and an acquire race.
         """
         tools = {t.name: t for t in self._get_agent_tools(agent.tools)}
         model = self._model.bind_tools(list(tools.values())) if tools else self._model
@@ -491,7 +487,7 @@ class LLM(Device):
         raise RuntimeError(f"step limit: the model was still calling tools after {max_steps} model calls")
 
     async def _run_one_tool(self, tools: dict, call: dict, step: int, index: int, agent_label: str):
-        """Run one tool call; a failure becomes an error ToolMessage the model can read, never an exception."""
+        """Run one tool call; failures become an error ToolMessage, not an exception."""
         name, args, call_id = call.get("name", ""), call.get("args") or {}, call.get("id") or f"call_{step}_{index}"
         started, t0 = time.time(), time.perf_counter()
         print(f"[{agent_label}] [EXECUTING TOOL]: {name}({args})")
@@ -518,7 +514,7 @@ class LLM(Device):
 
     @staticmethod
     def _tool_output_text(message) -> str:
-        """Text of a tool result whose content is a string or a list of content blocks."""
+        """Text of a message whose content is a string or a list of blocks."""
         content = getattr(message, "content", message)
         if isinstance(content, list):
             return "\n".join(

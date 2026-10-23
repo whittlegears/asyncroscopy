@@ -434,7 +434,7 @@ class TestAutoScriptConnectionErrors:
 
     @pytest.mark.parametrize("available, advice", [
         (True, "Call Connect once"),
-        (False, "Calling Connect again will not help"),
+        (False, "Reconnecting will not help"),
     ])
     def test_hardware_command_without_client_names_the_reason(self, monkeypatch, available, advice) -> None:
         import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module

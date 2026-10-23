@@ -245,10 +245,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Run a second, independent stack beside an existing one: the Tango database "
-        "file lives in DIR, process state is tracked per port, and nothing outside this "
-        "stack is cleared (no port scouring, no killing other device servers, no shared "
-        "database file deletion). Use distinct tango/tiled ports in the YAML.",
+        help="Run a separate stack with its database and process state in DIR, "
+        "leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
     )
     return parser.parse_args(argv)
 

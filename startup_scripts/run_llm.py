@@ -115,7 +115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--yaml', type=Path, default=DEFAULT_CONFIG_PATH, metavar='PATH', help='LLM YAML config to start from.')
     parser.add_argument('--interactive', action='store_true', default=False, help='Run in interactive mode, allowing user to send prompts to the LLM device.')
-    parser.add_argument('--name', default='default', help='Device suffix: asyncroscopy/llm/<name>, server LLM/<name>_instance. Lets a second LLM device run beside the default one.')
+    parser.add_argument('--name', default='default', help='Run as asyncroscopy/llm/<name>, beside the default LLM device.')
     return parser.parse_args(argv)
 
 def main(argv: list[str] | None = None) -> int:
@@ -139,8 +139,7 @@ def main(argv: list[str] | None = None) -> int:
     env = {**os.environ, 'TANGO_HOST': tango_host, 'PYTHONUNBUFFERED': '1'}
 
     try:
-        # One state file per device, so starting a second LLM device never reaps the first;
-        # the default device keeps the original run_llm.json.
+        # One state file per device so a second LLM never reaps the first.
         state_name = "run_llm" if args.name == "default" else f"run_llm_{INSTANCE_NAME}"
         with ProcessManager(name=state_name) as manager:
             managed: ManagedProcess = manager.start_process(

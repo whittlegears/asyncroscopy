@@ -58,20 +58,14 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
 
-# Agents loop on a failing call (connect, retry, reconnect, retry...). From the
-# second identical failure in a row the error tells the model to stop and report.
+# From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
-# Identical failures further apart than this count as a new run, not a loop.
+# Identical failures further apart than this don't count as a loop.
 REPEAT_FAILURE_WINDOW_S = 120.0
 
 
 def describe_error(exc: Exception) -> str:
-    """One line for a failure: a DevFailed's reasons and descriptions, without the C++/Python stack.
-
-    The full DevFailed repr runs to kilobytes of origins and tracebacks that the
-    model re-reads on every later step. The first error carries the cause; the
-    last one usually names the device (e.g. "Failed to connect to device ...").
-    """
+    """One-line summary of a failure; for DevFailed, the first (cause) and last (device) errors, no stack."""
     if isinstance(exc, tango.DevFailed) and exc.args:
         errors = [exc.args[0]] + ([exc.args[-1]] if len(exc.args) > 1 else [])
         return " | ".join(f"{e.reason}: {' '.join(str(e.desc).split())}" for e in errors)
@@ -103,8 +97,7 @@ class MCPServer:
             include_only_functions (list[str], optional): Command names/patterns to allow exclusively.
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
-            tool_log_path (str, optional): JSONL file receiving one line per device tool call
-                (arguments, duration, outcome, result). Off when empty.
+            tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -530,8 +523,8 @@ class MCPServer:
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
                     message += (
-                        f"\nThis exact call has now failed {repeats} times in a row with the same "
-                        "error. Do not call it again with the same arguments: report the error to the user."
+                        f"\nThis call has failed {repeats} times in a row. "
+                        "Do not call it again with the same arguments; report the error to the user."
                     )
                 raise RuntimeError(message) from exc
             with self._failures_lock:
@@ -610,10 +603,7 @@ class MCPServer:
         return wrapper
 
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
-        """Count consecutive identical failures of one tool within REPEAT_FAILURE_WINDOW_S.
-
-        A success, a different failure or a long pause resets the count.
-        """
+        """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
         signature = json.dumps(arguments, sort_keys=True, default=str) + "\n" + error
         now = time.monotonic()
         with self._failures_lock:
