@@ -125,3 +125,17 @@ def test_requests_that_cannot_run_are_errors():
     for bad in ('"just a string"', '{"prompt": "go", "max_steps": "ten"}'):
         result = json.loads(asyncio.run(device.QueryJSON(bad)))
         assert result["answer"] is None and result["error"]
+
+
+def test_swarm_failure_is_an_error_and_max_steps_reaches_a_lone_agent(monkeypatch):
+    device = _device([], [])
+    seen = {}
+
+    async def fake_swarm(prompt, limit_single_agent=False):
+        seen["limit"], seen["steps"] = limit_single_agent, device._max_steps
+        return "Swarm Error: No agent produced a response before routing finished."
+
+    monkeypatch.setattr(device, "_run_swarm", fake_swarm)
+    result = json.loads(asyncio.run(device.QueryJSON(json.dumps({"prompt": "go", "max_steps": 4}))))
+    assert result["answer"] is None and "No agent produced" in result["error"]
+    assert seen == {"limit": True, "steps": 4}

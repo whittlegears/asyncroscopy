@@ -41,6 +41,9 @@ def test_rows_round_trip_and_filter_by_time(tmp_path):
     assert rows[1]["error"] == "RuntimeError: boom"
     assert len(read_tool_log(tmp_path / "log.jsonl", t0 + 5, t0 + 20)) == 1
     assert read_tool_log(tmp_path / "missing.jsonl") == []
+    with (tmp_path / "log.jsonl").open("a") as handle:
+        handle.write('{"ts": 1, "tool": "cut sho\n')
+    assert len(read_tool_log(tmp_path / "log.jsonl")) == 2
 
 
 def test_log_failure_never_fails_the_call(tmp_path):
