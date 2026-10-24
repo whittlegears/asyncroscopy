@@ -312,7 +312,7 @@ class TestRunSwarm:
 
         captured_messages = []
 
-        async def fake_stream(executor, messages, agent_label="", transcript=None):
+        async def fake_stream(executor, messages, agent_label="", transcript=None, recursion_limit=None):
             captured_messages.extend(messages)
             return "done"
 
@@ -321,6 +321,21 @@ class TestRunSwarm:
         asyncio.run(swarm._run_swarm("scan now"))
         assert len(captured_messages) == 1
         assert captured_messages[0].content == "scan now"
+
+    def test_single_agent_is_bounded_by_max_steps(self):
+        swarm = _make_agent_swarm(agents=[_make_agent()])
+        swarm.set_max_steps(3)
+        executor = MagicMock()
+
+        async def no_events(*args, **kwargs):
+            executor.config = kwargs.get("config")
+            return
+            yield
+
+        executor.astream_events = no_events
+        swarm._build_agent_executor = MagicMock(return_value=executor)
+        asyncio.run(swarm._run_swarm("scan now"))
+        assert executor.config == {"recursion_limit": 3}
 
 
 class TestOpenAIMessagesToLangchain:

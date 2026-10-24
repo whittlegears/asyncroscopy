@@ -30,3 +30,5 @@ mcp:
   # commands. Entries may be "command" or "Class.command".
   # list_devices and get_data_from_key are always included.
   include_only_functions: []
+  # Optional JSONL log of tool calls. Empty disables it.
+  tool_log: ""

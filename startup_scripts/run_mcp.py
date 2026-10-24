@@ -33,6 +33,7 @@ class MCPConfig:
     blocked_classes: list[str]
     blocked_functions: dict[str, list[str]]
     include_only_functions: list[str] = field(default_factory=list)
+    tool_log: str = ''
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,7 @@ def load_config(path: Path) -> Config:
             blocked_classes=list(_require(mcp, 'blocked_classes', 'mcp')),
             blocked_functions={key: list(value) for key, value in _require(mcp, 'blocked_functions', 'mcp').items()},
             include_only_functions=list(mcp.get('include_only_functions', [])),
+            tool_log=str(mcp.get('tool_log') or ''),
         ),
     )
 
@@ -103,6 +105,8 @@ def build_command(config: Config) -> list[str]:
     ]
     if config.mcp.quiet:
         command.append('--quiet')
+    if config.mcp.tool_log:
+        command.extend(['--tool-log', config.mcp.tool_log])
     return command
 
 
@@ -130,7 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f'  command: {" ".join(command)}')
 
     try:
-        with ProcessManager() as manager:
+        # One state file per name and port so bridges on other ports survive.
+        with ProcessManager(name=f"run_mcp_{config.mcp.name}_{config.mcp.http_port}") as manager:
             managed: ManagedProcess = manager.start_process(
                 key=config.mcp.name,
                 label=f"MCP Server ({config.mcp.name})",

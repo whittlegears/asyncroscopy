@@ -375,6 +375,7 @@ class AgentSwarm:
         messages,
         agent_label: str = "",
         transcript: list[str] | None = None,
+        recursion_limit: int | None = None,
     ) -> str:
         """Run a create_agent executor while streaming tokens and tool calls."""
         prefix = f"[{agent_label}] " if agent_label else ""
@@ -387,7 +388,8 @@ class AgentSwarm:
             if transcript is not None:
                 transcript.append(line)
 
-        async for event in agent_executor.astream_events({"messages": messages}, version="v2"):
+        config = {"recursion_limit": recursion_limit} if recursion_limit else None
+        async for event in agent_executor.astream_events({"messages": messages}, config=config, version="v2"):
             kind = event["event"]
 
             if kind == "on_chat_model_start":
@@ -452,8 +454,10 @@ class AgentSwarm:
             agent = self._agents[0]
             agent_executor = self._build_agent_executor(agent)
             print(f"\n[{agent.name}] is working...")
+            # max_steps bounds a lone agent too, not only the routed graph below.
             return await self._stream_agent(
-                agent_executor, [HumanMessage(content=prompt)], agent_label=agent.name, transcript=transcript
+                agent_executor, [HumanMessage(content=prompt)], agent_label=agent.name, transcript=transcript,
+                recursion_limit=self.max_steps,
             )
 
         builder = StateGraph(AgentState)
