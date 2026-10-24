@@ -248,3 +248,14 @@ def test_stop_lets_the_script_clean_up(app, tmp_path):
     command.stop(wait=True)
     assert marker.read_text() == "ok"
     assert not command.running
+
+
+def test_config_write_is_all_or_nothing(tmp_path, monkeypatch):
+    from startup_guis import shared
+
+    path = shared.write_yaml(tmp_path / "run.yaml", {"tango": {"host": "localhost"}})
+    monkeypatch.setattr(shared.os, "replace", lambda *a: (_ for _ in ()).throw(OSError(28, "No space left on device")))
+    with pytest.raises(OSError):
+        shared.write_yaml(path, {"tango": {"host": "elsewhere"}})
+    assert yaml.safe_load(path.read_text()) == {"tango": {"host": "localhost"}}  # a reader never sees a partial file
+    assert [p.name for p in tmp_path.iterdir()] == ["run.yaml"]
