@@ -3,7 +3,7 @@
 ```bash
 uv run startup_guis/server_gui.py   # Tango database, devices, Tiled (run_servers.py)
 uv run startup_guis/mcp_gui.py      # MCP bridge (run_mcp.py)
-uv run startup_guis/llm_gui.py      # LLM device (run_llm.py)
+uv run startup_guis/llm_gui.py      # agent MCP server (run_llm.py)
 ```
 
 The server GUI opens on `configs/DigitalTwin.yaml` and the MCP GUI on the digital-twin

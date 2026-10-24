@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""LLM startup window; every field and check comes from startup_scripts/run_llm.py."""
+"""Agent startup window; every field and check comes from startup_scripts/run_llm.py."""
 
 import sys
 from pathlib import Path

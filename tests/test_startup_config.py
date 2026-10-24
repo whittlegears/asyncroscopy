@@ -229,12 +229,23 @@ def test_mcp_tool_log_and_validation(tmp_path):
 
 def test_llm_config_rejects_unknown_keys_readably(tmp_path):
     raw = yaml.safe_load((CONFIGS / "gemma-llm.yaml").read_text())
-    assert run_llm.load_config(CONFIGS / "gemma-llm.yaml").startup_agents[0]["name"] == "base"
-    raw["mcp_ulr"] = "typo"
+    assert run_llm.load_config(CONFIGS / "gemma-llm.yaml").agent.startup_agents[0]["name"] == "base"
+    raw["agent"]["mcp_ulr"] = "typo"
     path = tmp_path / "llm.yaml"
     path.write_text(yaml.safe_dump(raw))
     with pytest.raises(ConfigError, match="unknown key.*mcp_ulr"):
         run_llm.load_config(path)
+
+
+def test_llm_config_checks_agents_and_steps(tmp_path):
+    raw = yaml.safe_load((CONFIGS / "gemma-llm.yaml").read_text())
+    raw["agent"]["max_steps"] = 0
+    raw["agent"]["startup_agents"] = [{"system_prompt": "no name"}]
+    path = tmp_path / "llm.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(ConfigError) as excinfo:
+        run_llm.load_config(path)
+    assert len(excinfo.value.problems) == 2
 
 
 def test_config_kinds_do_not_overlap():
