@@ -47,20 +47,13 @@ database properties before the instrument starts.
 
 ## Server GUI
 
-`startup_guis/server_gui.py` is a small YAML launcher for the server stack. It
-does not start servers directly. It formats the current selections into YAML,
-writes that YAML to `outputs/startup_configs/server_gui.yaml`, and runs:
+`startup_guis/server_gui.py` is built from this script's settings and the loaded
+YAML's devices; see [Running Servers in a GUI](run-server-gui.md). It writes
+`outputs/startup_configs/run_servers_gui.yaml` and runs:
 
 ```bash
-uv run python startup_scripts/run_servers.py --yaml outputs/startup_configs/server_gui.yaml
+uv run python startup_scripts/run_servers.py --yaml outputs/startup_configs/run_servers_gui.yaml
 ```
-
-The GUI includes:
-
-- YAML preview generated from the current selections.
-- Terminal output from the running process.
-- **Start** and **Stop** controls.
-- **Save current config** to write a YAML file you can reuse later.
 
 ## Configs
 
@@ -79,7 +72,10 @@ Each server config has:
 - `tiled:` for the DATA-managed Tiled HTTP server.
 - `device_timeout_seconds:` for device readiness waits.
 
-Device `class_name` defaults to the upper-cased key (`scan` becomes `SCAN`).
+Device `class_name` defaults to the class the module passes to `run_server()`
+(otherwise the upper-cased key). Set `enabled: false` on a device to keep it in the
+file without starting it. Unknown keys, missing modules and classes a module does not
+define are refused before anything starts.
 `instrument.hardware_host`, `instrument.hardware_port`, and
 `instrument.timeout_seconds` become instrument device properties.
 
