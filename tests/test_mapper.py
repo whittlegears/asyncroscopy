@@ -51,6 +51,12 @@ class TestTileCentres:
         assert rows[0] == sorted(rows[0])
         assert rows[1] == sorted(rows[1], reverse=True)
 
+    def test_too_many_tiles_is_refused_before_any_is_built(self):
+        started = time.perf_counter()
+        with pytest.raises(ValueError, match="at most 5000"):
+            tile_centres([0, 1e-4, 0, 1e-4], 1e-9, 0.1, "raster", limit=5000)  # about 1e10 tiles
+        assert time.perf_counter() - started < 1.0
+
     def test_box_smaller_than_fov_is_refused(self):
         with pytest.raises(ValueError, match="smaller than the field of view"):
             tile_centres([0, 1e-7, 0, 1e-7], 2e-7, 0.1, "raster")
@@ -143,6 +149,18 @@ class TestRun:
         assert status["progress"]["done"] == N_TILES
         with h5py.File(call(mapper_proxy, "results", {"job_id": resumed["job_id"]})["result_keys"]["run_file"], "r") as h5:
             assert len(h5["tiles"]) == N_TILES
+        release_all(mapper_proxy, reserve["reservation_id"])
+
+    def test_abort_cuts_a_long_eds_map_step_short(self, mapper_proxy, mapping_twin_proxy):
+        # One tile with a 64 x 64 spectrum image: thousands of spectra in a single step.
+        plan = {"size_m": [8e-8, 8e-8], "fov_m": 8e-8, "imsize": 32, "dwell_s": 1e-6, "per_tile": ["eds_map"], "eds_map_points": 64}
+        reserve = call(mapper_proxy, "reserve", {"plan": plan})
+        started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+        time.sleep(1.0)
+        call(mapper_proxy, "abort", {"job_id": started["job_id"]})
+        status = wait(mapper_proxy, started["job_id"], states=("aborted", "done", "failed"), timeout=15)
+        assert status["state"] == "aborted" and status["progress"]["done"] == 0
+        assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
         release_all(mapper_proxy, reserve["reservation_id"])
 
     def test_release_refuses_a_running_job(self, mapper_proxy):

@@ -63,8 +63,13 @@ class JobDevice(Device):
         raise NotImplementedError
 
     def run_step(self, job: dict, index: int) -> dict:
-        """Do step ``index``; return a JSON-safe record of what it produced."""
+        """Do step ``index``; return a JSON-safe record of what it produced, or None if it stopped early for an abort (see aborting), so a resume runs it again."""
         raise NotImplementedError
+
+    def aborting(self, job: dict) -> bool:
+        """True once abort was called for ``job``; a long run_step should check it and return None."""
+        event = self._abort.get(job.get("job_id"))
+        return event is not None and event.is_set()
 
     def on_start(self, job: dict) -> None:
         """Called in the worker before the first step (including on resume)."""
@@ -327,6 +332,8 @@ class JobDevice(Device):
                     break
                 started = time.time()
                 record = self.run_step(job, index)
+                if record is None:  # the step stopped early for an abort and did not finish
+                    break
                 with self._lock:
                     job["done"].append(index)
                     job["step_results"][str(index)] = record
@@ -382,7 +389,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops this device's background job after the current step and puts the instrument in its safe state. Always allowed.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops this device's background job after the current step (or sooner, where the step checks for it) and puts the instrument in its safe state. Always allowed.")
     def abort(self, request: str) -> str:
         """Stop a running job after the current step and put the instrument in a safe state. Always allowed."""
         return self._guard(self._abort_job, request)

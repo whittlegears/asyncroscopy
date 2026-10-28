@@ -59,7 +59,7 @@ A grid of 400 indents takes hours; a single Tango command times out after second
 | Hook | What it does |
 | :-- | :-- |
 | `resolve_plan(plan)` | Check the plan; raise `ValueError` to refuse it. Return `{"steps": [...], "estimate": {...}, ...}`. Everything except `steps` is kept as `job["resolved_plan"]`. |
-| `run_step(job, index)` | Do one step and return a JSON-safe record of it. |
+| `run_step(job, index)` | Do one step and return a JSON-safe record of it. A step that can take long (minutes) should check `self.aborting(job)` and return `None` when it is set; the job then stops, and a resume runs that step again. |
 | `on_stop(job, reason)` | Abort or failure: put the instrument in a safe state. |
 | `on_finish(job)` | After the last step: make it safe again, and return the keys of anything saved. |
 
@@ -90,7 +90,7 @@ You don't have to configure anything for the default policy:
 | `IndentGrid.abort` | low | stop word |
 | `Init`, `Kill`, `RestartServer` on any device | not offered to agents | operator only |
 
-`place_beam`, `set_fov` and `set_defocus` are low only on a device with both `acquire_scanned_image` and `blank_beam` (an electron microscope); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
+`set_fov` and `set_defocus` are low only on a device with both `acquire_scanned_image` and `blank_beam` (an electron microscope); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
 
 ## 4. Config and launch
 

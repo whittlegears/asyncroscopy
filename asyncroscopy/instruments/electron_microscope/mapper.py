@@ -48,8 +48,8 @@ PLAN_DEFAULTS = {
 EDGE_TOLERANCE_M = 1e-12
 
 
-def tile_centres(box: list[float], fov: float, overlap: float, order: str) -> list[dict]:
-    """Tile centres covering ``box`` with every tile inside it."""
+def tile_centres(box: list[float], fov: float, overlap: float, order: str, limit: int | None = None) -> list[dict]:
+    """Tile centres covering ``box`` with every tile inside it; more than ``limit`` tiles is refused before any is built."""
     x_min, x_max, y_min, y_max = box
     step = fov * (1.0 - overlap)
 
@@ -58,12 +58,16 @@ def tile_centres(box: list[float], fov: float, overlap: float, order: str) -> li
         if span < fov - EDGE_TOLERANCE_M:
             raise ValueError(f"box side {span:.3e} m is smaller than the field of view {fov:.3e} m")
         n = max(1, int(math.ceil((span - fov) / step - 1e-9)) + 1)
+        if limit is not None and n > limit:
+            raise ValueError(f"plan needs more than {limit} tiles; this Mapper allows at most {limit}")
         if n == 1:
             return np.array([(lo + hi) / 2.0])
         # Spread the tiles evenly so the last one ends exactly at the box edge.
         return np.linspace(lo + fov / 2.0, hi - fov / 2.0, n)
 
     xs, ys = axis(x_min, x_max), axis(y_min, y_max)
+    if limit is not None and len(xs) * len(ys) > limit:
+        raise ValueError(f"plan needs {len(xs) * len(ys)} tiles; this Mapper allows at most {limit}")
     tiles = []
     for row, y in enumerate(ys):
         cols = range(len(xs))
@@ -133,9 +137,7 @@ class Mapper(JobDevice):
             raise ValueError("box_m must be [x_min, x_max, y_min, y_max] with min < max")
         if "eds_point" in p["per_tile"] and "eds_map" in p["per_tile"]:
             raise ValueError("choose eds_point or eds_map, not both")
-        steps = tile_centres([x_min, x_max, y_min, y_max], float(p["fov_m"]), float(p["overlap"]), p["order"])
-        if len(steps) > int(self.max_tiles):
-            raise ValueError(f"plan needs {len(steps)} tiles; this Mapper allows at most {self.max_tiles}")
+        steps = tile_centres([x_min, x_max, y_min, y_max], float(p["fov_m"]), float(p["overlap"]), p["order"], limit=int(self.max_tiles))
 
         imsize, dwell, fov = int(p["imsize"]), float(p["dwell_s"]), float(p["fov_m"])
         pixel_a = fov / imsize / 1e-10
@@ -227,10 +229,12 @@ class Mapper(JobDevice):
                 microscope.place_beam([0.5, 0.5])
                 spectrum_key = microscope.acquire_spectrum("eds")
             elif "eds_map" in plan["per_tile"]:
-                spectrum = self._spectrum_map(microscope, int(plan["eds_map_points"]))
+                spectrum = self._spectrum_map(job, microscope, int(plan["eds_map_points"]))
                 spectrum_key = "eds_map"
         finally:
             microscope.blank_beam()
+        if spectrum_key == "eds_map" and spectrum is None:
+            return None  # aborted part way through the spectrum image; a resume redoes this tile
         images = read_acquisition(image_key, self._data_proxy())
         if "eds_point" in plan["per_tile"]:
             spectrum = read_acquisition(spectrum_key, self._data_proxy())
@@ -272,12 +276,14 @@ class Mapper(JobDevice):
                 dset.attrs.update({"index": index, "stage_xy_m": reported[:2], "kind": "eds_map" if "eds_map" in plan["per_tile"] else "eds_point"})
         return record
 
-    def _spectrum_map(self, microscope: tango.DeviceProxy, points: int) -> dict:
+    def _spectrum_map(self, job: dict, microscope: tango.DeviceProxy, points: int) -> dict | None:
         coords = (np.arange(points) + 0.5) / points
         cube = None
         attrs: dict = {}
         for r, fy in enumerate(coords):
             for c, fx in enumerate(coords):
+                if self.aborting(job):  # points x points spectra can take long; stop with the beam blanked
+                    return None
                 microscope.place_beam([float(fx), float(fy)])
                 data = read_acquisition(microscope.acquire_spectrum("eds"), self._data_proxy())
                 array, attrs = next(iter(data.values()))

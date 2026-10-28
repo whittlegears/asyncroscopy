@@ -110,6 +110,13 @@ class TestPolicy:
         assert not operator_only("Approvals", "get_mode")
 
 
+def test_a_configured_approve_beats_a_saved_auto():
+    from asyncroscopy.safety.approvals import starting_mode
+    assert starting_mode("approve", "auto") == "approve"
+    assert starting_mode("auto", "approve") == "approve"
+    assert starting_mode("auto", "auto") == "auto"
+
+
 class TestApprovalsDevice:
     def test_default_mode_is_auto(self, approvals_proxy):
         assert approvals_proxy.get_mode() == "auto"

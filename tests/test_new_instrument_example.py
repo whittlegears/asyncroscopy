@@ -10,6 +10,7 @@ import pytest
 import tango
 
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
+from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.safety.policy import is_envelope_device, risk_of
 
@@ -92,8 +93,8 @@ def test_the_agent_reads_each_commands_docstring(indent_grid_proxy, tango_ctx):
 
 
 def test_policy_sees_a_job_device_and_a_raw_instrument():
-    grid_commands = [name for name in dir(IndentGrid) if name in ("reserve", "start", "job_status", "abort", "results", "release")]
-    assert is_envelope_device(grid_commands) and issubclass(IndentGrid, JobDevice)
+    assert is_envelope_device(dir(IndentGrid)) and issubclass(IndentGrid, JobDevice)
+    assert not is_envelope_device(dir(SimIndenter))
     assert risk_of("IndentGrid", "start", envelope=True) == "high"
     assert risk_of("IndentGrid", "job_status", envelope=True) == "low"
     assert risk_of("SimIndenter", "indent") == "high"

@@ -63,10 +63,10 @@ DEFAULT_RISK: list[tuple[str, str]] = [
     # Reading the approval state; the deciding commands are operator-only below.
     ("approvals.request_status", "low"),
 ]
-# STEM commands that neither move hardware nor expose the sample. Low only on a device that
-# acquires scanned images: on an optical microscope set_defocus drives the objective, and on a
-# laser system place_beam points a live beam.
-STEM_LOW = frozenset({"place_beam", "place_beam_list", "set_fov", "set_defocus"})
+# STEM settings that neither move hardware nor expose the sample. Low only on a device that
+# acquires scanned images: on an optical microscope set_defocus drives the objective. place_beam
+# is not here: with the beam unblanked it parks the probe on one spot.
+STEM_LOW = frozenset({"set_fov", "set_defocus"})
 
 # Never offered on the agent endpoint, whatever the config says: an agent must
 # not approve its own requests, switch the mode, or read a twin's answers.

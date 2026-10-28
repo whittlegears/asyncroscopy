@@ -34,6 +34,12 @@ def fingerprint(action: str, arguments) -> str:
     return hashlib.sha256(f"{action}\n{canonical}".encode()).hexdigest()[:16]
 
 
+def starting_mode(configured: str, saved: str) -> str:
+    """The stricter of default_mode and the saved mode: a mode file saying "auto" (left by any
+    earlier set_mode) must not undo a deployment configured to start in approve."""
+    return "approve" if "approve" in (configured, saved) else "auto"
+
+
 class Approvals(Device):
     default_mode = device_property(dtype=str, default_value="auto", doc="Mode at start-up: auto or approve.")
     request_timeout_s = device_property(dtype=float, default_value=1800.0, doc="A request nobody answers expires after this long.")
@@ -54,11 +60,15 @@ class Approvals(Device):
             self.set_state(DevState.FAULT)
             self.set_status(f"default_mode must be one of {MODES}, got {self.default_mode!r}; holding every high-risk call")
             return
-        self._mode = self._restore_mode(mode)
+        saved = self._restore_mode(mode)
+        self._mode = starting_mode(mode, saved)
         self.set_state(DevState.ON)
+        self.set_status(f"mode {self._mode} (default_mode {mode}, saved {saved if Path(self.mode_file).exists() else 'none'})")
 
     def _restore_mode(self, default: str) -> str:
         """The last mode an operator set, or ``default`` if none was ever saved.
+
+        init_device then takes the stricter of this and default_mode.
 
         A saved file that cannot be read gives "approve": after a crash the safe
         assumption is that someone wanted calls held.
@@ -72,10 +82,10 @@ class Approvals(Device):
             return "approve"
         return mode if mode in MODES else "approve"
 
-    def _save_mode(self, who) -> None:
+    def _save_mode(self, mode: str, who) -> None:
         path = Path(self.mode_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"mode": self._mode, "who": who, "at": time.time()}), encoding="utf-8")
+        path.write_text(json.dumps({"mode": mode, "who": who, "at": time.time()}), encoding="utf-8")
 
     def _expire(self) -> None:
         now = time.time()
@@ -116,8 +126,8 @@ class Approvals(Device):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         with self._lock:
+            self._save_mode(mode, body.get("who"))  # if this fails, the mode is unchanged
             previous, self._mode = self._mode, mode
-            self._save_mode(body.get("who"))
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous})
 

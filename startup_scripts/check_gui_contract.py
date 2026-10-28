@@ -47,7 +47,8 @@ async def mcp_side():
         names = {t.name for t in await op.list_tools()}
         check("operator role detected (Approvals_approve + Approvals_set_mode)", {"Approvals_approve", "Approvals_set_mode"} <= names)
         mode = text(await op.call_tool("Approvals_get_mode", {}))
-        check("parseMode accepts get_mode reply", mode.strip().strip('"') in ("auto", "approve"), mode)
+        mode = mode.strip().strip('"')
+        check("parseMode accepts get_mode reply", mode in ("auto", "approve"), mode)
         reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "gui-probe"})}))
         check("set_mode with a JSON-string request", json.loads(reply)["mode"] == "approve", reply)
         async with Client(StreamableHttpTransport("http://127.0.0.1:8000/mcp", headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
@@ -60,8 +61,8 @@ async def mcp_side():
         for p in [p for p in pending if p.get("caller") == CALLER]:
             denied = text(await op.call_tool("Approvals_deny", {"request": json.dumps({"request_id": p["request_id"], "who": "gui-probe", "reason": "probe"})}))
             check("deny with JSON-string request", json.loads(denied)["state"] == "denied")
-        reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": "auto", "who": "gui-probe"})}))
-        check("mode restored to auto", json.loads(reply)["mode"] == "auto")
+        reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}))
+        check(f"mode restored to {mode}", json.loads(reply)["mode"] == mode)
 
 
 def tiled_side():
