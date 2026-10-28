@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation
 from tango.server import command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import AtomisticDigitalTwin
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,7 @@ class GrainParameters:
     composition: dict[str, float]
 
 
-class PolycrystallineGoldDigitalTwin(DigitalTwin):
+class PolycrystallineGoldDigitalTwin(AtomisticDigitalTwin):
     """Atomistic FCC Au grains rendered through a digital-twin corrector probe."""
 
     volume_size_xy_nm = device_property(dtype=float, default_value=200.0)
