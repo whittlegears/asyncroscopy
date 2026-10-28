@@ -351,16 +351,15 @@ class JobDevice(Device):
             if any(t.is_alive() for t in self._stale_workers):
                 raise JobError("bad_state", "a worker from before the device restarted is still finishing its step; try again shortly")
             job_id = uuid.uuid4().hex[:12]
-            job["job_ids"].append(job_id)
-            job["job_id"] = job_id
             # Each start records its own approval (none in auto mode); a resume never inherits an old one.
-            job["grant_id"] = body.get("grant_id")
-            job["caller"] = body.get("caller") or job.get("caller")
-            job["state"] = "running"
-            job["last_error"] = None
+            started = {
+                **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id, "grant_id": body.get("grant_id"),
+                "caller": body.get("caller") or job.get("caller"), "state": "running", "last_error": None,
+            }
+            self._save(started)  # if this fails, the reservation stays as it was and can be started again
+            job.update(started)
             self._job_index[job_id] = job["reservation_id"]
             self._abort[job_id] = threading.Event()
-            self._save(job)
             thread = threading.Thread(target=self._omni_worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
             self._threads[job_id] = thread
             thread.start()

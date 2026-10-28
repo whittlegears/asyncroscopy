@@ -118,3 +118,22 @@ def test_a_resolve_plan_bug_is_the_devices_not_the_callers():
     assert not plan_caused(TypeError("x"), json.dumps({"plan": {"nx": 1}}))
     for confused in ({"origin_m": 5}, {"nx": [2]}, {"nx": {"a": 1}}, {"origin_m": [None, 0]}):  # wrong type or a nested null
         assert plan_caused(TypeError("x"), json.dumps({"plan": confused})), confused
+
+
+def test_a_failed_state_save_on_start_leaves_the_reservation_startable():
+    import threading
+
+    class Envelope:  # JobDevice's envelope logic only, no Tango server
+        _start, _parse, _active = JobDevice._start, JobDevice._parse, JobDevice._active
+
+    grid = Envelope()
+    job = {"reservation_id": "r1", "state": "reserved", "job_ids": [], "caller": None, "last_error": None}
+    grid._lock, grid._jobs, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, []
+
+    def full_disk(_job):
+        raise PermissionError("state file locked")
+
+    grid._save = full_disk
+    with pytest.raises(PermissionError):
+        grid._start(json.dumps({"reservation_id": "r1"}))
+    assert job["state"] == "reserved" and job["job_ids"] == [] and not grid._abort and not grid._job_index
