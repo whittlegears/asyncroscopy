@@ -966,7 +966,7 @@ class MCPServer:
             if not hidden and not any(fnmatchcase(tool.lower(), p) or fnmatchcase(key.lower(), p) for tool, key in self._risk_keys.items()):
                 warnings.append(f"risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {example}")
         for tool, risk in self.tool_risks.items():
-            if risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
+            if self.endpoint_role == "agent" and risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
                 warnings.append(f"{tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
         for tool in sorted(self._lowered):
             warnings.append(f"{tool} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")

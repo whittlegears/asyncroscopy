@@ -44,12 +44,12 @@ uv run pytest -q -m "not slow"
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine; `pyproject.toml` caps the fast-moving dependencies (sidpy, SciFiReaders, tiled, fastmcp, numpy, LangChain/LangGraph) below their next breaking release so a fresh clone still gets a tested combination. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
 
-The test suite starts real Tango devices in-process. Without the slow tests, pytest prints its summary after about 40 s on a laptop; the devices then shut down and keep printing INFO lines ("Connected to detector proxy", "Restarting managed Tiled server") for up to a minute more. That is normal; let it finish. `uv run pytest -q` runs everything, including the two timing tests that `-m "not slow"` deselects. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra, three need a running Tango database). The DeprecationWarnings in the summary come from dependencies and are harmless. Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
+The test suite starts real Tango devices in-process. Without the slow tests, pytest prints its summary after about 40 s on a laptop (the first run takes 1.5-2 minutes and prints nothing for about the first minute while it imports everything); the devices then shut down and keep printing INFO lines ("Connected to detector proxy", "Restarting managed Tiled server") for up to a minute more. That is normal; let it finish. `uv run pytest -q` runs everything, including the two timing tests that `-m "not slow"` deselects. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra, three need a running Tango database). The DeprecationWarnings in the summary come from dependencies and are harmless. Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
 
 **Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python install is broken. Point uv at the interpreter file directly (PowerShell); this is the fix that worked in testing:
 
 ```powershell
-$py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Select-Object -First 1).FullName
+$py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Sort-Object { [version]($_.Directory.Name -replace '^cpython-([\d.]+)-.*', '$1') } -Descending | Select-Object -First 1).FullName
 & $uv sync --python $py --extra agent --extra ollama   # $uv from section 1; or plain uv if it is on PATH
 ```
 
@@ -61,17 +61,25 @@ Use four terminals, from the repository root. Each MCP server prints a large Fas
 
 ```powershell
 if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
-$servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
-while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if ($servers.HasExited) { Get-Content servers.log, servers.err -Tail 20; break }; Start-Sleep 1 }   # about a minute
-$agent = $operator = $analysis = $null
-if (-not $servers.HasExited) {   # if the servers stopped, read the lines above and fix that first
-    $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
-    $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
-    $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+if (Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue) {
+    'A stack is already running (ports 8000-9094 in use). Stop it first (below), then paste this again.'
+} else {
+    $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
+    while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if ($servers.HasExited) { Get-Content servers.log, servers.err -Tail 20; break }; Start-Sleep 1 }   # about a minute
+    $agent = $operator = $analysis = $null
+    if (-not $servers.HasExited) {   # if the servers stopped, read the lines above and fix that first
+        $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
+        $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
+        $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+        Start-Sleep 20
+        foreach ($s in @(@($agent, 'mcp_dt.err'), @($operator, 'mcp_op.err'), @($analysis, 'pytem.err'))) {
+            if ($s[0].HasExited) { "$($s[1]) says the server stopped:"; Get-Content -Encoding utf8 $s[1] -Tail 10 }
+        }
+    }
 }
 ```
 
-Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F } }`, which also stops the child servers.
+Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers; check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready. The operator endpoint's log may list `[safety]` lines; they are about the agent endpoint's settings and harmless here.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
@@ -96,6 +104,8 @@ Both MCP endpoints listen on `127.0.0.1` only. They have no authentication, and 
 The Tiled API key `secret` is the default the DATA device starts Tiled with; set `ASYNCROSCOPY_TILED_API_KEY` to change it (and pass the same value to the pyTEMlib server).
 
 ## 4. Check that everything talks to everything
+
+(In PowerShell without `uv` on `PATH`, write `& $uv` for `uv` here and in section 5, as in section 1.)
 
 ```bash
 uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
@@ -154,5 +164,7 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
 | `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the two `run_mcp.py` servers. |
+| `check_stack.py` says an endpoint is not reachable | The stack is not up yet: start it (section 3) and wait until both MCP logs say "MCP ready". |
+| Started in the background and something is still running after stopping, or "already running" | Find what holds the ports with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 \| Select-Object LocalPort, OwningProcess`, and stop each with `taskkill /PID <pid> /T /F`. |
 | Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal. On the next start `run_servers.py` also stops whatever is listening on its Tango and Tiled ports and leftover device servers from the same config; it leaves other asyncroscopy stacks alone. |
 | The agent picks the wrong tool or loops | Use `qwen3:8b` or larger, keep `ASYNCROSCOPY_NUM_CTX` at 8192 or more, and prefer the `mapping` graph for maps. `benchmarks/run_tool_json.py` measures a model on this machine. |

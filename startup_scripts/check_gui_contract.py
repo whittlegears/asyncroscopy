@@ -12,6 +12,7 @@ It switches approval mode to approve and back, and denies the requests it causes
 """
 import asyncio
 import json
+import socket
 import sys
 import urllib.parse
 import urllib.request
@@ -125,6 +126,22 @@ def tiled_side():
         print("SKIP spectrum check: newest map has no linked EDS points")
 
 
+def unreachable(*urls: str) -> list[str]:
+    """The URLs nothing is listening on (a stack that was not started yet)."""
+    down = []
+    for url in urls:
+        parts = urllib.parse.urlsplit(url)
+        try:
+            socket.create_connection((parts.hostname, parts.port), timeout=2).close()
+        except OSError:
+            down.append(url)
+    return down
+
+
+down = unreachable("http://127.0.0.1:8000/mcp", "http://127.0.0.1:8001/mcp", TILED)
+if down:
+    check("stack reachable", False, f"nothing at {', '.join(down)}: start the stack (quickstart section 3) and wait for 'MCP ready'")
+    sys.exit(1)
 asyncio.run(mcp_side())
 tiled_side()
 print(f"\n{results.count(False)} failure(s) of {len(results)}")
