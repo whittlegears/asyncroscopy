@@ -62,7 +62,7 @@ Use four terminals, from the repository root. Each MCP server prints a large Fas
 ```powershell
 if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
 $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
-while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { Start-Sleep 1 }   # about a minute
+while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if ($servers.HasExited) { Get-Content servers.log, servers.err -Tail 20; break }; Start-Sleep 1 }   # about a minute
 $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
 $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
 $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru

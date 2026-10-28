@@ -68,8 +68,12 @@ async def mcp_side():
                 check("deny with JSON-string request", json.loads(denied)["state"] == "denied")
         finally:
             # Whatever failed above, do not leave the instrument holding every call.
-            reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}))
-            check(f"mode restored to {mode}", json.loads(reply)["mode"] == mode)
+            reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}, raise_on_error=False))
+            try:
+                restored = json.loads(reply).get("mode") == mode
+            except ValueError:
+                restored = False
+            check(f"mode restored to {mode}", restored, "" if restored else reply[:160])
 
 
 def tiled_side():

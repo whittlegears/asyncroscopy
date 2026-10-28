@@ -129,8 +129,9 @@ class Approvals(Device):
             previous, persisted = self._mode, True
             try:
                 self._save_mode(mode, body.get("who"))
-            except OSError:
+            except OSError as exc:
                 if mode != "approve":
+                    self._trace.record("Approvals.set_mode", False, time.time(), caller=body.get("who"), arguments={"from": self._mode, "to": mode}, error=str(exc))
                     raise  # loosening to auto happens only once it is saved
                 persisted = False  # holding calls must not depend on the disk
             self._mode = mode
