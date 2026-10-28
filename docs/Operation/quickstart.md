@@ -63,9 +63,11 @@ Use four terminals, from the repository root. Each MCP server prints a large Fas
 if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
 $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
 while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if ($servers.HasExited) { Get-Content servers.log, servers.err -Tail 20; break }; Start-Sleep 1 }   # about a minute
-$agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
-$operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
-$analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+if (-not $servers.HasExited) {   # if the servers stopped, read the lines above and fix that first
+    $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
+    $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
+    $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+}
 ```
 
 Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { taskkill /PID $p.Id /T /F }`, which also stops the child servers.
