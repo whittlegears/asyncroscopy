@@ -42,7 +42,7 @@ class TestRealisticTwin:
         view = params["viewport_world_angstrom"]
         centre = np.array([view["x_min"] + view["x_max"], view["y_min"] + view["y_max"]]) / 2 * 1e-10
         assert np.allclose(centre, reported[:2], atol=1e-12)
-        assert params["particle_count"] > 0
+        assert "particle_count" not in params and "sample_seed" not in params
 
     def test_stage_device_shows_reported_position(self, mapping_twin_proxy, mapping_stage_proxy):
         mapping_twin_proxy.move_stage([1e-8, 1e-8, 0.0, 0.0, 0.0])

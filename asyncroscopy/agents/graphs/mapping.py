@@ -49,6 +49,7 @@ class MapState(TypedDict, total=False):
     estimate: dict
     job_id: str
     approval_request_id: str
+    released: bool  # the reservation is already released; error paths must not release (or abort) it again
     run_key: str
     spectra: list
     map_key: str
@@ -298,10 +299,10 @@ class MappingGraph:
                 if status.get("state") in {"denied", "expired"}:
                     await self._release(state)
                     reason = status.get("reason") or status["state"]
-                    return {"error": f"the operator did not approve the map ({reason})", "approval_request_id": request_id}
+                    return {"error": f"the operator did not approve the map ({reason})", "approval_request_id": request_id, "released": True}
                 if time.time() > deadline:
                     await self._release(state)
-                    return {"error": "no operator decision before the approval wait ran out", "approval_request_id": request_id}
+                    return {"error": "no operator decision before the approval wait ran out", "approval_request_id": request_id, "released": True}
                 await asyncio.sleep(POLL_S)
 
     async def wait(self, state: MapState) -> MapState:
@@ -327,9 +328,9 @@ class MappingGraph:
         results = await self.instrument.call_json(f"{await self._mapper()}_results", {"request": json.dumps({"job_id": state["job_id"]})})
         await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         if status["state"] != "done":
-            return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}"}
+            return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}", "released": True}
         keys = results.get("result_keys", {})
-        return {"run_key": keys.get("run") or keys.get("run_file"), "spectra": results.get("summary", {}).get("spectra", [])}
+        return {"run_key": keys.get("run") or keys.get("run_file"), "spectra": results.get("summary", {}).get("spectra", []), "released": True}
 
     async def stitch(self, state: MapState) -> MapState:
         job = await self.analysis.call_json("assemble_map", {"run": state["run_key"]})
@@ -404,7 +405,7 @@ class MappingGraph:
         first (abort blanks the beam) rather than left running with nobody watching.
         Errors are ignored: the endpoint may be the reason we are failing.
         """
-        if not state.get("reservation_id"):
+        if not state.get("reservation_id") or state.get("released"):
             return
         try:
             if state.get("job_id"):

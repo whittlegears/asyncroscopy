@@ -105,15 +105,10 @@ class Mapper(JobDevice):
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa.")
 
-    def _proxy(self, address: str, timeout_ms: int = 60_000) -> tango.DeviceProxy:
-        proxy = tango.DeviceProxy(address)
-        proxy.set_timeout_millis(timeout_ms)
-        return proxy
-
     def _beam_current_pa(self) -> tuple[float, str]:
         """(current, source): "microscope" when reported, "default_beam_current_pa" when assumed."""
         try:
-            parameters = json.loads(self._proxy(self.microscope_device_address).get_parameters())
+            parameters = json.loads(self.proxy(self.microscope_device_address).get_parameters())
             if "beam_current_pa" in parameters:
                 return float(parameters["beam_current_pa"]), "microscope"
         except (tango.DevFailed, ValueError, TypeError):
@@ -131,7 +126,7 @@ class Mapper(JobDevice):
         if "size_m" in p:
             # The device does the arithmetic: callers (often small models) get centre +/- half wrong.
             width, height = (float(v) for v in p["size_m"])
-            cx, cy = (float(v) for v in p.get("centre_m") or list(self._proxy(self.microscope_device_address).get_stage())[:2])
+            cx, cy = (float(v) for v in p.get("centre_m") or list(self.proxy(self.microscope_device_address).get_stage())[:2])
             p["box_m"] = [cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2]
         x_min, x_max, y_min, y_max = (float(v) for v in p["box_m"])
         if not (x_min < x_max and y_min < y_max):
@@ -184,8 +179,8 @@ class Mapper(JobDevice):
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
-        microscope = self._proxy(self.microscope_device_address)
-        scan = self._proxy(self.scan_device_address)
+        microscope = self.proxy(self.microscope_device_address)
+        scan = self.proxy(self.scan_device_address)
         scan.imsize = int(plan["imsize"])
         scan.dwell_time = float(plan["dwell_s"])
         scan.scan_region = [0.0, 0.0, 1.0, 1.0]
@@ -193,9 +188,10 @@ class Mapper(JobDevice):
         current = list(microscope.get_stage())
         job.setdefault("pose", {"z": float(plan.get("z_m", current[2])), "alpha": float(current[3]), "beta": float(current[4])})
         if any(a in plan["per_tile"] for a in ("eds_point", "eds_map")) and self.eds_device_address:
-            eds = self._proxy(self.eds_device_address)
+            eds = self.proxy(self.eds_device_address)
             eds.exposure_time = float(plan["eds_exposure_s"])
-        microscope.unblank_beam()
+        # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
+        microscope.blank_beam()
         path = self._run_path(job)
         path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(path, "a") as h5:
@@ -217,23 +213,31 @@ class Mapper(JobDevice):
         half = float(plan["fov_m"]) / 2.0
         if not (x_min + half - EDGE_TOLERANCE_M <= tile["x"] <= x_max - half + EDGE_TOLERANCE_M and y_min + half - EDGE_TOLERANCE_M <= tile["y"] <= y_max - half + EDGE_TOLERANCE_M):
             raise RuntimeError(f"tile {index} at ({tile['x']:.3e}, {tile['y']:.3e}) lies outside the plan box; refusing to move")
-        microscope = self._proxy(self.microscope_device_address)
+        microscope = self.proxy(self.microscope_device_address)
         pose = job["pose"]
         microscope.move_stage([tile["x"], tile["y"], pose["z"], pose["alpha"], pose["beta"]])
         reported = [float(v) for v in microscope.get_stage()]
-        image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
+        # Unblank only for this tile's acquisitions: a beam left on during the stage move, file
+        # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
+        microscope.unblank_beam()
+        try:
+            image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
+            spectrum, spectrum_key = None, None
+            if "eds_point" in plan["per_tile"]:
+                microscope.place_beam([0.5, 0.5])
+                spectrum_key = microscope.acquire_spectrum("eds")
+            elif "eds_map" in plan["per_tile"]:
+                spectrum = self._spectrum_map(microscope, int(plan["eds_map_points"]))
+                spectrum_key = "eds_map"
+        finally:
+            microscope.blank_beam()
         images = read_acquisition(image_key, self._data_proxy())
+        if "eds_point" in plan["per_tile"]:
+            spectrum = read_acquisition(spectrum_key, self._data_proxy())
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key}
 
-        spectrum = None
-        if "eds_point" in plan["per_tile"]:
-            microscope.place_beam([0.5, 0.5])
-            spectrum_key = microscope.acquire_spectrum("eds")
-            spectrum = read_acquisition(spectrum_key, self._data_proxy())
+        if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
-        elif "eds_map" in plan["per_tile"]:
-            spectrum = self._spectrum_map(microscope, int(plan["eds_map_points"]))
-            record["spectrum_key"] = "eds_map"
 
         with h5py.File(self._run_path(job), "a") as h5:
             for n, (name, (array, attrs)) in enumerate(sorted(images.items())):
@@ -285,20 +289,20 @@ class Mapper(JobDevice):
         return {"spectrum_image": (cube, attrs)}
 
     def _data_proxy(self):
-        return self._proxy(self.data_device_address) if self.data_device_address else None
+        return self.proxy(self.data_device_address) if self.data_device_address else None
 
     def on_stop(self, job: dict, reason: str) -> None:
-        self._proxy(self.microscope_device_address).blank_beam()
+        self.proxy(self.microscope_device_address).blank_beam()
         self._write_trace(job)
 
     def on_finish(self, job: dict) -> dict:
         # A finished map must not leave the beam parked on the last tile.
-        self._proxy(self.microscope_device_address).blank_beam()
+        self.proxy(self.microscope_device_address).blank_beam()
         self._write_trace(job)
         path = self._run_path(job)
         keys = {"run_file": str(path)}
         if self.data_device_address:
-            keys["run"] = self._proxy(self.data_device_address).register_path(str(path))
+            keys["run"] = self.proxy(self.data_device_address).register_path(str(path))
         return keys
 
     def _write_trace(self, job: dict) -> None:

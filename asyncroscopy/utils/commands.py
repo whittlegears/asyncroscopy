@@ -33,14 +33,15 @@ def summary(func) -> str:
 
 def command(f=None, **kwargs):
     def decorate(func):
-        if not kwargs.get("doc_out"):
-            kwargs["doc_out"] = summary(func)
+        options = dict(kwargs)  # a decorator reused on several functions must not share their docs
+        if not options.get("doc_out"):
+            options["doc_out"] = summary(func)
         # The MCP server names the tool's argument after ":param <name>:" (otherwise "arg");
         # take the name from the Python signature when doc_in does not give one.
         params = [p for p in inspect.signature(func).parameters.values() if p.name != "self"]
-        doc_in = kwargs.get("doc_in") or ""
+        doc_in = options.get("doc_in") or ""
         if params and ":param " not in doc_in:
-            kwargs["doc_in"] = f":param {params[0].name}: {doc_in}".rstrip()
-        return tango_command(func, **kwargs)
+            options["doc_in"] = f":param {params[0].name}: {doc_in}".rstrip()
+        return tango_command(func, **options)
 
     return decorate(f) if f is not None else decorate
