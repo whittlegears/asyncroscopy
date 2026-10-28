@@ -16,10 +16,16 @@ from asyncroscopy.instruments.electron_microscope.twin import (
     pixel_sample_coordinates,
     point_spectrum,
 )
-from asyncroscopy.instruments.electron_microscope.twin.detector import DetectorParams, count
+from asyncroscopy.instruments.electron_microscope.twin.detector import (
+    DetectorParams,
+    count,
+)
 from asyncroscopy.instruments.electron_microscope.twin.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
-from asyncroscopy.instruments.electron_microscope.twin.render import Renderer, RenderParams
+from asyncroscopy.instruments.electron_microscope.twin.render import (
+    Renderer,
+    RenderParams,
+)
 
 
 def survey_sample(seed=7):

@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from asyncroscopy.calibration._common import acquire, connect, parse_args, print_yaml, shift_m
+from asyncroscopy.calibration._common import (
+    acquire,
+    connect,
+    parse_args,
+    print_yaml,
+    shift_m,
+)
 
 
 def measure(microscope, fov: float, imsize: int, excursion: float, repeats: int) -> dict[str, float]:

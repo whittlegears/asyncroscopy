@@ -11,9 +11,18 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from asyncroscopy.instruments.electron_microscope.twin import EventRng, SampleModel, SampleParams, ScanParams, pixel_sample_coordinates
+from asyncroscopy.instruments.electron_microscope.twin import (
+    EventRng,
+    SampleModel,
+    SampleParams,
+    ScanParams,
+    pixel_sample_coordinates,
+)
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
-from asyncroscopy.instruments.electron_microscope.twin.render import Renderer, RenderParams
+from asyncroscopy.instruments.electron_microscope.twin.render import (
+    Renderer,
+    RenderParams,
+)
 
 RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results" / "twin_render.json"
 

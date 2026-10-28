@@ -11,7 +11,13 @@ import time
 
 import numpy as np
 
-from asyncroscopy.calibration._common import acquire, connect, parse_args, print_yaml, shift_m
+from asyncroscopy.calibration._common import (
+    acquire,
+    connect,
+    parse_args,
+    print_yaml,
+    shift_m,
+)
 
 
 def main() -> None:

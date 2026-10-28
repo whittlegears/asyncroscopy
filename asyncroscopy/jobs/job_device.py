@@ -20,7 +20,6 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any
 
 import jsonschema
 from tango import DevState

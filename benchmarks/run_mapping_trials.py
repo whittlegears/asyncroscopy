@@ -23,19 +23,18 @@ import argparse
 import asyncio
 import json
 import re
+import sys
 import time
 from pathlib import Path
-
-import sys
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from langchain_core.messages import HumanMessage  # noqa: E402
+from langchain_core.messages import HumanMessage
 
-from asyncroscopy.agents.config import AgentConfig  # noqa: E402
-from asyncroscopy.agents.graphs.mapping import MappingGraph  # noqa: E402
+from asyncroscopy.agents.config import AgentConfig
+from asyncroscopy.agents.graphs.mapping import MappingGraph
 
 HERE = Path(__file__).resolve().parent
 SIDE_M = 6e-7

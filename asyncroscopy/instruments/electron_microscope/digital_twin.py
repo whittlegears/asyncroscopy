@@ -37,10 +37,18 @@ from asyncroscopy.instruments.electron_microscope.twin import (
     pixel_sample_coordinates,
     point_spectrum,
 )
-from asyncroscopy.instruments.electron_microscope.twin.detector import DetectorParams, count, electrons_per_pixel
+from asyncroscopy.instruments.electron_microscope.twin.detector import (
+    DetectorParams,
+    count,
+    electrons_per_pixel,
+)
 from asyncroscopy.instruments.electron_microscope.twin.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
-from asyncroscopy.instruments.electron_microscope.twin.render import DETECTOR_SCALE, Renderer, RenderParams
+from asyncroscopy.instruments.electron_microscope.twin.render import (
+    DETECTOR_SCALE,
+    Renderer,
+    RenderParams,
+)
 from asyncroscopy.instruments.electron_microscope.twin.sample_model import ELEMENTS
 from asyncroscopy.instruments.electron_microscope.twin.scan_distortion import frame_time
 
