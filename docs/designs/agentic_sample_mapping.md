@@ -1,7 +1,7 @@
 # Agentic Sample Mapping and Instrument-Agent Infrastructure for Asyncroscopy
 
 *   **Author:** whittlegears
-*   **Status:** Proposed
+*   **Status:** Implemented (Stages 0-4 and parts of 5); see "Implementation notes" at the end
 *   **Date:** 2026-10-27
 
 --------------------------------------------------------------------------------
@@ -1470,3 +1470,29 @@ Paths are relative to each repository root:
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
+
+--------------------------------------------------------------------------------
+
+## Implementation notes (2026-10-28)
+
+What was built differs from the plan above in these places. Each change came from running the system, not from preference.
+
+| Plan | Built | Why |
+| :-- | :-- | :-- |
+| Schemas in `contracts/` at the repository root | `asyncroscopy/contracts/` | Ships with the package, so an installed copy can validate. |
+| Envelope verb `status` on Tango | `job_status` | Tango command names are case-insensitive and every device already has `Status`. |
+| `DigitalTwin` rewritten in place | Original renderer moved to `AtomisticDigitalTwin` (`digital_twin_base.py`); new `DigitalTwin` builds on it | Four specialised twins depended on the old internals. |
+| Three twin levels of detail (L0, L1, L2) and numba | Two levels, vectorised NumPy | Measured: survey tile ~30 ms, first atomic tile ~0.7 s, so L1 and numba were not needed. |
+| Region guard inside the microscope device for every client | Approval mode at the MCP server; plan box and dose budget in `Mapper` | Author's decision: notebooks are never held. |
+| `fit_twin_params.py` | Each calibration script prints its YAML block | Simpler; `tests/test_calibration.py` shows the stage script recovers the twin's configured errors. |
+| `DATA.register_in_container` | `Mapper` writes one run file under the DATA save path and registers it | Tiled serves only files under that path; one file per run is easier to move and share. |
+| Mosaic stored as OME-Zarr or per-level arrays (Stage 3 spike) | Tiled container `<run>_map` with `level_N` arrays and transform + points in its metadata | Tiled client writes arrays and metadata directly; no OME-Zarr reader needed. |
+| Phase correlation of the predicted overlap strip | Masked normalised cross-correlation of whole tiles, outlier rejection in the solve | The strip method was biased and failed when the stage error approached the overlap width (found by the accuracy test). |
+| `langchain-mcp-adapters` | `asyncroscopy/agents/mcp_tools.py` on fastmcp's client | The adapter pins an `mcp` version fastmcp 4 cannot use; the existing agent swarm could not import. |
+| pyTEMlib analysis job tools `job_status`, `job_results` | `analysis_job_status`, `analysis_job_results` | Every local model tested confused them with `Mapper_job_status`. |
+| JSON-string arguments for envelope and approval commands | Also accept the object, or its fields directly | Local models pass objects far more reliably than JSON strings. |
+| Model chooses the whole plan | Plan repaired in code: units, swapped corners, tiny boxes, EDS keywords, and stated sizes ("a 600 nm square") | qwen3:8b planned the whole sample for "a 600 nm square around the current position". |
+| Agent-written skills | Not built (as decided in the zoom-out review) | Future improvement. |
+| pyTEMlib upstream package | `pyproject.toml` takes pyTEMlib from `whittlegears/pyTEMlib@feature/mcp-mapping` | The stack's launcher re-syncs the environment; the fork must be a declared source until upstream merges it. |
+
+Found and fixed along the way, outside the plan: the test fixtures passed Windows paths as Tango properties, which the test database cut at the drive colon, so every test run wrote HDF5 files into the working tree; the launcher block-buffered its output when not writing to a terminal, so "ready" never appeared in logs or to programs reading it; pyTEMlib ran a demo fit and printed a non-ASCII character on every import, which crashed Windows consoles.
