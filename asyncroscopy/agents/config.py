@@ -7,6 +7,8 @@ import json
 import os
 from dataclasses import dataclass, field
 
+from .mcp_tools import McpServer
+
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
 CALLER_HEADER = "X-Asyncroscopy-Caller"
@@ -14,7 +16,7 @@ CALLER_HEADER = "X-Asyncroscopy-Caller"
 
 @dataclass
 class AgentConfig:
-    model: str = "qwen3:4b"
+    model: str = "qwen3:8b"
     model_provider: str = "ollama"
     num_ctx: int = 8192
     temperature: float = 0.0
@@ -49,14 +51,10 @@ class AgentConfig:
 
         return init_chat_model(model=self.model, model_provider=self.model_provider, temperature=self.temperature)
 
-    def instrument(self) -> "McpServer":
-        from .mcp_tools import McpServer
-
+    def instrument(self) -> McpServer:
         return McpServer(self.mcp_url, {CALLER_HEADER: self.caller})
 
-    def analysis(self) -> "McpServer | None":
-        from .mcp_tools import McpServer
-
+    def analysis(self) -> McpServer | None:
         return McpServer(self.analysis_url, {CALLER_HEADER: self.caller}) if self.analysis_url else None
 
     async def tools(self, include_analysis: bool = True, allow: list[str] | None = None):

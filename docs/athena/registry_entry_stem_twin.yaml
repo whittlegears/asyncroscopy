@@ -1,0 +1,31 @@
+# Capability-registry entry (WG2 registry v0.3 layout: instrument, interfaces,
+# workflows, readiness, gaps). For C. Cao to merge into the shared registry.
+id: utk-spectra300-asyncroscopy
+instrument:
+  name: Thermo Fisher Spectra 300 (S)TEM, and its asyncroscopy digital twin
+  site: UTK Materials Science and Engineering
+  owner: G. Duscher group
+  modalities: [HAADF/ADF/BF STEM imaging, EDS point spectra and spectrum images, stage navigation, aberration correction (CEOS)]
+interfaces:
+  control: PyTango devices (asyncroscopy), vendor backends AutoScript (Thermo), PyJEM (JEOL), digital twin
+  agent: MCP, streamable HTTP; agent endpoint :8000, operator endpoint :8001 (local only)
+  analysis: pyTEMlib MCP server :8003 (stitching, maps, region scoring, points of interest)
+  data: Tiled (HDF5 acquisitions, map runs, stitched map pyramids)
+  jobs: ATHENA job envelope v1.0.0 (reserve, start, job_status, abort, results, release); asyncroscopy/contracts/envelope.schema.json
+  trace: Instrument Trace v1.0.0, one JSON line per action (asyncroscopy/contracts/trace_event.schema.json)
+  approval: instrument-level mode auto|approve (Approvals device); operator-only commands never offered to agents
+  identity: caller name header recorded, not authenticated (awaiting WG1 tokens)
+workflows:
+  - name: map a sample or area (optionally EDS at each tile), stitch, score regions, revisit
+    agents: [LangGraph mapping graph, LangGraph general agent with mapping skill]
+    models_tested: [qwen3:8b, qwen3:4b (local, Ollama)]
+readiness:
+  instrument_ready: facility owner decision
+  athena_integrated: twin-validated (all checks in startup_scripts/check_stack.py pass)
+  workflow_ready: twin-validated; not yet run on the Spectra 300
+  user_ready: no
+gaps:
+  - Authentication and authorisation tokens (WG1) are not wired in; caller identity is self-reported.
+  - Mapping workflow not yet exercised on the instrument; twin effect magnitudes partly unverified (see docs/digital_twin.md).
+  - Instrument Trace is per-run JSONL plus a copy in each map run file; no online trace pipeline service yet.
+  - Reward models: the baseline scorer is a placeholder, not a learned or validated STEM reward.

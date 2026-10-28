@@ -571,8 +571,11 @@ class MCPServer:
         if in_desc:
             doc_lines.append(f"Input Description: {in_desc}")
         doc_lines.append(f"Output Type: {out_type.name}")
-        if cmd_info.out_type_desc:
-            doc_lines.append(f"Output Description: {cmd_info.out_type_desc}")
+        out_desc = cmd_info.out_type_desc
+        if out_desc and out_desc.lower() not in ("uninitialised", "uninitialized", "none"):
+            doc_lines.append(f"Output Description: {out_desc}")
+            # Lead with what the command is for: models weigh the first line most when choosing a tool.
+            doc_lines.insert(0, out_desc)
         doc = "\n".join(doc_lines)
 
         # Get parameter name from docstring description text

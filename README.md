@@ -25,6 +25,19 @@ Start the MCP server in a second terminal for agent/AI integration:
 uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
+**New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md):** clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample, then `startup_scripts/check_stack.py` to confirm every piece talks to the others.
+
+### Agentic control at a glance
+
+| What | Where |
+| :-- | :-- |
+| A realistic, seeded digital twin (stage error, drift, scan distortion, focus, noise, EDS spectra, dose) with hidden ground truth for scoring workflows | `configs/digital_twin_mapping.yaml`, [docs/digital_twin.md](docs/digital_twin.md) |
+| Long jobs (map acquisition) as reserve / start / job_status / abort / results / release | `Mapper` device, [asyncroscopy/contracts](asyncroscopy/contracts/README.md) |
+| An approval mode (`auto` / `approve`) that holds risky agent calls for an operator, and an Instrument Trace of every call | [docs/Operation/approval_mode.md](docs/Operation/approval_mode.md) |
+| Stitching, zoomable maps in Tiled, region scoring and points of interest | pyTEMlib MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
+| LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
+| Calibrating the twin to your instrument | `asyncroscopy/calibration` |
+
 Start only the segmentation Tango device against an existing Tango/DATA/Tiled stack:
 ```bash
 uv run --extra segment startup_scripts/run_segmentation.py --yaml configs/Segmentation.yaml
@@ -70,6 +83,9 @@ asyncroscopy/
 | `DigitalTwin.yaml` | Simulated microscope for development/testing |
 | `diffraction.yaml` | DigitalTwin with diffraction simulation |
 | `digital_twin_tilt.yaml` | ASE/abTEM multislice silicon lamella tilt twin |
+| `digital_twin_mapping.yaml` | DigitalTwin with realistic instrument effects, a 2 um sample, Mapper and Approvals |
+| `mcp_dt.yaml` / `mcp_operator.yaml` | Agent MCP endpoint (port 8000) and operator endpoint for the GUI (port 8001) |
+| `qwen-llm.yaml` | Agent server on a local Qwen3 model (laptop GPU); `gemma-llm.yaml` is the 31B workstation version |
 | `mcp.yaml` | MCP server configuration (not hardware) |
 
 These are some examples of the available configs, which define the instrument class, supporting devices, Tango connection, and Tiled settings.
@@ -80,11 +96,11 @@ These are some examples of the available configs, which define the instrument cl
 # Diffraction and tilt-twin multislice simulation (abTEM-based)
 uv sync --extra diffraction
 
-# AI agent support (LangChain/OpenAI)
-uv sync --extra agent
+# AI agents (LangChain/LangGraph) with local Ollama models
+uv sync --extra agent --extra ollama
 
-# Local AI models via HuggingFace transformers (requires --extra agent)
-uv sync --extra agent --extra localagent
+# LangGraph Studio (uv run langgraph dev) and developer tools
+uv sync --extra agent --extra ollama --extra dev
 ```
 
 ## Running Tests

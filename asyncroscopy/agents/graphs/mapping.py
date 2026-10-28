@@ -29,11 +29,12 @@ from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
-from asyncroscopy.contracts import validate
+from asyncroscopy.contracts import load, validate
 
 POLL_S = float(os.environ.get("ASYNCROSCOPY_POLL_S", "1.0"))
 APPROVAL_WAIT_S = float(os.environ.get("ASYNCROSCOPY_APPROVAL_WAIT_S", "1800"))
 DEFAULT_FOV_M = 200e-9
+load("map_plan")  # read the schema now: file I/O inside async nodes blocks the event loop
 
 
 class MapState(TypedDict, total=False):

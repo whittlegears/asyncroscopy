@@ -9,12 +9,18 @@ a request id, and the prompt says how to wait for them.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from langchain.agents import create_agent
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.skills import list_skills
+
+try:  # import the model client here: an import inside the async factory blocks the event loop
+    import langchain_ollama  # noqa: F401
+except ImportError:  # other providers load through init_chat_model
+    pass
 
 DEFAULT_TOOLS = [
     "*_get_stage", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
@@ -42,5 +48,7 @@ async def make_graph(config: dict | None = None):
         caller=configurable.get("caller") or os.environ.get("ASYNCROSCOPY_CALLER", "general-agent"),
     )
     tools = await agent_config.tools(allow=configurable.get("tools") or DEFAULT_TOOLS)
-    skills = "; ".join(f"{s.name}: {s.description}" for s in list_skills() if s.available) or "none"
+    # Reading skill files is blocking I/O; keep it off the event loop (LangGraph Studio enforces this).
+    available = await asyncio.to_thread(list_skills)
+    skills = "; ".join(f"{s.name}: {s.description}" for s in available if s.available) or "none"
     return create_agent(agent_config.chat_model(), tools, system_prompt=SYSTEM.format(skills=skills))

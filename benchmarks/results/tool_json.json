@@ -3,679 +3,17 @@
   "prompts": 20,
   "num_ctx": 8192,
   "models": {
-    "qwen3:4b": {
-      "valid_fraction": 0.8,
-      "passes": false,
-      "total_seconds": 316.3,
-      "rows": [
-        {
-          "prompt": "What is the current stage position?",
-          "expected": "*_get_stage",
-          "ok": true,
-          "why": "ok",
-          "seconds": 23.55,
-          "call": {
-            "name": "DigitalTwin_get_stage",
-            "args": {},
-            "id": "f1dffa66-6da2-4f3e-839d-dc99d8ac37d0",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Move the stage to x = 100 nm, y = -50 nm, z = 0 with no tilt.",
-          "expected": "*_move_stage",
-          "ok": true,
-          "why": "ok",
-          "seconds": 9.76,
-          "call": {
-            "name": "DigitalTwin_move_stage",
-            "args": {
-              "position": [
-                1e-07,
-                -5e-08,
-                0,
-                0,
-                0
-              ]
-            },
-            "id": "aa280ef6-7c6e-4509-9ca3-efed15ef1bae",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Take a HAADF image.",
-          "expected": "*_acquire_scanned_image",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.62,
-          "call": {
-            "name": "DigitalTwin_acquire_scanned_image",
-            "args": {
-              "detector_list": [
-                "haadf"
-              ]
-            },
-            "id": "a1dee69c-a2d6-446f-8eb2-a630b28b3d25",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Set the field of view to 500 nm.",
-          "expected": "*_set_fov",
-          "ok": true,
-          "why": "ok",
-          "seconds": 6.82,
-          "call": {
-            "name": "DigitalTwin_set_fov",
-            "args": {
-              "fov": 5e-07
-            },
-            "id": "47fe897b-39ad-4ca9-b955-3b19321f0e6a",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Put the beam in the centre of the field of view.",
-          "expected": "*_place_beam",
-          "ok": true,
-          "why": "ok",
-          "seconds": 5.17,
-          "call": {
-            "name": "DigitalTwin_place_beam",
-            "args": {
-              "position": [
-                0.5,
-                0.5
-              ]
-            },
-            "id": "abf0ceaf-353f-48e6-a15f-39e9cf1f431c",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Acquire an EDS spectrum with the eds detector.",
-          "expected": "*_acquire_spectrum",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.8,
-          "call": {
-            "name": "DigitalTwin_acquire_spectrum",
-            "args": {
-              "detector_name": "eds"
-            },
-            "id": "fb985f83-2462-433d-b1db-e4b5cd0c909c",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Is the approval mode auto or approve right now?",
-          "expected": "Approvals_get_mode",
-          "ok": true,
-          "why": "ok",
-          "seconds": 9.79,
-          "call": {
-            "name": "Approvals_get_mode",
-            "args": {},
-            "id": "6453b85a-caf6-4290-a27f-caa7f4281068",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.",
-          "expected": "Mapper_reserve",
-          "ok": false,
-          "why": "bad args: {'plan': {'area': {'x_min': -1e-06, 'x_max': 1e-06, 'y_min': -1e-06, 'y_max': 1e-06}, 'fov': 2e-07}, 'caller': 'user'} is not of type 'string'",
-          "seconds": 27.74,
-          "call": {
-            "name": "Mapper_reserve",
-            "args": {
-              "request": {
-                "plan": {
-                  "area": {
-                    "x_min": -1e-06,
-                    "x_max": 1e-06,
-                    "y_min": -1e-06,
-                    "y_max": 1e-06
-                  },
-                  "fov": 2e-07
-                },
-                "caller": "user"
-              }
-            },
-            "id": "10ffcff1-714c-4dbf-9038-fe5e838b30af",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "What is the status of map job 8f2c1d9e0a11?",
-          "expected": "Mapper_job_status",
-          "ok": false,
-          "why": "picked job_status",
-          "seconds": 7.45,
-          "call": {
-            "name": "job_status",
-            "args": {
-              "job_id": "8f2c1d9e0a11"
-            },
-            "id": "c1b89489-7018-4417-bd4a-96ec25d6a24a",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Stop map job 8f2c1d9e0a11 now.",
-          "expected": "Mapper_abort",
-          "ok": false,
-          "why": "bad args: {'job_id': '8f2c1d9e0a11'} is not of type 'string'",
-          "seconds": 78.93,
-          "call": {
-            "name": "Mapper_abort",
-            "args": {
-              "request": {
-                "job_id": "8f2c1d9e0a11"
-              }
-            },
-            "id": "4cd3e133-f0f7-4fd9-ad62-89ded3a5af73",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Stitch the map run map_1b8aee6810a4.h5 into one map.",
-          "expected": "assemble_map",
-          "ok": true,
-          "why": "ok",
-          "seconds": 7.88,
-          "call": {
-            "name": "assemble_map",
-            "args": {
-              "run": "map_1b8aee6810a4.h5"
-            },
-            "id": "303aa5c0-9748-4594-8dd1-e71690da7144",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Find the 3 most interesting regions on the map map_1b8aee6810a4_map.",
-          "expected": "score_map",
-          "ok": true,
-          "why": "ok",
-          "seconds": 58.17,
-          "call": {
-            "name": "score_map",
-            "args": {
-              "map": "map_1b8aee6810a4_map",
-              "top_k": 3
-            },
-            "id": "01de66a3-8e04-4b21-9e80-09eaa1661c13",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Blank the beam.",
-          "expected": "*_blank_beam",
-          "ok": true,
-          "why": "ok",
-          "seconds": 4.09,
-          "call": {
-            "name": "DigitalTwin_blank_beam",
-            "args": {},
-            "id": "bd9707a3-31fc-4c36-b6d2-a3437eac80b8",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Set the defocus to 20 nm.",
-          "expected": "*_set_defocus",
-          "ok": true,
-          "why": "ok",
-          "seconds": 5.99,
-          "call": {
-            "name": "DigitalTwin_set_defocus",
-            "args": {
-              "defocus": 2e-08
-            },
-            "id": "b112302e-e71a-44ac-a9bd-a86d1fe8ece6",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Which devices are connected?",
-          "expected": "list_devices",
-          "ok": true,
-          "why": "ok",
-          "seconds": 4.33,
-          "call": {
-            "name": "list_devices",
-            "args": {},
-            "id": "1f5a4743-eaae-4198-b0ca-a4ffa8a5ad26",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Mark x = 1e-7 m, y = 2e-7 m on map map_1b8aee6810a4_map as a place where an EDS spectrum was taken.",
-          "expected": "add_poi",
-          "ok": true,
-          "why": "ok",
-          "seconds": 32.6,
-          "call": {
-            "name": "add_poi",
-            "args": {
-              "y_m": 2e-07,
-              "kind": "eds",
-              "map": "map_1b8aee6810a4_map",
-              "x_m": 1e-07
-            },
-            "id": "492cbf47-d8a0-455e-9c2e-fa3c07ee7be8",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Show me the part of map map_1b8aee6810a4_map between x = 0 and 1e-7 m and y = 0 and 1e-7 m.",
-          "expected": "get_region",
-          "ok": true,
-          "why": "ok",
-          "seconds": 12.21,
-          "call": {
-            "name": "get_region",
-            "args": {
-              "map": "map_1b8aee6810a4_map",
-              "box_m": [
-                0,
-                1e-07,
-                0,
-                1e-07
-              ]
-            },
-            "id": "1b74bc8c-c301-45d1-8f32-6c940bf8dbe3",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Which region scorers can I use?",
-          "expected": "list_scorers",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.72,
-          "call": {
-            "name": "list_scorers",
-            "args": {},
-            "id": "37720928-4c6f-4a88-b012-e5ad60c87ac1",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Get the results of map job 8f2c1d9e0a11.",
-          "expected": "Mapper_results",
-          "ok": false,
-          "why": "picked job_results",
-          "seconds": 4.81,
-          "call": {
-            "name": "job_results",
-            "args": {
-              "job_id": "8f2c1d9e0a11"
-            },
-            "id": "808bb5ae-19f3-4669-bf8b-ef5bab1ecec4",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Has approval request 46522aaafac8 been approved yet?",
-          "expected": "approval_status",
-          "ok": true,
-          "why": "ok",
-          "seconds": 5.83,
-          "call": {
-            "name": "approval_status",
-            "args": {
-              "request_id": "46522aaafac8"
-            },
-            "id": "bad67e45-85aa-449a-b3a2-370b3b56eae1",
-            "type": "tool_call"
-          }
-        }
-      ]
-    },
-    "qwen3-agent": {
-      "valid_fraction": 0.8,
-      "passes": false,
-      "total_seconds": 308.6,
-      "rows": [
-        {
-          "prompt": "What is the current stage position?",
-          "expected": "*_get_stage",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.92,
-          "call": {
-            "name": "DigitalTwin_get_stage",
-            "args": {},
-            "id": "d2eba00d-5a54-44b9-9f93-c2bcf406aa05",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Move the stage to x = 100 nm, y = -50 nm, z = 0 with no tilt.",
-          "expected": "*_move_stage",
-          "ok": true,
-          "why": "ok",
-          "seconds": 10.65,
-          "call": {
-            "name": "DigitalTwin_move_stage",
-            "args": {
-              "position": [
-                1e-07,
-                -5e-08,
-                0,
-                0,
-                0
-              ]
-            },
-            "id": "91001e08-f839-4513-880d-0d62793d932a",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Take a HAADF image.",
-          "expected": "*_acquire_scanned_image",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.96,
-          "call": {
-            "name": "DigitalTwin_acquire_scanned_image",
-            "args": {
-              "detector_list": [
-                "haadf"
-              ]
-            },
-            "id": "d4f1ee15-d1b2-4b1d-a665-35548bf5d054",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Set the field of view to 500 nm.",
-          "expected": "*_set_fov",
-          "ok": true,
-          "why": "ok",
-          "seconds": 7.5,
-          "call": {
-            "name": "DigitalTwin_set_fov",
-            "args": {
-              "fov": 5e-07
-            },
-            "id": "097d1b76-b58e-44b7-9c73-4530f3712615",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Put the beam in the centre of the field of view.",
-          "expected": "*_place_beam",
-          "ok": true,
-          "why": "ok",
-          "seconds": 5.66,
-          "call": {
-            "name": "DigitalTwin_place_beam",
-            "args": {
-              "position": [
-                0.5,
-                0.5
-              ]
-            },
-            "id": "a877a471-a737-4ea4-b2fc-0a3d6b48fc7d",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Acquire an EDS spectrum with the eds detector.",
-          "expected": "*_acquire_spectrum",
-          "ok": true,
-          "why": "ok",
-          "seconds": 4.15,
-          "call": {
-            "name": "DigitalTwin_acquire_spectrum",
-            "args": {
-              "detector_name": "eds"
-            },
-            "id": "0f2a9a65-5e18-4bf1-861b-00b199bd56b4",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Is the approval mode auto or approve right now?",
-          "expected": "Approvals_get_mode",
-          "ok": true,
-          "why": "ok",
-          "seconds": 10.74,
-          "call": {
-            "name": "Approvals_get_mode",
-            "args": {},
-            "id": "c600424a-5e3b-4459-8561-27df8a03f258",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.",
-          "expected": "Mapper_reserve",
-          "ok": false,
-          "why": "bad args: {'plan': {'area': {'x_min': -1e-06, 'x_max': 1e-06, 'y_min': -1e-06, 'y_max': 1e-06}, 'fov': 2e-07}, 'caller': 'user'} is not of type 'string'",
-          "seconds": 29.94,
-          "call": {
-            "name": "Mapper_reserve",
-            "args": {
-              "request": {
-                "plan": {
-                  "area": {
-                    "x_min": -1e-06,
-                    "x_max": 1e-06,
-                    "y_min": -1e-06,
-                    "y_max": 1e-06
-                  },
-                  "fov": 2e-07
-                },
-                "caller": "user"
-              }
-            },
-            "id": "9793ed68-3094-49e9-ace6-b44f3a33fd9e",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "What is the status of map job 8f2c1d9e0a11?",
-          "expected": "Mapper_job_status",
-          "ok": false,
-          "why": "picked job_status",
-          "seconds": 7.89,
-          "call": {
-            "name": "job_status",
-            "args": {
-              "job_id": "8f2c1d9e0a11"
-            },
-            "id": "70a9efa2-c889-409a-8089-b04e163a2aa6",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Stop map job 8f2c1d9e0a11 now.",
-          "expected": "Mapper_abort",
-          "ok": false,
-          "why": "bad args: {'job_id': '8f2c1d9e0a11'} is not of type 'string'",
-          "seconds": 82.06,
-          "call": {
-            "name": "Mapper_abort",
-            "args": {
-              "request": {
-                "job_id": "8f2c1d9e0a11"
-              }
-            },
-            "id": "f6bf7b4a-b6b3-4563-aa9d-856a65c2f015",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Stitch the map run map_1b8aee6810a4.h5 into one map.",
-          "expected": "assemble_map",
-          "ok": true,
-          "why": "ok",
-          "seconds": 7.99,
-          "call": {
-            "name": "assemble_map",
-            "args": {
-              "run": "map_1b8aee6810a4.h5"
-            },
-            "id": "c910fcfd-4bda-4c9a-991c-b86a79584871",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Find the 3 most interesting regions on the map map_1b8aee6810a4_map.",
-          "expected": "score_map",
-          "ok": true,
-          "why": "ok",
-          "seconds": 59.56,
-          "call": {
-            "name": "score_map",
-            "args": {
-              "top_k": 3,
-              "map": "map_1b8aee6810a4_map"
-            },
-            "id": "949e1890-0e80-4bee-8f8a-6b659d4ef6cf",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Blank the beam.",
-          "expected": "*_blank_beam",
-          "ok": true,
-          "why": "ok",
-          "seconds": 4.03,
-          "call": {
-            "name": "DigitalTwin_blank_beam",
-            "args": {},
-            "id": "6f383814-4f72-4a9a-a2a3-c64098a171de",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Set the defocus to 20 nm.",
-          "expected": "*_set_defocus",
-          "ok": true,
-          "why": "ok",
-          "seconds": 6.04,
-          "call": {
-            "name": "DigitalTwin_set_defocus",
-            "args": {
-              "defocus": 2e-08
-            },
-            "id": "0f210597-e437-466e-b458-a86b7eb6ba8a",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Which devices are connected?",
-          "expected": "list_devices",
-          "ok": true,
-          "why": "ok",
-          "seconds": 4.44,
-          "call": {
-            "name": "list_devices",
-            "args": {},
-            "id": "94bfc554-afb9-45f0-8384-012915b3a85b",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Mark x = 1e-7 m, y = 2e-7 m on map map_1b8aee6810a4_map as a place where an EDS spectrum was taken.",
-          "expected": "add_poi",
-          "ok": true,
-          "why": "ok",
-          "seconds": 33.01,
-          "call": {
-            "name": "add_poi",
-            "args": {
-              "map": "map_1b8aee6810a4_map",
-              "x_m": 1e-07,
-              "y_m": 2e-07,
-              "kind": "eds"
-            },
-            "id": "3e55b0b4-99ca-4692-8738-5f81a8d16795",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Show me the part of map map_1b8aee6810a4_map between x = 0 and 1e-7 m and y = 0 and 1e-7 m.",
-          "expected": "get_region",
-          "ok": true,
-          "why": "ok",
-          "seconds": 12.42,
-          "call": {
-            "name": "get_region",
-            "args": {
-              "map": "map_1b8aee6810a4_map",
-              "box_m": [
-                0,
-                1e-07,
-                0,
-                1e-07
-              ]
-            },
-            "id": "393775bf-86aa-4321-a59d-379c85ca6703",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Which region scorers can I use?",
-          "expected": "list_scorers",
-          "ok": true,
-          "why": "ok",
-          "seconds": 3.82,
-          "call": {
-            "name": "list_scorers",
-            "args": {},
-            "id": "1233e351-b4d0-4f50-bc03-ff5dd7598f77",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Get the results of map job 8f2c1d9e0a11.",
-          "expected": "Mapper_results",
-          "ok": false,
-          "why": "picked job_results",
-          "seconds": 4.89,
-          "call": {
-            "name": "job_results",
-            "args": {
-              "job_id": "8f2c1d9e0a11"
-            },
-            "id": "f3076aa4-abb7-4f77-b829-435e071c68d6",
-            "type": "tool_call"
-          }
-        },
-        {
-          "prompt": "Has approval request 46522aaafac8 been approved yet?",
-          "expected": "approval_status",
-          "ok": true,
-          "why": "ok",
-          "seconds": 5.97,
-          "call": {
-            "name": "approval_status",
-            "args": {
-              "request_id": "46522aaafac8"
-            },
-            "id": "6ea807a2-fa55-4236-b442-10cce80d3e27",
-            "type": "tool_call"
-          }
-        }
-      ]
-    },
     "qwen3:8b": {
-      "valid_fraction": 0.75,
+      "valid_fraction": 0.85,
       "passes": false,
-      "total_seconds": 126.3,
+      "total_seconds": 128.7,
       "rows": [
         {
           "prompt": "What is the current stage position?",
           "expected": "*_get_stage",
           "ok": false,
           "why": "no tool call",
-          "seconds": 17.0,
+          "seconds": 15.7,
           "call": null
         },
         {
@@ -683,7 +21,7 @@
           "expected": "*_move_stage",
           "ok": true,
           "why": "ok",
-          "seconds": 36.16,
+          "seconds": 36.09,
           "call": {
             "name": "DigitalTwin_move_stage",
             "args": {
@@ -695,7 +33,7 @@
                 0
               ]
             },
-            "id": "9884eaa7-e18e-4bcf-8dcc-731747ac808a",
+            "id": "ed4a3bdc-dab0-4299-8339-f06d72e3c128",
             "type": "tool_call"
           }
         },
@@ -704,7 +42,7 @@
           "expected": "*_acquire_scanned_image",
           "ok": true,
           "why": "ok",
-          "seconds": 4.47,
+          "seconds": 3.49,
           "call": {
             "name": "DigitalTwin_acquire_scanned_image",
             "args": {
@@ -712,7 +50,7 @@
                 "haadf"
               ]
             },
-            "id": "f3fd4742-df41-4744-8074-34da2262136a",
+            "id": "654b3045-e4b5-481b-a3e6-a93842c79ac2",
             "type": "tool_call"
           }
         },
@@ -721,13 +59,13 @@
           "expected": "*_set_fov",
           "ok": true,
           "why": "ok",
-          "seconds": 4.36,
+          "seconds": 3.81,
           "call": {
             "name": "DigitalTwin_set_fov",
             "args": {
               "fov": 5e-07
             },
-            "id": "ee57234f-7dce-4239-9ef4-ba23dbcd2244",
+            "id": "8fe82869-2a8b-461d-a2ff-507b2a319dbe",
             "type": "tool_call"
           }
         },
@@ -736,7 +74,7 @@
           "expected": "*_place_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 4.53,
+          "seconds": 4.28,
           "call": {
             "name": "DigitalTwin_place_beam",
             "args": {
@@ -745,7 +83,7 @@
                 0.5
               ]
             },
-            "id": "d318d880-b08e-472c-935e-28e2f18956b3",
+            "id": "ae45b391-5a10-4556-afd6-37b859c2e3c0",
             "type": "tool_call"
           }
         },
@@ -760,7 +98,7 @@
             "args": {
               "detector_name": "eds"
             },
-            "id": "8e8e9008-265e-4aa3-ade7-6ad76df7bded",
+            "id": "c486d663-3da1-4594-b01d-92524cd2a8fa",
             "type": "tool_call"
           }
         },
@@ -769,40 +107,34 @@
           "expected": "Approvals_get_mode",
           "ok": true,
           "why": "ok",
-          "seconds": 2.44,
+          "seconds": 2.6,
           "call": {
             "name": "Approvals_get_mode",
             "args": {},
-            "id": "827b48c3-8386-44c3-8071-8e7202e81d4a",
+            "id": "7a738b7c-8233-4e20-8880-afaea4b94740",
             "type": "tool_call"
           }
         },
         {
           "prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.",
           "expected": "Mapper_reserve",
-          "ok": false,
-          "why": "bad args: Additional properties are not allowed ('caller', 'plan' were unexpected)",
-          "seconds": 7.26,
+          "ok": true,
+          "why": "ok",
+          "seconds": 10.25,
           "call": {
             "name": "Mapper_reserve",
             "args": {
               "plan": {
-                "area": {
-                  "x": [
-                    -1e-06,
-                    1e-06
-                  ],
-                  "y": [
-                    -1e-06,
-                    1e-06
-                  ]
-                },
-                "fov": 2e-07,
-                "type": "map"
+                "fov_m": 2e-07,
+                "type": "map_plan",
+                "x_end_m": 1e-06,
+                "x_start_m": -1e-06,
+                "y_end_m": 1e-06,
+                "y_start_m": -1e-06
               },
               "caller": "user"
             },
-            "id": "3ad6d1ea-d12f-44db-959b-adb6286238ac",
+            "id": "796ec0f8-40aa-4b9f-bb85-23e676aa2de5",
             "type": "tool_call"
           }
         },
@@ -810,23 +142,23 @@
           "prompt": "What is the status of map job 8f2c1d9e0a11?",
           "expected": "Mapper_job_status",
           "ok": false,
-          "why": "picked job_status",
-          "seconds": 3.34,
+          "why": "picked analysis_job_status",
+          "seconds": 3.52,
           "call": {
-            "name": "job_status",
+            "name": "analysis_job_status",
             "args": {
               "job_id": "8f2c1d9e0a11"
             },
-            "id": "2886a6da-1df1-4baf-929f-74c41bc069d2",
+            "id": "67b5db24-7218-4b47-b6b4-a6c9d5931cad",
             "type": "tool_call"
           }
         },
         {
           "prompt": "Stop map job 8f2c1d9e0a11 now.",
           "expected": "Mapper_abort",
-          "ok": false,
-          "why": "bad args: {'job_id': '8f2c1d9e0a11'} is not of type 'string'",
-          "seconds": 4.5,
+          "ok": true,
+          "why": "ok",
+          "seconds": 4.45,
           "call": {
             "name": "Mapper_abort",
             "args": {
@@ -834,7 +166,7 @@
                 "job_id": "8f2c1d9e0a11"
               }
             },
-            "id": "e7c2e12a-fb5f-4111-83a7-268fd6a86bec",
+            "id": "1d27110b-e462-4201-9eb4-d5ca37cfe140",
             "type": "tool_call"
           }
         },
@@ -843,13 +175,13 @@
           "expected": "assemble_map",
           "ok": true,
           "why": "ok",
-          "seconds": 3.45,
+          "seconds": 3.85,
           "call": {
             "name": "assemble_map",
             "args": {
               "run": "map_1b8aee6810a4.h5"
             },
-            "id": "67846dea-6a48-4c67-a970-f47697944975",
+            "id": "420a0ab9-e0c8-4bfa-acb3-53105c28f0dc",
             "type": "tool_call"
           }
         },
@@ -858,16 +190,15 @@
           "expected": "score_map",
           "ok": true,
           "why": "ok",
-          "seconds": 5.94,
+          "seconds": 5.4,
           "call": {
             "name": "score_map",
             "args": {
-              "window_m": 1e-07,
               "map": "map_1b8aee6810a4_map",
               "scorer": "list_scorers()",
               "top_k": 3
             },
-            "id": "12d79e8c-7107-45ff-8d6c-219bc1d90b7c",
+            "id": "9651a47d-9388-4b7c-a4d6-c08b36406caa",
             "type": "tool_call"
           }
         },
@@ -876,11 +207,11 @@
           "expected": "*_blank_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 2.59,
+          "seconds": 2.66,
           "call": {
             "name": "DigitalTwin_blank_beam",
             "args": {},
-            "id": "0832494b-fbdb-4621-a189-f3fb5e05e205",
+            "id": "35bdad88-0977-4c7d-ac01-0247ff8c2a7c",
             "type": "tool_call"
           }
         },
@@ -889,13 +220,13 @@
           "expected": "*_set_defocus",
           "ok": true,
           "why": "ok",
-          "seconds": 3.41,
+          "seconds": 3.5,
           "call": {
             "name": "DigitalTwin_set_defocus",
             "args": {
               "defocus": 2e-08
             },
-            "id": "ba30990e-da28-4aae-ac50-05fc6a943515",
+            "id": "8d7dae6d-8789-45c8-a366-3077336965ae",
             "type": "tool_call"
           }
         },
@@ -904,11 +235,11 @@
           "expected": "list_devices",
           "ok": true,
           "why": "ok",
-          "seconds": 2.1,
+          "seconds": 2.35,
           "call": {
             "name": "list_devices",
             "args": {},
-            "id": "d007e024-31ee-40d4-aff2-0771be086f38",
+            "id": "6f89a851-efd5-43e9-9846-e77a2f6882cd",
             "type": "tool_call"
           }
         },
@@ -917,7 +248,7 @@
           "expected": "add_poi",
           "ok": true,
           "why": "ok",
-          "seconds": 6.86,
+          "seconds": 7.4,
           "call": {
             "name": "add_poi",
             "args": {
@@ -925,11 +256,11 @@
               "y_m": 2e-07,
               "kind": "eds_spectrum",
               "links": [
-                "eds_spectrum_123"
+                "eds_spectrum_12345"
               ],
               "map": "map_1b8aee6810a4_map"
             },
-            "id": "6011e942-552a-4a6f-86a6-1503eefc8c34",
+            "id": "435f903b-7272-4574-bf8d-f8bcbfaaebfa",
             "type": "tool_call"
           }
         },
@@ -938,7 +269,7 @@
           "expected": "get_region",
           "ok": true,
           "why": "ok",
-          "seconds": 5.89,
+          "seconds": 6.52,
           "call": {
             "name": "get_region",
             "args": {
@@ -951,7 +282,7 @@
               ],
               "level": 0
             },
-            "id": "123696b0-ab79-4b70-9126-8551b3d5482f",
+            "id": "499f5dd5-52c9-4ecd-b2e8-5a9761a70358",
             "type": "tool_call"
           }
         },
@@ -960,11 +291,11 @@
           "expected": "list_scorers",
           "ok": true,
           "why": "ok",
-          "seconds": 2.38,
+          "seconds": 2.73,
           "call": {
             "name": "list_scorers",
             "args": {},
-            "id": "10441227-700e-4d2a-ac41-656fb81e5f90",
+            "id": "5f708b8e-6e85-4dff-a63a-7ad7ce4223de",
             "type": "tool_call"
           }
         },
@@ -972,14 +303,14 @@
           "prompt": "Get the results of map job 8f2c1d9e0a11.",
           "expected": "Mapper_results",
           "ok": false,
-          "why": "picked job_results",
-          "seconds": 3.0,
+          "why": "picked analysis_job_results",
+          "seconds": 3.43,
           "call": {
-            "name": "job_results",
+            "name": "analysis_job_results",
             "args": {
               "job_id": "8f2c1d9e0a11"
             },
-            "id": "68166128-a4d2-40a9-a4ad-57402e91a81e",
+            "id": "5f22c510-d0db-4996-bdf1-43949f71d238",
             "type": "tool_call"
           }
         },
@@ -988,13 +319,343 @@
           "expected": "approval_status",
           "ok": true,
           "why": "ok",
-          "seconds": 3.4,
+          "seconds": 3.49,
           "call": {
             "name": "approval_status",
             "args": {
               "request_id": "46522aaafac8"
             },
-            "id": "2a62d284-b2f8-444f-8287-a5215d76b681",
+            "id": "31850e45-eb44-47e3-945f-0ce9e4d1c0a8",
+            "type": "tool_call"
+          }
+        }
+      ]
+    },
+    "qwen3:4b": {
+      "valid_fraction": 0.9,
+      "passes": true,
+      "total_seconds": 244.2,
+      "rows": [
+        {
+          "prompt": "What is the current stage position?",
+          "expected": "*_get_stage",
+          "ok": true,
+          "why": "ok",
+          "seconds": 22.16,
+          "call": {
+            "name": "DigitalTwin_get_stage",
+            "args": {},
+            "id": "9b4f13f8-1874-40cc-adb8-8e8eba572ff7",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Move the stage to x = 100 nm, y = -50 nm, z = 0 with no tilt.",
+          "expected": "*_move_stage",
+          "ok": true,
+          "why": "ok",
+          "seconds": 13.9,
+          "call": {
+            "name": "DigitalTwin_move_stage",
+            "args": {
+              "position": [
+                1e-07,
+                -5e-08,
+                0,
+                0,
+                0
+              ]
+            },
+            "id": "92e6212e-896a-40cb-88f6-f55b089826c4",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Take a HAADF image.",
+          "expected": "*_acquire_scanned_image",
+          "ok": true,
+          "why": "ok",
+          "seconds": 3.65,
+          "call": {
+            "name": "DigitalTwin_acquire_scanned_image",
+            "args": {
+              "detector_list": [
+                "haadf"
+              ]
+            },
+            "id": "c3074a18-ee0c-4777-bd67-2a296856817b",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Set the field of view to 500 nm.",
+          "expected": "*_set_fov",
+          "ok": true,
+          "why": "ok",
+          "seconds": 5.44,
+          "call": {
+            "name": "DigitalTwin_set_fov",
+            "args": {
+              "fov": 5e-07
+            },
+            "id": "1ff982a6-7aaa-405f-a5ec-5a78d2646000",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Put the beam in the centre of the field of view.",
+          "expected": "*_place_beam",
+          "ok": true,
+          "why": "ok",
+          "seconds": 4.44,
+          "call": {
+            "name": "DigitalTwin_place_beam",
+            "args": {
+              "position": [
+                0.5,
+                0.5
+              ]
+            },
+            "id": "15dc09cf-cd05-4e5e-843e-4a45af8b6baa",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Acquire an EDS spectrum with the eds detector.",
+          "expected": "*_acquire_spectrum",
+          "ok": true,
+          "why": "ok",
+          "seconds": 4.48,
+          "call": {
+            "name": "DigitalTwin_acquire_spectrum",
+            "args": {
+              "detector_name": "eds"
+            },
+            "id": "9c0ab8ac-cb49-4d4a-8868-65379fc1d9c1",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Is the approval mode auto or approve right now?",
+          "expected": "Approvals_get_mode",
+          "ok": true,
+          "why": "ok",
+          "seconds": 9.89,
+          "call": {
+            "name": "Approvals_get_mode",
+            "args": {},
+            "id": "952b8e6d-52f8-403e-aced-617191f35152",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.",
+          "expected": "Mapper_reserve",
+          "ok": true,
+          "why": "ok",
+          "seconds": 18.49,
+          "call": {
+            "name": "Mapper_reserve",
+            "args": {
+              "request": {
+                "caller": "user",
+                "plan": {
+                  "fov": 2e-07,
+                  "stage_box": [
+                    -1e-06,
+                    1e-06,
+                    -1e-06,
+                    1e-06
+                  ]
+                }
+              }
+            },
+            "id": "862e3411-abbb-4799-b091-1ae9c89231e9",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "What is the status of map job 8f2c1d9e0a11?",
+          "expected": "Mapper_job_status",
+          "ok": false,
+          "why": "picked analysis_job_status",
+          "seconds": 5.25,
+          "call": {
+            "name": "analysis_job_status",
+            "args": {
+              "job_id": "8f2c1d9e0a11"
+            },
+            "id": "d56e7ed9-8941-43ea-b581-a325b4a430c3",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Stop map job 8f2c1d9e0a11 now.",
+          "expected": "Mapper_abort",
+          "ok": true,
+          "why": "ok",
+          "seconds": 11.17,
+          "call": {
+            "name": "Mapper_abort",
+            "args": {
+              "job_id": "8f2c1d9e0a11"
+            },
+            "id": "3fa6d68f-cb20-4ac4-adcb-c63269e02f1f",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Stitch the map run map_1b8aee6810a4.h5 into one map.",
+          "expected": "assemble_map",
+          "ok": true,
+          "why": "ok",
+          "seconds": 10.36,
+          "call": {
+            "name": "assemble_map",
+            "args": {
+              "run": "map_1b8aee6810a4.h5"
+            },
+            "id": "cb967f00-c28e-410f-968b-09b130826cd1",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Find the 3 most interesting regions on the map map_1b8aee6810a4_map.",
+          "expected": "score_map",
+          "ok": true,
+          "why": "ok",
+          "seconds": 57.61,
+          "call": {
+            "name": "score_map",
+            "args": {
+              "map": "map_1b8aee6810a4_map",
+              "scorer": "intensity",
+              "top_k": 3
+            },
+            "id": "5d4ed321-4f82-420d-97c4-8ccca265494f",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Blank the beam.",
+          "expected": "*_blank_beam",
+          "ok": true,
+          "why": "ok",
+          "seconds": 3.54,
+          "call": {
+            "name": "DigitalTwin_blank_beam",
+            "args": {},
+            "id": "2d53fbfd-ce2f-4a79-83d1-0a894536e132",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Set the defocus to 20 nm.",
+          "expected": "*_set_defocus",
+          "ok": true,
+          "why": "ok",
+          "seconds": 6.1,
+          "call": {
+            "name": "DigitalTwin_set_defocus",
+            "args": {
+              "defocus": 2e-08
+            },
+            "id": "f8029a6d-ea22-403f-85a6-c8ec6103d2ac",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Which devices are connected?",
+          "expected": "list_devices",
+          "ok": true,
+          "why": "ok",
+          "seconds": 4.67,
+          "call": {
+            "name": "list_devices",
+            "args": {},
+            "id": "5b21013b-2ecc-4879-b43d-ebe70a1734a1",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Mark x = 1e-7 m, y = 2e-7 m on map map_1b8aee6810a4_map as a place where an EDS spectrum was taken.",
+          "expected": "add_poi",
+          "ok": true,
+          "why": "ok",
+          "seconds": 36.28,
+          "call": {
+            "name": "add_poi",
+            "args": {
+              "map": "map_1b8aee6810a4_map",
+              "x_m": 1e-07,
+              "y_m": 2e-07,
+              "kind": "eds"
+            },
+            "id": "3a0ff9fb-8769-42c7-a357-5ac8219134c4",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Show me the part of map map_1b8aee6810a4_map between x = 0 and 1e-7 m and y = 0 and 1e-7 m.",
+          "expected": "get_region",
+          "ok": true,
+          "why": "ok",
+          "seconds": 11.31,
+          "call": {
+            "name": "get_region",
+            "args": {
+              "map": "map_1b8aee6810a4_map",
+              "box_m": [
+                0,
+                1e-07,
+                0,
+                1e-07
+              ]
+            },
+            "id": "e638de08-06c5-4606-88f8-f89fff816864",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Which region scorers can I use?",
+          "expected": "list_scorers",
+          "ok": true,
+          "why": "ok",
+          "seconds": 3.76,
+          "call": {
+            "name": "list_scorers",
+            "args": {},
+            "id": "983a89aa-b8c5-477c-b67b-29e8b7186f8e",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Get the results of map job 8f2c1d9e0a11.",
+          "expected": "Mapper_results",
+          "ok": false,
+          "why": "picked analysis_job_results",
+          "seconds": 5.55,
+          "call": {
+            "name": "analysis_job_results",
+            "args": {
+              "job_id": "8f2c1d9e0a11"
+            },
+            "id": "d4711dfd-c689-4eb3-81ea-cca106c34892",
+            "type": "tool_call"
+          }
+        },
+        {
+          "prompt": "Has approval request 46522aaafac8 been approved yet?",
+          "expected": "approval_status",
+          "ok": true,
+          "why": "ok",
+          "seconds": 6.2,
+          "call": {
+            "name": "approval_status",
+            "args": {
+              "request_id": "46522aaafac8"
+            },
+            "id": "310dfad8-2faf-490d-a789-6accf479939d",
             "type": "tool_call"
           }
         }

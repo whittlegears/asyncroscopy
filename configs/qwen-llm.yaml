@@ -1,0 +1,26 @@
+# Qwen3 8B agent server config for a laptop-class GPU (tested on a 6 GB GTX 1660 Ti).
+# The 31B config for the RTX 5090 workstation is gemma-llm.yaml.
+#
+#   uv run startup_scripts/run_llm.py --yaml configs/qwen-llm.yaml
+
+agent:
+  name: Asyncroscopy_Agent_MCP
+  transport: streamable-http
+  http_host: 0.0.0.0
+  http_port: 8002
+  model: "qwen3:8b"
+  model_provider: "ollama"
+  max_steps: 10
+  use_init_chat_model: false
+
+  mcp_urls:
+    - "http://127.0.0.1:8000/mcp"
+    - "http://127.0.0.1:8003/mcp"
+
+  startup_agents:
+    - name: "base"
+      system_prompt: "You are a helpful assistant that can answer questions and provide information."
+      tools: ["list_devices"]
+    - name: "image"
+      system_prompt: "You are an image acquiring assistant."
+      tools: ["*image"]

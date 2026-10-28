@@ -37,10 +37,16 @@ project:
         - file: MCP/asyncroscopy_mcp.md
     - title: Operation
       children:
+        - file: Operation/quickstart.md
+        - file: Operation/agentic_mapping.md
+        - file: Operation/approval_mode.md
         - file: Operation/run-servers.md
         - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
+    - title: Digital Twin
+      children:
+        - file: digital_twin.md
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md
