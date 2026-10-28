@@ -81,7 +81,7 @@ if (-not $uv) {
 }
 ```
 
-Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers; check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready. The operator endpoint's log may list `[safety]` lines; they are about the agent endpoint's settings and harmless here.
+Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers; check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
@@ -121,7 +121,7 @@ If you use SciAgentGUI, this checks that the stack answers the way the GUI expec
 uv run startup_scripts/check_gui_contract.py
 ```
 
-Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
+Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
 
 Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
 
