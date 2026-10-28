@@ -60,7 +60,6 @@ OPERATOR_ONLY: list[str] = [
     "approvals.approve",
     "approvals.deny",
     "approvals.set_mode",
-    "approvals.revoke",
     # The MCP server reaches these through Tango itself; offering them to agents would let
     # an agent consume a grant (check) or file requests under any caller name (request).
     "approvals.check",

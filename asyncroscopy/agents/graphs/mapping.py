@@ -140,7 +140,8 @@ class MappingGraph:
 
     async def make_plan(self, state: MapState) -> MapState:
         context = state.get("context", {})
-        if state.get("plan"):
+        from_model = not state.get("plan")
+        if not from_model:
             plan = dict(state["plan"])
         else:
             model = self.config.chat_model()
@@ -148,9 +149,10 @@ class MappingGraph:
             try:
                 plan = _parse_json(reply.content if isinstance(reply.content, str) else str(reply.content))
             except (ValueError, json.JSONDecodeError):
-                plan = {}
+                # Never fall back to an empty plan: it would become a whole-sample map.
+                return {"error": "the model's reply held no JSON map plan"}
         score = bool(plan.pop("score", state.get("score", False)))
-        plan = self._complete_plan(plan, context, state.get("request", ""))
+        plan = self._complete_plan(plan, context, state.get("request", ""), from_model=from_model)
         try:
             validate(plan, "map_plan")
         except jsonschema.ValidationError as exc:
@@ -158,14 +160,23 @@ class MappingGraph:
         return {"plan": plan, "score": score or bool(re.search(r"interesting|feature|score|where to look|regions? of interest", state.get("request", ""), re.I))}
 
     @staticmethod
-    def _complete_plan(plan: dict, context: dict, request: str) -> dict:
-        """Fill gaps and repair obvious slips (units, swapped corners) so a small model's plan is usable."""
-        allowed = {"box_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
+    def _complete_plan(plan: dict, context: dict, request: str, from_model: bool = True) -> dict:
+        """Fill gaps and repair obvious slips (units, swapped corners) so a small model's plan is usable.
+
+        The request text overrides size and EDS only for a plan the model wrote; a plan passed in
+        directly is the caller's decision and keeps its per_tile and size.
+        """
+        allowed = {"box_m", "size_m", "centre_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
         fov = float(plan.get("fov_m") or context.get("fov_m") or DEFAULT_FOV_M)
         fov = _to_metres(fov, metres_below=1e-3)  # a STEM field of view is far below a millimetre
         plan["fov_m"] = fov
+        size_m, centre_m = plan.pop("size_m", None), plan.pop("centre_m", None)
         box = plan.get("box_m")
+        if isinstance(size_m, list) and len(size_m) == 2 and not isinstance(box, list):
+            width, height = (_to_metres(float(v), metres_below=1e-2) for v in size_m)
+            x, y = (centre_m or context.get("stage_position_m") or [0.0, 0.0])[:2]
+            box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         if not (isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box)):
             box = context.get("sample_bounds_m")
             if box is None:
@@ -177,7 +188,7 @@ class MappingGraph:
         # A size stated in the request ("a 600 nm square", "2 x 1 um area") is read here, not left to
         # the model: small models often fall back to the whole sample. Centred on the stage unless the
         # model's box already has that size.
-        size = MappingGraph._requested_size(request)
+        size = MappingGraph._requested_size(request) if from_model else None
         if size is not None:
             width, height = size
             if not (abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height):
@@ -190,6 +201,9 @@ class MappingGraph:
                 box[lo], box[hi] = mid - fov / 2, mid + fov / 2
         plan["box_m"] = box
         per_tile = [p for p in plan.get("per_tile") or [] if p in ("eds_point", "eds_map")]
+        if not from_model:
+            plan["per_tile"] = per_tile[:1]
+            return plan
         asks_for_eds = re.search(r"\beds\b|\bedx\b|spectr|composition|element", request, re.I)
         if not per_tile and asks_for_eds:
             per_tile = ["eds_point"]
@@ -302,6 +316,8 @@ class MappingGraph:
         if "error" in job:
             return {"error": f"scoring was refused: {job['error']['message']}"}
         results = await self._analysis_job(job["job_id"])
+        if results.get("state") != "done":
+            return {"error": f"the map {state['map_key']} was stitched, but scoring {results.get('state')}"}
         return {"pois": list(state.get("pois", [])) + results.get("summary", {}).get("added_pois", [])}
 
     async def report(self, state: MapState) -> MapState:

@@ -530,6 +530,16 @@ class DigitalTwin(AtomisticDigitalTwin):
     # ------------------------------------------------------------------
     # Status and ground truth
     # ------------------------------------------------------------------
+    def _viewport_metadata(self) -> dict:
+        # The base class reads _stage_position, which here is the true pose: report what the stage reports.
+        metadata = super()._viewport_metadata()
+        x, y, z = (float(v) / ANGSTROM for v in self._stage.reported[:3])
+        half = self._fov / ANGSTROM / 2
+        metadata["stage_position"] = self._stage.reported.tolist()
+        metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
+        metadata["particle_count"] = len(self._sample)
+        return metadata
+
     def _get_parameters(self) -> str:
         parameters = json.loads(super()._get_parameters())
         parameters["stage_position"] = self._stage.reported.tolist()
