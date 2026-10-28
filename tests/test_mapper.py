@@ -69,6 +69,25 @@ class TestEnvelope:
         validate(reply, "envelope", "error_response")
         assert reply["error"]["code"] == "plan_rejected"
 
+    def test_refusal_carries_an_example_plan(self, mapper_proxy):
+        message = call(mapper_proxy, "reserve", {"plan": {"box_m": [0, 1], "fov_m": 1e-7}})["error"]["message"]
+        example = json.loads(message.split("Example plan: ", 1)[1])
+        validate(example, "map_plan")
+
+    def test_size_plan_is_centred_on_the_stage(self, mapper_proxy, mapping_twin_proxy):
+        x, y = list(mapping_twin_proxy.get_stage())[:2]
+        reply = call(mapper_proxy, "reserve", {"plan": {"size_m": [4e-7, 2e-7], "fov_m": 1e-7}})
+        box = reply["resolved_plan"]["box_m"]
+        assert box == pytest.approx([x - 2e-7, x + 2e-7, y - 1e-7, y + 1e-7])
+        release_all(mapper_proxy, reply["reservation_id"])
+        reply = call(mapper_proxy, "reserve", {"plan": {"size_m": [4e-7, 2e-7], "centre_m": [1e-6, 0.0], "fov_m": 1e-7}})
+        assert reply["resolved_plan"]["box_m"] == pytest.approx([8e-7, 1.2e-6, -1e-7, 1e-7])
+        release_all(mapper_proxy, reply["reservation_id"])
+
+    def test_box_and_size_together_are_refused(self, mapper_proxy):
+        reply = call(mapper_proxy, "reserve", {"plan": {**PLAN, "size_m": [4e-7, 4e-7]}})
+        assert reply["error"]["code"] == "plan_rejected" and "not both" in reply["error"]["message"]
+
     def test_dose_budget_rejects_plan(self, mapper_proxy):
         reply = call(mapper_proxy, "reserve", {"plan": {**PLAN, "dose_budget_e_per_a2": 1e-6}})
         assert reply["error"]["code"] == "plan_rejected"

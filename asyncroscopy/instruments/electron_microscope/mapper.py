@@ -93,7 +93,8 @@ def max_exposures(tiles: list[dict], fov: float) -> int:
 
 class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images (optionally an EDS spectrum at each) over a stage box. Not stitching"
-    PLAN_EXAMPLE = {"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 1.6e-7, "per_tile": []}  # metres; per_tile ["eds_point"] adds EDS
+    # A 600 nm square around the current stage position; per_tile ["eds_point"] adds a spectrum at each tile.
+    PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "per_tile": []}
 
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to drive.")
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
@@ -123,8 +124,15 @@ class Mapper(JobDevice):
     # Plan
     # ------------------------------------------------------------------
     def resolve_plan(self, plan: dict) -> dict:
+        if ("box_m" in plan) == ("size_m" in plan):
+            raise ValueError("give the area as box_m [x_min, x_max, y_min, y_max] or as size_m [width, height], not both or neither")
         validate(plan, "map_plan")
         p = {**PLAN_DEFAULTS, **plan}
+        if "size_m" in p:
+            # The device does the arithmetic: callers (often small models) get centre +/- half wrong.
+            width, height = (float(v) for v in p["size_m"])
+            cx, cy = (float(v) for v in p.get("centre_m") or list(self._proxy(self.microscope_device_address).get_stage())[:2])
+            p["box_m"] = [cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2]
         x_min, x_max, y_min, y_max = (float(v) for v in p["box_m"])
         if not (x_min < x_max and y_min < y_max):
             raise ValueError("box_m must be [x_min, x_max, y_min, y_max] with min < max")

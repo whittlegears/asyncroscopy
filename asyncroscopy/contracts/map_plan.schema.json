@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/map_plan.schema.json",
   "title": "Map plan",
-  "description": "What a Mapper job acquires. Lengths in metres, times in seconds. The box is in stage coordinates; tile centres never leave it.",
+  "description": "What a Mapper job acquires. Lengths in metres, times in seconds. Give the area as box_m in stage coordinates, or as size_m around centre_m (default: the current stage position); tile centres never leave the box.",
   "schema_version": "1.0.0",
   "type": "object",
-  "required": ["box_m", "fov_m"],
+  "required": ["fov_m"],
+  "oneOf": [{"required": ["box_m"]}, {"required": ["size_m"]}],
   "additionalProperties": false,
   "properties": {
     "box_m": {
@@ -14,6 +15,20 @@
       "items": {"type": "number"},
       "minItems": 4,
       "maxItems": 4
+    },
+    "size_m": {
+      "type": "array",
+      "description": "[width, height] in metres; the Mapper centres the box on centre_m.",
+      "items": {"type": "number", "exclusiveMinimum": 0},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "centre_m": {
+      "type": "array",
+      "description": "[x, y] stage centre for size_m; defaults to the current stage position.",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
     },
     "fov_m": {"type": "number", "exclusiveMinimum": 0},
     "overlap": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.15},

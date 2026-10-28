@@ -11,6 +11,8 @@ tools: [Mapper_reserve, Mapper_start, Mapper_job_status, Mapper_results, Mapper_
 
 A map is ONE background job, not hundreds of moves. Never loop over `move_stage` and `acquire_scanned_image` yourself.
 
+A whole request is: reserve, start, wait, release, then stitch. "The map" means the stitched map key (`result_keys.map`, ending in `_map`), not the run file.
+
 ## 1. Plan
 
 Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
@@ -18,7 +20,8 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | Request says | Plan |
 | :-- | :-- |
 | "the sample", "whole sample" | `box_m` = sample bounds from `<Microscope>_get_parameters` (`world_bounds_angstrom` x 1e-10) |
-| "a 500 nm square around the centre" | `box_m` centred on the current stage position (`<Microscope>_get_stage`) |
+| "a 500 nm square around here / the current position" | `"size_m": [5e-7, 5e-7]` (the Mapper centres it on the stage; do not compute a box) |
+| "a 500 nm square around a point (x, y)" | `"size_m": [5e-7, 5e-7], "centre_m": [x, y]` |
 | "with EDS", "and a spectrum at each image" | `"per_tile": ["eds_point"]` (one spectrum at each tile centre) |
 | "spectrum image", "EDS map" of every tile | `"per_tile": ["eds_map"]`. Only when asked by name: it multiplies time and dose. |
 | nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` |
@@ -42,7 +45,7 @@ If the request is unclear about the area or would take more than an hour (see th
 ## 4. Find interesting regions and go back
 
 1. `score_map` with `{"map": ..., "top_k": 3}`; poll `analysis_job_status`; `analysis_job_results.summary.added_pois` lists regions with `x_m`, `y_m`, `score` and `reason`.
-2. To image one closer, reserve a small map around it (`box_m` = point +/- half a field of view, smaller `fov_m`), or move there and acquire once.
+2. To image one closer, reserve a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`), or move there and acquire once.
 3. Mark what you took with `add_poi` and `links`, so the map shows it.
 
 ## Report
