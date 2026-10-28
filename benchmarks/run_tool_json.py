@@ -16,19 +16,19 @@ import argparse
 import asyncio
 import fnmatch
 import json
+import sys
 import time
 from pathlib import Path
 
 import jsonschema
-import sys
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
+from langchain_core.messages import HumanMessage, SystemMessage
 
-from asyncroscopy.agents.config import AgentConfig  # noqa: E402
+from asyncroscopy.agents.config import AgentConfig
 
 HERE = Path(__file__).resolve().parent
 SYSTEM = (

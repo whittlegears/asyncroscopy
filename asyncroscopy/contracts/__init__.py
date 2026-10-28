@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import jsonschema
@@ -12,7 +12,7 @@ HERE = Path(__file__).resolve().parent
 ENVELOPE_VERSION = "1.0.0"
 
 
-@lru_cache(maxsize=None)
+@cache
 def load(name: str) -> dict:
     """Load ``<name>.schema.json`` from this folder."""
     return json.loads((HERE / f"{name}.schema.json").read_text(encoding="utf-8"))

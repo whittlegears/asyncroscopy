@@ -21,7 +21,7 @@ import json
 import os
 import re
 import time
-from typing import Any, TypedDict
+from typing import TypedDict
 
 import jsonschema
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -298,7 +298,7 @@ class MappingGraph:
         graph = StateGraph(MapState)
         for name in ("gather_context", "make_plan", "reserve", "start", "wait", "stitch", "score", "report"):
             graph.add_node(name, getattr(self, name))
-        ok = lambda nxt: (lambda s: "report" if s.get("error") else nxt)  # noqa: E731
+        ok = lambda nxt: (lambda s: "report" if s.get("error") else nxt)
         graph.add_edge(START, "gather_context")
         graph.add_edge("gather_context", "make_plan")
         graph.add_conditional_edges("make_plan", ok("reserve"), ["reserve", "report"])

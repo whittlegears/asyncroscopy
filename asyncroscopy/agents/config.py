@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fnmatch
-import json
 import os
 from dataclasses import dataclass, field
 
@@ -26,7 +25,7 @@ class AgentConfig:
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
 
     @classmethod
-    def from_env(cls, **overrides) -> "AgentConfig":
+    def from_env(cls, **overrides) -> AgentConfig:
         env = os.environ
         config = cls(
             model=env.get("ASYNCROSCOPY_MODEL", cls.model),
