@@ -36,7 +36,7 @@ ollama pull qwen3:8b
 ```bash
 git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # Windows: add a short target, e.g. C:\src\asyncroscopy
 cd asyncroscopy
-uv sync --extra agent --extra ollama
+uv sync --extra agent --extra ollama   # Windows: fails with "Missing expected target directory"? see the fix below
 uv run pytest -q -m "not slow"
 ```
 
@@ -126,7 +126,7 @@ If you use SciAgentGUI, this checks that the stack answers the way the GUI expec
 uv run startup_scripts/check_gui_contract.py
 ```
 
-Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
+The checks use whatever stack is on these ports, so two people testing on one machine share it. Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
 
 Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
 
@@ -172,6 +172,6 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
 | `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the two `run_mcp.py` servers. |
 | `check_stack.py` says an endpoint is not reachable | The stack is not up yet: start it (section 3) and wait until both MCP logs say "MCP ready". |
-| Started in the background and something is still running after stopping, or "already running" | Find what holds the ports with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 \| Select-Object LocalPort, OwningProcess`, and stop each with `taskkill /PID <pid> /T /F`. |
+| Started in the background and something is still running after stopping, "already running", or you need to stop it from another window | Free ports alone do not mean everything stopped: the launcher and its device servers hold no port. Stop every asyncroscopy stack on this machine with `Get-CimInstance Win32_Process \| Where-Object { $_.CommandLine -match 'run_servers\.py\|run_mcp\.py\|pyTEMlib\.mcp_server' } \| ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null \| Out-Null }`, then check the ports again. |
 | Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal. On the next start `run_servers.py` also stops whatever is listening on its Tango and Tiled ports and leftover device servers from the same config; it leaves other asyncroscopy stacks alone. |
 | The agent picks the wrong tool or loops | Use `qwen3:8b` or larger, keep `ASYNCROSCOPY_NUM_CTX` at 8192 or more, and prefer the `mapping` graph for maps. `benchmarks/run_tool_json.py` measures a model on this machine. |
