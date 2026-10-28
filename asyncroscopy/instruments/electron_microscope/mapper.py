@@ -76,7 +76,7 @@ class Mapper(JobDevice):
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
     eds_device_address = device_property(dtype=str, default_value="", doc="EDS settings device (needed for EDS per-tile actions).")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device; when set, the run file is registered with Tiled.")
-    output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written.")
+    output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written when there is no DATA device; with one, they go in its save path (which Tiled serves) under maps/.")
     max_tiles = device_property(dtype=int, default_value=5000, doc="Refuse plans with more tiles than this.")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa.")
@@ -139,7 +139,11 @@ class Mapper(JobDevice):
     # Run
     # ------------------------------------------------------------------
     def _run_path(self, job: dict) -> Path:
-        return Path(self.output_directory) / f"map_{job['reservation_id']}.h5"
+        if "run_path" not in job:
+            # Tiled only serves files under the DATA save path, so the run file must live there.
+            base = Path(self._data_proxy().save_path) / "maps" if self.data_device_address else Path(self.output_directory)
+            job["run_path"] = str(base / f"map_{job['reservation_id']}.h5")
+        return Path(job["run_path"])
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
