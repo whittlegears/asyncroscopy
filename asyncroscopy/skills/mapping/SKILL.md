@@ -5,7 +5,7 @@ version: 1.0.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 requires: [Mapper_reserve]
-tools: [Mapper_reserve, Mapper_start, Mapper_job_status, Mapper_results, Mapper_abort, Mapper_release, approval_status, assemble_map, score_map, analysis_job_status, analysis_job_results, map_info, get_region, list_pois, add_poi]
+tools: [Mapper_reserve, Mapper_start, wait_for_job, Mapper_job_status, Mapper_results, Mapper_abort, Mapper_release, approval_status, assemble_map, score_map, analysis_job_status, analysis_job_results, map_info, get_region, list_pois, add_poi]
 ---
 
 # Mapping a sample
@@ -34,8 +34,8 @@ If the request is unclear about the area or would take more than an hour (see th
 1. `Mapper_reserve` with `{"plan": {...}}`. Read `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says.
 2. `Mapper_start` with `{"reservation_id": "..."}`.
    - If the reply says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `Mapper_start` again with exactly the same request. If `denied` or `expired`, stop and tell the user; call `Mapper_release`.
-3. Call `Mapper_job_status` with `{"job_id": "..."}` until `state` is `done`, `failed` or `aborted`. To stop early, call `Mapper_abort` (always allowed; the beam is blanked).
-4. `Mapper_results` gives `result_keys.run` (the run in Tiled) and `summary.spectra` (where each EDS spectrum was taken). Then `Mapper_release`.
+3. Call `wait_for_job` with `{"device": "Mapper", "job_id": "..."}` until `state` is `done`, `failed` or `aborted` (each call waits up to 25 s). To stop early, call `Mapper_abort` (always allowed; the beam is blanked).
+4. `Mapper_results` gives `result_keys.run` (the run in Tiled) and `summary.spectra` (where each EDS spectrum was taken). Then `Mapper_release`. **You are not done yet: go on to section 3 and stitch.**
 
 ## 3. Stitch and look
 
@@ -44,6 +44,8 @@ If the request is unclear about the area or would take more than an hour (see th
 3. For each EDS spectrum, `add_poi` at its `stage_xy_m` with `kind: "eds_point"` and `links: [its key]`.
 
 ## 4. Find interesting regions and go back
+
+Do this whenever the request asks for interesting, notable or unusual regions; listing the existing points of interest is not enough.
 
 1. `score_map` with `{"map": ..., "top_k": 3}`; poll `analysis_job_status`; `analysis_job_results.summary.added_pois` lists regions with `x_m`, `y_m`, `score` and `reason`.
 2. To image one closer, reserve a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`), or move there and acquire once.

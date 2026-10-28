@@ -25,7 +25,7 @@ except ImportError:  # other providers load through init_chat_model
 
 # Tools every instrument endpoint and the pyTEMlib analysis server offer.
 GENERIC_TOOLS = [
-    "Approvals_get_mode", "approval_status", "list_skills", "load_skill", "list_devices", "get_data_from_key",
+    "Approvals_get_mode", "approval_status", "wait_for_job", "list_skills", "load_skill", "list_devices", "get_data_from_key",
     "assemble_map", "score_map", "analysis_job_status", "analysis_job_results", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
 ]
 # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.

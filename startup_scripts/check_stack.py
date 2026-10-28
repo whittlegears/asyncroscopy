@@ -107,11 +107,11 @@ async def main(args: argparse.Namespace) -> int:
             deadline = time.time() + args.timeout
             status = {}
             while job_id and time.time() < deadline:
-                status = json.loads(text(await call(agent, "Mapper_job_status", {"request": json.dumps({"job_id": job_id})})))
+                # wait_for_job waits on the server side, so a model needs one call, not dozens.
+                status = json.loads(text(await call(agent, "wait_for_job", {"device": "Mapper", "job_id": job_id, "max_wait_s": 25})))
                 if status.get("state") in {"done", "failed", "aborted"}:
                     break
-                await asyncio.sleep(1.0)
-            report("map job finishes", status.get("state") == "done", json.dumps(status))
+            report("map job finishes (via wait_for_job)", status.get("state") == "done", json.dumps(status))
             results = json.loads(text(await call(agent, "Mapper_results", {"request": json.dumps({"job_id": job_id})})))
             report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
             if "run" in results.get("result_keys", {}):
@@ -139,6 +139,15 @@ async def main(args: argparse.Namespace) -> int:
                 report("the approved call runs once", not retried.is_error, text(retried)[:120])
                 again = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
                 report("the approval is single use", again.is_error)
+            # A held job start shows the operator the plan it would run, not just an id.
+            small = {"size_m": [1.6e-7, 1.6e-7], "fov_m": 1.6e-7, "imsize": 64}
+            reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": small})})))
+            if "reservation_id" in reserved:
+                held = await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})}, raise_on_error=False)
+                pending = json.loads(text(await call(operator, "Approvals_list_pending")))
+                shown = [p for p in pending if p["action"] == "Mapper_start" and reserved["reservation_id"] in (p.get("reason") or "")]
+                report("a held map start shows the operator its plan", held.is_error and bool(shown) and "size_m" in shown[0]["reason"], (shown[0]["reason"][:120] if shown else text(held)[:120]))
+                await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
         finally:
             # Deny anything this check left pending (the single-use retry files a new request),
             # so the operator's approvals list is not left holding test calls.
