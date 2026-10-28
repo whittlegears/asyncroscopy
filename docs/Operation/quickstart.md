@@ -38,7 +38,7 @@ uv sync --extra agent --extra ollama
 uv run pytest -q -m "not slow"
 ```
 
-`--depth 1` skips the project history (about 250 MB); leave it out if you want the history.
+`--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, clone to a short path such as `C:\src\asyncroscopy`: some installed DLLs have long names, and a deep folder pushes them past Windows' path limit (see Troubleshooting).
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
 
@@ -93,7 +93,9 @@ If you use SciAgentGUI, this checks that the stack answers the way the GUI expec
 uv run startup_scripts/check_gui_contract.py
 ```
 
-Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working.
+Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
+
+Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
 
 ## 5. Map with an agent
 
@@ -129,6 +131,7 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | :-- | :-- |
 | `ModuleNotFoundError: No module named 'asyncroscopy'` | The environment predates asyncroscopy being installed into it, or you are using a different Python. Run `uv sync --extra agent --extra ollama` again, and start Python, Jupyter or scripts with `uv run` (or the `.venv` interpreter). |
 | `FileNotFoundError` naming `uv` when a launcher starts its servers | uv is not on `PATH`. Open a new terminal, or call uv by its full path as in section 1; the launchers then reuse that path. |
+| Windows: `DLL load failed ... The filename or extension is too long`, or `The 'dask-ml' library is required` although it is installed | The clone is in a deep folder, so DLLs inside `.venv` exceed Windows' path limit (the dask-ml message hides the real import error). Clone to a short path such as `C:\src\asyncroscopy`, or keep the clone and set `UV_PROJECT_ENVIRONMENT=C:\venvs\asyncroscopy` before `uv sync`. |
 | `uv sync` fails to fetch pyTEMlib | It is installed from GitHub (git must be installed and github.com reachable). |
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
 | pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |

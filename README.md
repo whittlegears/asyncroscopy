@@ -12,22 +12,26 @@
 **New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md).** It is the tested path (installing uv, the exact `uv sync` and test commands, Windows fixes) from clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample. In short:
 
 ```bash
-git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git
+git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Windows, clone to a short path such as C:\src
 cd asyncroscopy
 uv sync --extra agent --extra ollama
 uv run pytest -q -m "not slow"
 
-# Digital twin (no hardware required)
+# Digital twin (no hardware required); one terminal each
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
-# Agent MCP endpoint for the twin, in a second terminal (127.0.0.1:8000)
-uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml        # agent endpoint, 127.0.0.1:8000
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml  # operator endpoint, 127.0.0.1:8001
+uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003
+
+# Then check the whole stack
+uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
 ```
 
 On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml`.
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
-After starting the STEM twin stack, `startup_scripts/check_stack.py` confirms every piece talks to the others (see the quickstart). It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
+`check_stack.py` confirms every piece talks to the others; without `--pytemlib` it skips stitching and scoring. It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
 
 ### Agentic control at a glance
 

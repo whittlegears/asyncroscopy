@@ -54,8 +54,8 @@ def prop_path(path) -> str:
 
     try:
         return os.path.relpath(path).replace("\\", "/")
-    except ValueError:  # a different drive on Windows; nothing better to offer
-        return str(path)
+    except ValueError:  # another drive: a cut path would write into the working tree, so stop here
+        raise RuntimeError(f"{path} is on another drive than the working directory; pytest.ini keeps --basetemp inside the repository for this reason") from None
 
 
 # We use DigitalTwin as our simulated microscope for all tests.
