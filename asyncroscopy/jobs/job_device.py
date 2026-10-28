@@ -365,7 +365,7 @@ class JobDevice(Device):
             self._threads[job_id] = thread
             try:
                 thread.start()
-            except RuntimeError:  # no thread to run it: put the reservation back as it was
+            except Exception:  # no thread to run it (RuntimeError, MemoryError): put the reservation back as it was
                 for table in (self._job_index, self._abort, self._threads):
                     table.pop(job_id, None)
                 job.clear()
