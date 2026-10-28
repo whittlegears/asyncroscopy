@@ -1,0 +1,651 @@
+{
+  "model": "qwen3:8b",
+  "n": 10,
+  "started": 1793166696.2493892,
+  "tasks": {
+    "map_square/general": {
+      "passed": 5,
+      "of": 5,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 162.8,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 2e-07,
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "The map is created around the current stage position with a 600 nm square. The map key is `map_ce51486c1ca4_map`. No points of interest were found, and the map is ready for further analysis or exploration.",
+          "infra_error": false
+        },
+        {
+          "seconds": 123.6,
+          "model_calls": 12,
+          "tool_calls": 11,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 2e-07,
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "I mapped a 600 nm square around the current stage position. The map key is `map_60503bbe923b_map`. There are no points of interest yet. The map has 16 tiles and 4 levels of resolution. The stage box is approximately [-4.81e-7 m, 1.51e-7 m, -9.85e-8 m, 5.21e-7 m]. No regions were scored as interesting.",
+          "infra_error": false
+        },
+        {
+          "seconds": 151.6,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "Mapper_results",
+            "Mapper_release",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 2e-07,
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "The map is created around the current stage position, covering a 600 nm square. The map key is `map_6446d55519fa_map`. There are no points of interest identified in this map yet. The map has 16 tiles and is stitched into a zoomable multi-resolution map. The map's stage box is `[-6.715533575312293e-7, -5.319398253122927e-8, 8.088862498539969e-8, 7.078417499853997e-7]` with a pixel size of `3.90625e-10` metres. The mean match confidence is `0.9456254243875983`.",
+          "infra_error": false
+        },
+        {
+          "seconds": 152.5,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 2e-07,
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "The map is created around the current stage position, covering a 600 nm square. The map key is `map_b6e85d75f9a8_map`. There are no points of interest added yet. The map has 16 tiles and 4 levels of resolution. The stage box of the map is approximately from [-8.8e-7 m, -2.68e-7 m] to [3.01e-7 m, 9.16e-7 m]. No regions were found to be particularly interesting.",
+          "infra_error": false
+        },
+        {
+          "seconds": 117.5,
+          "model_calls": 12,
+          "tool_calls": 11,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 2e-07,
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "I mapped a 600 nm square around the current stage position. The map key is `map_1912b5342877_map`. No interesting regions were found or refused.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_with_eds/general": {
+      "passed": 2,
+      "of": 5,
+      "infra_errors": 0,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 292.8,
+          "model_calls": 17,
+          "tool_calls": 16,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "Mapper_job_status",
+            "Mapper_results",
+            "list_pois",
+            "score_map",
+            "score_map",
+            "score_map",
+            "score_map"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": false,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": false,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "The `window_m` parameter in the `score_map` function expects a single float value, not a list. I will correct the call by using a single float value for `window_m`. Let's try again with a single float value.",
+          "infra_error": false
+        },
+        {
+          "seconds": 538.5,
+          "model_calls": 28,
+          "tool_calls": 27,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": false,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "The assembly of the map has repeatedly failed due to an invalid input parameter. The issue seems to be with the `recursive` parameter in the metadata query, which is expecting a boolean but is receiving a string. I will attempt to fix this by ensuring the correct boolean value is used. Let's try again with the correct parameter.",
+          "infra_error": false
+        },
+        {
+          "seconds": 186.5,
+          "model_calls": 11,
+          "tool_calls": 10,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": false,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "I cannot find the job with ID \"3cb7aba525c5\". Please check the job ID and try again.",
+          "infra_error": false
+        },
+        {
+          "seconds": 203.2,
+          "model_calls": 13,
+          "tool_calls": 12,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_results"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "I have completed the mapping and stitching process. The resulting map is available with the key `map_882441852bbc_map`. The keys of the data produced include the map and the individual EDS spectra. No steps were refused or left undone.",
+          "infra_error": false
+        },
+        {
+          "seconds": 269.7,
+          "model_calls": 15,
+          "tool_calls": 14,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "I have completed the mapping task. The results include a stitched map with the key `map_4d2c0e4a7d05_map`, and the run file `map_4d2c0e4a7d05.h5`. The map has 4 levels of detail, a canvas size of 1989x1977 pixels, and a pixel size of 3.125e-10 metres. There are no points of interest identified yet. No tasks were refused or left undone.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_and_explore/general": {
+      "passed": 0,
+      "of": 5,
+      "infra_errors": 0,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 362.6,
+          "model_calls": 26,
+          "tool_calls": 25,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_job_status"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": false,
+            "box_matches_request": true,
+            "eds_as_asked": false,
+            "explored_as_asked": false,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "The Mapper job with ID \"4feb84884515\" is complete. The results are available with the run key \"map_f53975057c2c.h5\". The spectra keys are listed in the summary. No further action is needed.",
+          "infra_error": false
+        },
+        {
+          "seconds": 247.9,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": false,
+            "explored_as_asked": false,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "I have completed the mapping and stitching process. The resulting map is available with the key `map_f9b7356e09e8_map`. No errors were encountered during the process.",
+          "infra_error": false
+        },
+        {
+          "seconds": 298.9,
+          "model_calls": 15,
+          "tool_calls": 14,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "Mapper_job_status",
+            "analysis_job_status",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": false,
+            "explored_as_asked": false,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "I have completed the mapping task. The results include a stitched map with the key `map_a3a0e9026c41_map`, and the run data is stored under `map_a3a0e9026c41.h5`. The map has 4 levels of detail, a canvas size of 1932x1979 pixels, and a pixel size of 3.125e-10 metres. There are no points of interest identified yet. No tasks were refused or left undone.",
+          "infra_error": false
+        },
+        {
+          "seconds": 276.1,
+          "model_calls": 16,
+          "tool_calls": 15,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "Mapper_job_status",
+            "Mapper_results",
+            "get_data_from_key",
+            "get_data_from_key",
+            "get_data_from_key",
+            "get_data_from_key"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": false,
+            "box_matches_request": true,
+            "eds_as_asked": false,
+            "explored_as_asked": false,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "I cannot resolve the data key 'spectrum_eds_20261028T024406918891.h5'. Please check if the key is correct or if there is an issue with the Tiled server. If the key is correct, try again later.",
+          "infra_error": false
+        },
+        {
+          "seconds": 523.5,
+          "ok": false,
+          "error": "GraphRecursionError: Recursion limit of 60 reached without hitting a stop condition. You can increase the limit by setting the `recursion_limit` config key.\nFor troubleshooting, visit: https://docs.langchain.com/oss/python/langgraph/errors/GRAPH_RECURSION_LIMIT",
+          "checks": {},
+          "infra_error": false
+        }
+      ]
+    }
+  },
+  "out_of_box_moves": 0
+}

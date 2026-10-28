@@ -19,9 +19,40 @@ Each row links a WG2 Year-1 item (Project Execution Plan v7a §2.1.4.2, the mile
 
 Laptop with a 6 GB GTX 1660 Ti and 16 GB RAM, Ollama models, twin stack as in `docs/Operation/quickstart.md`.
 
-Valid tool calls (20 instrument requests, correct tool and schema-valid arguments): see `benchmarks/results/tool_json.json`.
+Laptop with a 6 GB GTX 1660 Ti and 16 GB RAM, Ollama, twin stack as in `docs/Operation/quickstart.md`, 2026-10-27/28.
 
-Seeded mapping trials (10 per task for the `mapping` graph, 5 for the `general` agent): see `benchmarks/results/mapping_trials.json`.
+**Valid tool calls**: 20 instrument requests, scored on the right tool with schema-valid arguments (`benchmarks/results/tool_json.json`).
+
+| Model | Valid | Time for 20 |
+| :-- | --: | --: |
+| qwen3:8b (default) | 95 % | 218 s |
+| qwen3:4b | 100 % | 301 s |
+
+**Mapping trials** (`benchmarks/run_mapping_trials.py`). A trial passes when:
+
+- the map completes with a stitched map key;
+- the stage box covers the requested area without being far larger;
+- EDS is used exactly when asked;
+- interesting regions are scored exactly when asked.
+
+| Task | `mapping` graph (model plans, graph runs the workflow) | `general` agent (model makes every call, using the mapping skill) |
+| :-- | --: | --: |
+| Map a 600 nm square | 9/10 | 5/5 |
+| ... with an EDS spectrum per tile | 10/10 | 2/5 |
+| ... and find the 3 most interesting regions | 10/10 | 0/5 |
+| Stage moves outside a plan box (all trials) | 0 | 0 |
+
+The `general` column is the last of four rounds. Overall it went 0/15, 1/15, 6/14 (one model-server crash not counted), then 7/15. These changes moved it:
+
+- The Mapper accepts a plan's size and does the box arithmetic (`size_m`).
+- Every refused plan comes back with a valid example.
+- `wait_for_job` replaces dozens of status polls.
+- The prompt tells the agent to act instead of announcing.
+- The skill is explicit about stitching and scoring.
+
+What is left is an 8B model following a long procedure: it stops after collecting data, skips scoring, or adds EDS nobody asked for. Use the `mapping` graph when the workflow is known; the general agent is for open-ended requests. Raw rows, including the tools called and skills loaded per trial: `benchmarks/results/mapping_trials_*.json`.
+
+**Live checks**, each run on the stack after every change: `startup_scripts/check_stack.py` passes 20/20 (map, stitch, score, POIs, approval hold/approve/single-use, a held map start showing its plan) and `startup_scripts/check_gui_contract.py` passes 12/12 (SciAgentGUI's approvals and map/spectrum reads).
 
 ## Not claimed
 
