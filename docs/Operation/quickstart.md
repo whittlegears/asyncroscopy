@@ -65,6 +65,14 @@ uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
 
 It runs a small map, stitches it, scores it, marks a point, and exercises the approval mode. Every line should say PASS. A FAIL line says what failed and why.
 
+If you use SciAgentGUI, this checks that the stack answers the way the GUI expects (approvals, maps and spectra from Tiled):
+
+```bash
+uv run startup_scripts/check_gui_contract.py
+```
+
+Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working.
+
 ## 5. Map with an agent
 
 ```bash
