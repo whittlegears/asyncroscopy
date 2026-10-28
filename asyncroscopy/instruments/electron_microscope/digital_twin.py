@@ -136,6 +136,11 @@ class DigitalTwin(AtomisticDigitalTwin):
             ),
             self._rng,
         )
+        if len(self._sample) < self._sample.requested_count:
+            self.warn_stream(
+                f"Placed {len(self._sample)} of {self._sample.requested_count} particles: the rest do not fit in "
+                f"{float(self.sample_size_xy):.2e} m. Increase sample_size_xy or reduce the count or radius."
+            )
         self._stage = StageModel(
             StageParams(
                 bias_m=(float(self.stage_bias_x), float(self.stage_bias_y)),
