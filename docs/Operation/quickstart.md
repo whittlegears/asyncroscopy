@@ -53,7 +53,7 @@ $py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\
 & $uv sync --python $py --extra agent --extra ollama   # $uv from section 1; or plain uv if it is on PATH
 ```
 
-If no file matches, install that Python first with `uv python install 3.12`. (`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.) `uv python install 3.12 --reinstall` followed by `uv sync --python 3.12 ...` can also repair the link, but it fails when a different version's link is the broken one.
+Later `uv run` commands do not need `--python`. If no file matches, install that Python first with `uv python install 3.12`. (`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.) `uv python install 3.12 --reinstall` followed by `uv sync --python 3.12 ...` can also repair the link, but it fails when a different version's link is the broken one.
 
 ## 3. Start the stack
 
@@ -82,7 +82,7 @@ if (-not $uv) {
 }
 ```
 
-Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers; check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
+Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers (in the same PowerShell window; from another one, see Troubleshooting); check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".

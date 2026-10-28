@@ -16,6 +16,7 @@ git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Window
 cd asyncroscopy
 uv sync --extra agent --extra ollama   # Windows: uv not found, or "Missing expected target directory"? see quickstart sections 1-2
 uv run pytest -q -m "not slow"
+# PowerShell without uv on PATH: write & $uv for uv (quickstart section 1)
 
 # Digital twin (no hardware required); one terminal each
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
