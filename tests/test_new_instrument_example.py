@@ -61,6 +61,12 @@ def test_a_bad_plan_is_refused_at_reserve(grid):
     assert "Example plan" in error["message"]  # a model can copy the shape and retry
 
 
+def test_a_null_field_is_a_refused_plan_not_a_python_error(grid):
+    proxy, _ = grid
+    error = call(proxy, "reserve", plan={**PLAN, "pitch_m": None})["error"]  # small models send nulls
+    assert error["code"] == "plan_rejected" and "Example plan" in error["message"]
+
+
 def test_a_plan_beyond_the_instruments_limits_is_refused_at_reserve(grid):
     proxy, _ = grid
     too_far = call(proxy, "reserve", plan={**PLAN, "pitch_m": 0.01})["error"]

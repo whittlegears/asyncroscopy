@@ -37,15 +37,15 @@ from fnmatch import fnmatchcase
 # A safe stop is recognised by an allow-list (anything else is high, like any unknown name):
 # exactly one stop verb, and every other word one of the objects that verb may take.
 STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
-RETREAT_VERBS = frozenset({"retract", "withdraw"})  # move away from the sample; take hardware objects only
+RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample; take hardware objects only
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
-    "tip", "probe", "stage", "all", "x", "y", "z", "now",
+    "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
 })
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
 # (a de-energised shutter may open; close it with close_shutter).
-OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "laser", "gun", "filament", "hv"})
-MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel"})
+OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv"})
+MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
 # "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
 MODIFIERS = frozenset({"emergency"})

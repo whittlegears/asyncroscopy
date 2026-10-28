@@ -42,7 +42,7 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
-from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_stem_device, operator_only, risk_of
+from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -53,6 +53,11 @@ CALLER_HEADER = "x-asyncroscopy-caller"
 # blocks (e.g. SciAgentGUI) display the capture without any extra tool call.
 # Image commands are previewed as a grayscale rendering of the first 2D dataset;
 # spectrum commands as a plot of the first 1D dataset.
+def _without_param_name(desc: str) -> str:
+    """A parameter's description without its ":param name:" prefix, which only names it."""
+    return re.sub(r"^(?::param|@param)\s+\w+:\s*", "", desc.strip())
+
+
 IMAGE_PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image"}
 SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 
@@ -156,6 +161,7 @@ class MCPServer:
         self._stem_prefixes: set[str] = set()
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
+        self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -559,6 +565,7 @@ class MCPServer:
         envelope = (tool_prefix or dev_class) in self._envelope_prefixes
         stem = (tool_prefix or dev_class) in self._stem_prefixes
         risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
+        self.tool_risks[unique_name] = risk
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -600,7 +607,7 @@ class MCPServer:
         if in_type != CmdArgType.DevVoid:
             doc_lines.append(f"Input Type: {in_type.name}")
         if in_desc and not _placeholder_doc(in_desc):
-            doc_lines.append(f"Input Description: {in_desc}")
+            doc_lines.append(f"Input Description: {_without_param_name(in_desc)}")
         if out_type != CmdArgType.DevVoid:
             doc_lines.append(f"Output Type: {out_type.name}")
         out_desc = cmd_info.out_type_desc
@@ -608,7 +615,7 @@ class MCPServer:
             # Lead with what the command is for (once): models weigh the first line most when choosing a tool.
             doc_lines.insert(0, out_desc)
         job_kind = self._job_kinds.get(tool_prefix or dev_class)
-        if envelope and job_kind:
+        if envelope and job_kind and command_name.lower() in ENVELOPE_VERBS:
             doc_lines.insert(0, f"{tool_prefix or dev_class} job: {job_kind}.")
         plan_example = self._plan_examples.get(tool_prefix or dev_class)
         if envelope and command_name == "reserve" and plan_example:
@@ -629,9 +636,7 @@ class MCPServer:
             "uninitialized",
         ):
             # Sanitize description
-            clean_desc = in_desc.replace("\n", " ").strip()
-            # ":param name:" only names the parameter; the model should see just the description.
-            clean_desc = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", clean_desc)
+            clean_desc = _without_param_name(in_desc.replace("\n", " "))
             arg_type = Annotated[py_type, Field(description=clean_desc)]
         else:
             clean_desc = ""
@@ -878,6 +883,7 @@ class MCPServer:
         self._stem_prefixes: set[str] = set()
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
+        self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
         for device_name, dev, dev_class in opened:
             prefix = dev_class
             if per_class[dev_class] > 1:
