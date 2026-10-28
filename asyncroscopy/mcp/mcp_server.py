@@ -42,7 +42,7 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
-from asyncroscopy.safety.policy import is_envelope_device, is_stem_device, operator_only, risk_of
+from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_stem_device, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -143,7 +143,7 @@ class MCPServer:
         self.tool_log = ToolCallLog(tool_log_path) if tool_log_path else None
         self.endpoint_role = endpoint_role
         self.approvals_device_address = approvals_device_address or None
-        self.risk_overrides = dict(risk_overrides or {})
+        self.risk_overrides = check_overrides(risk_overrides)
         self.trace = TraceWriter(trace_path, source="mcp") if trace_path else None
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
@@ -753,7 +753,7 @@ class MCPServer:
         if self.endpoint_role == "operator":
             # The operator endpoint is the person at the GUI; nothing they do is held.
             return {"mode": None, "approved_by": "operator"}
-        if self.approvals_device_address is None or risk != "high":
+        if self.approvals_device_address is None or risk == "low":  # anything not plainly low is gated
             return {"mode": None, "approved_by": None}
         try:
             approvals = self._approvals()
@@ -824,7 +824,7 @@ class MCPServer:
                     f"{job_id!r} is not a {device} job. Jobs started by assemble_map or score_map run on the analysis "
                     "server: wait for them with analysis_job_status and wait_s=25."
                 )
-            if "error" in status or status.get("state") not in {"reserved", "queued", "running", "aborting"} or time.monotonic() >= deadline:
+            if "error" in status or status.get("state") not in {"queued", "running", "aborting"} or time.monotonic() >= deadline:
                 return status
             time.sleep(1.0)
 

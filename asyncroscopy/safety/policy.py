@@ -42,6 +42,9 @@ STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "now",
 })
+# What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
+# (a de-energised shutter may open; close it with close_shutter).
+OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "laser", "gun", "filament", "hv"})
 MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
 # "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
@@ -116,15 +119,31 @@ def is_safe_stop(command: str) -> bool:
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
     # A motion is stopped only when it follows the verb: "abort_approach" stops, "approach_stop" approaches.
+    if verbs[0] == "off":
+        return before <= OFF_OBJECTS
     allowed_after = STOP_OBJECTS | (MOTION_OBJECTS if verbs[0] in STOP_VERBS else frozenset())
     return before <= STOP_OBJECTS and after <= allowed_after
+
+
+def check_overrides(overrides: dict[str, str] | None) -> dict[str, str]:
+    """A deployment's risk patterns with their levels lower-cased; any level but low or high is refused.
+
+    A typo such as "Hgih" must not quietly make a command unheld.
+    """
+    checked = {}
+    for pattern, level in (overrides or {}).items():
+        normalised = str(level).strip().lower()
+        if normalised not in ("low", "high"):
+            raise ValueError(f"risk level for {pattern!r} must be 'low' or 'high', got {level!r}")
+        checked[pattern] = normalised
+    return checked
 
 
 def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False, stem: bool = False) -> str:
     """"low" or "high" for one command. ``envelope``: the device implements the job envelope;
     ``stem``: it acquires scanned images (see ``is_stem_device``)."""
     key = _key(dev_class, command)
-    for pattern, level in (overrides or {}).items():
+    for pattern, level in check_overrides(overrides).items():
         if fnmatchcase(key, pattern.lower()):
             return level
     name = command.lower()

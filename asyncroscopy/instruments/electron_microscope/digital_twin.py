@@ -537,7 +537,10 @@ class DigitalTwin(AtomisticDigitalTwin):
         half = self._fov / ANGSTROM / 2
         metadata["stage_position"] = self._stage.reported.tolist()
         metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
-        metadata["particle_count"] = len(self._sample)
+        # The seed regenerates the sample and the count is part of the answer: export_ground_truth
+        # (operator only) has both; an agent must find particles by imaging.
+        metadata.pop("sample_seed", None)
+        metadata.pop("particle_count", None)
         return metadata
 
     def _get_parameters(self) -> str:
