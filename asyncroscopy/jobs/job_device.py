@@ -147,7 +147,7 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     # Envelope verbs
     # ------------------------------------------------------------------
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan follows the job type, e.g. map_plan.schema.json.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan follows the job type, e.g. map_plan.schema.json.', doc_out="Checks a plan for this instrument's acquisition job (on Mapper: acquiring a map) and returns reservation_id with a time and dose estimate.")
     def reserve(self, request: str) -> str:
         """Validate a plan, hold the device for it, and return the resolved plan with a time and dose estimate."""
         return self._guard(self._reserve, request)
@@ -192,7 +192,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts the instrument acquisition job (on Mapper: the map acquisition) and returns job_id at once.")
     def start(self, request: str) -> str:
         """Start a reserved job in the background and return its job id at once. Starting an aborted or failed job resumes it."""
         return self._guard(self._start, request)
@@ -265,7 +265,7 @@ class JobDevice(Device):
             self._save(job)
         self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"))
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of the instrument acquisition job (on Mapper: the map acquisition, not stitching): state and tiles done.")
     def job_status(self, request: str) -> str:
         """Progress of a job: state, steps done of total, last error."""
         return self._guard(self._status, request)
@@ -283,7 +283,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops the instrument acquisition job after the current step and blanks the beam. Always allowed.")
     def abort(self, request: str) -> str:
         """Stop a running job after the current step and put the instrument in a safe state. Always allowed."""
         return self._guard(self._abort_job, request)
@@ -303,7 +303,7 @@ class JobDevice(Device):
             thread.join(timeout=25.0)
         return self._status(json.dumps({"job_id": job_id or job["reservation_id"]}))
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what the instrument acquisition job produced (on Mapper: result_keys.run, the map run) and a summary.")
     def results(self, request: str) -> str:
         """Tiled keys of everything the job produced so far, plus a summary."""
         return self._guard(self._results, request)
@@ -322,7 +322,7 @@ class JobDevice(Device):
     def summary(self, job: dict) -> dict:
         return {}
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.', doc_out="Frees the instrument for the next reservation.")
     def release(self, request: str) -> str:
         """Free the device for the next reservation. A running job must be aborted first."""
         return self._guard(self._release, request)

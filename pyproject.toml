@@ -69,6 +69,12 @@ ollama = [
     "langchain_ollama"
 ]
 
+# LangGraph Studio (`uv run langgraph dev`) and other developer tools:
+#     uv sync --extra agent --extra ollama --extra dev
+dev = [
+    "langgraph-cli[inmem]",
+]
+
 # Install SAM2 segmentation support with:
 #     uv sync --extra segment
 segment = [

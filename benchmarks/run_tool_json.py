@@ -20,9 +20,15 @@ import time
 from pathlib import Path
 
 import jsonschema
-from langchain_core.messages import HumanMessage, SystemMessage
+import sys
 
-from asyncroscopy.agents.config import AgentConfig
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from langchain_core.messages import HumanMessage, SystemMessage  # noqa: E402
+
+from asyncroscopy.agents.config import AgentConfig  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SYSTEM = (

@@ -26,10 +26,16 @@ import re
 import time
 from pathlib import Path
 
-from langchain_core.messages import HumanMessage
+import sys
 
-from asyncroscopy.agents.config import AgentConfig
-from asyncroscopy.agents.graphs.mapping import MappingGraph
+PROJECT_DIR = Path(__file__).resolve().parents[1]
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from langchain_core.messages import HumanMessage  # noqa: E402
+
+from asyncroscopy.agents.config import AgentConfig  # noqa: E402
+from asyncroscopy.agents.graphs.mapping import MappingGraph  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 SIDE_M = 6e-7

@@ -11,7 +11,7 @@ agent MCP server share it:
 =========================== ==================================== ==========================
 Variable                    Meaning                              Default
 =========================== ==================================== ==========================
-ASYNCROSCOPY_MODEL          Ollama tag or provider model name    qwen3:4b
+ASYNCROSCOPY_MODEL          Ollama tag or provider model name    qwen3:8b
 ASYNCROSCOPY_MODEL_PROVIDER ollama, or any init_chat_model one   ollama
 ASYNCROSCOPY_NUM_CTX        Context window for Ollama            8192
 ASYNCROSCOPY_MCP_URL        asyncroscopy agent MCP endpoint      http://127.0.0.1:8000/mcp
