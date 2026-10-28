@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/trace_event.schema.json",
+  "title": "Instrument Trace event",
+  "description": "One action taken on an instrument, by anyone (agent, GUI, script, job), with enough context to rebuild the run and to learn rewards from it. Written as one JSON object per line.",
+  "schema_version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "ts", "source", "action", "ok"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "ts": {"type": "number", "description": "Wall-clock Unix time when the action started."},
+    "iso": {"type": "string"},
+    "source": {"enum": ["mcp", "job", "approvals", "script"]},
+    "action": {"type": "string", "description": "Tool or command name, e.g. Mapper_start or move_stage."},
+    "arguments": {},
+    "ok": {"type": "boolean"},
+    "duration_s": {"type": "number"},
+    "error": {"type": ["string", "null"]},
+    "result": {"description": "Short result preview; large data are referenced by result_key."},
+    "result_key": {"type": ["string", "null"]},
+    "caller": {"type": ["string", "null"]},
+    "mode": {"enum": ["auto", "approve", null]},
+    "approved_by": {"type": ["string", "null"], "description": "'auto' when the mode let it through, the operator's name when approved, null if not gated."},
+    "request_id": {"type": ["string", "null"]},
+    "grant_id": {"type": ["string", "null"]},
+    "run_id": {"type": ["string", "null"]},
+    "plan_id": {"type": ["string", "null"]},
+    "job_id": {"type": ["string", "null"]},
+    "step": {"type": ["integer", "null"]},
+    "stage_reported_m": {"type": ["array", "null"], "items": {"type": "number"}}
+  }
+}

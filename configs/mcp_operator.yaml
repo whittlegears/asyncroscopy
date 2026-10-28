@@ -1,0 +1,46 @@
+# Operator MCP endpoint for SciAgentGUI (approvals, mode switch, ground truth).
+#
+# Start the Tango/device stack first, then run this on the GUI machine:
+#
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
+#
+# If MCP runs on a separate computer, set tango.host to the Tango database
+# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+
+tango:
+  host: localhost
+  port: 9094
+
+mcp:
+  name: Operator_MCP
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8001
+  data_device_address: asyncroscopy/data/default
+  quiet: true
+  blocked_classes:
+    - DataBase
+    - DServer
+  blocked_functions:
+    "*":
+      - Init
+      - Kill
+      - RestartServer
+  # Optional Tango command allowlist. Leave empty to include all non-blocked
+  # commands. Entries may be "command" or "Class.command".
+  # list_devices and get_data_from_key are always included.
+  include_only_functions: []
+  # Optional JSONL log of tool calls. Empty disables it.
+  tool_log: ""
+  # Operator endpoint: bound to 127.0.0.1 so only this machine (the GUI) reaches
+  # it. It offers Approvals.approve/deny/set_mode and export_ground_truth.
+  endpoint_role: operator
+  # Approval mode lives in the Approvals device; switch it from the GUI.
+  # auto (default) runs every call; approve holds high-risk agent calls.
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    # Optional {"Class.command" glob: low|high} checked before the defaults in
+    # asyncroscopy/safety/policy.py. Unknown commands are high risk.
+    risk: {}
+  # Instrument Trace: one JSON line per tool call. Empty disables it.
+  trace: outputs/trace/mcp_operator.jsonl

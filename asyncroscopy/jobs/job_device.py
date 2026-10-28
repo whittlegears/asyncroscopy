@@ -1,0 +1,340 @@
+"""Tango base class for jobs that outlive a single command.
+
+A Tango command times out after seconds; a map takes hours. ``JobDevice``
+splits a job into the envelope verbs: ``reserve`` checks a plan and returns an
+estimate, ``start`` launches a worker thread and returns at once, ``status``
+reports progress, ``abort`` stops within one step, ``results`` returns what was
+produced and ``release`` frees the device. State is saved after every step,
+so a restarted device resumes a job and skips the steps already done.
+
+Subclasses implement ``resolve_plan`` and ``run_step`` (and optionally
+``on_start``, ``on_stop`` and ``on_finish``). One reservation is active per
+device at a time: the device stands for one instrument.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+import traceback
+import uuid
+from pathlib import Path
+from typing import Any
+
+import jsonschema
+from tango import DevState
+from tango.server import Device, command, device_property
+
+from asyncroscopy.contracts import ENVELOPE_VERSION
+from asyncroscopy.mcp.tool_log import TraceWriter
+
+ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "aborting"}
+RESUMABLE_STATES = {"reserved", "failed", "aborted"}
+
+
+class JobError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+class JobDevice(Device):
+    state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
+    trace_path = device_property(dtype=str, default_value="outputs/trace/jobs.jsonl", doc="Instrument Trace JSONL file.")
+
+    # ------------------------------------------------------------------
+    # Subclass hooks
+    # ------------------------------------------------------------------
+    def resolve_plan(self, plan: dict) -> dict:
+        """Validate and expand a plan. Return {"steps": [...], "estimate": {...}, ...}; raise ValueError to refuse."""
+        raise NotImplementedError
+
+    def run_step(self, job: dict, index: int) -> dict:
+        """Do step ``index``; return a JSON-safe record of what it produced."""
+        raise NotImplementedError
+
+    def on_start(self, job: dict) -> None:
+        """Called in the worker before the first step (including on resume)."""
+
+    def on_stop(self, job: dict, reason: str) -> None:
+        """Called in the worker after an abort or a failure; put the instrument in a safe state here."""
+
+    def on_finish(self, job: dict) -> dict:
+        """Called after the last step; return result keys to merge into ``results``."""
+        return {}
+
+    # ------------------------------------------------------------------
+    # Tango plumbing
+    # ------------------------------------------------------------------
+    def init_device(self) -> None:
+        Device.init_device(self)
+        self._lock = threading.RLock()
+        self._jobs: dict[str, dict] = {}
+        self._job_index: dict[str, str] = {}
+        self._threads: dict[str, threading.Thread] = {}
+        self._abort: dict[str, threading.Event] = {}
+        self._name = self.get_name()
+        self._state_dir = Path(self.state_directory)
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._trace = TraceWriter(self.trace_path, source="job")
+        self._reload()
+        self.set_state(DevState.ON)
+
+    def _reload(self) -> None:
+        """Pick up jobs from a previous run of this device; interrupted ones become resumable."""
+        for path in sorted(self._state_dir.glob(f"{self._name.replace('/', '_')}__*.json")):
+            try:
+                job = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if job.get("state") in {"queued", "running", "aborting", "paused_awaiting_approval"}:
+                job["state"] = "failed"
+                job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
+            self._jobs[job["reservation_id"]] = job
+            for job_id in job.get("job_ids", []):
+                self._job_index[job_id] = job["reservation_id"]
+
+    def _path(self, reservation_id: str) -> Path:
+        return self._state_dir / f"{self._name.replace('/', '_')}__{reservation_id}.json"
+
+    def _save(self, job: dict) -> None:
+        tmp = self._path(job["reservation_id"]).with_suffix(".tmp")
+        tmp.write_text(json.dumps(job, default=str), encoding="utf-8")
+        tmp.replace(self._path(job["reservation_id"]))
+
+    @staticmethod
+    def _reply(payload: dict) -> str:
+        return json.dumps({"schema_version": ENVELOPE_VERSION, **payload}, default=str)
+
+    @staticmethod
+    def _error(code: str, message: str) -> str:
+        return json.dumps({"schema_version": ENVELOPE_VERSION, "error": {"code": code, "message": message}})
+
+    def _parse(self, text: str, required: str) -> dict:
+        try:
+            request = json.loads(text) if text.strip().startswith("{") else {required: text.strip()}
+        except json.JSONDecodeError as exc:
+            raise JobError("bad_request", f"expected a JSON object: {exc}") from exc
+        if required not in request:
+            raise JobError("bad_request", f"missing '{required}'")
+        return request
+
+    def _active(self) -> dict | None:
+        for job in self._jobs.values():
+            if job["state"] in ACTIVE_STATES:
+                return job
+        return None
+
+    def _by_job_id(self, job_id: str) -> dict:
+        reservation = self._job_index.get(job_id)
+        if reservation is None:
+            # Accept a reservation id too: callers often only kept that.
+            if job_id in self._jobs:
+                return self._jobs[job_id]
+            raise JobError("unknown_job", f"no job {job_id!r}")
+        return self._jobs[reservation]
+
+    def _guard(self, fn, *args) -> str:
+        try:
+            return fn(*args)
+        except JobError as exc:
+            return self._error(exc.code, str(exc))
+        except (ValueError, jsonschema.ValidationError) as exc:
+            message = exc.message if isinstance(exc, jsonschema.ValidationError) else str(exc)
+            return self._error("plan_rejected", message)
+
+    # ------------------------------------------------------------------
+    # Envelope verbs
+    # ------------------------------------------------------------------
+    @command(dtype_in=str, dtype_out=str, doc_in='{"plan": {...}, "caller": "..."}: check a plan and hold the instrument for it.')
+    def reserve(self, request: str) -> str:
+        """Validate a plan, hold the device for it, and return the resolved plan with a time and dose estimate."""
+        return self._guard(self._reserve, request)
+
+    def _reserve(self, request: str) -> str:
+        body = self._parse(request, "plan")
+        if not isinstance(body["plan"], dict):
+            raise JobError("bad_request", "'plan' must be an object")
+        with self._lock:
+            active = self._active()
+            if active is not None:
+                raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}; release or abort it first")
+            resolved = self.resolve_plan(body["plan"])
+            reservation_id = uuid.uuid4().hex[:12]
+            job = {
+                "reservation_id": reservation_id,
+                "plan_id": uuid.uuid4().hex[:12],
+                "device": self._name,
+                "plan": body["plan"],
+                "resolved_plan": {k: v for k, v in resolved.items() if k != "steps"},
+                "steps": resolved["steps"],
+                "estimate": resolved.get("estimate", {"steps": len(resolved["steps"])}),
+                "state": "reserved",
+                "done": [],
+                "step_results": {},
+                "result_keys": {},
+                "job_ids": [],
+                "caller": body.get("caller"),
+                "grant_id": None,
+                "last_error": None,
+                "created": time.time(),
+            }
+            self._jobs[reservation_id] = job
+            self._save(job)
+        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], arguments=body["plan"])
+        return self._reply(
+            {
+                "reservation_id": reservation_id,
+                "plan_id": job["plan_id"],
+                "resolved_plan": job["resolved_plan"],
+                "estimate": job["estimate"],
+            }
+        )
+
+    @command(dtype_in=str, dtype_out=str, doc_in='{"reservation_id": "...", "grant_id": null}: start (or resume) a reserved job.')
+    def start(self, request: str) -> str:
+        """Start a reserved job in the background and return its job id at once. Starting an aborted or failed job resumes it."""
+        return self._guard(self._start, request)
+
+    def _start(self, request: str) -> str:
+        body = self._parse(request, "reservation_id")
+        with self._lock:
+            job = self._jobs.get(body["reservation_id"])
+            if job is None:
+                raise JobError("unknown_reservation", f"no reservation {body['reservation_id']!r}")
+            if job["state"] not in RESUMABLE_STATES:
+                raise JobError("bad_state", f"reservation is {job['state']}")
+            active = self._active()
+            if active is not None and active is not job:
+                raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}")
+            job_id = uuid.uuid4().hex[:12]
+            job["job_ids"].append(job_id)
+            job["job_id"] = job_id
+            job["grant_id"] = body.get("grant_id") or job.get("grant_id")
+            job["state"] = "running"
+            job["last_error"] = None
+            self._job_index[job_id] = job["reservation_id"]
+            self._abort[job_id] = threading.Event()
+            self._save(job)
+            thread = threading.Thread(target=self._worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
+            self._threads[job_id] = thread
+            thread.start()
+        return self._reply({"job_id": job_id, "reservation_id": job["reservation_id"], "state": "running"})
+
+    def _worker(self, job: dict, job_id: str) -> None:
+        abort = self._abort[job_id]
+        cls = type(self).__name__
+        try:
+            self.on_start(job)
+            for index in range(len(job["steps"])):
+                if index in job["done"]:
+                    continue
+                if abort.is_set():
+                    break
+                started = time.time()
+                record = self.run_step(job, index)
+                with self._lock:
+                    job["done"].append(index)
+                    job["step_results"][str(index)] = record
+                    self._save(job)
+                self._trace.record(
+                    f"{cls}.step", True, started, duration_s=time.time() - started, job_id=job_id, plan_id=job["plan_id"],
+                    run_id=job["reservation_id"], step=index, grant_id=job.get("grant_id"), caller=job.get("caller"),
+                    result=record, result_key=record.get("key") if isinstance(record, dict) else None,
+                    stage_reported_m=record.get("stage_reported_m") if isinstance(record, dict) else None,
+                )
+            if abort.is_set():
+                self.on_stop(job, "aborted")
+                state = "aborted"
+            else:
+                with self._lock:
+                    job["result_keys"].update(self.on_finish(job) or {})
+                state = "done"
+        except Exception as exc:  # any failure leaves the instrument safe and the job resumable
+            job["last_error"] = {"code": "step_failed", "message": f"{type(exc).__name__}: {exc}"}
+            self._trace.record(f"{cls}.step", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=job["last_error"]["message"], result=traceback.format_exc(limit=3))
+            try:
+                self.on_stop(job, "failed")
+            except Exception as stop_exc:  # report, but never mask the original failure
+                job["last_error"]["message"] += f"; on_stop also failed: {stop_exc}"
+            state = "failed"
+        with self._lock:
+            job["state"] = state
+            job["finished"] = time.time()
+            self._save(job)
+        self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"))
+
+    @command(dtype_in=str, dtype_out=str, doc_in='{"job_id": "..."}')
+    def job_status(self, request: str) -> str:
+        """Progress of a job: state, steps done of total, last error."""
+        return self._guard(self._status, request)
+
+    def _status(self, request: str) -> str:
+        job = self._by_job_id(self._parse(request, "job_id")["job_id"])
+        return self._reply(
+            {
+                "job_id": job.get("job_id", job["reservation_id"]),
+                "reservation_id": job["reservation_id"],
+                "state": job["state"],
+                "progress": {"done": len(job["done"]), "total": len(job["steps"])},
+                "last_error": job["last_error"],
+                "pending_request_id": None,
+            }
+        )
+
+    @command(dtype_in=str, dtype_out=str, doc_in='{"job_id": "..."}')
+    def abort(self, request: str) -> str:
+        """Stop a running job after the current step and put the instrument in a safe state. Always allowed."""
+        return self._guard(self._abort_job, request)
+
+    def _abort_job(self, request: str) -> str:
+        job = self._by_job_id(self._parse(request, "job_id")["job_id"])
+        job_id = job.get("job_id")
+        with self._lock:
+            if job["state"] == "running" and job_id in self._abort:
+                job["state"] = "aborting"
+                self._abort[job_id].set()
+            elif job["state"] == "reserved":
+                job["state"] = "aborted"
+            self._save(job)
+        thread = self._threads.get(job_id)
+        if thread is not None:
+            thread.join(timeout=25.0)
+        return self._status(json.dumps({"job_id": job_id or job["reservation_id"]}))
+
+    @command(dtype_in=str, dtype_out=str, doc_in='{"job_id": "..."}')
+    def results(self, request: str) -> str:
+        """Tiled keys of everything the job produced so far, plus a summary."""
+        return self._guard(self._results, request)
+
+    def _results(self, request: str) -> str:
+        job = self._by_job_id(self._parse(request, "job_id")["job_id"])
+        return self._reply(
+            {
+                "job_id": job.get("job_id", job["reservation_id"]),
+                "state": job["state"],
+                "result_keys": job["result_keys"],
+                "summary": {"steps_done": len(job["done"]), "steps_total": len(job["steps"]), **self.summary(job)},
+            }
+        )
+
+    def summary(self, job: dict) -> dict:
+        return {}
+
+    @command(dtype_in=str, dtype_out=str, doc_in='{"reservation_id": "..."}')
+    def release(self, request: str) -> str:
+        """Free the device for the next reservation. A running job must be aborted first."""
+        return self._guard(self._release, request)
+
+    def _release(self, request: str) -> str:
+        reservation_id = self._parse(request, "reservation_id")["reservation_id"]
+        with self._lock:
+            job = self._jobs.get(reservation_id)
+            if job is None:
+                raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
+            if job["state"] in {"running", "aborting", "queued"}:
+                raise JobError("bad_state", f"job is {job['state']}; abort it first")
+            job["state"] = "released"
+            self._save(job)
+        return self._reply({"reservation_id": reservation_id, "state": "released"})

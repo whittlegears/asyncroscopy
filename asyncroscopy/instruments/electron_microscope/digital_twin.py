@@ -13,6 +13,7 @@ literature magnitudes. See docs/digital_twin.md.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import numpy as np
 import tango
@@ -187,6 +188,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             self._sample.bounds,
             margin_m=(x_max - x_min) * 0.25,
         )
+        self._blanked = False
         self._last_written_stage: np.ndarray | None = None
         self._stage_position = self._stage.true.copy()
         # The atom-renderer state of the base class is unused here.
@@ -204,6 +206,16 @@ class DigitalTwin(AtomisticDigitalTwin):
 
     def _update_view_cache(self, force: bool = False) -> None:
         """The particle renderer works in sample coordinates; there is no rotated atom copy to refresh."""
+
+    def _blank_beam(self) -> None:
+        """A blanked beam gives no signal and no dose, as on the instrument."""
+        self._blanked = True
+
+    def _unblank_beam(self) -> None:
+        self._blanked = False
+
+    def _beam_current_pa(self) -> float:
+        return 0.0 if self._blanked else self._detector_params.beam_current_pa
 
     # ------------------------------------------------------------------
     # Stage: commanded / true / reported
@@ -276,7 +288,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         rows, cols = xs.shape
         duration = frame_time(rows, cols, float(dwell_time), self._scan_params)
         pixel = float(self._fov) / int(imsize)
-        self._dose.add_frame(xs, ys, electrons_per_pixel(self._detector_params.beam_current_pa, dwell_time), pixel)
+        self._dose.add_frame(xs, ys, electrons_per_pixel(self._beam_current_pa(), dwell_time), pixel)
         self._clock.advance(duration)
         record = {
             "index": index,
@@ -315,7 +327,8 @@ class DigitalTwin(AtomisticDigitalTwin):
             damage=self._dose.damage_factors(self._sample.centers, visible),
         )
         rng = self._rng.for_event(f"detector_{detector}", frame["index"])
-        return count(fraction, frame["dwell_s"], self._detector_params, rng)
+        params = replace(self._detector_params, beam_current_pa=self._beam_current_pa())
+        return count(fraction, frame["dwell_s"], params, rng)
 
     def _acquire_scanned_image(
         self,
@@ -345,7 +358,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             "pixel_size_m": frame["pixel_m"],
             "dwell_time_s": record["dwell_s"],
             "scan_region": record["scan_region"],
-            "beam_current_pa": self._detector_params.beam_current_pa,
+            "beam_current_pa": self._beam_current_pa(),
             "sim_time_start_s": record["t_start_s"],
             "axes": "rows=+y, columns=+x",
         }
@@ -397,12 +410,12 @@ class DigitalTwin(AtomisticDigitalTwin):
         xy = self._beam_sample_xy(t0 + real_time / 2.0)
         energies, counts, live_time = point_spectrum(
             self._areal_density(xy),
-            self._detector_params.beam_current_pa,
+            self._beam_current_pa(),
             real_time,
             self._eds_params,
             self._rng.for_event("eds", index),
         )
-        electrons = self._detector_params.beam_current_pa * 1e-12 * real_time / 1.602176634e-19
+        electrons = self._beam_current_pa() * 1e-12 * real_time / 1.602176634e-19
         self._dose.add_point(float(xy[0]), float(xy[1]), electrons, 1e-20)
         self._clock.advance(real_time)
         self._acquisitions.append(
@@ -448,6 +461,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
         parameters["beam_current_pa"] = self._detector_params.beam_current_pa
+        parameters["beam_blanked"] = self._blanked
         return json.dumps(parameters)
 
     @command(dtype_out=str)

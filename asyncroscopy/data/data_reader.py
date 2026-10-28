@@ -77,3 +77,42 @@ def describe_tiled_node(key: str, uri: str, node: Any, max_values: int = 64) -> 
     visit(node)
     result["datasets"] = datasets
     return result
+
+
+def read_acquisition(key: str, data_proxy: Any = None) -> dict[str, tuple[np.ndarray, dict[str, Any]]]:
+    """Every dataset of one acquisition as ``{name: (array, attrs)}``.
+
+    ``key`` is what an acquire command returned: a local HDF5 path when no DATA
+    device is configured, otherwise a Tiled key resolved through the DATA
+    device's Tiled server.
+    """
+    from pathlib import Path
+
+    path = Path(key)
+    out: dict[str, tuple[np.ndarray, dict[str, Any]]] = {}
+    if path.suffix.lower() in {".h5", ".hdf5"} and path.exists():
+        import h5py
+
+        with h5py.File(path, "r") as h5:
+            def visit(name, obj):
+                if isinstance(obj, h5py.Dataset):
+                    out[name] = (obj[()], dict(obj.attrs))
+            h5.visititems(visit)
+        return out
+    if data_proxy is None:
+        raise FileNotFoundError(f"{key!r} is not a local file and no DATA device was given to resolve it")
+    import json
+
+    from tiled.client import from_uri
+
+    node = from_uri(json.loads(data_proxy.get_config())["uri"])[key]
+
+    def walk(current: Any, name: str) -> None:
+        if callable(getattr(current, "read", None)) and not hasattr(current, "keys"):
+            out[name] = (np.asarray(current.read()), numpy_to_python(dict(getattr(current, "metadata", {}) or {})))
+            return
+        for child in current.keys():
+            walk(current[child], f"{name}/{child}" if name else child)
+
+    walk(node, "")
+    return out

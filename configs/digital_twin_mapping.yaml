@@ -62,6 +62,19 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  # Background map jobs (reserve/start/status/abort/results/release) on this microscope.
+  mapper:
+    class_name: Mapper
+    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      eds_device_address: asyncroscopy/eds/default
+      data_device_address: asyncroscopy/data/default
+  # Approval mode (auto by default); switched from SciAgentGUI.
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
   stage:
     class_name: TestStage
     module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage

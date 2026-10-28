@@ -34,6 +34,10 @@ class MCPConfig:
     blocked_functions: dict[str, list[str]]
     include_only_functions: list[str] = field(default_factory=list)
     tool_log: str = ''
+    endpoint_role: str = 'agent'
+    approvals_device_address: str = ''
+    risk: dict[str, str] = field(default_factory=dict)
+    trace: str = ''
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,10 @@ def load_config(path: Path) -> Config:
             blocked_functions={key: list(value) for key, value in _require(mcp, 'blocked_functions', 'mcp').items()},
             include_only_functions=list(mcp.get('include_only_functions', [])),
             tool_log=str(mcp.get('tool_log') or ''),
+            endpoint_role=str(mcp.get('endpoint_role', 'agent')),
+            approvals_device_address=str((mcp.get('safety') or {}).get('approvals_device_address') or ''),
+            risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
+            trace=str(mcp.get('trace') or ''),
         ),
     )
 
@@ -107,6 +115,13 @@ def build_command(config: Config) -> list[str]:
         command.append('--quiet')
     if config.mcp.tool_log:
         command.extend(['--tool-log', config.mcp.tool_log])
+    command.extend(['--endpoint-role', config.mcp.endpoint_role])
+    if config.mcp.approvals_device_address:
+        command.extend(['--approvals-device-address', config.mcp.approvals_device_address])
+    if config.mcp.risk:
+        command.extend(['--risk-json', json.dumps(config.mcp.risk)])
+    if config.mcp.trace:
+        command.extend(['--trace', config.mcp.trace])
     return command
 
 

@@ -28,6 +28,8 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_particles import 
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
+from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.safety.approvals import Approvals
 
 
 from tests.test_agent import setup_llm_stubs
@@ -37,6 +39,21 @@ setup_llm_stubs()
 class FakeAdornedImage:
     def __init__(self, data: np.ndarray):
         self.data = data
+
+
+def prop_path(path) -> str:
+    """A path a Tango test-context device property can carry.
+
+    The test context's file database cuts property values at ":", so a Windows
+    path like C:/Users/... arrives as "C:" (the current directory) and files
+    land in the working tree. Relative paths have no drive colon.
+    """
+    import os
+
+    try:
+        return os.path.relpath(path).replace("\\", "/")
+    except ValueError:  # a different drive on Windows; nothing better to offer
+        return str(path)
 
 
 # We use DigitalTwin as our simulated microscope for all tests.
@@ -70,7 +87,12 @@ def data_save_dir(tmp_path_factory):
 
 
 @pytest.fixture(scope="session")
-def tango_ctx(data_save_dir):
+def job_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp("jobs")
+
+
+@pytest.fixture(scope="session")
+def tango_ctx(data_save_dir, job_dir):
     """
     One Tango device server hosting SCAN + STEMMicroscope together.
 
@@ -147,7 +169,7 @@ def tango_ctx(data_save_dir):
                         "stage_device_address": "asyncroscopy/stage/default",
                         "corrector_device_address": "asyncroscopy/corrector/default",
                         "camera_device_address": "asyncroscopy/camera/default",
-                        "acquisition_save_directory": str(data_save_dir),
+                        "acquisition_save_directory": prop_path(data_save_dir),
                     },
                 },
                 {
@@ -157,10 +179,36 @@ def tango_ctx(data_save_dir):
                         "scan_device_address": "asyncroscopy/scan/mapping",
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/mapping",
-                        "acquisition_save_directory": str(data_save_dir),
+                        "acquisition_save_directory": prop_path(data_save_dir),
                         **MAPPING_TWIN_PROPERTIES,
                     },
                 },
+            ],
+        },
+        {
+            "class": Mapper,
+            "devices": [
+                {
+                    "name": "asyncroscopy/mapper/default",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/mapping",
+                        "scan_device_address": "asyncroscopy/scan/mapping",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "output_directory": prop_path(job_dir / "maps"),
+                        "state_directory": prop_path(job_dir / "state"),
+                        "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
+                        "estimate_move_s": 1.0,
+                    },
+                }
+            ],
+        },
+        {
+            "class": Approvals,
+            "devices": [
+                {
+                    "name": "asyncroscopy/approvals/default",
+                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "request_timeout_s": 600},
+                }
             ],
         },
         {
@@ -172,7 +220,7 @@ def tango_ctx(data_save_dir):
                         "scan_device_address": "asyncroscopy/scan/default",
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/default",
-                        "acquisition_save_directory": str(data_save_dir),
+                        "acquisition_save_directory": prop_path(data_save_dir),
                         "sample_particle_count": 8,
                         "world_imsize": 48,
                     },
@@ -188,7 +236,7 @@ def tango_ctx(data_save_dir):
                         "scan_device_address": "asyncroscopy/scan/default",
                         "stage_device_address": "asyncroscopy/stage/default",
                         "camera_device_address": "asyncroscopy/camera/default",
-                        "acquisition_save_directory": str(data_save_dir),
+                        "acquisition_save_directory": prop_path(data_save_dir),
                         "diffraction_image_size": 16,
                         "randomness_scale": 0.0,
                     },
@@ -428,3 +476,15 @@ def mapping_scan_proxy(tango_ctx):
 @pytest.fixture(scope="session")
 def mapping_stage_proxy(tango_ctx):
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/mapping"))
+
+
+@pytest.fixture(scope="session")
+def mapper_proxy(tango_ctx):
+    proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/default"))
+    proxy.set_timeout_millis(60_000)
+    return proxy
+
+
+@pytest.fixture(scope="session")
+def approvals_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/approvals/default"))

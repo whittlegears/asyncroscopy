@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/map_plan.schema.json",
+  "title": "Map plan",
+  "description": "What a Mapper job acquires. Lengths in metres, times in seconds. The box is in stage coordinates; tile centres never leave it.",
+  "schema_version": "1.0.0",
+  "type": "object",
+  "required": ["box_m", "fov_m"],
+  "additionalProperties": false,
+  "properties": {
+    "box_m": {
+      "type": "array",
+      "description": "[x_min, x_max, y_min, y_max] in stage metres.",
+      "items": {"type": "number"},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "fov_m": {"type": "number", "exclusiveMinimum": 0},
+    "overlap": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.15},
+    "imsize": {"type": "integer", "minimum": 16, "maximum": 4096, "default": 512},
+    "dwell_s": {"type": "number", "exclusiveMinimum": 0, "default": 1e-6},
+    "detectors": {"type": "array", "items": {"type": "string"}, "minItems": 1, "default": ["haadf"]},
+    "per_tile": {
+      "type": "array",
+      "description": "Extra actions at every tile. eds_point is one spectrum at the tile centre; eds_map is a coarse spectrum image and must be asked for by name.",
+      "items": {"enum": ["eds_point", "eds_map"]},
+      "default": []
+    },
+    "eds_exposure_s": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
+    "eds_map_points": {"type": "integer", "minimum": 2, "maximum": 64, "default": 8},
+    "dose_budget_e_per_a2": {"type": "number", "exclusiveMinimum": 0, "description": "Refuse the plan if any point would receive more than this."},
+    "order": {"enum": ["serpentine", "raster"], "default": "serpentine"},
+    "z_m": {"type": "number", "description": "Stage z for every tile; defaults to the current z."},
+    "label": {"type": "string"}
+  }
+}
