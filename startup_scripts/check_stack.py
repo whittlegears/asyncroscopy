@@ -20,8 +20,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import socket
 import sys
 import time
+import urllib.parse
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -85,7 +87,23 @@ async def check_analysis(args: argparse.Namespace, run_key: str) -> None:
         report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
 
 
+def unreachable(*urls: str) -> list[str]:
+    """The URLs nothing is listening on (a stack that was not started yet)."""
+    down = []
+    for url in urls:
+        parts = urllib.parse.urlsplit(url)
+        try:
+            socket.create_connection((parts.hostname, parts.port), timeout=2).close()
+        except OSError:
+            down.append(url)
+    return down
+
+
 async def main(args: argparse.Namespace) -> int:
+    down = unreachable(args.agent, args.operator)
+    if down:
+        report("MCP endpoints reachable", False, f"nothing at {', '.join(down)}: start the stack (quickstart section 3) and wait for 'MCP ready'")
+        return 1
     agent = Client(StreamableHttpTransport(args.agent, headers={"X-Asyncroscopy-Caller": "check_stack-agent"}))
     operator = Client(StreamableHttpTransport(args.operator, headers={"X-Asyncroscopy-Caller": "check_stack-operator"}))
     async with agent, operator:
