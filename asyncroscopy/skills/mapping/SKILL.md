@@ -32,6 +32,8 @@ If the request is unclear about the area or would take more than an hour (see th
 
 ## 2. Reserve, then start
 
+Tool names below assume one Mapper. An endpoint with several names them `Mapper_<key>_reserve` and so on: use the ones it lists, and the same prefix as `device` for `wait_for_job`.
+
 1. `Mapper_reserve` with `{"plan": {...}}`. Read `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says.
 2. `Mapper_start` with `{"reservation_id": "..."}`.
    - If the reply says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `Mapper_start` again with exactly the same request. If `denied` or `expired`, stop and tell the user; call `Mapper_release`.

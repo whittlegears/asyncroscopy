@@ -78,6 +78,13 @@ class TestPolicy:
         "off_axis_tilt", "goto_stop", "jog_to_halt", "stop_at_position", "retract_to", "withdraw_volume", "vacuum_off", "pump_off",
         "cooling_off", "LN2_off", "stop_cooling", "stop_pumping", "pause_ventilation", "go_to_safe_state",
         "chiller_off", "z_piezo_off", "stop_return_home", "off_axis_illumination", "approach_stop",
+        # Found by the final review: hardware holds, harmful subsystem stops, feedback loops,
+        # motion until a stop, re-engage after a retreat, stopping a safety action, re-arming.
+        "brake_off", "BrakeOff", "servo_off", "motor_off", "gripper_off", "clamp_off", "magnet_off", "turbopump_off",
+        "ionpump_off", "cryocooler_off", "helium_off", "stop_flow", "stop_pid", "zfeedback_off", "z_loop_off",
+        "seek_hard_stop", "descend_until_stop", "find_stop", "retract_approach", "withdraw_engage", "retract_tip_down",
+        "stop_retract", "abort_withdraw", "stop_restart", "abort_retry", "estop_ack", "acknowledge_estop",
+        "rearm_after_stop", "continue_after_pause", "kick_off", "lift_off", "back_off",
     ])
     def test_names_that_do_more_than_stop_are_high(self, name):
         assert risk_of("AnyDevice", name) == "high"

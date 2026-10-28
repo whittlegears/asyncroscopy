@@ -75,8 +75,11 @@ class TestMCPServer(MCPServer):
     __test__ = False  # not a pytest test class
 
     def list_tool_descriptions(self) -> dict[str, str]:
-        tools = asyncio.run(self.mcp.list_tools())
-        return {t.name: t.description or "" for t in tools}
+        """Tool name -> the description an agent reads. In an async test, await alist_tool_descriptions."""
+        return asyncio.run(self.alist_tool_descriptions())
+
+    async def alist_tool_descriptions(self) -> dict[str, str]:
+        return {t.name: t.description or "" for t in await self.mcp.list_tools()}
 
 
 def mcp_server_for(
