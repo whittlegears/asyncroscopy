@@ -147,11 +147,11 @@ def test_a_failure_while_the_map_runs_aborts_it_before_releasing():
     [
         ({"box_m": [500, -500, -500, 500], "fov_m": 200}, "map a 1 um square", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),
         ({}, "map the whole sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7]}),
-        ({"per_tile": ["eds_map"]}, "map with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
-        ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile", {"per_tile": ["eds_map"]}),
+        ({"per_tile": ["eds_map"]}, "map the sample with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
+        ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile of the sample", {"per_tile": ["eds_map"]}),
         ({"per_tile": ["eds_point"]}, "map a 600 nm square", {"per_tile": []}),  # EDS nobody asked for
         ({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, "map the sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),  # micrometres
-        ({}, "map it and tell me the composition", {"per_tile": ["eds_point"]}),
+        ({}, "map the sample and tell me the composition", {"per_tile": ["eds_point"]}),
         ({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, "map a tiny spot", {"box_m": [pytest.approx(-9.5e-8), pytest.approx(1.05e-7), pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
     ],
 )
@@ -177,6 +177,74 @@ def test_plan_completion_repairs_small_model_slips(model_plan, request_text, exp
 def test_requested_size_is_read_from_the_request(request_text, size):
     got = MappingGraph._requested_size(request_text)
     assert got == (pytest.approx(size) if size else None)
+
+
+CONTEXT = {"sample_bounds_m": [-2e-6, 2e-6, -2e-6, 2e-6], "stage_position_m": [0, 0, 0, 0, 0], "fov_m": 1.6e-7}
+
+
+@pytest.mark.parametrize("plan, from_model", [({}, True), ({"fov_m": 1.6e-7}, True), ({"fov_m": 1.6e-7}, False)])
+def test_a_plan_without_an_area_is_refused_unless_the_whole_sample_is_asked_for(plan, from_model):
+    with pytest.raises(ValueError, match="no area"):
+        MappingGraph._complete_plan(dict(plan), CONTEXT, "image the particle here", from_model=from_model)
+    whole = MappingGraph._complete_plan(dict(plan), CONTEXT, "map the whole sample", from_model=from_model)
+    assert whole["box_m"] == pytest.approx(CONTEXT["sample_bounds_m"])
+
+
+def test_whole_sample_without_reported_bounds_is_refused():
+    with pytest.raises(ValueError, match="no sample bounds"):
+        MappingGraph._complete_plan({}, {"stage_position_m": [0, 0, 0, 0, 0]}, "map the whole sample")
+
+
+def test_size_and_centre_are_both_unit_repaired():
+    plan = MappingGraph._complete_plan({"size_m": [600, 600], "centre_m": [100, 0], "fov_m": 1.6e-7}, CONTEXT, "", from_model=False)
+    assert plan["box_m"] == pytest.approx([-2e-7, 4e-7, -3e-7, 3e-7])
+    assert "size_m" not in plan and "centre_m" not in plan
+
+
+def test_a_plan_passed_in_keeps_its_eds_and_ignores_the_request_text():
+    plan = MappingGraph._complete_plan({"box_m": [0, 1e-6, 0, 1e-6], "fov_m": 2e-7, "per_tile": ["eds_point"]}, CONTEXT, "Map a 600 nm square", from_model=False)
+    assert plan["per_tile"] == ["eds_point"]
+    assert plan["box_m"] == pytest.approx([0, 1e-6, 0, 1e-6])
+
+
+class FakeModel:
+    def __init__(self, text):
+        self.text = text
+
+    async def ainvoke(self, messages):
+        return SimpleNamespace(content=self.text)
+
+
+def test_a_model_reply_without_a_plan_ends_without_touching_the_mapper(monkeypatch):
+    g = make()
+    monkeypatch.setattr(g.config, "chat_model", lambda: FakeModel("I would map the sample now."))
+    state = run(g, {"request": "map the whole sample"})
+    assert state["report"].startswith("Map not completed") and "no JSON" in state["report"]
+    assert not any(c.startswith("Mapper") and c != "Mapper_release" for c in g.instrument.calls)
+
+
+def test_the_mapper_prefix_is_discovered():
+    g = make()
+
+    async def tools():
+        return [SimpleNamespace(name=n) for n in ("Mapper_lab2_reserve", "Mapper_lab2_start", "DigitalTwin_move_stage")]
+
+    g.instrument.list_tools = tools
+    assert asyncio.run(g._mapper()) == "Mapper_lab2"
+
+
+def test_several_mappers_need_a_choice(monkeypatch):
+    g = make()
+
+    async def tools():
+        return [SimpleNamespace(name=n) for n in ("Mapper_a_reserve", "Mapper_b_reserve")]
+
+    g.instrument.list_tools = tools
+    with pytest.raises(RuntimeError, match="several Mappers"):
+        asyncio.run(g._mapper())
+    monkeypatch.setenv("ASYNCROSCOPY_MAPPER", "Mapper_b")
+    g._mapper_prefix = None
+    assert asyncio.run(g._mapper()) == "Mapper_b"
 
 
 def test_stated_size_overrides_a_whole_sample_box():

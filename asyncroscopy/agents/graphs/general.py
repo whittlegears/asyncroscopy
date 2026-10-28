@@ -31,11 +31,15 @@ GENERIC_TOOLS = [
 # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
 STEM_TOOLS = [
     "*_get_stage", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
-    "*_set_fov", "*_get_fov", "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam", "Mapper_*",
+    "*_set_fov", "*_get_fov", "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam", "Mapper*",
 ]
 DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
-# Only these mark an endpoint as a STEM: move_stage, set_fov and the like are common to many instruments.
-STEM_MARKERS = ["*_acquire_scanned_image", "Mapper_reserve"]
+# An endpoint is a STEM when one device both scans images and blanks a beam (an AFM scans too),
+# or it has a Mapper: move_stage, set_fov and the like are common to many instruments.
+def _is_stem(names: set[str]) -> bool:
+    return any(fnmatch.fnmatch(n, "Mapper*_reserve") for n in names) or any(
+        n.endswith("_acquire_scanned_image") and f"{n[: -len('_acquire_scanned_image')]}_blank_beam" in names for n in names
+    )
 
 SYSTEM = """You operate a laboratory instrument (or its digital twin) through tools.
 
@@ -68,9 +72,10 @@ async def make_graph(config: dict | None = None):
     env_tools = [p.strip() for p in os.environ.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()]
     chosen = configurable.get("tools") or env_tools
     tools = await agent_config.tools(allow=chosen or DEFAULT_TOOLS)
-    stem = any(fnmatch.fnmatch(t.name, p) for t in tools for p in STEM_MARKERS)
+    stem = _is_stem({t.name for t in tools})
     if not chosen and not stem:
-        tools = await agent_config.tools(allow=["*"])
+        # The analysis server's tools stitch and score STEM maps; another instrument gets its own tools only.
+        tools = await agent_config.tools(include_analysis=False, allow=["*"])
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
     print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")

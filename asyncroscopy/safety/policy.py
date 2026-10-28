@@ -8,7 +8,8 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    abort, stop, retract, switch off or close a shutter. A command is a safe
    stop when its name (split on "_" and CamelCase) starts or ends with a stop
    word (STOP_WORDS) or contains a stop pair (STOP_PAIRS), and has no word that
-   undoes a safeguard (UNSAFE_WORDS) or does more than stop (ACTION_WORDS). So
+   undoes a safeguard (UNSAFE_WORDS) or does more than stop (ACTION_WORDS; a
+   MOTION_WORDS object only after a leading stop verb, as in abort_approach). So
    ``Off``, ``stop_scan``, ``AbortScan`` and ``shutter_close`` are low;
    ``disable_stop``, ``interlock_off`` and ``withdraw_and_move`` are not;
 3. the job-envelope verbs other than ``start``, low on devices that implement
@@ -36,11 +37,19 @@ STOP_WORDS = frozenset({"abort", "stop", "halt", "retract", "withdraw", "off", "
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
 UNSAFE_WORDS = frozenset({"disable", "override", "bypass", "ignore", "reset", "clear", "release", "unblank", "open", "force"})
 # Words that mean the command does something besides stopping, or touches a safeguard:
-# "interlock_off", "withdraw_and_move" and "set_stop_height" are not safe stops.
+# "interlock_off", "vacuum_off", "withdraw_and_move" and "set_stop_height" are not safe stops.
 ACTION_WORDS = frozenset({
+    # safeguards
     "interlock", "safety", "limit", "limits", "guard", "lock", "unlock", "feedback",
-    "move", "approach", "set", "drop", "resume", "start", "run", "and", "then", "enable",
+    # subsystems whose stopping does harm (a vented column, a warming cryo holder, a dropped piezo)
+    "vacuum", "pump", "pumping", "cooling", "cryo", "ln2", "chiller", "vent", "ventilation", "valve", "heater", "power", "piezo",
+    # targets and sequences
+    "go", "goto", "to", "at", "home", "return", "jog", "drive", "axis", "tilt", "volume",
+    "set", "drop", "resume", "start", "enable", "and", "then",
 })
+# What a stop verb may stop: allowed after a leading stop verb ("abort_approach", "stop_move"),
+# disqualifying anywhere else ("approach_stop" approaches).
+MOTION_WORDS = frozenset({"move", "motion", "approach", "scan", "run", "travel"})
 
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release")
@@ -99,7 +108,11 @@ def is_safe_stop(command: str) -> bool:
     words = set(ordered)
     if not ordered or words & (UNSAFE_WORDS | ACTION_WORDS):
         return False
-    return ordered[0] in STOP_WORDS or ordered[-1] in STOP_WORDS or any(pair <= words for pair in STOP_PAIRS)
+    # "off" only as the last word ("beam_off"): first, it is usually "off-axis" or "offset"-like.
+    leading = ordered[0] in STOP_WORDS and ordered[0] != "off"
+    if words & MOTION_WORDS and not leading:
+        return False
+    return leading or ordered[-1] in STOP_WORDS or any(pair <= words for pair in STOP_PAIRS)
 
 
 def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False, stem: bool = False) -> str:
@@ -123,8 +136,9 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
 
 
 def is_stem_device(command_names) -> bool:
-    """True when a device acquires scanned images, so the STEM_LOW commands are beam settings."""
-    return "acquire_scanned_image" in {c.lower() for c in command_names}
+    """True for an electron microscope: it scans images and blanks a beam, so the STEM_LOW
+    commands are beam settings. An AFM's acquire_scanned_image alone does not count."""
+    return {"acquire_scanned_image", "blank_beam"} <= {c.lower() for c in command_names}
 
 
 def is_envelope_device(command_names) -> bool:
