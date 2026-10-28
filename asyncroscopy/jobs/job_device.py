@@ -356,13 +356,22 @@ class JobDevice(Device):
                 **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id, "grant_id": body.get("grant_id"),
                 "caller": body.get("caller") or job.get("caller"), "state": "running", "last_error": None,
             }
+            previous = dict(job)
             self._save(started)  # if this fails, the reservation stays as it was and can be started again
             job.update(started)
             self._job_index[job_id] = job["reservation_id"]
             self._abort[job_id] = threading.Event()
             thread = threading.Thread(target=self._omni_worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
             self._threads[job_id] = thread
-            thread.start()
+            try:
+                thread.start()
+            except RuntimeError:  # no thread to run it: put the reservation back as it was
+                for table in (self._job_index, self._abort, self._threads):
+                    table.pop(job_id, None)
+                job.clear()
+                job.update(previous)
+                self._save(job)
+                raise
         return self._reply({"job_id": job_id, "reservation_id": job["reservation_id"], "state": "running"})
 
     def _omni_worker(self, job: dict, job_id: str) -> None:
