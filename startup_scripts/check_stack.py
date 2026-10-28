@@ -140,6 +140,11 @@ async def main(args: argparse.Namespace) -> int:
                 again = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
                 report("the approval is single use", again.is_error)
         finally:
+            # Deny anything this check left pending (the single-use retry files a new request),
+            # so the operator's approvals list is not left holding test calls.
+            for leftover in json.loads(text(await call(operator, "Approvals_list_pending"))):
+                if leftover.get("caller") == "check_stack-agent":
+                    await call(operator, "Approvals_deny", {"request": json.dumps({"request_id": leftover["request_id"], "who": "check_stack", "reason": "left over from check_stack"})})
             await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": "auto", "who": "check_stack"})})
         report("mode is back to auto", text(await call(agent, "Approvals_get_mode")) == "auto")
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
