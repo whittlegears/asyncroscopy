@@ -5,7 +5,13 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 #
 # If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+# machine/IP.
+#
+# http_host is 127.0.0.1 so only this machine can reach the endpoint: it has no
+# authentication and the approval mode starts in auto, so anyone who can reach
+# it can drive the instrument. To let other machines connect, set http_host to
+# this machine's LAN address (or 0.0.0.0) on a trusted network only, and switch
+# approval mode to approve. See docs/Operation/quickstart.md.
 
 tango:
   host: localhost
@@ -14,7 +20,7 @@ tango:
 mcp:
   name: Spectra300_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true

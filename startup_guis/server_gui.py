@@ -31,6 +31,7 @@ from startup_guis.qt_compat import (  # noqa: E402
     QWidget,
     app_exec,
 )
+from asyncroscopy.utils.process_manager import python_command  # noqa: E402
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, GENERATED_CONFIG_DIR, TITLE_FONT, CheckBox, CollapsibleSection, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, write_yaml  # noqa: E402
 
 
@@ -368,7 +369,7 @@ class ServerGui(QMainWindow):
 
     def start(self) -> None: 
         config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config()) 
-        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_servers.py', '--yaml', str(config_path)]) 
+        self.command.start(python_command('startup_scripts/run_servers.py', '--yaml', str(config_path)))
 
     def enqueue_output(self, text: str) -> None: 
         append_terminal_text(self.output, text) 

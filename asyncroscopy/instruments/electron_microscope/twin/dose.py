@@ -41,8 +41,13 @@ class DoseMap:
     def add_frame(self, xs: np.ndarray, ys: np.ndarray, electrons_per_pixel: float, pixel_m: float) -> None:
         if not self.params.enabled:
             return
+        if not (np.isfinite(electrons_per_pixel) and np.isfinite(pixel_m) and pixel_m > 0):
+            return
+        xs, ys = xs.ravel(), ys.ravel()
+        finite = np.isfinite(xs) & np.isfinite(ys)  # one NaN would otherwise poison the whole map
+        xs, ys = xs[finite], ys[finite]
         per_a2 = electrons_per_pixel / (pixel_m * pixel_m * ANGSTROM2_PER_M2)
-        r, c = self._cells(xs.ravel(), ys.ravel())
+        r, c = self._cells(xs, ys)
         hits = np.zeros_like(self.dose)
         np.add.at(hits, (r, c), 1.0)
         # Spread each frame's dose over the cells it touched, weighted by pixel count.

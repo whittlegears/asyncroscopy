@@ -1,10 +1,13 @@
 """Render-time budget for the twin: a mapping run must not be bottlenecked by simulation.
 
-Marked slow; run with ``pytest -m slow``. Times are written to
-benchmarks/results/twin_render.json so regressions are visible.
+Marked slow; run with ``pytest -m slow``. Times are written to pytest's tmp_path
+so a normal test run leaves the working tree clean. Set
+ASYNCROSCOPY_WRITE_BENCHMARKS=1 to update the tracked
+benchmarks/results/twin_render.json instead, so regressions are visible.
 """
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -28,7 +31,7 @@ RESULTS = Path(__file__).resolve().parents[1] / "benchmarks" / "results" / "twin
 
 
 @pytest.mark.slow
-def test_render_time_budget():
+def test_render_time_budget(tmp_path):
     sample = SampleModel(
         SampleParams(size_xy_m=2e-6, particle_count=400, radius_mean_m=8e-9, radius_std_m=4e-9, aspect_ratio=0.6, elements=("Au", "Pt", "Fe", "Pd"), support_thickness_m=1e-8),
         EventRng(12345),
@@ -42,7 +45,8 @@ def test_render_time_budget():
         start = time.perf_counter()
         renderer.render(xs, ys, fov / 512, "HAADF", ab, 100.0)
         timings[name] = time.perf_counter() - start
-    RESULTS.parent.mkdir(parents=True, exist_ok=True)
-    RESULTS.write_text(json.dumps({k: round(v, 4) for k, v in timings.items()}, indent=2))
+    results = RESULTS if os.environ.get("ASYNCROSCOPY_WRITE_BENCHMARKS") == "1" else tmp_path / RESULTS.name
+    results.parent.mkdir(parents=True, exist_ok=True)
+    results.write_text(json.dumps({k: round(v, 4) for k, v in timings.items()}, indent=2))
     assert timings["survey_1um_512"] < 1.0
     assert timings["atomic_10nm_512"] < 2.0

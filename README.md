@@ -9,25 +9,25 @@
 
 ## Quick Start
 
+**New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md).** It is the tested path (installing uv, the exact `uv sync` and test commands, Windows fixes) from clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample. In short:
+
 ```bash
-# Install all dependencies
-uv sync
+git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git
+cd asyncroscopy
+uv sync --extra agent --extra ollama
+uv run pytest -q -m "not slow"
 
-# Start the server stack with a configuration
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
-
-# Or use the DigitalTwin (no hardware required)
-uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
+# Digital twin (no hardware required)
+uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
+# Agent MCP endpoint for the twin, in a second terminal (127.0.0.1:8000)
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-Start the MCP server in a second terminal for agent/AI integration:
-```bash
-uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
-```
+On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml`.
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
-**New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md):** clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample, then `startup_scripts/check_stack.py` to confirm every piece talks to the others.
+After starting the stack, `startup_scripts/check_stack.py` confirms every piece talks to the others (see the quickstart).
 
 ### Agentic control at a glance
 
@@ -94,6 +94,8 @@ These are some examples of the available configs, which define the instrument cl
 
 ## Optional Dependencies
 
+`uv sync` installs exactly the extras you name and removes the others, so list every extra you want in one command (for example `uv sync --extra agent --extra ollama --extra diffraction`). `uv run --extra X ...` adds an extra without removing anything.
+
 ```bash
 # Diffraction and tilt-twin multislice simulation (abTEM-based)
 uv sync --extra diffraction
@@ -108,8 +110,11 @@ uv sync --extra agent --extra ollama --extra dev
 ## Running Tests
 
 ```bash
-uv run pytest tests/ -v
+uv run pytest -q -m "not slow"   # about a minute on a laptop
+uv run pytest -q                 # everything, including timing tests: about a minute and a half
 ```
+
+See the [quickstart](docs/Operation/quickstart.md) for what to expect.
 
 ## Architecture
 
@@ -129,13 +134,19 @@ Various example workflows in `notebooks/`, including:
 - `00_Testing.ipynb` - Connection tests
 - `01_Aberrations.ipynb` - Probe aberration controls
 - `02_Image_Acquisition.ipynb` - HAADF image acquisition
-- `03_Stage_Movement_Sample_Map.ipynb` - Stage navigation
+- `03_EELS_Acquisition.ipynb` - EELS acquisition
 - `04_Image_EDS_Point_Spectra.ipynb` - EDS spectrum acquisition
 - `05_Digital_Twin_EDS.ipynb` - DigitalTwin EDS simulation
-- `06_Digital_Twin_Tilt.ipynb` - DigitalTwin tilt control
+- `06_Segmentation.ipynb` - Image acquisition for segmentation
+- `09_Hackathon_Digital_Twin.ipynb` - Hackathon walkthrough on the diffraction twin (`configs/diffraction.yaml`; needs `--extra diffraction`)
+- `11_MCP_server_usecase_on_twin.ipynb` - MCP server on the digital twin
 - `11_Test_AI_Agent.ipynb` - MCP agent testing
-- `15_MAPED.ipynb` - Multi-angle precession electron diffraction
-- `16_Alpha_Tilt_Diffraction_Map.ipynb` - Tracked alpha-tilt diffraction mapping
+- `13_Stage_Movement_Sample_Map.ipynb` - Stage navigation and sample maps
+- `15_MAPED.ipynb` - Multi-angle precession electron diffraction (`--extra diffraction`)
+- `16_Alpha_Tilt_Diffraction_Map.ipynb` - Tracked alpha-tilt diffraction mapping (`--extra diffraction`)
+- `18_Polycrystalline_Gold_Digital_Twin.ipynb` - Polycrystalline gold twin (`--extra diffraction`)
+
+Run them with the project environment, for example `uv run --extra diffraction jupyter lab` (asyncroscopy is installed into `.venv`, so imports work from `notebooks/`).
 
 ## Notes
 * The previous Twisted-based implementation is preserved in the `twisted-legacy` branch for reference.

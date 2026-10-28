@@ -17,7 +17,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
 
@@ -84,10 +84,7 @@ def load_config(path: Path) -> Config:
 
 
 def build_command(config: Config) -> list[str]:
-    command = [
-        'uv',
-        'run',
-        'python',
+    command = python_command(
         '-m',
         'asyncroscopy.mcp.mcp_server',
         '--name',
@@ -110,7 +107,7 @@ def build_command(config: Config) -> list[str]:
         json.dumps(config.mcp.blocked_functions),
         '--include-only-functions-json',
         json.dumps(config.mcp.include_only_functions),
-    ]
+    )
     if config.mcp.quiet:
         command.append('--quiet')
     if config.mcp.tool_log:

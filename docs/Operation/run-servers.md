@@ -100,8 +100,10 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 If MCP runs on a different computer, edit `configs/mcp.yaml`:
 
 - `tango.host` should point to the machine running the Tango database.
-- `mcp.http_host` should be `127.0.0.1` for local-only clients or `0.0.0.0` when
-  other machines need to connect.
+- `mcp.http_host` should be `127.0.0.1` for local-only clients. Set it to a LAN
+  address or `0.0.0.0` only on a trusted network when other machines need to
+  connect: the MCP endpoint has no authentication. The twin's
+  `configs/mcp_dt.yaml` and `configs/mcp_operator.yaml` default to `127.0.0.1`.
 
 ## Prompts
 
@@ -122,8 +124,13 @@ Interactive mode is used only when `--yaml` is omitted. The defaults come from
 
 ## Startup Stages
 
-1. **Clearing old processes** frees the database/Tiled ports and kills old device
-   server process groups.
+1. **Clearing old processes** stops whatever is LISTENING on the database and
+   Tiled ports (clients connected to them are left alone), and stops leftover
+   device servers this config starts: processes running exactly
+   `-m <module> <key>_instance` for one of its devices, and only those whose
+   `TANGO_HOST` matches this launch when the OS lets it be read. Other
+   asyncroscopy stacks are not touched. It uses psutil, falling back to
+   `Get-NetTCPConnection`/`Get-CimInstance` on Windows and `lsof`/`ps` elsewhere.
 2. **Starting Tango database** starts or waits for the database server.
 3. **Registering devices** writes device entries and instrument properties.
 4. **Starting device servers** starts support devices, Tiled, and then the
@@ -132,7 +139,10 @@ Interactive mode is used only when `--yaml` is omitted. The defaults come from
 
 ## Manual Fallback
 
-The runner automates this database-mode flow:
+The runner automates this database-mode flow. It starts each child with
+`uv run --no-sync python -u ...` (uv located through the `UV` variable that
+`uv run` sets, or `PATH`), or with the launcher's own Python when uv cannot be
+found:
 
 ```bash
 TANGO_HOST=localhost:9094 uv run python -m tango.databaseds.database 2

@@ -15,7 +15,7 @@ from abc import abstractmethod
 from typing import Optional
 
 import tango
-from tango import AttrWriteType, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
+from tango import AttrWriteType, DevDouble, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, command, device_property
 
 from asyncroscopy.instruments.instrument import Instrument
@@ -214,22 +214,22 @@ class ElectronMicroscope(Instrument):
         """Unblank beam."""
         self._unblank_beam()
 
-    @command(dtype_in=DevFloat, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).')
+    @command(dtype_in=DevDouble, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).')
     def set_defocus(self, defocus):
         """Set the defocus in meters."""
         self._set_defocus(defocus)
 
-    @command(dtype_out=DevFloat)
+    @command(dtype_out=DevDouble)
     def get_defocus(self):
         """Read the defocus in meters."""
         return self._get_defocus()
 
-    @command(dtype_in=DevFloat, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).')
+    @command(dtype_in=DevDouble, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).')
     def set_fov(self, fov):
         """Set the field of view for the next acquisition, in meters."""
         self._set_fov(fov)
 
-    @command(dtype_out=DevFloat)
+    @command(dtype_out=DevDouble)
     def get_fov(self):
         """Read the field of view for the next acquisition, in meters."""
         return self._get_fov()

@@ -12,6 +12,17 @@ Nothing here needs a microscope, vendor software or a GPU. A GPU makes the local
 | Git | `winget install Git.Git` | usually present |
 | Ollama (local models) | `winget install Ollama.Ollama` | see ollama.com |
 
+**Open a new terminal after installing uv**: installers add uv to `PATH`, and a terminal that was already open does not see the change. Check with `uv --version`.
+
+**Windows: `uv` still not found?** winget sometimes installs uv without a command shim on `PATH`. Call it by its full path; in PowerShell:
+
+```powershell
+$uv = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe" | Select-Object -First 1).FullName
+& $uv --version
+```
+
+and write `& $uv` wherever this guide says `uv` (for example `& $uv sync --extra agent --extra ollama`). The launchers find uv on their own when you start them this way: `uv run` tells its child processes where uv is.
+
 Then pull a model. `qwen3:8b` is the tested default (5 GB; runs partly on CPU on a 6 GB GPU); `qwen3:4b` (2.5 GB) works on smaller machines:
 
 ```bash
@@ -21,19 +32,33 @@ ollama pull qwen3:8b
 ## 2. Get the code and its dependencies
 
 ```bash
-git clone https://github.com/pycroscopy/asyncroscopy.git
+git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git
 cd asyncroscopy
 uv sync --extra agent --extra ollama
-uv run pytest -q
+uv run pytest -q -m "not slow"
 ```
 
-The test suite starts real Tango devices in-process and takes under a minute. All tests should pass; a few are skipped on purpose.
+`--depth 1` skips the project history (about 250 MB); leave it out if you want the history.
 
-**Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's Python link is broken. Point uv at the interpreter directly:
+`uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
+
+The test suite starts real Tango devices in-process. Without the slow tests it takes about a minute on a laptop; `uv run pytest -q` runs everything, including timing tests, in about a minute and a half. All tests should pass; a few are skipped on purpose. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
+
+**Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python 3.12 install is broken. Reinstall that Python, then sync again (works in PowerShell, cmd and bash):
 
 ```bash
-uv sync --python "%APPDATA%\uv\python\cpython-3.12.<n>-windows-x86_64-none\python.exe" --extra agent --extra ollama
+uv python install 3.12 --reinstall
+uv sync --python 3.12 --extra agent --extra ollama
 ```
+
+If it still fails, point uv at the interpreter file directly (PowerShell):
+
+```powershell
+$py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Select-Object -First 1).FullName
+uv sync --python $py --extra agent --extra ollama
+```
+
+(`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.)
 
 ## 3. Start the stack
 
@@ -54,6 +79,10 @@ uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key sec
 ```
 
 `configs/digital_twin_mapping.yaml` simulates a real instrument's timing (`time_scale: 1.0`): stage moves take seconds. Set `time_scale: 0` in that file for fast runs. `configs/DigitalTwin.yaml` is an ideal instrument with a tiny sample, useful for unit-style experiments.
+
+The environment was synced in step 2, so after that the launchers start their child servers with `uv run --no-sync` and never reinstall packages while the stack is coming up. If you change `pyproject.toml` or the extras, run `uv sync ...` once, in one terminal, before starting the stack again: several `uv run` commands syncing the same environment at the same time can trip over each other.
+
+Both MCP endpoints listen on `127.0.0.1` only. They have no authentication, and the agent endpoint runs in `auto` approval mode, so anyone who can reach it can drive the instrument. To use the agent endpoint from another machine, do it deliberately: set `mcp.http_host` in `configs/mcp_dt.yaml` to this machine's address on a network you trust (or `0.0.0.0` for every interface), switch approval mode to `approve` (see section 7), and point the other machine's `ASYNCROSCOPY_MCP_URL` at `http://<this machine>:8000/mcp`. Keep the operator endpoint (`mcp_operator.yaml`) on `127.0.0.1`: it can approve held calls.
 
 The Tiled API key `secret` is the default the DATA device starts Tiled with; set `ASYNCROSCOPY_TILED_API_KEY` to change it (and pass the same value to the pyTEMlib server).
 
@@ -103,9 +132,11 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 
 | Symptom | Cause and fix |
 | :-- | :-- |
-| `ModuleNotFoundError: No module named 'asyncroscopy'` running a script | Run it with `uv run` from the repository root; scripts in `startup_scripts/` and `benchmarks/` add the root to the path themselves. |
+| `ModuleNotFoundError: No module named 'asyncroscopy'` | The environment predates asyncroscopy being installed into it, or you are using a different Python. Run `uv sync --extra agent --extra ollama` again, and start Python, Jupyter or scripts with `uv run` (or the `.venv` interpreter). |
+| `FileNotFoundError` naming `uv` when a launcher starts its servers | uv is not on `PATH`. Open a new terminal, or call uv by its full path as in section 1; the launchers then reuse that path. |
+| `uv sync` fails to fetch pyTEMlib | It is installed from GitHub (git must be installed and github.com reachable). |
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
 | pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
-| Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal; the launchers also clean up their own stale processes on the next start. |
+| Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal. On the next start `run_servers.py` also stops whatever is listening on its Tango and Tiled ports and leftover device servers from the same config; it leaves other asyncroscopy stacks alone. |
 | The agent picks the wrong tool or loops | Use `qwen3:8b` or larger, keep `ASYNCROSCOPY_NUM_CTX` at 8192 or more, and prefer the `mapping` graph for maps. `benchmarks/run_tool_json.py` measures a model on this machine. |
