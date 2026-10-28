@@ -246,3 +246,4 @@ aws-use/
 
 .processes/
 .langgraph_api/
+.pytest_tmp/

@@ -18,7 +18,7 @@ tango:
   port: 9094
 
 mcp:
-  name: Spectra300_MCP
+  name: DigitalTwin_MCP
   transport: streamable-http
   http_host: 127.0.0.1
   http_port: 8000

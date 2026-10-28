@@ -21,6 +21,7 @@ Use this site to navigate contributor guidance, microscope architecture notes, h
 
 ## Start Here
 
+- [Quick Start](Operation/quickstart.md): the tested path from clone to a running digital twin, MCP endpoints, analysis server and an agent mapping a sample.
 - [Contributing Guide](dev_guide.md): project engineering principles and pull request expectations.
 - [Base Electron Microscope Extension Notes](Microscopy/modify_base_electron_microscope.md): where to add or change core microscope behavior.
 - [Thermo Microscope Extension Notes](Microscopy/modify_auto_script_microscope.md): detector integration and orchestration guidance.
@@ -35,6 +36,7 @@ Use this site to navigate contributor guidance, microscope architecture notes, h
 
 ## Operation
 
+- [Quick Start (digital twin)](Operation/quickstart.md)
 - [Starting Servers - CLI](Operation/run-servers.md)
 - [Starting Servers - GUI](Operation/run-server-gui.md)
 

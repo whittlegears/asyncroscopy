@@ -130,7 +130,7 @@ uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-The agent endpoint now offers `SimIndenter_indent`, `IndentGrid_reserve` and the rest. (The endpoint's name in `mcp_dt.yaml` says Spectra300; it serves whatever devices are running.) To approve held calls or switch the mode from SciAgentGUI, also start the operator endpoint:
+The agent endpoint now offers `SimIndenter_indent`, `IndentGrid_reserve` and the rest. (`mcp_dt.yaml` serves whatever devices are running, not only the twin.) To approve held calls or switch the mode from SciAgentGUI, also start the operator endpoint:
 
 ```bash
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml

@@ -152,6 +152,18 @@ uv run python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan
 uv run python -m asyncroscopy.instruments.electron_microscope.auto_script instrument_instance
 ```
 
+In PowerShell:
+
+```powershell
+$env:TANGO_HOST = "localhost:9094"
+uv run python -m tango.databaseds.database 2
+
+# in each further terminal
+$env:TANGO_HOST = "localhost:9094"
+uv run python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan_instance
+uv run python -m asyncroscopy.instruments.electron_microscope.auto_script instrument_instance
+```
+
 Manual device startup requires the devices to already be registered in Tango.
 Let `run_servers.py` do registration once, then stop and relaunch individual
 servers as needed.
