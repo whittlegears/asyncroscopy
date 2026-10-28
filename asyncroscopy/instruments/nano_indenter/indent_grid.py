@@ -30,7 +30,8 @@ class IndentGrid(JobDevice):
     indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Tango address of the indenter (the launcher names the instrument asyncroscopy/instrument/default).")
 
     def _indenter(self) -> tango.DeviceProxy:
-        return tango.DeviceProxy(self.indenter_device_address)
+        # proxy(), not tango.DeviceProxy: an indent takes longer than Tango's 3 s default timeout.
+        return self.proxy(self.indenter_device_address)
 
     def resolve_plan(self, plan: dict) -> dict:
         """plan: {"origin_m": [x, y], "nx": int, "ny": int, "pitch_m": float, "load_n": float}."""

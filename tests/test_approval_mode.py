@@ -75,11 +75,14 @@ class TestPolicy:
     @pytest.mark.parametrize("name", [
         "interlock_off", "turn_off_safety", "switch_off_interlock", "emergency_unlock", "withdraw_and_move",
         "stop_and_approach", "move_to_stop", "drop_off_sample", "set_stop_height", "pause_then_resume", "limits_off", "feedback_off",
+        "off_axis_tilt", "goto_stop", "jog_to_halt", "stop_at_position", "retract_to", "withdraw_volume", "vacuum_off", "pump_off",
+        "cooling_off", "LN2_off", "stop_cooling", "stop_pumping", "pause_ventilation", "go_to_safe_state",
+        "chiller_off", "z_piezo_off", "stop_return_home", "off_axis_illumination", "approach_stop",
     ])
     def test_names_that_do_more_than_stop_are_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 
-    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "go_to_safe_state"])
+    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan"])
     def test_plain_stops_are_low(self, name):
         assert risk_of("AnyDevice", name) == "low"
 
@@ -318,6 +321,10 @@ class TestDevicePrefixes:
     def test_same_family_devices_get_member_prefixes(self, monkeypatch):
         tools = self.server_for(monkeypatch, ["lab/mapper/1", "lab/mapper/2"])._find_tools()
         assert {prefix: commands["start"][0]() for prefix, commands in tools.items()} == {"Mapper_1": "lab/mapper/1", "Mapper_2": "lab/mapper/2"}
+
+    def test_repeated_default_members_are_named_by_their_config_key(self, monkeypatch):
+        tools = self.server_for(monkeypatch, ["asyncroscopy/grid1/default", "asyncroscopy/grid2/default"])._find_tools()
+        assert set(tools) == {"Mapper_grid1", "Mapper_grid2"}
 
     def test_repeated_members_fall_back_to_the_device_name(self, monkeypatch):
         tools = self.server_for(monkeypatch, ["east/mapper/default", "west/mapper/default"])._find_tools()

@@ -15,7 +15,7 @@ uv run startup_scripts/run_servers.py
 
 uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
 uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
-uv run startup_scripts/run_servers.py --yaml configs/ThinkPad-utkarsh-covalent-setup.yaml
+uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 ```
 
 GUI:

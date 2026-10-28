@@ -35,6 +35,15 @@ class TestRealisticTwin:
         assert np.allclose(reported[:2], [5e-8, -3e-8], atol=6e-9)
         assert not np.allclose(reported[:2], true[:2], atol=1e-10)
 
+    def test_parameters_never_reveal_the_true_position(self, mapping_twin_proxy):
+        mapping_twin_proxy.move_stage([5e-8, -3e-8, 0.0, 0.0, 0.0])
+        params = json.loads(mapping_twin_proxy.get_parameters())
+        reported = np.array(mapping_twin_proxy.get_stage())
+        view = params["viewport_world_angstrom"]
+        centre = np.array([view["x_min"] + view["x_max"], view["y_min"] + view["y_max"]]) / 2 * 1e-10
+        assert np.allclose(centre, reported[:2], atol=1e-12)
+        assert params["particle_count"] > 0
+
     def test_stage_device_shows_reported_position(self, mapping_twin_proxy, mapping_stage_proxy):
         mapping_twin_proxy.move_stage([1e-8, 1e-8, 0.0, 0.0, 0.0])
         assert mapping_stage_proxy.x == pytest.approx(mapping_twin_proxy.get_stage()[0])

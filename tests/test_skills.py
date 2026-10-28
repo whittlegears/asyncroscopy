@@ -44,7 +44,7 @@ def test_skill_needing_absent_tools_is_not_offered():
     stem = {s.name: s for s in list_skills({"Mapper_reserve", "Mapper_start"})}
     indenter = {s.name: s for s in list_skills({"IndentGrid_reserve", "SimIndenter_indent"})}
     assert stem["mapping"].available
-    assert not indenter["mapping"].available and "Mapper_reserve" in indenter["mapping"].problem
+    assert not indenter["mapping"].available and "Mapper*_reserve" in indenter["mapping"].problem
 
 
 def test_mcp_skill_tools(monkeypatch):
@@ -54,7 +54,7 @@ def test_mcp_skill_tools(monkeypatch):
 
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
-    with pytest.raises(ToolError, match="Mapper_reserve"):
+    with pytest.raises(ToolError, match=r"Mapper\*_reserve"):
         server.load_skill("mapping")  # this endpoint has no Mapper
     server.tools = {"Mapper": {"reserve": None}}
     assert any(s["name"] == "mapping" and s["available"] for s in server.list_skills())

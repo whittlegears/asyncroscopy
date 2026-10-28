@@ -32,7 +32,7 @@ ollama pull qwen3:8b
 ## 2. Get the code and its dependencies
 
 ```bash
-git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git
+git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # Windows: add a short target, e.g. C:\src\asyncroscopy
 cd asyncroscopy
 uv sync --extra agent --extra ollama
 uv run pytest -q -m "not slow"
@@ -42,13 +42,13 @@ uv run pytest -q -m "not slow"
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
 
-The test suite starts real Tango devices in-process. Without the slow tests it takes about a minute on a laptop; `uv run pytest -q` runs everything, including timing tests, in about a minute and a half. All tests should pass; a few are skipped on purpose. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
+The test suite starts real Tango devices in-process. Without the slow tests it takes about a minute on a laptop; `uv run pytest -q` runs everything, including timing tests, in about a minute and a half. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra, three need a running Tango database). Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
 
 **Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python install is broken. Point uv at the interpreter file directly (PowerShell); this is the fix that worked in testing:
 
 ```powershell
 $py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Select-Object -First 1).FullName
-uv sync --python $py --extra agent --extra ollama
+& $uv sync --python $py --extra agent --extra ollama   # or plain uv if it is on PATH
 ```
 
 If no file matches, install that Python first with `uv python install 3.12`. (`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.) `uv python install 3.12 --reinstall` followed by `uv sync --python 3.12 ...` can also repair the link, but it fails when a different version's link is the broken one.
@@ -132,6 +132,7 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | `ModuleNotFoundError: No module named 'asyncroscopy'` | The environment predates asyncroscopy being installed into it, or you are using a different Python. Run `uv sync --extra agent --extra ollama` again, and start Python, Jupyter or scripts with `uv run` (or the `.venv` interpreter). |
 | `FileNotFoundError` naming `uv` when a launcher starts its servers | uv is not on `PATH`. Open a new terminal, or call uv by its full path as in section 1; the launchers then reuse that path. |
 | Windows: `DLL load failed ... The filename or extension is too long`, or `The 'dask-ml' library is required` although it is installed | The clone is in a deep folder, so DLLs inside `.venv` exceed Windows' path limit (the dask-ml message hides the real import error). Clone to a short path such as `C:\src\asyncroscopy`, or keep the clone and set `UV_PROJECT_ENVIRONMENT=C:\venvs\asyncroscopy` before `uv sync`. |
+| The agent stops with `llama-server process has terminated ... 0xc0000409` or `CUDA error` | Ollama's GPU runner crashed loading the model (not asyncroscopy); it happens most on the first load on a small GPU. Run the command again; if it keeps failing, restart Ollama or use a smaller model (`ASYNCROSCOPY_MODEL=qwen3:4b`). The agent command exits with status 1 when a map did not complete. |
 | `uv sync` fails to fetch pyTEMlib | It is installed from GitHub (git must be installed and github.com reachable). |
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
 | pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |

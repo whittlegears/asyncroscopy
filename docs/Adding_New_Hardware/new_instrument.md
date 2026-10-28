@@ -45,9 +45,9 @@ Conventions the rest of the stack relies on:
 
 - **Units in names and SI values.** Use `load_n`, `pitch_m`, `travel_m`. Agents mix up units more than anything else.
 - **`get_*` and `list_*` must not change anything.** The safety policy treats them as read-only, so they are never held for approval. A command that reads *and* acts (an SPM `get_image` that scans the tip, an XRD `get_counts` that opens the shutter) needs a different name. Check your `get_*` commands for side effects.
-- **Give stop commands a stop word as the first or last word of their name.** Such a command is always allowed: an agent never waits for approval to make the instrument safe. The stop words are `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop` and `emergency`; the pairs close + shutter, blank + beam and safe + state count anywhere in the name. `Off`, `stop_scan`, `AbortScan` and `shutter_close` all qualify. A name that also contains a word that undoes a safeguard (`disable`, `override`, `bypass`, `ignore`, `reset`, `clear`, `release`, `unblank`, `open`, `force`) or does more than stop (`interlock`, `safety`, `limit`, `lock`, `unlock`, `guard`, `feedback`, `move`, `approach`, `set`, `drop`, `resume`, `start`, `run`, `enable`, `and`, `then`) does not: `interlock_off`, `feedback_off` and `withdraw_and_move` are held. `STOP_WORDS`, `STOP_PAIRS`, `UNSAFE_WORDS` and `ACTION_WORDS` in `asyncroscopy/safety/policy.py` are the exact lists.
+- **Give stop commands a stop word as the first or last word of their name.** Such a command is always allowed: an agent never waits for approval to make the instrument safe. The stop words are `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop` and `emergency`; the pairs close + shutter, blank + beam and safe + state count anywhere in the name. `Off`, `stop_scan`, `AbortScan` and `shutter_close` all qualify. A name that also contains a word that undoes a safeguard (`disable`, `override`, `bypass`, `ignore`, `reset`, `clear`, `release`, `unblank`, `open`, `force`) or names a safeguard, a subsystem whose stopping does harm, or motion (for example `interlock`, `feedback`, `vacuum`, `pump`, `cooling`, `cryo`, `move`, `go`, `to`, `jog`, `tilt`, `set`, `and`, `then`) does not: `interlock_off`, `vacuum_off`, `feedback_off`, `withdraw_and_move` and `go_to_safe_state` are held. `off` counts only as the last word. `STOP_WORDS`, `STOP_PAIRS`, `UNSAFE_WORDS` and `ACTION_WORDS` in `asyncroscopy/safety/policy.py` are the exact lists.
 - **Refuse unsafe arguments in the device** (`raise ValueError(...)`), not in the agent. The limit then applies to notebooks, the GUI and every agent. Expose the limits (the example's `get_limits`) so a job device can check a whole plan before it starts.
-- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition` and register the file with the DATA device's `register_path`; `asyncroscopy/instruments/electron_microscope/mapper.py` does this for every tile. The MCP server attaches an image preview only to the STEM `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` commands, and records a result's key in the trace for commands whose name starts with `acquire`.
+- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/instruments/electron_microscope/mapper.py` does this for every tile. The MCP server attaches an image preview only to the STEM `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` commands, and records a result's key in the trace for commands whose name starts with `acquire`.
 - **Start `doc_in` with "JSON" for an object argument** (`doc_in=':param plan: JSON {...}'`). Only then does the MCP server accept an object from the model and normalise it, so a retried call matches the approval it was given.
 - **Argument names come from the Python signature.** `command` writes `:param load_n:` into `doc_in` for you; with plain `tango.server.command` you must write it yourself, or the agent's argument is called `arg`.
 
@@ -62,7 +62,9 @@ A grid of 400 indents takes hours; a single Tango command times out after second
 | `on_stop(job, reason)` | Abort or failure: put the instrument in a safe state. |
 | `on_finish(job)` | After the last step: make it safe again, and return the keys of anything saved. |
 
-Also set `JOB_KIND`, one line that starts the tool descriptions, and `PLAN_EXAMPLE`, a valid plan. The agent sees the example in the `reserve` tool's description, and it comes back with every refused plan. Optionally override `summary(job)` to add what `results` returns.
+Also set `JOB_KIND`, one line that starts the tool descriptions, and `PLAN_EXAMPLE`, a valid plan. The agent sees the example in the `reserve` tool's description, and it comes back with every refused plan. `results` returns the records of the last 50 steps (what `run_step` returned); override `summary(job)` to return something more useful, such as one map key.
+
+Inside `run_step`, reach other devices with `self.proxy(address)`, not `tango.DeviceProxy(address)`: a bare proxy gives up after Tango's 3 s default, so a stage move or autofocus that takes longer fails the job while the motor is still moving. `proxy()` uses the `step_timeout_s` property (120 s). In-process tests do not show this timeout, so they pass either way.
 
 `JobDevice` provides the rest:
 
@@ -87,7 +89,7 @@ You don't have to configure anything for the default policy:
 | `IndentGrid.abort` | low | stop word |
 | `Init`, `Kill`, `RestartServer` on any device | not offered to agents | operator only |
 
-`place_beam`, `set_fov` and `set_defocus` are low only on a device that has `acquire_scanned_image` (a STEM); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
+`place_beam`, `set_fov` and `set_defocus` are low only on a device with both `acquire_scanned_image` and `blank_beam` (an electron microscope); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
 
 ## 4. Config and launch
 
@@ -143,8 +145,8 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 The general agent (`uv run python -m asyncroscopy.agents.run general "..."`, or LangGraph Studio) picks its tools in this order:
 
 1. The globs in `ASYNCROSCOPY_AGENT_TOOLS`, if set.
-2. Otherwise, when the endpoint has a STEM (a `*_acquire_scanned_image` or `Mapper_reserve` tool), a short STEM set.
-3. Otherwise, as here, every tool on the endpoint.
+2. Otherwise, when the endpoint has a STEM (a device with both `acquire_scanned_image` and `blank_beam`, or a `Mapper` job device), a short STEM set. An AFM that names its scan `acquire_scanned_image` is not a STEM.
+3. Otherwise, as here, every tool on the instrument endpoint (not the STEM analysis server's).
 
 It prints the tools it chose at start-up.
 

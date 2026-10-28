@@ -31,6 +31,7 @@ from asyncroscopy.mcp.tool_log import TraceWriter
 
 ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "aborting"}
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
+SUMMARY_STEPS = 50  # step records results returns by default; the rest are in the job's .steps.jsonl
 
 
 class JobError(Exception):
@@ -52,6 +53,7 @@ class JobDevice(Device):
     plan_example = attribute(dtype=str, doc="A valid plan for reserve, as JSON ('' if the device gives none).")
     state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/jobs.jsonl", doc="Instrument Trace JSONL file.")
+    step_timeout_s = device_property(dtype=float, default_value=120.0, doc="Timeout of proxies made with proxy(): the longest one instrument command may take.")
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -417,7 +419,17 @@ class JobDevice(Device):
         return self._reply(reply)
 
     def summary(self, job: dict) -> dict:
-        return {}
+        """Extra fields for ``results``; by default the last steps' records (what run_step returned)."""
+        records = job.get("step_results", {})
+        last = sorted(records, key=int)[-SUMMARY_STEPS:]
+        return {"steps": {i: records[i] for i in last}, "steps_omitted": max(0, len(records) - len(last))}
+
+    def proxy(self, address: str, timeout_s: float | None = None) -> tango.DeviceProxy:
+        """A proxy to another device whose commands may take longer than Tango's 3 s default
+        (a stage move, an autofocus): use this, not a bare DeviceProxy, inside run_step."""
+        proxy = tango.DeviceProxy(address)
+        proxy.set_timeout_millis(int(1000 * (timeout_s if timeout_s is not None else self.step_timeout_s)))
+        return proxy
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.', doc_out="Frees the instrument for the next reservation.")
     def release(self, request: str) -> str:

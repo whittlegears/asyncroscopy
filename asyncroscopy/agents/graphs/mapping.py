@@ -92,12 +92,35 @@ def _to_metres(value: float, metres_below: float) -> float:
         return value * 1e-6
     return value
 
+WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full|all of the|the)\s+sample\b|\beverything\b", re.I)
+
+
 class MappingGraph:
     def __init__(self, config: AgentConfig | None = None):
         self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "mapping-graph"))
         self.instrument: McpServer = self.config.instrument()
         self.analysis: McpServer | None = self.config.analysis()
         self._tool_names: set[str] | None = None
+        self._mapper_prefix: str | None = None
+
+    async def _mapper(self) -> str:
+        """The Mapper's tool prefix: Mapper, or Mapper_<key> when an endpoint exports several."""
+        if self._mapper_prefix is None:
+            if self._tool_names is None:
+                self._tool_names = {t.name for t in await self.instrument.list_tools()}
+            configured = os.environ.get("ASYNCROSCOPY_MAPPER")
+            candidates = sorted(n[: -len("_reserve")] for n in self._tool_names if n.startswith("Mapper") and n.endswith("_reserve"))
+            if configured:
+                if configured not in candidates:
+                    raise RuntimeError(f"ASYNCROSCOPY_MAPPER={configured!r} is not one of {candidates}")
+                self._mapper_prefix = configured
+            elif len(candidates) == 1:
+                self._mapper_prefix = candidates[0]
+            elif not candidates:
+                raise RuntimeError(f"no Mapper job device on {self.config.mcp_url}")
+            else:
+                raise RuntimeError(f"several Mappers {candidates}; set ASYNCROSCOPY_MAPPER to the one to use")
+        return self._mapper_prefix
 
     async def _microscope(self) -> str:
         """The exported microscope's class name, e.g. DigitalTwin or AutoScriptMicroscope."""
@@ -152,7 +175,10 @@ class MappingGraph:
                 # Never fall back to an empty plan: it would become a whole-sample map.
                 return {"error": "the model's reply held no JSON map plan"}
         score = bool(plan.pop("score", state.get("score", False)))
-        plan = self._complete_plan(plan, context, state.get("request", ""), from_model=from_model)
+        try:
+            plan = self._complete_plan(plan, context, state.get("request", ""), from_model=from_model)
+        except ValueError as exc:
+            return {"error": f"could not make a map plan: {exc}"}
         try:
             validate(plan, "map_plan")
         except jsonschema.ValidationError as exc:
@@ -172,28 +198,35 @@ class MappingGraph:
         fov = _to_metres(fov, metres_below=1e-3)  # a STEM field of view is far below a millimetre
         plan["fov_m"] = fov
         size_m, centre_m = plan.pop("size_m", None), plan.pop("centre_m", None)
+        stage_xy = (context.get("stage_position_m") or [0.0, 0.0])[:2]
         box = plan.get("box_m")
         if isinstance(size_m, list) and len(size_m) == 2 and not isinstance(box, list):
             width, height = (_to_metres(float(v), metres_below=1e-2) for v in size_m)
-            x, y = (centre_m or context.get("stage_position_m") or [0.0, 0.0])[:2]
+            x, y = (_to_metres(float(v), metres_below=1e-2) for v in (centre_m or stage_xy)[:2])
             box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
-        if not (isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box)):
-            box = context.get("sample_bounds_m")
-            if box is None:
-                x, y = (context.get("stage_position_m") or [0.0, 0.0])[:2]
-                box = [x - 2 * fov, x + 2 * fov, y - 2 * fov, y + 2 * fov]
-        box = [_to_metres(float(v), metres_below=1e-2) for v in box]  # STEM stage travel is a few mm
-        x0, x1, y0, y1 = box
-        box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
+        if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
+            box = [_to_metres(float(v), metres_below=1e-2) for v in box]  # STEM stage travel is a few mm
+            x0, x1, y0, y1 = box
+            box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
+        else:
+            box = None
         # A size stated in the request ("a 600 nm square", "2 x 1 um area") is read here, not left to
         # the model: small models often fall back to the whole sample. Centred on the stage unless the
         # model's box already has that size.
         size = MappingGraph._requested_size(request) if from_model else None
         if size is not None:
             width, height = size
-            if not (abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height):
-                x, y = (context.get("stage_position_m") or [0.0, 0.0])[:2]
+            if box is None or not (abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height):
+                x, y = stage_xy
                 box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
+        if box is None:
+            # The whole sample is hours of beam time: only when the request asks for it.
+            if not WHOLE_SAMPLE.search(request):
+                raise ValueError("the plan gives no area (box_m or size_m) and the request does not ask for the whole sample")
+            box = context.get("sample_bounds_m")
+            if box is None:
+                raise ValueError("the request asks for the whole sample, but the instrument reports no sample bounds; give box_m or size_m")
+            box = list(box)
         # A box smaller than one tile becomes one tile.
         for lo, hi in ((0, 1), (2, 3)):
             if box[hi] - box[lo] < fov:
@@ -233,7 +266,7 @@ class MappingGraph:
         return None
 
     async def reserve(self, state: MapState) -> MapState:
-        reply = await self.instrument.call_json("Mapper_reserve", {"request": json.dumps({"plan": state["plan"], "caller": self.config.caller})})
+        reply = await self.instrument.call_json(f"{await self._mapper()}_reserve", {"request": json.dumps({"plan": state["plan"], "caller": self.config.caller})})
         if "error" in reply:
             return {"error": f"Mapper refused the plan: {reply['error']['message']}"}
         return {"reservation_id": reply["reservation_id"], "estimate": reply["estimate"]}
@@ -243,7 +276,7 @@ class MappingGraph:
         deadline = time.time() + APPROVAL_WAIT_S
         request_id = None
         while True:
-            result = await self.instrument.call("Mapper_start", arguments)
+            result = await self.instrument.call(f"{await self._mapper()}_start", arguments)
             text = result_text(result)
             if not result.is_error:
                 reply = json.loads(text)
@@ -252,7 +285,7 @@ class MappingGraph:
                 return {"job_id": reply["job_id"], "approval_request_id": request_id or ""}
             match = re.search(r"request_id=(\w+)", text)
             if not match:
-                return {"error": f"Mapper_start failed: {text[:300]}"}
+                return {"error": f"the map start failed: {text[:300]}"}
             request_id = match.group(1)
             # Held in approve mode: wait for the operator, then repeat exactly the same call.
             while True:
@@ -274,7 +307,7 @@ class MappingGraph:
         misses = 0
         while True:
             try:
-                status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
+                status = await self.instrument.call_json(f"{await self._mapper()}_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
             except Exception as exc:  # one dropped call in an hours-long poll must not end the watch
                 status = {"error": {"message": str(exc)}}
             if "error" in status:
@@ -288,8 +321,8 @@ class MappingGraph:
             if time.time() > deadline:
                 return {"error": "the map run took more than three times its estimate"}
             await asyncio.sleep(POLL_S)
-        results = await self.instrument.call_json("Mapper_results", {"request": json.dumps({"job_id": state["job_id"]})})
-        await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
+        results = await self.instrument.call_json(f"{await self._mapper()}_results", {"request": json.dumps({"job_id": state["job_id"]})})
+        await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         if status["state"] != "done":
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}"}
         keys = results.get("result_keys", {})
@@ -372,14 +405,14 @@ class MappingGraph:
             return
         try:
             if state.get("job_id"):
-                await self.instrument.call("Mapper_abort", {"request": json.dumps({"job_id": state["job_id"]})})
+                await self.instrument.call(f"{await self._mapper()}_abort", {"request": json.dumps({"job_id": state["job_id"]})})
                 deadline = time.time() + ABORT_WAIT_S
                 while time.time() < deadline:
-                    status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
+                    status = await self.instrument.call_json(f"{await self._mapper()}_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
                     if status.get("state") not in {"running", "aborting"}:
                         break
                     await asyncio.sleep(POLL_S)
-            await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
+            await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         except Exception:
             pass
 

@@ -133,3 +133,9 @@ uv run python -m asyncroscopy.mcp.mcp_server \
   --blocked-classes-json '["DataBase", "DServer"]' \
   --blocked-functions-json '{"*": ["Init", "Kill", "RestartServer"]}'
 ```
+
+In PowerShell (one line; PowerShell passes the JSON quotes through with `--%`):
+
+```powershell
+uv run python -m asyncroscopy.mcp.mcp_server --% --name Spectra300_MCP --tango-host localhost --tango-port 9094 --transport streamable-http --http-host 127.0.0.1 --http-port 8000 --data-device-address asyncroscopy/data/default --blocked-classes-json "[\"DataBase\", \"DServer\"]" --blocked-functions-json "{\"*\": [\"Init\", \"Kill\", \"RestartServer\"]}"
+```
