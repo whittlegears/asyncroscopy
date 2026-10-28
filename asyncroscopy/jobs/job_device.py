@@ -46,6 +46,23 @@ def _json_default(value):
     return value.tolist() if hasattr(value, "tolist") else str(value)
 
 
+def _has_null(value) -> bool:
+    if isinstance(value, dict):
+        return any(_has_null(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_null(v) for v in value)
+    return value is None
+
+
+def _kind(value) -> str:
+    """JSON kind of a plan value; ints and floats are both numbers."""
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, (int, float)):
+        return "number"
+    return type(value).__name__
+
+
 class JobDevice(Device):
     # One line saying what this device's job does; MCP tool descriptions start with it.
     JOB_KIND = "background job"
@@ -213,9 +230,9 @@ class JobDevice(Device):
 
     @classmethod
     def _plan_caused(cls, exc: Exception, request: str) -> bool:
-        """A KeyError for a plan field the plan lacks, or a TypeError with a null in the plan, is the caller's;
-        anything else from resolve_plan (a typo'd limits key, arithmetic on None) is the device's bug.
-        Plan fields are PLAN_EXAMPLE's keys when there is one."""
+        """A KeyError for a plan field the plan lacks, or a TypeError with a null or a wrongly typed value
+        in the plan, is the caller's; anything else from resolve_plan (a typo'd limits key, arithmetic on
+        None) is the device's bug. Plan fields and their types are PLAN_EXAMPLE's when there is one."""
         try:
             plan = json.loads(request).get("plan")
         except (ValueError, AttributeError):
@@ -227,7 +244,8 @@ class JobDevice(Device):
                 return True
             known = cls.PLAN_EXAMPLE if isinstance(cls.PLAN_EXAMPLE, dict) else None
             return exc.args[0] not in plan and (known is None or exc.args[0] in known)
-        return any(v is None for v in plan.values())
+        example = cls.PLAN_EXAMPLE if isinstance(cls.PLAN_EXAMPLE, dict) else {}
+        return any(_has_null(v) or (k in example and _kind(v) != _kind(example[k])) for k, v in plan.items())
 
     def _guard(self, fn, *args) -> str:
         try:
@@ -238,7 +256,8 @@ class JobDevice(Device):
             if isinstance(exc, (TypeError, KeyError)) and fn != self._reserve:
                 raise  # outside a plan check these are bugs, not a caller's mistake
             if isinstance(exc, (TypeError, KeyError)) and not self._plan_caused(exc, args[0] if args else ""):
-                return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}")
+                example = f" Example plan: {json.dumps(self.PLAN_EXAMPLE)}" if self.PLAN_EXAMPLE is not None else ""
+                return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}.{example}")
             message = exc.message if isinstance(exc, jsonschema.ValidationError) else f"{type(exc).__name__}: {exc}" if isinstance(exc, (TypeError, KeyError)) else str(exc)
             if self.PLAN_EXAMPLE is not None:
                 message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"

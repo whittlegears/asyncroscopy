@@ -116,3 +116,5 @@ def test_a_resolve_plan_bug_is_the_devices_not_the_callers():
     assert not plan_caused(KeyError("travl_m"), json.dumps({"plan": {"nx": 1}}))  # a typo in the device
     assert plan_caused(TypeError("x"), json.dumps({"plan": {"nx": None}}))
     assert not plan_caused(TypeError("x"), json.dumps({"plan": {"nx": 1}}))
+    for confused in ({"origin_m": 5}, {"nx": [2]}, {"nx": {"a": 1}}, {"origin_m": [None, 0]}):  # wrong type or a nested null
+        assert plan_caused(TypeError("x"), json.dumps({"plan": confused})), confused

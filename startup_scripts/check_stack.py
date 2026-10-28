@@ -95,7 +95,8 @@ async def main(args: argparse.Namespace) -> int:
         report("agent endpoint hides operator-only commands", not ({"Approvals_approve", "Approvals_set_mode"} & agent_tools) and not any(t.endswith("export_ground_truth") for t in agent_tools))
         report("operator endpoint offers approvals", {"Approvals_approve", "Approvals_set_mode", "Approvals_list_pending"} <= operator_tools)
         microscope = next((t.rsplit("_move_stage", 1)[0] for t in agent_tools if t.endswith("_move_stage")), None)
-        if not report("a microscope with move_stage is exported", microscope is not None):
+        if not report("a microscope with move_stage is exported", microscope is not None,
+                      "" if microscope else f"only {len(agent_tools)} agent tools; were the MCP servers started before run_servers.py printed ready? Restart them"):
             return len(FAILURES)
 
         # A small map as one background job.

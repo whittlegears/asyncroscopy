@@ -694,7 +694,6 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 status_line("SKIP", "device registration")
 
-            tiled_started = False
             print_section(4, total_steps, "Starting device servers")
             started = {}
             for device in regular_devices:
@@ -714,7 +713,6 @@ def main(argv: list[str] | None = None) -> int:
                 print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
 
             if should_start_tiled:
-                tiled_started = True
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
                 if tiled_config["tiled_server"] != "yes":
                     raise RuntimeError(f"Tiled HTTP server failed to start: {tiled_config['tiled_server_status']}")
@@ -789,12 +787,7 @@ def main(argv: list[str] | None = None) -> int:
                     log_file.write_text(f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}", encoding="utf-8")
                 print(color(f"Saved logs to {log_dir}", Style.bold + Style.yellow))
 
-        # Stop tiled on a crash, if it was started: asking a device that never came up takes a minute to time out.
-        if locals().get("tiled_started"):
-            try:
-                stop_tiled_server()
-            except Exception:
-                pass
+        # No stop_tiled_server() here: the process manager's tree kill has already ended Tiled with the data server.
             
         return 1
 

@@ -126,13 +126,16 @@ class Approvals(Device):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         with self._lock:
-            previous = self._mode
-            if mode == "approve":
-                self._mode = mode  # holding calls must not depend on the disk
-            self._save_mode(mode, body.get("who"))  # if this fails, a switch to auto does not happen
+            previous, persisted = self._mode, True
+            try:
+                self._save_mode(mode, body.get("who"))
+            except OSError:
+                if mode != "approve":
+                    raise  # loosening to auto happens only once it is saved
+                persisted = False  # holding calls must not depend on the disk
             self._mode = mode
-        self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode}, mode=mode)
-        return json.dumps({"mode": mode, "previous": previous})
+        self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode, "persisted": persisted}, mode=mode)
+        return json.dumps({"mode": mode, "previous": previous, "persisted": persisted})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "reason": "..."}.')
     def request(self, request: str) -> str:
