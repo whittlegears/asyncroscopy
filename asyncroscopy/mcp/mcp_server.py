@@ -977,8 +977,8 @@ class MCPServer:
         raw_tools = self._find_tools()
         exported = {str(dev.dev_name()).lower() for dev in self._devices.values()}
         if self.approvals_device_address and self.approvals_device_address.lower() not in exported:
-            print(f"[safety] approvals device {self.approvals_device_address} is not exported: every gated call will be refused. "
-                  "Start this server after run_servers.py prints ready, or fix safety.approvals_device_address", flush=True)
+            print(f"[safety] approvals device {self.approvals_device_address} is not among the exported devices; while it is not running, "
+                  "gated calls are refused. Start this server after run_servers.py prints ready, or check safety.approvals_device_address", flush=True)
 
         wrapped_tools: dict[str, dict[str, Callable]] = {}
         prefix_class = self._prefix_class
