@@ -214,7 +214,7 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     # Envelope verbs
     # ------------------------------------------------------------------
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job (see its class for what the job does) and returns reservation_id with an estimate.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job and returns reservation_id with an estimate; nothing moves until start.")
     def reserve(self, request: str) -> str:
         """Validate a plan, hold the device for it, and return the resolved plan with an estimate."""
         return self._guard(self._reserve, request)

@@ -17,6 +17,8 @@ import numpy as np
 import tango
 from tango.test_context import MultiDeviceTestContext
 
+from asyncroscopy.testing import prop_path
+
 # Import device classes to test
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.detectors.eds import EDS
@@ -41,21 +43,6 @@ setup_llm_stubs()
 class FakeAdornedImage:
     def __init__(self, data: np.ndarray):
         self.data = data
-
-
-def prop_path(path) -> str:
-    """A path a Tango test-context device property can carry.
-
-    The test context's file database cuts property values at ":", so a Windows
-    path like C:/Users/... arrives as "C:" (the current directory) and files
-    land in the working tree. Relative paths have no drive colon.
-    """
-    import os
-
-    try:
-        return os.path.relpath(path).replace("\\", "/")
-    except ValueError:  # another drive: a cut path would write into the working tree, so stop here
-        raise RuntimeError(f"{path} is on another drive than the working directory; pytest.ini keeps --basetemp inside the repository for this reason") from None
 
 
 # We use DigitalTwin as our simulated microscope for all tests.

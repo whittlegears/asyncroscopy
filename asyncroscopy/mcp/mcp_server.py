@@ -104,6 +104,7 @@ class MCPServer:
         approvals_device_address: str | None = None,
         risk_overrides: dict[str, str] | None = None,
         trace_path: str | None = None,
+        database=None,
     ):
         """
         Args:
@@ -124,10 +125,13 @@ class MCPServer:
                 When unset, every call runs (there is no mode to consult).
             risk_overrides: {"Class.command" glob: "low"|"high"} checked before the defaults.
             trace_path: Instrument Trace JSONL file. Off when empty.
+            database: Stands in for the Tango database (anything with get_device_exported);
+                asyncroscopy.testing uses it to serve the devices of a test context.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
-        self.database = Database(tango_host, tango_port)
+        # ``database`` replaces the Tango database lookup (asyncroscopy.testing passes a device list).
+        self.database = database if database is not None else Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
 
         self.blocked_functions = {key: list(value) for key, value in blocked_functions.items()}
@@ -591,18 +595,17 @@ class MCPServer:
                 self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, **gate)
             return result
         py_return_type = self._tango_type_to_python(out_type)
-        doc_lines = [
-            f"Tango Device Class: {dev_class}",
-            f"Tango Command: {command_name}",
-            f"Input Type: {in_type.name}",
-        ]
+        doc_lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
+        # A DevVoid type line tells a model nothing; small models read every line.
+        if in_type != CmdArgType.DevVoid:
+            doc_lines.append(f"Input Type: {in_type.name}")
         if in_desc and not _placeholder_doc(in_desc):
             doc_lines.append(f"Input Description: {in_desc}")
-        doc_lines.append(f"Output Type: {out_type.name}")
+        if out_type != CmdArgType.DevVoid:
+            doc_lines.append(f"Output Type: {out_type.name}")
         out_desc = cmd_info.out_type_desc
         if out_desc and not _placeholder_doc(out_desc):
-            doc_lines.append(f"Output Description: {out_desc}")
-            # Lead with what the command is for: models weigh the first line most when choosing a tool.
+            # Lead with what the command is for (once): models weigh the first line most when choosing a tool.
             doc_lines.insert(0, out_desc)
         job_kind = self._job_kinds.get(tool_prefix or dev_class)
         if envelope and job_kind:
@@ -808,7 +811,7 @@ class MCPServer:
 
     @tool()
     def wait_for_job(self, device: str, job_id: str, max_wait_s: float = 25.0) -> dict[str, Any]:
-        """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the tool prefix, e.g. "Mapper". Use this instead of calling <device>_job_status over and over."""
+        """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the job device's tool prefix (the part before _start, e.g. "Mapper" or "IndentGrid"). Use this instead of calling <device>_job_status over and over."""
         proxy = self._devices.get(device)
         if proxy is None or device not in self._envelope_prefixes:
             raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
