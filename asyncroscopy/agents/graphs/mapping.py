@@ -67,7 +67,7 @@ Fields (lengths in metres):
 Optional: "overlap" (0-0.5, default 0.15), "imsize" (pixels, default 512), "dwell_s" (default 1e-6).
 
 Instrument now: {context}
-If the request says "the sample", "whole sample" or "everything", use the sample bounds above.
+Use the sample bounds above only if the request asks for the whole sample (or is just "map the sample"); otherwise give the area the request states.
 If it gives a size like "a 500 nm square around the centre", centre it on the current stage position.
 Convert units: 1 um = 1e-6 m, 1 nm = 1e-9 m."""
 
@@ -92,7 +92,8 @@ def _to_metres(value: float, metres_below: float) -> float:
         return value * 1e-6
     return value
 
-WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full|all of the|the)\s+sample\b|\beverything\b", re.I)
+# Only an explicit whole-area request: "a patch near the edge of the sample" is not one.
+WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full)\s+(?:sample|specimen|grid)\b|\ball of the sample\b|^\s*map\s+the\s+sample\s*[.!]?\s*$", re.I)
 
 
 class MappingGraph:
@@ -147,6 +148,7 @@ class MappingGraph:
     # ------------------------------------------------------------------ nodes
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
+        await self._mapper()  # a missing or ambiguous Mapper ends the run here, before the model is asked
         # get_parameters keys differ by vendor (the twin reports the most); fall back to plain commands.
         params = await self.instrument.call_json(f"{microscope}_get_parameters")
         stage = params.get("stage_position")

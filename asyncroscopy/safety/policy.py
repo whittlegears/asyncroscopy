@@ -5,13 +5,15 @@ Risk is decided by ``Class.command`` patterns, first match wins:
 1. the deployment's own patterns (the MCP config's ``safety.risk``), so a
    team can mark e.g. ``Opentrons.get_tip`` high or ``MyStage.jog`` high;
 2. safe-stop commands, always low: an agent must never wait for approval to
-   abort, stop, retract, switch off or close a shutter. A command is a safe
-   stop when its name (split on "_" and CamelCase) starts or ends with a stop
-   word (STOP_WORDS) or contains a stop pair (STOP_PAIRS), and has no word that
-   undoes a safeguard (UNSAFE_WORDS) or does more than stop (ACTION_WORDS; a
-   MOTION_WORDS object only after a leading stop verb, as in abort_approach). So
-   ``Off``, ``stop_scan``, ``AbortScan`` and ``shutter_close`` are low;
-   ``disable_stop``, ``interlock_off`` and ``withdraw_and_move`` are not;
+   abort, stop, retract, switch off or close a shutter. This is an allow-list,
+   like the rest of the policy: a command's name (split on "_" and CamelCase)
+   has exactly one stop verb (STOP_VERBS, RETREAT_VERBS, or "off" as the last
+   word) and every other word is something that verb may stop (STOP_OBJECTS;
+   MOTION_OBJECTS too after abort/stop/halt/pause), or it is a stop pair
+   (STOP_PAIRS) with only STOP_OBJECTS beside it. So ``Off``, ``stop_scan``,
+   ``AbortScan``, ``abort_approach``, ``beam_off`` and ``shutter_close`` are
+   low; ``brake_off``, ``vacuum_off``, ``stop_retract``, ``retract_approach``
+   and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
 3. the job-envelope verbs other than ``start``, low on devices that implement
    the envelope (the MCP server knows which those are);
 4. Tango's ``State`` and ``Status``, and the read-only naming convention of
@@ -32,24 +34,18 @@ from __future__ import annotations
 import re
 from fnmatch import fnmatchcase
 
-# Words that make a command a safe stop, and words that disqualify it (see the module docstring).
-STOP_WORDS = frozenset({"abort", "stop", "halt", "retract", "withdraw", "off", "estop", "emergency", "pause"})
-STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
-UNSAFE_WORDS = frozenset({"disable", "override", "bypass", "ignore", "reset", "clear", "release", "unblank", "open", "force"})
-# Words that mean the command does something besides stopping, or touches a safeguard:
-# "interlock_off", "vacuum_off", "withdraw_and_move" and "set_stop_height" are not safe stops.
-ACTION_WORDS = frozenset({
-    # safeguards
-    "interlock", "safety", "limit", "limits", "guard", "lock", "unlock", "feedback",
-    # subsystems whose stopping does harm (a vented column, a warming cryo holder, a dropped piezo)
-    "vacuum", "pump", "pumping", "cooling", "cryo", "ln2", "chiller", "vent", "ventilation", "valve", "heater", "power", "piezo",
-    # targets and sequences
-    "go", "goto", "to", "at", "home", "return", "jog", "drive", "axis", "tilt", "volume",
-    "set", "drop", "resume", "start", "enable", "and", "then",
+# A safe stop is recognised by an allow-list (anything else is high, like any unknown name):
+# exactly one stop verb, and every other word one of the objects that verb may take.
+STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
+RETREAT_VERBS = frozenset({"retract", "withdraw"})  # move away from the sample; take hardware objects only
+STOP_OBJECTS = frozenset({
+    "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
+    "tip", "probe", "stage", "all", "x", "y", "z", "now",
 })
-# What a stop verb may stop: allowed after a leading stop verb ("abort_approach", "stop_move"),
-# disqualifying anywhere else ("approach_stop" approaches).
-MOTION_WORDS = frozenset({"move", "motion", "approach", "scan", "run", "travel"})
+MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel"})
+STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
+# "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
+MODIFIERS = frozenset({"emergency"})
 
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release")
@@ -103,16 +99,25 @@ def _word_list(name: str) -> list[str]:
 
 
 def is_safe_stop(command: str) -> bool:
-    """A stop word as the first or last word (or a stop pair), and nothing that does more than stop."""
-    ordered = _word_list(command)
+    """Exactly one stop verb and nothing else but what it may stop (see STOP_OBJECTS), or a stop pair.
+
+    "off" counts only as the last word (beam_off, lamp_off); "off_axis" and "kick_off" are not stops.
+    """
+    ordered = [w for w in _word_list(command) if w not in MODIFIERS]
     words = set(ordered)
-    if not ordered or words & (UNSAFE_WORDS | ACTION_WORDS):
+    if not ordered:
         return False
-    # "off" only as the last word ("beam_off"): first, it is usually "off-axis" or "offset"-like.
-    leading = ordered[0] in STOP_WORDS and ordered[0] != "off"
-    if words & MOTION_WORDS and not leading:
+    for pair in STOP_PAIRS:
+        if pair <= words:
+            return words - pair <= STOP_OBJECTS
+    verbs = [w for w in ordered if w in STOP_VERBS | RETREAT_VERBS or w == "off"]
+    if len(verbs) != 1 or (verbs[0] == "off" and ordered[-1] != "off"):
         return False
-    return leading or ordered[-1] in STOP_WORDS or any(pair <= words for pair in STOP_PAIRS)
+    verb_at = ordered.index(verbs[0])
+    before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
+    # A motion is stopped only when it follows the verb: "abort_approach" stops, "approach_stop" approaches.
+    allowed_after = STOP_OBJECTS | (MOTION_OBJECTS if verbs[0] in STOP_VERBS else frozenset())
+    return before <= STOP_OBJECTS and after <= allowed_after
 
 
 def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False, stem: bool = False) -> str:

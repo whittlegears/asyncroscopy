@@ -1,5 +1,6 @@
 """Run by test_testing_helpers.py in a fresh interpreter: what an out-of-tree team's test does."""
 
+import asyncio
 import json
 import sys
 import tempfile
@@ -21,16 +22,19 @@ devices = [
 with instrument_context(devices):
     server = mcp_server_for(devices, approvals_device_address="asyncroscopy/approvals/default")
     tools = server.list_tool_descriptions()
-    held = {}
-    for name in ("SimIndenter_indent", "SimIndenter_retract", "IndentGrid_reserve"):
+    outcome = {}
+    calls = {"SimIndenter_indent": [0.001], "SimIndenter_retract": [], "IndentGrid_reserve": [json.dumps({"plan": {"origin_m": [0, 0], "nx": 2, "ny": 1, "pitch_m": 1e-5, "load_n": 0.01}})]}
+    for name, args in calls.items():
+        prefix, command = name.split("_", 1)
         try:
-            server.tools[name.split("_", 1)[0]][name.split("_", 1)[1]](*(["{}"] if name.endswith("reserve") else [0.001] if name.endswith("indent") else []))
-            held[name] = False
+            reply = server.tools[prefix][command](*args)
+            outcome[name] = "error" if isinstance(reply, str) and '"error"' in reply else "ran"
         except Exception as exc:
-            held[name] = "APPROVAL REQUIRED" in str(exc)
+            outcome[name] = "held" if "APPROVAL REQUIRED" in str(exc) else f"error: {exc}"
     print(json.dumps({
         "indent_doc": tools.get("SimIndenter_indent", "")[:40],
         "envelope": "IndentGrid" in server._envelope_prefixes,
         "retract_doc": tools.get("SimIndenter_retract", ""),
-        "held": held,
+        "outcome": outcome,
+        "async_descriptions_match": asyncio.run(server.alist_tool_descriptions()) == tools,
     }))

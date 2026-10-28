@@ -147,11 +147,11 @@ def test_a_failure_while_the_map_runs_aborts_it_before_releasing():
     [
         ({"box_m": [500, -500, -500, 500], "fov_m": 200}, "map a 1 um square", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),
         ({}, "map the whole sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7]}),
-        ({"per_tile": ["eds_map"]}, "map the sample with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
-        ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile of the sample", {"per_tile": ["eds_map"]}),
+        ({"per_tile": ["eds_map"]}, "map the whole sample with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
+        ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile of the whole sample", {"per_tile": ["eds_map"]}),
         ({"per_tile": ["eds_point"]}, "map a 600 nm square", {"per_tile": []}),  # EDS nobody asked for
         ({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, "map the sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),  # micrometres
-        ({}, "map the sample and tell me the composition", {"per_tile": ["eds_point"]}),
+        ({}, "map the entire sample and tell me the composition", {"per_tile": ["eds_point"]}),
         ({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, "map a tiny spot", {"box_m": [pytest.approx(-9.5e-8), pytest.approx(1.05e-7), pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
     ],
 )
@@ -188,6 +188,18 @@ def test_a_plan_without_an_area_is_refused_unless_the_whole_sample_is_asked_for(
         MappingGraph._complete_plan(dict(plan), CONTEXT, "image the particle here", from_model=from_model)
     whole = MappingGraph._complete_plan(dict(plan), CONTEXT, "map the whole sample", from_model=from_model)
     assert whole["box_m"] == pytest.approx(CONTEXT["sample_bounds_m"])
+
+
+@pytest.mark.parametrize("request_text", [
+    "find a grain boundary on the sample and map around it",
+    "image a small patch near the edge of the sample",
+    "map the region of interest in the sample",
+    "move to the sample holder and image",
+    "check everything is ok then map a small region",
+])
+def test_mentioning_the_sample_is_not_a_whole_sample_request(request_text):
+    with pytest.raises(ValueError, match="no area"):
+        MappingGraph._complete_plan({}, CONTEXT, request_text)
 
 
 def test_whole_sample_without_reported_bounds_is_refused():
