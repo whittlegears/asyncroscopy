@@ -411,6 +411,20 @@ class TestWaitForJob:
         with pytest.raises(ToolError, match="Mapper"):
             server.wait_for_job("Camera", "j1")
 
+    def test_a_job_still_running_at_the_deadline_says_to_wait_again(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Job:
+            def job_status(self, request):
+                return json.dumps({"job_id": "j1", "state": "running", "progress": 0.4})
+
+        server._devices = {"Mapper": Job()}
+        server._envelope_prefixes = {"Mapper"}
+        status = server.wait_for_job("Mapper", "j1", max_wait_s=0)
+        assert status["state"] == "running" and status["progress"] == 0.4
+        assert "wait_for_job again" in status["note"]
+
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)

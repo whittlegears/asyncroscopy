@@ -839,8 +839,10 @@ class MCPServer:
                     f"{job_id!r} is not a {device} job. Jobs started by assemble_map or score_map run on the analysis "
                     "server: wait for them with analysis_job_status and wait_s=25."
                 )
-            if "error" in status or status.get("state") not in {"queued", "running", "aborting"} or time.monotonic() >= deadline:
+            if "error" in status or status.get("state") not in {"queued", "running", "aborting"}:
                 return status
+            if time.monotonic() >= deadline:
+                return {**status, "note": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop."}
             time.sleep(1.0)
 
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
