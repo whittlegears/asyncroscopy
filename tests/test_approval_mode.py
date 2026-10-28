@@ -90,7 +90,7 @@ class TestPolicy:
         assert risk_of("AnyDevice", name) == "high"
 
     @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
-                                      "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "disengage", "led_off", "illumination_off",
+                                      "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "withdraw_tip", "led_off", "illumination_off",
                                       "stop_indent", "abort_indent", "retract_indenter", "retract_head", "stop_imaging", "stop_exposure",
                                       "retract_objective", "xray_off", "stop_robot", "abort_protocol", "pause_protocol", "source_off",
                                       "stop_xray", "disengage_tip", "DisengageProbe"])
@@ -103,7 +103,10 @@ class TestPolicy:
         assert not looks_like_stop("move_stage") and not looks_like_stop("get_offset")
 
     @pytest.mark.parametrize("name", ["indent_retract", "IndentRetract", "indent_withdraw", "indent_stop", "exposure_stop", "imaging_pause", "protocol_halt",
-                                      "Off", "off", "disengage_motor", "disengage_motors", "disengage_z", "disengage_stage", "DisengageAll"])
+                                      "Off", "off", "disengage_motor", "disengage_motors", "disengage_z", "disengage_stage", "DisengageAll",
+                                      "Disengage", "emergency_disengage", "retract_shutter", "withdraw_shutter", "ShutterRetract", "retract_x",
+                                      "withdraw_y", "retract_xy", "retract_stage", "StageRetract", "retract_robot", "withdraw_motors",
+                                      "retract_all", "retract_source", "retract_laser", "retract_gun", "retract_beam"])
     def test_an_action_before_the_stop_verb_is_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 

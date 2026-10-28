@@ -60,20 +60,22 @@ If no file matches, install that Python first with `uv python install 3.12`. (`u
 Use four terminals, from the repository root. Each MCP server prints a large FastMCP banner when it starts; that is normal. To run them in the background in PowerShell instead (use `$uv` from section 1 if `uv` is not on `PATH`):
 
 ```powershell
-if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
-if (Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue) {
+if (-not $uv) { $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source }   # keeps the $uv from section 1 if you set it there
+if (-not $uv) {
+    'uv not found: set $uv as in section 1, then paste this again.'
+} elseif (Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue) {
     'A stack is already running (ports 8000-9094 in use). Stop it first (below), then paste this again.'
 } else {
     $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
-    while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if ($servers.HasExited) { Get-Content servers.log, servers.err -Tail 20; break }; Start-Sleep 1 }   # about a minute
+    while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { if (-not $servers -or $servers.HasExited) { Get-Content servers.log, servers.err -Tail 20 -ErrorAction SilentlyContinue; break }; Start-Sleep 1 }   # about a minute
     $agent = $operator = $analysis = $null
-    if (-not $servers.HasExited) {   # if the servers stopped, read the lines above and fix that first
+    if ($servers -and -not $servers.HasExited) {   # if the servers stopped, read the lines above and fix that first
         $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
         $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
         $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
         Start-Sleep 20
         foreach ($s in @(@($agent, 'mcp_dt.err'), @($operator, 'mcp_op.err'), @($analysis, 'pytem.err'))) {
-            if ($s[0].HasExited) { "$($s[1]) says the server stopped:"; Get-Content -Encoding utf8 $s[1] -Tail 10 }
+            if (-not $s[0] -or $s[0].HasExited) { "$($s[1]) says the server stopped (or did not start):"; Get-Content -Encoding utf8 $s[1] -Tail 10 -ErrorAction SilentlyContinue }
         }
     }
 }
