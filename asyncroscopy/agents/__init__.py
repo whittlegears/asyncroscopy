@@ -8,18 +8,34 @@ demand. Both are listed in langgraph.json so LangGraph Studio can run them.
 Configuration comes from environment variables so Studio, scripts and the
 agent MCP server share it:
 
-=========================== ==================================== ==========================
-Variable                    Meaning                              Default
-=========================== ==================================== ==========================
-ASYNCROSCOPY_MODEL          Ollama tag or provider model name    qwen3:8b
-ASYNCROSCOPY_MODEL_PROVIDER ollama, or any init_chat_model one   ollama
-ASYNCROSCOPY_NUM_CTX        Context window for Ollama            8192
-ASYNCROSCOPY_MCP_URL        asyncroscopy agent MCP endpoint      http://127.0.0.1:8000/mcp
-ASYNCROSCOPY_ANALYSIS_URL   pyTEMlib MCP server ("" to skip)     http://127.0.0.1:8003/mcp
-ASYNCROSCOPY_CALLER         name recorded in the trace           agent
-ASYNCROSCOPY_MICROSCOPE     mapping graph target (tool prefix)   the only device with move_stage + acquire_scanned_image
-ASYNCROSCOPY_AGENT_TOOLS    general agent tool globs, comma list a STEM-oriented default set
-=========================== ==================================== ==========================
+============================ ====================================== =======================================================
+Variable                     Meaning                                Default
+============================ ====================================== =======================================================
+ASYNCROSCOPY_MODEL           Ollama tag or provider model name      qwen3:8b
+ASYNCROSCOPY_MODEL_PROVIDER  ollama, or any init_chat_model one     ollama
+ASYNCROSCOPY_NUM_CTX         Context window for Ollama              8192
+ASYNCROSCOPY_MCP_URL         asyncroscopy agent MCP endpoint        http://127.0.0.1:8000/mcp
+ASYNCROSCOPY_ANALYSIS_URL    pyTEMlib MCP server ("" to skip)       http://127.0.0.1:8003/mcp
+ASYNCROSCOPY_CALLER          name recorded in the trace             agent (general-agent / mapping-graph in the graphs)
+ASYNCROSCOPY_MICROSCOPE      mapping graph target (tool prefix)     the only device with move_stage + acquire_scanned_image
+ASYNCROSCOPY_AGENT_TOOLS     general agent tool globs, comma list   a STEM-oriented default set
+ASYNCROSCOPY_AGENT_PROMPT    general agent system prompt template   built-in prompt; {skills} and {extra} are filled in
+ASYNCROSCOPY_SKILLS_PATH     extra skill folders (os.pathsep list)  none; packaged asyncroscopy/skills only
+ASYNCROSCOPY_POLL_S          mapping graph job-status poll interval 1.0 (seconds)
+ASYNCROSCOPY_APPROVAL_WAIT_S mapping graph wait for an approval     1800 (seconds)
+ASYNCROSCOPY_ANALYSIS_WAIT_S mapping graph wait for stitch/score    3600 (seconds)
+============================ ====================================== =======================================================
+
+Read by the stack rather than the agents (listed so every ASYNCROSCOPY_* setting
+is in one place):
+
+============================ ====================================== ===================================
+Variable                     Meaning                                Default
+============================ ====================================== ===================================
+ASYNCROSCOPY_TILED_URI       Tiled server the DATA device runs      set by run_servers.py from the YAML
+ASYNCROSCOPY_ACQUISITION_DIR directory DATA writes and Tiled serves set by run_servers.py from the YAML
+ASYNCROSCOPY_TILED_API_KEY   Tiled API key (DATA, segmentation)     secret
+============================ ====================================== ===================================
 """
 
 from .config import AgentConfig

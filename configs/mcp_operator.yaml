@@ -5,7 +5,10 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 #
 # If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+# machine/IP.
+#
+# Keep http_host at 127.0.0.1: this endpoint can approve held calls and switch
+# approval mode, and it has no authentication. Run it on the GUI's machine.
 
 tango:
   host: localhost

@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+from types import SimpleNamespace
 
 from asyncroscopy.utils import process_manager
 from asyncroscopy.utils.process_manager import ProcessManager, ManagedProcess
@@ -169,49 +170,141 @@ def test_wipe_databases(tmp_path, monkeypatch):
     assert not uppercase.exists()
 
 
-def test_stop_processes_on_port(tmp_path, monkeypatch):
+def _fake_killers(monkeypatch):
+    """Record kills instead of performing them, on either OS."""
+    killed = []
+
+    class Done:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "taskkill":
+            killed.append(int(cmd[cmd.index("/PID") + 1]))
+        return Done()
+
+    monkeypatch.setattr(process_manager.subprocess, "run", fake_run)
+    monkeypatch.setattr(ProcessManager, "_kill_stale_pid", lambda self, pid: killed.append(pid))
+    return killed
+
+
+def test_stop_processes_on_port_kills_only_listeners(tmp_path, monkeypatch):
     manager = ProcessManager(name="test_run", state_dir=tmp_path)
+    killed = _fake_killers(monkeypatch)
+    monkeypatch.setattr(process_manager, "listening_pids", lambda port: {5555, os.getpid(), 4} if port == 9094 else set())
 
+    assert manager.stop_processes_on_port(9094) == 1
+    assert killed == [5555]  # never this process or Windows' System PID
+    assert manager.stop_processes_on_port(1234) == 0
+
+
+def test_listening_pids_psutil_ignores_connected_clients(monkeypatch):
+    class Conn:
+        def __init__(self, pid, status, port):
+            self.pid, self.status = pid, status
+            self.laddr = SimpleNamespace(port=port)
+
+    fake = SimpleNamespace(
+        CONN_LISTEN="LISTEN",
+        Error=Exception,
+        net_connections=lambda kind: [
+            Conn(10, "LISTEN", 9094),        # the server
+            Conn(11, "ESTABLISHED", 9094),   # a client's accepted socket
+            Conn(12, "LISTEN", 8000),        # another port
+            Conn(None, "LISTEN", 9094),      # pid hidden by the OS
+        ],
+    )
+    monkeypatch.setattr(process_manager, "psutil", fake)
+
+    assert process_manager.listening_pids(9094) == {10}
+
+
+def test_listening_pids_cli_fallback_asks_for_listeners_only(monkeypatch):
+    calls = []
+
+    class Done:
+        stdout = "321\n"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return Done()
+
+    monkeypatch.setattr(process_manager, "psutil", None)
+    monkeypatch.setattr(process_manager.subprocess, "run", fake_run)
+
+    assert process_manager.listening_pids(9094) == {321}
+    joined = " ".join(calls[0])
     if os.name == "nt":
-        calls = []
-
-        class FakeCompletedProcess:
-
-            def __init__(self, stdout="", returncode=0):
-                self.stdout = stdout
-                self.returncode = returncode
-
-        def mock_run(cmd, **kwargs):
-            calls.append(cmd)
-            if "netstat" in cmd[0]:
-                return FakeCompletedProcess(
-                    stdout="  TCP    0.0.0.0:9094           0.0.0.0:0              LISTENING       5555\n"
-                )
-            return FakeCompletedProcess()
-
-        monkeypatch.setattr(subprocess, "run", mock_run)
-
-        count = manager.stop_processes_on_port(9094)
-        assert count == 1
-        assert any("taskkill" in cmd[0] and "5555" in cmd for cmd in calls)
-
+        assert "Get-NetTCPConnection -State Listen -LocalPort 9094" in joined
+        assert "wmic" not in joined and "netstat" not in joined
     else:
-        class FakeCompletedProcess:
-            stdout = "1001\n1002\n"
+        assert calls[0][:1] == ["lsof"] and "tcp:9094" in calls[0] and "-sTCP:LISTEN" in calls[0]
 
-        killed_pids = []
 
-        def mock_kill(pid, sig):
-            if sig == 0:
-                raise ProcessLookupError()
-            killed_pids.append(pid)
+def test_listening_pids_none_when_no_tool(monkeypatch):
+    def missing(cmd, **kwargs):
+        raise FileNotFoundError(cmd[0])
 
-        monkeypatch.setattr(subprocess, "run", lambda cmd, **kwargs: FakeCompletedProcess())
-        monkeypatch.setattr(os, "kill", mock_kill)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-        monkeypatch.setattr(os, "killpg", mock_kill)
+    monkeypatch.setattr(process_manager, "psutil", None)
+    monkeypatch.setattr(process_manager.subprocess, "run", missing)
 
-        count = manager.stop_processes_on_port(9094)
-        assert count == 2
-        assert 1001 in killed_pids
-        assert 1002 in killed_pids
+    assert process_manager.listening_pids(9094) is None
+
+
+def test_matches_device_server_needs_module_and_instance():
+    tokens = ["uv", "run", "--no-sync", "python", "-u", "-m", "pkg.stage", "stage_instance"]
+    assert process_manager.matches_device_server(tokens, "pkg.stage", "stage_instance")
+    assert not process_manager.matches_device_server(tokens, "pkg.stage", "other_instance")
+    assert not process_manager.matches_device_server(tokens, "pkg.scan", "stage_instance")
+    # A launcher whose arguments merely mention the module is not a device server.
+    assert not process_manager.matches_device_server(["python", "run_servers.py", "pkg.stage"], "pkg.stage", "stage_instance")
+
+
+def test_stop_stale_device_servers_is_narrow(tmp_path, monkeypatch):
+    manager = ProcessManager(name="test_run", state_dir=tmp_path)
+    killed = _fake_killers(monkeypatch)
+    table = {
+        101: ["python", "-u", "-m", "pkg.stage", "stage_instance"],          # ours, same TANGO_HOST
+        102: ["uv", "run", "python", "-u", "-m", "pkg.stage", "stage_instance"],  # its uv wrapper
+        103: ["python", "-m", "pkg.stage", "stage_instance"],                # same server, other stack
+        104: ["python", "-m", "asyncroscopy.instruments.other", "x_instance"],  # unrelated asyncroscopy
+        os.getpid(): ["python", "-m", "pkg.stage", "stage_instance"],
+    }
+    hosts = {101: "localhost:9094", 102: None, 103: "localhost:9200"}
+    monkeypatch.setattr(process_manager, "process_command_lines", lambda: table)
+    monkeypatch.setattr(process_manager, "_process_tango_host", lambda pid: hosts.get(pid))
+
+    count = manager.stop_stale_device_servers([("pkg.stage", "stage_instance")], tango_host="localhost:9094")
+
+    assert count == 2
+    assert sorted(killed) == [101, 102]
+
+
+def test_stop_stale_device_servers_without_targets_kills_nothing(tmp_path, monkeypatch):
+    manager = ProcessManager(name="test_run", state_dir=tmp_path)
+    killed = _fake_killers(monkeypatch)
+    monkeypatch.setattr(process_manager, "process_command_lines", lambda: {1: ["python", "-m", "asyncroscopy.data.data", "data_instance"]})
+
+    assert manager.stop_stale_device_servers() == 0
+    assert killed == []
+
+
+def test_process_command_lines_windows_fallback_does_not_use_wmic(monkeypatch):
+    if os.name != "nt":
+        return
+    calls = []
+
+    class Done:
+        stdout = '42\t"C:/tools/venv/python.exe" -u -m pkg.stage stage_instance\n7\t\n'
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return Done()
+
+    monkeypatch.setattr(process_manager, "psutil", None)
+    monkeypatch.setattr(process_manager.subprocess, "run", fake_run)
+
+    table = process_manager.process_command_lines()
+
+    assert "Get-CimInstance Win32_Process" in " ".join(calls[0])
+    assert table == {42: ["C:/tools/venv/python.exe", "-u", "-m", "pkg.stage", "stage_instance"]}

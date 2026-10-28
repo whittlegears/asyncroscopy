@@ -1,4 +1,15 @@
+import pytest
+
+from asyncroscopy.utils import process_manager
 from startup_scripts import run_mcp, run_servers, run_llm
+
+FAKE_UV = "/opt/uv/bin/uv"
+
+
+@pytest.fixture
+def fake_uv(monkeypatch):
+    monkeypatch.setattr(process_manager, "find_uv", lambda: FAKE_UV)
+    return FAKE_UV
 
 
 class FakeDataProxy:
@@ -129,7 +140,7 @@ def test_load_mcp_config():
     assert config.mcp.blocked_functions == {"*": ["Init", "Kill", "RestartServer"]}
 
 
-def test_run_mcp_builds_server_command():
+def test_run_mcp_builds_server_command(fake_uv):
     config = run_mcp.Config(
         path=run_mcp.PROJECT_DIR / "configs" / "mcp.yaml",
         tango_host="localhost",
@@ -148,7 +159,8 @@ def test_run_mcp_builds_server_command():
 
     command = run_mcp.build_command(config)
 
-    assert command[:5] == ["uv", "run", "python", "-m", "asyncroscopy.mcp.mcp_server"]
+    assert command[:6] == [fake_uv, "run", "--no-sync", "python", "-u", "-m"]
+    assert command[6] == "asyncroscopy.mcp.mcp_server"
     assert "--class-name" not in command
     assert command[command.index("--name") + 1] == "Spectra300_MCP"
     assert command[command.index("--http-port") + 1] == "8123"
@@ -172,7 +184,8 @@ def test_load_agent_config():
     assert config.agent.startup_agents[0]["tools"] == ["list_devices"]
 
 
-def test_run_llm_builds_server_command():
+def test_run_llm_builds_server_command(fake_uv, monkeypatch):
+    monkeypatch.setattr(run_llm, "agent_extras_installed", lambda: False)
     config = run_llm.Config(
         path=run_llm.PROJECT_DIR / "configs" / "gemma-llm.yaml",
         agent=run_llm.AgentConfig(
@@ -187,8 +200,9 @@ def test_run_llm_builds_server_command():
 
     command = run_llm.build_command(config)
 
-    assert command[:2] == ["uv", "run"]
-    assert "agent" in command and "ollama" in command
+    # Extras missing: uv installs them, so this child syncs.
+    assert command[:6] == [fake_uv, "run", "--extra", "agent", "--extra", "ollama"]
+    assert "--no-sync" not in command
     assert command[command.index("-m") + 1] == "asyncroscopy.mcp.agent_mcp_server"
     assert command[command.index("--http-port") + 1] == "8124"
     assert command[command.index("--mcp-urls-json") + 1] == '["http://127.0.0.1:8000/mcp"]'
@@ -209,3 +223,19 @@ def test_run_llm_command_passes_init_chat_model_flag():
     )
 
     assert "--use-init-chat-model" in run_llm.build_command(config)
+
+
+def test_run_llm_skips_sync_when_extras_installed(fake_uv, monkeypatch):
+    monkeypatch.setattr(run_llm, "agent_extras_installed", lambda: True)
+    config = run_llm.load_config(run_llm.PROJECT_DIR / "configs" / "gemma-llm.yaml")
+
+    command = run_llm.build_command(config)
+
+    assert command[:5] == [fake_uv, "run", "--no-sync", "python", "-u"]
+    assert "--extra" not in command
+
+
+def test_device_server_command_uses_python_command(fake_uv):
+    device = run_servers.DeviceConfig(key="stage", class_name="STAGE", module_name="pkg.stage")
+
+    assert device.command == [fake_uv, "run", "--no-sync", "python", "-u", "-m", "pkg.stage", "stage_instance"]

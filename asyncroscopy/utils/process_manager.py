@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -7,13 +8,171 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 import threading
+
+try:
+    import psutil
+except ImportError:  # pragma: no cover - psutil is a declared dependency
+    psutil = None
 
 TANGO_DATABASE_FILES = ("tango_database.db", "Tango_database.db")
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
+
+_warned_no_uv = False
+
+
+def find_uv() -> str | None:
+    """Return the path of the uv executable, or None if there is none.
+
+    ``uv run`` exports ``UV`` (its own path) to the process it starts, so a
+    launcher started as ``C:\\...\\uv.exe run ...`` finds uv even when the
+    installer (winget, for one) left nothing on PATH.
+    """
+    uv = os.environ.get("UV")
+    if uv and Path(uv).is_file():
+        return uv
+    return shutil.which("uv")
+
+
+def running_in_project_venv() -> bool:
+    """True when this interpreter is the project's own ``.venv``."""
+    try:
+        return Path(sys.prefix).resolve() == (PROJECT_DIR / ".venv").resolve()
+    except OSError:
+        return False
+
+
+def python_command(*args: str, extras: Iterable[str] = (), sync: bool = False) -> list[str]:
+    """Build the command a launcher uses to run ``python -u <args>`` in this project.
+
+    With uv available the command is ``<uv> run --no-sync python -u <args>``.
+    Children skip uv's sync by default: the launcher that starts them already
+    runs in a synced environment, and several children syncing the same venv at
+    once race (one can die mid-import while another reinstalls a package).
+
+    Pass ``sync=True`` with ``extras`` when the child needs optional extras the
+    environment may lack; the command is then
+    ``<uv> run --extra X ... python -u <args>``, which installs them (``uv run``
+    syncs inexactly, so other installed extras stay).
+
+    Without uv (not on PATH and the launcher was not started by ``uv run``) the
+    current interpreter runs the child: ``<sys.executable> -u <args>``. That is
+    right when the launcher itself runs in the project venv; extras cannot be
+    installed in that case.
+    """
+    uv = find_uv()
+    if uv is not None:
+        command = [uv, "run"]
+        if sync:
+            for extra in extras:
+                command.extend(["--extra", extra])
+        else:
+            command.append("--no-sync")
+        return [*command, "python", "-u", *args]
+
+    global _warned_no_uv
+    if not running_in_project_venv() and not _warned_no_uv:
+        _warned_no_uv = True
+        print(
+            f"warning: uv not found; starting children with {sys.executable}, which is not "
+            f"{PROJECT_DIR / '.venv'}. Set UV to uv's full path or put uv on PATH.",
+            file=sys.stderr,
+        )
+    return [sys.executable, "-u", *args]
+
+
+def _run_text(command: list[str], timeout: float = 20.0) -> str | None:
+    """Run a read-only query command; return its stdout, or None if it could not run."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout or ""
+
+
+def _powershell(script: str) -> list[str]:
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
+def listening_pids(port: int) -> set[int] | None:
+    """PIDs with a TCP socket in LISTEN state on ``port`` (any address).
+
+    Only listeners: a client connected to the port (an MCP bridge, a notebook)
+    is not a squatter. Returns None if no method could list sockets.
+    """
+    port = int(port)
+    if psutil is not None:
+        try:
+            return {
+                conn.pid
+                for conn in psutil.net_connections(kind="tcp")
+                if conn.pid and conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
+            }
+        except (psutil.Error, OSError):
+            pass  # macOS needs root to see other processes' sockets; try the CLI tools.
+    if os.name == "nt":
+        out = _run_text(_powershell(
+            f"Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue"
+            " | Select-Object -ExpandProperty OwningProcess"
+        ))
+    else:
+        out = _run_text(["lsof", "-nP", "-t", "-i", f"tcp:{port}", "-sTCP:LISTEN"])
+    if out is None:
+        return None
+    return {int(token) for token in out.split() if token.isdigit()}
+
+
+def process_command_lines() -> dict[int, list[str]] | None:
+    """Map PID -> command-line tokens for every visible process, or None on failure."""
+    if psutil is not None:
+        table = {}
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            cmdline = proc.info.get("cmdline")
+            if cmdline:
+                table[proc.info["pid"]] = list(cmdline)
+        return table
+    if os.name == "nt":
+        out = _run_text(_powershell(
+            "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }"
+        ))
+        separator = "\t"
+    else:
+        out = _run_text(["ps", "-eo", "pid=,args="])
+        separator = None
+    if out is None:
+        return None
+    table = {}
+    for line in out.splitlines():
+        pid, _, cmdline = line.strip().partition(separator or " ")
+        if pid.isdigit() and cmdline.strip():
+            table[int(pid)] = [token.strip('"') for token in cmdline.split()]
+    return table
+
+
+def _process_tango_host(pid: int) -> str | None:
+    """TANGO_HOST in another process's environment, when the OS lets us read it."""
+    if psutil is None:
+        return None
+    try:
+        return psutil.Process(pid).environ().get("TANGO_HOST")
+    except (psutil.Error, OSError):
+        return None
+
+
+def matches_device_server(tokens: list[str], module_name: str, instance_name: str) -> bool:
+    """True when a command line runs ``-m <module_name> <instance_name>``.
+
+    That is the exact form run_servers.py uses, for the device server itself and
+    for the ``uv run`` wrapper around it.
+    """
+    for index, token in enumerate(tokens[:-2]):
+        if token == "-m" and tokens[index + 1] == module_name and tokens[index + 2] == instance_name:
+            return True
+    return False
 
 
 @dataclass
@@ -303,6 +462,14 @@ class ProcessManager:
             except ProcessLookupError:
                 return
 
+            if pgid == os.getpgid(0):
+                # Never signal our own process group (that would stop this launcher).
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                return
+
             try:
                 os.killpg(pgid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -340,75 +507,80 @@ class ProcessManager:
                 except OSError as e:
                     print(f"Failed to delete {filename}: {e}")
 
-    def scour_ports(self, ports: list[int]):
-        """Finds and kills any process squatting on critical ports or stale device server processes."""
+    def scour_ports(
+        self,
+        ports: list[int],
+        device_servers: Iterable[tuple[str, str]] = (),
+        tango_host: str | None = None,
+    ):
+        """Frees the given ports and stops this config's own stale device servers.
+
+        Args:
+            ports: TCP ports whose listeners are stopped.
+            device_servers: (module_name, instance_name) pairs this launcher is
+                about to start. Only processes running exactly those are stopped,
+                not every asyncroscopy process on the machine.
+            tango_host: "host:port" of this launcher's database. When the OS lets
+                us read a matching process's environment and it names a different
+                TANGO_HOST, the process belongs to another stack and is left alone.
+        """
         for port in ports:
             count = self.stop_processes_on_port(port)
             if count > 0:
                 print(f"Cleared {count} stale process(es) on port {port}")
-        self.stop_stale_device_servers()
+        count = self.stop_stale_device_servers(device_servers, tango_host=tango_host)
+        if count > 0:
+            print(f"Stopped {count} stale device server process(es)")
 
-    def stop_stale_device_servers(self):
-        """Finds and kills orphaned Python processes running asyncroscopy device servers."""
-        current_pid = os.getpid()
-        if os.name == "nt":
-            try:
-                cmd = ["wmic", "process", "where", "name='python.exe'", "get", "ProcessId,CommandLine"]
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                for line in res.stdout.splitlines():
-                    if ("asyncroscopy.instruments" in line or "asyncroscopy.data" in line) and "run_servers.py" not in line:
-                        parts = line.strip().split()
-                        if parts and parts[-1].isdigit():
-                            pid = int(parts[-1])
-                            if pid != current_pid:
-                                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-            except Exception:
-                pass
-
-    def stop_processes_on_port(self, port: int) -> int:
-        """Identifies and kills processes occupying a specific TCP port."""
-        if os.name == "nt":
-            try:
-                result = subprocess.run(
-                    ["netstat", "-ano", "-p", "tcp"],
-                    capture_output=True,
-                    text=True,
-                )
-            except FileNotFoundError:
-                return 0
-
-            pids = set()
-            for line in result.stdout.splitlines():
-                parts = line.split()
-                if len(parts) < 5 or parts[0].upper() != "TCP":
-                    continue
-                if (
-                    parts[3].upper() == "LISTENING"
-                    and parts[1].endswith(f":{port}")
-                    and parts[-1].isdigit()
-                ):
-                    pids.add(int(parts[-1]))
-
-            stopped = 0
-            for pid in pids:
-                res = subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    capture_output=True,
-                )
-                if res.returncode == 0:
-                    stopped += 1
-            return stopped
-
-        try:
-            result = subprocess.run(
-                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
-            )
-        except FileNotFoundError:
+    def stop_stale_device_servers(
+        self,
+        device_servers: Iterable[tuple[str, str]] = (),
+        tango_host: str | None = None,
+    ) -> int:
+        """Stops leftover processes running one of ``device_servers``; returns how many."""
+        targets = [(str(module), str(instance)) for module, instance in device_servers]
+        if not targets:
+            return 0
+        table = process_command_lines()
+        if table is None:
+            print("warning: could not list processes; stale device servers were not checked")
             return 0
 
+        current_pid = os.getpid()
         stopped = 0
-        for pid_str in result.stdout.splitlines():
-            if pid_str.strip().isdigit():
-                self._kill_stale_pid(int(pid_str.strip()))
+        for pid, tokens in table.items():
+            if pid == current_pid:
+                continue
+            if not any(matches_device_server(tokens, module, instance) for module, instance in targets):
+                continue
+            if tango_host is not None:
+                other_host = _process_tango_host(pid)
+                if other_host is not None and other_host != tango_host:
+                    continue
+            self._stop_pid_tree(pid)
+            stopped += 1
+        return stopped
+
+    def _stop_pid_tree(self, pid: int) -> None:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+        else:
+            self._kill_stale_pid(pid)
+
+    def stop_processes_on_port(self, port: int) -> int:
+        """Stops the processes LISTENING on a TCP port; returns how many."""
+        pids = listening_pids(port)
+        if not pids:
+            return 0
+        stopped = 0
+        for pid in sorted(pids):
+            if pid == os.getpid() or pid <= 4:  # never ourselves, or Windows' System/Idle
+                continue
+            if os.name == "nt":
+                res = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+                if res.returncode == 0:
+                    stopped += 1
+            else:
+                self._kill_stale_pid(pid)
                 stopped += 1
         return stopped

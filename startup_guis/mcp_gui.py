@@ -33,6 +33,7 @@ from startup_guis.qt_compat import (  # noqa: E402
     QWidget,
     app_exec,
 )
+from asyncroscopy.utils.process_manager import python_command  # noqa: E402
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, DIGITAL_TWIN_HOST, GENERATED_CONFIG_DIR, SPECTRA300_HOST, TEXT_FONT, TITLE_FONT, CheckBox, CollapsibleSection, HostToggle, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, set_tool_count_badge, tool_count_badge, write_yaml, yaml_text  # noqa: E402
 
 
@@ -299,7 +300,7 @@ class McpGui(QMainWindow):
         self.badge_error = False
         set_tool_count_badge(self.tool_badge, None)
         config_path = write_yaml(GENERATED_CONFIG_PATH, self.current_config())
-        self.command.start(['uv', 'run', 'python', '-u', 'startup_scripts/run_mcp.py', '--yaml', str(config_path)])
+        self.command.start(python_command('startup_scripts/run_mcp.py', '--yaml', str(config_path)))
 
     def enqueue_output(self, text: str) -> None:
         append_terminal_text(self.output, text)

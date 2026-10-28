@@ -31,6 +31,16 @@ uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 
 Coordinates are metres in the sample frame. Images are indexed `[row, column]`; rows run along +y and columns along +x. The stage position is the sample point under the centre of the field of view.
 
+### What it does not model
+
+Before you trust a workflow that passes on the twin, know where the twin is simpler than the instrument:
+
+- **Stage z, alpha and beta don't change the image.** They are tracked, recorded in ground truth and checked against the STAGE limits, but focus responds only to `set_defocus` and the specimen height gradient (`height_gradient_x/y`). A z-based autofocus will see a flat focus metric on the twin.
+- **The support film never ends.** Far from the particles the twin shows clean carbon. There are no grid bars, holes or sample edges, so nothing tells an agent it has left the sample.
+- **Particles are analytic ellipsoids**, not real specimen structure. Contrast is a mass-thickness model, not multislice.
+- **Inputs are limited to plausible values.** `set_fov` outside `min_fov`..`max_fov` (1 nm to 100 um), `|defocus|` above `max_defocus` (10 um), non-finite numbers and stage moves outside the STAGE limits are refused with an error. Your instrument's limits may differ, so set these properties to match it.
+- **`scan_region` is `[left, top, width, height]`** in fractions of the field, as on the SCAN device and in AutoScript.
+
 Rendering time on a laptop (GTX-class CPU, no GPU needed): about 30 ms for a 512x512 survey tile, about 0.7 s for the first 512x512 atomic-resolution tile of a particle and 0.1 s after that. `tests/test_twin_render_perf.py` checks this.
 
 ## Ground truth

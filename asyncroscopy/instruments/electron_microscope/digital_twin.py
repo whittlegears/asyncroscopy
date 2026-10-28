@@ -72,6 +72,10 @@ class DigitalTwin(AtomisticDigitalTwin):
     support_thickness = _prop(float, 0.0, "Amorphous carbon support film thickness (m).")
     height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
     height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
+    # Limits a real column enforces; the twin refuses rather than rendering nonsense (or running out of memory).
+    min_fov = _prop(float, 1e-9, "Smallest field of view accepted (m).")
+    max_fov = _prop(float, 1e-4, "Largest field of view accepted (m).")
+    max_defocus = _prop(float, 1e-5, "Largest |defocus| accepted (m); render cost grows with defocus squared.")
     # Optics and detector
     acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
     convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
@@ -262,7 +266,41 @@ class DigitalTwin(AtomisticDigitalTwin):
     def _move_stage(self, position):
         if len(position) != 5:
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
-        self._apply_move(np.asarray(position, dtype=np.float64))
+        target = np.asarray(position, dtype=np.float64)
+        if not np.all(np.isfinite(target)):
+            raise ValueError(f"Stage position must be finite numbers, got {list(position)}")
+        self._check_stage_limits(target)
+        self._apply_move(target)
+
+    def _check_stage_limits(self, target: np.ndarray) -> None:
+        """Refuse a move the STAGE device would refuse, before the twin's own model moves."""
+        stage = self._detector_proxies.get("stage")
+        if stage is None:
+            return
+        for axis, value in zip(("x", "y", "z", "alpha", "beta"), target):
+            try:
+                config = stage.get_attribute_config(axis)
+            except (tango.DevFailed, AttributeError):
+                continue
+            for bound, outside in ((config.min_value, lambda b: value < b), (config.max_value, lambda b: value > b)):
+                try:
+                    limit = float(bound)
+                except (TypeError, ValueError):  # "Not specified"
+                    continue
+                if outside(limit):
+                    raise ValueError(f"stage {axis} = {value} is outside the stage limits [{config.min_value}, {config.max_value}]")
+
+    def _set_fov(self, fov) -> None:
+        fov = float(fov)
+        if not (np.isfinite(fov) and float(self.min_fov) <= fov <= float(self.max_fov)):
+            raise ValueError(f"field of view must be between {self.min_fov} and {self.max_fov} m, got {fov}")
+        self._fov = fov
+
+    def _set_defocus(self, defocus) -> None:
+        defocus = float(defocus)
+        if not (np.isfinite(defocus) and abs(defocus) <= float(self.max_defocus)):
+            raise ValueError(f"defocus must be within +/-{self.max_defocus} m (did you pass nanometres?), got {defocus}")
+        self._defocus = defocus
 
     def _get_stage(self):
         self._sync_stage_from_proxy()
@@ -286,12 +324,20 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._sync_stage_from_proxy()
         self._acq_index += 1
         index = self._acq_index
-        region = tuple(scan_region) if scan_region is not None else (0.0, 0.0, 1.0, 1.0)
+        region = tuple(float(v) for v in scan_region) if scan_region is not None else (0.0, 0.0, 1.0, 1.0)
+        # SCAN, AutoScript and the tilt twin all use [left, top, width, height] in fractions of the field.
+        if len(region) != 4 or not all(np.isfinite(region)):
+            raise ValueError(f"scan_region must be four finite numbers [left, top, width, height], got {list(region)}")
+        left, top, width, height = region
+        if not (left >= 0 and top >= 0 and width > 0 and height > 0 and left + width <= 1 + 1e-9 and top + height <= 1 + 1e-9):
+            raise ValueError(f"scan_region [left, top, width, height] must lie inside the field (0..1), got {list(region)}")
+        if not (np.isfinite(imsize) and int(imsize) >= 1 and np.isfinite(dwell_time) and float(dwell_time) > 0):
+            raise ValueError(f"imsize must be >= 1 and dwell_time > 0, got {imsize}, {dwell_time}")
         t0 = self._clock.now()
         xs, ys = pixel_sample_coordinates(
             int(imsize),
             float(self._fov),
-            region,
+            (left, top, min(1.0, left + width), min(1.0, top + height)),
             float(dwell_time),
             self._scan_params,
             self._stage.true_xy_at,

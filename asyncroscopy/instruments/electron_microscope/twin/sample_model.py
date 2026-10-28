@@ -7,6 +7,7 @@ the handful of particles inside an atomic-resolution field of view.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -26,6 +27,9 @@ ELEMENTS: dict[str, tuple[int, float, str, float]] = {
     "Au": (79, 0.059, "fcc", 4.08),
 }
 
+
+
+PLACEMENT_TIME_LIMIT_S = 15.0  # longest the twin spends placing particles at start-up
 
 @dataclass
 class SampleParams:
@@ -61,8 +65,11 @@ class SampleModel:
         # Stop after a run of failed placements: asking for more particles than fit must not
         # stall device start-up (it would otherwise retry 500 x count times).
         misses, max_misses = 0, 2000
-        for _ in range(500 * target):
+        deadline = time.monotonic() + PLACEMENT_TIME_LIMIT_S  # a crowded sample keeps succeeding just often enough to never stop
+        for attempt in range(500 * target):
             if len(rows) >= target or misses >= max_misses:
+                break
+            if attempt % 1000 == 0 and time.monotonic() > deadline:
                 break
             radius = float(max(0.3e-9, rng.normal(p.radius_mean_m, p.radius_std_m)))
             margin = min(radius, half * 0.9)

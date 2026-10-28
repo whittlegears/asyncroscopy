@@ -1,3 +1,10 @@
+# A real build backend makes uv install asyncroscopy itself (editable) into the
+# venv, so `import asyncroscopy` works from notebooks/ or any other directory,
+# not only from the repository root.
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "asyncroscopy"
 version = "0.1.0"
@@ -43,6 +50,8 @@ dependencies = [
     "ipympl>=0.10.0",
     "tifffile>=2026.5.15",
     "pyro5>=5.17",
+    # Finding stale listeners and device servers at launch (process_manager).
+    "psutil>=5.9",
 ]
 
 [project.optional-dependencies]
@@ -88,7 +97,9 @@ segment = [
 package-dir = { "" = "." }
 
 [tool.setuptools.packages.find]
-include = ["asyncroscopy*"]
+# Only the library: tests/, notebooks/, startup_scripts/, startup_guis/, stubs/ stay out.
+where = ["."]
+include = ["asyncroscopy", "asyncroscopy.*"]
 
 [tool.setuptools.package-data]
 # Schemas and agent skills ship with the package so an installed copy can use them.
@@ -100,9 +111,11 @@ autoscript-tem-microscope-client = { path = "stubs/AutoScript_v_1.18/autoscript_
 autoscript-tem-toolkit = { path = "stubs/AutoScript_v_1.18/autoscript_tem_toolkit-1.18.0-py3-none-any.whl" }
 thermoscientific-logging = { path = "stubs/AutoScript_v_1.18/thermoscientific_logging-1.4.0-py3-none-any.whl" }
 pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
-# The map/analysis MCP server and the stitcher live in a pyTEMlib branch until they are
-# merged upstream (pycroscopy/pyTEMlib); then this line goes and PyPI pyTEMlib is used.
-pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", branch = "feature/mcp-mapping" }
+# The map/analysis MCP server and the stitcher live in a pyTEMlib fork branch
+# (whittlegears/pyTEMlib, branch feature/mcp-mapping) until they are merged upstream
+# (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
+# Pinned to a commit so every fresh `uv sync` (uv.lock is not committed) gets the same code.
+pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", rev = "8010866a407a2860724738ba5235aeff26788fe7" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]

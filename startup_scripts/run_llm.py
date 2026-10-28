@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -19,9 +20,18 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
+
+# The agent server needs the `agent` and `ollama` extras.
+AGENT_EXTRAS = ('agent', 'ollama')
+AGENT_EXTRA_MODULES = ('langgraph', 'langchain_mcp_adapters', 'langchain_ollama')
+
+
+def agent_extras_installed() -> bool:
+    """True when the agent extras are importable here, so the child need not sync."""
+    return all(importlib.util.find_spec(name) is not None for name in AGENT_EXTRA_MODULES)
 
 
 @dataclass(frozen=True)
@@ -76,14 +86,7 @@ def load_config(path: Path) -> Config:
 
 def build_command(config: Config) -> list[str]:
     agent = config.agent
-    command = [
-        'uv',
-        'run',
-        '--extra',
-        'agent',
-        '--extra',
-        'ollama',
-        'python',
+    command = python_command(
         '-m',
         'asyncroscopy.mcp.agent_mcp_server',
         '--name',
@@ -104,7 +107,11 @@ def build_command(config: Config) -> list[str]:
         str(agent.max_steps),
         '--startup-agents-json',
         json.dumps(agent.startup_agents),
-    ]
+        extras=AGENT_EXTRAS,
+        # Install the extras only if they are missing; otherwise skip uv's sync
+        # so this child cannot race other launchers re-syncing the same venv.
+        sync=not agent_extras_installed(),
+    )
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
     return command
