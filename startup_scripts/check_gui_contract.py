@@ -70,8 +70,8 @@ async def mcp_side():
             # Whatever failed above, do not leave the instrument holding every call.
             reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}, raise_on_error=False))
             try:
-                restored = json.loads(reply).get("mode") == mode
-            except ValueError:
+                restored = json.loads(reply)["mode"] == mode
+            except (ValueError, TypeError, KeyError):
                 restored = False
             check(f"mode restored to {mode}", restored, "" if restored else reply[:160])
 
