@@ -30,6 +30,8 @@ from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptM
 from asyncroscopy.data.data import DATA
 from asyncroscopy.instruments.electron_microscope.mapper import Mapper
 from asyncroscopy.safety.approvals import Approvals
+from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
+from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
 
 
 from tests.test_agent import setup_llm_stubs
@@ -208,6 +210,21 @@ def tango_ctx(data_save_dir, job_dir):
                 {
                     "name": "asyncroscopy/approvals/default",
                     "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "request_timeout_s": 600},
+                }
+            ],
+        },
+        # The worked example from docs/Adding_New_Hardware/new_instrument.md.
+        {"class": SimIndenter, "devices": [{"name": "asyncroscopy/indenter/default", "properties": {"seed": 3}}]},
+        {
+            "class": IndentGrid,
+            "devices": [
+                {
+                    "name": "asyncroscopy/indentgrid/default",
+                    "properties": {
+                        "indenter_device_address": "asyncroscopy/indenter/default",
+                        "state_directory": prop_path(job_dir / "indent" / "state"),
+                        "trace_path": prop_path(job_dir / "indent" / "trace.jsonl"),
+                    },
                 }
             ],
         },
@@ -488,3 +505,8 @@ def mapper_proxy(tango_ctx):
 @pytest.fixture(scope="session")
 def approvals_proxy(tango_ctx):
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/approvals/default"))
+
+
+@pytest.fixture(scope="session")
+def indent_grid_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/indentgrid/default"))

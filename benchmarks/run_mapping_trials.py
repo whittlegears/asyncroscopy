@@ -14,7 +14,7 @@ against what the request asked for:
 
     uv run python benchmarks/run_mapping_trials.py --n 10 --model qwen3:8b
 
-Results go to benchmarks/results/mapping_trials.json. Pass bar: 8 of 10 per task.
+Results go to benchmarks/results/mapping_trials.json (or --out). Pass bar: 8 of 10 per task.
 """
 
 from __future__ import annotations
@@ -128,11 +128,11 @@ async def main(args) -> None:
                 print(f"{name:16s} {runner_name:8s} #{i + 1:2d} {'PASS' if row['ok'] else 'FAIL'} {row.get('seconds', 0):6.1f}s  {json.dumps(row.get('checks'))}  {row.get('error') or ''}", flush=True)
             passed = sum(r["ok"] for r in rows)
             results["tasks"][f"{name}/{runner_name}"] = {"passed": passed, "of": len(rows), "pass_bar_met": passed >= 0.8 * len(rows), "rows": rows}
-            out = HERE / "results" / "mapping_trials.json"
+            out = Path(args.out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     results["out_of_box_moves"] = out_of_box_moves(Path("outputs/trace/jobs.jsonl"), results["started"])
-    (HERE / "results" / "mapping_trials.json").write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+    Path(args.out).write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     for key, value in results["tasks"].items():
         print(f"== {key}: {value['passed']}/{value['of']}")
     print(f"== out-of-box Mapper moves: {results['out_of_box_moves']}")
@@ -144,4 +144,5 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="qwen3:8b")
     parser.add_argument("--runners", nargs="+", default=["graph", "general"], choices=["graph", "general"])
     parser.add_argument("--tasks", nargs="*", default=None, choices=list(TASKS))
+    parser.add_argument("--out", default=str(HERE / "results" / "mapping_trials.json"), help="Results JSON file.")
     asyncio.run(main(parser.parse_args()))

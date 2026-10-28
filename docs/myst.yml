@@ -28,6 +28,7 @@ project:
         - file: Microscopy/modify_base_electron_microscope.md
     - title: Adding New Hardware
       children:
+        - file: Adding_New_Hardware/new_instrument.md
         - file: Adding_New_Hardware/add_detector.md
     - title: MCP Server
       children:

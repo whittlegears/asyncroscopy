@@ -41,6 +41,8 @@ class JobError(Exception):
 class JobDevice(Device):
     # One line saying what this device's job does; MCP tool descriptions start with it.
     JOB_KIND = "background job"
+    # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
+    PLAN_EXAMPLE: dict | None = None
 
     job_kind = attribute(dtype=str, doc="What this device's background job does.")
     state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
@@ -185,6 +187,8 @@ class JobDevice(Device):
             return self._error(exc.code, str(exc))
         except (ValueError, jsonschema.ValidationError) as exc:
             message = exc.message if isinstance(exc, jsonschema.ValidationError) else str(exc)
+            if self.PLAN_EXAMPLE is not None:
+                message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
             return self._error("plan_rejected", message)
 
     # ------------------------------------------------------------------

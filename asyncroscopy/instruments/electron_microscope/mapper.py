@@ -93,6 +93,7 @@ def max_exposures(tiles: list[dict], fov: float) -> int:
 
 class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images (optionally an EDS spectrum at each) over a stage box. Not stitching"
+    PLAN_EXAMPLE = {"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 1.6e-7, "per_tile": []}  # metres; per_tile ["eds_point"] adds EDS
 
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to drive.")
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
