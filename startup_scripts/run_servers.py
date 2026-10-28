@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
 import signal
@@ -126,7 +127,7 @@ def python_file_to_module(path: Path) -> str:
     except ValueError:
         raise ValueError(
             f"instrument.file {file_path} is outside {PROJECT_DIR}; for code kept elsewhere set instrument.module_name "
-            "(and instrument.class_name) instead, with the package importable (pip install -e it, or put it on PYTHONPATH)"
+            "(and instrument.class_name) instead, and put the package's folder on PYTHONPATH"
         ) from None
     return ".".join(relative_path.with_suffix("").parts)
 
@@ -153,6 +154,12 @@ def _instrument_config(raw: dict) -> InstrumentConfig:
         instrument_file = None
         if not raw.get("class_name"):
             raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
+        try:
+            found = importlib.util.find_spec(module) is not None
+        except ModuleNotFoundError:
+            found = False
+        if not found:
+            raise ValueError(f"instrument.module_name {module!r} cannot be imported; check the name, and put its package's folder on PYTHONPATH")
     else:
         instrument_file = _instrument_file(_require(raw, "file", "instrument"))
     properties = {
@@ -400,10 +407,15 @@ def wait_for_database(host: str, port: int, timeout: int) -> float:
     raise TimeoutError(f"Tango database did not become ready after {timeout}s. Last error: {last_error}")
 
 
-def wait_for_device(device_name: str, timeout: int) -> float:
+def wait_for_device(device_name: str, timeout: int, process=None) -> float:
     start = time.monotonic()
     last_error: Exception | None = None
     while time.monotonic() - start < timeout:
+        if process is not None and process.process.poll() is not None:
+            raise RuntimeError(
+                f"{device_name}'s server exited (code {process.process.poll()}) before it was ready; "
+                "check its module_name/class_name in the YAML and the error printed above"
+            )
         try:
             proxy = tango.DeviceProxy(device_name)
             proxy.ping()
@@ -673,6 +685,7 @@ def main(argv: list[str] | None = None) -> int:
                 status_line("SKIP", "device registration")
 
             print_section(4, total_steps, "Starting device servers")
+            started = {}
             for device in regular_devices:
                 process = manager.start_process(
                     key=device.key, 
@@ -680,11 +693,12 @@ def main(argv: list[str] | None = None) -> int:
                     command=device.command, 
                     env=environment
                 )
+                started[device.key] = process
                 status_line("RUN", device.key, f"{device.module_name}  pid={process.pid}")
 
             for device in regular_devices:
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
-                elapsed = wait_for_device(device.device_name, device_timeout)
+                elapsed = wait_for_device(device.device_name, device_timeout, started[device.key])
                 ready_times[device.key] = elapsed
                 print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
 
@@ -716,7 +730,7 @@ def main(argv: list[str] | None = None) -> int:
                     env=environment
                 )
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
-                elapsed = wait_for_device(device.device_name, device_timeout)
+                elapsed = wait_for_device(device.device_name, device_timeout, process)
                 ready_times[device.key] = elapsed
                 print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
 

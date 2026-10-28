@@ -41,10 +41,11 @@ RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away fro
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
+    "indent", "indenter", "head", "objective", "imaging", "exposure", "robot", "protocol",
 })
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
 # (a de-energised shutter may open; close it with close_shutter).
-OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv"})
+OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv", "xray", "source"})
 MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
 # "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
@@ -99,6 +100,11 @@ def _word_list(name: str) -> list[str]:
     """Lower-case words of a command name: "AbortScan" and "abort_scan" both give ["abort", "scan"]."""
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", name)
     return [w for w in re.split(r"[_\W]+", spaced.lower()) if w]
+
+
+def looks_like_stop(command: str) -> bool:
+    """A name with a stop word in it: if it is still high, the author probably meant it as a stop."""
+    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop"}))
 
 
 def is_safe_stop(command: str) -> bool:
