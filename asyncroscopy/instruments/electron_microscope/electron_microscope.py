@@ -169,7 +169,7 @@ class ElectronMicroscope(Instrument):
             camera.output_format,
         )
 
-    @command(dtype_in=int, dtype_out=DevEncoded)
+    @command(dtype_in=int, dtype_out=DevEncoded, doc_in=':param index: Index of a cached image.')
     def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
         """Retrieve cached image by index."""
         if not hasattr(self, '_cached_images'):
@@ -183,12 +183,12 @@ class ElectronMicroscope(Instrument):
         meta = {'shape': list(img_data.shape), 'dtype': str(img_data.dtype)}
         return json.dumps(meta), img_data.tobytes()
 
-    @command(dtype_in=DevVarFloatArray, dtype_out=None)
+    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param position: [x, y] beam position as fractions (0-1) of the field of view; [0.5, 0.5] is the centre.')
     def place_beam(self, position) -> None:
         """Set resting beam position, [0:1]."""
         self._place_beam(position)
 
-    @command(dtype_in=DevVarFloatArray, dtype_out=None)
+    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.')
     def place_beam_list(self, positions) -> None:
         """Place beam at multiple positions sequentially."""
         if len(positions) % 2 != 0:
@@ -199,7 +199,7 @@ class ElectronMicroscope(Instrument):
             y = float(positions[i + 1])
             self._place_beam([x, y])
 
-    @command(dtype_in=str)
+    @command(dtype_in=str, doc_in=":param state: 'open' or 'close'.")
     def set_column_valves(self, state: str) -> None:
         """Open or close the column valves."""
         self._set_column_valves(state)
@@ -214,7 +214,7 @@ class ElectronMicroscope(Instrument):
         """Unblank beam."""
         self._unblank_beam()
 
-    @command(dtype_in=DevFloat)
+    @command(dtype_in=DevFloat, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).')
     def set_defocus(self, defocus):
         """Set the defocus in meters."""
         self._set_defocus(defocus)
@@ -224,7 +224,7 @@ class ElectronMicroscope(Instrument):
         """Read the defocus in meters."""
         return self._get_defocus()
 
-    @command(dtype_in=DevFloat)
+    @command(dtype_in=DevFloat, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).')
     def set_fov(self, fov):
         """Set the field of view for the next acquisition, in meters."""
         self._set_fov(fov)
@@ -234,7 +234,7 @@ class ElectronMicroscope(Instrument):
         """Read the field of view for the next acquisition, in meters."""
         return self._get_fov()
     
-    @command(dtype_in=DevVarFloatArray)
+    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] image shift in metres.')
     def set_image_shift(self, shift):
         """Set the image shift to [x_shift, y_shift] in meters."""
         self._set_image_shift(shift)
@@ -249,7 +249,7 @@ class ElectronMicroscope(Instrument):
         """Get the current beam tilt as [alpha, beta] in radian."""
         return self._get_beam_tilt()
 
-    @command(dtype_in=DevVarFloatArray)
+    @command(dtype_in=DevVarFloatArray, doc_in=':param tilt: [x, y] beam tilt in radians.')
     def set_beam_tilt(self, tilt):
         """Set the beam tilt to [x_tilt, y_tilt] in radian."""
         self._set_beam_tilt(tilt)
@@ -259,7 +259,7 @@ class ElectronMicroscope(Instrument):
         """Get the current  diffraction shift as [alpha, beta] in radian."""
         return self._get_diffraction_shift()
     
-    @command(dtype_in=DevVarFloatArray)
+    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift.')
     def set_diffraction_shift(self, shift):
         """Set the diffraction shift to [x_shift, y_shift] in radian."""
         self._set_diffraction_shift(shift)
@@ -269,7 +269,7 @@ class ElectronMicroscope(Instrument):
         """ Get all status parameters"""
         return self._get_parameters()
 
-    @command(dtype_in=DevString)
+    @command(dtype_in=DevString, doc_in=":param position: 'inserted' or 'retracted'.")
     def set_screen(self, position: str)->None:
         self._set_screen(position)
 
@@ -279,7 +279,7 @@ class ElectronMicroscope(Instrument):
         self._calibrate_screen_current()
 
 
-    @command(dtype_in=DevFloat)
+    @command(dtype_in=DevFloat, doc_in=':param current: Screen current in amperes.')
     def set_screen_current(self, current):
         """Set the screen current in pA."""
         self._set_screen_current(current)
@@ -294,7 +294,7 @@ class ElectronMicroscope(Instrument):
         """Get the current stage position as [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         return self._get_stage()
    
-    @command(dtype_in=DevVarFloatArray)
+    @command(dtype_in=DevVarFloatArray, doc_in=':param position: [x, y, z, alpha, beta]; x, y, z in metres, alpha and beta in degrees.')
     def move_stage(self, position):
         """Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         self._move_stage(position)

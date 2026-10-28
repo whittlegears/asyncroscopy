@@ -76,7 +76,7 @@ class Approvals(Device):
         """Current approval mode: 'auto' or 'approve'."""
         return self._mode
 
-    @command(dtype_in=str, dtype_out=str, doc_in='{"mode": "auto|approve", "who": "operator name"}')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"mode": "auto" or "approve", "who": "operator name"}.')
     def set_mode(self, request: str) -> str:
         """Switch between auto and approve. Operator only; recorded in the trace."""
         body = self._load(request)
@@ -88,7 +88,7 @@ class Approvals(Device):
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous})
 
-    @command(dtype_in=str, dtype_out=str, doc_in='{"action": "Class_command", "arguments": {...}, "caller": "...", "reason": "..."}')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "reason": "..."}.')
     def request(self, request: str) -> str:
         """File a request for a held call; the same pending call returns the same request id."""
         body = self._load(request)
@@ -123,7 +123,7 @@ class Approvals(Device):
             pending = [r for r in self._requests.values() if r["state"] == "pending"]
         return json.dumps(sorted(pending, key=lambda r: r["created"]), default=str)
 
-    @command(dtype_in=str, dtype_out=str, doc_in='request id')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request_id: The request id returned when the call was held.')
     def request_status(self, request_id: str) -> str:
         """State of one request: pending, approved, denied or expired."""
         with self._lock:
@@ -133,7 +133,7 @@ class Approvals(Device):
             raise ValueError(f"no request {request_id!r}")
         return json.dumps({k: request.get(k) for k in ("request_id", "action", "state", "grant_id", "reason", "decided_by")})
 
-    @command(dtype_in=str, dtype_out=str, doc_in='{"request_id": "...", "who": "operator name"}')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name"}.')
     def approve(self, request: str) -> str:
         """Approve a pending request. Operator only. The call it covers may then run once."""
         body = self._load(request)
@@ -148,7 +148,7 @@ class Approvals(Device):
         self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"])
         return json.dumps({"request_id": req["request_id"], "grant_id": grant_id, "state": "approved"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in='{"request_id": "...", "who": "operator name", "reason": "..."}')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name", "reason": "..."}.')
     def deny(self, request: str) -> str:
         """Deny a pending request. Operator only."""
         body = self._load(request)
@@ -160,7 +160,7 @@ class Approvals(Device):
         self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"])
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in='{"action": "Class_command", "arguments": {...}}')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}}.')
     def check(self, request: str) -> str:
         """Use an unused grant for exactly this call, if one exists. Called by the MCP server."""
         body = self._load(request)
