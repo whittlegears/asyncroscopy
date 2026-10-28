@@ -77,16 +77,17 @@ class DeviceConfig:
 @dataclass(frozen=True)
 class InstrumentConfig:
     class_name: str
-    file: Path
+    file: Path | None
     description: str = ""
     hardware_host: str | None = None
     hardware_port: int | None = None
     timeout_seconds: int | None = None
     properties: dict[str, list[str]] = field(default_factory=dict)
+    module: str | None = None
 
     @property
     def module_name(self) -> str:
-        return python_file_to_module(self.file)
+        return self.module or python_file_to_module(self.file)
 
 
 @dataclass(frozen=True)
@@ -120,7 +121,13 @@ def python_file_to_module(path: Path) -> str:
     file_path = path.expanduser()
     if not file_path.is_absolute():
         file_path = PROJECT_DIR / file_path
-    relative_path = file_path.resolve().relative_to(PROJECT_DIR)
+    try:
+        relative_path = file_path.resolve().relative_to(PROJECT_DIR)
+    except ValueError:
+        raise ValueError(
+            f"instrument.file {file_path} is outside {PROJECT_DIR}; for code kept elsewhere set instrument.module_name "
+            "(and instrument.class_name) instead, with the package importable (pip install -e it, or put it on PYTHONPATH)"
+        ) from None
     return ".".join(relative_path.with_suffix("").parts)
 
 
@@ -140,7 +147,14 @@ def _class_name_from_file(path: Path) -> str:
 
 
 def _instrument_config(raw: dict) -> InstrumentConfig:
-    instrument_file = _instrument_file(_require(raw, "file", "instrument"))
+    module = raw.get("module_name") if isinstance(raw, dict) else None
+    if module:
+        # Code outside this repository: a module the servers' Python can import.
+        instrument_file = None
+        if not raw.get("class_name"):
+            raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
+    else:
+        instrument_file = _instrument_file(_require(raw, "file", "instrument"))
     properties = {
         name: [str(item) for item in value] if isinstance(value, list) else [str(value)]
         for name, value in (raw.get("properties") or {}).items()
@@ -153,6 +167,7 @@ def _instrument_config(raw: dict) -> InstrumentConfig:
         hardware_port=int(raw["hardware_port"]) if raw.get("hardware_port") else None,
         timeout_seconds=int(raw["timeout_seconds"]) if raw.get("timeout_seconds") else None,
         properties=properties,
+        module=module,
     )
 
 

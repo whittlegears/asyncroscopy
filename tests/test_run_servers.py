@@ -239,3 +239,13 @@ def test_device_server_command_uses_python_command(fake_uv):
     device = run_servers.DeviceConfig(key="stage", class_name="STAGE", module_name="pkg.stage")
 
     assert device.command == [fake_uv, "run", "--no-sync", "python", "-u", "-m", "pkg.stage", "stage_instance"]
+
+
+def test_instrument_kept_outside_the_repository_is_given_by_module_name():
+    config = run_servers._instrument_config({"module_name": "mylab.optiscope", "class_name": "OptiScope"})
+    assert config.module_name == "mylab.optiscope" and config.class_name == "OptiScope"
+    with pytest.raises(KeyError, match="class_name"):
+        run_servers._instrument_config({"module_name": "mylab.optiscope"})
+    outside = run_servers.PROJECT_DIR.parent / "mylab" / "scope.py"
+    with pytest.raises(ValueError, match="module_name"):
+        run_servers.python_file_to_module(outside)

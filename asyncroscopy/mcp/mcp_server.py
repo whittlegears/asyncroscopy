@@ -146,6 +146,12 @@ class MCPServer:
         self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
+        # Filled by _find_tools; set here so a wrapper built before it sees empty sets, not an AttributeError.
+        self._prefix_class: dict[str, str] = {}
+        self._envelope_prefixes: set[str] = set()
+        self._stem_prefixes: set[str] = set()
+        self._job_kinds: dict[str, str] = {}
+        self._plan_examples: dict[str, str] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -546,8 +552,8 @@ class MCPServer:
         out_type = cmd_info.out_type
         unique_name = f"{tool_prefix or dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
-        envelope = (tool_prefix or dev_class) in getattr(self, "_envelope_prefixes", set())
-        stem = (tool_prefix or dev_class) in getattr(self, "_stem_prefixes", set())
+        envelope = (tool_prefix or dev_class) in self._envelope_prefixes
+        stem = (tool_prefix or dev_class) in self._stem_prefixes
         risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
 
         def _run(arguments: dict, *call_args):
@@ -598,10 +604,10 @@ class MCPServer:
             doc_lines.append(f"Output Description: {out_desc}")
             # Lead with what the command is for: models weigh the first line most when choosing a tool.
             doc_lines.insert(0, out_desc)
-        job_kind = getattr(self, "_job_kinds", {}).get(tool_prefix or dev_class)
+        job_kind = self._job_kinds.get(tool_prefix or dev_class)
         if envelope and job_kind:
             doc_lines.insert(0, f"{tool_prefix or dev_class} job: {job_kind}.")
-        plan_example = getattr(self, "_plan_examples", {}).get(tool_prefix or dev_class)
+        plan_example = self._plan_examples.get(tool_prefix or dev_class)
         if envelope and command_name == "reserve" and plan_example:
             doc_lines.insert(1, f'Example request: {{"plan": {plan_example}}}')
         doc = "\n".join(doc_lines)
@@ -804,8 +810,8 @@ class MCPServer:
     def wait_for_job(self, device: str, job_id: str, max_wait_s: float = 25.0) -> dict[str, Any]:
         """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the tool prefix, e.g. "Mapper". Use this instead of calling <device>_job_status over and over."""
         proxy = self._devices.get(device)
-        if proxy is None or device not in getattr(self, "_envelope_prefixes", set()):
-            raise ToolError(f"no job device {device!r}; job devices here: {sorted(getattr(self, '_envelope_prefixes', set()))}")
+        if proxy is None or device not in self._envelope_prefixes:
+            raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
         deadline = time.monotonic() + min(max(float(max_wait_s), 0.0), JOB_WAIT_MAX_S)
         while True:
             # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
@@ -943,7 +949,7 @@ class MCPServer:
         raw_tools = self._find_tools()
 
         wrapped_tools: dict[str, dict[str, Callable]] = {}
-        prefix_class = getattr(self, "_prefix_class", {})
+        prefix_class = self._prefix_class
         for prefix in raw_tools:
             wrapped_tools[prefix] = {}
             for command_name, (func, cmd_info) in raw_tools[prefix].items():
@@ -960,7 +966,7 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices, self.list_skills, self.load_skill]
-        if getattr(self, "_envelope_prefixes", None):
+        if self._envelope_prefixes:
             native_tools.append(self.wait_for_job)
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)

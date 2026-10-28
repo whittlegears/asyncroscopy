@@ -215,12 +215,20 @@ class FakeModel:
         return SimpleNamespace(content=self.text)
 
 
-def test_a_model_reply_without_a_plan_ends_without_touching_the_mapper(monkeypatch):
+def test_a_prose_reply_with_no_area_in_the_request_ends_without_touching_the_mapper(monkeypatch):
     g = make()
-    monkeypatch.setattr(g.config, "chat_model", lambda: FakeModel("I would map the sample now."))
-    state = run(g, {"request": "map the whole sample"})
-    assert state["report"].startswith("Map not completed") and "no JSON" in state["report"]
+    monkeypatch.setattr(g.config, "chat_model", lambda: FakeModel("I would image that particle now."))
+    state = run(g, {"request": "image the particle here"})
+    assert state["report"].startswith("Map not completed") and "no area" in state["report"]
     assert not any(c.startswith("Mapper") and c != "Mapper_release" for c in g.instrument.calls)
+
+
+def test_a_prose_reply_still_maps_what_the_request_states(monkeypatch):
+    g = make()
+    monkeypatch.setattr(g.config, "chat_model", lambda: FakeModel("Sure, mapping it."))
+    state = run(g, {"request": "map the whole sample"})
+    assert not state.get("error"), state
+    assert "Mapper_start" in g.instrument.calls
 
 
 def test_the_mapper_prefix_is_discovered():
