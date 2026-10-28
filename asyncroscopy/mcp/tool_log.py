@@ -50,7 +50,7 @@ class ToolCallLog:
                 "duration_s": round(duration_s, 6),
                 "ok": error is None,
                 "error": f"{type(error).__name__}: {error}" if error is not None else None,
-                "result": None if result is None else str(result)[:RESULT_PREVIEW_CHARS],
+                "result": None if result is None else (result if isinstance(result, str) else json.dumps(_json_safe(result), default=str))[:RESULT_PREVIEW_CHARS],
             }
             with self._lock, self.path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(row) + "\n")
@@ -82,7 +82,8 @@ class TraceWriter:
         }
         for key, value in fields.items():
             if key == "result" and value is not None:
-                value = str(value)[:RESULT_PREVIEW_CHARS]
+                # JSON, not Python repr, so analysis code can parse previews that were not cut short.
+                value = (value if isinstance(value, str) else json.dumps(_json_safe(value), default=str))[:RESULT_PREVIEW_CHARS]
             event[key] = _json_safe(value)
         try:
             with self._lock, self.path.open("a", encoding="utf-8") as handle:

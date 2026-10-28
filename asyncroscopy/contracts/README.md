@@ -14,19 +14,26 @@ Tango command names are case-insensitive and every device already has a `Status`
 
 ## Why a long job is not one command
 
-A Tango command times out after 30 s and an MCP request after 60 s, but a map takes minutes to hours. So a job is split: `reserve` checks a plan and returns an estimate, `start` returns at once with a job id, `status` reports progress, `abort` stops within one step with the beam blanked, `results` returns the Tiled keys of what was produced, and `release` frees the instrument for the next caller. A restarted device resumes a job from its saved state and skips finished steps.
+A Tango command times out after seconds (3 s for a default client, 30 s from the MCP server), but a map or an indent grid takes minutes to hours. So a job is split: `reserve` checks a plan and returns an estimate, `start` returns at once with a job id, `job_status` reports progress, `abort` stops within one step and leaves the instrument safe (the Mapper blanks the beam), `results` returns the Tiled keys of what was produced, and `release` frees the instrument for the next caller. A job interrupted by a restart can be started again and skips finished steps.
 
 ## Implementing the envelope for a new instrument
 
-Subclass `asyncroscopy.jobs.JobDevice` and implement two methods:
+Subclass `asyncroscopy.jobs.JobDevice` and implement `resolve_plan` and `run_step`, plus `on_stop` and `on_finish` to leave the instrument safe:
 
 ```python
 class MyScan(JobDevice):
-    def resolve_plan(self, plan: dict) -> dict:     # validate, expand into steps, estimate; raise ValueError to refuse
+    JOB_KIND = "one line saying what the job does"
+    PLAN_EXAMPLE = {...}                                  # a valid plan; agents see it
+
+    def resolve_plan(self, plan: dict) -> dict:           # validate, expand into steps, estimate; raise ValueError to refuse
         ...
-    def run_step(self, job: dict, index: int) -> dict:   # do one step; return what it produced
+    def run_step(self, job: dict, index: int) -> dict:    # do one step; return what it produced
+        ...
+    def on_stop(self, job: dict, reason: str) -> None:    # abort or failure: make the instrument safe
         ...
 ```
+
+[docs/Adding_New_Hardware/new_instrument.md](../../docs/Adding_New_Hardware/new_instrument.md) walks through a complete example.
 
 The base class handles threading, state, abort, resume and tracing. Outside Python, implement the same JSON shapes; validate against the schema with any JSON Schema library.
 

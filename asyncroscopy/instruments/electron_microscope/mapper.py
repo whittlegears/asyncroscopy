@@ -168,6 +168,8 @@ class Mapper(JobDevice):
         }
         if "eds_point" in p["per_tile"]:
             estimate["note"] = "EDS point spectra concentrate dose at each tile centre; that dose is not in max_dose_e_per_a2."
+        elif "eds_map" in p["per_tile"]:
+            estimate["note"] = "The EDS spectrum image parks the beam at eds_map_points x eds_map_points points per tile; that dose is not in max_dose_e_per_a2."
         return {**p, "box_m": [x_min, x_max, y_min, y_max], "steps": steps, "estimate": estimate, "grid": {"rows": 1 + max(s["row"] for s in steps), "cols": 1 + max(s["col"] for s in steps)}}
 
     # ------------------------------------------------------------------

@@ -48,6 +48,9 @@ class FakeInstrument:
             return reply({"state": "done", "result_keys": {"run": "map_r1.h5"}, "summary": {"spectra": [{"index": 0, "stage_xy_m": [1e-7, 1e-7], "key": "spectrum_0.h5"}]}})
         if name == "Mapper_release":
             return reply({"state": "released"})
+        if name == "Mapper_abort":
+            self.status_polls = 99  # the job reports aborted from now on
+            return reply({"job_id": "j1", "state": "aborting"})
         raise AssertionError(f"unexpected call {name}")
 
     async def call_json(self, name, arguments=None):
@@ -125,6 +128,20 @@ def test_a_node_that_raises_ends_in_a_report_and_releases():
     assert "Mapper_release" in g.instrument.calls
 
 
+def test_a_failure_while_the_map_runs_aborts_it_before_releasing():
+    g = make()
+
+    async def lost(state):
+        raise ConnectionError("endpoint dropped")
+
+    g.wait = lost
+    state = run(g, {"request": "map the sample", "plan": dict(PLAN)})
+    assert state["report"].startswith("Map not completed")
+    calls = g.instrument.calls
+    assert "Mapper_abort" in calls and "Mapper_release" in calls
+    assert calls.index("Mapper_abort") < calls.index("Mapper_release")  # never left running unattended
+
+
 @pytest.mark.parametrize(
     "model_plan, request_text, expect",
     [
@@ -133,6 +150,7 @@ def test_a_node_that_raises_ends_in_a_report_and_releases():
         ({"per_tile": ["eds_map"]}, "map with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
         ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile", {"per_tile": ["eds_map"]}),
         ({"per_tile": ["eds_point"]}, "map a 600 nm square", {"per_tile": []}),  # EDS nobody asked for
+        ({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, "map the sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),  # micrometres
         ({}, "map it and tell me the composition", {"per_tile": ["eds_point"]}),
         ({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, "map a tiny spot", {"box_m": [pytest.approx(-9.5e-8), pytest.approx(1.05e-7), pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
     ],

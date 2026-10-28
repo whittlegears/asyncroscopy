@@ -74,4 +74,4 @@ Where the mapping config's values come from is noted in the file. Values marked 
 - `DigitalTwinParticles`: voxel-backed oriented particles.
 - `PolycrystallineGoldDigitalTwin`: polycrystalline gold driven by the corrector twin.
 
-To build your own twin for a new instrument, start from `DigitalTwin` if your instrument images a sample by scanning, or from `AtomisticDigitalTwin` if you want the shared plumbing and your own renderer. The models in `twin/` have no Tango dependency and can be reused directly.
+To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `AtomisticDigitalTwin` if you want the shared plumbing and your own renderer. For a different kind of instrument, start from the simulated nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) and reuse the instrument-neutral models: `twin/stage_model.py`, `twin/clock.py` and `twin/rng.py` have no Tango or electron-optics dependency and import in a fraction of a second.

@@ -7,6 +7,8 @@ the same call (same tool, same arguments) succeeds once. Notebooks and
 scripts talk to Tango directly and are never held.
 
 Every mode change, request and decision is written to the Instrument Trace.
+The mode is also saved to ``mode_file`` and restored on restart, so a crashed
+or re-initialised device does not silently fall back to ``auto``.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import json
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from tango import DevState
 from tango.server import Device, command, device_property
@@ -23,6 +26,7 @@ from tango.server import Device, command, device_property
 from asyncroscopy.mcp.tool_log import TraceWriter
 
 MODES = ("auto", "approve")
+PRUNE_AFTER_S = 86400.0
 
 
 def fingerprint(action: str, arguments) -> str:
@@ -35,6 +39,7 @@ class Approvals(Device):
     request_timeout_s = device_property(dtype=float, default_value=1800.0, doc="A request nobody answers expires after this long.")
     grant_ttl_s = device_property(dtype=float, default_value=900.0, doc="An approval must be used within this long.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/approvals.jsonl", doc="Instrument Trace JSONL file.")
+    mode_file = device_property(dtype=str, default_value="outputs/approvals/mode.json", doc="Where the mode is kept, so a restart does not fall back to default_mode.")
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -46,9 +51,29 @@ class Approvals(Device):
             self.set_state(DevState.FAULT)
             self.set_status(f"default_mode must be one of {MODES}, got {self.default_mode!r}")
             return
-        self._mode = mode
+        self._mode = self._restore_mode(mode)
         self._trace = TraceWriter(self.trace_path, source="approvals")
         self.set_state(DevState.ON)
+
+    def _restore_mode(self, default: str) -> str:
+        """The last mode an operator set, or ``default`` if none was ever saved.
+
+        A saved file that cannot be read gives "approve": after a crash the safe
+        assumption is that someone wanted calls held.
+        """
+        path = Path(self.mode_file)
+        if not path.exists():
+            return default
+        try:
+            mode = str(json.loads(path.read_text(encoding="utf-8"))["mode"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return "approve"
+        return mode if mode in MODES else "approve"
+
+    def _save_mode(self, who) -> None:
+        path = Path(self.mode_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"mode": self._mode, "who": who, "at": time.time()}), encoding="utf-8")
 
     def _expire(self) -> None:
         now = time.time()
@@ -60,6 +85,11 @@ class Approvals(Device):
             if not grant["used"] and now - grant["created"] > float(self.grant_ttl_s):
                 grant["used"] = True
                 grant["expired"] = True
+        # Forget settled requests and used grants after a day (the trace keeps the record),
+        # so a long session or a retrying agent cannot grow these without bound.
+        for table, settled in ((self._requests, lambda r: r["state"] != "pending"), (self._grants, lambda g: g["used"])):
+            for key in [k for k, v in table.items() if settled(v) and now - v["created"] > PRUNE_AFTER_S]:
+                del table[key]
 
     @staticmethod
     def _load(text: str) -> dict:
@@ -85,6 +115,7 @@ class Approvals(Device):
             raise ValueError(f"mode must be one of {MODES}")
         with self._lock:
             previous, self._mode = self._mode, mode
+            self._save_mode(body.get("who"))
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous})
 

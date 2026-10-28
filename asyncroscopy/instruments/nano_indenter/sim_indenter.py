@@ -3,7 +3,8 @@
 It is the worked example in docs/Adding_New_Hardware/new_instrument.md. Copy
 it, replace the simulated physics with calls to your instrument's API, and
 keep the command names and docstrings in the same style: the MCP server turns
-each command into an agent tool, and the docstring is what the agent reads.
+each command into an agent tool, and ``asyncroscopy.utils.commands.command``
+carries each docstring to the agent (plain ``tango.server.command`` does not).
 
 Physics: the sample is two phases split at x = 0 (soft below, hard above).
 Hardness follows from the peak load and a Berkovich contact depth, with
@@ -17,7 +18,9 @@ import math
 
 import numpy as np
 from tango import DevState
-from tango.server import Device, command, device_property
+from tango.server import Device, device_property
+
+from asyncroscopy.utils.commands import command
 
 BERKOVICH_AREA = 24.5  # projected contact area = 24.5 * h_c**2
 
@@ -33,6 +36,11 @@ class SimIndenter(Device):
         self._tip_down = False
         self._rng = np.random.default_rng(int(self.seed))
         self.set_state(DevState.ON)
+
+    @command(dtype_out=str)
+    def get_limits(self) -> str:
+        """JSON with the stage travel (travel_m, from the origin in each direction) and the largest load (max_load_n)."""
+        return json.dumps({"travel_m": float(self.travel_m), "max_load_n": float(self.max_load_n)})
 
     @command(dtype_out=[float])
     def get_position(self) -> list[float]:

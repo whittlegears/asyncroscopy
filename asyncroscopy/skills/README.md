@@ -19,6 +19,7 @@ description: One line saying when to use it; this is all the agent sees before l
 version: 1.0.0
 min_asyncroscopy: 0.1.0      # optional: refuse to load on older installs
 envelope_schema: 1.0.0       # optional: the job envelope major version it was written for
+requires: [Mapper_reserve]    # tool patterns that must exist; otherwise the skill is not offered
 tools: [Mapper_reserve, ...] # tools it uses (documentation for readers and reviewers)
 ---
 
@@ -28,6 +29,6 @@ tools: [Mapper_reserve, ...] # tools it uses (documentation for readers and revi
 
 Keep it short and concrete: the decision rules (what to do when the request says X), the order of tool calls, and when to stop and ask a person.
 
-Put lab-specific skills outside the repository and point `ASYNCROSCOPY_SKILLS_PATH` at their folder (several folders separated by `;` on Windows, `:` elsewhere). A skill in this package wins over an outside one with the same name.
+Put lab-specific skills outside the repository and point `ASYNCROSCOPY_SKILLS_PATH` at their folder (several folders separated by `;` on Windows, `:` elsewhere). An outside skill replaces a packaged one with the same name, so a lab can adapt a skill without editing the repository.
 
 Agents cannot write or change skills; add them by pull request (or to your own folder).
