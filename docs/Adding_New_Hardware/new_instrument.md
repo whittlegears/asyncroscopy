@@ -180,7 +180,9 @@ Copy `tests/test_new_instrument_example.py`. It covers:
 
 No Tango database or ports are needed.
 
-Add your devices to the `devices_info` list in `tests/conftest.py`, next to `SimIndenter` and `IndentGrid`, and add a fixture that returns a proxy. All tests share one in-process `MultiDeviceTestContext`: PyTango can't start a second one in the same interpreter. Use `prop_path()` for any path property: the test context cuts property values at `:`, which breaks Windows drive letters.
+**Instrument kept in its own repository?** Use `asyncroscopy.testing`: `instrument_context(devices_info)` starts your devices in a Tango test context, and `mcp_server_for(devices_info, approvals_device_address=...)` builds the MCP server the agent would talk to, so you can check the tool descriptions it reads (`server.list_tool_descriptions()`) and which calls approve mode holds. `tests/out_of_tree_check.py` is a complete example. `instrument_context(..., process=True)` runs the devices in a child process, where Tango's 3 s client timeout applies as it does on the real launcher.
+
+**Instrument inside this repository?** Add your devices to the `devices_info` list in `tests/conftest.py`, next to `SimIndenter` and `IndentGrid`, and add a fixture that returns a proxy. All tests share one in-process `MultiDeviceTestContext`: PyTango can't start a second one in the same interpreter. Use `prop_path()` for any path property: the test context cuts property values at `:`, which breaks Windows drive letters.
 
 ## Digital twin first
 

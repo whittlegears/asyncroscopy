@@ -1,0 +1,110 @@
+"""Test helpers for instruments built on asyncroscopy, inside this repository or outside it.
+
+A team with its own instrument package tests it from its own repository, without
+editing asyncroscopy's ``tests/conftest.py``::
+
+    from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path
+
+    def test_my_scope(tmp_path):
+        devices = [
+            {"class": OptiScope, "devices": [{"name": "asyncroscopy/instrument/default"}]},
+            {"class": TileScan, "devices": [{"name": "asyncroscopy/tilescan/default",
+                                             "properties": {"state_directory": prop_path(tmp_path / "jobs")}}]},
+        ]
+        with instrument_context(devices):
+            server = mcp_server_for(devices)
+            tools = server.list_tool_descriptions()
+            assert tools["OptiScope_move_xy"].startswith("Move the stage")
+
+PyTango allows one in-process test context per interpreter, so give each test
+module its own pytest run, or share one context through a session fixture.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from tango.test_context import MultiDeviceTestContext
+
+from asyncroscopy.mcp.mcp_server import MCPServer
+
+
+def prop_path(path: str | os.PathLike) -> str:
+    """A path a test-context device property can carry.
+
+    The test context's file database cuts property values at ":", so a Windows
+    path like C:/Users/... arrives as "C:" and files land in the working
+    directory. A relative path has no drive colon; keep pytest's temp folder on
+    the same drive as the working directory (``--basetemp``) so one exists.
+    """
+    try:
+        return os.path.relpath(path).replace("\\", "/")
+    except ValueError:  # another drive: a cut path would write into the working directory
+        raise RuntimeError(f"{path} is on another drive than the working directory; run pytest with --basetemp on this drive") from None
+
+
+@contextmanager
+def instrument_context(devices_info: list[dict], process: bool = False) -> Iterator[MultiDeviceTestContext]:
+    """Start the given devices in one Tango test context (no database, no ports to configure).
+
+    ``devices_info`` is MultiDeviceTestContext's list of {"class": ..., "devices": [{"name": ..., "properties": {...}}]}.
+    ``process=True`` runs them in a child process, so command timeouts behave as on a real
+    server (an in-process context does not enforce the 3 s client timeout).
+    """
+    with MultiDeviceTestContext(devices_info, process=process) as ctx:
+        yield ctx
+
+
+class _DeviceList:
+    """Stands in for the Tango database: the MCP server only asks it which devices are exported."""
+
+    def __init__(self, names: list[str]):
+        self.value_string = names
+
+    def get_device_exported(self, pattern: str) -> "_DeviceList":
+        return self
+
+
+class TestMCPServer(MCPServer):
+    """An MCPServer over devices in a test context, with the tool descriptions an agent would read."""
+
+    __test__ = False  # not a pytest test class
+
+    def list_tool_descriptions(self) -> dict[str, str]:
+        tools = asyncio.run(self.mcp.list_tools())
+        return {t.name: t.description or "" for t in tools}
+
+
+def mcp_server_for(
+    devices_info: list[dict],
+    approvals_device_address: str | None = None,
+    endpoint_role: str = "agent",
+    risk_overrides: dict[str, str] | None = None,
+    trace_path: str | Path = "",
+) -> TestMCPServer:
+    """The MCP server the agent would talk to, over the devices of a running ``instrument_context``.
+
+    Give ``approvals_device_address`` (an Approvals device in the same context) to exercise
+    the approval mode; without it every call runs, as on a server with no Approvals device.
+    """
+    names = [device["name"] for group in devices_info for device in group["devices"]]
+    server = TestMCPServer(
+        "test",
+        "localhost",
+        0,
+        blocked_classes=["DataBase", "DServer"],
+        blocked_functions={"*": ["Init", "Kill", "RestartServer"]},
+        data_device_address="asyncroscopy/data/default",
+        verbose=False,
+        endpoint_role=endpoint_role,
+        approvals_device_address=approvals_device_address,
+        risk_overrides=risk_overrides,
+        trace_path=str(trace_path),
+        database=_DeviceList(names),
+    )
+    server.setup(print_summary=False)
+    return server

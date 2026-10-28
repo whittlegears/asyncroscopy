@@ -21,15 +21,17 @@ dependencies = [
     "lxml>=6.0.2",
     "matplotlib>=3.10.7",
     "multiprocess>=0.70.19",
-    "numpy>=2.3.5",
+    # Upper bounds on the fast-moving pre-1.0 and major-version dependencies: uv.lock is not
+    # committed, so these keep a fresh clone from picking up a breaking release.
+    "numpy>=2.3.5,<3",
     "pytango==10.1.2",
     "pytest>=9.0.2",
     "ruff>=0.15.2",
-    "scifireaders>=0.12.4",
+    "scifireaders>=0.12.4,<0.13",
     "ase>=3.27.0",
     "pyTEMlib>=0.2024.1.0",
-    "sidpy>=0.12.8",
-    "fastmcp>=0.1.0",
+    "sidpy>=0.12.8,<0.13",
+    "fastmcp>=0.1.0,<5",
     "anyio>=4.0.0",
     # AutoScript (local wheels)
     "autoscript-core",
@@ -42,7 +44,7 @@ dependencies = [
     "pyjem",
     "aicspylibczi>=3.3.1",
     "jupyter-book>=2.0.0",
-    "tiled[all]>=0.2.9",
+    "tiled[all]>=0.2.9,<0.3",
     "pyyaml>=6.0.3",
     "pyqt5>=5.15.11,<5.16; sys_platform != 'darwin' or platform_machine != 'arm64'",
     "pyqt5-qt5==5.15.2; sys_platform == 'win32'",
@@ -64,9 +66,9 @@ diffraction = [
 ]
 
 agent = [
-    "langchain",
+    "langchain<2",
     "langchain-openai",
-    "langgraph",
+    "langgraph<2",
     "langchain-mcp-adapters",    
 ]
 
