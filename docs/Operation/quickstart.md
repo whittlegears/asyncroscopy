@@ -62,7 +62,7 @@ Use four terminals, from the repository root. Each MCP server prints a large Fas
 ```powershell
 if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
 $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
-while (-not (Select-String servers.log 'Leave this terminal open' -Quiet)) { Start-Sleep 1 }   # about a minute
+while (-not ((Test-Path servers.log) -and (Select-String -Path servers.log -Pattern 'Leave this terminal open' -Quiet))) { Start-Sleep 1 }   # about a minute
 $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
 $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
 $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
@@ -150,5 +150,6 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
 | pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
+| `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the two `run_mcp.py` servers. |
 | Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal. On the next start `run_servers.py` also stops whatever is listening on its Tango and Tiled ports and leftover device servers from the same config; it leaves other asyncroscopy stacks alone. |
 | The agent picks the wrong tool or loops | Use `qwen3:8b` or larger, keep `ASYNCROSCOPY_NUM_CTX` at 8192 or more, and prefer the `mapping` graph for maps. `benchmarks/run_tool_json.py` measures a model on this machine. |

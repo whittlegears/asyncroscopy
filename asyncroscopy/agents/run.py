@@ -29,14 +29,27 @@ async def _final_state(graph, inputs: dict, config: dict | None, progress: bool,
         return await graph.ainvoke(inputs, config)
     state: dict = {}
     started = time.monotonic()
-    async for mode, chunk in graph.astream(inputs, config, stream_mode=["updates", "values"]):
-        if mode == "values":
-            state = chunk
-            continue
-        for node, update in (chunk or {}).items():
-            calls = [c["name"] for m in (update or {}).get("messages", []) for c in getattr(m, "tool_calls", None) or []]
-            detail = f"calling {', '.join(calls)}" if calls else ("error" if (update or {}).get("error") else "done")
-            print(f"[{name} {time.monotonic() - started:5.0f}s] {node}: {detail}", file=sys.stderr, flush=True)
+    last = {"node": "start", "at": started}
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(20)
+            if time.monotonic() - last["at"] >= 20:
+                print(f"[{name} {time.monotonic() - started:5.0f}s] still working (last finished: {last['node']})", file=sys.stderr, flush=True)
+
+    beat = asyncio.create_task(heartbeat())
+    try:
+        async for mode, chunk in graph.astream(inputs, config, stream_mode=["updates", "values"]):
+            if mode == "values":
+                state = chunk
+                continue
+            for node, update in (chunk or {}).items():
+                calls = [c["name"] for m in (update or {}).get("messages", []) for c in getattr(m, "tool_calls", None) or []]
+                detail = f"calling {', '.join(calls)}" if calls else ("error" if (update or {}).get("error") else "done")
+                print(f"[{name} {time.monotonic() - started:5.0f}s] {node}: {detail}", file=sys.stderr, flush=True)
+                last.update(node=node, at=time.monotonic())
+    finally:
+        beat.cancel()
     return state
 
 

@@ -51,18 +51,24 @@ async def mcp_side():
         check("parseMode accepts get_mode reply", mode in ("auto", "approve"), mode)
         reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "gui-probe"})}))
         check("set_mode with a JSON-string request", json.loads(reply)["mode"] == "approve", reply)
-        async with Client(StreamableHttpTransport("http://127.0.0.1:8000/mcp", headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
-            microscope = next(t.name[: -len("_unblank_beam")] for t in await agent.list_tools() if t.name.endswith("_unblank_beam"))
-            held_text = text(await agent.call_tool(f"{microscope}_unblank_beam", {}, raise_on_error=False))
-        check("agent high-risk call is held in approve mode", "APPROVAL REQUIRED" in held_text, held_text[:120])
-        pending = json.loads(text(await op.call_tool("Approvals_list_pending", {})))
-        ok = isinstance(pending, list) and pending and all(isinstance(p.get("request_id"), str) and isinstance(p.get("action"), str) and isinstance(p.get("created"), (int, float)) for p in pending)
-        check("parsePending fields (request_id, action, created, state)", bool(ok), json.dumps(pending[:1])[:200])
-        for p in [p for p in pending if p.get("caller") == CALLER]:
-            denied = text(await op.call_tool("Approvals_deny", {"request": json.dumps({"request_id": p["request_id"], "who": "gui-probe", "reason": "probe"})}))
-            check("deny with JSON-string request", json.loads(denied)["state"] == "denied")
-        reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}))
-        check(f"mode restored to {mode}", json.loads(reply)["mode"] == mode)
+        try:
+            async with Client(StreamableHttpTransport("http://127.0.0.1:8000/mcp", headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
+                microscope = next((t.name[: -len("_unblank_beam")] for t in await agent.list_tools() if t.name.endswith("_unblank_beam")), None)
+                if not check("agent endpoint offers a microscope (<name>_unblank_beam)", microscope is not None,
+                             "none found: were the MCP servers started before run_servers.py printed ready? Restart them"):
+                    return
+                held_text = text(await agent.call_tool(f"{microscope}_unblank_beam", {}, raise_on_error=False))
+            check("agent high-risk call is held in approve mode", "APPROVAL REQUIRED" in held_text, held_text[:120])
+            pending = json.loads(text(await op.call_tool("Approvals_list_pending", {})))
+            ok = isinstance(pending, list) and pending and all(isinstance(p.get("request_id"), str) and isinstance(p.get("action"), str) and isinstance(p.get("created"), (int, float)) for p in pending)
+            check("parsePending fields (request_id, action, created, state)", bool(ok), json.dumps(pending[:1])[:200])
+            for p in [p for p in pending if p.get("caller") == CALLER]:
+                denied = text(await op.call_tool("Approvals_deny", {"request": json.dumps({"request_id": p["request_id"], "who": "gui-probe", "reason": "probe"})}))
+                check("deny with JSON-string request", json.loads(denied)["state"] == "denied")
+        finally:
+            # Whatever failed above, do not leave the instrument holding every call.
+            reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": mode, "who": "gui-probe"})}))
+            check(f"mode restored to {mode}", json.loads(reply)["mode"] == mode)
 
 
 def tiled_side():
