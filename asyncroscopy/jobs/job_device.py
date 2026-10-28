@@ -307,8 +307,8 @@ class JobDevice(Device):
                 "last_error": None,
                 "created": time.time(),
             }
+            self._save(job)  # if this fails, nothing is reserved
             self._jobs[reservation_id] = job
-            self._save(job)
         self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"])
         return self._reply(
             {

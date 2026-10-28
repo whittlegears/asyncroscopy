@@ -9,11 +9,14 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    like the rest of the policy: a command's name (split on "_" and CamelCase)
    has exactly one stop verb (STOP_VERBS, RETREAT_VERBS, or "off" as the last
    word) and every other word is something that verb may stop (STOP_OBJECTS;
-   MOTION_OBJECTS too after abort/stop/halt/pause), or it is a stop pair
-   (STOP_PAIRS) with only STOP_OBJECTS beside it. So ``stop_scan``,
+   MOTION_OBJECTS too after abort/stop/halt/pause; only RETREAT_OBJECTS for
+   retract/withdraw, a named DISENGAGE_OBJECTS word for disengage, and an
+   OFF_OBJECTS word before "off"), or it is a stop pair (STOP_PAIRS) with only
+   STOP_OBJECTS beside it; "beam stop" is the beamstop, not a stop. So ``stop_scan``,
    ``AbortScan``, ``abort_approach``, ``beam_off`` and ``shutter_close`` are
    low; ``Off``, ``brake_off``, ``vacuum_off``, ``disengage_motor``,
-   ``stop_retract``, ``retract_approach`` and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
+   ``retract_shutter``, ``BeamStopMove``, ``stop_retract``, ``retract_approach``
+   and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
 3. the job-envelope verbs other than ``start``, low on devices that implement
    the envelope (the MCP server knows which those are);
 4. Tango's ``State`` and ``Status``, and the read-only naming convention of
@@ -109,7 +112,7 @@ def _word_list(name: str) -> list[str]:
 
 def looks_like_stop(command: str) -> bool:
     """A name with a stop word in it: if it is still high, the author probably meant it as a stop."""
-    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop", "cancel", "shutdown"}))
+    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop", "cancel", "shutdown", "close", "blank", "lift", "safe"}))
 
 
 def is_safe_stop(command: str) -> bool:
@@ -118,6 +121,10 @@ def is_safe_stop(command: str) -> bool:
     "off" counts only as the last word (beam_off, lamp_off); "off_axis" and "kick_off" are not stops.
     """
     ordered = [w for w in _word_list(command) if w not in MODIFIERS]
+    # "beam" then "stop" names the beamstop (BeamStopMove moves it out of the direct beam): one noun.
+    for i in range(len(ordered) - 1, 0, -1):
+        if ordered[i - 1] == "beam" and ordered[i] == "stop":
+            ordered[i - 1:i + 1] = ["beamstop"]
     words = set(ordered)
     if not ordered:
         return False

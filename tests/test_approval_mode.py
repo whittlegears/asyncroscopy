@@ -106,7 +106,8 @@ class TestPolicy:
                                       "Off", "off", "disengage_motor", "disengage_motors", "disengage_z", "disengage_stage", "DisengageAll",
                                       "Disengage", "emergency_disengage", "retract_shutter", "withdraw_shutter", "ShutterRetract", "retract_x",
                                       "withdraw_y", "retract_xy", "retract_stage", "StageRetract", "retract_robot", "withdraw_motors",
-                                      "retract_all", "retract_source", "retract_laser", "retract_gun", "retract_beam"])
+                                      "retract_all", "retract_source", "retract_laser", "retract_gun", "retract_beam",
+                                      "BeamStopMove", "beam_stop_move", "BeamStopX", "beam_stop_y", "BeamStop", "BeamStopScan"])
     def test_an_action_before_the_stop_verb_is_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 
