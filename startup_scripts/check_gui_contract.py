@@ -29,6 +29,7 @@ results = []
 def check(name, ok, detail=""):
     results.append(ok)
     print(("PASS " if ok else "FAIL ") + name + (f"  -- {detail}" if detail else ""))
+    return ok
 
 
 def get(path, accept="application/json"):
@@ -55,7 +56,7 @@ async def mcp_side():
             async with Client(StreamableHttpTransport("http://127.0.0.1:8000/mcp", headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
                 microscope = next((t.name[: -len("_unblank_beam")] for t in await agent.list_tools() if t.name.endswith("_unblank_beam")), None)
                 if not check("agent endpoint offers a microscope (<name>_unblank_beam)", microscope is not None,
-                             "none found: were the MCP servers started before run_servers.py printed ready? Restart them"):
+                             "" if microscope else "none found: were the MCP servers started before run_servers.py printed ready? Restart them"):
                     return
                 held_text = text(await agent.call_tool(f"{microscope}_unblank_beam", {}, raise_on_error=False))
             check("agent high-risk call is held in approve mode", "APPROVAL REQUIRED" in held_text, held_text[:120])
