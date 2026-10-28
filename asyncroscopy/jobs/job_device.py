@@ -23,7 +23,7 @@ from pathlib import Path
 
 import jsonschema
 from tango import DevState
-from tango.server import Device, command, device_property
+from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
 from asyncroscopy.mcp.tool_log import TraceWriter
@@ -39,6 +39,10 @@ class JobError(Exception):
 
 
 class JobDevice(Device):
+    # One line saying what this device's job does; MCP tool descriptions start with it.
+    JOB_KIND = "background job"
+
+    job_kind = attribute(dtype=str, doc="What this device's background job does.")
     state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/jobs.jsonl", doc="Instrument Trace JSONL file.")
 
@@ -58,6 +62,9 @@ class JobDevice(Device):
 
     def on_stop(self, job: dict, reason: str) -> None:
         """Called in the worker after an abort or a failure; put the instrument in a safe state here."""
+
+    def read_job_kind(self) -> str:
+        return self.JOB_KIND
 
     def on_finish(self, job: dict) -> dict:
         """Called after the last step; return result keys to merge into ``results``."""
@@ -90,17 +97,54 @@ class JobDevice(Device):
             if job.get("state") in {"queued", "running", "aborting", "paused_awaiting_approval"}:
                 job["state"] = "failed"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
+            job["step_results"] = self._read_steps(job["reservation_id"])
             self._jobs[job["reservation_id"]] = job
             for job_id in job.get("job_ids", []):
                 self._job_index[job_id] = job["reservation_id"]
 
+    def delete_device(self) -> None:
+        """Stop every worker before the device goes away (Init, restart, shutdown).
+
+        Without this, Init would reload the job as resumable while the old
+        worker kept driving the instrument, and a resume would run a second
+        worker beside it. Each stopping worker runs on_stop (safe state).
+        """
+        for event in list(getattr(self, "_abort", {}).values()):
+            event.set()
+        for thread in list(getattr(self, "_threads", {}).values()):
+            thread.join(timeout=60.0)
+        Device.delete_device(self)
+
     def _path(self, reservation_id: str) -> Path:
         return self._state_dir / f"{self._name.replace('/', '_')}__{reservation_id}.json"
 
+    def _steps_path(self, reservation_id: str) -> Path:
+        return self._path(reservation_id).with_suffix(".steps.jsonl")
+
+    def _read_steps(self, reservation_id: str) -> dict:
+        path = self._steps_path(reservation_id)
+        if not path.exists():
+            return {}
+        steps = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:  # a line cut short by a crash
+                continue
+            steps[str(row["index"])] = row["record"]
+        return steps
+
     def _save(self, job: dict) -> None:
+        """Write the job's small state file. Step results go to an append-only file instead,
+        so saving after each of thousands of steps does not rewrite all earlier results."""
+        state = {k: v for k, v in job.items() if k != "step_results"}
         tmp = self._path(job["reservation_id"]).with_suffix(".tmp")
-        tmp.write_text(json.dumps(job, default=str), encoding="utf-8")
+        tmp.write_text(json.dumps(state, default=str), encoding="utf-8")
         tmp.replace(self._path(job["reservation_id"]))
+
+    def _append_step(self, job: dict, index: int, record: dict) -> None:
+        with self._steps_path(job["reservation_id"]).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"index": index, "record": record}, default=str) + "\n")
 
     @staticmethod
     def _reply(payload: dict) -> str:
@@ -146,7 +190,7 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     # Envelope verbs
     # ------------------------------------------------------------------
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan follows the job type, e.g. map_plan.schema.json.', doc_out="Checks a plan for this instrument's acquisition job (on Mapper: acquiring a map) and returns reservation_id with a time and dose estimate.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan follows the job type, e.g. map_plan.schema.json.', doc_out="Checks a plan for this device's background job (see its class for what the job does) and returns reservation_id with an estimate.")
     def reserve(self, request: str) -> str:
         """Validate a plan, hold the device for it, and return the resolved plan with a time and dose estimate."""
         return self._guard(self._reserve, request)
@@ -191,7 +235,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts the instrument acquisition job (on Mapper: the map acquisition) and returns job_id at once.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.")
     def start(self, request: str) -> str:
         """Start a reserved job in the background and return its job id at once. Starting an aborted or failed job resumes it."""
         return self._guard(self._start, request)
@@ -211,6 +255,7 @@ class JobDevice(Device):
             job["job_ids"].append(job_id)
             job["job_id"] = job_id
             job["grant_id"] = body.get("grant_id") or job.get("grant_id")
+            job["caller"] = body.get("caller") or job.get("caller")
             job["state"] = "running"
             job["last_error"] = None
             self._job_index[job_id] = job["reservation_id"]
@@ -236,6 +281,7 @@ class JobDevice(Device):
                 with self._lock:
                     job["done"].append(index)
                     job["step_results"][str(index)] = record
+                    self._append_step(job, index, record)
                     self._save(job)
                 self._trace.record(
                     f"{cls}.step", True, started, duration_s=time.time() - started, job_id=job_id, plan_id=job["plan_id"],
@@ -264,7 +310,7 @@ class JobDevice(Device):
             self._save(job)
         self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"))
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of the instrument acquisition job (on Mapper: the map acquisition, not stitching): state and tiles done.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of this device's background job: state and steps done of total.")
     def job_status(self, request: str) -> str:
         """Progress of a job: state, steps done of total, last error."""
         return self._guard(self._status, request)
@@ -282,7 +328,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops the instrument acquisition job after the current step and blanks the beam. Always allowed.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops this device's background job after the current step and puts the instrument in its safe state. Always allowed.")
     def abort(self, request: str) -> str:
         """Stop a running job after the current step and put the instrument in a safe state. Always allowed."""
         return self._guard(self._abort_job, request)
@@ -297,12 +343,14 @@ class JobDevice(Device):
             elif job["state"] == "reserved":
                 job["state"] = "aborted"
             self._save(job)
+        # Wait briefly so a quick step reports "aborted" at once; a long step keeps the state
+        # "aborting" (poll job_status) rather than blocking this device past client timeouts.
         thread = self._threads.get(job_id)
         if thread is not None:
-            thread.join(timeout=25.0)
+            thread.join(timeout=2.0)
         return self._status(json.dumps({"job_id": job_id or job["reservation_id"]}))
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what the instrument acquisition job produced (on Mapper: result_keys.run, the map run) and a summary.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what this device's background job produced, and a summary.")
     def results(self, request: str) -> str:
         """Tiled keys of everything the job produced so far, plus a summary."""
         return self._guard(self._results, request)

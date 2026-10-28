@@ -1,0 +1,249 @@
+{
+  "model": "qwen3:8b",
+  "n": 10,
+  "started": 1793155085.6536264,
+  "tasks": {
+    "map_square/graph": {
+      "passed": 9,
+      "of": 10,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 139.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              -2.686065143476194e-07,
+              3.313934856523807e-07,
+              -2.994123862575082e-07,
+              3.0058761374249187e-07
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_647277fcf583.h5.\nStitched map: map_647277fcf583_map."
+        },
+        {
+          "seconds": 97.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              -6.357741487442579e-08,
+              5.364225851255743e-07,
+              -8.210783276234459e-08,
+              5.178921672376554e-07
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_3af5b94b2e78.h5.\nStitched map: map_3af5b94b2e78_map."
+        },
+        {
+          "seconds": 93.0,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              1.7165107011310563e-07,
+              7.716510701131057e-07,
+              1.4389248350103005e-07,
+              7.438924835010301e-07
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_654b5ce4621c.h5.\nStitched map: map_654b5ce4621c_map."
+        },
+        {
+          "seconds": 93.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              3.88249402192063e-07,
+              9.88249402192063e-07,
+              3.512176902220055e-07,
+              9.512176902220055e-07
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_2077abb78f61.h5.\nStitched map: map_2077abb78f61_map."
+        },
+        {
+          "seconds": 91.5,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              6.089642100014984e-07,
+              1.2089642100014984e-06,
+              5.763014123968317e-07,
+              1.1763014123968317e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_230a28f78cda.h5.\nStitched map: map_230a28f78cda_map."
+        },
+        {
+          "seconds": 91.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              8.025926878650779e-07,
+              1.402592687865078e-06,
+              7.845333669610241e-07,
+              1.3845333669610243e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_efbfb3578700.h5.\nStitched map: map_efbfb3578700_map."
+        },
+        {
+          "seconds": 92.8,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              1.0125127838649603e-06,
+              1.6125127838649605e-06,
+              1.0003640390775561e-06,
+              1.6003640390775563e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_b06e878efe6a.h5.\nStitched map: map_b06e878efe6a_map."
+        },
+        {
+          "seconds": 89.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              1.2303305528294362e-06,
+              1.8303305528294364e-06,
+              1.2068808648767448e-06,
+              1.806880864876745e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_0fe2544b732f.h5.\nStitched map: map_0fe2544b732f_map."
+        },
+        {
+          "seconds": 89.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.5999999902760464e-07,
+            "box_m": [
+              1.4579801597200921e-06,
+              2.057980159720092e-06,
+              1.427739596697521e-06,
+              2.027739596697521e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_603d9cf4dfb1.h5.\nStitched map: map_603d9cf4dfb1_map."
+        },
+        {
+          "seconds": 121.6,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": null,
+          "plan": {
+            "box_m": [
+              1.6637468828329483e-06,
+              2.2637468828329485e-06,
+              1.664303852742171e-06,
+              2.264303852742171e-06
+            ],
+            "fov_m": 1.5999999902760464e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm and an EDS spectrum at each tile.\nRun data: map_03fb5d28791b.h5.\nStitched map: map_03fb5d28791b_map.\n25 EDS spectra are marked on the map."
+        }
+      ]
+    }
+  }
+}

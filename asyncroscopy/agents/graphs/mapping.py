@@ -87,20 +87,36 @@ class MappingGraph:
         """The exported microscope's class name, e.g. DigitalTwin or AutoScriptMicroscope."""
         if self._tool_names is None:
             self._tool_names = {t.name for t in await self.instrument.list_tools()}
-        for name in sorted(self._tool_names):
-            if name.endswith("_move_stage"):
-                return name[: -len("_move_stage")]
-        raise RuntimeError("no microscope with move_stage on the MCP endpoint")
+        configured = os.environ.get("ASYNCROSCOPY_MICROSCOPE")
+        if configured:
+            if f"{configured}_move_stage" not in self._tool_names:
+                raise RuntimeError(f"ASYNCROSCOPY_MICROSCOPE={configured!r} has no {configured}_move_stage tool on {self.config.mcp_url}")
+            return configured
+        # A microscope here is a device that both moves a stage and acquires scanned images;
+        # an SPM or indenter with move_stage alone is not a candidate.
+        candidates = sorted(
+            name[: -len("_move_stage")]
+            for name in self._tool_names
+            if name.endswith("_move_stage") and f"{name[: -len('_move_stage')]}_acquire_scanned_image" in self._tool_names
+        )
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise RuntimeError("no device with both move_stage and acquire_scanned_image on the MCP endpoint")
+        raise RuntimeError(f"several microscopes {candidates}; set ASYNCROSCOPY_MICROSCOPE to the one to map with")
 
     # ------------------------------------------------------------------ nodes
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
+        # get_parameters keys differ by vendor (the twin reports the most); fall back to plain commands.
         params = await self.instrument.call_json(f"{microscope}_get_parameters")
-        context = {
-            "stage_position_m": params.get("stage_position"),
-            "fov_m": params.get("fov_m"),
-            "microscope": microscope,
-        }
+        stage = params.get("stage_position")
+        if stage is None:
+            stage = json.loads(await self.instrument.call_text(f"{microscope}_get_stage"))
+        fov = params.get("fov_m")
+        if fov is None and f"{microscope}_get_fov" in (self._tool_names or set()):
+            fov = float(await self.instrument.call_text(f"{microscope}_get_fov"))
+        context = {"stage_position_m": stage, "fov_m": fov, "microscope": microscope}
         bounds = params.get("world_bounds_angstrom")
         if bounds:
             context["sample_bounds_m"] = [bounds["x_min"] * 1e-10, bounds["x_max"] * 1e-10, bounds["y_min"] * 1e-10, bounds["y_max"] * 1e-10]
@@ -131,7 +147,7 @@ class MappingGraph:
         allowed = {"box_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
         fov = float(plan.get("fov_m") or context.get("fov_m") or DEFAULT_FOV_M)
-        if fov > 1e-3:  # the model wrote nanometres
+        if fov > 1.0:  # no microscope field of view is a metre: the model wrote nanometres
             fov *= 1e-9
         plan["fov_m"] = fov
         box = plan.get("box_m")
@@ -140,7 +156,8 @@ class MappingGraph:
             if box is None:
                 x, y = (context.get("stage_position_m") or [0.0, 0.0])[:2]
                 box = [x - 2 * fov, x + 2 * fov, y - 2 * fov, y + 2 * fov]
-        box = [float(v) * (1e-9 if abs(float(v)) > 1e-3 else 1.0) for v in box]
+        # Values above a metre can only be nanometres (a 2 mm indent grid is 2e-3 m and must stay that).
+        box = [float(v) * (1e-9 if abs(float(v)) > 1.0 else 1.0) for v in box]
         x0, x1, y0, y1 = box
         box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         # A size stated in the request ("a 600 nm square", "2 x 1 um area") is read here, not left to
@@ -159,8 +176,11 @@ class MappingGraph:
                 box[lo], box[hi] = mid - fov / 2, mid + fov / 2
         plan["box_m"] = box
         per_tile = [p for p in plan.get("per_tile") or [] if p in ("eds_point", "eds_map")]
-        if not per_tile and re.search(r"\beds\b|spectr", request, re.I):
+        asks_for_eds = re.search(r"\beds\b|\bedx\b|spectr|composition|element", request, re.I)
+        if not per_tile and asks_for_eds:
             per_tile = ["eds_point"]
+        if not asks_for_eds:
+            per_tile = []  # EDS adds dose and time: only when the request asks for it
         if "eds_map" in per_tile and not re.search(r"spectrum image|eds map|spectral map|eds_map", request, re.I):
             per_tile = ["eds_point"]  # a full spectrum image must be asked for by name
         plan["per_tile"] = per_tile[:1]
@@ -221,10 +241,16 @@ class MappingGraph:
                 await asyncio.sleep(POLL_S)
 
     async def wait(self, state: MapState) -> MapState:
+        # Give the job three times its estimate (plus 5 minutes), then abort it rather than wait forever.
+        deadline = time.time() + 3.0 * float(state.get("estimate", {}).get("duration_s", 600)) + 300.0
         while True:
             status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
-            if status.get("state") in {"done", "failed", "aborted"}:
+            if status.get("state") in {"done", "failed", "aborted", "released"}:
                 break
+            if time.time() > deadline:
+                await self.instrument.call("Mapper_abort", {"request": json.dumps({"job_id": state["job_id"]})})
+                await self._release(state)
+                return {"error": "the map run took more than three times its estimate and was aborted"}
             await asyncio.sleep(POLL_S)
         results = await self.instrument.call_json("Mapper_results", {"request": json.dumps({"job_id": state["job_id"]})})
         await self._release(state)
@@ -258,6 +284,8 @@ class MappingGraph:
 
     async def report(self, state: MapState) -> MapState:
         if state.get("error"):
+            # Every failed path ends here; free the instrument so the next reserve is not "busy".
+            await self._release(state)
             return {"report": f"Map not completed: {state['error']}"}
         plan = state["plan"]
         box = plan["box_m"]
@@ -290,17 +318,33 @@ class MappingGraph:
         return results
 
     async def _release(self, state: MapState) -> None:
+        """Release the reservation if there is one; releasing twice is harmless and errors are ignored."""
         if state.get("reservation_id"):
-            await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
+            try:
+                await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
+            except Exception:  # the endpoint may be the reason we are failing
+                pass
+
+    @staticmethod
+    def _guarded(node):
+        """Turn an exception in a node into an error in the state, so the run still reaches report."""
+        async def run(state: MapState) -> MapState:
+            try:
+                return await node(state)
+            except Exception as exc:
+                return {"error": f"{node.__name__} failed: {type(exc).__name__}: {exc}"}
+
+        run.__name__ = node.__name__
+        return run
 
     # ------------------------------------------------------------------ graph
     def build(self):
         graph = StateGraph(MapState)
         for name in ("gather_context", "make_plan", "reserve", "start", "wait", "stitch", "score", "report"):
-            graph.add_node(name, getattr(self, name))
+            graph.add_node(name, self._guarded(getattr(self, name)))
         ok = lambda nxt: (lambda s: "report" if s.get("error") else nxt)
         graph.add_edge(START, "gather_context")
-        graph.add_edge("gather_context", "make_plan")
+        graph.add_conditional_edges("gather_context", ok("make_plan"), ["make_plan", "report"])
         graph.add_conditional_edges("make_plan", ok("reserve"), ["reserve", "report"])
         graph.add_conditional_edges("reserve", ok("start"), ["start", "report"])
         graph.add_conditional_edges("start", ok("wait"), ["wait", "report"])

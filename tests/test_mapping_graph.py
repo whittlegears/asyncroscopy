@@ -24,7 +24,7 @@ class FakeInstrument:
         self.status_polls = 0
 
     async def list_tools(self):
-        return [SimpleNamespace(name=n) for n in ("DigitalTwin_move_stage", "DigitalTwin_get_parameters", "Mapper_reserve")]
+        return [SimpleNamespace(name=n) for n in ("DigitalTwin_move_stage", "DigitalTwin_acquire_scanned_image", "DigitalTwin_get_parameters", "Mapper_reserve")]
 
     async def call(self, name, arguments=None):
         self.calls.append(name)
@@ -112,6 +112,19 @@ def test_denied_approval_ends_with_reason_and_releases():
     assert "Mapper_release" in g.instrument.calls and "Mapper_job_status" not in g.instrument.calls
 
 
+def test_a_node_that_raises_ends_in_a_report_and_releases():
+    g = make()
+
+    async def broken(state):
+        raise RuntimeError("tiled is down")
+
+    g.stitch = broken  # build() looks nodes up by name, so the patched one is used
+    state = run(g, {"request": "map the sample", "plan": dict(PLAN)})
+    assert "broken failed: RuntimeError" in state["report"]
+    assert state["report"].startswith("Map not completed") and "tiled is down" in state["report"]
+    assert "Mapper_release" in g.instrument.calls
+
+
 @pytest.mark.parametrize(
     "model_plan, request_text, expect",
     [
@@ -119,6 +132,8 @@ def test_denied_approval_ends_with_reason_and_releases():
         ({}, "map the whole sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7]}),
         ({"per_tile": ["eds_map"]}, "map with an EDS spectrum at each image", {"per_tile": ["eds_point"]}),
         ({"per_tile": ["eds_map"]}, "acquire an EDS spectrum image of every tile", {"per_tile": ["eds_map"]}),
+        ({"per_tile": ["eds_point"]}, "map a 600 nm square", {"per_tile": []}),  # EDS nobody asked for
+        ({}, "map it and tell me the composition", {"per_tile": ["eds_point"]}),
         ({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, "map a tiny spot", {"box_m": [pytest.approx(-9.5e-8), pytest.approx(1.05e-7), pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
     ],
 )

@@ -38,15 +38,15 @@ class Approvals(Device):
 
     def init_device(self) -> None:
         Device.init_device(self)
+        self._lock = threading.Lock()  # set before any early return, so a FAULT device still refuses cleanly
+        self._requests: dict[str, dict] = {}
+        self._grants: dict[str, dict] = {}
         mode = str(self.default_mode).strip().lower()
         if mode not in MODES:
             self.set_state(DevState.FAULT)
             self.set_status(f"default_mode must be one of {MODES}, got {self.default_mode!r}")
             return
         self._mode = mode
-        self._lock = threading.Lock()
-        self._requests: dict[str, dict] = {}
-        self._grants: dict[str, dict] = {}
         self._trace = TraceWriter(self.trace_path, source="approvals")
         self.set_state(DevState.ON)
 
@@ -153,6 +153,7 @@ class Approvals(Device):
         """Deny a pending request. Operator only."""
         body = self._load(request)
         with self._lock:
+            self._expire()
             req = self._requests.get(str(body.get("request_id")))
             if req is None or req["state"] != "pending":
                 raise ValueError(f"request {body.get('request_id')!r} is not pending")

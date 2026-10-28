@@ -463,7 +463,7 @@ A caller-identity field is read from the MCP request and stored with each event.
 
 Notebooks and scripts call Tango directly and are treated as the operator. The mode does not affect them, so existing notebooks run unchanged.
 
-One limit applies in both modes, because it is part of the plan rather than an approval: the `Mapper` worker refuses any tile outside its resolved plan box, and stops with the beam blanked when the dose budget is used up. That check lives in the `Mapper` device, not in the microscope device, so direct `move_stage` calls are not affected.
+One limit applies in both modes, because it is part of the plan rather than an approval: the `Mapper` worker refuses any tile outside its resolved plan box, and `reserve` refuses a plan that would exceed its dose budget (see Implementation notes). That check lives in the `Mapper` device, not in the microscope device, so direct `move_stage` calls are not affected.
 
 In `approve` mode, a run waiting on an unanswered request stays paused with the beam blanked. How long it may wait is an open question.
 

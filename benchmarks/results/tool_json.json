@@ -4,24 +4,29 @@
   "num_ctx": 8192,
   "models": {
     "qwen3:8b": {
-      "valid_fraction": 0.85,
-      "passes": false,
-      "total_seconds": 128.7,
+      "valid_fraction": 0.95,
+      "passes": true,
+      "total_seconds": 217.8,
       "rows": [
         {
           "prompt": "What is the current stage position?",
           "expected": "*_get_stage",
-          "ok": false,
-          "why": "no tool call",
-          "seconds": 15.7,
-          "call": null
+          "ok": true,
+          "why": "ok",
+          "seconds": 33.6,
+          "call": {
+            "name": "DigitalTwin_get_stage",
+            "args": {},
+            "id": "3766f1f2-57f2-42de-a3d8-f9bd982ed4df",
+            "type": "tool_call"
+          }
         },
         {
           "prompt": "Move the stage to x = 100 nm, y = -50 nm, z = 0 with no tilt.",
           "expected": "*_move_stage",
           "ok": true,
           "why": "ok",
-          "seconds": 36.09,
+          "seconds": 4.36,
           "call": {
             "name": "DigitalTwin_move_stage",
             "args": {
@@ -33,7 +38,7 @@
                 0
               ]
             },
-            "id": "ed4a3bdc-dab0-4299-8339-f06d72e3c128",
+            "id": "516c431f-c02d-46b8-8153-2477033c5a8c",
             "type": "tool_call"
           }
         },
@@ -42,7 +47,7 @@
           "expected": "*_acquire_scanned_image",
           "ok": true,
           "why": "ok",
-          "seconds": 3.49,
+          "seconds": 3.44,
           "call": {
             "name": "DigitalTwin_acquire_scanned_image",
             "args": {
@@ -50,7 +55,7 @@
                 "haadf"
               ]
             },
-            "id": "654b3045-e4b5-481b-a3e6-a93842c79ac2",
+            "id": "d42a43f0-06b3-421f-9e53-dbf04ed6ca87",
             "type": "tool_call"
           }
         },
@@ -59,13 +64,13 @@
           "expected": "*_set_fov",
           "ok": true,
           "why": "ok",
-          "seconds": 3.81,
+          "seconds": 3.17,
           "call": {
             "name": "DigitalTwin_set_fov",
             "args": {
               "fov": 5e-07
             },
-            "id": "8fe82869-2a8b-461d-a2ff-507b2a319dbe",
+            "id": "9d44ee15-6051-4436-aa95-7f8e4bb671a6",
             "type": "tool_call"
           }
         },
@@ -74,7 +79,7 @@
           "expected": "*_place_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 4.28,
+          "seconds": 3.81,
           "call": {
             "name": "DigitalTwin_place_beam",
             "args": {
@@ -83,7 +88,7 @@
                 0.5
               ]
             },
-            "id": "ae45b391-5a10-4556-afd6-37b859c2e3c0",
+            "id": "6b70e66e-9aa5-4823-8306-753d3df596c1",
             "type": "tool_call"
           }
         },
@@ -92,13 +97,13 @@
           "expected": "*_acquire_spectrum",
           "ok": true,
           "why": "ok",
-          "seconds": 3.2,
+          "seconds": 4.11,
           "call": {
             "name": "DigitalTwin_acquire_spectrum",
             "args": {
               "detector_name": "eds"
             },
-            "id": "c486d663-3da1-4594-b01d-92524cd2a8fa",
+            "id": "ba1bdfaf-9b83-4a3b-89e9-cc0f6ca32a04",
             "type": "tool_call"
           }
         },
@@ -107,49 +112,43 @@
           "expected": "Approvals_get_mode",
           "ok": true,
           "why": "ok",
-          "seconds": 2.6,
+          "seconds": 4.64,
           "call": {
             "name": "Approvals_get_mode",
             "args": {},
-            "id": "7a738b7c-8233-4e20-8880-afaea4b94740",
+            "id": "c3ed8770-0c86-48ba-b268-f93a940dac31",
             "type": "tool_call"
           }
         },
         {
           "prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.",
           "expected": "Mapper_reserve",
-          "ok": true,
-          "why": "ok",
-          "seconds": 10.25,
+          "ok": false,
+          "why": "picked DigitalTwin_set_fov",
+          "seconds": 52.64,
           "call": {
-            "name": "Mapper_reserve",
+            "name": "DigitalTwin_set_fov",
             "args": {
-              "plan": {
-                "fov_m": 2e-07,
-                "type": "map_plan",
-                "x_end_m": 1e-06,
-                "x_start_m": -1e-06,
-                "y_end_m": 1e-06,
-                "y_start_m": -1e-06
-              },
-              "caller": "user"
+              "fov": 2e-07
             },
-            "id": "796ec0f8-40aa-4b9f-bb85-23e676aa2de5",
+            "id": "09f01520-e845-47d5-919b-3816be94f59e",
             "type": "tool_call"
           }
         },
         {
           "prompt": "What is the status of map job 8f2c1d9e0a11?",
           "expected": "Mapper_job_status",
-          "ok": false,
-          "why": "picked analysis_job_status",
-          "seconds": 3.52,
+          "ok": true,
+          "why": "ok",
+          "seconds": 9.81,
           "call": {
-            "name": "analysis_job_status",
+            "name": "Mapper_job_status",
             "args": {
-              "job_id": "8f2c1d9e0a11"
+              "request": {
+                "job_id": "8f2c1d9e0a11"
+              }
             },
-            "id": "67b5db24-7218-4b47-b6b4-a6c9d5931cad",
+            "id": "5765c0a4-7c35-4bfd-85c6-21af44cb2de7",
             "type": "tool_call"
           }
         },
@@ -158,7 +157,7 @@
           "expected": "Mapper_abort",
           "ok": true,
           "why": "ok",
-          "seconds": 4.45,
+          "seconds": 8.05,
           "call": {
             "name": "Mapper_abort",
             "args": {
@@ -166,7 +165,7 @@
                 "job_id": "8f2c1d9e0a11"
               }
             },
-            "id": "1d27110b-e462-4201-9eb4-d5ca37cfe140",
+            "id": "0104f741-69c1-4846-add7-9968c9fe0111",
             "type": "tool_call"
           }
         },
@@ -175,13 +174,13 @@
           "expected": "assemble_map",
           "ok": true,
           "why": "ok",
-          "seconds": 3.85,
+          "seconds": 6.05,
           "call": {
             "name": "assemble_map",
             "args": {
               "run": "map_1b8aee6810a4.h5"
             },
-            "id": "420a0ab9-e0c8-4bfa-acb3-53105c28f0dc",
+            "id": "bf7b433a-8355-4906-a9ad-75f89664d607",
             "type": "tool_call"
           }
         },
@@ -190,15 +189,15 @@
           "expected": "score_map",
           "ok": true,
           "why": "ok",
-          "seconds": 5.4,
+          "seconds": 11.64,
           "call": {
             "name": "score_map",
             "args": {
-              "map": "map_1b8aee6810a4_map",
               "scorer": "list_scorers()",
-              "top_k": 3
+              "top_k": 3,
+              "map": "map_1b8aee6810a4_map"
             },
-            "id": "9651a47d-9388-4b7c-a4d6-c08b36406caa",
+            "id": "22717cd3-5bd4-4374-903b-571db66d97c8",
             "type": "tool_call"
           }
         },
@@ -207,11 +206,11 @@
           "expected": "*_blank_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 2.66,
+          "seconds": 4.11,
           "call": {
             "name": "DigitalTwin_blank_beam",
             "args": {},
-            "id": "35bdad88-0977-4c7d-ac01-0247ff8c2a7c",
+            "id": "a49e58a0-9df4-4f02-9c44-aba088ec1cfe",
             "type": "tool_call"
           }
         },
@@ -220,13 +219,13 @@
           "expected": "*_set_defocus",
           "ok": true,
           "why": "ok",
-          "seconds": 3.5,
+          "seconds": 6.98,
           "call": {
             "name": "DigitalTwin_set_defocus",
             "args": {
               "defocus": 2e-08
             },
-            "id": "8d7dae6d-8789-45c8-a366-3077336965ae",
+            "id": "23609739-094a-4093-9a39-b5acaa590702",
             "type": "tool_call"
           }
         },
@@ -235,11 +234,11 @@
           "expected": "list_devices",
           "ok": true,
           "why": "ok",
-          "seconds": 2.35,
+          "seconds": 4.64,
           "call": {
             "name": "list_devices",
             "args": {},
-            "id": "6f89a851-efd5-43e9-9846-e77a2f6882cd",
+            "id": "aa62fa4f-4982-488d-b074-759e038684d6",
             "type": "tool_call"
           }
         },
@@ -248,19 +247,17 @@
           "expected": "add_poi",
           "ok": true,
           "why": "ok",
-          "seconds": 7.4,
+          "seconds": 18.97,
           "call": {
             "name": "add_poi",
             "args": {
+              "map": "map_1b8aee6810a4_map",
               "x_m": 1e-07,
               "y_m": 2e-07,
               "kind": "eds_spectrum",
-              "links": [
-                "eds_spectrum_12345"
-              ],
-              "map": "map_1b8aee6810a4_map"
+              "reason": "EDS spectrum taken at this position"
             },
-            "id": "435f903b-7272-4574-bf8d-f8bcbfaaebfa",
+            "id": "a6d44f44-0f2f-4f73-a3e1-ae7bcfc1f53b",
             "type": "tool_call"
           }
         },
@@ -269,7 +266,7 @@
           "expected": "get_region",
           "ok": true,
           "why": "ok",
-          "seconds": 6.52,
+          "seconds": 16.4,
           "call": {
             "name": "get_region",
             "args": {
@@ -282,7 +279,7 @@
               ],
               "level": 0
             },
-            "id": "499f5dd5-52c9-4ecd-b2e8-5a9761a70358",
+            "id": "a91f7cda-04ac-46cb-be1e-01a2bf1bc8d8",
             "type": "tool_call"
           }
         },
@@ -291,26 +288,26 @@
           "expected": "list_scorers",
           "ok": true,
           "why": "ok",
-          "seconds": 2.73,
+          "seconds": 5.19,
           "call": {
             "name": "list_scorers",
             "args": {},
-            "id": "5f708b8e-6e85-4dff-a63a-7ad7ce4223de",
+            "id": "bcba50e4-cae1-4d6d-b6e0-0e13245746aa",
             "type": "tool_call"
           }
         },
         {
           "prompt": "Get the results of map job 8f2c1d9e0a11.",
           "expected": "Mapper_results",
-          "ok": false,
-          "why": "picked analysis_job_results",
-          "seconds": 3.43,
+          "ok": true,
+          "why": "ok",
+          "seconds": 7.91,
           "call": {
-            "name": "analysis_job_results",
+            "name": "Mapper_results",
             "args": {
               "job_id": "8f2c1d9e0a11"
             },
-            "id": "5f22c510-d0db-4996-bdf1-43949f71d238",
+            "id": "cc4896c9-4244-41c8-a92b-f8421cd7c07d",
             "type": "tool_call"
           }
         },
@@ -319,33 +316,33 @@
           "expected": "approval_status",
           "ok": true,
           "why": "ok",
-          "seconds": 3.49,
+          "seconds": 8.24,
           "call": {
             "name": "approval_status",
             "args": {
               "request_id": "46522aaafac8"
             },
-            "id": "31850e45-eb44-47e3-945f-0ce9e4d1c0a8",
+            "id": "b9b2e875-58b0-46f6-afdd-3387ab8dd0ac",
             "type": "tool_call"
           }
         }
       ]
     },
     "qwen3:4b": {
-      "valid_fraction": 0.9,
+      "valid_fraction": 1.0,
       "passes": true,
-      "total_seconds": 244.2,
+      "total_seconds": 301.0,
       "rows": [
         {
           "prompt": "What is the current stage position?",
           "expected": "*_get_stage",
           "ok": true,
           "why": "ok",
-          "seconds": 22.16,
+          "seconds": 33.56,
           "call": {
             "name": "DigitalTwin_get_stage",
             "args": {},
-            "id": "9b4f13f8-1874-40cc-adb8-8e8eba572ff7",
+            "id": "d4cb7365-856d-4cfb-b970-73843dd74a55",
             "type": "tool_call"
           }
         },
@@ -354,7 +351,7 @@
           "expected": "*_move_stage",
           "ok": true,
           "why": "ok",
-          "seconds": 13.9,
+          "seconds": 11.94,
           "call": {
             "name": "DigitalTwin_move_stage",
             "args": {
@@ -366,7 +363,7 @@
                 0
               ]
             },
-            "id": "92e6212e-896a-40cb-88f6-f55b089826c4",
+            "id": "e9172386-05e9-4fd1-8f69-fb9414298ffb",
             "type": "tool_call"
           }
         },
@@ -375,7 +372,7 @@
           "expected": "*_acquire_scanned_image",
           "ok": true,
           "why": "ok",
-          "seconds": 3.65,
+          "seconds": 4.97,
           "call": {
             "name": "DigitalTwin_acquire_scanned_image",
             "args": {
@@ -383,7 +380,7 @@
                 "haadf"
               ]
             },
-            "id": "c3074a18-ee0c-4777-bd67-2a296856817b",
+            "id": "8f0638bb-6944-4c2a-9087-8546937f9d37",
             "type": "tool_call"
           }
         },
@@ -392,13 +389,13 @@
           "expected": "*_set_fov",
           "ok": true,
           "why": "ok",
-          "seconds": 5.44,
+          "seconds": 9.57,
           "call": {
             "name": "DigitalTwin_set_fov",
             "args": {
               "fov": 5e-07
             },
-            "id": "1ff982a6-7aaa-405f-a5ec-5a78d2646000",
+            "id": "479923fb-cf77-4001-a5ab-6a2f9fa479be",
             "type": "tool_call"
           }
         },
@@ -407,7 +404,7 @@
           "expected": "*_place_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 4.44,
+          "seconds": 5.64,
           "call": {
             "name": "DigitalTwin_place_beam",
             "args": {
@@ -416,7 +413,7 @@
                 0.5
               ]
             },
-            "id": "15dc09cf-cd05-4e5e-843e-4a45af8b6baa",
+            "id": "8fcb0c4e-2854-402a-9a4e-e58d848e7ec1",
             "type": "tool_call"
           }
         },
@@ -425,13 +422,13 @@
           "expected": "*_acquire_spectrum",
           "ok": true,
           "why": "ok",
-          "seconds": 4.48,
+          "seconds": 5.51,
           "call": {
             "name": "DigitalTwin_acquire_spectrum",
             "args": {
               "detector_name": "eds"
             },
-            "id": "9c0ab8ac-cb49-4d4a-8868-65379fc1d9c1",
+            "id": "601c084c-d11d-49c3-b673-7c8ab8e33144",
             "type": "tool_call"
           }
         },
@@ -440,11 +437,11 @@
           "expected": "Approvals_get_mode",
           "ok": true,
           "why": "ok",
-          "seconds": 9.89,
+          "seconds": 5.31,
           "call": {
             "name": "Approvals_get_mode",
             "args": {},
-            "id": "952b8e6d-52f8-403e-aced-617191f35152",
+            "id": "a1bcbe0f-5e4c-4e60-be80-e68d3006119c",
             "type": "tool_call"
           }
         },
@@ -453,7 +450,7 @@
           "expected": "Mapper_reserve",
           "ok": true,
           "why": "ok",
-          "seconds": 18.49,
+          "seconds": 47.33,
           "call": {
             "name": "Mapper_reserve",
             "args": {
@@ -461,31 +458,29 @@
                 "caller": "user",
                 "plan": {
                   "fov": 2e-07,
-                  "stage_box": [
-                    -1e-06,
-                    1e-06,
-                    -1e-06,
-                    1e-06
-                  ]
+                  "x_max": 1e-06,
+                  "x_min": -1e-06,
+                  "y_max": 1e-06,
+                  "y_min": -1e-06
                 }
               }
             },
-            "id": "862e3411-abbb-4799-b091-1ae9c89231e9",
+            "id": "84612b12-aa7e-4059-9091-b9952aa32d4b",
             "type": "tool_call"
           }
         },
         {
           "prompt": "What is the status of map job 8f2c1d9e0a11?",
           "expected": "Mapper_job_status",
-          "ok": false,
-          "why": "picked analysis_job_status",
-          "seconds": 5.25,
+          "ok": true,
+          "why": "ok",
+          "seconds": 7.22,
           "call": {
-            "name": "analysis_job_status",
+            "name": "Mapper_job_status",
             "args": {
               "job_id": "8f2c1d9e0a11"
             },
-            "id": "d56e7ed9-8941-43ea-b581-a325b4a430c3",
+            "id": "914dbe5b-06b5-4bcd-bc99-e8937f0895c4",
             "type": "tool_call"
           }
         },
@@ -494,13 +489,15 @@
           "expected": "Mapper_abort",
           "ok": true,
           "why": "ok",
-          "seconds": 11.17,
+          "seconds": 27.99,
           "call": {
             "name": "Mapper_abort",
             "args": {
-              "job_id": "8f2c1d9e0a11"
+              "request": {
+                "job_id": "8f2c1d9e0a11"
+              }
             },
-            "id": "3fa6d68f-cb20-4ac4-adcb-c63269e02f1f",
+            "id": "66cc9e18-5a66-4818-8e57-35c6bb3d54d3",
             "type": "tool_call"
           }
         },
@@ -509,13 +506,13 @@
           "expected": "assemble_map",
           "ok": true,
           "why": "ok",
-          "seconds": 10.36,
+          "seconds": 8.75,
           "call": {
             "name": "assemble_map",
             "args": {
               "run": "map_1b8aee6810a4.h5"
             },
-            "id": "cb967f00-c28e-410f-968b-09b130826cd1",
+            "id": "6c7d8c09-900f-4269-93ce-adad9204d4c7",
             "type": "tool_call"
           }
         },
@@ -524,15 +521,14 @@
           "expected": "score_map",
           "ok": true,
           "why": "ok",
-          "seconds": 57.61,
+          "seconds": 56.02,
           "call": {
             "name": "score_map",
             "args": {
               "map": "map_1b8aee6810a4_map",
-              "scorer": "intensity",
               "top_k": 3
             },
-            "id": "5d4ed321-4f82-420d-97c4-8ccca265494f",
+            "id": "059e8129-5437-4462-9b91-c58885521685",
             "type": "tool_call"
           }
         },
@@ -541,11 +537,11 @@
           "expected": "*_blank_beam",
           "ok": true,
           "why": "ok",
-          "seconds": 3.54,
+          "seconds": 4.84,
           "call": {
             "name": "DigitalTwin_blank_beam",
             "args": {},
-            "id": "2d53fbfd-ce2f-4a79-83d1-0a894536e132",
+            "id": "c2d64bef-c3dc-45fb-a231-3eec3f04c813",
             "type": "tool_call"
           }
         },
@@ -554,13 +550,13 @@
           "expected": "*_set_defocus",
           "ok": true,
           "why": "ok",
-          "seconds": 6.1,
+          "seconds": 8.71,
           "call": {
             "name": "DigitalTwin_set_defocus",
             "args": {
               "defocus": 2e-08
             },
-            "id": "f8029a6d-ea22-403f-85a6-c8ec6103d2ac",
+            "id": "15c6c38e-2ede-4af6-9d4b-d266c3e529f5",
             "type": "tool_call"
           }
         },
@@ -569,11 +565,11 @@
           "expected": "list_devices",
           "ok": true,
           "why": "ok",
-          "seconds": 4.67,
+          "seconds": 5.62,
           "call": {
             "name": "list_devices",
             "args": {},
-            "id": "5b21013b-2ecc-4879-b43d-ebe70a1734a1",
+            "id": "7e23ef06-7431-4377-bf63-24845ff37749",
             "type": "tool_call"
           }
         },
@@ -582,7 +578,7 @@
           "expected": "add_poi",
           "ok": true,
           "why": "ok",
-          "seconds": 36.28,
+          "seconds": 32.72,
           "call": {
             "name": "add_poi",
             "args": {
@@ -591,7 +587,7 @@
               "y_m": 2e-07,
               "kind": "eds"
             },
-            "id": "3a0ff9fb-8769-42c7-a357-5ac8219134c4",
+            "id": "a5fc68a8-50e0-4f60-917e-8fb45bb58975",
             "type": "tool_call"
           }
         },
@@ -600,19 +596,19 @@
           "expected": "get_region",
           "ok": true,
           "why": "ok",
-          "seconds": 11.31,
+          "seconds": 8.22,
           "call": {
             "name": "get_region",
             "args": {
-              "map": "map_1b8aee6810a4_map",
               "box_m": [
                 0,
                 1e-07,
                 0,
                 1e-07
-              ]
+              ],
+              "map": "map_1b8aee6810a4_map"
             },
-            "id": "e638de08-06c5-4606-88f8-f89fff816864",
+            "id": "44ce754d-d23a-4545-a8e6-398699fa1be2",
             "type": "tool_call"
           }
         },
@@ -621,26 +617,26 @@
           "expected": "list_scorers",
           "ok": true,
           "why": "ok",
-          "seconds": 3.76,
+          "seconds": 4.71,
           "call": {
             "name": "list_scorers",
             "args": {},
-            "id": "983a89aa-b8c5-477c-b67b-29e8b7186f8e",
+            "id": "c7757c0f-bf65-4f13-838c-cb1af0c6cf03",
             "type": "tool_call"
           }
         },
         {
           "prompt": "Get the results of map job 8f2c1d9e0a11.",
           "expected": "Mapper_results",
-          "ok": false,
-          "why": "picked analysis_job_results",
-          "seconds": 5.55,
+          "ok": true,
+          "why": "ok",
+          "seconds": 6.15,
           "call": {
-            "name": "analysis_job_results",
+            "name": "Mapper_results",
             "args": {
               "job_id": "8f2c1d9e0a11"
             },
-            "id": "d4711dfd-c689-4eb3-81ea-cca106c34892",
+            "id": "3faeb6a9-689f-480f-992c-b2e2ac9acbaf",
             "type": "tool_call"
           }
         },
@@ -649,13 +645,13 @@
           "expected": "approval_status",
           "ok": true,
           "why": "ok",
-          "seconds": 6.2,
+          "seconds": 6.17,
           "call": {
             "name": "approval_status",
             "args": {
               "request_id": "46522aaafac8"
             },
-            "id": "310dfad8-2faf-490d-a789-6accf479939d",
+            "id": "023048d8-3cd0-4a51-96d3-df8b1265fd38",
             "type": "tool_call"
           }
         }

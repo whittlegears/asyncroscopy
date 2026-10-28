@@ -49,13 +49,14 @@ TASKS = {
 def check(task: dict, plan: dict | None, state: dict, centre: list[float]) -> dict:
     checks = {}
     checks["completed"] = bool(state.get("map_key")) and not state.get("error")
-    if plan:
-        x0, x1, y0, y1 = plan["box_m"]
+    box = plan.get("box_m") if isinstance(plan, dict) else None
+    if isinstance(box, (list, tuple)) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
+        x0, x1, y0, y1 = box
         covers = x0 <= centre[0] - SIDE_M / 2 * 0.75 and x1 >= centre[0] + SIDE_M / 2 * 0.75 and y0 <= centre[1] - SIDE_M / 2 * 0.75 and y1 >= centre[1] + SIDE_M / 2 * 0.75
         not_huge = (x1 - x0) <= SIDE_M * 1.6 and (y1 - y0) <= SIDE_M * 1.6
         checks["box_matches_request"] = covers and not_huge
         checks["eds_as_asked"] = ("eds_point" in plan.get("per_tile", [])) == task["eds"]
-    else:
+    else:  # no plan, or a box the Mapper itself would reject
         checks["box_matches_request"] = checks["eds_as_asked"] = False
     candidates = [p for p in state.get("pois", []) if p.get("kind") == "candidate"]
     checks["explored_as_asked"] = (len(candidates) > 0) == task["score"]
@@ -93,6 +94,8 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
         body = args.get("request", args)
         body = json.loads(body) if isinstance(body, str) else body
         plan = body.get("plan")
+    if plan is not None and not isinstance(plan, dict):
+        plan = None
     final = messages[-1].content if messages else ""
     map_key = re.search(r"map_\w+_map", final)
     state_like = {"map_key": map_key.group(0) if map_key else None, "pois": [{"kind": "candidate"}] if any(c["name"] == "score_map" for c in calls) else []}
