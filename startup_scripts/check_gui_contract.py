@@ -49,7 +49,8 @@ async def mcp_side():
         check("operator role detected (Approvals_approve + Approvals_set_mode)", {"Approvals_approve", "Approvals_set_mode"} <= names)
         mode = text(await op.call_tool("Approvals_get_mode", {}))
         mode = mode.strip().strip('"')
-        check("parseMode accepts get_mode reply", mode in ("auto", "approve"), mode)
+        if not check("parseMode accepts get_mode reply", mode in ("auto", "approve"), mode):
+            return  # without the current mode there is nothing safe to restore
         reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "gui-probe"})}))
         check("set_mode with a JSON-string request", json.loads(reply)["mode"] == "approve", reply)
         try:

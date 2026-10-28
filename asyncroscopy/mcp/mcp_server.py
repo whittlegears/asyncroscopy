@@ -168,6 +168,7 @@ class MCPServer:
         self._plan_examples: dict[str, str] = {}
         self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
         self._risk_keys: dict[str, str] = {}  # tool name -> "Class.command", the other name overrides match
+        self._lowered: set[str] = set()  # tools an override made low that the policy would hold
         self.risk_warnings: list[str] = []  # what setup() printed as [safety] lines
 
     def _is_blocked_class(self, class_name: str) -> bool:
@@ -573,7 +574,10 @@ class MCPServer:
         stem = (tool_prefix or dev_class) in self._stem_prefixes
         key = f"{dev_class}.{command_name}"
         matched = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower()) or fnmatchcase(key.lower(), pattern.lower())]
-        risk = matched[0] if matched else risk_of(dev_class, command_name, envelope=envelope, stem=stem)
+        default = risk_of(dev_class, command_name, envelope=envelope, stem=stem)
+        risk = matched[0] if matched else default
+        if risk == "low" and default == "high":
+            self._lowered.add(unique_name)
         self.tool_risks[unique_name] = risk
         self._risk_keys[unique_name] = key
 
@@ -884,7 +888,7 @@ class MCPServer:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
             families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
-        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys):
+        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys, self._lowered):
             table.clear()
         for device_name, dev, dev_class in opened:
             prefix = dev_class
@@ -964,6 +968,8 @@ class MCPServer:
         for tool, risk in self.tool_risks.items():
             if risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
                 warnings.append(f"{tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
+        for tool in sorted(self._lowered):
+            warnings.append(f"{tool} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")
         self.risk_warnings = warnings
         for line in warnings:
             print(f"[safety] {line}")

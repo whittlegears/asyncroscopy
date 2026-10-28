@@ -10,10 +10,10 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    has exactly one stop verb (STOP_VERBS, RETREAT_VERBS, or "off" as the last
    word) and every other word is something that verb may stop (STOP_OBJECTS;
    MOTION_OBJECTS too after abort/stop/halt/pause), or it is a stop pair
-   (STOP_PAIRS) with only STOP_OBJECTS beside it. So ``Off``, ``stop_scan``,
+   (STOP_PAIRS) with only STOP_OBJECTS beside it. So ``stop_scan``,
    ``AbortScan``, ``abort_approach``, ``beam_off`` and ``shutter_close`` are
-   low; ``brake_off``, ``vacuum_off``, ``stop_retract``, ``retract_approach``
-   and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
+   low; ``Off``, ``brake_off``, ``vacuum_off``, ``disengage_motor``,
+   ``stop_retract``, ``retract_approach`` and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
 3. the job-envelope verbs other than ``start``, low on devices that implement
    the envelope (the MCP server knows which those are);
 4. Tango's ``State`` and ``Status``, and the read-only naming convention of
@@ -41,8 +41,10 @@ RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away fro
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
-    "indenter", "head", "objective", "robot",
+    "indenter", "head", "objective", "robot", "xray", "source",
 })
+# What "disengage" may take: a probe lifted off the sample. disengage_motor or disengage_z frees an axis.
+DISENGAGE_OBJECTS = frozenset({"tip", "probe", "head"})
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
 # (a de-energised shutter may open; close it with close_shutter).
 OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv", "xray", "source"})
@@ -125,8 +127,10 @@ def is_safe_stop(command: str) -> bool:
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
     # A motion is stopped only when it follows the verb: "abort_approach" stops, "approach_stop" approaches.
-    if verbs[0] == "off":
-        return before <= OFF_OBJECTS
+    if verbs[0] == "off":  # a bare Off is a de-energise (on a stage it drops holding torque)
+        return bool(before) and before <= OFF_OBJECTS
+    if verbs[0] == "disengage":
+        return (before | after) <= DISENGAGE_OBJECTS
     allowed_after = STOP_OBJECTS | (MOTION_OBJECTS if verbs[0] in STOP_VERBS else frozenset())
     return before <= STOP_OBJECTS and after <= allowed_after
 

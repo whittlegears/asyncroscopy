@@ -262,6 +262,10 @@ class JobDevice(Device):
             if self.PLAN_EXAMPLE is not None:
                 message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
             return self._error("plan_rejected", message)
+        except Exception as exc:
+            if fn != self._reserve:
+                raise
+            return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------
     # Envelope verbs

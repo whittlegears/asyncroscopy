@@ -64,8 +64,9 @@ def instrument_context(devices_info: list[dict], process: bool = False) -> Itera
     global _in_process_started, _process_open
     if _in_process_started or (_process_open and not process):
         raise RuntimeError(
-            "Tango allows one in-process instrument_context per Python interpreter, started after any "
-            "process=True contexts have closed; start it once in a session-scoped pytest fixture and share it"
+            "Tango allows one in-process instrument_context per Python interpreter, and no other context "
+            "(process=True included) after it; start it once in a session-scoped pytest fixture and share it, "
+            "and open any process=True contexts before it"
         )
     with MultiDeviceTestContext(devices_info, process=process) as ctx:
         if process:

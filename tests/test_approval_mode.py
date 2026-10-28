@@ -92,7 +92,8 @@ class TestPolicy:
     @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
                                       "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "disengage", "led_off", "illumination_off",
                                       "stop_indent", "abort_indent", "retract_indenter", "retract_head", "stop_imaging", "stop_exposure",
-                                      "retract_objective", "xray_off", "stop_robot", "abort_protocol", "pause_protocol", "source_off"])
+                                      "retract_objective", "xray_off", "stop_robot", "abort_protocol", "pause_protocol", "source_off",
+                                      "stop_xray", "disengage_tip", "DisengageProbe"])
     def test_plain_stops_are_low(self, name):
         assert risk_of("AnyDevice", name) == "low"
 
@@ -101,7 +102,8 @@ class TestPolicy:
         assert looks_like_stop("park_stage") and looks_like_stop("unload") and looks_like_stop("brake_off") and looks_like_stop("ParkStage")
         assert not looks_like_stop("move_stage") and not looks_like_stop("get_offset")
 
-    @pytest.mark.parametrize("name", ["indent_retract", "IndentRetract", "indent_withdraw", "indent_stop", "exposure_stop", "imaging_pause", "protocol_halt"])
+    @pytest.mark.parametrize("name", ["indent_retract", "IndentRetract", "indent_withdraw", "indent_stop", "exposure_stop", "imaging_pause", "protocol_halt",
+                                      "Off", "off", "disengage_motor", "disengage_motors", "disengage_z", "disengage_stage", "DisengageAll"])
     def test_an_action_before_the_stop_verb_is_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 
