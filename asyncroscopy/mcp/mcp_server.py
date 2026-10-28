@@ -629,12 +629,7 @@ class MCPServer:
             if match:
                 param_name = match.group(1)
 
-        if in_desc and in_desc.lower() not in (
-            "uninitialised",
-            "none",
-            "",
-            "uninitialized",
-        ):
+        if in_desc and not _placeholder_doc(in_desc):
             # Sanitize description
             clean_desc = _without_param_name(in_desc.replace("\n", " "))
             arg_type = Annotated[py_type, Field(description=clean_desc)]
@@ -815,7 +810,7 @@ class MCPServer:
         return json.loads(self._approvals().request_status(request_id))
 
     @tool()
-    def wait_for_job(self, device: str, job_id: str, max_wait_s: float = 25.0) -> dict[str, Any]:
+    def wait_for_job(self, device: str, job_id: str, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:
         """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the job device's tool prefix (the part before _start, e.g. "Mapper" or "IndentGrid"). Use this instead of calling <device>_job_status over and over."""
         proxy = self._devices.get(device)
         if proxy is None or device not in self._envelope_prefixes:
@@ -878,12 +873,8 @@ class MCPServer:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
             families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
-        self._prefix_class: dict[str, str] = {}
-        self._envelope_prefixes: set[str] = set()
-        self._stem_prefixes: set[str] = set()
-        self._job_kinds: dict[str, str] = {}
-        self._plan_examples: dict[str, str] = {}
-        self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
+        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks):
+            table.clear()
         for device_name, dev, dev_class in opened:
             prefix = dev_class
             if per_class[dev_class] > 1:

@@ -121,7 +121,8 @@ async def main(args: argparse.Namespace) -> int:
                     await check_analysis(args, results["result_keys"]["run"])
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
 
-        # Approval mode: hold, approve, retry once.
+        # Approval mode: hold, approve, retry once; then put back the mode the operator had.
+        mode_before = text(await call(operator, "Approvals_get_mode")).strip().strip('"')
         await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "check_stack"})})
         try:
             target = {"position": [1e-8, -1e-8, 0.0, 0.0, 0.0]}
@@ -154,8 +155,8 @@ async def main(args: argparse.Namespace) -> int:
             for leftover in json.loads(text(await call(operator, "Approvals_list_pending"))):
                 if leftover.get("caller") == "check_stack-agent":
                     await call(operator, "Approvals_deny", {"request": json.dumps({"request_id": leftover["request_id"], "who": "check_stack", "reason": "left over from check_stack"})})
-            await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": "auto", "who": "check_stack"})})
-        report("mode is back to auto", text(await call(agent, "Approvals_get_mode")) == "auto")
+            await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": mode_before, "who": "check_stack"})})
+        report(f"mode is back to {mode_before}", text(await call(agent, "Approvals_get_mode")) == mode_before)
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
 

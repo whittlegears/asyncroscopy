@@ -21,6 +21,7 @@ try:
 
     from langgraph.graph import END, START, StateGraph
 
+    from asyncroscopy.agents.config import CALLER_HEADER
     from asyncroscopy.agents.mcp_tools import McpServer
 except ImportError:
     print("Missing dependencies! Please run:")
@@ -164,7 +165,7 @@ class AgentSwarm:
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
         """Connect to an MCP server and inherit its tools. Returns true for success."""
         try:
-            client = McpServer(url)
+            client = McpServer(url, {CALLER_HEADER: "agent-swarm"})
 
             print(f"\n[SYSTEM]: Connecting to MCP Server at {url}...")
 
