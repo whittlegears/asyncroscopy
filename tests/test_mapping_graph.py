@@ -128,3 +128,25 @@ def test_plan_completion_repairs_small_model_slips(model_plan, request_text, exp
     for key, value in expect.items():
         numeric = isinstance(value, (int, float)) or (isinstance(value, list) and all(isinstance(v, (int, float)) for v in value))
         assert plan[key] == (pytest.approx(value) if numeric else value)
+
+
+@pytest.mark.parametrize(
+    "request_text, size",
+    [
+        ("Map a 600 nm square around the current stage position.", (6e-7, 6e-7)),
+        ("map a 2 x 1 um area here", (2e-6, 1e-6)),
+        ("Map a 1.5 µm region with EDS", (1.5e-6, 1.5e-6)),
+        ("map 300nm by 500 nm patch", (3e-7, 5e-7)),
+        ("map the whole sample", None),
+        ("take 3 images of 500 nm fov", None),
+    ],
+)
+def test_requested_size_is_read_from_the_request(request_text, size):
+    got = MappingGraph._requested_size(request_text)
+    assert got == (pytest.approx(size) if size else None)
+
+
+def test_stated_size_overrides_a_whole_sample_box():
+    context = {"sample_bounds_m": [-1e-6, 1e-6, -1e-6, 1e-6], "stage_position_m": [1e-7, -2e-7, 0, 0, 0], "fov_m": 1.6e-7}
+    plan = MappingGraph._complete_plan({"box_m": [-1e-6, 1e-6, -1e-6, 1e-6], "fov_m": 1.6e-7}, context, "Map a 600 nm square around the current stage position.")
+    assert plan["box_m"] == pytest.approx([-2e-7, 4e-7, -5e-7, 1e-7])
