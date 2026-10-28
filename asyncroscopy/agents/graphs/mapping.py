@@ -143,6 +143,15 @@ class MappingGraph:
         box = [float(v) * (1e-9 if abs(float(v)) > 1e-3 else 1.0) for v in box]
         x0, x1, y0, y1 = box
         box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
+        # A size stated in the request ("a 600 nm square", "2 x 1 um area") is read here, not left to
+        # the model: small models often fall back to the whole sample. Centred on the stage unless the
+        # model's box already has that size.
+        size = MappingGraph._requested_size(request)
+        if size is not None:
+            width, height = size
+            if not (abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height):
+                x, y = (context.get("stage_position_m") or [0.0, 0.0])[:2]
+                box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         # A box smaller than one tile becomes one tile.
         for lo, hi in ((0, 1), (2, 3)):
             if box[hi] - box[lo] < fov:
@@ -156,6 +165,24 @@ class MappingGraph:
             per_tile = ["eds_point"]  # a full spectrum image must be asked for by name
         plan["per_tile"] = per_tile[:1]
         return plan
+
+    @staticmethod
+    def _requested_size(request: str) -> tuple[float, float] | None:
+        """(width, height) in metres of an area stated in the request, or None."""
+        units = {"nm": 1e-9, "um": 1e-6, "µm": 1e-6, "μm": 1e-6, "micron": 1e-6, "microns": 1e-6, "mm": 1e-3}
+        number = r"(\d+(?:\.\d+)?)"
+        unit = r"(nm|um|µm|μm|microns?|mm)"
+        area = r"(?:square|area|region|box|field|patch|map)"
+        two = re.search(rf"{number}\s*{unit}?\s*(?:x|by|×)\s*{number}\s*{unit}\b[^.]*?{area}", request, re.I)
+        if two:
+            u2 = units[two.group(4).lower()]
+            u1 = units[two.group(2).lower()] if two.group(2) else u2
+            return float(two.group(1)) * u1, float(two.group(3)) * u2
+        one = re.search(rf"{number}\s*{unit}\b(?:\s*-?\s*(?:wide|side|across))?\s*{area}", request, re.I)
+        if one:
+            side = float(one.group(1)) * units[one.group(2).lower()]
+            return side, side
+        return None
 
     async def reserve(self, state: MapState) -> MapState:
         reply = await self.instrument.call_json("Mapper_reserve", {"request": json.dumps({"plan": state["plan"], "caller": self.config.caller})})
