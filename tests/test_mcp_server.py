@@ -543,7 +543,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"get_data_from_key", "list_devices"}
+        assert set(calls) == {"get_data_from_key", "list_devices", "list_skills", "load_skill"}
 
 
 class TestMCPCommandTimeout:

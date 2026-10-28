@@ -203,3 +203,41 @@ class TestEndpointRoles:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         with pytest.raises(ValueError, match="endpoint_role"):
             MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", endpoint_role="admin")
+
+
+class TestJsonArguments:
+    """Envelope and approval commands take a JSON string; models pass objects. All forms must work."""
+
+    @staticmethod
+    def make(monkeypatch, seen):
+        import asyncio
+
+        from fastmcp import Client, FastMCP
+        from fastmcp.tools import Tool
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        info = type("CommandInfo", (), {"in_type": tango.CmdArgType.DevString, "out_type": tango.CmdArgType.DevString, "in_type_desc": ':param request: JSON {"plan": {...}, "caller": "name"}.', "out_type_desc": ""})()
+        wrapper = server._create_wrapper(lambda text: seen.append(json.loads(text)) or "ok", info, "reserve", "Mapper")
+        app = FastMCP("t")
+        app.add_tool(Tool.from_function(wrapper))
+
+        def call(args):
+            async def go():
+                async with Client(app) as client:
+                    return await client.call_tool("Mapper_reserve", args)
+            return asyncio.run(go())
+
+        return wrapper, call
+
+    def test_object_string_and_flattened_fields(self, monkeypatch):
+        seen = []
+        wrapper, call = self.make(monkeypatch, seen)
+        wrapper(request={"plan": {"fov_m": 1}})
+        wrapper(request='{"plan": {"fov_m": 2}}')
+        wrapper(plan={"fov_m": 3})
+        call({"request": {"plan": {"fov_m": 4}}})
+        call({"request": '{"plan": {"fov_m": 5}}'})
+        call({"plan": {"fov_m": 6}, "caller": "x"})
+        assert [s["plan"]["fov_m"] for s in seen] == [1, 2, 3, 4, 5, 6]
+        assert seen[-1]["caller"] == "x"

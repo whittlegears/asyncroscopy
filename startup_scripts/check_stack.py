@@ -61,11 +61,11 @@ async def check_analysis(args: argparse.Namespace, run_key: str) -> None:
         async def finish(job):
             deadline = time.time() + args.timeout
             while time.time() < deadline:
-                status = await structured("job_status", {"job_id": job["job_id"]})
+                status = await structured("analysis_job_status", {"job_id": job["job_id"]})
                 if status.get("state") in {"done", "failed", "aborted"}:
                     break
                 await asyncio.sleep(0.5)
-            return status, await structured("job_results", {"job_id": job["job_id"]})
+            return status, await structured("analysis_job_results", {"job_id": job["job_id"]})
 
         job = await structured("assemble_map", {"run": run_key})
         status, stitched = await finish(job) if "job_id" in job else (job, {})

@@ -272,9 +272,23 @@ class Mapper(JobDevice):
                 del h5["trace"]
             h5.create_dataset("trace", data=np.array([json.dumps(e) for e in events], dtype=h5py.string_dtype()))
 
+    MAX_SUMMARY_SPECTRA = 500
+
     def summary(self, job: dict) -> dict:
         plan = job["resolved_plan"]
-        return {"grid": plan.get("grid"), "box_m": plan.get("box_m"), "fov_m": plan.get("fov_m"), "run_file": str(self._run_path(job))}
+        spectra = [
+            {"index": r["index"], "stage_xy_m": r["stage_reported_m"][:2], "key": r["spectrum_key"]}
+            for r in job["step_results"].values()
+            if r.get("spectrum_key") and r["spectrum_key"] != "eds_map"
+        ]
+        return {
+            "grid": plan.get("grid"),
+            "box_m": plan.get("box_m"),
+            "fov_m": plan.get("fov_m"),
+            "run_file": str(self._run_path(job)),
+            # Where each EDS point spectrum was taken, so a map can mark them (capped to keep replies small).
+            "spectra": sorted(spectra, key=lambda s: s["index"])[: self.MAX_SUMMARY_SPECTRA],
+        }
 
 
 if __name__ == "__main__":
