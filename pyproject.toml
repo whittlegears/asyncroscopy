@@ -115,7 +115,7 @@ pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
 # (whittlegears/pyTEMlib, branch feature/mcp-mapping) until they are merged upstream
 # (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
 # Pinned to a commit so every fresh `uv sync` (uv.lock is not committed) gets the same code.
-pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", rev = "8010866a407a2860724738ba5235aeff26788fe7" }
+pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", rev = "9e8848d8992f2ac43a3d3f41ff8f84d5cad93c21" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
