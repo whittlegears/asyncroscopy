@@ -20,6 +20,12 @@ def acquire(twin, scan, imsize=64, fov=1e-7, region=(0.0, 0.0, 1.0, 1.0), detect
         return {name: (group[name][()], dict(group[name].attrs)) for name in group}
 
 
+@pytest.fixture(autouse=True)
+def beam_on(mapping_twin_proxy):
+    """Other tests (Mapper abort) leave the beam blanked, as a real abort would."""
+    mapping_twin_proxy.unblank_beam()
+
+
 class TestRealisticTwin:
     def test_reported_position_is_not_the_true_position(self, mapping_twin_proxy):
         mapping_twin_proxy.move_stage([5e-8, -3e-8, 0.0, 0.0, 0.0])

@@ -32,3 +32,15 @@ mcp:
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
+  # Agent endpoint: operator-only commands (Approvals.approve/deny/set_mode,
+  # export_ground_truth) are never offered here. The GUI uses mcp_operator.yaml.
+  endpoint_role: agent
+  # Approval mode lives in the Approvals device; switch it from the GUI.
+  # auto (default) runs every call; approve holds high-risk agent calls.
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    # Optional {"Class.command" glob: low|high} checked before the defaults in
+    # asyncroscopy/safety/policy.py. Unknown commands are high risk.
+    risk: {}
+  # Instrument Trace: one JSON line per tool call. Empty disables it.
+  trace: outputs/trace/mcp_agent.jsonl

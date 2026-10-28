@@ -35,12 +35,17 @@ from tango.utils import (
 )
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import tool, Tool, ToolResult
 from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
-from asyncroscopy.mcp.tool_log import ToolCallLog
+from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
+from asyncroscopy.safety.policy import operator_only, risk_of
+
+ENDPOINT_ROLES = ("agent", "operator")
+CALLER_HEADER = "x-asyncroscopy-caller"
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
 # plain string. Their tool wrappers additionally fetch the array back from Tiled and
@@ -84,6 +89,10 @@ class MCPServer:
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
         tool_log_path: str | None = None,
+        endpoint_role: str = "agent",
+        approvals_device_address: str | None = None,
+        risk_overrides: dict[str, str] | None = None,
+        trace_path: str | None = None,
     ):
         """
         Args:
@@ -98,7 +107,15 @@ class MCPServer:
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
+            endpoint_role: "agent" (default) hides operator-only commands such as
+                Approvals.approve and export_ground_truth; "operator" is for the GUI.
+            approvals_device_address: Approvals device holding the approval mode.
+                When unset, every call runs (there is no mode to consult).
+            risk_overrides: {"Class.command" glob: "low"|"high"} checked before the defaults.
+            trace_path: Instrument Trace JSONL file. Off when empty.
         """
+        if endpoint_role not in ENDPOINT_ROLES:
+            raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
 
@@ -109,6 +126,10 @@ class MCPServer:
         self.include_only_functions = list(include_only_functions) if include_only_functions else []
         self.verbose = verbose
         self.tool_log = ToolCallLog(tool_log_path) if tool_log_path else None
+        self.endpoint_role = endpoint_role
+        self.approvals_device_address = approvals_device_address or None
+        self.risk_overrides = dict(risk_overrides or {})
+        self.trace = TraceWriter(trace_path, source="mcp") if trace_path else None
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
@@ -511,14 +532,20 @@ class MCPServer:
         out_type = cmd_info.out_type
         unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
+        risk = risk_of(dev_class, command_name, self.risk_overrides)
+
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
+            caller = self._caller()
+            gate = self._gate(unique_name, risk, arguments, caller)
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
                 result = self._augment_with_preview(command_name, normalized)
             except Exception as exc:
                 if self.tool_log is not None:
                     self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
+                if self.trace is not None:
+                    self.trace.record(unique_name, False, started, arguments=arguments, duration_s=time.perf_counter() - t0, error=describe_error(exc), caller=caller, **gate)
                 message = describe_error(exc)
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
@@ -531,6 +558,9 @@ class MCPServer:
                 self._failures.pop(unique_name, None)
             if self.tool_log is not None:
                 self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized)
+            if self.trace is not None:
+                key = normalized if isinstance(normalized, str) and command_name.startswith("acquire") else None
+                self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, **gate)
             return result
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [
@@ -602,6 +632,61 @@ class MCPServer:
 
         return wrapper
 
+    @staticmethod
+    def _caller() -> str | None:
+        """Who is calling, from the X-Asyncroscopy-Caller header; None outside an HTTP request."""
+        try:
+            from fastmcp.server.dependencies import get_http_headers
+
+            return get_http_headers().get(CALLER_HEADER) or None
+        except Exception:
+            return None
+
+    def _approvals(self) -> DeviceProxy:
+        proxy = DeviceProxy(self.approvals_device_address)
+        proxy.set_timeout_millis(5_000)
+        return proxy
+
+    def _gate(self, tool_name: str, risk: str, arguments: dict, caller: str | None) -> dict:
+        """Apply the approval mode to one call. Returns trace fields, or raises ToolError to hold the call.
+
+        Low-risk calls and servers without an Approvals device always pass. In
+        approve mode a high-risk call passes only if an operator approved this
+        exact call; otherwise a request is filed and the call is refused with
+        the request id, so the agent can wait and retry the same call.
+        """
+        if self.endpoint_role == "operator":
+            # The operator endpoint is the person at the GUI; nothing they do is held.
+            return {"mode": None, "approved_by": "operator"}
+        if self.approvals_device_address is None or risk != "high":
+            return {"mode": None, "approved_by": None}
+        try:
+            approvals = self._approvals()
+            mode = approvals.get_mode()
+            if mode == "auto":
+                return {"mode": "auto", "approved_by": "auto"}
+            decision = json.loads(approvals.check(json.dumps({"action": tool_name, "arguments": arguments})))
+            if decision.get("allowed"):
+                return {"mode": mode, "approved_by": decision.get("approved_by"), "grant_id": decision.get("grant_id"), "request_id": decision.get("request_id")}
+            filed = json.loads(approvals.request(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller})))
+        except tango.DevFailed as exc:
+            # Fail closed: without the Approvals device we cannot tell whether a person must approve.
+            raise ToolError(f"{tool_name} is high risk and the approval service is unreachable ({describe_error(exc)}); not run.") from exc
+        if self.trace is not None:
+            self.trace.record(tool_name, False, time.time(), arguments=arguments, error="approval_required", caller=caller, mode=mode, request_id=filed["request_id"])
+        raise ToolError(
+            f"APPROVAL REQUIRED: {tool_name} is held for an operator (request_id={filed['request_id']}). "
+            "Call approval_status with this request_id until it is approved, then repeat exactly the same call. "
+            "If it is denied, do not retry; report to the user."
+        )
+
+    @tool()
+    def approval_status(self, request_id: str) -> dict[str, Any]:
+        """State of an approval request: pending, approved, denied or expired. After 'approved', repeat the held call unchanged."""
+        if self.approvals_device_address is None:
+            return {"request_id": request_id, "state": "approved", "note": "this server has no approval mode"}
+        return json.loads(self._approvals().request_status(request_id))
+
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
         """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
         signature = json.dumps(arguments, sort_keys=True, default=str) + "\n" + error
@@ -645,6 +730,8 @@ class MCPServer:
 
             for cmd in commands:
                 command_name = cmd.cmd_name
+                if self.endpoint_role == "agent" and operator_only(dev_class, command_name):
+                    continue
                 global_blocks = self.blocked_functions.get("*", [])
                 if command_name in global_blocks or f"{dev_class}.{command_name}" in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
                     continue
@@ -696,6 +783,8 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices]
+        if self.approvals_device_address is not None:
+            native_tools.append(self.approval_status)
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -763,6 +852,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
+    parser.add_argument("--endpoint-role", default="agent", choices=ENDPOINT_ROLES)
+    parser.add_argument("--approvals-device-address", default="", help="Approvals device; empty disables the approval mode.")
+    parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
+    parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
     return parser.parse_args(argv)
 
 
@@ -808,6 +901,10 @@ def main(argv: list[str] | None = None) -> int:
         data_device_address=args.data_device_address,
         verbose=not args.quiet,
         tool_log_path=args.tool_log or None,
+        endpoint_role=args.endpoint_role,
+        approvals_device_address=args.approvals_device_address or None,
+        risk_overrides=json.loads(args.risk_json),
+        trace_path=args.trace or None,
     )
     if args.transport == "streamable-http":
         print(
