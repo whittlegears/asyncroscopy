@@ -58,8 +58,11 @@ class SampleModel:
         cell = max(4.0 * p.radius_mean_m, p.size_xy_m / 64.0)
         grid: dict[tuple[int, int], list[int]] = {}
         rows: list[tuple] = []
+        # Stop after a run of failed placements: asking for more particles than fit must not
+        # stall device start-up (it would otherwise retry 500 x count times).
+        misses, max_misses = 0, 2000
         for _ in range(500 * target):
-            if len(rows) >= target:
+            if len(rows) >= target or misses >= max_misses:
                 break
             radius = float(max(0.3e-9, rng.normal(p.radius_mean_m, p.radius_std_m)))
             margin = min(radius, half * 0.9)
@@ -80,7 +83,9 @@ class SampleModel:
                 if clash:
                     break
             if clash:
+                misses += 1
                 continue
+            misses = 0
             element = str(rng.choice(list(p.elements)))
             elong = float(rng.uniform(0.8, 1.2))
             theta = float(rng.uniform(0.0, np.pi))
@@ -98,6 +103,7 @@ class SampleModel:
         self.z = np.array([ELEMENTS[e][0] for e in self.elements], dtype=np.float64)
         self.density = np.array([ELEMENTS[e][1] for e in self.elements], dtype=np.float64)
         self.bounds = (-half, half, -half, half)
+        self.requested_count = target  # may exceed len(self) when the particles do not fit
 
     def __len__(self) -> int:
         return len(self.ids)
