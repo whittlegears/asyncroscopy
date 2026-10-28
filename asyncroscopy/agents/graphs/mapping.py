@@ -33,6 +33,9 @@ from asyncroscopy.contracts import load, validate
 
 POLL_S = float(os.environ.get("ASYNCROSCOPY_POLL_S", "1.0"))
 APPROVAL_WAIT_S = float(os.environ.get("ASYNCROSCOPY_APPROVAL_WAIT_S", "1800"))
+ANALYSIS_WAIT_S = float(os.environ.get("ASYNCROSCOPY_ANALYSIS_WAIT_S", "3600"))
+ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
+MAX_POLL_MISSES = 5  # consecutive failed status polls before the graph gives up on a job
 DEFAULT_FOV_M = 200e-9
 load("map_plan")  # read the schema now: file I/O inside async nodes blocks the event loop
 
@@ -75,6 +78,19 @@ def _parse_json(text: str) -> dict:
         raise ValueError(f"no JSON object in model reply: {text[:200]!r}")
     return json.loads(match.group(0))
 
+
+
+def _to_metres(value: float, metres_below: float) -> float:
+    """Repair a length a model wrote in the wrong unit.
+
+    Above 1 it can only be nanometres; between ``metres_below`` and 1 it is
+    micrometres (0.2 meant 0.2 um, not 20 cm); below that it is already metres.
+    """
+    if abs(value) > 1.0:
+        return value * 1e-9
+    if abs(value) > metres_below:
+        return value * 1e-6
+    return value
 
 class MappingGraph:
     def __init__(self, config: AgentConfig | None = None):
@@ -147,8 +163,7 @@ class MappingGraph:
         allowed = {"box_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
         fov = float(plan.get("fov_m") or context.get("fov_m") or DEFAULT_FOV_M)
-        if fov > 1.0:  # no microscope field of view is a metre: the model wrote nanometres
-            fov *= 1e-9
+        fov = _to_metres(fov, metres_below=1e-3)  # a STEM field of view is far below a millimetre
         plan["fov_m"] = fov
         box = plan.get("box_m")
         if not (isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box)):
@@ -156,8 +171,7 @@ class MappingGraph:
             if box is None:
                 x, y = (context.get("stage_position_m") or [0.0, 0.0])[:2]
                 box = [x - 2 * fov, x + 2 * fov, y - 2 * fov, y + 2 * fov]
-        # Values above a metre can only be nanometres (a 2 mm indent grid is 2e-3 m and must stay that).
-        box = [float(v) * (1e-9 if abs(float(v)) > 1.0 else 1.0) for v in box]
+        box = [_to_metres(float(v), metres_below=1e-2) for v in box]  # STEM stage travel is a few mm
         x0, x1, y0, y1 = box
         box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         # A size stated in the request ("a 600 nm square", "2 x 1 um area") is read here, not left to
@@ -243,17 +257,25 @@ class MappingGraph:
     async def wait(self, state: MapState) -> MapState:
         # Give the job three times its estimate (plus 5 minutes), then abort it rather than wait forever.
         deadline = time.time() + 3.0 * float(state.get("estimate", {}).get("duration_s", 600)) + 300.0
+        misses = 0
         while True:
-            status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
+            try:
+                status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
+            except Exception as exc:  # one dropped call in an hours-long poll must not end the watch
+                status = {"error": {"message": str(exc)}}
+            if "error" in status:
+                misses += 1
+                if misses >= MAX_POLL_MISSES:
+                    return {"error": f"lost track of the map job: {status['error'].get('message', '')}"}
+            else:
+                misses = 0
             if status.get("state") in {"done", "failed", "aborted", "released"}:
                 break
             if time.time() > deadline:
-                await self.instrument.call("Mapper_abort", {"request": json.dumps({"job_id": state["job_id"]})})
-                await self._release(state)
-                return {"error": "the map run took more than three times its estimate and was aborted"}
+                return {"error": "the map run took more than three times its estimate"}
             await asyncio.sleep(POLL_S)
         results = await self.instrument.call_json("Mapper_results", {"request": json.dumps({"job_id": state["job_id"]})})
-        await self._release(state)
+        await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         if status["state"] != "done":
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}"}
         keys = results.get("result_keys", {})
@@ -308,22 +330,42 @@ class MappingGraph:
 
     # ------------------------------------------------------------------ helpers
     async def _analysis_job(self, job_id: str) -> dict:
+        deadline = time.time() + ANALYSIS_WAIT_S
         while True:
             status = await self.analysis.call_json("analysis_job_status", {"job_id": job_id})
+            if "error" in status:  # e.g. unknown_job after the analysis server restarted
+                return {"state": "lost", "error": status["error"]}
             if status.get("state") in {"done", "failed", "aborted"}:
                 break
+            if time.time() > deadline:
+                await self.analysis.call_json("analysis_job_abort", {"job_id": job_id})
+                return {"state": "timed out"}
             await asyncio.sleep(POLL_S)
         results = await self.analysis.call_json("analysis_job_results", {"job_id": job_id})
         results["state"] = status["state"]
         return results
 
     async def _release(self, state: MapState) -> None:
-        """Release the reservation if there is one; releasing twice is harmless and errors are ignored."""
-        if state.get("reservation_id"):
-            try:
-                await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
-            except Exception:  # the endpoint may be the reason we are failing
-                pass
+        """Stop the job if it may still be running, then release the reservation.
+
+        Release refuses a running job, so on an error path a started map is aborted
+        first (abort blanks the beam) rather than left running with nobody watching.
+        Errors are ignored: the endpoint may be the reason we are failing.
+        """
+        if not state.get("reservation_id"):
+            return
+        try:
+            if state.get("job_id"):
+                await self.instrument.call("Mapper_abort", {"request": json.dumps({"job_id": state["job_id"]})})
+                deadline = time.time() + ABORT_WAIT_S
+                while time.time() < deadline:
+                    status = await self.instrument.call_json("Mapper_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
+                    if status.get("state") not in {"running", "aborting"}:
+                        break
+                    await asyncio.sleep(POLL_S)
+            await self.instrument.call("Mapper_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
+        except Exception:
+            pass
 
     @staticmethod
     def _guarded(node):

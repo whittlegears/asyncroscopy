@@ -27,7 +27,7 @@ class IndentGrid(JobDevice):
     JOB_KIND = "a grid of nanoindents with hardness at each point"
     PLAN_EXAMPLE = {"origin_m": [0.0, 0.0], "nx": 5, "ny": 5, "pitch_m": 2e-5, "load_n": 0.01}
 
-    indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/indenter/default", doc="Tango address of the indenter.")
+    indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Tango address of the indenter (the launcher names the instrument asyncroscopy/instrument/default).")
 
     def _indenter(self) -> tango.DeviceProxy:
         return tango.DeviceProxy(self.indenter_device_address)
@@ -42,6 +42,13 @@ class IndentGrid(JobDevice):
         if pitch <= 0 or load <= 0:
             raise ValueError("pitch_m and load_n must be positive")
         steps = [{"x": x0 + i * pitch, "y": y0 + j * pitch} for j in range(ny) for i in range(nx)]
+        # Check against the instrument's own limits now, not halfway through the grid.
+        limits = json.loads(self._indenter().get_limits())
+        if load > limits["max_load_n"]:
+            raise ValueError(f"load_n {load} is above the indenter's {limits['max_load_n']} N")
+        far = max(max(abs(s["x"]), abs(s["y"])) for s in steps)
+        if far > limits["travel_m"]:
+            raise ValueError(f"the grid reaches {far:.3g} m from the origin; the stage travels {limits['travel_m']} m")
         # Everything except "steps" is kept as job["resolved_plan"] and returned by reserve.
         return {
             "steps": steps,

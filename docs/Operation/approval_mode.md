@@ -11,11 +11,13 @@ Notebooks and scripts talk to Tango directly and are never held, in either mode.
 
 ## What counts as high risk
 
-`asyncroscopy/safety/policy.py` decides by `Class.command` pattern; the first match wins:
+`asyncroscopy/safety/policy.py` decides, in this order (its docstring is the authority):
 
-- **Low:** reading state (`get_*`, `list*`), job planning and control (`reserve`, `job_status`, `results`, `release`, `abort`), `blank_beam`, `place_beam`, `set_fov`, `set_defocus`, the `Approvals` and `DATA` devices.
-- **High:** `move_stage`, every `acquire*`, `unblank_beam`, starting a job (`*.start`), column valves, screen, calibration and correction, autofocus.
-- **Anything else is high.** A new or renamed command is held in `approve` mode rather than waved through.
+1. Your own patterns from `safety.risk` in the MCP config.
+2. **Low:** safe-stop commands, recognised by a stop word in the name: `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop`, or close + shutter, blank + beam. So `Mapper_abort`, `blank_beam`, `Off` and `stop_scan` are never held. A name that also says `disable`, `override`, `bypass`, `reset`, `release`, `open` or `force` is not a safe stop.
+3. **Low:** `reserve`, `job_status`, `results`, `release` on job devices.
+4. **Low:** Tango's `State` and `Status`; `get_*` and `list_*` (read-only by convention); `place_beam`, `set_fov`, `set_defocus`; `Approvals.request_status`.
+5. **High:** everything else. That includes `move_stage`, every `acquire*`, `unblank_beam`, starting a job (`*.start`) and DATA's `register_path` (with `get_data_from_key` it would read any file). A new or renamed command is held in `approve` mode rather than waved through.
 
 Add your own patterns in front of these with `safety.risk` in the MCP config, for example `{"MyStage.jog": "high", "MyCamera.preview": "low"}`.
 
@@ -28,11 +30,11 @@ Add your own patterns in front of these with `safety.risk` in the MCP config, fo
 
 **What approve mode does and does not hold.** It holds agents whose only route to the instrument is the agent MCP endpoint. It does not hold anything with direct Tango access (port 9094) or a shell on the stack's machine: such a program can call devices directly, or the operator endpoint (unauthenticated, local only). Run unattended agents where their only access is the agent endpoint.
 
-The agent endpoint never offers operator-only commands (approve, deny, set_mode, the grant-consuming `check`, `request`, `list_grants`, and the twin's ground truth), whatever its config says. Without this an agent could approve its own requests, because caller identity is not yet authenticated (the `X-Asyncroscopy-Caller` header is recorded, not checked; ATHENA WG1 owns tokens). Calls on the operator endpoint are never held: they come from the person at the GUI.
+The agent endpoint never offers operator-only commands (approve, deny, set_mode, the grant-consuming `check`, `request`, `list_grants`, the twin's ground truth, `Init`/`Kill`/`RestartServer` on any device, and running the data service: DATA `configure`, `start_tiled_server`, `stop_tiled_server`), whatever its config says. Without this an agent could approve its own requests, because caller identity is not yet authenticated (the `X-Asyncroscopy-Caller` header is recorded, not checked; ATHENA WG1 owns tokens). Calls on the operator endpoint are never held: they come from the person at the GUI.
 
 ## Map runs
 
-A map is one high-risk call, `Mapper_start`, so `approve` mode asks once per run, not once per tile. The approval covers the reserved plan: its stage box, tile count and dose budget. In both modes the `Mapper` refuses to move outside its plan box, `reserve` refuses a plan that would exceed its dose budget, and the beam is blanked whenever a job ends. `Mapper_abort` is always allowed.
+A map is one high-risk call, `Mapper_start`, so `approve` mode asks once per run, not once per tile. The approval covers the reserved plan: its stage box, tile count and dose budget. The request the operator sees carries that plan and its estimate (from `get_reservation`), not just a reservation id. In both modes the `Mapper` refuses to move outside its plan box, `reserve` refuses a plan that would exceed its dose budget, and the beam is blanked whenever a job ends. `Mapper_abort` is always allowed.
 
 ## Switching the mode
 
@@ -47,6 +49,8 @@ approvals.approve(json.dumps({"request_id": "...", "who": "your name"}))
 ```
 
 Unanswered requests expire after `request_timeout_s` (default 30 minutes); an approval must be used within `grant_ttl_s` (default 15 minutes).
+
+The mode is saved to the Approvals device's `mode_file` (default `outputs/approvals/mode.json`) and restored when the device restarts, so a crash or `Init` does not drop `approve` back to `auto`. If that file exists but cannot be read, the device starts in `approve`.
 
 If the `Approvals` device cannot be reached, high-risk agent calls are refused (the server cannot tell whether a person must approve) and low-risk calls still run.
 

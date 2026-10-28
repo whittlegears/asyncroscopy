@@ -4,6 +4,7 @@ description: Map a sample or an area as a grid of images (optionally with an EDS
 version: 1.0.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
+requires: [Mapper_reserve]
 tools: [Mapper_reserve, Mapper_start, Mapper_job_status, Mapper_results, Mapper_abort, Mapper_release, approval_status, assemble_map, score_map, analysis_job_status, analysis_job_results, map_info, get_region, list_pois, add_poi]
 ---
 

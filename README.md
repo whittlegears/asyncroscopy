@@ -25,6 +25,8 @@ Start the MCP server in a second terminal for agent/AI integration:
 uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
+**Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
+
 **New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md):** clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample, then `startup_scripts/check_stack.py` to confirm every piece talks to the others.
 
 ### Agentic control at a glance

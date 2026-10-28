@@ -27,6 +27,7 @@ Use this site to navigate contributor guidance, microscope architecture notes, h
 
 ## Hardware and Integrations
 
+- [Add a New Instrument](Adding_New_Hardware/new_instrument.md): put any instrument under agent control, with a worked nanoindenter example.
 - [Add a Detector](Adding_New_Hardware/add_detector.md): detector onboarding checklist and implementation notes.
 - [Data Integration (Tiled)](Tiled_server/data_integration.md): how acquisitions are saved, registered, and served via the DATA device and Tiled.
 - [MCP Server Documentation](MCP/mcp_server.md): how Tango commands are exposed to MCP-compatible agents.

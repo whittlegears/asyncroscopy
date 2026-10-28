@@ -33,11 +33,18 @@ def test_extra_skill_folder_and_version_gate(tmp_path, monkeypatch):
         load_skill("future")
 
 
-def test_package_skill_wins_over_same_named_extra(tmp_path, monkeypatch):
+def test_a_labs_skill_replaces_the_packaged_one(tmp_path, monkeypatch):
     (tmp_path / "mapping").mkdir()
-    (tmp_path / "mapping" / "SKILL.md").write_text("---\nname: mapping\ndescription: impostor\n---\nwrong", encoding="utf-8")
+    (tmp_path / "mapping" / "SKILL.md").write_text("---\nname: mapping\ndescription: our lab's version\n---\nours", encoding="utf-8")
     monkeypatch.setenv("ASYNCROSCOPY_SKILLS_PATH", str(tmp_path))
-    assert "impostor" not in {s.description for s in list_skills()}
+    assert [s.description for s in list_skills() if s.name == "mapping"] == ["our lab's version"]
+
+
+def test_skill_needing_absent_tools_is_not_offered():
+    stem = {s.name: s for s in list_skills({"Mapper_reserve", "Mapper_start"})}
+    indenter = {s.name: s for s in list_skills({"IndentGrid_reserve", "SimIndenter_indent"})}
+    assert stem["mapping"].available
+    assert not indenter["mapping"].available and "Mapper_reserve" in indenter["mapping"].problem
 
 
 def test_mcp_skill_tools(monkeypatch):
@@ -47,7 +54,10 @@ def test_mcp_skill_tools(monkeypatch):
 
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
-    assert any(s["name"] == "mapping" for s in server.list_skills())
+    with pytest.raises(ToolError, match="Mapper_reserve"):
+        server.load_skill("mapping")  # this endpoint has no Mapper
+    server.tools = {"Mapper": {"reserve": None}}
+    assert any(s["name"] == "mapping" and s["available"] for s in server.list_skills())
     assert "Mapper_reserve" in server.load_skill("mapping")
     with pytest.raises(ToolError):
         server.load_skill("nope")

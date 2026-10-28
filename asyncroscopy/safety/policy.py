@@ -4,25 +4,36 @@ Risk is decided by ``Class.command`` patterns, first match wins:
 
 1. the deployment's own patterns (the MCP config's ``safety.risk``), so a
    team can mark e.g. ``Opentrons.get_tip`` high or ``MyStage.jog`` high;
-2. safe-stop verbs, always low: an agent must never wait for approval to
-   abort, stop, retract or close a shutter;
+2. safe-stop commands, always low: an agent must never wait for approval to
+   abort, stop, retract, switch off or close a shutter. A command is a safe
+   stop when its name (split on "_" and CamelCase) contains a stop word such as
+   abort, stop, halt, retract, withdraw or off, or the pairs close+shutter and
+   blank+beam, and no word that undoes a safeguard (disable, override, bypass,
+   reset, release, ...). So ``Off``, ``stop_scan``, ``AbortScan`` and
+   ``shutter_close`` are low; ``disable_stop`` is not;
 3. the job-envelope verbs other than ``start``, low on devices that implement
    the envelope (the MCP server knows which those are);
-4. the read-only naming convention of this code base (``get_*``, ``list_*``)
-   and a few STEM commands that neither move hardware nor expose the sample;
+4. Tango's ``State`` and ``Status``, and the read-only naming convention of
+   this code base (``get_*``, ``list_*``), plus a few STEM commands that neither
+   move hardware nor expose the sample;
 5. everything else is high: a new or renamed command is held in approval
    mode rather than waved through.
 
 The convention in (4) is a promise instrument authors keep: a command named
-``get_...`` or ``list_...`` must not move or change anything. Name commands
-that act otherwise, or list them as high in ``safety.risk``.
+``get_...`` or ``list_...`` must not move or change anything (an SPM
+``get_image`` that scans the tip breaks it). Name commands that act
+otherwise, or list them as high in ``safety.risk``.
 """
 
 from __future__ import annotations
 
+import re
 from fnmatch import fnmatchcase
 
-SAFE_STOP_VERBS = ("abort", "stop", "retract", "close_shutter", "safe_state", "blank_beam", "halt", "emergency_stop")
+# Words that make a command a safe stop, and words that disqualify it (see the module docstring).
+STOP_WORDS = frozenset({"abort", "stop", "halt", "retract", "withdraw", "off", "estop", "emergency", "pause"})
+STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
+UNSAFE_WORDS = frozenset({"disable", "override", "bypass", "ignore", "reset", "clear", "release", "unblank", "open", "force"})
 
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release")
@@ -32,8 +43,10 @@ DEFAULT_RISK: list[tuple[str, str]] = [
     ("*.get_*", "low"),
     ("*.list_*", "low"),
     ("*.ping", "low"),
-    ("approvals.*", "low"),
-    ("data.*", "low"),
+    ("*.state", "low"),
+    ("*.status", "low"),
+    # Reading the approval state; the deciding commands are operator-only below.
+    ("approvals.request_status", "low"),
     # STEM commands that neither move hardware nor expose the sample.
     ("*.place_beam", "low"),
     ("*.place_beam_list", "low"),
@@ -54,11 +67,32 @@ OPERATOR_ONLY: list[str] = [
     "approvals.request",
     "approvals.list_grants",
     "*.export_ground_truth",
+    # Restarting a device resets its state (the approval mode among it).
+    "*.init",
+    "*.kill",
+    "*.restartserver",
+    # Running the data service is the operator's job; the launcher calls these over Tango.
+    "data.configure",
+    "data.start_tiled_server",
+    "data.stop_tiled_server",
 ]
 
 
 def _key(dev_class: str, command: str) -> str:
     return f"{dev_class}.{command}".lower()
+
+
+def _words(name: str) -> set[str]:
+    """Lower-case words of a command name: "AbortScan" and "abort_scan" both give {"abort", "scan"}."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", "_", name)
+    return {w for w in re.split(r"[_\W]+", spaced.lower()) if w}
+
+
+def is_safe_stop(command: str) -> bool:
+    words = _words(command)
+    if words & UNSAFE_WORDS:
+        return False
+    return bool(words & STOP_WORDS) or any(pair <= words for pair in STOP_PAIRS)
 
 
 def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False) -> str:
@@ -68,7 +102,7 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
         if fnmatchcase(key, pattern.lower()):
             return level
     name = command.lower()
-    if name in SAFE_STOP_VERBS:
+    if is_safe_stop(command):
         return "low"
     if envelope and name in ENVELOPE_LOW:
         return "low"

@@ -7,6 +7,7 @@ import json
 import time
 
 import pytest
+import tango
 
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.jobs import JobDevice
@@ -58,6 +59,30 @@ def test_a_bad_plan_is_refused_at_reserve(grid):
     error = call(proxy, "reserve", plan={**PLAN, "nx": 0})["error"]
     assert error["code"] == "plan_rejected"
     assert "Example plan" in error["message"]  # a model can copy the shape and retry
+
+
+def test_a_plan_beyond_the_instruments_limits_is_refused_at_reserve(grid):
+    proxy, _ = grid
+    too_far = call(proxy, "reserve", plan={**PLAN, "pitch_m": 0.01})["error"]
+    too_hard = call(proxy, "reserve", plan={**PLAN, "load_n": 5.0})["error"]
+    assert "travels" in too_far["message"] and "above" in too_hard["message"]
+
+
+def test_a_restart_does_not_leave_the_device_busy(grid):
+    proxy, _ = grid
+    first = call(proxy, "reserve", plan=PLAN)
+    proxy.Init()  # what a crash and restart would do
+    second = call(proxy, "reserve", plan=PLAN)
+    assert "reservation_id" in second, second
+    assert call(proxy, "get_reservation", reservation_id=first["reservation_id"])["state"] == "released"
+    call(proxy, "release", reservation_id=second["reservation_id"])
+
+
+def test_the_agent_reads_each_commands_docstring(indent_grid_proxy, tango_ctx):
+    indenter = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/indenter/default"))
+    assert indenter.command_query("indent").out_type_desc.startswith("Make one indent")
+    assert indenter.command_query("move_xy").in_type_desc.startswith(":param xy:")
+    assert json.loads(indent_grid_proxy.plan_example)["nx"] == 5
 
 
 def test_policy_sees_a_job_device_and_a_raw_instrument():

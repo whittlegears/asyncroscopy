@@ -209,7 +209,7 @@ def tango_ctx(data_save_dir, job_dir):
             "devices": [
                 {
                     "name": "asyncroscopy/approvals/default",
-                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "request_timeout_s": 600},
+                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "mode_file": prop_path(job_dir / "approvals_mode.json"), "request_timeout_s": 600},
                 }
             ],
         },

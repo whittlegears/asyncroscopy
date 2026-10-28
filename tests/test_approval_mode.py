@@ -87,6 +87,17 @@ class TestApprovalsDevice:
     def test_default_mode_is_auto(self, approvals_proxy):
         assert approvals_proxy.get_mode() == "auto"
 
+    def test_mode_survives_a_device_restart(self, approvals_proxy, job_dir):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        try:
+            assert json.loads((job_dir / "approvals_mode.json").read_text())["mode"] == "approve"
+            approvals_proxy.Init()  # what a crash and restart, or an Init, would do
+            assert approvals_proxy.get_mode() == "approve"
+        finally:
+            approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "operator"}))
+        approvals_proxy.Init()
+        assert approvals_proxy.get_mode() == "auto"
+
     def test_request_approve_check_is_single_use(self, approvals_proxy):
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [1, 2, 3, 0, 0]}}
         request_id = json.loads(approvals_proxy.request(json.dumps({**call, "caller": "agent-1"})))["request_id"]
@@ -254,3 +265,70 @@ class TestJsonArguments:
         call({"plan": {"fov_m": 6}, "caller": "x"})
         assert [s["plan"]["fov_m"] for s in seen] == [1, 2, 3, 4, 5, 6]
         assert seen[-1]["caller"] == "x"
+
+
+class TestDevicePrefixes:
+    """Two devices of one class each get their own tools; neither hides the other."""
+
+    @staticmethod
+    def server_for(monkeypatch, names):
+        class Exported:
+            value_string = names
+
+        class FakeDb:
+            def get_device_exported(self, pattern):
+                return Exported()
+
+        class FakeProxy:
+            def __init__(self, name):
+                self.name = name
+
+            def set_timeout_millis(self, ms):
+                pass
+
+            def info(self):
+                return type("Info", (), {"dev_class": "Mapper"})()
+
+            def command_list_query(self):
+                return [type("Cmd", (), {"cmd_name": n})() for n in ("reserve", "start", "job_status", "abort", "results", "release")]
+
+            def __getattr__(self, item):
+                return lambda *a, _name=self.name: _name
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: FakeDb())
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FakeProxy)
+        return MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+    def test_same_family_devices_get_member_prefixes(self, monkeypatch):
+        tools = self.server_for(monkeypatch, ["lab/mapper/1", "lab/mapper/2"])._find_tools()
+        assert {prefix: commands["start"][0]() for prefix, commands in tools.items()} == {"Mapper_1": "lab/mapper/1", "Mapper_2": "lab/mapper/2"}
+
+    def test_repeated_members_fall_back_to_the_device_name(self, monkeypatch):
+        tools = self.server_for(monkeypatch, ["east/mapper/default", "west/mapper/default"])._find_tools()
+        assert set(tools) == {"Mapper_east_mapper_default", "Mapper_west_mapper_default"}
+
+
+class TestGateDetails:
+    @staticmethod
+    def server(monkeypatch, approvals_proxy):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, approvals_device_address="asyncroscopy/approvals/default")
+        monkeypatch.setattr(server, "_approvals", lambda: approvals_proxy)
+        return server
+
+    def test_a_held_start_shows_the_operator_what_it_will_do(self, monkeypatch, approvals_proxy):
+        server = self.server(monkeypatch, approvals_proxy)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "test"}))
+        try:
+            with pytest.raises(ToolError):
+                server._gate("Mapper_start", "high", {"request": '{"reservation_id":"r1"}'}, "agent", describe=lambda: 'Reserved plan: {"size_m": [6e-7, 6e-7]}')
+            pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["action"] == "Mapper_start"]
+            assert pending and "size_m" in pending[-1]["reason"]
+            for p in pending:
+                approvals_proxy.deny(json.dumps({"request_id": p["request_id"], "who": "test"}))
+        finally:
+            approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "test"}))
+
+    def test_an_agent_cannot_name_its_own_grant(self):
+        body = json.loads(MCPServer._with_grant('{"reservation_id": "r1", "grant_id": "forged"}', {"approved_by": "auto"}, "agent"))
+        assert body.get("grant_id") != "forged"

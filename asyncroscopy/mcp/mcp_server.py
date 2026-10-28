@@ -77,6 +77,16 @@ def describe_error(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}".strip()
 
 
+
+def _placeholder_doc(text: str) -> bool:
+    """True for the text PyTango fills in when a command has no doc_in/doc_out.
+
+    Such text must never lead a tool description: models read the first line to
+    pick a tool. Use asyncroscopy.utils.commands.command to carry the docstring.
+    """
+    t = text.strip().lower()
+    return t in ("", "uninitialised", "uninitialized", "none") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
+
 class MCPServer:
     def __init__(
         self,
@@ -134,6 +144,7 @@ class MCPServer:
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
+        self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -540,7 +551,11 @@ class MCPServer:
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
             caller = self._caller()
-            gate = self._gate(unique_name, risk, arguments, caller)
+            describe = None
+            if envelope and command_name == "start" and call_args:
+                device = self._devices.get(tool_prefix or dev_class)
+                describe = (lambda: "Reserved plan: " + device.get_reservation(str(call_args[0]))) if device is not None else None
+            gate = self._gate(unique_name, risk, arguments, caller, describe)
             if envelope and command_name == "start" and call_args:
                 call_args = (self._with_grant(call_args[0], gate, caller), *call_args[1:])
             try:
@@ -573,17 +588,20 @@ class MCPServer:
             f"Tango Command: {command_name}",
             f"Input Type: {in_type.name}",
         ]
-        if in_desc:
+        if in_desc and not _placeholder_doc(in_desc):
             doc_lines.append(f"Input Description: {in_desc}")
         doc_lines.append(f"Output Type: {out_type.name}")
         out_desc = cmd_info.out_type_desc
-        if out_desc and out_desc.lower() not in ("uninitialised", "uninitialized", "none"):
+        if out_desc and not _placeholder_doc(out_desc):
             doc_lines.append(f"Output Description: {out_desc}")
             # Lead with what the command is for: models weigh the first line most when choosing a tool.
             doc_lines.insert(0, out_desc)
         job_kind = getattr(self, "_job_kinds", {}).get(tool_prefix or dev_class)
         if envelope and job_kind:
             doc_lines.insert(0, f"{tool_prefix or dev_class} job: {job_kind}.")
+        plan_example = getattr(self, "_plan_examples", {}).get(tool_prefix or dev_class)
+        if envelope and command_name == "reserve" and plan_example:
+            doc_lines.insert(1, f'Example request: {{"plan": {plan_example}}}')
         doc = "\n".join(doc_lines)
 
         # Get parameter name from docstring description text
@@ -713,7 +731,7 @@ class MCPServer:
         proxy.set_timeout_millis(5_000)
         return proxy
 
-    def _gate(self, tool_name: str, risk: str, arguments: dict, caller: str | None) -> dict:
+    def _gate(self, tool_name: str, risk: str, arguments: dict, caller: str | None, describe: Callable[[], str] | None = None) -> dict:
         """Apply the approval mode to one call. Returns trace fields, or raises ToolError to hold the call.
 
         Low-risk calls and servers without an Approvals device always pass. In
@@ -734,7 +752,13 @@ class MCPServer:
             decision = json.loads(approvals.check(json.dumps({"action": tool_name, "arguments": arguments})))
             if decision.get("allowed"):
                 return {"mode": mode, "approved_by": decision.get("approved_by"), "grant_id": decision.get("grant_id"), "request_id": decision.get("request_id")}
-            filed = json.loads(approvals.request(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller})))
+            reason = None
+            if describe is not None:
+                try:  # what the operator is approving; outside the fingerprint, so the retry still matches
+                    reason = describe()[:2000]
+                except Exception as exc:
+                    reason = f"(could not read what this call will do: {describe_error(exc)})"
+            filed = json.loads(approvals.request(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller, "reason": reason})))
         except tango.DevFailed as exc:
             # Fail closed: without the Approvals device we cannot tell whether a person must approve.
             raise ToolError(f"{tool_name} is high risk and the approval service is unreachable ({describe_error(exc)}); not run.") from exc
@@ -746,12 +770,16 @@ class MCPServer:
             "If it is denied, do not retry; report to the user."
         )
 
+    def _tool_names(self) -> set[str]:
+        """Names of the device tools this endpoint offers (skills that need others are not offered)."""
+        return {f"{prefix}_{command}".replace("/", "_").replace("-", "_") for prefix, commands in self.tools.items() for command in commands}
+
     @tool()
     def list_skills(self) -> list[dict[str, Any]]:
         """Skills: procedures for kinds of experiment (e.g. mapping). Load one with load_skill before doing that kind of task."""
         from asyncroscopy.skills import list_skills
 
-        return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in list_skills()]
+        return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in list_skills(self._tool_names())]
 
     @tool()
     def load_skill(self, name: str) -> str:
@@ -759,7 +787,7 @@ class MCPServer:
         from asyncroscopy.skills import load_skill
 
         try:
-            return load_skill(name)
+            return load_skill(name, self._tool_names())
         except (KeyError, RuntimeError) as exc:
             raise ToolError(str(exc).strip("'\"")) from exc
 
@@ -809,16 +837,22 @@ class MCPServer:
         # two job devices) each gets its own prefix, <Class>_<member>, so neither hides the
         # other and an approval for one never covers the other.
         per_class: dict[str, int] = {}
-        for _name, _dev, dev_class in opened:
+        members: dict[str, list[str]] = {}
+        for name, _dev, dev_class in opened:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
+            members.setdefault(dev_class, []).append(name.split("/")[-1])
         self._prefix_class: dict[str, str] = {}
         self._envelope_prefixes: set[str] = set()
         self._job_kinds: dict[str, str] = {}
+        self._plan_examples: dict[str, str] = {}
         for device_name, dev, dev_class in opened:
             prefix = dev_class
             if per_class[dev_class] > 1:
+                # The member ("lab/mapper/2" -> 2); the whole device name when members repeat.
                 parts = device_name.split("/")
-                prefix = f"{dev_class}_{parts[1] if len(parts) == 3 else device_name}".replace("/", "_").replace("-", "_")
+                member = parts[-1]
+                suffix = member if members[dev_class].count(member) == 1 else "_".join(parts)
+                prefix = f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
             self._prefix_class[prefix] = dev_class
 
             try:
@@ -828,6 +862,11 @@ class MCPServer:
                     try:
                         self._job_kinds[prefix] = str(dev.job_kind)
                     except Exception:  # an envelope device without the job_kind attribute
+                        pass
+                    try:
+                        if str(dev.plan_example):
+                            self._plan_examples[prefix] = str(dev.plan_example)
+                    except Exception:  # older job devices have no plan_example
                         pass
             except Exception as exc:
                 if self.verbose:
@@ -860,6 +899,7 @@ class MCPServer:
                         )
                     continue
                 tools.setdefault(prefix, {})[command_name] = (func, cmd)
+                self._devices[prefix] = dev
         return tools
 
     def setup(self, print_summary: bool = True):

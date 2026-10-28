@@ -22,6 +22,7 @@ import uuid
 from pathlib import Path
 
 import jsonschema
+import tango
 from tango import DevState
 from tango.server import Device, attribute, command, device_property
 
@@ -45,6 +46,7 @@ class JobDevice(Device):
     PLAN_EXAMPLE: dict | None = None
 
     job_kind = attribute(dtype=str, doc="What this device's background job does.")
+    plan_example = attribute(dtype=str, doc="A valid plan for reserve, as JSON ('' if the device gives none).")
     state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/jobs.jsonl", doc="Instrument Trace JSONL file.")
 
@@ -67,6 +69,9 @@ class JobDevice(Device):
 
     def read_job_kind(self) -> str:
         return self.JOB_KIND
+
+    def read_plan_example(self) -> str:
+        return json.dumps(self.PLAN_EXAMPLE) if self.PLAN_EXAMPLE is not None else ""
 
     def on_finish(self, job: dict) -> dict:
         """Called after the last step; return result keys to merge into ``results``."""
@@ -99,6 +104,10 @@ class JobDevice(Device):
             if job.get("state") in {"queued", "running", "aborting", "paused_awaiting_approval"}:
                 job["state"] = "failed"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
+            elif job.get("state") == "reserved":
+                # Never started; whoever reserved it is gone. Keeping it would leave the device busy.
+                job["state"] = "released"
+                job["last_error"] = {"code": "device_restarted", "message": "The device restarted before this reservation was started; reserve again."}
             job["step_results"] = self._read_steps(job["reservation_id"])
             self._jobs[job["reservation_id"]] = job
             for job_id in job.get("job_ids", []):
@@ -194,9 +203,9 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     # Envelope verbs
     # ------------------------------------------------------------------
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan follows the job type, e.g. map_plan.schema.json.', doc_out="Checks a plan for this device's background job (see its class for what the job does) and returns reservation_id with an estimate.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job (see its class for what the job does) and returns reservation_id with an estimate.")
     def reserve(self, request: str) -> str:
-        """Validate a plan, hold the device for it, and return the resolved plan with a time and dose estimate."""
+        """Validate a plan, hold the device for it, and return the resolved plan with an estimate."""
         return self._guard(self._reserve, request)
 
     def _reserve(self, request: str) -> str:
@@ -229,7 +238,7 @@ class JobDevice(Device):
             }
             self._jobs[reservation_id] = job
             self._save(job)
-        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], arguments=body["plan"])
+        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"])
         return self._reply(
             {
                 "reservation_id": reservation_id,
@@ -238,6 +247,19 @@ class JobDevice(Device):
                 "estimate": job["estimate"],
             }
         )
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="The plan, resolved plan, estimate and state of one reservation.")
+    def get_reservation(self, request: str) -> str:
+        """What a reservation will do; shown to the operator who approves its start."""
+        return self._guard(self._get_reservation, request)
+
+    def _get_reservation(self, request: str) -> str:
+        reservation_id = self._parse(request, "reservation_id")["reservation_id"]
+        with self._lock:
+            job = self._jobs.get(reservation_id)
+            if job is None:
+                raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
+            return self._reply({k: job.get(k) for k in ("reservation_id", "plan_id", "plan", "resolved_plan", "estimate", "state", "caller")})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.")
     def start(self, request: str) -> str:
@@ -258,17 +280,24 @@ class JobDevice(Device):
             job_id = uuid.uuid4().hex[:12]
             job["job_ids"].append(job_id)
             job["job_id"] = job_id
-            job["grant_id"] = body.get("grant_id") or job.get("grant_id")
+            # Each start records its own approval (none in auto mode); a resume never inherits an old one.
+            job["grant_id"] = body.get("grant_id")
             job["caller"] = body.get("caller") or job.get("caller")
             job["state"] = "running"
             job["last_error"] = None
             self._job_index[job_id] = job["reservation_id"]
             self._abort[job_id] = threading.Event()
             self._save(job)
-            thread = threading.Thread(target=self._worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
+            thread = threading.Thread(target=self._omni_worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
             self._threads[job_id] = thread
             thread.start()
         return self._reply({"job_id": job_id, "reservation_id": job["reservation_id"], "state": "running"})
+
+    def _omni_worker(self, job: dict, job_id: str) -> None:
+        # PyTango requires threads it did not create to be registered with omniORB before
+        # making Tango calls from inside a device server.
+        with tango.EnsureOmniThread():
+            self._worker(job, job_id)
 
     def _worker(self, job: dict, job_id: str) -> None:
         abort = self._abort[job_id]
@@ -297,8 +326,11 @@ class JobDevice(Device):
                 self.on_stop(job, "aborted")
                 state = "aborted"
             else:
+                # Outside the lock: on_finish may do slow I/O (registering data), and abort,
+                # job_status and release must still answer meanwhile.
+                finished = self.on_finish(job) or {}
                 with self._lock:
-                    job["result_keys"].update(self.on_finish(job) or {})
+                    job["result_keys"].update(finished)
                 state = "done"
         except Exception as exc:  # any failure leaves the instrument safe and the job resumable
             job["last_error"] = {"code": "step_failed", "message": f"{type(exc).__name__}: {exc}"}
@@ -361,14 +393,14 @@ class JobDevice(Device):
 
     def _results(self, request: str) -> str:
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
-        return self._reply(
-            {
+        with self._lock:  # the worker adds step results under this lock; summary iterates them
+            reply = {
                 "job_id": job.get("job_id", job["reservation_id"]),
                 "state": job["state"],
-                "result_keys": job["result_keys"],
+                "result_keys": dict(job["result_keys"]),
                 "summary": {"steps_done": len(job["done"]), "steps_total": len(job["steps"]), **self.summary(job)},
             }
-        )
+        return self._reply(reply)
 
     def summary(self, job: dict) -> dict:
         return {}
