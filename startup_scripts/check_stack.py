@@ -47,6 +47,44 @@ async def call(client: Client, tool: str, args: dict | None = None, raise_on_err
     return await client.call_tool(tool, args or {}, raise_on_error=raise_on_error)
 
 
+async def check_analysis(args: argparse.Namespace, run_key: str) -> None:
+    """Stitch the run on the pyTEMlib MCP server, look at it, score it and mark a point."""
+    analysis = Client(StreamableHttpTransport(args.pytemlib))
+    async with analysis:
+
+        async def structured(tool, payload):
+            result = await analysis.call_tool(tool, payload, raise_on_error=False)
+            if result.is_error:
+                return {"error": text(result)}
+            return result.structured_content or json.loads(text(result) or "{}")
+
+        async def finish(job):
+            deadline = time.time() + args.timeout
+            while time.time() < deadline:
+                status = await structured("job_status", {"job_id": job["job_id"]})
+                if status.get("state") in {"done", "failed", "aborted"}:
+                    break
+                await asyncio.sleep(0.5)
+            return status, await structured("job_results", {"job_id": job["job_id"]})
+
+        job = await structured("assemble_map", {"run": run_key})
+        status, stitched = await finish(job) if "job_id" in job else (job, {})
+        detail = stitched.get("summary") if status.get("state") == "done" else status.get("last_error", status)
+        if not report("pyTEMlib stitches the run from Tiled", status.get("state") == "done", json.dumps(detail)[:300]):
+            return
+        map_key = stitched["result_keys"]["map"]
+        info = await structured("map_info", {"map": map_key})
+        x0, x1, y0, y1 = info["stage_box_m"]
+        region = await analysis.call_tool("get_region", {"map": map_key, "box_m": [x0, (x0 + x1) / 2, y0, (y0 + y1) / 2]}, raise_on_error=False)
+        report("map region preview comes back as an image", not region.is_error and any(getattr(b, "type", "") == "image" for b in region.content))
+        scored = await structured("score_map", {"map": map_key, "top_k": 2})
+        _status, ranked = await finish(scored)
+        added = ranked.get("summary", {}).get("added_pois", [])
+        report("scorer adds points of interest inside the map", len(added) == 2 and all(x0 <= p["x_m"] <= x1 and y0 <= p["y_m"] <= y1 for p in added))
+        poi = await structured("add_poi", {"map": map_key, "x_m": (x0 + x1) / 2, "y_m": (y0 + y1) / 2, "kind": "check", "reason": "check_stack"})
+        report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
+
+
 async def main(args: argparse.Namespace) -> int:
     agent = Client(StreamableHttpTransport(args.agent, headers={"X-Asyncroscopy-Caller": "check_stack-agent"}))
     operator = Client(StreamableHttpTransport(args.operator, headers={"X-Asyncroscopy-Caller": "check_stack-operator"}))
@@ -61,7 +99,7 @@ async def main(args: argparse.Namespace) -> int:
             return len(FAILURES)
 
         # A small map as one background job.
-        plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.6e-7, "overlap": 0.1, "imsize": 128, "dwell_s": 1e-6, "per_tile": ["eds_point"], "eds_exposure_s": 0.2}
+        plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.6e-7, "overlap": 0.2, "imsize": 128, "dwell_s": 1e-6, "per_tile": ["eds_point"], "eds_exposure_s": 0.2}
         reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": plan, "caller": "check_stack"})})))
         if report("Mapper reserves a plan", "reservation_id" in reserved, json.dumps(reserved.get("estimate", reserved.get("error")))):
             started = json.loads(text(await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})))
@@ -79,6 +117,8 @@ async def main(args: argparse.Namespace) -> int:
             if "run" in results.get("result_keys", {}):
                 data = await call(agent, "get_data_from_key", {"key": results["result_keys"]["run"], "max_values": 4})
                 report("agent can read the map back by key", "tiles" in text(data) or bool(getattr(data, "structured_content", None)))
+                if args.pytemlib:
+                    await check_analysis(args, results["result_keys"]["run"])
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
 
         # Approval mode: hold, approve, retry once.
@@ -110,5 +150,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--agent", default="http://127.0.0.1:8000/mcp")
     parser.add_argument("--operator", default="http://127.0.0.1:8001/mcp")
-    parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for the map job.")
+    parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each job.")
+    parser.add_argument("--pytemlib", default="", help="pyTEMlib MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")
     sys.exit(asyncio.run(main(parser.parse_args())))
