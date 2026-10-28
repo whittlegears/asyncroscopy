@@ -24,6 +24,7 @@ def test_helpers_serve_an_instrument_through_the_mcp_server_and_gate(tmp_path):
     assert result["override_by_tool_name"] == "low"
     assert result["first_override_wins"] == "high"  # listed first, in either form
     assert [w for w in result["risk_warnings"] if "SimIndentr.indent" in w]
+    assert [w for w in result["risk_warnings"] if w.startswith("SimIndenter_move_xy would be held by default")]
     assert any("'SimIndentr.indent' matches no command" in line for line in result["startup_warnings"])
     assert "session-scoped" in result["second_context"]
     assert result["risks"] == {"SimIndenter_indent": "high", "SimIndenter_retract": "low", "IndentGrid_reserve": "low", "IndentGrid_start": "high"}
