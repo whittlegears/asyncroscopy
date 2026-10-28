@@ -44,21 +44,14 @@ uv run pytest -q -m "not slow"
 
 The test suite starts real Tango devices in-process. Without the slow tests it takes about a minute on a laptop; `uv run pytest -q` runs everything, including timing tests, in about a minute and a half. All tests should pass; a few are skipped on purpose. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
 
-**Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python 3.12 install is broken. Reinstall that Python, then sync again (works in PowerShell, cmd and bash):
-
-```bash
-uv python install 3.12 --reinstall
-uv sync --python 3.12 --extra agent --extra ollama
-```
-
-If it still fails, point uv at the interpreter file directly (PowerShell):
+**Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python install is broken. Point uv at the interpreter file directly (PowerShell); this is the fix that worked in testing:
 
 ```powershell
 $py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Select-Object -First 1).FullName
 uv sync --python $py --extra agent --extra ollama
 ```
 
-(`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.)
+If no file matches, install that Python first with `uv python install 3.12`. (`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.) `uv python install 3.12 --reinstall` followed by `uv sync --python 3.12 ...` can also repair the link, but it fails when a different version's link is the broken one.
 
 ## 3. Start the stack
 
@@ -113,6 +106,8 @@ uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the
 ```
 
 Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). All settings are listed in `asyncroscopy/agents/__init__.py`.
+
+Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU the `mapping` graph completed 29 of 30 trial runs. The `general` agent, which makes every call itself, completed 7 of 15. See `docs/athena/wg2_traceability.md`.
 
 ## 6. LangGraph Studio
 

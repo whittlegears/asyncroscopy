@@ -121,7 +121,24 @@ class DigitalTwin(AtomisticDigitalTwin):
     # ------------------------------------------------------------------
     # Model construction
     # ------------------------------------------------------------------
+    def _check_properties(self) -> None:
+        """Refuse impossible configuration at start-up, not with a cryptic error at the first image."""
+        rules = [
+            ("beam_current_pa", float(self.beam_current_pa) > 0, "must be > 0"),
+            ("particle_radius_mean", float(self.particle_radius_mean) > 0, "must be > 0"),
+            ("sample_size_xy", float(self.sample_size_xy) > 0, "must be > 0"),
+            ("particle_elements", any(e.strip() for e in str(self.particle_elements).split(",")), "must name at least one element"),
+            ("fov_scale_error", float(self.fov_scale_error) > -1, "must be > -1 (a fraction)"),
+            ("eds_channels", int(self.eds_channels) >= 16, "must be >= 16"),
+            ("eds_energy_max", float(self.eds_energy_max) > 0, "must be > 0"),
+            ("contamination_dose", float(self.contamination_dose) > 0, "must be > 0"),
+        ]
+        bad = [f"{name} {why} (got {getattr(self, name)!r})" for name, ok, why in rules if not ok]
+        if bad:
+            raise ValueError("digital twin configuration: " + "; ".join(bad))
+
     def _generate_sample(self, seed: int) -> None:
+        self._check_properties()
         self._rng = EventRng(int(seed))
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
@@ -397,7 +414,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         scan_region: list[float] = [0.0, 0.0, 1.0, 1.0],
         output_format: str = ".h5",
     ) -> str:
-        detectors = [d.upper() for d in detector_list]
+        detectors = list(dict.fromkeys(d.upper() for d in detector_list))  # "HAADF" and "haadf" are one detector
         unknown = [d for d in detectors if d not in DETECTOR_SCALE]
         if unknown:
             tango.Except.throw_exception(

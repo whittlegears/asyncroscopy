@@ -146,3 +146,22 @@ class TestIdealTwinUnchanged:
         assert np.allclose(twin_proxy.get_stage()[:2], [1e-9, 2e-9])
         truth = json.loads(twin_proxy.export_ground_truth())
         assert np.allclose(truth["moves"][-1]["true"][:2], [1e-9, 2e-9])
+
+
+def test_impossible_twin_configuration_is_refused_at_start(mapping_twin_proxy):
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+
+    class Bad:
+        beam_current_pa, particle_radius_mean, sample_size_xy = -50.0, 1e-9, 2e-6
+        particle_elements, fov_scale_error = "", 0.0
+        eds_channels, eds_energy_max, contamination_dose = 0, 20000.0, 0.0
+
+    with pytest.raises(ValueError) as refused:
+        DigitalTwin._check_properties(Bad())
+    for name in ("beam_current_pa", "particle_elements", "eds_channels", "contamination_dose"):
+        assert name in str(refused.value)
+
+
+def test_a_detector_named_twice_is_acquired_once(mapping_twin_proxy, mapping_scan_proxy):
+    images = acquire(mapping_twin_proxy, mapping_scan_proxy, detectors=("HAADF", "haadf"))
+    assert list(images) == ["HAADF"]

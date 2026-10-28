@@ -31,6 +31,8 @@ class SCAN(Device):
         dtype=int,
         access=AttrWriteType.READ_WRITE,
         unit="px",
+        min_value=1,
+        max_value=8192,
         doc="Acquisition width in pixels (should match an AutoScript ImageSize preset)",
     )
 
