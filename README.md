@@ -14,7 +14,7 @@
 ```bash
 git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Windows, avoid deeply nested folders
 cd asyncroscopy
-uv sync --extra agent --extra ollama   # Windows: "Missing expected target directory"? see quickstart section 2
+uv sync --extra agent --extra ollama   # Windows: uv not found, or "Missing expected target directory"? see quickstart sections 1-2
 uv run pytest -q -m "not slow"
 
 # Digital twin (no hardware required); one terminal each
@@ -76,6 +76,7 @@ uv run startup_guis/mcp_gui.py
 
 ```text
 asyncroscopy/
+├── APIservers/        # Vendor API bridges (Gatan EELS server)
 ├── agents/            # LangGraph agents (mapping graph, general agent) and the CLI
 ├── calibration/       # Dose, drift and stage-repeatability measurement series
 ├── contracts/         # JSON schemas for plans and job envelopes
@@ -84,7 +85,7 @@ asyncroscopy/
 ├── jobs/              # JobDevice: reserve/start/abort for long-running work
 ├── mcp/               # FastMCP server for AI agents
 ├── safety/            # Risk policy and the Approvals device
-├── skills/            # Skill loader (skill files live in skills/ at the root)
+├── skills/            # Skill loader and bundled skills (mapping/SKILL.md)
 ├── utils/             # The command decorator and shared helpers
 └── testing.py         # instrument_context and TestMCPServer for your own tests
 ```

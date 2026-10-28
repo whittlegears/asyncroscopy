@@ -50,7 +50,7 @@ The test suite starts real Tango devices in-process. Without the slow tests, pyt
 
 ```powershell
 $py = (Get-ChildItem "$env:APPDATA\uv\python\cpython-3.12.*-windows-x86_64-none\python.exe" | Select-Object -First 1).FullName
-& $uv sync --python $py --extra agent --extra ollama   # or plain uv if it is on PATH
+& $uv sync --python $py --extra agent --extra ollama   # $uv from section 1; or plain uv if it is on PATH
 ```
 
 If no file matches, install that Python first with `uv python install 3.12`. (`uv python dir` prints the folder uv keeps its Pythons in, if yours is elsewhere.) `uv python install 3.12 --reinstall` followed by `uv sync --python 3.12 ...` can also repair the link, but it fails when a different version's link is the broken one.
@@ -60,15 +60,15 @@ If no file matches, install that Python first with `uv python install 3.12`. (`u
 Use four terminals, from the repository root. Each MCP server prints a large FastMCP banner when it starts; that is normal. To run them in the background in PowerShell instead (use `$uv` from section 1 if `uv` is not on `PATH`):
 
 ```powershell
-$uv = (Get-Command uv -ErrorAction SilentlyContinue).Source   # or keep the $uv from section 1
+if (-not $uv) { $uv = (Get-Command uv).Source }   # keeps the $uv from section 1 if you set it there
 $servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
-# wait for "Leave this terminal open" in servers.log, then:
+while (-not (Select-String servers.log 'Leave this terminal open' -Quiet)) { Start-Sleep 1 }   # about a minute
 $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
 $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
 $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
 ```
 
-The MCP servers log to the `.err` files (stderr). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { taskkill /PID $p.Id /T /F }`, which also stops the child servers.
+Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { taskkill /PID $p.Id /T /F }`, which also stops the child servers.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
@@ -122,7 +122,7 @@ uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the
 
 Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). All settings are listed in `asyncroscopy/agents/__init__.py`.
 
-The command prints nothing until it finishes; progress shows in the agent endpoint's terminal (or `mcp_dt.err`). Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 28 of 30 on the final code. See `docs/athena/wg2_traceability.md`.
+The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 28 of 30 on the final code. See `docs/athena/wg2_traceability.md`.
 
 ## 6. LangGraph Studio
 

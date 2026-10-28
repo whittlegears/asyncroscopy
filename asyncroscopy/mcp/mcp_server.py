@@ -92,8 +92,10 @@ def _placeholder_doc(text: str) -> bool:
     Such text must never lead a tool description: models read the first line to
     pick a tool. Use asyncroscopy.utils.commands.command to carry the docstring.
     """
-    t = text.strip().lower()
-    return t in ("", "uninitialised", "uninitialized", "none") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
+    # A plain tango.server.command gives ":param x: (not documented)\n:type x: DevDouble".
+    t = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", text.strip())
+    t = "\n".join(line for line in t.splitlines() if not line.strip().startswith(":type")).strip().lower()
+    return t in ("", "uninitialised", "uninitialized", "none", "(not documented)") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
 
 class MCPServer:
     def __init__(
@@ -165,7 +167,8 @@ class MCPServer:
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
         self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
-        self._risk_keys: dict[str, str] = {}  # tool name -> "class.command", what overrides match
+        self._risk_keys: dict[str, str] = {}  # tool name -> "Class.command", the other name overrides match
+        self.risk_warnings: list[str] = []  # what setup() printed as [safety] lines
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -568,10 +571,11 @@ class MCPServer:
 
         envelope = (tool_prefix or dev_class) in self._envelope_prefixes
         stem = (tool_prefix or dev_class) in self._stem_prefixes
-        by_tool_name = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower())]
-        risk = by_tool_name[0] if by_tool_name else risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
+        key = f"{dev_class}.{command_name}"
+        matched = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower()) or fnmatchcase(key.lower(), pattern.lower())]
+        risk = matched[0] if matched else risk_of(dev_class, command_name, envelope=envelope, stem=stem)
         self.tool_risks[unique_name] = risk
-        self._risk_keys[unique_name] = f"{dev_class}.{command_name}".lower()
+        self._risk_keys[unique_name] = key
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -950,15 +954,19 @@ class MCPServer:
     def _warn_about_risks(self) -> None:
         """Print what an instrument author most likely got wrong in the risk settings: an override
         that matches no command (it does nothing), and a stop-like command that approve mode holds."""
+        warnings = []
+        example = next((t for t in self._risk_keys if not t.endswith(("_State", "_Status"))), "Class_command")
         for pattern in self.risk_overrides:
             p = pattern.lower()
-            if not any(fnmatchcase(tool.lower(), p) or fnmatchcase(key, p) for tool, key in self._risk_keys.items()):
-                print(f"[safety] risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {next(iter(self._risk_keys), 'Class_command')}")
-        if self.approvals_device_address is None:
-            return
+            hidden = "." in pattern and operator_only(*pattern.split(".", 1))  # not on this endpoint, but real
+            if not hidden and not any(fnmatchcase(tool.lower(), p) or fnmatchcase(key.lower(), p) for tool, key in self._risk_keys.items()):
+                warnings.append(f"risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {example}")
         for tool, risk in self.tool_risks.items():
             if risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
-                print(f"[safety] {tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
+                warnings.append(f"{tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
+        self.risk_warnings = warnings
+        for line in warnings:
+            print(f"[safety] {line}")
 
     def setup(self, print_summary: bool = True):
         """Configure tools and add them to the MCP instance.

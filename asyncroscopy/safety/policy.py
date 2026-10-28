@@ -41,12 +41,12 @@ RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away fro
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
-    "indent", "indenter", "head", "objective", "imaging", "exposure", "robot", "protocol",
+    "indenter", "head", "objective", "robot",
 })
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
 # (a de-energised shutter may open; close it with close_shutter).
 OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv", "xray", "source"})
-MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live"})
+MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live", "indent", "imaging", "exposure", "protocol"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
 # "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
 MODIFIERS = frozenset({"emergency"})
@@ -104,7 +104,7 @@ def _word_list(name: str) -> list[str]:
 
 def looks_like_stop(command: str) -> bool:
     """A name with a stop word in it: if it is still high, the author probably meant it as a stop."""
-    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop"}))
+    return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop", "cancel", "shutdown"}))
 
 
 def is_safe_stop(command: str) -> bool:

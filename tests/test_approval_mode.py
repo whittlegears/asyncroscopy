@@ -98,8 +98,12 @@ class TestPolicy:
 
     def test_stop_like_names_left_high_are_spotted(self):
         from asyncroscopy.safety.policy import looks_like_stop
-        assert looks_like_stop("park_stage") and looks_like_stop("unload") and looks_like_stop("brake_off")
+        assert looks_like_stop("park_stage") and looks_like_stop("unload") and looks_like_stop("brake_off") and looks_like_stop("ParkStage")
         assert not looks_like_stop("move_stage") and not looks_like_stop("get_offset")
+
+    @pytest.mark.parametrize("name", ["indent_retract", "IndentRetract", "indent_withdraw", "indent_stop", "exposure_stop", "imaging_pause", "protocol_halt"])
+    def test_an_action_before_the_stop_verb_is_high(self, name):
+        assert risk_of("AnyDevice", name) == "high"
 
     def test_place_beam_is_high_even_on_a_stem(self):
         assert risk_of("DigitalTwin", "place_beam", stem=True) == "high"
