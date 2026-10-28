@@ -50,7 +50,7 @@ The `general` column is the last of four rounds. Overall it went 0/15, 1/15, 6/1
 
 What is left is an 8B model following a long procedure: it stops after collecting data, skips scoring, or adds EDS nobody asked for. Use the `mapping` graph when the workflow is known; the general agent is for open-ended requests. Raw rows, including the tools called and skills loaded per trial: `benchmarks/results/mapping_trials_*.json`.
 
-**Live checks**, each run on the stack after every change: `startup_scripts/check_stack.py` passes 20/20 (map, stitch, score, POIs, approval hold/approve/single-use, a held map start showing its plan) and `startup_scripts/check_gui_contract.py` passes 12/12 (SciAgentGUI's approvals and map/spectrum reads).
+**Live checks**, each run on the stack after every change: `startup_scripts/check_stack.py` passes 19/19 (map, stitch, score, POIs, approval hold/approve/single-use, a held map start showing its plan) and `startup_scripts/check_gui_contract.py` passes 12/12 (SciAgentGUI's approvals and map/spectrum reads).
 
 ## Not claimed
 
