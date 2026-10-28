@@ -101,3 +101,18 @@ def test_policy_sees_a_job_device_and_a_raw_instrument():
     assert risk_of("SimIndenter", "move_xy") == "high"
     assert risk_of("SimIndenter", "retract") == "low"
     assert risk_of("SimIndenter", "get_position") == "low"
+
+
+def test_job_replies_keep_numpy_values_as_numbers():
+    import numpy as np
+
+    from asyncroscopy.jobs.job_device import _json_default
+    assert json.loads(json.dumps({"i": np.int64(2), "xy": np.array([0.5, 1.5])}, default=_json_default)) == {"i": 2, "xy": [0.5, 1.5]}
+
+
+def test_a_resolve_plan_bug_is_the_devices_not_the_callers():
+    plan_caused = IndentGrid._plan_caused  # its PLAN_EXAMPLE names the plan fields
+    assert plan_caused(KeyError("nx"), json.dumps({"plan": {"ny": 1}}))  # the plan lacks nx
+    assert not plan_caused(KeyError("travl_m"), json.dumps({"plan": {"nx": 1}}))  # a typo in the device
+    assert plan_caused(TypeError("x"), json.dumps({"plan": {"nx": None}}))
+    assert not plan_caused(TypeError("x"), json.dumps({"plan": {"nx": 1}}))

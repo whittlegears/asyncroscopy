@@ -126,8 +126,11 @@ class Approvals(Device):
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
         with self._lock:
-            self._save_mode(mode, body.get("who"))  # if this fails, the mode is unchanged
-            previous, self._mode = self._mode, mode
+            previous = self._mode
+            if mode == "approve":
+                self._mode = mode  # holding calls must not depend on the disk
+            self._save_mode(mode, body.get("who"))  # if this fails, a switch to auto does not happen
+            self._mode = mode
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous})
 

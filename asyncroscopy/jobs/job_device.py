@@ -41,8 +41,9 @@ class JobError(Exception):
 
 
 def _json_default(value):
-    """numpy numbers stay numbers in replies and state files (np.int64(2) -> 2, not "2")."""
-    return value.item() if hasattr(value, "item") and getattr(value, "ndim", None) == 0 else str(value)
+    """numpy values stay numbers in replies and state files: np.int64(2) -> 2 and an array (what
+    Tango returns for a list of floats) -> a list, not "2" or "[0.1 0.2]"."""
+    return value.tolist() if hasattr(value, "tolist") else str(value)
 
 
 class JobDevice(Device):
@@ -210,6 +211,24 @@ class JobDevice(Device):
             raise JobError("unknown_job", f"no job {job_id!r}")
         return self._jobs[reservation]
 
+    @classmethod
+    def _plan_caused(cls, exc: Exception, request: str) -> bool:
+        """A KeyError for a plan field the plan lacks, or a TypeError with a null in the plan, is the caller's;
+        anything else from resolve_plan (a typo'd limits key, arithmetic on None) is the device's bug.
+        Plan fields are PLAN_EXAMPLE's keys when there is one."""
+        try:
+            plan = json.loads(request).get("plan")
+        except (ValueError, AttributeError):
+            return True
+        if not isinstance(plan, dict):
+            return True
+        if isinstance(exc, KeyError):
+            if not exc.args:
+                return True
+            known = cls.PLAN_EXAMPLE if isinstance(cls.PLAN_EXAMPLE, dict) else None
+            return exc.args[0] not in plan and (known is None or exc.args[0] in known)
+        return any(v is None for v in plan.values())
+
     def _guard(self, fn, *args) -> str:
         try:
             return fn(*args)
@@ -218,6 +237,8 @@ class JobDevice(Device):
         except (ValueError, TypeError, KeyError, jsonschema.ValidationError) as exc:
             if isinstance(exc, (TypeError, KeyError)) and fn != self._reserve:
                 raise  # outside a plan check these are bugs, not a caller's mistake
+            if isinstance(exc, (TypeError, KeyError)) and not self._plan_caused(exc, args[0] if args else ""):
+                return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}")
             message = exc.message if isinstance(exc, jsonschema.ValidationError) else f"{type(exc).__name__}: {exc}" if isinstance(exc, (TypeError, KeyError)) else str(exc)
             if self.PLAN_EXAMPLE is not None:
                 message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
@@ -340,8 +361,10 @@ class JobDevice(Device):
                     break
                 started = time.time()
                 record = self.run_step(job, index)
-                if record is None:  # the step stopped early for an abort and did not finish
-                    break
+                if record is None:
+                    if abort.is_set():  # the step stopped early for the abort and did not finish
+                        break
+                    raise RuntimeError(f"{cls}.run_step returned None for step {index} without an abort; return a record of the step")
                 with self._lock:
                     job["done"].append(index)
                     job["step_results"][str(index)] = record

@@ -127,7 +127,7 @@ def python_file_to_module(path: Path) -> str:
     except ValueError:
         raise ValueError(
             f"instrument.file {file_path} is outside {PROJECT_DIR}; for code kept elsewhere set instrument.module_name "
-            "(and instrument.class_name) instead, and put the package's folder on PYTHONPATH"
+            "(and instrument.class_name) instead, and put the package's folder on PYTHONPATH (or install it with uv add --editable)"
         ) from None
     return ".".join(relative_path.with_suffix("").parts)
 
@@ -147,6 +147,19 @@ def _class_name_from_file(path: Path) -> str:
     raise ValueError(f"Instrument file {path} does not define a class")
 
 
+def _check_importable(module: str, where: str) -> None:
+    """Fail at load, not after the device timeout, when a server's module cannot be imported."""
+    try:
+        found, reason = importlib.util.find_spec(module) is not None, "not found"
+    except Exception as exc:  # running the package's __init__ can fail for its own reasons
+        found, reason = False, f"{type(exc).__name__}: {exc}"
+    if not found:
+        raise ValueError(
+            f"{where} {module!r} cannot be imported ({reason}); check the name, and put its package's "
+            "folder on PYTHONPATH (or install it with uv add --editable)"
+        )
+
+
 def _instrument_config(raw: dict) -> InstrumentConfig:
     module = raw.get("module_name") if isinstance(raw, dict) else None
     if module:
@@ -154,12 +167,7 @@ def _instrument_config(raw: dict) -> InstrumentConfig:
         instrument_file = None
         if not raw.get("class_name"):
             raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
-        try:
-            found = importlib.util.find_spec(module) is not None
-        except ModuleNotFoundError:
-            found = False
-        if not found:
-            raise ValueError(f"instrument.module_name {module!r} cannot be imported; check the name, and put its package's folder on PYTHONPATH")
+        _check_importable(module, "instrument.module_name")
     else:
         instrument_file = _instrument_file(_require(raw, "file", "instrument"))
     properties = {
@@ -195,6 +203,8 @@ def load_config(path: Path) -> Config:
         )
         for key, spec in _require(raw, "devices", "(top level)").items()
     ]
+    for device in support_devices:
+        _check_importable(device.module_name, f"devices.{device.key}.module_name")
     tango_section = raw.get("tango", {})
     tiled = _require(raw, "tiled", "(top level)")
 
@@ -414,7 +424,7 @@ def wait_for_device(device_name: str, timeout: int, process=None) -> float:
         if process is not None and process.process.poll() is not None:
             raise RuntimeError(
                 f"{device_name}'s server exited (code {process.process.poll()}) before it was ready; "
-                "check its module_name/class_name in the YAML and the error printed above"
+                "check its module_name/class_name in the YAML and the server's output below"
             )
         try:
             proxy = tango.DeviceProxy(device_name)
@@ -684,6 +694,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 status_line("SKIP", "device registration")
 
+            tiled_started = False
             print_section(4, total_steps, "Starting device servers")
             started = {}
             for device in regular_devices:
@@ -703,6 +714,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
 
             if should_start_tiled:
+                tiled_started = True
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
                 if tiled_config["tiled_server"] != "yes":
                     raise RuntimeError(f"Tiled HTTP server failed to start: {tiled_config['tiled_server_status']}")
@@ -777,11 +789,12 @@ def main(argv: list[str] | None = None) -> int:
                     log_file.write_text(f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}", encoding="utf-8")
                 print(color(f"Saved logs to {log_dir}", Style.bold + Style.yellow))
 
-        # Stop tiled on a crash
-        try:
-            stop_tiled_server() 
-        except Exception:
-            pass
+        # Stop tiled on a crash, if it was started: asking a device that never came up takes a minute to time out.
+        if locals().get("tiled_started"):
+            try:
+                stop_tiled_server()
+            except Exception:
+                pass
             
         return 1
 

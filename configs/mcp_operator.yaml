@@ -42,7 +42,7 @@ mcp:
   # auto (default) runs every call; approve holds high-risk agent calls.
   safety:
     approvals_device_address: asyncroscopy/approvals/default
-    # Optional {"Class.command" glob: low|high} checked before the defaults in
+    # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in
     # asyncroscopy/safety/policy.py. Unknown commands are high risk.
     risk: {}
   # Instrument Trace: one JSON line per tool call. Empty disables it.

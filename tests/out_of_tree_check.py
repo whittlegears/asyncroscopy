@@ -37,7 +37,7 @@ with instrument_context(devices):
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         overridden = mcp_server_for(devices, approvals_device_address="asyncroscopy/approvals/default",
-                                    risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high"})
+                                    risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high", "SimIndenter.retract": "high", "SimIndenter_ret*": "low"})
     try:
         with instrument_context(devices):
             second_context = "started"
@@ -45,6 +45,8 @@ with instrument_context(devices):
         second_context = str(exc)
     print(json.dumps({
         "override_by_tool_name": overridden.list_tool_risks()["SimIndenter_move_xy"],
+        "first_override_wins": overridden.list_tool_risks()["SimIndenter_retract"],
+        "risk_warnings": overridden.risk_warnings,
         "startup_warnings": [line for line in printed.getvalue().splitlines() if line.startswith("[safety]")],
         "second_context": second_context,
         "indent_doc": tools.get("SimIndenter_indent", "")[:40],
