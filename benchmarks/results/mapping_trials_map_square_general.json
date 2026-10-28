@@ -1,0 +1,165 @@
+{
+  "model": "qwen3:8b",
+  "n": 10,
+  "started": 1793156647.2671187,
+  "tasks": {
+    "map_square/general": {
+      "passed": 0,
+      "of": 5,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 56.9,
+          "model_calls": 5,
+          "tool_calls": 4,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "type": "map",
+            "grid": {
+              "num_x": 10,
+              "num_y": 10
+            },
+            "stage_box": [
+              "current_position_x-3e-8",
+              "current_position_x+3e-8",
+              "current_position_y-3e-8",
+              "current_position_y+3e-8"
+            ],
+            "detector": [
+              "haadf"
+            ]
+          },
+          "final": ""
+        },
+        {
+          "seconds": 39.3,
+          "model_calls": 5,
+          "tool_calls": 4,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "type": "map",
+            "grid": {
+              "num_x": 10,
+              "num_y": 10
+            },
+            "stage_box": [
+              "current_position_x-3e-8",
+              "current_position_x+3e-8",
+              "current_position_y-3e-8",
+              "current_position_y+3e-8"
+            ],
+            "detector": [
+              "haadf"
+            ]
+          },
+          "final": ""
+        },
+        {
+          "seconds": 37.9,
+          "model_calls": 5,
+          "tool_calls": 4,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "type": "map",
+            "grid": {
+              "num_x": 10,
+              "num_y": 10
+            },
+            "stage_box": [
+              "current_position_x-3e-8",
+              "current_position_x+3e-8",
+              "current_position_y-3e-8",
+              "current_position_y+3e-8"
+            ],
+            "detector": [
+              "haadf"
+            ]
+          },
+          "final": ""
+        },
+        {
+          "seconds": 37.4,
+          "model_calls": 5,
+          "tool_calls": 4,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "type": "map",
+            "grid": {
+              "num_x": 10,
+              "num_y": 10
+            },
+            "stage_box": [
+              "current_position_x-3e-8",
+              "current_position_x+3e-8",
+              "current_position_y-3e-8",
+              "current_position_y+3e-8"
+            ],
+            "detector": [
+              "haadf"
+            ]
+          },
+          "final": ""
+        },
+        {
+          "seconds": 40.7,
+          "model_calls": 5,
+          "tool_calls": 4,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": false,
+          "plan": {
+            "type": "map",
+            "grid": {
+              "num_x": 10,
+              "num_y": 10
+            },
+            "stage_box": [
+              "current_position_x-3e-8",
+              "current_position_x+3e-8",
+              "current_position_y-3e-8",
+              "current_position_y+3e-8"
+            ],
+            "detector": [
+              "haadf"
+            ]
+          },
+          "final": ""
+        }
+      ]
+    }
+  },
+  "out_of_box_moves": 0
+}

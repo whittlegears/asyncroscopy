@@ -1,0 +1,41 @@
+# The worked example from docs/Adding_New_Hardware/new_instrument.md: a
+# simulated nanoindenter plus an IndentGrid job device, with approval mode.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
+#
+# Every device below gets the Tango name asyncroscopy/<key>/default, and the
+# instrument is asyncroscopy/instrument/default.
+
+instrument:
+  class_name: SimIndenter
+  file: asyncroscopy/instruments/nano_indenter/sim_indenter.py
+  description: "Simulated nanoindenter: soft phase at x < 0, hard phase at x >= 0"
+  properties:
+    max_load_n: 0.5
+    travel_m: 0.01
+    seed: 0
+
+devices:
+  data:
+    module_name: asyncroscopy.data.data
+  indentgrid:
+    class_name: IndentGrid
+    module_name: asyncroscopy.instruments.nano_indenter.indent_grid
+    properties:
+      indenter_device_address: asyncroscopy/instrument/default
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
+
+tiled:
+  host: localhost
+  port: 9091
+  acquisition_dir: outputs/tiled_acquisitions
+  autostart: true
+  register_on_startup: false
+
+tango:
+  host: localhost
+  port: 9094
+  reset_database_file: true
