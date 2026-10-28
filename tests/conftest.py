@@ -41,6 +41,29 @@ class FakeAdornedImage:
 
 # We use DigitalTwin as our simulated microscope for all tests.
 
+MAPPING_TWIN_PROPERTIES = {
+    "sample_seed": 2024,
+    "sample_size_xy": 4e-7,
+    "sample_particle_count": 40,
+    "particle_radius_mean": 8e-9,
+    "particle_radius_std": 3e-9,
+    "particle_aspect_ratio": 0.6,
+    "support_thickness": 1e-8,
+    "stage_move_noise_std": 5e-9,
+    "stage_bias_x": 3e-9,
+    "stage_bias_y": -2e-9,
+    "stage_reported_noise_std": 1e-9,
+    "stage_backlash_x": 4e-9,
+    "stage_backlash_y": 6e-9,
+    "drift_rate_per_min": 0.5e-9,
+    "scan_line_jitter_px": 0.3,
+    "scan_shear": 0.005,
+    "detector_read_noise": 0.5,
+    "dose_tracking": True,
+    "contamination_max": 2e-9,
+    "time_scale": 0.0,
+}
+
 @pytest.fixture(scope="session")
 def data_save_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("data-acquisitions")
@@ -63,7 +86,8 @@ def tango_ctx(data_save_dir):
                         # put SCAN defaults here if you want
                         # e.g. "dwell_time": 2e-6  (only if it's a device_property)
                     },
-                }
+                },
+                {"name": "asyncroscopy/scan/mapping", "properties": {}},
             ],
         },
         {
@@ -90,7 +114,8 @@ def tango_ctx(data_save_dir):
                 {
                     "name": "asyncroscopy/stage/default",
                     "properties": {},
-                }
+                },
+                {"name": "asyncroscopy/stage/mapping", "properties": {}},
             ],
         },
         {
@@ -124,7 +149,18 @@ def tango_ctx(data_save_dir):
                         "camera_device_address": "asyncroscopy/camera/default",
                         "acquisition_save_directory": str(data_save_dir),
                     },
-                }
+                },
+                {
+                    # A twin with every realistic effect on, for mapping and Mapper tests.
+                    "name": "asyncroscopy/digitaltwin/mapping",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/mapping",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/mapping",
+                        "acquisition_save_directory": str(data_save_dir),
+                        **MAPPING_TWIN_PROPERTIES,
+                    },
+                },
             ],
         },
         {
@@ -377,3 +413,18 @@ def patched_spectrum_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path)
 
     monkeypatch.setattr(AutoScriptMicroscope, "_acquire_spectrum", fake_acquire)
     return calls
+
+
+@pytest.fixture(scope="session")
+def mapping_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/mapping"))
+
+
+@pytest.fixture(scope="session")
+def mapping_scan_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/scan/mapping"))
+
+
+@pytest.fixture(scope="session")
+def mapping_stage_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/mapping"))

@@ -36,7 +36,7 @@ class TestDigitalTwin:
         assert "defocus_m" in parameters
         assert "stage_position" in parameters
         assert "fov_m" in parameters
-        assert parameters["scan_detectors"] == ["haadf"]
+        assert parameters["scan_detectors"] == ["adf", "bf", "haadf"]
         assert parameters["spectrum_detectors"] == ["eds"]
         assert "BM-Ceta" in parameters["camera_detectors"]
         assert "scan" in parameters["device_proxies"]
@@ -45,6 +45,7 @@ class TestDigitalTwin:
     def test_get_image_returns_saved_hdf5(self, twin_proxy: tango.DeviceProxy, scan_proxy: tango.DeviceProxy):
         scan_proxy.imsize = 32
         scan_proxy.dwell_time = 1e-6
+        scan_proxy.scan_region = [0.0, 0.0, 1.0, 1.0]
 
         saved_path = Path(twin_proxy.acquire_scanned_image(["haadf"]))
 
@@ -62,7 +63,7 @@ class TestDigitalTwin:
         scan_proxy: tango.DeviceProxy,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        def fake_stage_render(self, imsize: int, dwell_time: float, detector_list: list):
+        def fake_stage_render(self, imsize: int, dwell_time: float, detector_list: list, *args, **kwargs):
             self._sync_stage_from_proxy()
             stage_signal = int(round((self._stage_position[0] - self._stage_position[1]) * 1e10))
             return np.full((imsize, imsize), stage_signal, dtype=np.int16)
@@ -73,6 +74,7 @@ class TestDigitalTwin:
 
         scan_proxy.imsize = 64
         scan_proxy.dwell_time = 1e-6
+        scan_proxy.scan_region = [0.0, 0.0, 1.0, 1.0]
 
         twin_proxy.move_stage([0.0, 0.0, 0.0, 0.0, 0.0])
         with h5py.File(twin_proxy.acquire_scanned_image(["haadf"]), "r") as h5:

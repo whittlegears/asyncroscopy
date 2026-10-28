@@ -9,7 +9,7 @@ from ase.build import bulk
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin import DEFAULT_ACQUISITION_DIR, DigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, AtomisticDigitalTwin
 
 FOV_NM = 500.0
 FOV_M = FOV_NM * 1e-9
@@ -25,7 +25,7 @@ EDGE_LATTICE_CHANGE_FRACTION = 0.25
 AMORPHOUS_EDGE_WIDTH_PX = 5.0
 
 
-class DigitalTwinDiffraction(DigitalTwin):
+class DigitalTwinDiffraction(AtomisticDigitalTwin):
     """Digital twin that pairs a HAADF nanoparticle overview with local diffraction."""
 
     acquisition_save_directory = device_property(

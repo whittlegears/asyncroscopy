@@ -15,10 +15,10 @@ from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import AtomisticDigitalTwin
 
 
-class DigitalTwinParticles(DigitalTwin):
+class DigitalTwinParticles(AtomisticDigitalTwin):
     """
     Detector-specific settings (dwell time, resolution) are stored in
     dedicated detector devices and read via DeviceProxy at acquisition time.
