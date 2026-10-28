@@ -55,7 +55,7 @@ If no file matches, install that Python first with `uv python install 3.12`. (`u
 
 ## 3. Start the stack
 
-Use four terminals (or run each in the background), from the repository root:
+Use four terminals, from the repository root. To run them in the background in PowerShell instead, start each with `Start-Process -FilePath $uv -ArgumentList 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -PassThru` (and so on), and later stop each with `taskkill /PID <pid> /T /F`, which also stops its child servers.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
@@ -93,7 +93,7 @@ If you use SciAgentGUI, this checks that the stack answers the way the GUI expec
 uv run startup_scripts/check_gui_contract.py
 ```
 
-Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
+Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
 
 Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
 
@@ -109,12 +109,12 @@ uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the
 
 Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). All settings are listed in `asyncroscopy/agents/__init__.py`.
 
-Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU the `mapping` graph completed 29 of 30 trial runs. The `general` agent, which makes every call itself, completed 7 of 15. See `docs/athena/wg2_traceability.md`.
+Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 8 of 9. See `docs/athena/wg2_traceability.md`.
 
 ## 6. LangGraph Studio
 
 ```bash
-uv sync --extra agent --extra ollama --extra dev
+uv sync --extra agent --extra ollama --extra dev   # Windows: add --python $py if section 2 needed it
 cp .env.example .env
 uv run langgraph dev
 ```

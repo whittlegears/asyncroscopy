@@ -89,7 +89,8 @@ class TestPolicy:
     def test_names_that_do_more_than_stop_are_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 
-    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan"])
+    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
+                                      "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "disengage", "led_off", "illumination_off"])
     def test_plain_stops_are_low(self, name):
         assert risk_of("AnyDevice", name) == "low"
 

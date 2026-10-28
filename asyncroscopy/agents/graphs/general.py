@@ -48,7 +48,7 @@ Rules:
 - Before a multi-step task, call load_skill with the matching skill and follow it. Skills: {skills}
 - For a long experiment use the instrument's job tools (*_reserve, *_start, *_job_status, *_results, *_release) instead of looping over single actions.
 - If a tool says APPROVAL REQUIRED with a request_id, call approval_status until it is approved, then repeat the same call once. If denied or expired, stop and tell the user.
-- Data come back as keys; look at them with get_region or get_data_from_key, never ask for raw arrays.
+- Data come back as keys; look at them with {readers}, never ask for raw arrays.
 - Never end your turn by saying what you will do next: make that tool call now. Fix a refused call and call again; stop only when the task is done or impossible.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone.{extra}"""
 
@@ -75,7 +75,7 @@ async def make_graph(config: dict | None = None):
     stem = _is_stem({t.name for t in tools})
     if not chosen and not stem:
         # The analysis server's tools stitch and score STEM maps; another instrument gets its own tools only.
-        tools = await agent_config.tools(include_analysis=False, allow=["*"])
+        tools = [t for t in await agent_config.tools(include_analysis=False, allow=["*"]) if not t.name.endswith(("_State", "_Status"))]
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
     print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")
@@ -83,4 +83,6 @@ async def make_graph(config: dict | None = None):
     available = await asyncio.to_thread(list_skills, {t.name for t in tools})
     skills = "; ".join(f"{s.name}: {s.description}" for s in available if s.available) or "none"
     template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
-    return create_agent(agent_config.chat_model(), tools, system_prompt=template.replace("{skills}", skills).replace("{extra}", STEM_RULES if stem else ""))
+    names = {t.name for t in tools}
+    readers = " or ".join(r for r in ("get_region", "get_data_from_key") if r in names) or "the instrument's own read tools"
+    return create_agent(agent_config.chat_model(), tools, system_prompt=template.replace("{skills}", skills).replace("{extra}", STEM_RULES if stem else "").replace("{readers}", readers))

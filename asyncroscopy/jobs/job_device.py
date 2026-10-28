@@ -205,8 +205,10 @@ class JobDevice(Device):
             return fn(*args)
         except JobError as exc:
             return self._error(exc.code, str(exc))
-        except (ValueError, jsonschema.ValidationError) as exc:
-            message = exc.message if isinstance(exc, jsonschema.ValidationError) else str(exc)
+        except (ValueError, TypeError, KeyError, jsonschema.ValidationError) as exc:
+            if isinstance(exc, (TypeError, KeyError)) and fn != self._reserve:
+                raise  # outside a plan check these are bugs, not a caller's mistake
+            message = exc.message if isinstance(exc, jsonschema.ValidationError) else f"{type(exc).__name__}: {exc}" if isinstance(exc, (TypeError, KeyError)) else str(exc)
             if self.PLAN_EXAMPLE is not None:
                 message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
             return self._error("plan_rejected", message)

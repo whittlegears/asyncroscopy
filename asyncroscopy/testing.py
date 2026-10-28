@@ -38,13 +38,15 @@ def prop_path(path: str | os.PathLike) -> str:
 
     The test context's file database cuts property values at ":", so a Windows
     path like C:/Users/... arrives as "C:" and files land in the working
-    directory. A relative path has no drive colon; keep pytest's temp folder on
-    the same drive as the working directory (``--basetemp``) so one exists.
+    directory. The path is given without its drive ("/Users/..."), which Windows
+    reads on the working directory's drive; a relative "../../.." path would
+    instead risk the 260-character limit. Keep pytest's temp folder on the same
+    drive as the working directory (``--basetemp``).
     """
-    try:
-        return os.path.relpath(path).replace("\\", "/")
-    except ValueError:  # another drive: a cut path would write into the working directory
-        raise RuntimeError(f"{path} is on another drive than the working directory; run pytest with --basetemp on this drive") from None
+    drive, rest = os.path.splitdrive(os.path.abspath(path))
+    if drive and drive.lower() != os.path.splitdrive(os.getcwd())[0].lower():
+        raise RuntimeError(f"{path} is on another drive than the working directory; run pytest with --basetemp on this drive")
+    return rest.replace("\\", "/")
 
 
 @contextmanager
@@ -73,6 +75,10 @@ class TestMCPServer(MCPServer):
     """An MCPServer over devices in a test context, with the tool descriptions an agent would read."""
 
     __test__ = False  # not a pytest test class
+
+    def list_tool_risks(self) -> dict[str, str]:
+        """Tool name -> "low" or "high": what approve mode would hold, without calling anything."""
+        return dict(self.tool_risks)
 
     def list_tool_descriptions(self) -> dict[str, str]:
         """Tool name -> the description an agent reads. In an async test, await alist_tool_descriptions."""

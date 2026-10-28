@@ -98,7 +98,7 @@ These are some examples of the available configs, which define the instrument cl
 
 ## Optional Dependencies
 
-`uv sync` installs exactly the extras you name and removes the others, so list every extra you want in one command (for example `uv sync --extra agent --extra ollama --extra diffraction`). `uv run --extra X ...` adds an extra without removing anything.
+`uv sync` installs exactly the extras you name and removes the others, so list every extra you want in one command (on Windows, add `--python <path>` if the quickstart's Python-link fix was needed) (for example `uv sync --extra agent --extra ollama --extra diffraction`). `uv run --extra X ...` adds an extra without removing anything.
 
 ```bash
 # Diffraction and tilt-twin multislice simulation (abTEM-based)

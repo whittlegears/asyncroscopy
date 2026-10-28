@@ -35,6 +35,8 @@ with instrument_context(devices):
         "indent_doc": tools.get("SimIndenter_indent", "")[:40],
         "envelope": "IndentGrid" in server._envelope_prefixes,
         "retract_doc": tools.get("SimIndenter_retract", ""),
+        "move_doc": tools.get("SimIndenter_move_xy", ""),
+        "risks": {n: server.list_tool_risks()[n] for n in ("SimIndenter_indent", "SimIndenter_retract", "IndentGrid_reserve", "IndentGrid_start")},
         "outcome": outcome,
         "async_descriptions_match": asyncio.run(server.alist_tool_descriptions()) == tools,
     }))
