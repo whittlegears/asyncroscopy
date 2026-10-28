@@ -27,7 +27,7 @@ On a real instrument use its config instead, for example `configs/Spectra300.yam
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
-After starting the stack, `startup_scripts/check_stack.py` confirms every piece talks to the others (see the quickstart).
+After starting the STEM twin stack, `startup_scripts/check_stack.py` confirms every piece talks to the others (see the quickstart). It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
 
 ### Agentic control at a glance
 

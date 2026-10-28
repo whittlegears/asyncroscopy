@@ -34,6 +34,8 @@ STEM_TOOLS = [
     "*_set_fov", "*_get_fov", "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam", "Mapper_*",
 ]
 DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
+# Only these mark an endpoint as a STEM: move_stage, set_fov and the like are common to many instruments.
+STEM_MARKERS = ["*_acquire_scanned_image", "Mapper_reserve"]
 
 SYSTEM = """You operate a laboratory instrument (or its digital twin) through tools.
 
@@ -54,8 +56,9 @@ async def make_graph(config: dict | None = None):
     """Graph factory for LangGraph Studio and the agent server (tools are discovered when the graph is built).
 
     Tools: ``configurable["tools"]``, else ASYNCROSCOPY_AGENT_TOOLS (comma-separated globs), else the
-    STEM set; when that set matches no instrument tool (another kind of instrument), every tool on
-    the endpoint. ASYNCROSCOPY_AGENT_PROMPT replaces the system prompt ({skills} is filled in).
+    STEM set when the endpoint has a STEM (a scanned-image or Mapper tool), otherwise every tool on
+    the endpoint. ASYNCROSCOPY_AGENT_PROMPT replaces the system prompt; the literal text {skills}
+    in it is replaced by the skill list (other braces, such as JSON examples, are left alone).
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_config = AgentConfig.from_env(
@@ -65,13 +68,14 @@ async def make_graph(config: dict | None = None):
     env_tools = [p.strip() for p in os.environ.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()]
     chosen = configurable.get("tools") or env_tools
     tools = await agent_config.tools(allow=chosen or DEFAULT_TOOLS)
-    stem = any(fnmatch.fnmatch(t.name, p) for t in tools for p in STEM_TOOLS)
+    stem = any(fnmatch.fnmatch(t.name, p) for t in tools for p in STEM_MARKERS)
     if not chosen and not stem:
         tools = await agent_config.tools(allow=["*"])
-        print(f"[agents] no STEM tools on {agent_config.mcp_url}; giving the agent all {len(tools)} tools. "
+        print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
+    print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")
     # Reading skill files is blocking I/O; keep it off the event loop (LangGraph Studio enforces this).
     available = await asyncio.to_thread(list_skills, {t.name for t in tools})
     skills = "; ".join(f"{s.name}: {s.description}" for s in available if s.available) or "none"
     template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
-    return create_agent(agent_config.chat_model(), tools, system_prompt=template.format(skills=skills, extra=STEM_RULES if stem else ""))
+    return create_agent(agent_config.chat_model(), tools, system_prompt=template.replace("{skills}", skills).replace("{extra}", STEM_RULES if stem else ""))

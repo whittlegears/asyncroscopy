@@ -13,13 +13,13 @@ Notebooks and scripts talk to Tango directly and are never held, in either mode.
 
 `asyncroscopy/safety/policy.py` decides, in this order (its docstring is the authority):
 
-1. Your own patterns from `safety.risk` in the MCP config.
-2. **Low:** safe-stop commands, recognised by a stop word in the name: `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop`, or close + shutter, blank + beam. So `Mapper_abort`, `blank_beam`, `Off` and `stop_scan` are never held. A name that also says `disable`, `override`, `bypass`, `reset`, `release`, `open` or `force` is not a safe stop.
+1. Your own patterns from `mcp.safety.risk` in the MCP config.
+2. **Low:** safe-stop commands: a stop word (`abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop`, `emergency`) as the first or last word of the name, or the pairs close + shutter, blank + beam, safe + state. So `Mapper_abort`, `blank_beam`, `Off` and `stop_scan` are never held. A name that also undoes a safeguard (`disable`, `override`, `bypass`, `ignore`, `reset`, `clear`, `release`, `unblank`, `open`, `force`) or does more than stop (`interlock`, `safety`, `limit`, `lock`, `unlock`, `guard`, `feedback`, `move`, `approach`, `set`, `drop`, `resume`, `start`, `run`, `enable`, `and`, `then`) is not a safe stop, so `interlock_off` and `withdraw_and_move` are held.
 3. **Low:** `reserve`, `job_status`, `results`, `release` on job devices.
-4. **Low:** Tango's `State` and `Status`; `get_*` and `list_*` (read-only by convention); `place_beam`, `set_fov`, `set_defocus`; `Approvals.request_status`.
+4. **Low:** Tango's `State` and `Status`; `get_*` and `list_*` (read-only by convention); `Approvals.request_status`; and, on a device with `acquire_scanned_image` (a STEM) only, `place_beam`, `place_beam_list`, `set_fov` and `set_defocus`.
 5. **High:** everything else. That includes `move_stage`, every `acquire*`, `unblank_beam`, starting a job (`*.start`) and DATA's `register_path` (with `get_data_from_key` it would read any file). A new or renamed command is held in `approve` mode rather than waved through.
 
-Add your own patterns in front of these with `safety.risk` in the MCP config, for example `{"MyStage.jog": "high", "MyCamera.preview": "low"}`.
+Add your own patterns in front of these with `mcp.safety.risk` in the MCP config, for example `{"MyStage.jog": "high", "MyCamera.preview": "low"}`.
 
 ## Two endpoints
 
