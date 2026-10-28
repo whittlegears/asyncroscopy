@@ -17,8 +17,6 @@ Each row links a WG2 Year-1 item (Project Execution Plan v7a §2.1.4.2, the mile
 
 ## Agent results on this machine
 
-Laptop with a 6 GB GTX 1660 Ti and 16 GB RAM, Ollama models, twin stack as in `docs/Operation/quickstart.md`.
-
 Laptop with a 6 GB GTX 1660 Ti and 16 GB RAM, Ollama, twin stack as in `docs/Operation/quickstart.md`, 2026-10-27/28.
 
 **Valid tool calls**: 20 instrument requests, scored on the right tool with schema-valid arguments (`benchmarks/results/tool_json.json`).
