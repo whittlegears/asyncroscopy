@@ -809,6 +809,11 @@ class MCPServer:
         while True:
             # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
             status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
+            if status.get("error", {}).get("code") == "unknown_job":
+                raise ToolError(
+                    f"{job_id!r} is not a {device} job. Jobs started by assemble_map or score_map run on the analysis "
+                    "server: wait for them with analysis_job_status and wait_s=25."
+                )
             if "error" in status or status.get("state") not in {"reserved", "queued", "running", "aborting"} or time.monotonic() >= deadline:
                 return status
             time.sleep(1.0)

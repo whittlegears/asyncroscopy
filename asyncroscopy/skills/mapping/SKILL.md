@@ -23,6 +23,7 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | "the sample", "whole sample" | `box_m` = sample bounds from `<Microscope>_get_parameters` (`world_bounds_angstrom` x 1e-10) |
 | "a 500 nm square around here / the current position" | `"size_m": [5e-7, 5e-7]` (the Mapper centres it on the stage; do not compute a box) |
 | "a 500 nm square around a point (x, y)" | `"size_m": [5e-7, 5e-7], "centre_m": [x, y]` |
+| nothing about EDS, spectra or composition | no `per_tile` at all: images only |
 | "with EDS", "and a spectrum at each image" | `"per_tile": ["eds_point"]` (one spectrum at each tile centre) |
 | "spectrum image", "EDS map" of every tile | `"per_tile": ["eds_map"]`. Only when asked by name: it multiplies time and dose. |
 | nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` |
@@ -39,7 +40,7 @@ If the request is unclear about the area or would take more than an hour (see th
 
 ## 3. Stitch and look
 
-1. `assemble_map` with `{"run": result_keys.run}` returns a `job_id`; poll `analysis_job_status`, then `analysis_job_results` gives `result_keys.map`.
+1. `assemble_map` with `{"run": result_keys.run}` returns a `job_id`. Wait with `analysis_job_status` and `{"job_id": ..., "wait_s": 25}` until `state` is `done` (not `wait_for_job`: that is for instrument jobs). Then `analysis_job_results` gives `result_keys.map`.
 2. `map_info` gives the map's stage box. `get_region` with a stage box returns a preview image; never ask for raw pixels.
 3. For each EDS spectrum, `add_poi` at its `stage_xy_m` with `kind: "eds_point"` and `links: [its key]`.
 
@@ -47,7 +48,7 @@ If the request is unclear about the area or would take more than an hour (see th
 
 Do this whenever the request asks for interesting, notable or unusual regions; listing the existing points of interest is not enough.
 
-1. `score_map` with `{"map": ..., "top_k": 3}`; poll `analysis_job_status`; `analysis_job_results.summary.added_pois` lists regions with `x_m`, `y_m`, `score` and `reason`.
+1. `score_map` with `{"map": ..., "top_k": 3}`; wait with `analysis_job_status` and `wait_s: 25`; `analysis_job_results.summary.added_pois` lists regions with `x_m`, `y_m`, `score` and `reason`.
 2. To image one closer, reserve a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`), or move there and acquire once.
 3. Mark what you took with `add_poi` and `links`, so the map shows it.
 

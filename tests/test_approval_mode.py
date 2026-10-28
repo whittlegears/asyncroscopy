@@ -352,3 +352,16 @@ class TestWaitForJob:
         assert Job.polls == 2
         with pytest.raises(ToolError, match="Mapper"):
             server.wait_for_job("Camera", "j1")
+
+    def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Job:
+            def job_status(self, request):
+                return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
+
+        server._devices = {"Mapper": Job()}
+        server._envelope_prefixes = {"Mapper"}
+        with pytest.raises(ToolError, match="analysis_job_status"):
+            server.wait_for_job("Mapper", "assemble-job-1")
