@@ -116,8 +116,25 @@ def out_of_box_moves(trace_path: Path, since: float) -> int:
     return sum(1 for line in trace_path.read_text(encoding="utf-8").splitlines() if '"Mapper.step"' in line and '"ok": false' in line and json.loads(line).get("ts", 0) >= since and "outside the plan box" in line)
 
 
+# A crash of the model server itself (seen with Ollama on a 6 GB GPU on the first load after a
+# restart) says nothing about the agent; such rows are reported apart and left out of the pass rate.
+INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error")
+
+
+async def warm_up(config: AgentConfig) -> None:
+    """Load the model once before the first trial, retrying if the first load crashes the server."""
+    for attempt in range(3):
+        try:
+            await config.chat_model().ainvoke("Reply with OK.")
+            return
+        except Exception as exc:
+            print(f"warm-up {attempt + 1} failed: {exc}", flush=True)
+            await asyncio.sleep(5)
+
+
 async def main(args) -> None:
     config = AgentConfig.from_env(model=args.model, caller="trials")
+    await warm_up(config)
     results = {"model": args.model, "n": args.n, "started": time.time(), "tasks": {}}
     tasks = {k: v for k, v in TASKS.items() if not args.tasks or k in args.tasks}
     for name, task in tasks.items():
@@ -129,17 +146,20 @@ async def main(args) -> None:
                     row = await runner(config, task)
                 except Exception as exc:
                     row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "checks": {}}
+                row["infra_error"] = any(marker in (row.get("error") or "") for marker in INFRA_ERRORS)
                 rows.append(row)
-                print(f"{name:16s} {runner_name:8s} #{i + 1:2d} {'PASS' if row['ok'] else 'FAIL'} {row.get('seconds', 0):6.1f}s  {json.dumps(row.get('checks'))}  {row.get('error') or ''}", flush=True)
-            passed = sum(r["ok"] for r in rows)
-            results["tasks"][f"{name}/{runner_name}"] = {"passed": passed, "of": len(rows), "pass_bar_met": passed >= 0.8 * len(rows), "rows": rows}
+                verdict = "INFRA" if row["infra_error"] else ("PASS" if row["ok"] else "FAIL")
+                print(f"{name:16s} {runner_name:8s} #{i + 1:2d} {verdict} {row.get('seconds', 0):6.1f}s  {json.dumps(row.get('checks'))}  {row.get('error') or ''}", flush=True)
+            counted = [r for r in rows if not r["infra_error"]]
+            passed = sum(r["ok"] for r in counted)
+            results["tasks"][f"{name}/{runner_name}"] = {"passed": passed, "of": len(counted), "infra_errors": len(rows) - len(counted), "pass_bar_met": bool(counted) and passed >= 0.8 * len(counted), "rows": rows}
             out = Path(args.out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     results["out_of_box_moves"] = out_of_box_moves(Path("outputs/trace/jobs.jsonl"), results["started"])
     Path(args.out).write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     for key, value in results["tasks"].items():
-        print(f"== {key}: {value['passed']}/{value['of']}")
+        print(f"== {key}: {value['passed']}/{value['of']}" + (f" ({value['infra_errors']} infrastructure errors not counted)" if value.get("infra_errors") else ""))
     print(f"== out-of-box Mapper moves: {results['out_of_box_moves']}")
 
 

@@ -62,6 +62,7 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # 60 s per MCP HTTP request, so 30 s lets slow commands finish while still failing
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
+JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
 
 # From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
@@ -798,6 +799,20 @@ class MCPServer:
             return {"request_id": request_id, "state": "approved", "note": "this server has no approval mode"}
         return json.loads(self._approvals().request_status(request_id))
 
+    @tool()
+    def wait_for_job(self, device: str, job_id: str, max_wait_s: float = 25.0) -> dict[str, Any]:
+        """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the tool prefix, e.g. "Mapper". Use this instead of calling <device>_job_status over and over."""
+        proxy = self._devices.get(device)
+        if proxy is None or device not in getattr(self, "_envelope_prefixes", set()):
+            raise ToolError(f"no job device {device!r}; job devices here: {sorted(getattr(self, '_envelope_prefixes', set()))}")
+        deadline = time.monotonic() + min(max(float(max_wait_s), 0.0), JOB_WAIT_MAX_S)
+        while True:
+            # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
+            status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
+            if "error" in status or status.get("state") not in {"reserved", "queued", "running", "aborting"} or time.monotonic() >= deadline:
+                return status
+            time.sleep(1.0)
+
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
         """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
         signature = json.dumps(arguments, sort_keys=True, default=str) + "\n" + error
@@ -928,6 +943,8 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices, self.list_skills, self.load_skill]
+        if getattr(self, "_envelope_prefixes", None):
+            native_tools.append(self.wait_for_job)
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
         for native_tool in native_tools:

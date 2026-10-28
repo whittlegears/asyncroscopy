@@ -332,3 +332,23 @@ class TestGateDetails:
     def test_an_agent_cannot_name_its_own_grant(self):
         body = json.loads(MCPServer._with_grant('{"reservation_id": "r1", "grant_id": "forged"}', {"approved_by": "auto"}, "agent"))
         assert body.get("grant_id") != "forged"
+
+
+class TestWaitForJob:
+    def test_waits_until_the_job_finishes_and_refuses_unknown_devices(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Job:
+            polls = 0
+
+            def job_status(self, request):
+                Job.polls += 1
+                return json.dumps({"job_id": "j1", "state": "done" if Job.polls >= 2 else "running"})
+
+        server._devices = {"Mapper": Job()}
+        server._envelope_prefixes = {"Mapper"}
+        assert server.wait_for_job("Mapper", "j1", max_wait_s=10)["state"] == "done"
+        assert Job.polls == 2
+        with pytest.raises(ToolError, match="Mapper"):
+            server.wait_for_job("Camera", "j1")
