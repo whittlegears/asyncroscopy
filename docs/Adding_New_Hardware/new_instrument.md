@@ -45,9 +45,10 @@ Conventions the rest of the stack relies on:
 
 - **Units in names and SI values.** Use `load_n`, `pitch_m`, `travel_m`. Agents mix up units more than anything else.
 - **`get_*` and `list_*` must not change anything.** The safety policy treats them as read-only, so they are never held for approval. A command that reads *and* acts (an SPM `get_image` that scans the tip, an XRD `get_counts` that opens the shutter) needs a different name. Check your `get_*` commands for side effects.
-- **Give stop commands a stop word in their name.** A command whose name contains `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause` or `estop`, or the pairs close + shutter or blank + beam, is always allowed: an agent never waits for approval to make the instrument safe. `Off`, `stop_scan`, `AbortScan` and `shutter_close` all qualify. A name that also contains `disable`, `override`, `bypass`, `reset`, `release`, `open` or `force` does not.
+- **Give stop commands a stop word as the first or last word of their name.** Such a command is always allowed: an agent never waits for approval to make the instrument safe. The stop words are `abort`, `stop`, `halt`, `retract`, `withdraw`, `off`, `pause`, `estop` and `emergency`; the pairs close + shutter, blank + beam and safe + state count anywhere in the name. `Off`, `stop_scan`, `AbortScan` and `shutter_close` all qualify. A name that also contains a word that undoes a safeguard (`disable`, `override`, `bypass`, `ignore`, `reset`, `clear`, `release`, `unblank`, `open`, `force`) or does more than stop (`interlock`, `safety`, `limit`, `lock`, `unlock`, `guard`, `feedback`, `move`, `approach`, `set`, `drop`, `resume`, `start`, `run`, `enable`, `and`, `then`) does not: `interlock_off`, `feedback_off` and `withdraw_and_move` are held. `STOP_WORDS`, `STOP_PAIRS`, `UNSAFE_WORDS` and `ACTION_WORDS` in `asyncroscopy/safety/policy.py` are the exact lists.
 - **Refuse unsafe arguments in the device** (`raise ValueError(...)`), not in the agent. The limit then applies to notebooks, the GUI and every agent. Expose the limits (the example's `get_limits`) so a job device can check a whole plan before it starts.
-- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent.
+- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition` and register the file with the DATA device's `register_path`; `asyncroscopy/instruments/electron_microscope/mapper.py` does this for every tile. The MCP server attaches an image preview only to the STEM `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` commands, and records a result's key in the trace for commands whose name starts with `acquire`.
+- **Start `doc_in` with "JSON" for an object argument** (`doc_in=':param plan: JSON {...}'`). Only then does the MCP server accept an object from the model and normalise it, so a retried call matches the approval it was given.
 - **Argument names come from the Python signature.** `command` writes `:param load_n:` into `doc_in` for you; with plain `tango.server.command` you must write it yourself, or the agent's argument is called `arg`.
 
 ## 2. A job device for long experiments
@@ -86,7 +87,7 @@ You don't have to configure anything for the default policy:
 | `IndentGrid.abort` | low | stop word |
 | `Init`, `Kill`, `RestartServer` on any device | not offered to agents | operator only |
 
-To change any of these, add patterns to `safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
+`place_beam`, `set_fov` and `set_defocus` are low only on a device that has `acquire_scanned_image` (a STEM); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).
 
 ## 4. Config and launch
 
@@ -119,7 +120,7 @@ tango:
   reset_database_file: true
 ```
 
-A config has one `instrument`; a second instrument (a robot beside an XRD) goes under `devices`.
+A config has one `instrument`; a second instrument (a robot beside an XRD) goes under `devices`. The `instrument.file` must be inside this repository; a device kept elsewhere goes under `devices` with a `module_name` importable from the server's Python path. Each device is named `asyncroscopy/<config key>/default`; two devices of one class get tools named after their config keys (`IndentGrid_grid1_reserve`, `IndentGrid_grid2_reserve`), so give a skill's `requires:` a glob such as `IndentGrid*_reserve`.
 
 ```bash
 uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml
@@ -129,29 +130,39 @@ uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-The agent endpoint now offers `SimIndenter_indent`, `IndentGrid_reserve` and the rest. (The endpoint's name in `mcp_dt.yaml` says Spectra300; it serves whatever devices are running.)
+The agent endpoint now offers `SimIndenter_indent`, `IndentGrid_reserve` and the rest. (The endpoint's name in `mcp_dt.yaml` says Spectra300; it serves whatever devices are running.) To approve held calls or switch the mode from SciAgentGUI, also start the operator endpoint:
+
+```bash
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
+```
+
+`startup_scripts/check_stack.py` checks the STEM twin stack (Mapper, stitching, EDS); it is not a check for other instruments. For yours, run your copy of `tests/test_new_instrument_example.py`.
 
 ## 5. Let the general agent use it
 
 The general agent (`uv run python -m asyncroscopy.agents.run general "..."`, or LangGraph Studio) picks its tools in this order:
 
 1. The globs in `ASYNCROSCOPY_AGENT_TOOLS`, if set.
-2. Otherwise a short STEM set.
-3. When the STEM set matches no instrument tool, as here, every tool on the endpoint, with a printed warning.
+2. Otherwise, when the endpoint has a STEM (a `*_acquire_scanned_image` or `Mapper_reserve` tool), a short STEM set.
+3. Otherwise, as here, every tool on the endpoint.
+
+It prints the tools it chose at start-up.
 
 Small models do better with fewer tools, so list yours. In bash:
 
 ```bash
-export ASYNCROSCOPY_AGENT_TOOLS="SimIndenter_*,IndentGrid_*,approval_status,list_skills,load_skill"
+export ASYNCROSCOPY_AGENT_TOOLS="SimIndenter_*,IndentGrid_*,approval_status,wait_for_job,list_skills,load_skill"
 ```
 
 In PowerShell:
 
 ```powershell
-$env:ASYNCROSCOPY_AGENT_TOOLS = "SimIndenter_*,IndentGrid_*,approval_status,list_skills,load_skill"
+$env:ASYNCROSCOPY_AGENT_TOOLS = "SimIndenter_*,IndentGrid_*,approval_status,wait_for_job,list_skills,load_skill"
 ```
 
-`ASYNCROSCOPY_AGENT_PROMPT` replaces the system prompt; `{skills}` in it is filled with the skill list.
+`ASYNCROSCOPY_AGENT_PROMPT` replaces the system prompt; the text `{skills}` in it is replaced by the skill list, and other braces (a JSON plan example) are left as they are.
+
+`wait_for_job` waits up to 25 s per call, and one agent run allows about 20 tool calls, so the agent can follow a job of a few minutes. For an hours-long job, tell it in the prompt or skill to report the job id and stop; check on it later with `job_status`.
 
 For a multi-step procedure, add a skill: a folder with a `SKILL.md`, under `asyncroscopy/skills/` or in a folder named by `ASYNCROSCOPY_SKILLS_PATH`. Copy `asyncroscopy/skills/mapping/SKILL.md` for the format. Set `requires:` to the tools the skill cannot work without (for example `[IndentGrid_reserve]`); a skill is offered only where those tools exist, so the indenter agent is never offered the STEM mapping skill.
 
@@ -171,4 +182,4 @@ Add your devices to the `devices_info` list in `tests/conftest.py`, next to `Sim
 
 ## Digital twin first
 
-Validate a workflow against a simulator before running it on hardware. Make the simulator a sibling class with the same commands, like `SimIndenter`; the agent, the job device and the tests then run unchanged against either one. For realistic motion, reuse the twin's instrument-neutral models: `twin/stage_model.py` (commanded vs true vs reported position, backlash, settling), `twin/clock.py` (simulated time that can run faster than real time) and `twin/rng.py` (seeded noise per event). They import without the electron-optics code. `asyncroscopy/instruments/electron_microscope/digital_twin.py` is the full-scale example.
+Validate a workflow against a simulator before running it on hardware. Make the simulator a sibling class with the same commands, like `SimIndenter`; the agent, the job device and the tests then run unchanged against either one. For realistic motion, reuse the twin's instrument-neutral models in `asyncroscopy/instruments/electron_microscope/twin/`: `stage_model.py` (commanded vs true vs reported position, backlash, settling), `clock.py` (simulated time that can run faster than real time) and `rng.py` (seeded noise per event). They import without the electron-optics code. The stage model has five axes `[x, y, z, alpha, beta]`; for an XY or XYZ stage, pass zeros for the rest. `asyncroscopy/instruments/electron_microscope/digital_twin.py` is the full-scale example.

@@ -42,7 +42,7 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
-from asyncroscopy.safety.policy import is_envelope_device, operator_only, risk_of
+from asyncroscopy.safety.policy import is_envelope_device, is_stem_device, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -547,7 +547,8 @@ class MCPServer:
         unique_name = f"{tool_prefix or dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
         envelope = (tool_prefix or dev_class) in getattr(self, "_envelope_prefixes", set())
-        risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope)
+        stem = (tool_prefix or dev_class) in getattr(self, "_stem_prefixes", set())
+        risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -858,25 +859,36 @@ class MCPServer:
         # other and an approval for one never covers the other.
         per_class: dict[str, int] = {}
         members: dict[str, list[str]] = {}
+        families: dict[str, list[str]] = {}
         for name, _dev, dev_class in opened:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
+            families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
         self._prefix_class: dict[str, str] = {}
         self._envelope_prefixes: set[str] = set()
+        self._stem_prefixes: set[str] = set()
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
         for device_name, dev, dev_class in opened:
             prefix = dev_class
             if per_class[dev_class] > 1:
-                # The member ("lab/mapper/2" -> 2); the whole device name when members repeat.
+                # The member ("lab/mapper/2" -> 2); else the family, which the launcher sets from the
+                # config key ("asyncroscopy/grid2/default" -> grid2); else the whole device name.
                 parts = device_name.split("/")
-                member = parts[-1]
-                suffix = member if members[dev_class].count(member) == 1 else "_".join(parts)
+                member, family = parts[-1], (parts[1] if len(parts) == 3 else device_name)
+                if members[dev_class].count(member) == 1:
+                    suffix = member
+                elif families[dev_class].count(family) == 1:
+                    suffix = family
+                else:
+                    suffix = "_".join(parts)
                 prefix = f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
             self._prefix_class[prefix] = dev_class
 
             try:
                 commands = dev.command_list_query()
+                if is_stem_device(c.cmd_name for c in commands):
+                    self._stem_prefixes.add(prefix)
                 if is_envelope_device(c.cmd_name for c in commands):
                     self._envelope_prefixes.add(prefix)
                     try:

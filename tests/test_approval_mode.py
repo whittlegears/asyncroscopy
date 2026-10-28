@@ -72,6 +72,22 @@ class TestPolicy:
         assert risk_of("AnyStage", "stop") == "low"
         assert risk_of("Mapper", "abort") == "low"
 
+    @pytest.mark.parametrize("name", [
+        "interlock_off", "turn_off_safety", "switch_off_interlock", "emergency_unlock", "withdraw_and_move",
+        "stop_and_approach", "move_to_stop", "drop_off_sample", "set_stop_height", "pause_then_resume", "limits_off", "feedback_off",
+    ])
+    def test_names_that_do_more_than_stop_are_high(self, name):
+        assert risk_of("AnyDevice", name) == "high"
+
+    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "go_to_safe_state"])
+    def test_plain_stops_are_low(self, name):
+        assert risk_of("AnyDevice", name) == "low"
+
+    def test_stem_beam_settings_are_low_only_on_a_stem(self):
+        assert risk_of("OpticalScope", "set_defocus") == "high"
+        assert risk_of("DigitalTwin", "set_defocus", stem=True) == "low"
+        assert risk_of("DigitalTwin", "move_stage", stem=True) == "high"
+
     def test_overrides_come_first(self):
         assert risk_of("DigitalTwin", "move_stage", {"DigitalTwin.move_stage": "low"}) == "low"
 
