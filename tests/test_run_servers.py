@@ -241,11 +241,19 @@ def test_device_server_command_uses_python_command(fake_uv):
     assert device.command == [fake_uv, "run", "--no-sync", "python", "-u", "-m", "pkg.stage", "stage_instance"]
 
 
-def test_instrument_kept_outside_the_repository_is_given_by_module_name():
+def test_instrument_kept_outside_the_repository_is_given_by_module_name(tmp_path, monkeypatch):
+    (tmp_path / "mylab").mkdir()
+    (tmp_path / "mylab" / "__init__.py").write_text("")
+    (tmp_path / "mylab" / "optiscope.py").write_text("class OptiScope:\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
     config = run_servers._instrument_config({"module_name": "mylab.optiscope", "class_name": "OptiScope"})
     assert config.module_name == "mylab.optiscope" and config.class_name == "OptiScope"
     with pytest.raises(KeyError, match="class_name"):
         run_servers._instrument_config({"module_name": "mylab.optiscope"})
+    with pytest.raises(ValueError, match="PYTHONPATH"):  # a typo is caught at load, not after the device timeout
+        run_servers._instrument_config({"module_name": "mylab.optiscop", "class_name": "OptiScope"})
+    with pytest.raises(ValueError, match="PYTHONPATH"):
+        run_servers._instrument_config({"module_name": "nolab.optiscope", "class_name": "OptiScope"})
     outside = run_servers.PROJECT_DIR.parent / "mylab" / "scope.py"
     with pytest.raises(ValueError, match="module_name"):
         run_servers.python_file_to_module(outside)

@@ -40,6 +40,11 @@ class JobError(Exception):
         self.code = code
 
 
+def _json_default(value):
+    """numpy numbers stay numbers in replies and state files (np.int64(2) -> 2, not "2")."""
+    return value.item() if hasattr(value, "item") and getattr(value, "ndim", None) == 0 else str(value)
+
+
 class JobDevice(Device):
     # One line saying what this device's job does; MCP tool descriptions start with it.
     JOB_KIND = "background job"
@@ -60,11 +65,11 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     def resolve_plan(self, plan: dict) -> dict:
         """Validate and expand a plan. Return {"steps": [...], "estimate": {...}, ...}; raise ValueError to refuse."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} must implement resolve_plan(plan)")
 
     def run_step(self, job: dict, index: int) -> dict:
         """Do step ``index``; return a JSON-safe record of what it produced, or None if it stopped early for an abort (see aborting), so a resume runs it again."""
-        raise NotImplementedError
+        raise NotImplementedError(f"{type(self).__name__} must implement run_step(job, index)")
 
     def aborting(self, job: dict) -> bool:
         """True once abort was called for ``job``; a long run_step should check it and return None."""
@@ -166,16 +171,16 @@ class JobDevice(Device):
         so saving after each of thousands of steps does not rewrite all earlier results."""
         state = {k: v for k, v in job.items() if k != "step_results"}
         tmp = self._path(job["reservation_id"]).with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, default=str), encoding="utf-8")
+        tmp.write_text(json.dumps(state, default=_json_default), encoding="utf-8")
         tmp.replace(self._path(job["reservation_id"]))
 
     def _append_step(self, job: dict, index: int, record: dict) -> None:
         with self._steps_path(job["reservation_id"]).open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps({"index": index, "record": record}, default=str) + "\n")
+            handle.write(json.dumps({"index": index, "record": record}, default=_json_default) + "\n")
 
     @staticmethod
     def _reply(payload: dict) -> str:
-        return json.dumps({"schema_version": ENVELOPE_VERSION, **payload}, default=str)
+        return json.dumps({"schema_version": ENVELOPE_VERSION, **payload}, default=_json_default)
 
     @staticmethod
     def _error(code: str, message: str) -> str:
@@ -235,6 +240,9 @@ class JobDevice(Device):
             if active is not None:
                 raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}; release or abort it first")
             resolved = self.resolve_plan(body["plan"])
+            if not isinstance(resolved, dict) or not isinstance(resolved.get("steps"), list):
+                # The device's own bug, not the caller's plan: say so, outside plan_rejected.
+                raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list, got {type(resolved).__name__}")
             reservation_id = uuid.uuid4().hex[:12]
             job = {
                 "reservation_id": reservation_id,

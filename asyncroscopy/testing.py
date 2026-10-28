@@ -49,6 +49,9 @@ def prop_path(path: str | os.PathLike) -> str:
     return rest.replace("\\", "/")
 
 
+_context_used = False  # Tango allows one in-process device server per interpreter
+
+
 @contextmanager
 def instrument_context(devices_info: list[dict], process: bool = False) -> Iterator[MultiDeviceTestContext]:
     """Start the given devices in one Tango test context (no database, no ports to configure).
@@ -57,6 +60,13 @@ def instrument_context(devices_info: list[dict], process: bool = False) -> Itera
     ``process=True`` runs them in a child process, so command timeouts behave as on a real
     server (an in-process context does not enforce the 3 s client timeout).
     """
+    global _context_used
+    if _context_used and not process:
+        raise RuntimeError(
+            "only one in-process instrument_context can start per Python interpreter (a Tango limit); "
+            "start it once in a session-scoped pytest fixture and share it, or pass process=True"
+        )
+    _context_used = not process or _context_used
     with MultiDeviceTestContext(devices_info, process=process) as ctx:
         yield ctx
 

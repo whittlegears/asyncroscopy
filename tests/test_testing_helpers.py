@@ -21,4 +21,7 @@ def test_helpers_serve_an_instrument_through_the_mcp_server_and_gate(tmp_path):
     assert result["outcome"] == {"SimIndenter_indent": "held", "SimIndenter_retract": "ran", "IndentGrid_reserve": "ran"}
     assert result["async_descriptions_match"]
     assert ":param" not in result["move_doc"] and "Input Description:" in result["move_doc"]
+    assert result["override_by_tool_name"] == "low"
+    assert any("'SimIndentr.indent' matches no command" in line for line in result["startup_warnings"])
+    assert "session-scoped" in result["second_context"]
     assert result["risks"] == {"SimIndenter_indent": "high", "SimIndenter_retract": "low", "IndentGrid_reserve": "low", "IndentGrid_start": "high"}

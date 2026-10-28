@@ -1,6 +1,8 @@
 """Run by test_testing_helpers.py in a fresh interpreter: what an out-of-tree team's test does."""
 
 import asyncio
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -31,7 +33,20 @@ with instrument_context(devices):
             outcome[name] = "error" if isinstance(reply, str) and '"error"' in reply else "ran"
         except Exception as exc:
             outcome[name] = "held" if "APPROVAL REQUIRED" in str(exc) else f"error: {exc}"
+    # Overrides may name the tool; one that matches nothing is reported at start-up.
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        overridden = mcp_server_for(devices, approvals_device_address="asyncroscopy/approvals/default",
+                                    risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high"})
+    try:
+        with instrument_context(devices):
+            second_context = "started"
+    except RuntimeError as exc:
+        second_context = str(exc)
     print(json.dumps({
+        "override_by_tool_name": overridden.list_tool_risks()["SimIndenter_move_xy"],
+        "startup_warnings": [line for line in printed.getvalue().splitlines() if line.startswith("[safety]")],
+        "second_context": second_context,
         "indent_doc": tools.get("SimIndenter_indent", "")[:40],
         "envelope": "IndentGrid" in server._envelope_prefixes,
         "retract_doc": tools.get("SimIndenter_retract", ""),

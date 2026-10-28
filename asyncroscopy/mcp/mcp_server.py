@@ -42,7 +42,9 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, operator_only, risk_of
+from fnmatch import fnmatchcase
+
+from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, looks_like_stop, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -128,7 +130,8 @@ class MCPServer:
                 Approvals.approve and export_ground_truth; "operator" is for the GUI.
             approvals_device_address: Approvals device holding the approval mode.
                 When unset, every call runs (there is no mode to consult).
-            risk_overrides: {"Class.command" glob: "low"|"high"} checked before the defaults.
+            risk_overrides: {"Class.command" or tool-name ("Class_command") glob: "low"|"high"},
+                checked before the defaults.
             trace_path: Instrument Trace JSONL file. Off when empty.
             database: Stands in for the Tango database (anything with get_device_exported);
                 asyncroscopy.testing uses it to serve the devices of a test context.
@@ -162,6 +165,7 @@ class MCPServer:
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
         self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
+        self._risk_keys: dict[str, str] = {}  # tool name -> "class.command", what overrides match
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -564,8 +568,10 @@ class MCPServer:
 
         envelope = (tool_prefix or dev_class) in self._envelope_prefixes
         stem = (tool_prefix or dev_class) in self._stem_prefixes
-        risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
+        by_tool_name = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower())]
+        risk = by_tool_name[0] if by_tool_name else risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope, stem=stem)
         self.tool_risks[unique_name] = risk
+        self._risk_keys[unique_name] = f"{dev_class}.{command_name}".lower()
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -607,7 +613,8 @@ class MCPServer:
         if in_type != CmdArgType.DevVoid:
             doc_lines.append(f"Input Type: {in_type.name}")
         if in_desc and not _placeholder_doc(in_desc):
-            doc_lines.append(f"Input Description: {_without_param_name(in_desc)}")
+            if _without_param_name(in_desc):
+                doc_lines.append(f"Input Description: {_without_param_name(in_desc)}")
         if out_type != CmdArgType.DevVoid:
             doc_lines.append(f"Output Type: {out_type.name}")
         out_desc = cmd_info.out_type_desc
@@ -873,7 +880,7 @@ class MCPServer:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
             families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
-        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks):
+        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys):
             table.clear()
         for device_name, dev, dev_class in opened:
             prefix = dev_class
@@ -940,6 +947,19 @@ class MCPServer:
                 self._devices[prefix] = dev
         return tools
 
+    def _warn_about_risks(self) -> None:
+        """Print what an instrument author most likely got wrong in the risk settings: an override
+        that matches no command (it does nothing), and a stop-like command that approve mode holds."""
+        for pattern in self.risk_overrides:
+            p = pattern.lower()
+            if not any(fnmatchcase(tool.lower(), p) or fnmatchcase(key, p) for tool, key in self._risk_keys.items()):
+                print(f"[safety] risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {next(iter(self._risk_keys), 'Class_command')}")
+        if self.approvals_device_address is None:
+            return
+        for tool, risk in self.tool_risks.items():
+            if risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
+                print(f"[safety] {tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
+
     def setup(self, print_summary: bool = True):
         """Configure tools and add them to the MCP instance.
 
@@ -987,6 +1007,7 @@ class MCPServer:
                         print(f"Failed to wrap {dev_class}.{command_name}: {e}")
                         traceback.print_exc()
 
+        self._warn_about_risks()
         # Printed unconditionally (unlike the verbose summary below) so GUIs can
         # parse the final count from stdout even when quiet mode is on.
         print(f"MCP ready: {len(native_tools) + num_device_tools} tool(s) registered", flush=True)

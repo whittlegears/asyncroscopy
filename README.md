@@ -12,9 +12,9 @@
 **New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md).** It is the tested path (installing uv, the exact `uv sync` and test commands, Windows fixes) from clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample. In short:
 
 ```bash
-git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Windows, clone to a short path such as C:\src
+git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Windows, avoid deeply nested folders
 cd asyncroscopy
-uv sync --extra agent --extra ollama
+uv sync --extra agent --extra ollama   # Windows: "Missing expected target directory"? see quickstart section 2
 uv run pytest -q -m "not slow"
 
 # Digital twin (no hardware required); one terminal each
@@ -76,9 +76,17 @@ uv run startup_guis/mcp_gui.py
 
 ```text
 asyncroscopy/
-├── data/              # Data management device
-├── instruments/       # Hardware device implementations
-└── mcp/               # FastMCP server for AI agents
+├── agents/            # LangGraph agents (mapping graph, general agent) and the CLI
+├── calibration/       # Dose, drift and stage-repeatability measurement series
+├── contracts/         # JSON schemas for plans and job envelopes
+├── data/              # Data management device (Tiled)
+├── instruments/       # Hardware device implementations, the digital twin, the Mapper
+├── jobs/              # JobDevice: reserve/start/abort for long-running work
+├── mcp/               # FastMCP server for AI agents
+├── safety/            # Risk policy and the Approvals device
+├── skills/            # Skill loader (skill files live in skills/ at the root)
+├── utils/             # The command decorator and shared helpers
+└── testing.py         # instrument_context and TestMCPServer for your own tests
 ```
 
 ## Configuration Files (`configs/`)
@@ -114,7 +122,7 @@ uv sync --extra agent --extra ollama --extra dev
 ## Running Tests
 
 ```bash
-uv run pytest -q -m "not slow"   # about a minute on a laptop
+uv run pytest -q -m "not slow"   # summary after about 40 s; device shutdown logs can follow for a minute more
 uv run pytest -q                 # everything, including timing tests: about a minute and a half
 ```
 

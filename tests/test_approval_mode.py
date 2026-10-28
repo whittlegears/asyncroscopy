@@ -90,9 +90,19 @@ class TestPolicy:
         assert risk_of("AnyDevice", name) == "high"
 
     @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
-                                      "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "disengage", "led_off", "illumination_off"])
+                                      "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "disengage", "led_off", "illumination_off",
+                                      "stop_indent", "abort_indent", "retract_indenter", "retract_head", "stop_imaging", "stop_exposure",
+                                      "retract_objective", "xray_off", "stop_robot", "abort_protocol", "pause_protocol", "source_off"])
     def test_plain_stops_are_low(self, name):
         assert risk_of("AnyDevice", name) == "low"
+
+    def test_stop_like_names_left_high_are_spotted(self):
+        from asyncroscopy.safety.policy import looks_like_stop
+        assert looks_like_stop("park_stage") and looks_like_stop("unload") and looks_like_stop("brake_off")
+        assert not looks_like_stop("move_stage") and not looks_like_stop("get_offset")
+
+    def test_place_beam_is_high_even_on_a_stem(self):
+        assert risk_of("DigitalTwin", "place_beam", stem=True) == "high"
 
     def test_stem_beam_settings_are_low_only_on_a_stem(self):
         assert risk_of("OpticalScope", "set_defocus") == "high"

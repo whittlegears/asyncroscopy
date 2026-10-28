@@ -17,9 +17,11 @@ Nothing here needs a microscope, vendor software or a GPU. A GPU makes the local
 **Windows: `uv` still not found?** winget sometimes installs uv without a command shim on `PATH`. Call it by its full path; in PowerShell:
 
 ```powershell
-$uv = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe" | Select-Object -First 1).FullName
+$uv = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\astral-sh.uv_*\uv.exe", "$env:USERPROFILE\.local\bin\uv.exe" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 & $uv --version
 ```
+
+(The second path is where the official PowerShell installer puts uv. `where.exe uv` finds it anywhere on `PATH`.)
 
 and write `& $uv` wherever this guide says `uv` (for example `& $uv sync --extra agent --extra ollama`). The launchers find uv on their own when you start them this way: `uv run` tells its child processes where uv is.
 
@@ -38,11 +40,11 @@ uv sync --extra agent --extra ollama
 uv run pytest -q -m "not slow"
 ```
 
-`--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, clone to a short path such as `C:\src\asyncroscopy`: some installed DLLs have long names, and a deep folder pushes them past Windows' path limit (see Troubleshooting).
+`--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, keep the clone's path short (under about 60 characters, such as `C:\src\asyncroscopy`): some installed DLLs have long names, and a deeply nested folder pushes them past Windows' path limit (see Troubleshooting).
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine; `pyproject.toml` caps the fast-moving dependencies (sidpy, SciFiReaders, tiled, fastmcp, numpy, LangChain/LangGraph) below their next breaking release so a fresh clone still gets a tested combination. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
 
-The test suite starts real Tango devices in-process. Without the slow tests it takes about a minute on a laptop; `uv run pytest -q` runs everything, including timing tests, in about a minute and a half. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra, three need a running Tango database). Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
+The test suite starts real Tango devices in-process. Without the slow tests, pytest prints its summary after about 40 s on a laptop; the devices then shut down and keep printing INFO lines ("Connected to detector proxy", "Restarting managed Tiled server") for up to a minute more. That is normal; let it finish. `uv run pytest -q` runs everything, including the two timing tests that `-m "not slow"` deselects. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra, three need a running Tango database). The DeprecationWarnings in the summary come from dependencies and are harmless. Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
 
 **Windows: if `uv sync` stops with "Missing expected target directory for Python minor version link"**, uv's link to its Python install is broken. Point uv at the interpreter file directly (PowerShell); this is the fix that worked in testing:
 
@@ -55,7 +57,18 @@ If no file matches, install that Python first with `uv python install 3.12`. (`u
 
 ## 3. Start the stack
 
-Use four terminals, from the repository root. To run them in the background in PowerShell instead, start each with `Start-Process -FilePath $uv -ArgumentList 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -PassThru` (and so on), and later stop each with `taskkill /PID <pid> /T /F`, which also stops its child servers.
+Use four terminals, from the repository root. Each MCP server prints a large FastMCP banner when it starts; that is normal. To run them in the background in PowerShell instead (use `$uv` from section 1 if `uv` is not on `PATH`):
+
+```powershell
+$uv = (Get-Command uv -ErrorAction SilentlyContinue).Source   # or keep the $uv from section 1
+$servers = Start-Process $uv 'run','startup_scripts/run_servers.py','--yaml','configs/digital_twin_mapping.yaml' -RedirectStandardOutput servers.log -RedirectStandardError servers.err -WindowStyle Hidden -PassThru
+# wait for "Leave this terminal open" in servers.log, then:
+$agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
+$operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
+$analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+```
+
+The MCP servers log to the `.err` files (stderr). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { taskkill /PID $p.Id /T /F }`, which also stops the child servers.
 
 ```bash
 # 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
@@ -109,7 +122,7 @@ uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the
 
 Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). All settings are listed in `asyncroscopy/agents/__init__.py`.
 
-Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 28 of 30 on the final code. See `docs/athena/wg2_traceability.md`.
+The command prints nothing until it finishes; progress shows in the agent endpoint's terminal (or `mcp_dt.err`). Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 28 of 30 on the final code. See `docs/athena/wg2_traceability.md`.
 
 ## 6. LangGraph Studio
 
