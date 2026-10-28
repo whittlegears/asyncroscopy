@@ -279,7 +279,7 @@ class ElectronMicroscope(Instrument):
         self._calibrate_screen_current()
 
 
-    @command(dtype_in=DevFloat, doc_in=':param current: Screen current in amperes.')
+    @command(dtype_in=DevFloat, doc_in=':param current: Screen current in picoamperes (pA).')
     def set_screen_current(self, current):
         """Set the screen current in pA."""
         self._set_screen_current(current)

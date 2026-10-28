@@ -44,6 +44,9 @@ class JobDevice(Device):
     JOB_KIND = "background job"
     # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
     PLAN_EXAMPLE: dict | None = None
+    # Workers still finishing a step when the device was last re-initialised (see delete_device).
+    _stale_workers: tuple = ()
+    _generation = 0
 
     job_kind = attribute(dtype=str, doc="What this device's background job does.")
     plan_example = attribute(dtype=str, doc="A valid plan for reserve, as JSON ('' if the device gives none).")
@@ -82,6 +85,7 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     def init_device(self) -> None:
         Device.init_device(self)
+        self._generation += 1  # a worker from an earlier generation no longer writes state files
         self._lock = threading.RLock()
         self._jobs: dict[str, dict] = {}
         self._job_index: dict[str, str] = {}
@@ -118,12 +122,17 @@ class JobDevice(Device):
 
         Without this, Init would reload the job as resumable while the old
         worker kept driving the instrument, and a resume would run a second
-        worker beside it. Each stopping worker runs on_stop (safe state).
+        worker beside it. Each stopping worker runs on_stop (safe state). A
+        worker still inside a long step after the wait is remembered, and start
+        refuses until it has finished.
         """
         for event in list(getattr(self, "_abort", {}).values()):
             event.set()
-        for thread in list(getattr(self, "_threads", {}).values()):
-            thread.join(timeout=60.0)
+        threads = list(getattr(self, "_threads", {}).values()) + list(self._stale_workers)
+        deadline = time.time() + 60.0
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - time.time()))
+        self._stale_workers = tuple(t for t in threads if t.is_alive())
         Device.delete_device(self)
 
     def _path(self, reservation_id: str) -> Path:
@@ -277,6 +286,8 @@ class JobDevice(Device):
             active = self._active()
             if active is not None and active is not job:
                 raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}")
+            if any(t.is_alive() for t in self._stale_workers):
+                raise JobError("bad_state", "a worker from before the device restarted is still finishing its step; try again shortly")
             job_id = uuid.uuid4().hex[:12]
             job["job_ids"].append(job_id)
             job["job_id"] = job_id
@@ -301,6 +312,7 @@ class JobDevice(Device):
 
     def _worker(self, job: dict, job_id: str) -> None:
         abort = self._abort[job_id]
+        generation = self._generation
         cls = type(self).__name__
         try:
             self.on_start(job)
@@ -314,8 +326,9 @@ class JobDevice(Device):
                 with self._lock:
                     job["done"].append(index)
                     job["step_results"][str(index)] = record
-                    self._append_step(job, index, record)
-                    self._save(job)
+                    if generation == self._generation:
+                        self._append_step(job, index, record)
+                        self._save(job)
                 self._trace.record(
                     f"{cls}.step", True, started, duration_s=time.time() - started, job_id=job_id, plan_id=job["plan_id"],
                     run_id=job["reservation_id"], step=index, grant_id=job.get("grant_id"), caller=job.get("caller"),
@@ -343,7 +356,8 @@ class JobDevice(Device):
         with self._lock:
             job["state"] = state
             job["finished"] = time.time()
-            self._save(job)
+            if generation == self._generation:  # after a re-init the reloaded copy owns the file
+                self._save(job)
         self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"))
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of this device's background job: state and steps done of total.")
