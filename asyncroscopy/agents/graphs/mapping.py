@@ -172,8 +172,9 @@ class MappingGraph:
             try:
                 plan = _parse_json(reply.content if isinstance(reply.content, str) else str(reply.content))
             except (ValueError, json.JSONDecodeError):
-                # Never fall back to an empty plan: it would become a whole-sample map.
-                return {"error": "the model's reply held no JSON map plan"}
+                # Small models often answer in prose. The request text then decides: a stated size
+                # ("a 600 nm square") or "the whole sample"; with neither, _complete_plan refuses.
+                plan = {}
         score = bool(plan.pop("score", state.get("score", False)))
         try:
             plan = self._complete_plan(plan, context, state.get("request", ""), from_model=from_model)

@@ -122,7 +122,7 @@ tango:
   reset_database_file: true
 ```
 
-A config has one `instrument`; a second instrument (a robot beside an XRD) goes under `devices`. The `instrument.file` must be inside this repository; a device kept elsewhere goes under `devices` with a `module_name` importable from the server's Python path. Each device is named `asyncroscopy/<config key>/default`; two devices of one class get tools named after their config keys (`IndentGrid_grid1_reserve`, `IndentGrid_grid2_reserve`), so give a skill's `requires:` a glob such as `IndentGrid*_reserve`.
+A config has one `instrument`; a second instrument (a robot beside an XRD) goes under `devices`. For an instrument kept outside this repository, replace `file` with `module_name` (for example `mylab.optiscope`) and give `class_name`; install your package into the environment (`uv pip install -e path/to/mylab`) or put its folder on `PYTHONPATH`, which the launched servers inherit. Supporting devices under `devices` work the same way. Each device is named `asyncroscopy/<config key>/default`; two devices of one class get tools named after their config keys (`IndentGrid_grid1_reserve`, `IndentGrid_grid2_reserve`), so give a skill's `requires:` a glob such as `IndentGrid*_reserve`.
 
 ```bash
 uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml

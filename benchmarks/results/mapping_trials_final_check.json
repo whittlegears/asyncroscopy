@@ -1,0 +1,326 @@
+{
+  "model": "qwen3:8b",
+  "n": 3,
+  "started": 1793185116.0018437,
+  "tasks": {
+    "map_square/graph": {
+      "passed": 1,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 86.6,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              -2.686065143476194e-07,
+              3.313934856523807e-07,
+              -2.994123862575082e-07,
+              3.0058761374249187e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_54fb2db6d44d.h5.\nStitched map: map_54fb2db6d44d_map.",
+          "infra_error": false
+        },
+        {
+          "seconds": 15.9,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        },
+        {
+          "seconds": 13.4,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_square/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 176.4,
+          "model_calls": 12,
+          "tool_calls": 11,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "size_m": [
+              6e-07,
+              6e-07
+            ]
+          },
+          "final": "The map has been created successfully. The map key is `map_61fe8ba408b3_map`. It covers a stage box of approximately [-7.6e-8 m, 5.5e-7 m, -8.35e-8 m, 5.28e-7 m] with a pixel size of 3.125e-10 m. There are no points of interest marked yet. The map is ready for further analysis or exploration.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_with_eds/graph": {
+      "passed": 0,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 12.5,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        },
+        {
+          "seconds": 11.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        },
+        {
+          "seconds": 11.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": true
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_with_eds/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 250.2,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "wait_for_job",
+            "wait_for_job",
+            "Mapper_results",
+            "assemble_map",
+            "wait_for_job",
+            "wait_for_job",
+            "analysis_job_status",
+            "analysis_job_results",
+            "map_info"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "final": "I have completed the mapping task. The resulting map is stored under the key `map_c9bbb22922fb_map`. The map has 4 levels of detail, a canvas size of 1940x1993 pixels, and a pixel size of 3.125e-10 metres. There are no points of interest identified yet.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_and_explore/graph": {
+      "passed": 0,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": false,
+      "rows": [
+        {
+          "seconds": 12.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": false
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        },
+        {
+          "seconds": 10.7,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": false
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        },
+        {
+          "seconds": 10.7,
+          "model_calls": 1,
+          "checks": {
+            "completed": false,
+            "box_matches_request": false,
+            "eds_as_asked": false,
+            "explored_as_asked": false
+          },
+          "ok": false,
+          "error": "the model's reply held no JSON map plan",
+          "plan": null,
+          "report": "Map not completed: the model's reply held no JSON map plan",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_and_explore/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 158.6,
+          "model_calls": 14,
+          "tool_calls": 13,
+          "tool_names": [
+            "load_skill",
+            "Mapper_reserve",
+            "Mapper_start",
+            "wait_for_job",
+            "Mapper_results",
+            "Mapper_release",
+            "assemble_map",
+            "analysis_job_status",
+            "analysis_job_results",
+            "score_map",
+            "score_map",
+            "analysis_job_status",
+            "analysis_job_results"
+          ],
+          "skills_loaded": [
+            "mapping"
+          ],
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true,
+            "used_mapper_not_a_loop": true
+          },
+          "ok": true,
+          "plan": {
+            "size_m": [
+              6e-07,
+              6e-07
+            ],
+            "fov_m": 2e-07,
+            "overlap": 0.15
+          },
+          "final": "I mapped a 600 nm square around the current position with a grid of 16 images (4x4), no EDS spectra. The stitched map key is `map_261026f649a2_map`.\n\nThe 3 most interesting regions (based on the baseline scorer) are:\n\n1. **Region 1**: Stage coordinates `[6.796875654930773e-7, 6.421387356698688e-7]`, score `0.5436`, reason: \"contrast 1.00 (features 28.6 above background, noise 0.789); edges cover 3.9%\".\n\nNo other regions were found. The map and regions are ready for further exploration.",
+          "infra_error": false
+        }
+      ]
+    }
+  },
+  "out_of_box_moves": 0
+}
