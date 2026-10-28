@@ -29,10 +29,10 @@ DEFAULT_TOOLS = [
     "assemble_map", "score_map", "analysis_job_status", "analysis_job_results", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
 ]
 
-SYSTEM = """You operate a scanning transmission electron microscope (or its digital twin) through tools.
+SYSTEM = """You operate laboratory instruments (for example a scanning transmission electron microscope, or its digital twin) through tools.
 
 Rules:
-- Lengths are metres, tilts degrees. Stage positions are [x, y, z, alpha, beta].
+- Lengths are metres, tilts degrees. Each tool's description gives its arguments; a STEM stage position is [x, y, z, alpha, beta].
 - Before a multi-step task, call load_skill with the matching skill and follow it. Skills: {skills}
 - Never move the stage or acquire in a loop for a map: use the Mapper job (see the mapping skill).
 - If a tool says APPROVAL REQUIRED with a request_id, call approval_status until it is approved, then repeat the same call once. If denied or expired, stop and tell the user.
@@ -47,7 +47,9 @@ async def make_graph(config: dict | None = None):
         model=configurable.get("model"),
         caller=configurable.get("caller") or os.environ.get("ASYNCROSCOPY_CALLER", "general-agent"),
     )
-    tools = await agent_config.tools(allow=configurable.get("tools") or DEFAULT_TOOLS)
+    # Other instruments: list their tool patterns in ASYNCROSCOPY_AGENT_TOOLS (comma-separated globs).
+    env_tools = [p.strip() for p in os.environ.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()]
+    tools = await agent_config.tools(allow=configurable.get("tools") or env_tools or DEFAULT_TOOLS)
     # Reading skill files is blocking I/O; keep it off the event loop (LangGraph Studio enforces this).
     available = await asyncio.to_thread(list_skills)
     skills = "; ".join(f"{s.name}: {s.description}" for s in available if s.available) or "none"

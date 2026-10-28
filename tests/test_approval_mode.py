@@ -52,7 +52,7 @@ class TestPolicy:
             ("DigitalTwin", "acquire_scanned_image", "high"),
             ("Mapper", "start", "high"),
             ("Mapper", "abort", "low"),
-            ("Mapper", "job_status", "low"),
+            ("Mapper", "job_status", "high"),  # envelope verbs are low only on envelope devices
             ("DigitalTwin", "get_stage", "low"),
             ("DigitalTwin", "blank_beam", "low"),
             ("DigitalTwin", "unblank_beam", "high"),
@@ -62,13 +62,25 @@ class TestPolicy:
     def test_default_risk(self, dev_class, command, level):
         assert risk_of(dev_class, command) == level
 
+    def test_envelope_verbs_low_only_on_envelope_devices(self):
+        assert risk_of("Mapper", "job_status", envelope=True) == "low"
+        assert risk_of("Mapper", "release", envelope=True) == "low"
+        assert risk_of("Mapper", "start", envelope=True) == "high"
+        assert risk_of("Camera", "release") == "high"
+
+    def test_safe_stop_verbs_always_low(self):
+        assert risk_of("AnyStage", "stop") == "low"
+        assert risk_of("Mapper", "abort") == "low"
+
     def test_overrides_come_first(self):
         assert risk_of("DigitalTwin", "move_stage", {"DigitalTwin.move_stage": "low"}) == "low"
 
     def test_operator_only(self):
         assert operator_only("Approvals", "approve")
         assert operator_only("DigitalTwin", "export_ground_truth")
-        assert not operator_only("Approvals", "request")
+        assert operator_only("Approvals", "request")
+        assert operator_only("Approvals", "check")
+        assert not operator_only("Approvals", "get_mode")
 
 
 class TestApprovalsDevice:
@@ -197,7 +209,8 @@ class TestEndpointRoles:
         assert ("approve" not in approvals) is hidden
         assert ("set_mode" not in approvals) is hidden
         assert ("export_ground_truth" not in twin) is hidden
-        assert {"request", "get_mode"} <= approvals and "move_stage" in twin
+        assert ("request" not in approvals) is hidden
+        assert "get_mode" in approvals and "move_stage" in twin
 
     def test_unknown_role_rejected(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)

@@ -14,8 +14,15 @@ from asyncroscopy.contracts import ENVELOPE_VERSION
 RESULT_PREVIEW_CHARS = 500
 
 
+def _plain(value: Any) -> Any:
+    """numpy scalars and arrays as plain numbers and lists; anything else as text."""
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return str(value)
+
+
 def _json_safe(value: Any) -> Any:
-    return json.loads(json.dumps(value, default=str))
+    return json.loads(json.dumps(value, default=_plain))
 
 
 class ToolCallLog:

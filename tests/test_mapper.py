@@ -103,7 +103,7 @@ class TestRun:
             trace = [json.loads(line) for line in h5["trace"][()]]
             assert sum(1 for e in trace if e["action"] == "Mapper.step") == N_TILES
             assert json.loads(h5.attrs["plan"])["fov_m"] == pytest.approx(8e-8)
-        assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is False
+        assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True  # blanked when the job ends
         release_all(mapper_proxy, reserve["reservation_id"])
 
     def test_abort_stops_within_one_tile_and_blanks_beam_then_resume_finishes(self, mapper_proxy, mapping_twin_proxy, mapping_scan_proxy):

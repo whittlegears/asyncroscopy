@@ -4,9 +4,12 @@ An agent (or a person, or a script) asks for a map in one call instead of
 issuing a thousand moves and acquisitions. The plan (asyncroscopy/contracts/
 map_plan.schema.json) fixes a stage box, field of view, overlap, detectors and
 per-tile actions such as one EDS spectrum at each tile centre. The worker
-visits tiles in serpentine order (to limit backlash), never leaves the box,
-stops when the dose budget would be exceeded, and blanks the beam whenever it
-stops early.
+visits tiles in serpentine order (to limit backlash) and never leaves the box.
+`reserve` refuses a plan whose overlapping tiles would give any point more
+than the dose budget; the plan cannot change after that, so there is no
+separate dose check while it runs (EDS point spectra are reported, not
+budgeted). The beam is blanked whenever the job ends: done, aborted or
+failed.
 
 Every tile, its reported stage position and any spectra go into one HDF5 run
 file, ``maps/map_<run>.h5``, which is registered with Tiled when the job
@@ -71,7 +74,26 @@ def tile_centres(box: list[float], fov: float, overlap: float, order: str) -> li
     return tiles
 
 
+def max_exposures(tiles: list[dict], fov: float) -> int:
+    """Most tiles that cover any one point, from the actual tile centres.
+
+    tile_centres spreads tiles evenly, so the real overlap can exceed the
+    requested one; the dose check must use the real spacing.
+    """
+
+    def per_axis(values: list[float]) -> int:
+        unique = sorted(set(round(v, 15) for v in values))
+        if len(unique) < 2:
+            return 1
+        spacing = min(b - a for a, b in zip(unique, unique[1:]))
+        return min(len(unique), int(math.ceil(fov / spacing - 1e-9)))
+
+    return per_axis([t["x"] for t in tiles]) * per_axis([t["y"] for t in tiles])
+
+
 class Mapper(JobDevice):
+    JOB_KIND = "map acquisition: a grid of images (optionally an EDS spectrum at each) over a stage box. Not stitching"
+
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to drive.")
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
     eds_device_address = device_property(dtype=str, default_value="", doc="EDS settings device (needed for EDS per-tile actions).")
@@ -86,12 +108,15 @@ class Mapper(JobDevice):
         proxy.set_timeout_millis(timeout_ms)
         return proxy
 
-    def _beam_current_pa(self) -> float:
+    def _beam_current_pa(self) -> tuple[float, str]:
+        """(current, source): "microscope" when reported, "default_beam_current_pa" when assumed."""
         try:
             parameters = json.loads(self._proxy(self.microscope_device_address).get_parameters())
-            return float(parameters.get("beam_current_pa", self.default_beam_current_pa))
+            if "beam_current_pa" in parameters:
+                return float(parameters["beam_current_pa"]), "microscope"
         except (tango.DevFailed, ValueError, TypeError):
-            return float(self.default_beam_current_pa)
+            pass
+        return float(self.default_beam_current_pa), "default_beam_current_pa"
 
     # ------------------------------------------------------------------
     # Plan
@@ -110,10 +135,9 @@ class Mapper(JobDevice):
 
         imsize, dwell, fov = int(p["imsize"]), float(p["dwell_s"]), float(p["fov_m"])
         pixel_a = fov / imsize / 1e-10
-        current = self._beam_current_pa()
+        current, current_source = self._beam_current_pa()
         frame_dose = current * 1e-12 * dwell / ELECTRON_CHARGE / (pixel_a**2)
-        step = fov * (1.0 - float(p["overlap"]))
-        multiplicity = min(len(steps), int(math.ceil(fov / step - 1e-9)) ** 2)
+        multiplicity = max_exposures(steps, fov)
         max_dose = frame_dose * multiplicity
         budget = p.get("dose_budget_e_per_a2")
         if budget is not None and max_dose > float(budget):
@@ -130,6 +154,8 @@ class Mapper(JobDevice):
             "duration_s": round(len(steps) * (float(self.estimate_move_s) + frame_s + eds_s), 1),
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
+            # The dose estimate is only as good as the current; say when it was assumed.
+            "beam_current_source": current_source,
         }
         if "eds_point" in p["per_tile"]:
             estimate["note"] = "EDS point spectra concentrate dose at each tile centre; that dose is not in max_dose_e_per_a2."
@@ -255,6 +281,8 @@ class Mapper(JobDevice):
         self._write_trace(job)
 
     def on_finish(self, job: dict) -> dict:
+        # A finished map must not leave the beam parked on the last tile.
+        self._proxy(self.microscope_device_address).blank_beam()
         self._write_trace(job)
         path = self._run_path(job)
         keys = {"run_file": str(path)}

@@ -42,7 +42,7 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
-from asyncroscopy.safety.policy import operator_only, risk_of
+from asyncroscopy.safety.policy import is_envelope_device, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -512,6 +512,7 @@ class MCPServer:
         cmd_info: CommandInfo,
         command_name: str,
         dev_class: str,
+        tool_prefix: str | None = None,
     ) -> Callable:
         """Create a wrapper function with a proper signature for a Tango command.
 
@@ -519,7 +520,8 @@ class MCPServer:
             func: The raw Tango device command method
             cmd_info: The CommandInfo object from Tango
             command_name: The name of the command
-            dev_class: The Tango device class name
+            dev_class: The Tango device class name (used by the risk and blocking rules)
+            tool_prefix: Tool-name prefix; defaults to the class name
 
         Returns:
             A wrapper function with a proper signature
@@ -530,14 +532,17 @@ class MCPServer:
         in_desc = cmd_info.in_type_desc
 
         out_type = cmd_info.out_type
-        unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
+        unique_name = f"{tool_prefix or dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
-        risk = risk_of(dev_class, command_name, self.risk_overrides)
+        envelope = (tool_prefix or dev_class) in getattr(self, "_envelope_prefixes", set())
+        risk = risk_of(dev_class, command_name, self.risk_overrides, envelope=envelope)
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
             caller = self._caller()
             gate = self._gate(unique_name, risk, arguments, caller)
+            if envelope and command_name == "start" and call_args:
+                call_args = (self._with_grant(call_args[0], gate, caller), *call_args[1:])
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
                 result = self._augment_with_preview(command_name, normalized)
@@ -576,6 +581,9 @@ class MCPServer:
             doc_lines.append(f"Output Description: {out_desc}")
             # Lead with what the command is for: models weigh the first line most when choosing a tool.
             doc_lines.insert(0, out_desc)
+        job_kind = getattr(self, "_job_kinds", {}).get(tool_prefix or dev_class)
+        if envelope and job_kind:
+            doc_lines.insert(0, f"{tool_prefix or dev_class} job: {job_kind}.")
         doc = "\n".join(doc_lines)
 
         # Get parameter name from docstring description text
@@ -634,8 +642,15 @@ class MCPServer:
                 arg = args[0] if args else kwargs.get(param_name)
                 if arg is None:
                     arg = {k: v for k, v in kwargs.items() if k in fields and v is not None}
+                if isinstance(arg, str):
+                    try:
+                        arg = json.loads(arg)
+                    except json.JSONDecodeError:
+                        pass  # not JSON: the device reports the error
                 if isinstance(arg, (dict, list)):
-                    arg = json.dumps(arg)
+                    # One canonical text for one call, whatever form it came in, so the
+                    # approval fingerprint of a retried call matches its grant.
+                    arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
                 return _run({param_name: self._numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[arg_type | None, Field(description=clean_desc)], default=None)]
@@ -660,6 +675,28 @@ class MCPServer:
         wrapper.__qualname__ = unique_name
 
         return wrapper
+
+    @staticmethod
+    def _with_grant(request: Any, gate: dict, caller: str | None) -> Any:
+        """Tell a starting job who asked and which approval covers it, so its trace links to the grant.
+
+        Added after the approval check, so it never changes the call's fingerprint.
+        """
+        if not isinstance(request, str):
+            return request
+        try:
+            body = json.loads(request)
+        except json.JSONDecodeError:
+            return request
+        if not isinstance(body, dict):
+            return request
+        # Only the gate may say which approval covers a job; an agent-supplied grant_id is dropped.
+        body.pop("grant_id", None)
+        if gate.get("grant_id"):
+            body["grant_id"] = gate["grant_id"]
+        if caller:
+            body["caller"] = caller
+        return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _caller() -> str | None:
@@ -747,10 +784,12 @@ class MCPServer:
     def _find_tools(self) -> dict[str, dict[str, tuple[Callable, CommandInfo]]]:
         """Discover tools by querying Tango DB for devices and their commands.
 
-        Returns a dict mapping dev_class -> command_name -> (func, cmd_info)
+        Returns a dict mapping tool prefix (the class name, or <Class>_<member> when several
+        devices share a class) -> command_name -> (func, cmd_info)
         """
         devices = self._list_all_devices()
         tools: dict[str, dict[str, tuple[Callable, CommandInfo]]] = {}
+        opened: list[tuple[str, DeviceProxy, str]] = []
         for device_name in devices:
             if self._is_admin_device(device_name):
                 continue
@@ -763,12 +802,33 @@ class MCPServer:
                 if self.verbose:
                     print(f"Skipping {device_name}: failed to open proxy ({exc})")
                 continue
+            if not self._is_blocked_class(dev_class):
+                opened.append((device_name, dev, dev_class))
 
-            if self._is_blocked_class(dev_class):
-                continue
+        # Tools are named <Class>_<command>. When several devices share a class (two robots,
+        # two job devices) each gets its own prefix, <Class>_<member>, so neither hides the
+        # other and an approval for one never covers the other.
+        per_class: dict[str, int] = {}
+        for _name, _dev, dev_class in opened:
+            per_class[dev_class] = per_class.get(dev_class, 0) + 1
+        self._prefix_class: dict[str, str] = {}
+        self._envelope_prefixes: set[str] = set()
+        self._job_kinds: dict[str, str] = {}
+        for device_name, dev, dev_class in opened:
+            prefix = dev_class
+            if per_class[dev_class] > 1:
+                parts = device_name.split("/")
+                prefix = f"{dev_class}_{parts[1] if len(parts) == 3 else device_name}".replace("/", "_").replace("-", "_")
+            self._prefix_class[prefix] = dev_class
 
             try:
                 commands = dev.command_list_query()
+                if is_envelope_device(c.cmd_name for c in commands):
+                    self._envelope_prefixes.add(prefix)
+                    try:
+                        self._job_kinds[prefix] = str(dev.job_kind)
+                    except Exception:  # an envelope device without the job_kind attribute
+                        pass
             except Exception as exc:
                 if self.verbose:
                     print(f"Skipping {device_name}: failed to query commands ({exc})")
@@ -799,9 +859,7 @@ class MCPServer:
                             f"failed to resolve command ({exc})"
                         )
                     continue
-                if dev_class not in tools:
-                    tools[dev_class] = {}
-                tools[dev_class][command_name] = (func, cmd)
+                tools.setdefault(prefix, {})[command_name] = (func, cmd)
         return tools
 
     def setup(self, print_summary: bool = True):
@@ -813,11 +871,12 @@ class MCPServer:
         raw_tools = self._find_tools()
 
         wrapped_tools: dict[str, dict[str, Callable]] = {}
-        for dev_class in raw_tools:
-            wrapped_tools[dev_class] = {}
-            for command_name, (func, cmd_info) in raw_tools[dev_class].items():
-                wrapped = self._create_wrapper(func, cmd_info, command_name, dev_class)
-                wrapped_tools[dev_class][command_name] = wrapped
+        prefix_class = getattr(self, "_prefix_class", {})
+        for prefix in raw_tools:
+            wrapped_tools[prefix] = {}
+            for command_name, (func, cmd_info) in raw_tools[prefix].items():
+                wrapped = self._create_wrapper(func, cmd_info, command_name, prefix_class.get(prefix, prefix), tool_prefix=prefix)
+                wrapped_tools[prefix][command_name] = wrapped
 
         self.tools = wrapped_tools
         if print_summary and self.verbose:
