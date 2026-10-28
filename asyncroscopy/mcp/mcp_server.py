@@ -968,7 +968,7 @@ class MCPServer:
         for tool, risk in self.tool_risks.items():
             if self.endpoint_role == "agent" and risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
                 warnings.append(f"{tool} looks like a stop but is high: approve mode holds it. If it is a safe stop, add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
-        for tool in sorted(self._lowered):
+        for tool in sorted(self._lowered if self.endpoint_role == "agent" else ()):
             warnings.append(f"{tool} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")
         self.risk_warnings = warnings
         for line in warnings:

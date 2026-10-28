@@ -132,7 +132,7 @@ def unreachable(*urls: str) -> list[str]:
     for url in urls:
         parts = urllib.parse.urlsplit(url)
         try:
-            socket.create_connection((parts.hostname, parts.port), timeout=2).close()
+            socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
         except OSError:
             down.append(url)
     return down

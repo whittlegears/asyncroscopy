@@ -262,10 +262,6 @@ class JobDevice(Device):
             if self.PLAN_EXAMPLE is not None:
                 message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
             return self._error("plan_rejected", message)
-        except Exception as exc:
-            if fn != self._reserve:
-                raise
-            return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}")
 
     # ------------------------------------------------------------------
     # Envelope verbs
@@ -283,7 +279,12 @@ class JobDevice(Device):
             active = self._active()
             if active is not None:
                 raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}; release or abort it first")
-            resolved = self.resolve_plan(body["plan"])
+            try:
+                resolved = self.resolve_plan(body["plan"])
+            except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
+                raise  # sorted out by _guard: the caller's plan, or the device's bug
+            except Exception as exc:
+                raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
             if not isinstance(resolved, dict) or not isinstance(resolved.get("steps"), list):
                 # The device's own bug, not the caller's plan: say so, outside plan_rejected.
                 raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list, got {type(resolved).__name__}")

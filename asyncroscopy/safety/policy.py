@@ -43,7 +43,10 @@ STOP_OBJECTS = frozenset({
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
     "indenter", "head", "objective", "robot", "xray", "source",
 })
-# What "disengage" may take: a probe lifted off the sample. disengage_motor or disengage_z frees an axis.
+# What "retract"/"withdraw" may move: a probe or Z away from the sample (a bare Retract means that on
+# an SPM). retract_shutter opens a beam path and retract_stage or retract_robot moves an axis or an arm.
+RETREAT_OBJECTS = frozenset({"tip", "probe", "head", "z", "indenter", "objective", "now"})
+# What "disengage" may take, and it must name one: disengage_motor or a bare Disengage can free an axis.
 DISENGAGE_OBJECTS = frozenset({"tip", "probe", "head"})
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
 # (a de-energised shutter may open; close it with close_shutter).
@@ -130,7 +133,9 @@ def is_safe_stop(command: str) -> bool:
     if verbs[0] == "off":  # a bare Off is a de-energise (on a stage it drops holding torque)
         return bool(before) and before <= OFF_OBJECTS
     if verbs[0] == "disengage":
-        return (before | after) <= DISENGAGE_OBJECTS
+        return bool(before | after) and (before | after) <= DISENGAGE_OBJECTS
+    if verbs[0] in RETREAT_VERBS:
+        return (before | after) <= RETREAT_OBJECTS
     allowed_after = STOP_OBJECTS | (MOTION_OBJECTS if verbs[0] in STOP_VERBS else frozenset())
     return before <= STOP_OBJECTS and after <= allowed_after
 
