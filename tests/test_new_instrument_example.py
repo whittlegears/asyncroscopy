@@ -137,3 +137,26 @@ def test_a_failed_state_save_on_start_leaves_the_reservation_startable():
     with pytest.raises(PermissionError):
         grid._start(json.dumps({"reservation_id": "r1"}))
     assert job["state"] == "reserved" and job["job_ids"] == [] and not grid._abort and not grid._job_index
+
+
+def test_a_worker_that_cannot_start_leaves_the_reservation_startable(monkeypatch):
+    import threading
+
+    class Envelope:  # JobDevice's envelope logic only, no Tango server
+        _start, _parse, _active = JobDevice._start, JobDevice._parse, JobDevice._active
+
+    grid = Envelope()
+    job = {"reservation_id": "r1", "state": "reserved", "job_ids": [], "caller": None, "last_error": None}
+    saved = []
+    grid._lock, grid._jobs, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, []
+    grid._save = lambda j: saved.append(j["state"])
+    grid._omni_worker = lambda *a: None
+
+    def no_threads(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", no_threads)
+    with pytest.raises(RuntimeError):
+        grid._start(json.dumps({"reservation_id": "r1"}))
+    assert job == {"reservation_id": "r1", "state": "reserved", "job_ids": [], "caller": None, "last_error": None}
+    assert saved == ["running", "reserved"] and not grid._abort and not grid._job_index and not grid._threads
