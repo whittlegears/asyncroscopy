@@ -590,9 +590,18 @@ class MCPServer:
         ):
             # Sanitize description
             clean_desc = in_desc.replace("\n", " ").strip()
+            # ":param name:" only names the parameter; the model should see just the description.
+            clean_desc = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", clean_desc)
             arg_type = Annotated[py_type, Field(description=clean_desc)]
         else:
+            clean_desc = ""
             arg_type = py_type
+
+        # A string parameter documented as JSON also accepts the object itself: models pass
+        # {"job_id": "..."} far more reliably than a JSON-encoded string of it.
+        json_string = py_type is str and clean_desc.upper().startswith("JSON")
+        if json_string:
+            arg_type = Annotated[str | dict[str, Any] | list[Any], Field(description=clean_desc)]
 
         if in_type == CmdArgType.DevVoid:
             def wrapper():
@@ -612,6 +621,23 @@ class MCPServer:
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
             
+        elif json_string:
+            # JSON-object commands (job envelope, approvals): accept {"request": {...}},
+            # {"request": "<json>"} or the object's fields given directly, e.g. {"plan": {...}}.
+            # The fields come from the description's example object; FastMCP does not allow **kwargs.
+            fields = [f for f in dict.fromkeys(re.findall(r'"(\w+)"\s*:', clean_desc)) if f != param_name]
+
+            def wrapper(*args, **kwargs):
+                arg = args[0] if args else kwargs.get(param_name)
+                if arg is None:
+                    arg = {k: v for k, v in kwargs.items() if k in fields and v is not None}
+                if isinstance(arg, (dict, list)):
+                    arg = json.dumps(arg)
+                return _run({param_name: self._numpy_to_python(arg)}, arg)
+
+            params = [inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[arg_type | None, Field(description=clean_desc)], default=None)]
+            params += [inspect.Parameter(f, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[Any, Field(description=f"Same as {param_name}.{f}.")], default=None) for f in fields]
+
         else:
             # Scalars and standard arrays
             def wrapper(*args, **kwargs):
@@ -679,6 +705,23 @@ class MCPServer:
             "Call approval_status with this request_id until it is approved, then repeat exactly the same call. "
             "If it is denied, do not retry; report to the user."
         )
+
+    @tool()
+    def list_skills(self) -> list[dict[str, Any]]:
+        """Skills: procedures for kinds of experiment (e.g. mapping). Load one with load_skill before doing that kind of task."""
+        from asyncroscopy.skills import list_skills
+
+        return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in list_skills()]
+
+    @tool()
+    def load_skill(self, name: str) -> str:
+        """Full instructions of one skill from list_skills. Follow them for that kind of task."""
+        from asyncroscopy.skills import load_skill
+
+        try:
+            return load_skill(name)
+        except (KeyError, RuntimeError) as exc:
+            raise ToolError(str(exc).strip("'\"")) from exc
 
     @tool()
     def approval_status(self, request_id: str) -> dict[str, Any]:
@@ -782,7 +825,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices]
+        native_tools = [self.get_data_from_key, self.list_devices, self.list_skills, self.load_skill]
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
         for native_tool in native_tools:

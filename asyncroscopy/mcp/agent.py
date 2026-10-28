@@ -18,17 +18,20 @@ try:
     from langchain.chat_models import init_chat_model
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import BaseTool
-    from langchain_mcp_adapters.client import MultiServerMCPClient
 
     from langgraph.graph import END, START, StateGraph
+
+    from asyncroscopy.agents.mcp_tools import McpServer
 except ImportError:
     print("Missing dependencies! Please run:")
     print("uv sync --extra agent --extra ollama")
     sys.exit(1)
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
-DEFAULT_MODEL = "gemma4:31b"
+DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_MAX_STEPS = 10
+# Ollama's default context silently truncates long tool lists; always set it.
+DEFAULT_NUM_CTX = 8192
 
 
 @dataclass
@@ -60,11 +63,12 @@ class AgentSwarm:
         max_steps: int = DEFAULT_MAX_STEPS,
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
+        num_ctx: int = DEFAULT_NUM_CTX,
         verbose: bool = True,
     ):
         """
         Args:
-            model (str): Model name, interpreted by ``model_provider``. Defaults to "gemma4:31b".
+            model (str): Model name, interpreted by ``model_provider``. Defaults to DEFAULT_MODEL.
             model_provider (str): Provider for ``init_chat_model`` when
                 ``use_init_chat_model`` is set; "ollama" otherwise. Defaults to "ollama".
             max_steps (int): LangGraph recursion limit for a single query. Defaults to 10.
@@ -77,11 +81,12 @@ class AgentSwarm:
         self.model_provider = model_provider
         self.max_steps = int(max_steps)
         self.use_init_chat_model = use_init_chat_model
+        self.num_ctx = int(num_ctx)
         self.verbose = verbose
 
         self._agents: list[Agent] = list(startup_agents or [])
         self._tools: list[BaseTool] = []
-        self._mcp_clients: list[MultiServerMCPClient] = []
+        self._mcp_clients: list[McpServer] = []
         self._model = None
         self.startup_error: str | None = None
 
@@ -122,6 +127,7 @@ class AgentSwarm:
                     model=self.model,
                     temperature=0,
                     reasoning=False,
+                    num_ctx=self.num_ctx,
                 )
 
             print("\n[SYSTEM]: Pre-warming model (Cold Start)...")
@@ -158,12 +164,11 @@ class AgentSwarm:
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
         """Connect to an MCP server and inherit its tools. Returns true for success."""
         try:
-            server_id = f"server_{len(self._mcp_clients)}"
-            client = MultiServerMCPClient({server_id: {"url": url, "transport": transport}})
+            client = McpServer(url)
 
             print(f"\n[SYSTEM]: Connecting to MCP Server at {url}...")
 
-            tools = await client.get_tools()
+            tools = await client.langchain_tools()
 
             self._mcp_clients.append(client)
             self._tools.extend(tools)

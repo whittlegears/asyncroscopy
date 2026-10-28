@@ -498,6 +498,9 @@ def print_summary(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Line-buffer even when stdout is a pipe or file (a GUI, a log, CI), so "ready"
+    # and the summary appear when they happen rather than when the launcher exits.
+    sys.stdout.reconfigure(line_buffering=True)
     shutdown_requested = False
 
     def request_shutdown(_signum, _frame) -> None:

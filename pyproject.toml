@@ -94,6 +94,9 @@ autoscript-tem-microscope-client = { path = "stubs/AutoScript_v_1.18/autoscript_
 autoscript-tem-toolkit = { path = "stubs/AutoScript_v_1.18/autoscript_tem_toolkit-1.18.0-py3-none-any.whl" }
 thermoscientific-logging = { path = "stubs/AutoScript_v_1.18/thermoscientific_logging-1.4.0-py3-none-any.whl" }
 pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
+# The map/analysis MCP server and the stitcher live in a pyTEMlib branch until they are
+# merged upstream (pycroscopy/pyTEMlib); then this line goes and PyPI pyTEMlib is used.
+pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", branch = "feature/mcp-mapping" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]

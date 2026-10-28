@@ -1,0 +1,20 @@
+{"prompt": "What is the current stage position?", "tool": "*_get_stage"}
+{"prompt": "Move the stage to x = 100 nm, y = -50 nm, z = 0 with no tilt.", "tool": "*_move_stage"}
+{"prompt": "Take a HAADF image.", "tool": "*_acquire_scanned_image"}
+{"prompt": "Set the field of view to 500 nm.", "tool": "*_set_fov"}
+{"prompt": "Put the beam in the centre of the field of view.", "tool": "*_place_beam"}
+{"prompt": "Acquire an EDS spectrum with the eds detector.", "tool": "*_acquire_spectrum"}
+{"prompt": "Is the approval mode auto or approve right now?", "tool": "Approvals_get_mode"}
+{"prompt": "Reserve a map of the square from -1 um to 1 um in both x and y with a 200 nm field of view.", "tool": "Mapper_reserve"}
+{"prompt": "What is the status of map job 8f2c1d9e0a11?", "tool": "Mapper_job_status"}
+{"prompt": "Stop map job 8f2c1d9e0a11 now.", "tool": "Mapper_abort"}
+{"prompt": "Stitch the map run map_1b8aee6810a4.h5 into one map.", "tool": "assemble_map"}
+{"prompt": "Find the 3 most interesting regions on the map map_1b8aee6810a4_map.", "tool": "score_map"}
+{"prompt": "Blank the beam.", "tool": "*_blank_beam"}
+{"prompt": "Set the defocus to 20 nm.", "tool": "*_set_defocus"}
+{"prompt": "Which devices are connected?", "tool": "list_devices"}
+{"prompt": "Mark x = 1e-7 m, y = 2e-7 m on map map_1b8aee6810a4_map as a place where an EDS spectrum was taken.", "tool": "add_poi"}
+{"prompt": "Show me the part of map map_1b8aee6810a4_map between x = 0 and 1e-7 m and y = 0 and 1e-7 m.", "tool": "get_region"}
+{"prompt": "Which region scorers can I use?", "tool": "list_scorers"}
+{"prompt": "Get the results of map job 8f2c1d9e0a11.", "tool": "Mapper_results"}
+{"prompt": "Has approval request 46522aaafac8 been approved yet?", "tool": "approval_status"}

@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
+from asyncroscopy.agents.run import run_named_graph
 from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, DEFAULT_MODEL, Agent, AgentSwarm
 
 
@@ -101,14 +102,19 @@ class AgentMCPServer:
             print("  - set_max_steps(max_steps: int) -> int")
             print(f"\nInheriting tools from MCP servers: {', '.join(self.mcp_urls)}")
 
-    async def query_agent(self, prompt: str, include_transcript: bool = True) -> str:
+    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: str = "") -> str:
         """
-        Ask the agent swarm to carry out a request and return its response.
+        Ask the agents to carry out a request and return the response.
 
-        If `include_transcript` is true (default), the routing decisions, 
+        graph: "" uses the agent swarm; "mapping" runs the fixed map workflow
+        (plan, reserve, approval, run, stitch, score, report); "general" runs
+        the single tool-using agent with skills.
+        If `include_transcript` is true (default), the routing decisions,
         tool calls, and generated text will also be included above the final answer.
         """
         async with self._query_lock:
+            if graph:
+                return await run_named_graph(graph, prompt, model=self.swarm.model)
             return await self.swarm.query(prompt, include_transcript=include_transcript)
 
     def spawn_agent(self, config: str) -> str:
