@@ -50,6 +50,10 @@ def check(task: dict, plan: dict | None, state: dict, centre: list[float]) -> di
     checks = {}
     checks["completed"] = bool(state.get("map_key")) and not state.get("error")
     box = plan.get("box_m") if isinstance(plan, dict) else None
+    size = plan.get("size_m") if isinstance(plan, dict) else None
+    if box is None and isinstance(size, (list, tuple)) and len(size) == 2 and all(isinstance(v, (int, float)) for v in size):
+        cx, cy = (plan.get("centre_m") or centre)[:2]  # resolved as the Mapper does
+        box = [cx - size[0] / 2, cx + size[0] / 2, cy - size[1] / 2, cy + size[1] / 2]
     if isinstance(box, (list, tuple)) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
         x0, x1, y0, y1 = box
         covers = x0 <= centre[0] - SIDE_M / 2 * 0.75 and x1 >= centre[0] + SIDE_M / 2 * 0.75 and y0 <= centre[1] - SIDE_M / 2 * 0.75 and y1 >= centre[1] + SIDE_M / 2 * 0.75
@@ -101,7 +105,8 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     state_like = {"map_key": map_key.group(0) if map_key else None, "pois": [{"kind": "candidate"}] if any(c["name"] == "score_map" for c in calls) else []}
     checks = check(task, plan, state_like, centre)
     checks["used_mapper_not_a_loop"] = sum(1 for c in calls if c["name"].endswith("_move_stage")) <= 2
-    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
+    skills = sorted({c["args"].get("name", "") for c in calls if c["name"] == "load_skill"})
+    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": [c["name"] for c in calls], "skills_loaded": skills, "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
 
 
 def out_of_box_moves(trace_path: Path, since: float) -> int:

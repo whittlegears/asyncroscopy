@@ -37,6 +37,7 @@ Rules:
 - Never move the stage or acquire in a loop for a map: use the Mapper job (see the mapping skill).
 - If a tool says APPROVAL REQUIRED with a request_id, call approval_status until it is approved, then repeat the same call once. If denied or expired, stop and tell the user.
 - Data come back as keys; look at images with get_region or get_data_from_key, never ask for raw arrays.
+- Never end your turn by saying what you will do next: make that tool call now. Fix a refused call and call again; stop only when the task is done or impossible.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone."""
 
 
