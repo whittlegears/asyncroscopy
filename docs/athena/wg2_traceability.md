@@ -35,22 +35,25 @@ Laptop with a 6 GB GTX 1660 Ti and 16 GB RAM, Ollama, twin stack as in `docs/Ope
 
 | Task | `mapping` graph (model plans, graph runs the workflow) | `general` agent (model makes every call, using the mapping skill) |
 | :-- | --: | --: |
-| Map a 600 nm square | 9/10 | 5/5 |
-| ... with an EDS spectrum per tile | 10/10 | 2/5 |
-| ... and find the 3 most interesting regions | 10/10 | 0/5 |
+| Map a 600 nm square | 9/10 | 10/10 |
+| ... with an EDS spectrum per tile | 10/10 | 10/10 |
+| ... and find the 3 most interesting regions | 10/10 | 10/10 |
 | Stage moves outside a plan box (all trials) | 0 | 0 |
 
-The `general` column is the last of four rounds. Overall it went 0/15, 1/15, 6/14 (one model-server crash not counted), then 7/15. These changes moved it:
+The `general` column is the sixth round (10 trials per task, qwen3:8b). Overall it went 0/15, 1/15, 6/14 (one model-server crash not counted), 7/15, 13/15, then 30/30. These changes moved it:
 
 - The Mapper accepts a plan's size and does the box arithmetic (`size_m`).
 - Every refused plan comes back with a valid example.
 - `wait_for_job` replaces dozens of status polls.
 - The prompt tells the agent to act instead of announcing.
 - The skill is explicit about stitching and scoring.
+- `wait_for_job` and `analysis_job_status(wait_s=...)` wait on the server, and each names the other when given the wrong kind of job id.
+- `score_map` accepts a per-axis `window_m` list.
+- The prompt is generic when no STEM tools are connected, and skills are listed only when their required tools exist.
 
-What is left is an 8B model following a long procedure: it stops after collecting data, skips scoring, or adds EDS nobody asked for. Use the `mapping` graph when the workflow is known; the general agent is for open-ended requests. Raw rows, including the tools called and skills loaded per trial: `benchmarks/results/mapping_trials_*.json`.
+Thirty trials are a small sample, and earlier rounds failed by stopping after collecting data, skipping scoring, or adding EDS nobody asked for. Use the `mapping` graph when the workflow is known; the general agent is for open-ended requests. Raw rows, including the tools called and skills loaded per trial: `benchmarks/results/mapping_trials_*.json`.
 
-**Live checks**, each run on the stack after every change: `startup_scripts/check_stack.py` passes 19/19 (map, stitch, score, POIs, approval hold/approve/single-use, a held map start showing its plan) and `startup_scripts/check_gui_contract.py` passes 12/12 (SciAgentGUI's approvals and map/spectrum reads).
+**Live checks**, each run on the stack after every change: `startup_scripts/check_stack.py` passes 19/19 (map, stitch, score, POIs, approval hold/approve/single-use, a held map start showing its plan) and `startup_scripts/check_gui_contract.py` passes 12/12 (SciAgentGUI's approvals and map/spectrum reads). The SciAgentGUI desktop app was also driven against the live stack: it listed the stitched maps, showed a map with 25 EDS points and their spectra, switched the instrument to approve mode, displayed a held `Mapper_start` with its plan, and approved it; the agent's retry then ran the job.
 
 ## Not claimed
 
