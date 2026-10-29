@@ -209,6 +209,8 @@ class JobWaitMiddleware(AgentMiddleware):
         name = request.tool_call.get("name")
         if self.wait_tool is None or name not in ("run_job", "wait_for_job") or not isinstance(result, ToolMessage):
             return None
+        if name == "run_job" and (request.tool_call.get("args") or {}).get("wait") is False:
+            return None  # the user wants the job id now (to stop it, or to come back later)
         if getattr(result, "status", "success") == "error":
             return None
         status = _json(_text(result))

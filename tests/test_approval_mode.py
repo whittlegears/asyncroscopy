@@ -618,6 +618,14 @@ class TestRunJob:
         assert reply["state"] == "running" and "wait_for_job again" in reply["note"]
         assert [c[0] for c in calls] == ["reserve", "start"]
 
+    def test_wait_false_returns_at_once_with_the_job_id(self, server_factory, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 30.0)  # never reached: no wait
+        server, calls = self.mapper_server(server_factory)
+        began = time.monotonic()
+        reply = server.run_job("Mapper", {"fov_m": 2e-7}, wait=False)
+        assert time.monotonic() - began < 5.0
+        assert reply["job_id"] == "j-r1" and reply["state"] == "running" and "Mapper_abort" in reply["note"]
+
     def test_a_short_job_comes_back_finished_with_its_results(self, server_factory):
         server, calls = self.mapper_server(server_factory)
         server._devices["Mapper"].finished = True

@@ -147,6 +147,18 @@ def test_a_long_job_costs_one_tool_round(monkeypatch):
     assert final.tool_call_id == "call-1" and seen.count("wait_for_job") == 41 and progress[-1] == "done"
 
 
+def test_run_job_with_wait_false_returns_while_the_job_runs():
+    seen = []
+
+    async def handler(request):
+        seen.append(request.tool_call["name"])
+        return ToolMessage(json.dumps({"job_id": "j1", "state": "running"}), tool_call_id="call-1", name="run_job")
+
+    middleware = JobWaitMiddleware([SimpleNamespace(name="wait_for_job")], on_progress=None)
+    final = asyncio.run(middleware.awrap_tool_call(FakeToolRequest("run_job", {"device": "Mapper", "plan": {}, "wait": False}), handler))
+    assert json.loads(final.content)["state"] == "running" and seen == ["run_job"]
+
+
 def test_waiting_stops_at_its_cap_and_says_the_job_goes_on(monkeypatch):
     monkeypatch.setattr("asyncroscopy.agents.guards.asyncio.sleep", lambda s: asyncio.sleep(0))
 
