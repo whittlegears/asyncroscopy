@@ -46,6 +46,7 @@ from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envel
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
+RUN_HEADER = "x-asyncroscopy-run"  # one agent run (agents send it with every call; see run_job)
 
 def _without_param_name(desc: str) -> str:
     """A parameter's description without its ":param name:" prefix, which only names it."""
@@ -223,7 +224,10 @@ class MCPServer:
         # (_sweep_held runs on approval_status, run_job and wait_for_job).
         self._held_runs: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         self._held_runs_lock = threading.Lock()
-        self._run_job_lock = threading.Lock()  # one reserve-and-start at a time: identical retries never file twice
+        # One reserve-and-start (and one sweep of held runs) at a time: identical retries never file twice,
+        # and a sweep never releases a reservation a retry is starting.
+        self._run_job_lock = threading.RLock()
+        self._via = threading.local()  # set while run_job calls a job device, so the trace says so
         self._last_sweep = 0.0
         self._native_names: set[str] = set()
         self.tools: dict[str, dict[str, Callable]] = {}
@@ -517,14 +521,17 @@ class MCPServer:
             gate = self._gate(unique_name, risk, arguments, caller, describe)
             if envelope and command_name == "start" and call_args:
                 call_args = (self._with_grant(call_args[0], gate, caller), *call_args[1:])
+            via = {"via": self._via.name} if getattr(self._via, "name", None) else {}  # run_job's own reserve and start
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
+                if envelope and command_name == "reserve" and self.job_limits:
+                    normalized = self._limit_reservation(tool_prefix or dev_class, normalized)
                 result = self._augment_with_preview(command_name, normalized)
             except Exception as exc:
                 if self.tool_log is not None:
                     self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
                 if self.trace is not None:
-                    self.trace.record(unique_name, False, started, arguments=arguments, duration_s=time.perf_counter() - t0, error=describe_error(exc), caller=caller, **gate)
+                    self.trace.record(unique_name, False, started, arguments=arguments, duration_s=time.perf_counter() - t0, error=describe_error(exc), caller=caller, **gate, **via)
                 message = describe_error(exc)
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
@@ -539,7 +546,7 @@ class MCPServer:
                 self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized)
             if self.trace is not None:
                 key = normalized if isinstance(normalized, str) and command_name.startswith("acquire") else None
-                self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, **gate)
+                self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, **gate, **via)
             return result
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
@@ -788,12 +795,16 @@ class MCPServer:
 
     # ------------------------------------------------------------------ run_job's reservations
     @staticmethod
-    def _session() -> str:
-        """The MCP session of the current request ("" outside one): two agents with one caller name stay apart."""
+    def _run_id() -> str:
+        """The agent run of the current request (X-Asyncroscopy-Run; "" without one).
+
+        Agents open a new MCP session for every call, so a held run_job is found again by caller
+        and run, not by session: two agents with one caller name stay apart by their run ids.
+        """
         try:
             from fastmcp.server.dependencies import get_http_headers
 
-            return get_http_headers(include_all=True).get("mcp-session-id") or ""
+            return get_http_headers().get(RUN_HEADER) or ""
         except Exception:
             return ""
 
@@ -823,22 +834,45 @@ class MCPServer:
             if not force and now - self._last_sweep < HELD_SWEEP_S:
                 return []
             self._last_sweep = now
-            entries = list(self._held_runs.items())
-        stale = []
-        for key, held in entries:
-            state = None
-            if held["request_id"] and self.approvals_device_address:
-                try:
-                    state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
-                except Exception:
-                    state = None
-            if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
-                stale.append(key)
-        with self._held_runs_lock:
-            ordered = sorted(self._held_runs, key=lambda k: self._held_runs[k]["created"])
-            stale += [k for k in ordered[: max(0, len(ordered) - MAX_HELD_RUNS)] if k not in stale]
-            removed = [self._held_runs.pop(k) for k in stale if k in self._held_runs]
-        return [self._release(h["device"], h["reservation_id"]) for h in removed]
+        with self._run_job_lock:  # never while a run_job is reserving or starting
+            with self._held_runs_lock:
+                entries = list(self._held_runs.items())
+            stale = []
+            for key, held in entries:
+                state = None
+                if held["request_id"] and self.approvals_device_address:
+                    try:
+                        state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
+                    except Exception:
+                        state = None
+                if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
+                    stale.append(key)
+            with self._held_runs_lock:
+                ordered = sorted(self._held_runs, key=lambda k: self._held_runs[k]["created"])
+                stale += [k for k in ordered[: max(0, len(ordered) - MAX_HELD_RUNS)] if k not in stale]
+                removed = [self._held_runs.pop(k) for k in stale if k in self._held_runs]
+            return [self._release(h["device"], h["reservation_id"]) for h in removed]
+
+    def _limit_reservation(self, device: str, reply: Any) -> Any:
+        """A reserve reply, refused (and the reservation released) when its estimate is over mcp.job_limits.
+
+        Applied to every <device>_reserve, so run_job and a direct reserve share the limits.
+        """
+        try:
+            reserved = json.loads(reply) if isinstance(reply, str) else None
+        except json.JSONDecodeError:
+            return reply
+        if not isinstance(reserved, dict) or "error" in reserved or not reserved.get("reservation_id"):
+            return reply
+        violations = self._over_limits(reserved)
+        if not violations:
+            return reply
+        note = self._release(device, reserved["reservation_id"])
+        summary = {k: reserved[k] for k in ("schema_version", "reservation_id", "plan_id", "resolved_plan", "estimate") if k in reserved}
+        return json.dumps({**summary, "note": note, "error": {"code": "plan_rejected", "violations": violations, "message": (
+            "the estimate is over this endpoint's job limits (mcp.job_limits): "
+            + "; ".join(f"{v['what']} {v['value']:.4g} {v['units']} > {v['limit']:.4g}" for v in violations)
+            + ". Tell the user the estimate and ask before trying a smaller plan; only an operator can raise the limit.")}})
 
     def _over_limits(self, reserved: dict) -> list[dict]:
         estimate = reserved.get("estimate") if isinstance(reserved.get("estimate"), dict) else {}
@@ -864,62 +898,26 @@ class MCPServer:
         return proxy
 
     @tool()
-    def run_job(self, device: str, plan: dict[str, Any]) -> dict[str, Any]:
-        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask."""
+    def run_job(self, device: str, plan: dict[str, Any] | None = None, resume: str | None = None) -> dict[str, Any]:
+        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask. To continue a job that was aborted, pass resume=<its reservation_id> and no plan: it goes on from the next step (through the approval gate, like any start)."""
         began = time.monotonic()
         tools = self.tools.get(device) if device in self._envelope_prefixes else None
         if not tools or "reserve" not in tools or "start" not in tools:
             raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
+        if (plan is None) == (resume is None):
+            raise ToolError("give a plan for a new job, or resume=<reservation_id> to continue an aborted one (not both)")
         self._sweep_held()
-        key = (self._caller() or "", self._session(), device, json.dumps(plan, sort_keys=True, default=str))
+        # A held run is found again by caller and agent run, never by MCP session (agents open one per call).
+        target = {"resume": resume} if resume else plan
+        key = (self._caller() or "", self._run_id(), device, json.dumps(target, sort_keys=True, default=str))
         with self._run_job_lock:
-            with self._held_runs_lock:
-                held = self._held_runs.get(key)
-            if held is not None and held["request_id"] and self.approvals_device_address is not None:
-                try:
-                    state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
-                except Exception:
-                    state = None
-                if state == "pending":  # asking again before the operator decided must not file a second request
-                    raise ToolError(self._held_message(device, held["request_id"], held["reservation_id"], held["summary"]))
-                if state in ("denied", "expired"):
-                    with self._held_runs_lock:
-                        self._held_runs.pop(key, None)
-                    note = self._release(device, held["reservation_id"])
-                    raise ToolError(f"the approval request {held['request_id']} for this run was {state}; {note}. Do not retry; tell the user.")
-            if held is None:
-                reserved = json.loads(tools["reserve"]({"plan": plan}))
-                if "error" in reserved:
-                    return reserved
-                summary = {k: reserved[k] for k in ("reservation_id", "plan_id", "resolved_plan", "estimate", "limits") if k in reserved}
-                violations = self._over_limits(reserved)
-                if violations:
-                    note = self._release(device, reserved["reservation_id"])
-                    return {**summary, "error": {"code": "plan_rejected", "violations": violations, "message": (
-                        "the estimate is over this endpoint's job limits (mcp.job_limits): "
-                        + "; ".join(f"{v['what']} {v['value']:.4g} {v['units']} > {v['limit']:.4g}" for v in violations)
-                        + ". Tell the user the estimate and ask before trying a smaller plan; only an operator can raise the limit.")}, "note": note}
-            else:
-                summary = held["summary"]
-            reservation_id = summary["reservation_id"]
+            self._via.name = "run_job"
             try:
-                # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
-                started = json.loads(tools["start"]({"reservation_id": reservation_id}))
-            except Exception as exc:
-                request_id = re.search(r"request_id=(\w+)", str(exc)) if "APPROVAL REQUIRED" in str(exc) else None
-                if request_id is not None:
-                    with self._held_runs_lock:
-                        self._held_runs[key] = {"reservation_id": reservation_id, "request_id": request_id.group(1), "device": device,
-                                                "created": time.monotonic(), "summary": summary}
-                    raise ToolError(self._held_message(device, request_id.group(1), reservation_id, summary)) from exc
-                with self._held_runs_lock:
-                    self._held_runs.pop(key, None)
-                note = self._release(device, reservation_id)
-                raise ToolError(f"{device} did not start ({describe_error(exc)}); {note}. Plan: {json.dumps(summary, default=str)[:1500]}") from exc
-            with self._held_runs_lock:
-                self._held_runs.pop(key, None)
-            if "error" in started:
-                return {**summary, **started, "note": self._release(device, reservation_id)}
+                summary, started = self._reserve_and_start(device, plan, tools, key, resume)
+            finally:
+                self._via.name = None
+        if "error" in started:
+            return started
         reply = {**summary, **{k: v for k, v in started.items() if k != "schema_version"}}
         wait_s = max(0.0, min(RUN_JOB_WAIT_S, RUN_JOB_BUDGET_S - (time.monotonic() - began)))
         if started.get("job_id"):
@@ -927,6 +925,66 @@ class MCPServer:
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
         return reply
+
+    def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, key: tuple, resume: str | None = None) -> tuple[dict, dict]:
+        """(plan summary, start reply or an error reply) for run_job; called under its lock."""
+        with self._held_runs_lock:
+            held = self._held_runs.get(key)
+        if held is not None and held["request_id"] and self.approvals_device_address is not None:
+            try:
+                state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
+            except Exception:
+                state = None
+            if state == "pending":  # asking again before the operator decided must not file a second request
+                raise ToolError(self._held_message(device, held["request_id"], held["reservation_id"], held["summary"]))
+            if state in ("denied", "expired"):
+                with self._held_runs_lock:
+                    self._held_runs.pop(key, None)
+                note = self._release(device, held["reservation_id"])
+                raise ToolError(f"the approval request {held['request_id']} for this run was {state}; {note}. Do not retry; tell the user.")
+        if held is None and resume:
+            # Continue an aborted job: its reservation already holds the plan; starting it again resumes it.
+            try:
+                reserved = json.loads(self._job_device(device).get_reservation(json.dumps({"reservation_id": resume})))
+            except Exception as exc:
+                raise ToolError(f"no reservation {resume!r} on {device} to resume ({describe_error(exc)})") from exc
+            if "error" in reserved:
+                return {}, {k: v for k, v in reserved.items() if k != "schema_version"}
+            summary = {"reservation_id": resume, **{k: reserved[k] for k in ("plan_id", "resolved_plan", "estimate") if k in reserved}, "resumed": True}
+        elif held is None:
+            # The reserve wrapper applies mcp.job_limits and releases a reservation over them.
+            reserved = json.loads(tools["reserve"]({"plan": plan}))
+            if "error" in reserved:
+                return {}, {k: v for k, v in reserved.items() if k != "schema_version"}
+            summary = {k: reserved[k] for k in ("reservation_id", "plan_id", "resolved_plan", "estimate", "limits") if k in reserved}
+        else:
+            summary = held["summary"]
+        reservation_id = summary["reservation_id"]
+        try:
+            # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
+            started = json.loads(tools["start"]({"reservation_id": reservation_id}))
+        except Exception as exc:
+            request_id = re.search(r"request_id=(\w+)", str(exc)) if "APPROVAL REQUIRED" in str(exc) else None
+            if request_id is not None:
+                with self._held_runs_lock:
+                    self._held_runs[key] = {"reservation_id": reservation_id, "request_id": request_id.group(1), "device": device,
+                                            "created": time.monotonic(), "summary": summary}
+                raise ToolError(self._held_message(device, request_id.group(1), reservation_id, summary)) from exc
+            with self._held_runs_lock:
+                self._held_runs.pop(key, None)
+            note = self._release_unless_resumed(device, summary)
+            raise ToolError(f"{device} did not start ({describe_error(exc)}); {note}. Plan: {json.dumps(summary, default=str)[:1500]}") from exc
+        with self._held_runs_lock:
+            self._held_runs.pop(key, None)
+        if "error" in started:
+            return summary, {**summary, **started, "note": self._release_unless_resumed(device, summary)}
+        return summary, started
+
+    def _release_unless_resumed(self, device: str, summary: dict) -> str:
+        """Free a reservation run_job made for a start that failed; an aborted job being resumed keeps its own."""
+        if summary.get("resumed"):
+            return f"{device} reservation {summary['reservation_id']} is kept, so the job can still be resumed"
+        return self._release(device, summary["reservation_id"])
 
     @tool()
     def wait_for_job(self, job_id: str, device: str | None = None, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:

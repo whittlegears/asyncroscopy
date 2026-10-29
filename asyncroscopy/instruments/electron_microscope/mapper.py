@@ -5,29 +5,37 @@ issuing a thousand moves and acquisitions. The plan (asyncroscopy/contracts/
 map_plan.schema.json) fixes a stage box, field of view, overlap, detectors and
 per-tile actions such as one EDS spectrum at each tile centre. The worker
 visits tiles in serpentine order (to limit backlash) and never leaves the box.
-`reserve` refuses a plan whose overlapping tiles would give any point more
-than the dose budget; the plan cannot change after that, so there is no
-separate dose check while it runs (EDS point spectra are reported, not
-budgeted). The beam is blanked whenever the job ends: done, aborted or
-failed.
+`reserve` refuses a plan whose dose anywhere (overlapping tiles plus a
+revisit image) would exceed the budget; the plan cannot change after that,
+so there is no separate dose check while it runs (EDS point spectra are
+reported, not budgeted). The beam is blanked whenever the job ends: done,
+aborted or failed.
 
 The job is a pipeline whose phases are steps of the same job, so abort,
 approval and progress cover all of them:
 
-1. tiles: one step per tile. Steps are computed from the plan's grid when
-   needed (``step_at``), so a plan of millions of tiles stores a few numbers.
+1. tiles: one step per tile. Steps are computed from the plan's grid (origin,
+   step and count per axis) when needed, so a plan of millions of tiles
+   stores a few numbers.
 2. stitch (``stitch``, default on, needs ``analysis_url``): the finished run is
    stitched on the analysis server (pyTEMlib ``assemble_map``) with search
    bounds from this Mapper's ``stage_sigma_m`` and ``max_drift_m_per_s``;
    every EDS point spectrum becomes a point of interest linked to its key.
 3. score (``find_regions``: N > 0): the best N regions become points of interest.
 4. revisit (``revisit``: {"fov_m": ...}): the stage goes to each of those
-   regions (only inside the plan box) and takes a higher-magnification image,
-   added as a point of interest linked to the image and to its region.
+   regions, corrected for the drift the stitch fitted, and only inside the
+   plan box, and takes a higher-magnification image, added as a point of
+   interest linked to the image and to its region.
 
-If the analysis server is down or stitching fails, the job still ends done
-with every tile safe; ``summary.stitch_error`` says why and how to retry
-(assemble_map on the run).
+Analysis calls go through one session to the analysis server. Each phase
+waits for its analysis job with backoff and an overall deadline that grows
+with the map, checking for an abort between waits. The analysis job's id is
+saved in the job before waiting, so a resumed job waits for that same job
+(or, if another client already started one on the same run, adopts it)
+instead of starting a second. If the analysis server is down, restarted or
+too slow, the job still ends done with every tile safe; ``summary.stitch_error``
+says why and how to retry (assemble_map on the run). Scoring and revisits are
+idempotent: a resumed job never images a region twice or adds its points twice.
 
 Every tile, its reported stage position and any spectra go into one HDF5 run
 file, ``maps/map_<run>.h5`` (``.h5.partial`` while tiles are being taken, so
@@ -35,16 +43,21 @@ DATA does not register it half-written). The run file uses layout 2 (see
 pyTEMlib.mcp_server.map_store): ``tiles`` is one chunked array [n, rows,
 cols] with per-tile arrays ``written``, ``stage_reported_m``,
 ``commanded_xy_m``, ``acquired_s`` and ``row_col``; ``spectra`` [n, channels]
-and ``spectrum_keys`` [n] hold EDS point spectra. Nothing in it depends on the
-vendor or on whether the microscope was the digital twin.
+and ``spectrum_keys`` [n] hold EDS point spectra. The file is closed and
+synced after each tile, so a crash loses at most the tile being written.
+Nothing in it depends on the vendor or on whether the microscope was the
+digital twin.
 """
 
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import math
+import os
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -53,10 +66,10 @@ import numpy as np
 import tango
 from tango.server import device_property
 
-from asyncroscopy.contracts import ENVELOPE_VERSION, validate
+from asyncroscopy.contracts import ENVELOPE_VERSION, load, validate
 from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.jobs import JobDevice
-from asyncroscopy.mcp.tool_log import read_tool_log
+from asyncroscopy.jobs.job_device import done_count
 
 ELECTRON_CHARGE = 1.602176634e-19
 PLAN_DEFAULTS = {
@@ -73,8 +86,15 @@ PLAN_DEFAULTS = {
 }
 EDGE_TOLERANCE_M = 1e-12
 RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
-ANALYSIS_POLL_S = 5.0  # how long one wait on the analysis server lasts; abort is checked between waits
 RUN_LAYOUT = 2
+STAGE_POLL_S = 0.2  # how often a long stage move is checked for arrival (and the job for an abort)
+ANALYSIS_CALL_S = 60.0  # longest one call to the analysis server may take
+ANALYSIS_WAIT_S = 5.0  # longest one wait on an analysis job; abort is checked between waits
+ANALYSIS_BACKOFF_S = (1.0, 2.0, 5.0, 10.0, 20.0)  # after a failed call to the analysis server
+STITCH_DEADLINE_S = (600.0, 0.05)  # base, plus per tile: the longest a stitch may take before it counts as failed
+SCORE_DEADLINE_S = 900.0
+TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
+REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
 
 
 def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -100,35 +120,181 @@ def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = 
     return xs, ys
 
 
-def tile_at(xs, ys, order: str, index: int) -> dict:
+# Names a caller (often a small model) uses for a field the plan calls something else.
+FIELD_SYNONYMS = {
+    "max_dose_e_per_a2": "dose_budget_e_per_a2", "max_dose": "dose_budget_e_per_a2", "dose_limit": "dose_budget_e_per_a2",
+    "dose_budget": "dose_budget_e_per_a2", "dose": "dose_budget_e_per_a2", "fov": "fov_m", "field_of_view_m": "fov_m",
+    "size": "size_m", "box": "box_m", "centre": "centre_m", "center_m": "centre_m", "center": "centre_m",
+    "dwell": "dwell_s", "dwell_time": "dwell_s", "image_size": "imsize", "pixels": "imsize", "regions": "find_regions",
+}
+
+
+def check_plan_fields(plan: dict) -> None:
+    """Refuse unknown plan fields by name, with the closest allowed field and the full list, before anything else."""
+    allowed = sorted(load("map_plan")["properties"])
+    unknown = [k for k in plan if k not in allowed]
+    if not unknown:
+        return
+    hints = []
+    for key in unknown:
+        guess = FIELD_SYNONYMS.get(key) or next(iter(difflib.get_close_matches(key, allowed, n=1, cutoff=0.6)), None)
+        hints.append(f"{key!r} (did you mean {guess!r}?)" if guess else repr(key))
+    raise ValueError(f"unknown plan field(s): {', '.join(hints)}. Nothing was dropped or changed: resend the plan with the right names. Allowed fields: {', '.join(allowed)}")
+
+
+def compact_grid(xs, ys) -> dict:
+    """A grid as origin, step and count per axis (the tiles are evenly spaced)."""
+    return {
+        "rows": len(ys), "cols": len(xs),
+        "x0": float(xs[0]), "dx": float(xs[1] - xs[0]) if len(xs) > 1 else 0.0,
+        "y0": float(ys[0]), "dy": float(ys[1] - ys[0]) if len(ys) > 1 else 0.0,
+    }
+
+
+def tile_at(grid: dict, order: str, index: int) -> dict:
     """Tile ``index`` of the grid, in acquisition order (serpentine reverses every other row)."""
-    cols = len(xs)
+    cols = grid["cols"]
     row, k = divmod(int(index), cols)
     col = cols - 1 - k if order == "serpentine" and row % 2 == 1 else k
-    return {"index": int(index), "row": row, "col": col, "x": float(xs[col]), "y": float(ys[row])}
+    return {"index": int(index), "row": row, "col": col, "x": grid["x0"] + col * grid["dx"], "y": grid["y0"] + row * grid["dy"]}
 
 
 def tile_centres(box: list[float], fov: float, overlap: float, order: str, limit: int | None = None) -> list[dict]:
-    """Every tile of a (small) grid as a list; large plans use ``grid_axes`` and ``tile_at`` instead."""
-    xs, ys = grid_axes(box, fov, overlap, limit)
-    return [tile_at(xs, ys, order, k) for k in range(len(xs) * len(ys))]
+    """Every tile of a (small) grid as a list; plans use ``compact_grid`` and ``tile_at`` instead."""
+    grid = compact_grid(*grid_axes(box, fov, overlap, limit))
+    return [tile_at(grid, order, k) for k in range(grid["rows"] * grid["cols"])]
 
 
-def max_exposures(xs, ys, fov: float) -> int:
+def max_exposures(grid: dict, fov: float) -> int:
     """Most tiles that cover any one point, from the actual tile spacing.
 
     The grid spreads tiles evenly, so the real overlap can exceed the
     requested one; the dose check must use the real spacing.
     """
 
-    def per_axis(values) -> int:
-        values = np.unique(np.round(np.asarray(values, dtype=np.float64), 15))
-        if len(values) < 2:
-            return 1
-        spacing = float(np.min(np.diff(values)))
-        return min(len(values), int(math.ceil(fov / spacing - 1e-9)))
+    def per_axis(n: int, step: float) -> int:
+        return 1 if n < 2 or step <= 0 else min(n, int(math.ceil(fov / step - 1e-9)))
 
-    return per_axis(xs) * per_axis(ys)
+    return per_axis(grid["cols"], grid["dx"]) * per_axis(grid["rows"], grid["dy"])
+
+
+def frame_dose(current_pa: float, dwell_s: float, fov_m: float, imsize: int) -> float:
+    """Electrons per square angstrom one frame gives."""
+    pixel_a = fov_m / imsize / 1e-10
+    return current_pa * 1e-12 * dwell_s / ELECTRON_CHARGE / (pixel_a**2)
+
+
+def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
+    """The stitch's fitted drift (x, y in metres) at ``t_s`` after the first tile; extrapolated from the last segment."""
+    if not drift or len(drift.get("times_s", [])) < 2:
+        return 0.0, 0.0
+    times = np.asarray(drift["times_s"], dtype=np.float64)
+    xy = np.asarray(drift["xy_m"], dtype=np.float64)
+    if t_s <= times[-1]:
+        return float(np.interp(t_s, times, xy[:, 0])), float(np.interp(t_s, times, xy[:, 1]))
+    rate = (xy[-1] - xy[-2]) / max(times[-1] - times[-2], 1e-9)
+    end = xy[-1] + rate * (t_s - times[-1])
+    return float(end[0]), float(end[1])
+
+
+def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, image_key, images, spectrum, spectrum_key) -> None:
+    """Put one tile into a run file's per-tile arrays (created at the first tile, sized for the whole grid).
+
+    The file is closed and synced to disk before returning, so a crash later loses nothing written here.
+    """
+    k = tile["index"]
+    with h5py.File(path, "a") as h5:
+        if "written" not in h5:
+            h5.create_dataset("written", shape=(n,), dtype=bool)
+            h5.create_dataset("stage_reported_m", shape=(n, 5), dtype=np.float64, fillvalue=np.nan)
+            h5.create_dataset("commanded_xy_m", shape=(n, 2), dtype=np.float64, fillvalue=np.nan)
+            h5.create_dataset("acquired_s", shape=(n,), dtype=np.float64, fillvalue=np.nan)
+            h5.create_dataset("row_col", shape=(n, 2), dtype=np.int32, fillvalue=-1)
+            h5.create_dataset("source_keys", shape=(n,), dtype=h5py.string_dtype())
+        for m, (name, (array, attrs)) in enumerate(sorted(images.items())):
+            detector = str(attrs.get("detector", name.rsplit("/", 1)[-1])).upper()
+            target = "tiles" if m == 0 else f"channels/{detector}"
+            if target not in h5:
+                array = np.asarray(array)
+                dset = h5.create_dataset(target, shape=(n, *array.shape), dtype=array.dtype, chunks=(1, *array.shape))
+                dset.attrs.update({"detector": detector, "fov_m": float(plan["fov_m"]), "pixel_size_m": float(plan["fov_m"]) / int(plan["imsize"])})
+            h5[target][k] = array
+        h5["stage_reported_m"][k] = (list(reported) + [0.0] * 5)[:5]
+        h5["commanded_xy_m"][k] = [tile["x"], tile["y"]]
+        h5["acquired_s"][k] = acquired
+        h5["row_col"][k] = [tile["row"], tile["col"]]
+        h5["source_keys"][k] = image_key
+        if spectrum is not None:
+            array, attrs = next(iter(spectrum.values()))
+            array = np.asarray(array)
+            target = "spectrum_image" if spectrum_key == "eds_map" else "spectra"
+            if target not in h5:
+                dset = h5.create_dataset(target, shape=(n, *array.shape), dtype=array.dtype, chunks=(1, *array.shape))
+                dset.attrs.update({key: (json.dumps(v) if isinstance(v, (list, dict)) else v) for key, v in attrs.items() if v is not None})
+                h5.create_dataset("spectrum_keys", shape=(n,), dtype=h5py.string_dtype())
+            h5[target][k] = array
+            h5["spectrum_keys"][k] = spectrum_key if spectrum_key != "eds_map" else ""
+        h5["written"][k] = True
+    with open(path, "rb+") as handle:
+        os.fsync(handle.fileno())
+
+
+class AnalysisSession:
+    """One MCP session to the analysis server, used from any thread; reopened after a failure."""
+
+    def __init__(self, url: str):
+        self.url = url
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._client = None
+        self._lock = threading.Lock()
+
+    def _ensure_loop(self) -> asyncio.AbstractEventLoop:
+        with self._lock:
+            if self._loop is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(target=loop.run_forever, name="mapper-analysis", daemon=True).start()
+                self._loop = loop
+            return self._loop
+
+    async def _call(self, tool: str, arguments: dict, timeout: float) -> dict:
+        from fastmcp import Client
+
+        if self._client is None:
+            client = Client(self.url, timeout=timeout)
+            await client.__aenter__()
+            self._client = client
+        try:
+            result = await asyncio.wait_for(self._client.call_tool(tool, arguments, raise_on_error=False), timeout)
+        except BaseException:
+            await self._drop()
+            raise
+        if result.is_error:
+            raise RuntimeError(" ".join(getattr(b, "text", "") for b in result.content) or f"{tool} failed")
+        if result.structured_content is not None:
+            return result.structured_content
+        return json.loads("".join(getattr(b, "text", "") for b in result.content))
+
+    async def _drop(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                await client.__aexit__(None, None, None)
+            except BaseException:
+                pass
+
+    def call(self, tool: str, arguments: dict, timeout: float = ANALYSIS_CALL_S) -> dict:
+        future = asyncio.run_coroutine_threadsafe(self._call(tool, arguments, timeout), self._ensure_loop())
+        return future.result(timeout + 10.0)
+
+    def close(self) -> None:
+        if self._loop is not None:
+            asyncio.run_coroutine_threadsafe(self._drop(), self._loop).result(10.0)
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._loop = None
+
+
+class AnalysisFailed(RuntimeError):
+    """The analysis server could not do (or finish) the job; the message says why and how to retry."""
 
 
 class Mapper(JobDevice):
@@ -140,12 +306,18 @@ class Mapper(JobDevice):
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
     eds_device_address = device_property(dtype=str, default_value="", doc="EDS settings device (needed for EDS per-tile actions).")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device; when set, the run file is registered with Tiled.")
+    stage_device_address = device_property(dtype=str, default_value="asyncroscopy/stage/default", doc="STAGE device whose x/y limits every plan is checked against at reserve; blank: not checked (the microscope still refuses moves outside them).")
     output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written when there is no DATA device; with one, they go in its save path (which Tiled serves) under maps/.")
     max_tiles = device_property(dtype=int, default_value=4_000_000, doc="Refuse plans with more tiles than this (a 2000 x 2000 grid by default).")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa.")
     analysis_url = device_property(dtype=str, default_value="", doc="pyTEMlib analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
-    stage_sigma_m = device_property(dtype=float, default_value=2e-7, doc="1-sigma error of reported stage positions; bounds the stitching search and weighs the stage prior.")
+    stage_sigma_m = device_property(
+        dtype=float,
+        default_value=5e-8,
+        doc="1-sigma error of the stage positions this microscope reports (readout, not where it was told to go); bounds the stitching search. "
+        "50 nm suits a typical TEM goniometer read back by encoders; set it from your stage's specification.",
+    )
     max_drift_m_per_s = device_property(dtype=float, default_value=5e-11, doc="Most the sample drifts relative to the stage (m/s); bounds the stitching search and the fitted drift. 0: no drift model.")
 
     def _beam_current_pa(self) -> tuple[float, str]:
@@ -161,10 +333,22 @@ class Mapper(JobDevice):
     # ------------------------------------------------------------------
     # Plan
     # ------------------------------------------------------------------
+    def example_plan(self, request: str) -> dict | None:
+        example = dict(self.PLAN_EXAMPLE)
+        if "dose" in request.lower():  # a caller who mentioned dose sees where a dose limit goes
+            example["dose_budget_e_per_a2"] = 50.0
+        return example
+
     def resolve_plan(self, plan: dict) -> dict:
+        check_plan_fields(plan)
+        validate(plan, "map_plan")
+        revisit_only = isinstance(plan.get("revisit"), dict) and ("points" in plan["revisit"] or "map" in plan["revisit"])
+        if revisit_only:
+            return self._resolve_revisit_only(plan)
         if ("box_m" in plan) == ("size_m" in plan):
             raise ValueError("give the area as box_m [x_min, x_max, y_min, y_max] or as size_m [width, height], not both or neither")
-        validate(plan, "map_plan")
+        if "fov_m" not in plan:
+            raise ValueError("fov_m (the field of view of each tile, metres) is required")
         p = {**PLAN_DEFAULTS, **plan}
         if "size_m" in p:
             # The device does the arithmetic: callers (often small models) get centre +/- half wrong.
@@ -179,18 +363,30 @@ class Mapper(JobDevice):
         if (p["find_regions"] or p.get("revisit")) and not (p["stitch"] and self.analysis_url):
             raise ValueError("find_regions and revisit need the map stitched: keep stitch on, on a Mapper with an analysis_url")
         if p.get("revisit") and not p["find_regions"]:
-            raise ValueError("revisit images the regions find_regions finds; give find_regions > 0")
-        xs, ys = grid_axes([x_min, x_max, y_min, y_max], float(p["fov_m"]), float(p["overlap"]), limit=int(self.max_tiles))
-        tiles = len(xs) * len(ys)
-
+            raise ValueError("revisit images the regions find_regions finds (give find_regions > 0), or give revisit points [[x, y], ...] or an existing map (revisit map, top_k)")
         imsize, dwell, fov = int(p["imsize"]), float(p["dwell_s"]), float(p["fov_m"])
-        pixel_a = fov / imsize / 1e-10
+        revisit = None
+        if p.get("revisit"):
+            revisit = {"fov_m": float(p["revisit"]["fov_m"]), "imsize": int(p["revisit"].get("imsize", imsize)), "dwell_s": float(p["revisit"].get("dwell_s", dwell))}
+            if not fov * REVISIT_FOV_MIN_FRACTION <= revisit["fov_m"] <= fov:
+                raise ValueError(f"revisit fov_m must be between {fov * REVISIT_FOV_MIN_FRACTION:.3g} m (a twentieth of the tile) and the tile's {fov:.3g} m")
+            p["revisit"] = revisit
+        grid = compact_grid(*grid_axes([x_min, x_max, y_min, y_max], fov, float(p["overlap"]), limit=int(self.max_tiles)))
+        tiles = grid["rows"] * grid["cols"]
+
         current, current_source = self._beam_current_pa()
-        frame_dose = current * 1e-12 * dwell / ELECTRON_CHARGE / (pixel_a**2)
-        max_dose = frame_dose * max_exposures(xs, ys, fov)
+        tile_dose = frame_dose(current, dwell, fov, imsize) * max_exposures(grid, fov)
+        stitch = bool(p["stitch"] and self.analysis_url)
+        regions = int(p["find_regions"]) if stitch else 0
+        revisits = regions if revisit else 0
+        # A revisit adds its frame on top of whatever the tiles gave that spot; regions lie a scoring window apart,
+        # so one spot gets at most one revisit.
+        revisit_dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"]) if revisit else 0.0
+        max_dose = tile_dose + revisit_dose
         budget = p.get("dose_budget_e_per_a2")
         if budget is not None and max_dose > float(budget):
-            raise ValueError(f"plan would give up to {max_dose:.3g} e/A^2 where tiles overlap, above the budget of {budget} e/A^2")
+            parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
+            raise ValueError(f"plan would give up to {max_dose:.3g} e/A^2 ({parts}), above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s")
 
         frame_s = imsize * imsize * dwell
         eds_s = 0.0
@@ -198,19 +394,19 @@ class Mapper(JobDevice):
             eds_s = float(p["eds_exposure_s"])
         elif "eds_map" in p["per_tile"]:
             eds_s = float(p["eds_exposure_s"]) * int(p["eds_map_points"]) ** 2
-        stitch = bool(p["stitch"] and self.analysis_url)
-        regions = int(p["find_regions"]) if stitch else 0
-        revisits = regions if p.get("revisit") else 0
+        revisit_s = revisits * (float(self.estimate_move_s) + (revisit["imsize"] ** 2 * revisit["dwell_s"] if revisit else 0.0))
         estimate = {
             "steps": tiles + int(stitch) + int(regions > 0) + revisits,
             "tiles": tiles,
-            "duration_s": round(tiles * (float(self.estimate_move_s) + frame_s + eds_s), 1),
+            "duration_s": round(tiles * (float(self.estimate_move_s) + frame_s + eds_s) + revisit_s, 1),
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
             # The dose estimate is only as good as the current; say when it was assumed.
             "beam_current_source": current_source,
             "phases": ["tiles"] + (["stitch"] if stitch else []) + (["score"] if regions else []) + (["revisit"] if revisits else []),
         }
+        if revisit:
+            estimate["revisit_dose_e_per_a2"] = round(revisit_dose, 3)
         if not stitch:
             estimate["stitch"] = "off" if not p["stitch"] else "this Mapper has no analysis_url; stitch the run with assemble_map"
         if "eds_point" in p["per_tile"]:
@@ -224,15 +420,70 @@ class Mapper(JobDevice):
             "find_regions": regions,
             "step_count": tiles + int(stitch) + int(regions > 0) + revisits,
             "estimate": estimate,
-            "grid": {"rows": len(ys), "cols": len(xs), "xs": [float(v) for v in xs], "ys": [float(v) for v in ys]},
+            "grid": grid,
+        }
+
+    def _resolve_revisit_only(self, plan: dict) -> dict:
+        """A plan that only images given points, or an existing map's best regions: no tiles, no stitch."""
+        p = {**PLAN_DEFAULTS, **plan}
+        revisit = dict(p["revisit"])
+        if ("points" in revisit) == ("map" in revisit):
+            raise ValueError("give revisit points [[x, y], ...] or an existing map (revisit map, top_k), not both")
+        if p.get("find_regions") or p.get("per_tile"):
+            raise ValueError("a revisit-only plan takes no tiles: leave out find_regions and per_tile, or give an area to map")
+        fov = float(revisit["fov_m"])
+        imsize = int(revisit.get("imsize", p["imsize"]))
+        dwell = float(revisit.get("dwell_s", p["dwell_s"]))
+        revisit.update({"fov_m": fov, "imsize": imsize, "dwell_s": dwell})
+        half = fov / 2.0
+        regions: list[dict] = []
+        if "points" in revisit:
+            regions = [{"id": f"point:{k}", "x_m": float(x), "y_m": float(y)} for k, (x, y) in enumerate(revisit["points"])]
+            xs = [r["x_m"] for r in regions]
+            ys = [r["y_m"] for r in regions]
+            box = p.get("box_m") or [min(xs) - half, max(xs) + half, min(ys) - half, max(ys) + half]
+            count = len(regions)
+        else:
+            if not self.analysis_url:
+                raise ValueError("revisiting an existing map's regions needs a Mapper with an analysis_url")
+            info = self._analysis("map_info", {"map": revisit["map"]})
+            box = p.get("box_m") or list(info["stage_box_m"])
+            count = int(revisit.get("top_k", 3))
+        x_min, x_max, y_min, y_max = (float(v) for v in box)
+        current, current_source = self._beam_current_pa()
+        dose = frame_dose(current, dwell, fov, imsize)
+        budget = p.get("dose_budget_e_per_a2")
+        if budget is not None and dose > float(budget):
+            raise ValueError(f"each revisit image would give {dose:.3g} e/A^2, above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s")
+        for r in regions:
+            if not (x_min + half <= r["x_m"] <= x_max - half and y_min + half <= r["y_m"] <= y_max - half):
+                raise ValueError(f"revisit point ({r['x_m']:.3e}, {r['y_m']:.3e}) m is outside the approved area {[x_min, x_max, y_min, y_max]} for a {fov:.2e} m image")
+        steps = count + (1 if "map" in revisit else 0)
+        estimate = {
+            "steps": steps, "tiles": 0, "revisits": count,
+            "duration_s": round(count * (float(self.estimate_move_s) + imsize * imsize * dwell), 1),
+            "max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3),
+            "beam_current_pa": current, "beam_current_source": current_source,
+            "phases": (["select"] if "map" in revisit else []) + ["revisit"],
+        }
+        return {
+            **p, "fov_m": fov, "revisit": revisit, "box_m": [x_min, x_max, y_min, y_max], "stitch": False, "find_regions": 0,
+            "step_count": steps, "estimate": estimate, "grid": {"rows": 0, "cols": 0, "x0": 0.0, "dx": 0.0, "y0": 0.0, "dy": 0.0},
+            "regions": regions, "revisit_only": True,
         }
 
     def step_at(self, job: dict, index: int) -> dict:
+        if "steps" in job:  # a job saved before plans were computed lazily: tiles only
+            return {"phase": "tiles", **job["steps"][index]}
         plan = job["resolved_plan"]
+        if plan.get("revisit_only"):
+            if "map" in plan["revisit"]:
+                return {"phase": "select"} if index == 0 else {"phase": "revisit", "region": index - 1}
+            return {"phase": "revisit", "region": index}
         grid = plan["grid"]
         tiles = grid["rows"] * grid["cols"]
         if index < tiles:
-            return {"phase": "tiles", **tile_at(grid["xs"], grid["ys"], plan["order"], index)}
+            return {"phase": "tiles", **tile_at(grid, plan["order"], index)}
         k = index - tiles
         if plan["stitch"] and k == 0:
             return {"phase": "stitch"}
@@ -241,15 +492,41 @@ class Mapper(JobDevice):
             return {"phase": "score"}
         return {"phase": "revisit", "region": k - int(bool(plan["find_regions"]))}
 
+    def step_targets(self, job: dict) -> list[dict]:
+        """The stage x and y the plan goes to at its extremes (outermost tile centres, given revisit points),
+        checked at reserve against the STAGE device's limits, so a plan off the stage is refused before anything moves."""
+        if not self.stage_device_address:
+            return []
+        plan = job["resolved_plan"]
+        grid = plan["grid"]
+        xs: list[tuple[str, float]] = []
+        ys: list[tuple[str, float]] = []
+        if grid["rows"] and grid["cols"]:
+            xs += [("tiles (left column)", grid["x0"]), ("tiles (right column)", grid["x0"] + (grid["cols"] - 1) * grid["dx"])]
+            ys += [("tiles (first row)", grid["y0"]), ("tiles (last row)", grid["y0"] + (grid["rows"] - 1) * grid["dy"])]
+        for region in plan.get("regions") or []:
+            xs.append((f"revisit {region['id']}", region["x_m"]))
+            ys.append((f"revisit {region['id']}", region["y_m"]))
+        if plan.get("revisit_only") and "map" in plan["revisit"]:  # the map's regions are chosen later, inside its box
+            x_min, x_max, y_min, y_max = plan["box_m"]
+            xs += [("revisit area", x_min), ("revisit area", x_max)]
+            ys += [("revisit area", y_min), ("revisit area", y_max)]
+        stage = self.stage_device_address
+        return [{"step": s, "device": stage, "attribute": "x", "value": float(v)} for s, v in xs] + [
+            {"step": s, "device": stage, "attribute": "y", "value": float(v)} for s, v in ys
+        ]
+
+    def _tile_count(self, job: dict) -> int:
+        if "steps" in job:
+            return len(job["steps"])
+        grid = job["resolved_plan"]["grid"]
+        return grid["rows"] * grid["cols"]
+
     def phase(self, job: dict) -> str | None:
         """Which phase a job is in, for job_status."""
-        plan = job.get("resolved_plan", {})
-        grid = plan.get("grid")
-        if not grid:
+        if "resolved_plan" not in job:
             return None
-        tiles = grid["rows"] * grid["cols"]
-        from asyncroscopy.jobs.job_device import done_count
-
+        tiles = self._tile_count(job)
         done = done_count(job)
         if done < tiles:
             return f"acquiring tiles ({done} of {tiles})"
@@ -324,6 +601,7 @@ class Mapper(JobDevice):
             if notes:
                 job["result_keys"]["run_file_note"] = "; ".join(notes)
             job["run_closed"] = True
+            self._save(job)
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
@@ -340,6 +618,8 @@ class Mapper(JobDevice):
             eds.exposure_time = float(plan["eds_exposure_s"])
         # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
         microscope.blank_beam()
+        if job["resolved_plan"].get("revisit_only"):
+            job["run_closed"] = True  # no tiles, so no run file
         if job.get("run_closed"):
             return  # resuming after the tiles: only pipeline steps are left
         final = self._run_path(job)
@@ -357,7 +637,7 @@ class Mapper(JobDevice):
             h5.attrs["run_layout"] = RUN_LAYOUT
             h5.attrs["run_id"] = job["reservation_id"]
             h5.attrs["plan_id"] = job["plan_id"]
-            h5.attrs["plan"] = json.dumps({k: v for k, v in plan.items() if k != "grid"})
+            h5.attrs["plan"] = json.dumps(plan)
             h5.attrs["grid"] = json.dumps({"rows": plan["grid"]["rows"], "cols": plan["grid"]["cols"]})
             h5.attrs["axes"] = "images: rows=+y, columns=+x; positions in stage metres"
             h5.attrs["microscope"] = self.microscope_device_address
@@ -372,6 +652,8 @@ class Mapper(JobDevice):
         if step["phase"] == "tiles":
             return self._tile(job, step)
         self._close_run_file(job)  # the tiles are done: stitching reads the finished, registered run
+        if step["phase"] == "select":
+            return self._select(job)
         if step["phase"] == "stitch":
             return self._stitch(job)
         if step["phase"] == "score":
@@ -388,6 +670,8 @@ class Mapper(JobDevice):
         microscope = self.proxy(self.microscope_device_address)
         pose = job["pose"]
         microscope.move_stage([tile["x"], tile["y"], pose["z"], pose["alpha"], pose["beta"]])
+        if not self._wait_for_stage(job, microscope):
+            return None  # aborted during a long move; a resume moves again
         reported = [float(v) for v in microscope.get_stage()]
         # Unblank only for this tile's acquisitions: a beam left on during the stage move, file
         # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
@@ -406,52 +690,28 @@ class Mapper(JobDevice):
         if spectrum_key == "eds_map" and spectrum is None:
             return None  # aborted part way through the spectrum image; a resume redoes this tile
         acquired = time.time()
+        job.setdefault("first_tile_s", acquired)
         images = read_acquisition(image_key, self._data_proxy())
         if "eds_point" in plan["per_tile"]:
             spectrum = read_acquisition(spectrum_key, self._data_proxy())
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key}
         if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
-        self._write_tile(job, tile, reported, acquired, image_key, images, spectrum, spectrum_key)
+        write_tile(self._file(job), self._tile_count(job), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key)
         return record
 
-    def _write_tile(self, job, tile, reported, acquired, image_key, images, spectrum, spectrum_key) -> None:
-        """Put one tile into the run file's per-tile arrays (created at the first tile, sized for the whole grid)."""
-        plan = job["resolved_plan"]
-        n = plan["grid"]["rows"] * plan["grid"]["cols"]
-        k = tile["index"]
-        with h5py.File(self._file(job), "a") as h5:
-            if "written" not in h5:
-                h5.create_dataset("written", shape=(n,), dtype=bool)
-                h5.create_dataset("stage_reported_m", shape=(n, 5), dtype=np.float64, fillvalue=np.nan)
-                h5.create_dataset("commanded_xy_m", shape=(n, 2), dtype=np.float64, fillvalue=np.nan)
-                h5.create_dataset("acquired_s", shape=(n,), dtype=np.float64, fillvalue=np.nan)
-                h5.create_dataset("row_col", shape=(n, 2), dtype=np.int32, fillvalue=-1)
-                h5.create_dataset("source_keys", shape=(n,), dtype=h5py.string_dtype())
-            for m, (name, (array, attrs)) in enumerate(sorted(images.items())):
-                detector = str(attrs.get("detector", name.rsplit("/", 1)[-1])).upper()
-                target = "tiles" if m == 0 else f"channels/{detector}"
-                if target not in h5:
-                    array = np.asarray(array)
-                    dset = h5.create_dataset(target, shape=(n, *array.shape), dtype=array.dtype, chunks=(1, *array.shape))
-                    dset.attrs.update({"detector": detector, "fov_m": float(plan["fov_m"]), "pixel_size_m": float(plan["fov_m"]) / int(plan["imsize"])})
-                h5[target][k] = array
-            h5["stage_reported_m"][k] = (reported + [0.0] * 5)[:5]
-            h5["commanded_xy_m"][k] = [tile["x"], tile["y"]]
-            h5["acquired_s"][k] = acquired
-            h5["row_col"][k] = [tile["row"], tile["col"]]
-            h5["source_keys"][k] = image_key
-            if spectrum is not None:
-                array, attrs = next(iter(spectrum.values()))
-                array = np.asarray(array)
-                target = "spectrum_image" if spectrum_key == "eds_map" else "spectra"
-                if target not in h5:
-                    dset = h5.create_dataset(target, shape=(n, *array.shape), dtype=array.dtype, chunks=(1, *array.shape))
-                    dset.attrs.update({key: (json.dumps(v) if isinstance(v, (list, dict)) else v) for key, v in attrs.items() if v is not None})
-                    h5.create_dataset("spectrum_keys", shape=(n,), dtype=h5py.string_dtype())
-                h5[target][k] = array
-                h5["spectrum_keys"][k] = spectrum_key if spectrum_key != "eds_map" else ""
-            h5["written"][k] = True
+    def _wait_for_stage(self, job: dict, microscope: tango.DeviceProxy) -> bool:
+        """Wait for a long move to end (a microscope that returns before arriving says so in stage_moving); False if aborted."""
+        while True:
+            try:
+                moving = bool(microscope.read_attribute("stage_moving").value)
+            except tango.DevFailed:  # a microscope whose move_stage returns only on arrival
+                return True
+            if not moving:
+                return True
+            if self.aborting(job):
+                return False
+            time.sleep(STAGE_POLL_S)
 
     def _spectrum_map(self, job: dict, microscope: tango.DeviceProxy, points: int) -> dict | None:
         coords = (np.arange(points) + 0.5) / points
@@ -475,24 +735,43 @@ class Mapper(JobDevice):
     # Pipeline: stitch, score, revisit (on the analysis server)
     # ------------------------------------------------------------------
     def _analysis(self, tool: str, arguments: dict) -> dict:
-        from fastmcp import Client
+        """One call to the analysis server over this Mapper's session."""
+        session = getattr(self, "_analysis_session", None)
+        if session is None or session.url != self.analysis_url:
+            session = self._analysis_session = AnalysisSession(self.analysis_url)
+        return session.call(tool, arguments)
 
-        async def call() -> dict:
-            async with Client(self.analysis_url, timeout=60) as client:
-                result = await client.call_tool(tool, arguments, raise_on_error=False)
-                if result.is_error:
-                    raise RuntimeError(" ".join(getattr(b, "text", "") for b in result.content) or f"{tool} failed")
-                if result.structured_content is not None:
-                    return result.structured_content
-                return json.loads("".join(getattr(b, "text", "") for b in result.content))
-
-        return asyncio.run(call())
-
-    def _analysis_job(self, job: dict, started: dict) -> dict | None:
-        """Wait for an analysis job, checking for an abort between waits; its results, or None if aborted."""
+    def _submit(self, job: dict, slot: str, tool: str, arguments: dict) -> str:
+        """Start (or adopt) an analysis job and save its id in the job before waiting on it."""
+        pipeline = self._pipeline(job)
+        if pipeline.get(slot):
+            return pipeline[slot]  # a resumed job waits for the analysis job it already started
+        started = None
+        for delay in (0.0, *ANALYSIS_BACKOFF_S):
+            time.sleep(delay)
+            if self.aborting(job):
+                raise AnalysisFailed("aborted")
+            try:
+                started = self._analysis(tool, arguments)
+                break
+            except Exception as exc:  # down, restarting, or the call timed out: try again; a busy reply below adopts
+                last = exc
+        if started is None:
+            raise AnalysisFailed(f"the analysis server at {self.analysis_url} did not answer ({type(last).__name__}: {last})")
         if "error" in started:
-            raise RuntimeError(started["error"].get("message", str(started["error"])))
-        job_id = started["job_id"]
+            if started["error"].get("code") == "busy" and started.get("job_id"):
+                started = {"job_id": started["job_id"]}  # someone (or this job, before a timeout) is already on it
+            else:
+                raise AnalysisFailed(started["error"].get("message", str(started["error"])))
+        with self._lock:
+            pipeline[slot] = started["job_id"]
+            self._save(job)
+        return started["job_id"]
+
+    def _await(self, job: dict, job_id: str, deadline_s: float) -> dict | None:
+        """Results of an analysis job; None if this job was aborted; AnalysisFailed if it failed, vanished or took too long."""
+        deadline = time.monotonic() + deadline_s
+        failures = 0
         while True:
             if self.aborting(job):
                 try:
@@ -500,11 +779,24 @@ class Mapper(JobDevice):
                 except Exception:
                     pass
                 return None
-            status = self._analysis("analysis_job_status", {"job_id": job_id, "wait_s": ANALYSIS_POLL_S})
-            if status.get("state") in {"done", "failed", "aborted"}:
+            if time.monotonic() > deadline:
+                raise AnalysisFailed(f"analysis job {job_id} did not finish within {deadline_s:.0f} s")
+            try:
+                status = self._analysis("analysis_job_status", {"job_id": job_id, "wait_s": ANALYSIS_WAIT_S})
+                failures = 0
+            except Exception as exc:
+                failures += 1
+                if failures > len(ANALYSIS_BACKOFF_S):
+                    raise AnalysisFailed(f"lost the analysis server at {self.analysis_url} ({type(exc).__name__}: {exc})") from exc
+                time.sleep(ANALYSIS_BACKOFF_S[failures - 1])
+                continue
+            if "error" in status or "state" not in status:
+                # unknown_job: the server restarted and forgot the job.
+                raise AnalysisFailed(f"the analysis server no longer knows job {job_id} ({(status.get('error') or {}).get('message', status)}); it may have restarted")
+            if status["state"] in {"done", "failed", "aborted", "released"}:
                 break
         if status["state"] != "done":
-            raise RuntimeError(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
+            raise AnalysisFailed(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
         return self._analysis("analysis_job_results", {"job_id": job_id})
 
     def _pipeline(self, job: dict) -> dict:
@@ -514,15 +806,23 @@ class Mapper(JobDevice):
         pipeline = self._pipeline(job)
         run = job["result_keys"].get("run") or job["result_keys"].get("run_file")
         plan = {"run": run, "stage_sigma_m": float(self.stage_sigma_m), "max_drift_m_per_s": float(self.max_drift_m_per_s), "eds_pois": True}
+        deadline = STITCH_DEADLINE_S[0] + STITCH_DEADLINE_S[1] * self._tile_count(job)
         try:
-            results = self._analysis_job(job, self._analysis("assemble_map", plan))
-        except Exception as exc:  # analysis down or stitching failed: the tiles are safe, the job goes on
-            pipeline["stitch_error"] = f"{type(exc).__name__}: {exc}. The tiles are in {run}; stitch them later with assemble_map(run={run!r})."
+            results = self._await(job, self._submit(job, "stitch_job", "assemble_map", plan), deadline)
+        except AnalysisFailed as exc:  # the tiles are safe, the job goes on
+            if str(exc) == "aborted":
+                return None
+            pipeline["stitch_error"] = f"{exc}. The tiles are in {run}; stitch them later with assemble_map(run={run!r})."
+            pipeline.pop("stitch_job", None)
             return {"phase": "stitch", "ok": False}
         if results is None:
-            return None  # aborted while stitching; a resume stitches again
+            return None  # aborted while stitching; a resume waits for (or restarts) the same stitch
         pipeline["map"] = results["result_keys"]["map"]
-        pipeline["stitching"] = {k: v for k, v in results.get("summary", {}).items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "drift", "eds_pois")}
+        summary = results.get("summary", {})
+        pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
+        pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver")}
+        if summary.get("drift"):
+            pipeline["stitching"]["drift"] = {k: summary["drift"][k] for k in ("total_nm", "mean_rate_nm_per_s") if k in summary["drift"]}
         with self._lock:
             job["result_keys"]["map"] = pipeline["map"]
         return {"phase": "stitch", "ok": True, "map": pipeline["map"]}
@@ -531,11 +831,18 @@ class Mapper(JobDevice):
         pipeline = self._pipeline(job)
         if "map" not in pipeline:
             return {"phase": "score", "skipped": "no map"}
+        if "regions" in pipeline:
+            return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}  # already scored before a resume
         n = int(job["resolved_plan"]["find_regions"])
+        # The job's tag makes scoring idempotent: a retry replaces the regions it added before.
+        arguments = {"map": pipeline["map"], "top_k": n, "tag": job["reservation_id"]}
         try:
-            results = self._analysis_job(job, self._analysis("score_map", {"map": pipeline["map"], "top_k": n}))
-        except Exception as exc:
-            pipeline["score_error"] = f"{type(exc).__name__}: {exc}. Score again with score_map(map={pipeline['map']!r}, top_k={n})."
+            results = self._await(job, self._submit(job, "score_job", "score_map", arguments), SCORE_DEADLINE_S)
+        except AnalysisFailed as exc:
+            if str(exc) == "aborted":
+                return None
+            pipeline["score_error"] = f"{exc}. Score again with score_map(map={pipeline['map']!r}, top_k={n})."
+            pipeline.pop("score_job", None)
             return {"phase": "score", "ok": False}
         if results is None:
             return None
@@ -544,38 +851,92 @@ class Mapper(JobDevice):
         ]
         return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}
 
+    def _select(self, job: dict) -> dict:
+        """Take an existing map's best scored regions (revisit-only plans with a map)."""
+        pipeline = self._pipeline(job)
+        if "regions" in pipeline:
+            return {"phase": "select", "regions": len(pipeline["regions"])}  # already chosen before a resume
+        revisit = job["resolved_plan"]["revisit"]
+        reply = self._analysis("list_pois", {"map": revisit["map"], "kind": "candidate", "limit": 500})
+        candidates = sorted((p for p in reply.get("pois", []) if p.get("score") is not None), key=lambda p: p["score"], reverse=True)
+        top = candidates[: int(revisit.get("top_k", 3))]
+        with self._lock:
+            pipeline["map"] = revisit["map"]
+            pipeline["regions"] = [{k: c.get(k) for k in ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")} for c in top]
+            if not top:
+                pipeline["select_error"] = f"{revisit['map']} has no scored regions; score it first with score_map(map={revisit['map']!r})"
+            self._save(job)
+        return {"phase": "select", "regions": len(top)}
+
+    def _link_pending(self, job: dict) -> None:
+        """Add the point of interest of every revisit image that has none yet (a link lost to a failure or an abort)."""
+        pipeline = self._pipeline(job)
+        if "map" not in pipeline:
+            return
+        regions = {r["id"]: r for r in pipeline.get("regions") or []}
+        for visit in pipeline.get("revisits", []):
+            if "image" not in visit or "poi" in visit or visit["region"] not in regions:
+                continue
+            region = regions[visit["region"]]
+            try:
+                poi = self._analysis(
+                    "add_poi",
+                    {"map": pipeline["map"], "x_m": float(region["x_m"]), "y_m": float(region["y_m"]), "kind": "high_mag", "reason": f"higher-magnification image of region {region['id']}", "links": [visit["image"], f"poi:{region['id']}"], "id": f"{job['reservation_id']}:revisit:{region['id']}"},
+                )
+                with self._lock:
+                    visit["poi"] = poi.get("id")
+                    visit.pop("poi_error", None)
+                    self._save(job)
+            except Exception as exc:  # the image is saved either way; the next revisit step or the finish tries again
+                visit["poi_error"] = f"{type(exc).__name__}: {exc}"
+
     def _revisit(self, job: dict, k: int) -> dict:
         pipeline = self._pipeline(job)
+        if "regions" not in pipeline and job["resolved_plan"].get("regions"):
+            pipeline["regions"] = job["resolved_plan"]["regions"]  # revisit-only plan with given points
+        self._link_pending(job)
         regions = pipeline.get("regions") or []
         if k >= len(regions):
             return {"phase": "revisit", "skipped": "no such region"}
         region = regions[k]
+        visits = pipeline.setdefault("revisits", [])
+        visit = next((v for v in visits if v.get("region") == region["id"]), None)
         plan = job["resolved_plan"]
-        fov = float(plan["revisit"]["fov_m"])
-        x_min, x_max, y_min, y_max = plan["box_m"]
-        half = fov / 2.0
-        x, y = float(region["x_m"]), float(region["y_m"])
-        if not (x_min + half <= x <= x_max - half and y_min + half <= y <= y_max - half):
-            note = f"region {region['id']} at ({x:.3e}, {y:.3e}) m is too close to the edge of the plan box for a {fov:.2e} m image; not visited"
-            pipeline.setdefault("revisits", []).append({"region": region["id"], "skipped": note})
-            return {"phase": "revisit", "skipped": note}
-        microscope = self.proxy(self.microscope_device_address)
-        pose = job["pose"]
-        microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
-        microscope.set_fov(fov)
-        microscope.unblank_beam()
-        try:
-            image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
-        finally:
-            microscope.blank_beam()
-            microscope.set_fov(float(plan["fov_m"]))
-        visit = {"region": region["id"], "image": image_key, "fov_m": fov}
-        try:
-            poi = self._analysis("add_poi", {"map": pipeline["map"], "x_m": x, "y_m": y, "kind": "high_mag", "reason": f"higher-magnification image of region {region['id']}", "links": [image_key, f"poi:{region['id']}"]})
-            visit["poi"] = poi.get("id")
-        except Exception as exc:  # the image is saved either way
-            visit["poi_error"] = f"{type(exc).__name__}: {exc}"
-        pipeline.setdefault("revisits", []).append(visit)
+        revisit = plan["revisit"]
+        fov = float(revisit["fov_m"])
+        if visit is None:
+            # The map places content at stage reading + drift(t) (pyTEMlib's fit), so to put the region under
+            # the beam now the stage goes to its map position minus the drift, extrapolated to now.
+            dx, dy = drift_at(pipeline.get("drift_fit"), time.time() - float(job.get("first_tile_s", time.time())))
+            x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
+            x_min, x_max, y_min, y_max = plan["box_m"]
+            half = fov / 2.0
+            if not (x_min + half <= x <= x_max - half and y_min + half <= y <= y_max - half):
+                note = f"region {region['id']} at ({x:.3e}, {y:.3e}) m (drift-corrected) is too close to the edge of the plan box for a {fov:.2e} m image; not visited"
+                visits.append({"region": region["id"], "skipped": note})
+                return {"phase": "revisit", "skipped": note}
+            microscope = self.proxy(self.microscope_device_address)
+            pose = job["pose"]
+            microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
+            if not self._wait_for_stage(job, microscope):
+                return None
+            microscope.set_fov(fov)
+            scan = self.proxy(self.scan_device_address)
+            scan.imsize = int(revisit["imsize"])
+            scan.dwell_time = float(revisit["dwell_s"])
+            microscope.unblank_beam()
+            try:
+                image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
+            finally:
+                microscope.blank_beam()
+                microscope.set_fov(float(plan["fov_m"]))
+                scan.imsize = int(plan["imsize"])
+                scan.dwell_time = float(plan["dwell_s"])
+            visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y]}
+            with self._lock:  # saved before the point is added, so a resume links this image instead of taking another
+                visits.append(visit)
+                self._save(job)
+        self._link_pending(job)
         return {"phase": "revisit", **visit}
 
     # ------------------------------------------------------------------
@@ -593,10 +954,11 @@ class Mapper(JobDevice):
         # A finished map must not leave the beam parked on the last tile.
         self.proxy(self.microscope_device_address).blank_beam()
         self._close_run_file(job)
+        self._link_pending(job)
         return {}
 
     def _release(self, request: str) -> str:
-        """Release; an unfinished run gets its final name, and is sent for stitching, so its tiles stay reachable."""
+        """Release; an unfinished run gets its final name and is sent for stitching in the background, so its tiles stay reachable."""
         reply = super()._release(request)
         try:
             reservation_id = json.loads(request)["reservation_id"]
@@ -605,51 +967,103 @@ class Mapper(JobDevice):
                 self._close_run_file(job)
                 run = job["result_keys"].get("run")
                 if run and job["resolved_plan"].get("stitch"):
-                    try:  # started, not waited for: release must return at once
-                        started = self._analysis("assemble_map", {"run": run, "stage_sigma_m": float(self.stage_sigma_m), "max_drift_m_per_s": float(self.max_drift_m_per_s), "eds_pois": True})
-                        job["result_keys"]["map_job"] = started.get("job_id")
-                    except Exception as exc:
-                        self._pipeline(job)["stitch_error"] = f"{type(exc).__name__}: {exc}. Stitch the tiles with assemble_map(run={run!r})."
-                with self._lock:
-                    self._save(job)
+                    # Never a call to the analysis server from this Tango command: it would block the device.
+                    threading.Thread(target=self._stitch_released, args=(job, run), name="mapper-release-stitch", daemon=True).start()
         except Exception as exc:  # the release itself succeeded; never turn it into an error
             self.warn_stream(f"Released, but the run file was not finalized: {exc}")
         return reply
 
-    def _write_trace(self, job: dict) -> None:
-        """The job's own events (reserve, start, stop, approvals, failed steps) into the run file.
+    def _stitch_released(self, job: dict, run: str) -> None:
+        with tango.EnsureOmniThread():
+            try:
+                started = self._analysis("assemble_map", {"run": run, "stage_sigma_m": float(self.stage_sigma_m), "max_drift_m_per_s": float(self.max_drift_m_per_s), "eds_pois": True})
+                with self._lock:
+                    job["result_keys"]["map_job"] = started.get("job_id")
+            except Exception as exc:
+                with self._lock:
+                    self._pipeline(job)["stitch_error"] = f"{type(exc).__name__}: {exc}. Stitch the tiles with assemble_map(run={run!r})."
+            with self._lock:
+                self._save(job)
 
-        Each tile's position and time are already in the run's per-tile arrays, so the per-step
-        events are left out: a map of a million tiles keeps a short trace.
+    def _write_trace(self, job: dict) -> None:
+        """This job's own events (reserve, start, stop, approvals, failed steps) into the run file.
+
+        Only the part of the shared trace written since this job was reserved is read, line by
+        line, so the cost is this job's, not the history's. Each tile's position and time are
+        already in the run's per-tile arrays, so successful per-tile events are left out, and at
+        most TRACE_LINES_KEPT lines are copied; the run file names the trace file and offset.
         """
-        events = [e for e in read_tool_log(self.trace_path) if e.get("run_id") == job["reservation_id"] and not (e.get("action", "").endswith(".step") and e.get("ok"))]
         path = self._file(job)
         if not path.exists():
             return
+        trace = Path(self.trace_path)
+        offset = int(job.get("trace_offset", 0))
+        events: list[str] = []
+        dropped = 0
+        marker = f'"run_id": "{job["reservation_id"]}"'
+        if trace.exists():
+            with trace.open("rb") as handle:
+                handle.seek(min(offset, trace.stat().st_size))
+                for raw in handle:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if marker not in line or ('.step"' in line and '"ok": true' in line):
+                        continue
+                    if len(events) < TRACE_LINES_KEPT:
+                        events.append(line)
+                    else:
+                        dropped += 1
         with h5py.File(path, "a") as h5:
             if "trace" in h5:
                 del h5["trace"]
-            h5.create_dataset("trace", data=np.array([json.dumps(e) for e in events], dtype=h5py.string_dtype()))
+            h5.create_dataset("trace", data=np.array(events, dtype=h5py.string_dtype()))
+            h5["trace"].attrs.update({"trace_file": str(trace), "trace_offset": offset, "events_not_copied": dropped})
 
-    MAX_SUMMARY_SPECTRA = 500
+    SUMMARY_KEYS_SHOWN = 3  # spectra keys listed in a reply; the map has all of them as points of interest
 
     def summary(self, job: dict) -> dict:
+        """A short reply: counts and a few keys. Every spectrum is a point of interest on the map
+        (list_pois), and the run file and view_data have the rest."""
         plan = job["resolved_plan"]
-        spectra = [
-            {"index": r["index"], "stage_xy_m": r["stage_reported_m"][:2], "key": r["spectrum_key"]}
-            for r in job["step_results"].values()
-            if isinstance(r, dict) and r.get("spectrum_key") and r["spectrum_key"] != "eds_map"
-        ]
+        spectra = sorted(
+            (r for r in job["step_results"].values() if isinstance(r, dict) and r.get("spectrum_key") and r["spectrum_key"] != "eds_map"),
+            key=lambda r: r["index"],
+        )
         grid = plan.get("grid") or {}
-        return {
+        shown = self.SUMMARY_KEYS_SHOWN
+        pipeline = {k: v for k, v in self._pipeline(job).items() if not k.endswith("_job") and k != "drift_fit"}
+        if "regions" in pipeline:
+            regions = pipeline["regions"]
+            pipeline["regions"] = {"count": len(regions), "first": [{k: r.get(k) for k in ("id", "x_m", "y_m", "score")} for r in regions[:shown]]}
+        if "revisits" in pipeline:
+            visits = pipeline["revisits"]
+            pipeline["revisits"] = {
+                "imaged": sum(1 for v in visits if "image" in v),
+                "skipped": sum(1 for v in visits if "skipped" in v),
+                "first": visits[:shown],
+            }
+        out = {
             "grid": {"rows": grid.get("rows"), "cols": grid.get("cols")},
             "box_m": plan.get("box_m"),
             "fov_m": plan.get("fov_m"),
-            "run_file": str(self._file(job)),
-            # Where EDS point spectra were taken (the latest, capped); the map has every one as a point of interest.
-            "spectra": sorted(spectra, key=lambda s: s["index"])[: self.MAX_SUMMARY_SPECTRA],
-            **self._pipeline(job),
+            **({} if plan.get("revisit_only") else {"run_file": str(self._file(job))}),
+            **pipeline,
         }
+        if "eds_point" in plan.get("per_tile", []):
+            out["spectra"] = {
+                "taken": min(done_count(job), self._tile_count(job)),
+                "first_keys": [r["spectrum_key"] for r in spectra[:shown]],
+                "all": "the map's points of interest of kind eds_point (list_pois), or the run file's spectrum_keys",
+            }
+        return out
+
+    def delete_device(self) -> None:
+        session = getattr(self, "_analysis_session", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+        super().delete_device()
 
 
 if __name__ == "__main__":

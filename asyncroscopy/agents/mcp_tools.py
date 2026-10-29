@@ -30,12 +30,18 @@ def result_text(result) -> str:
 
 
 class McpServer:
-    """One MCP endpoint: list its tools and call them, with a caller header for the trace."""
+    """One MCP endpoint: list its tools and call them, with a caller header for the trace.
 
-    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0):
+    ``ledger``: a list every call is appended to as soon as its reply arrives
+    ({"name", "args", "result", "error"}), so a run that is stopped part way still knows
+    what it started (the goal graph reads it; see ``AgentConfig.ledger``).
+    """
+
+    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0, ledger: list | None = None):
         self.url = url
         self.headers = dict(headers or {})
         self.timeout_s = timeout_s
+        self.ledger = ledger
 
     def _client(self) -> Client:
         return Client(StreamableHttpTransport(self.url, headers=self.headers), timeout=self.timeout_s)
@@ -47,7 +53,10 @@ class McpServer:
     async def call(self, name: str, arguments: dict[str, Any] | None = None):
         """Call a tool; returns the fastmcp result (check ``is_error``) without raising on tool errors."""
         async with self._client() as client:
-            return await client.call_tool(name, arguments or {}, raise_on_error=False)
+            result = await client.call_tool(name, arguments or {}, raise_on_error=False)
+        if self.ledger is not None:
+            self.ledger.append({"name": name, "args": dict(arguments or {}), "result": result_text(result)[:4000], "error": bool(result.is_error)})
+        return result
 
     async def call_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
         result = await self.call(name, arguments)

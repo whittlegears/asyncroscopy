@@ -53,6 +53,10 @@ class InProcessAnalysis:
             poi.pop("map")
             self.tools.store.add_pois(arguments["map"], [poi])
             return poi
+        if tool == "map_info":
+            return self.tools.map_info(arguments["map"])
+        if tool == "list_pois":
+            return self.tools.list_pois(arguments["map"], kind=arguments.get("kind"), box_m=arguments.get("box_m"), limit=arguments.get("limit", 200))
         raise AssertionError(f"unexpected analysis call {tool}")
 
 
@@ -116,14 +120,14 @@ def test_a_map_job_stitches_scores_and_revisits_with_every_spectrum_on_the_map(m
     map_key = results["result_keys"]["map"]
     eds = store.list_pois(map_key, kind="eds_point")
     assert len(eds) == tiles and all(p["links"] and p["links"][0].endswith(".h5") for p in eds)
-    assert len(summary["regions"]) == 2 and all(r["scorer_version"] for r in summary["regions"])
-    visited = [v for v in summary["revisits"] if "image" in v]
+    assert summary["regions"]["count"] == 2 and all(r["scorer_version"] for r in store.list_pois(map_key, kind="candidate"))
+    visited = [v for v in summary["revisits"]["first"] if "image" in v]
     for visit in visited:
         high_mag = [p for p in store.list_pois(map_key, kind="high_mag") if visit["image"] in p["links"]]
         assert len(high_mag) == 1 and f"poi:{visit['region']}" in high_mag[0]["links"]
     box = PLAN["box_m"]
-    for visit in summary["revisits"]:
-        region = next(r for r in summary["regions"] if r["id"] == visit["region"])
+    for visit in summary["revisits"]["first"]:
+        region = next(r for r in summary["regions"]["first"] if r["id"] == visit["region"])
         inside = box[0] + 1.5e-8 <= region["x_m"] <= box[1] - 1.5e-8 and box[2] + 1.5e-8 <= region["y_m"] <= box[3] - 1.5e-8
         assert ("image" in visit) == inside  # only regions a 30 nm image fits around, inside the box, are visited
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True

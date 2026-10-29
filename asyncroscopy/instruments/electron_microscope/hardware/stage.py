@@ -7,8 +7,10 @@ reads these attributes via DeviceProxy before acquiring.
 """
 
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute
+from tango.server import Device, attribute, device_property
 from abc import abstractmethod
+
+TILT_LIMITS_DEG = {"alpha": (-35.0, 35.0), "beta": (-20.0, 20.0)}
 
 class STAGE(Device):
     """Stage/sample settings device.
@@ -20,6 +22,11 @@ class STAGE(Device):
     # ------------------------------------------------------------------
     # Device properties — set per-deployment in the Tango DB
     # ------------------------------------------------------------------
+    # Travel limits: a move outside them is refused, and job devices check plans against them at reserve.
+    # The defaults (+/-1 mm in x and y, +/-0.5 mm in z) are conservative for a TEM goniometer; set your stage's.
+    x_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage x travel (m).")
+    y_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage y travel (m).")
+    z_limits_m = device_property(dtype=(float,), default_value=[-5e-4, 5e-4], doc="[min, max] stage z travel (m).")
 
     # ------------------------------------------------------------------
     # Attributes
@@ -45,9 +52,7 @@ class STAGE(Device):
         dtype=float,
         access=AttrWriteType.READ_WRITE,
         unit="m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
-        doc="Stage X position in meters",
+        doc="Stage X position in meters (limits from the x_limits_m property)",
     )
 
     y = attribute(
@@ -55,9 +60,7 @@ class STAGE(Device):
         dtype=float,
         access=AttrWriteType.READ_WRITE,
         unit="m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
-        doc="Stage Y position in meters",
+        doc="Stage Y position in meters (limits from the y_limits_m property)",
     )
 
     z = attribute(
@@ -65,9 +68,7 @@ class STAGE(Device):
         dtype=float,
         access=AttrWriteType.READ_WRITE,
         unit="m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
-        doc="Stage Z position in meters",
+        doc="Stage Z position in meters (limits from the z_limits_m property)",
     )
 
     alpha = attribute(
@@ -98,6 +99,18 @@ class STAGE(Device):
         Device.init_device(self)
         self.set_state(DevState.ON)
         self._position = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self._limits = {
+            "x": self._pair(self.x_limits_m, "x_limits_m"),
+            "y": self._pair(self.y_limits_m, "y_limits_m"),
+            "z": self._pair(self.z_limits_m, "z_limits_m"),
+            **TILT_LIMITS_DEG,
+        }
+        attributes = self.get_device_attr()
+        for axis in ("x", "y", "z"):
+            low, high = self._limits[axis]
+            attr = attributes.get_attr_by_name(axis)
+            attr.set_min_value(low)
+            attr.set_max_value(high)
 
         self.info_stream("STAGE device initialised")
 
@@ -109,7 +122,18 @@ class STAGE(Device):
         return self._read_position()
 
     def write_position(self, value) -> None:
+        for axis, v in zip(("x", "y", "z", "alpha", "beta"), value):
+            low, high = self._limits[axis]
+            if not low <= float(v) <= high:
+                raise ValueError(f"stage {axis} = {float(v):.6g} is outside the stage limits [{low}, {high}]")
         self._write_position(value)
+
+    @staticmethod
+    def _pair(value, name: str) -> tuple[float, float]:
+        low, high = (float(v) for v in value)
+        if not low < high:
+            raise ValueError(f"{name} must be [min, max] with min < max, got {list(value)}")
+        return low, high
 
     def read_beta_tilt_enabled(self) -> bool:
         return self._read_beta_tilt_enabled()

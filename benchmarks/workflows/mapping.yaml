@@ -63,7 +63,7 @@ workflows:
     timeout_s: 900
     checks:
       - {check: job_finished}
-      - {check: called, tool: assemble_map}
+      - {check: stitched_map_in_answer}   # the map job stitches itself: no assemble_map call is needed
       - {check: no_sleepwalking}
 
   - name: explore_then_zoom
@@ -72,8 +72,8 @@ workflows:
     timeout_s: 1200
     checks:
       - {check: job_finished}
-      - {check: called, tool: score_map}
-      - {check: zoomed_on_region}
+      - {check: regions_scored}           # score_map, or the map job's find_regions
+      - {check: zoomed_on_region}         # a stage move and image, or the map job's revisit
       - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
 
   - name: abort_then_resume

@@ -199,9 +199,14 @@ def content_words(text: str) -> set[str]:
     return {_stem(w) for w in re.findall(r"[a-z][a-z0-9]+", text.lower()) if w not in STOP}
 
 
+# The negated word and the one after it ("without EDS spectra"): both name what is not wanted.
+NEGATED_WORD = re.compile(r"\b(?:without|no|not|don't|do not|skip)\s+(?:any\s+|an?\s+|the\s+)?[\w-]+(?:\s+[\w-]+)?", re.I)
+
+
 def match_score(skill: Skill, request: str) -> float:
-    """How well a skill matches a request: a keyword phrase counts 3, a word of its name 2, of its description 0.5."""
-    asked = content_words(request)
+    """How well a skill matches a request: a keyword phrase counts 3, a word of its name 2, of its description 0.5.
+    Words the request negates ("without EDS", "no spectra") do not count."""
+    asked = content_words(NEGATED_WORD.sub(" ", request))
     hits = sum(3.0 for k in skill.keywords if content_words(k) and content_words(k) <= asked)
     hits += 2.0 * len(asked & content_words(skill.name.replace("_", " ")))
     hits += 0.5 * len(asked & content_words(skill.description))
@@ -220,26 +225,48 @@ def usable_by(skill: Skill, agent_tools: set[str]) -> bool:
     return not skill.tools or any(fnmatch.fnmatchcase(t, p) for p in skill.tools for t in agent_tools)
 
 
-# A request that only asks about data: a question, or a read verb, with no instruction to act.
+# A request acts on the instrument unless it is clearly read-only. The costs are not equal: taking an
+# acting request for read-only keeps the skills it needs away from the agent, while taking a read-only
+# request for acting is still held by the risk policy and the approval gate.
 READ_CUE = re.compile(
     r"\?\s*$|^\s*(?:is|are|was|were|does|do|did|where|when|why|who|show|list|count|read)\b"
     r"|\b(?:what|which|how many|how much|is there|are there|tell me|show me|describe|list the|list all|look at|summari[sz]e|compare|explain)\b",
     re.I | re.M,
 )
-ACTING = re.compile(
-    r"\b(?:take|acquire|capture|move|drive|go(?: back)? to|goto|start|resume|revisit|expose|unblank|"
-    r"(?:map|image|photograph|scan|survey|record|run|focus on)\s+(?:a|an|the|this|that|it|them|each|every|around|here|\d)"
-    r"|make\s+(?:a|an)\s+(?:\w+\s+)?map)\b",
+# An instruction to act, anywhere in the request (past tenses such as "acquired" describe data, not actions).
+ACTION = re.compile(
+    r"\b(?:take|taking|acquire|acquiring|capture|capturing|measure|measuring|record|recording|collect|collecting|"
+    r"move|moving|go|going|goto|drive|revisit|start|starting|resume|perform|expose|exposing|(?:un)?blank|"
+    r"imaging|scanning|surveying|mapping|refocus|autofocus|focus(?:ing)? on|higher magnification|high magnification|"
+    r"(?:map|image|photograph|scan|survey|record)\s+(?:a|an|the|this|that|it|them|each|every|around|here|out|over|\d)|"
+    r"(?:do|run|make|get|give me|acquire)\s+(?:a|an|another|one|some)\s+(?:[\w-]+\s+){0,3}?(?:map|image|spectrum|spectra|scan|survey|measurement)s?|"
+    r"(?:new|another|fresh)\s+(?:area|image|map|spectrum|region|measurement|scan|data))\b",
     re.I,
 )
-NEGATED = re.compile(r"\b(?:do not|don't|dont|never|without|no need to|not)\s+(?:\w+\s+){0,2}?(?:\w+)(?:\s+anything)?", re.I)
+# An explicit instruction not to act ("do not acquire anything", "without moving", "no new data").
+NO_ACTION = re.compile(
+    r"\b(?:do not|don't|dont|never|without|no need to)\s+(?:\w+\s+){0,2}?"
+    r"(?:acquir\w*|tak\w*|mov\w*|scan\w*|map\w*|measur\w*|imag\w*|expos\w*|touch\w*|start\w*|record\w*|collect\w*)(?:\s+anything)?"
+    r"|\bno new (?:data|acquisitions?|measurements?|images?|maps?)\b",
+    re.I,
+)
+# A reference to data that already exist: a key, "the latest", "the stitched map", "stored" ...
+EXISTING = re.compile(
+    r"\b(?:latest|last|most recent(?:ly)?|recently|stored|existing|earlier|previous|already|acquired|recorded|saved)\b"
+    r"|\b[\w\-.]+\.(?:h5|hdf5|hdf|nxs|tiff?)\b|\b\w*\d\w*_map\b|\b(?:the|this|that)\s+(?:stitched\s+)?map\b",
+    re.I,
+)
 
 
 def read_only_request(request: str) -> bool:
-    """True when a request only asks about stored data: a question or read verb, and no instruction
-    to act ("take", "acquire", "move", "map a ...", "image it"); negated actions ("do not acquire") do not count."""
-    text = NEGATED.sub(" ", request)
-    return bool(READ_CUE.search(request)) and not ACTING.search(text)
+    """True only when a request clearly does not act: it says not to ("do not acquire anything"), or it
+    is a question about data that already exist ("the latest spectrum", a key, "the stitched map") with
+    no instruction to act anywhere in it. Everything else counts as acting."""
+    if ACTION.search(NO_ACTION.sub(" ", request)):
+        return False
+    if NO_ACTION.search(request):
+        return True
+    return bool(READ_CUE.search(request)) and bool(EXISTING.search(request))
 
 
 def select_skills(request: str, agent_tools: set[str], endpoint_tools: set[str] | None = None, limit: int = MAX_MATCHED) -> list[Skill]:

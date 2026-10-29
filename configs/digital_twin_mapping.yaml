@@ -71,6 +71,7 @@ devices:
       scan_device_address: asyncroscopy/scan/default
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
+      stage_device_address: asyncroscopy/stage/default
       # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
       # the twin reports stage positions to ~10 nm, plus scan distortion and drift.
       analysis_url: http://127.0.0.1:8003/mcp

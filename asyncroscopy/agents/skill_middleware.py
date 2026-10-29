@@ -35,9 +35,11 @@ import re
 from typing import Any, Callable, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import SystemMessage
 
-from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
+from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, NEW_MAP
+from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, fit_messages, repeats, stop_message, tool_rounds, tools_chars
 from asyncroscopy.skills import select_skills, skills_text
 from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS, list_skills, read_only_request, usable_by
 
@@ -64,7 +66,8 @@ def _text(message) -> str:
 
 
 def _request(messages) -> str:
-    return next((_text(m) for m in messages if getattr(m, "type", "") == "human"), "")
+    """The latest human message: in a conversation each turn is a request of its own."""
+    return next((_text(m) for m in reversed(messages) if getattr(m, "type", "") == "human"), "")
 
 
 def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
@@ -82,6 +85,8 @@ def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None 
         if name in usable and len(applied) < MAX_APPLIED and all(a["skill"] != name for a in applied):
             applied.append({"skill": name, "reason": reason})
 
+    if NEW_MAP.search(request):  # a request for a new map always gets the mapping procedure first
+        add("mapping", "the request asks for a new map")
     for skill in select_skills(request, agent_tools, endpoint_tools):
         add(skill.name, "matches the request")
     if ASKS_ABOUT_DATA.search(request):
@@ -102,16 +107,21 @@ def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None 
 
 
 class SkillMiddleware(AgentMiddleware):
-    """Puts the skills that apply (and optional memory notes) into the system prompt before every model call."""
+    """Puts the skills that apply (and optional memory notes) into the system prompt before every model call,
+    and keeps the whole call inside the model's context (``asyncroscopy.agents.guards``): the messages are
+    fitted to what the prompt and tools leave, and a call repeated with the same result is pointed out
+    once, then the run is stopped with an honest answer."""
 
     state_schema = SkillState
 
-    def __init__(self, base_prompt: str, agent_tools: set[str], endpoint_tools: set[str] | None = None, memory: Callable[[str], str] | None = None):
+    def __init__(self, base_prompt: str, agent_tools: set[str], endpoint_tools: set[str] | None = None,
+                 memory: Callable[[str], str] | None = None, num_ctx: int = 8192):
         super().__init__()
         self.base_prompt = base_prompt
         self.agent_tools = set(agent_tools)
         self.endpoint_tools = set(endpoint_tools or agent_tools)
         self.memory = memory
+        self.num_ctx = num_ctx
         self._notes: dict[str, str] = {}  # memory notes per request: read once per run, not per model call
 
     def _notes_for(self, request: str) -> str:
@@ -121,8 +131,17 @@ class SkillMiddleware(AgentMiddleware):
             self._notes[request] = self.memory(request) or ""
         return self._notes[request]
 
+    def _budget(self, messages) -> int:
+        """Characters of skill text this prompt may carry: skills and memory notes share at most a quarter
+        of the context (and PROMPT_BUDGET_CHARS), so the request and the replies keep the rest."""
+        share = min(PROMPT_BUDGET_CHARS, context_chars(self.num_ctx) // 4)
+        return max(1500, share - len(self._notes_for(_request(messages))))
+
     def _update(self, state) -> dict[str, Any] | None:
         applied = skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
+        # Which skills' instructions reach the prompt in full (a cut one is listed by its description only).
+        _text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools, budget=self._budget(state["messages"]))
+        applied = [{**a, "in_prompt": a["skill"] not in cut} for a in applied]
         return None if applied == state.get("skills_applied") else {"skills_applied": applied}
 
     def before_model(self, state, runtime):
@@ -137,17 +156,30 @@ class SkillMiddleware(AgentMiddleware):
         applied = state.get("skills_applied") or skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
         notes = self._notes_for(_request(state["messages"]))
         # One budget for skills and notes together: the prompt, tools and history share an 8k context.
-        text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools, budget=max(2000, PROMPT_BUDGET_CHARS - len(notes)))
+        text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools, budget=self._budget(state["messages"]))
         prompt = self.base_prompt
         if text:
             prompt += "\n\nSkills for this task (follow them):\n" + text
         if notes:
             prompt += "\n\nNotes from earlier work on this instrument (keys in them are from earlier runs, not this one):\n" + notes
-        tools = request.tools if cut else [t for t in request.tools if getattr(t, "name", None) != "load_skill"]
-        return request.override(system_message=SystemMessage(prompt), tools=tools)
+        # load_skill stays offered unless nothing was cut and the request only reads data: an acting
+        # request may need a skill the rules did not pick.
+        hide = not cut and read_only_request(_request(state["messages"]))
+        tools = [t for t in request.tools if getattr(t, "name", None) != "load_skill"] if hide else request.tools
+        messages = request.messages
+        if repeats(messages) == 1:
+            name = tool_rounds(messages)[-1][0]
+            prompt += REPEAT_NOTE.format(name=name)
+        # The messages get what the prompt and the tool schemas leave of the context.
+        room = context_chars(self.num_ctx) - len(prompt) - tools_chars(tools)
+        return request.override(system_message=SystemMessage(prompt), tools=tools, messages=fit_messages(messages, max(2000, room)))
 
     def wrap_model_call(self, request, handler):
+        if repeats(request.messages) >= 2:  # the third identical round: stop rather than loop
+            return ModelResponse(result=[stop_message(request.messages)])
         return handler(self._prompted(request))
 
     async def awrap_model_call(self, request, handler):
+        if repeats(request.messages) >= 2:
+            return ModelResponse(result=[stop_message(request.messages)])
         return await handler(await asyncio.to_thread(self._prompted, request))

@@ -57,7 +57,8 @@ def test_placeholders_keep_the_type_of_a_whole_fact():
     assert run_workflows.render("{poi_x}", facts) == 1.5e-7
     assert run_workflows.render("map {map_key} at {poi_x}", facts) == "map map_abc.h5_map at 1.5e-07"
     assert run_workflows.render([{"x": "{poi_x}"}], facts) == [{"x": 1.5e-7}]
-    assert run_workflows.render("{unknown}", facts) == "{unknown}"
+    with pytest.raises(run_workflows.InfraError):  # a missing fact is a broken setup, not "{unknown}" in a request
+        run_workflows.render("{unknown}", facts)
 
 
 def test_single_turn_runners_are_not_offered_conversations():
@@ -69,7 +70,7 @@ def test_single_turn_runners_are_not_offered_conversations():
 
 def test_device_calls_come_from_the_trace_and_native_calls_from_the_agent():
     run = Run(
-        calls=[Call("view_data", {"key": "img.h5"}, True), Call("view_data", {"key": "nope"}, False)],
+        calls=[Call("view_data", {"key": "img.h5"}, result="image, shape [64, 64]"), Call("view_data", {"key": "nope"}, result="Error: no key 'nope'", error=True)],
         events=[mcp("DigitalTwin_acquire_scanned_image", result_key="img.h5"), mcp("DigitalTwin_move_stage", ok=False, error="out of range")],
     )
     got = results(
@@ -138,7 +139,8 @@ def test_map_plan_from_the_job_trace_even_when_the_reserve_event_has_no_caller()
 
 
 def test_map_plan_from_a_run_job_call():
-    run = Run(calls=[Call("run_job", {"device": "Mapper", "plan": {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}}, True)], facts={"before": {"stage": [0, 0, 0, 0, 0]}})
+    run = Run(calls=[Call("run_job", {"device": "Mapper", "plan": {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}}, result='{"job_id": "j1", "state": "running"}')], facts={"before": {"stage": [0, 0, 0, 0, 0]}})
+    assert run.calls[0].ok and not run.calls[0].error
     assert results(run, {"check": "map_plan", "size_m": 1e-6, "eds": False})["map_plan"]["ok"]
 
 
@@ -280,7 +282,8 @@ def test_run_once_wires_setup_approval_trace_and_checks_together(monkeypatch):
     wf = {
         "name": "revisit", "setup": ["map"], "approval": "approve", "timeout_s": 30, "runners": ["general"],
         "request": "Go to x = {poi_x_nm} nm on {map_key}.",
-        "checks": [{"check": "stage_near", "x": "{poi_x}", "y": "{poi_y}"}, {"check": "called", "tool": "*_move_stage"}, {"check": "called", "tool": "view_data"}],
+        "checks": [{"check": "stage_near", "x": "{poi_x}", "y": "{poi_y}"}, {"check": "called", "tool": "*_move_stage"}, {"check": "called", "tool": "view_data"},
+                   {"check": "no_sleepwalking", "allow": ["*_move_stage", "view_data"]}],  # the move it asks for is not sleepwalking
     }
     row = asyncio.run(run_workflows.run_once(live, wf, "general", "unused:make_graph", {"stage": [0, 0, 0, 0, 0]}))
     assert row["ok"], row
@@ -348,13 +351,13 @@ def test_cuj3_visits_each_best_region_inside_the_approved_box_and_links_new_imag
 
 def test_zoom_navigation_needs_an_overview_then_level_0_at_a_point_without_walking_tiles():
     facts = {"map_box": [0.0, 6e-6, 0.0, 6e-6], "poi_records": {"m": [poi(3e-6, 3e-6, score=1.0)]}}
-    overview = Call("get_region", {"map": "m", "box_m": [0.0, 6e-6, 0.0, 6e-6]}, True)
-    detail = Call("get_region", {"map": "m", "box_m": [2.8e-6, 3.2e-6, 2.8e-6, 3.2e-6], "level": 0}, True)
+    overview = Call("get_region", {"map": "m", "box_m": [0.0, 6e-6, 0.0, 6e-6]}, result="png")
+    detail = Call("get_region", {"map": "m", "box_m": [2.8e-6, 3.2e-6, 2.8e-6, 3.2e-6], "level": 0}, result="png")
     assert results(Run(calls=[overview, detail], facts=facts), {"check": "zoom_navigation"})["zoom_navigation"]["ok"]
     assert not results(Run(calls=[detail, overview], facts=facts), {"check": "zoom_navigation"})["zoom_navigation"]["ok"]
-    elsewhere = Call("get_region", {"map": "m", "box_m": [0.0, 4e-7, 0.0, 4e-7], "level": 0}, True)
+    elsewhere = Call("get_region", {"map": "m", "box_m": [0.0, 4e-7, 0.0, 4e-7], "level": 0}, result="png")
     assert not results(Run(calls=[overview, elsewhere], facts=facts), {"check": "zoom_navigation"})["zoom_navigation"]["ok"]
-    walking = [overview, detail] + [Call("view_data", {"key": "run.h5", "dataset": f"tiles/tile_{i:05d}"}, True) for i in range(5)]
+    walking = [overview, detail] + [Call("view_data", {"key": "run.h5", "dataset": f"tiles/tile_{i:05d}"}, result="tile") for i in range(5)]
     assert not results(Run(calls=walking, facts=facts), {"check": "zoom_navigation"})["zoom_navigation"]["ok"]
 
 
@@ -405,10 +408,13 @@ def test_a_check_with_a_wrong_parameter_fails_when_the_file_is_loaded(tmp_path):
 
 def test_answer_peak_near_needs_the_peak_in_the_data_and_in_the_answer():
     truth = {"spectra": {"raman_1.h5": {"peaks": [2688.5, 1582.0, 520.0], "units": "cm-1"}}}
-    run = Run(facts={"truth": truth}, final="The 2D band is at 2689 cm-1.")
+    read = [Call("view_data", {"key": "raman_1.h5", "format": "text"}, result="peaks: 2688.5, 1582, 520")]
+    run = Run(calls=read, facts={"truth": truth}, final="The 2D band is at 2689 cm-1.")
     assert CHECKS["answer_peak_near"](run, position=2690, tol=20)[0]
-    assert not CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="It is at 1582 cm-1."), position=2690, tol=20)[0]
-    assert not CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="3000"), position=3000, tol=20)[0]  # not in the data
+    assert not CHECKS["answer_peak_near"](Run(calls=read, facts={"truth": truth}, final="It is at 1582 cm-1."), position=2690, tol=20)[0]
+    assert not CHECKS["answer_peak_near"](Run(calls=read, facts={"truth": truth}, final="3000"), position=3000, tol=20)[0]  # not in the data
+    parroted = CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="The 2D band is near 2690 cm-1."), position=2690, tol=20)
+    assert not parroted[0] and "never read" in parroted[1]  # the skill's own text says "2D near 2690"
 
 
 def test_skill_loaded_counts_skills_given_automatically():
@@ -419,9 +425,12 @@ def test_skill_loaded_counts_skills_given_automatically():
 def test_run_jobs_gated_start_is_allowed_with_run_job_and_overrides_count():
     from benchmarks._common import sleepwalking
 
-    traced = ["Mapper_reserve", "Mapper_start", "Mapper_release"]  # what the trace records for one run_job
-    assert sleepwalking(traced) == []  # the mapping skill allows run_job, so its start
-    assert sleepwalking(traced, ["view_data"]) == ["Mapper_start"]
+    via = [mcp("Mapper_reserve", via="run_job"), mcp("Mapper_start", via="run_job")]  # what one run_job leaves in the trace
+    assert CHECKS["no_sleepwalking"](Run(events=via))[0]  # the mapping skill allows run_job, so its own start
+    assert not CHECKS["no_sleepwalking"](Run(events=via), allow=["view_data"])[0]
+    direct = [mcp("Mapper_reserve"), mcp("Mapper_start")]  # a model calling the envelope itself
+    assert not CHECKS["no_sleepwalking"](Run(events=direct))[0]
+    assert CHECKS["no_sleepwalking"](Run(events=direct, has_calls=False))[0]  # the fixed mapping graph runs its own job
     assert sleepwalking(["DigitalTwin_set_fov"], []) == ["DigitalTwin_set_fov"]
     assert sleepwalking(["DigitalTwin_set_fov"], [], {"DigitalTwin_set_fov": "low"}) == []  # the endpoint's own table wins
     assert sleepwalking(["Opentrons_get_tip"], [], {"Opentrons_get_tip": "high"}) == ["Opentrons_get_tip"]  # an override to high

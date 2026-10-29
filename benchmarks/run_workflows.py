@@ -45,11 +45,10 @@ from _common import (
     find_tool,
     is_infra_error,
     read_trace,
-    sleepwalking,
     unique_caller,
     warm_up,
 )
-from workflow_checks import CHECKS, Call, Run, evaluate
+from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
@@ -157,13 +156,21 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
     return workflows
 
 
+def _fact(facts: dict, name: str) -> Any:
+    value = facts.get(name)
+    if value is None:  # "x = None nm" in a request is a broken setup, not a test of the agent
+        raise InfraError(f"placeholder {{{name}}} has no value: the setup did not produce it")
+    return value
+
+
 def render(value: Any, facts: dict) -> Any:
-    """Fill {name} placeholders from setup facts; a string that is only a placeholder keeps the fact's type."""
+    """Fill {name} placeholders from setup facts; a string that is only a placeholder keeps the fact's type.
+    A placeholder whose fact is missing or None raises InfraError."""
     if isinstance(value, str):
         whole = re.fullmatch(r"\{(\w+)\}", value)
-        if whole and whole.group(1) in facts:
-            return facts[whole.group(1)]
-        return re.sub(r"\{(\w+)\}", lambda m: str(facts.get(m.group(1), m.group(0))), value)
+        if whole:
+            return _fact(facts, whole.group(1))
+        return re.sub(r"\{(\w+)\}", lambda m: str(_fact(facts, m.group(1))), value)
     if isinstance(value, list):
         return [render(v, facts) for v in value]
     if isinstance(value, dict):
@@ -215,13 +222,17 @@ class Live:
         return {"stage": _floats(stage), "fov": _float(fov), "defocus": _float(defocus)}
 
     async def restore(self, state: dict) -> None:
-        """Put the stage, field of view and defocus back as they were when the suite started."""
-        if state.get("stage") and self.tool("_move_stage"):
-            await self.text(self.tool("_move_stage"), {"position": state["stage"]})
-        if state.get("fov") is not None:
-            await self.text(self.tool("_set_fov"), {"fov": state["fov"]})
-        if state.get("defocus") is not None:
-            await self.text(self.tool("_set_defocus"), {"defocus": state["defocus"]})
+        """Put the stage, field of view and defocus back as they were when the suite started; InfraError if the
+        instrument does not answer (a run after it would test a wedged device, not the agent)."""
+        steps = [("_move_stage", {"position": state.get("stage")}, state.get("stage")),
+                 ("_set_fov", {"fov": state.get("fov")}, state.get("fov")), ("_set_defocus", {"defocus": state.get("defocus")}, state.get("defocus"))]
+        for suffix, args, value in steps:
+            if value is None or not self.tool(suffix):
+                continue
+            try:
+                await self.instrument.call_text(self.tool(suffix), args)
+            except Exception as exc:
+                raise InfraError(f"re-homing failed: {self.tool(suffix)}: {str(exc)[:200]}") from exc
 
     # ---------------------------------------------------------- jobs, used by setups
 
@@ -297,7 +308,7 @@ class Live:
             listed = await self.analysis.call_json("list_pois", {"map": map_key})
         except Exception:
             return None
-        items = listed.get("result", listed) if isinstance(listed, dict) else listed
+        items = _poi_items(listed)
         return [p for p in items if isinstance(p, dict) and "x_m" in p] if isinstance(items, list) else None
 
     async def ground_truth(self) -> dict | None:
@@ -310,12 +321,18 @@ class Live:
             return None
 
     async def pois(self, map_key: str) -> list[list[float]]:
+        return [[p["x_m"], p["y_m"]] for p in await self.poi_records(map_key) or []]
+
+    async def health(self) -> str:
+        """"" when the instrument answers a plain read; otherwise why not (a held monitor, a timeout)."""
+        tool = self.tool("_get_stage")
+        if not tool:
+            return ""
         try:
-            listed = await self.analysis.call_json("list_pois", {"map": map_key})
-        except Exception:
-            return []
-        items = listed.get("result", listed) if isinstance(listed, dict) else listed
-        return [[p["x_m"], p["y_m"]] for p in items or [] if isinstance(p, dict) and "x_m" in p]
+            await self.instrument.call_text(tool, {})
+            return ""
+        except Exception as exc:
+            return f"{tool} did not answer: {str(exc)[:200]}"
 
     # ---------------------------------------------------------- setups (run by the benchmark, not the agent)
 
@@ -374,6 +391,17 @@ class Live:
                 pass
 
 
+class InfraError(RuntimeError):
+    """The stack, not the agent, failed: a wedged device, a setup that produced nothing. Such rows are not counted."""
+
+
+def _poi_items(listed: Any) -> list | None:
+    """The points of a list_pois reply: {"total", "pois"} from pyTEMlib, {"result": [...]} or a plain list."""
+    if isinstance(listed, dict):
+        listed = listed.get("pois", listed.get("result"))
+    return listed if isinstance(listed, list) else None
+
+
 def _float(text: str | None) -> float | None:
     try:
         return float(json.loads(text)) if text is not None else None
@@ -409,16 +437,16 @@ def data_truth(keys: list[str]) -> dict:
         except Exception as exc:  # the truth is missing, so checks that need it fail with the reason
             spectra[key] = {"error": f"{type(exc).__name__}: {exc}"}
             continue
-        positions = axis.values(0, len(values)) if axis else np.arange(len(values), dtype=np.float64)
-        xray = bool(axis) and axis.units == "eV"
-        fwhm = views.eds_fwhm_ev(positions) if xray else None
-        # The same peak finder and order (strongest net counts first) as view_data, so truth and what the agent read agree.
-        peaks = sorted(views.find_peaks(values, fwhm / abs(axis.scale) if xray else 3.0), key=lambda p: p.net, reverse=True)
-        strongest = float(positions[peaks[0].index]) if peaks else float(positions[int(np.argmax(values))])
-        entry = {"strongest": strongest, "units": axis.units if axis else "", "peaks": [round(float(positions[p.index]), 4) for p in peaks]}
+        line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
+        positions = line_axis.offset + line_axis.scale * np.arange(len(values), dtype=np.float64)
+        xray = line_axis.units == "eV" and views.is_xray(ds)
+        # view_data's own peak function (same widths, same strongest-first order), so truth and what the agent read agree.
+        rows = views.line_peaks(positions, values, line_axis, xray)
+        strongest = rows[0][0] if rows else float(positions[int(np.argmax(values))])
+        entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
-            entry["peaks_ev"] = [round(float(positions[p.index]), 1) for p in peaks]
-            entry["elements"] = sorted({c.split()[0] for p in peaks for c in views.xray_candidates(float(positions[p.index]), float(fwhm[p.index]) / 2)})
+            entry["peaks_ev"] = [round(row[0], 1) for row in rows]
+            entry["elements"] = sorted({c.strip().split()[0] for row in rows if row[4] and not row[4].startswith("possible") for c in row[4].split(",")})
         spectra[key] = entry
     return {"spectra": {k: v for k, v in spectra.items() if "elements" in v or "error" not in v}, "strongest_peak": strongest}
 
@@ -531,14 +559,15 @@ def calls_from_trace(trace: list) -> list[Call]:
 
 
 def skills_of(applied: list | None) -> list[str]:
-    return [a.get("skill") for a in applied or [] if isinstance(a, dict) and a.get("skill")]
+    """Skills whose instructions reached the agent's prompt in full (one cut to its description does not count)."""
+    return [a.get("skill") for a in applied or [] if isinstance(a, dict) and a.get("skill") and a.get("in_prompt", True)]
 
 
 async def run_chat_graph(factory: str, config, wf: dict, facts: dict, caller: str, started: float) -> tuple[list, str, list[str]]:
     """(messages, final answer, skills applied) of a chat graph over the workflow's turns."""
     module, _, function = factory.partition(":")
     make_graph = getattr(importlib.import_module(module), function or "make_graph")
-    graph = await make_graph({"configurable": {"model": config.model, "caller": caller}})
+    graph = await make_graph({"configurable": {"model": config.model, "caller": caller, "agent_config": config}})
     from langchain_core.messages import HumanMessage
 
     turns = wf.get("turns") or [{"say": wf["request"]}]
@@ -561,21 +590,41 @@ async def wait_for(condition: dict | None, started: float, caller: str) -> None:
     deadline = time.time() + float(condition.get("timeout_s", 300))
     need = int(condition.get("job_steps_at_least", 0))
     while time.time() < deadline:
-        steps = sum(1 for e in read_trace(started, [caller]) if str(e.get("action", "")).endswith(".step"))
+        events = read_trace(started, [caller])
+        steps = sum(1 for e in events if str(e.get("action", "")).endswith(".step"))
         if steps >= need:
+            if any(str(e.get("action", "")).endswith(".done") for e in events):
+                raise WorkflowError(f"the job finished ({steps} steps) before the next turn could act on it: make the plan bigger")
             return
         await asyncio.sleep(2)
+
+
+async def ensure_healthy(live: Live, baseline: dict) -> None:
+    """Before each run: the instrument answers a plain read, or is re-homed until it does; else InfraError
+    (a wedged device from an earlier run must not fail the next workflow)."""
+    why = await live.health()
+    if not why:
+        return
+    for _ in range(3):
+        await asyncio.sleep(10)
+        if not await live.health():
+            await live.restore(baseline)
+            return
+    raise InfraError(f"the instrument is not answering: {why}")
 
 
 async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: dict) -> dict:
     from asyncroscopy.agents.graphs.mapping import MappingGraph
 
     facts: dict = {}
-    for name in wf.get("setup") or []:
-        facts.update(await live.setup(name))
+    try:
+        for name in wf.get("setup") or []:
+            facts.update(await live.setup(name))
+    except Exception as exc:
+        raise InfraError(f"setup failed: {type(exc).__name__}: {exc}") from exc
     await live.restore(baseline)
     caller = unique_caller(f"wf-{wf['name']}-{runner}")
-    config = type(live.config)(**{**live.config.__dict__, "caller": caller})
+    config = live.config.for_run(caller=caller)
     stop, operator, mode_before = asyncio.Event(), None, None
     if wf.get("approval"):
         mode_before = await live.set_mode("approve")
@@ -608,6 +657,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
             run.calls = trace_from_messages(messages)
     except TimeoutError:
         error = f"timed out after {wf['timeout_s']} s"
+    except InfraError:
+        raise
     except Exception as exc:  # a crash or the recursion limit counts as a failed run
         error = f"{type(exc).__name__}: {exc}"
     finally:
@@ -617,6 +668,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         if mode_before:
             await live.set_mode(mode_before)
     seconds = round(time.time() - started, 1)
+    if error and len(config.ledger) > len(run.calls):  # stopped part way: keep every call whose reply arrived
+        run.calls = [Call.from_dict(c) for c in config.ledger]
     await asyncio.sleep(1.0)  # let the last trace lines land
     facts["after"] = await live.snapshot()
     run.events = read_trace(started, [caller])
@@ -653,6 +706,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
     truth = data_truth(truth_keys) if truth_keys else {}
     facts["truth"] = {**facts.get("truth", {}), **truth, **({"stitch": stitch} if stitch else {})}
     checks = evaluate(run, render(wf["checks"], {**facts, **facts.get("truth", {})}))
+    if runner != "mapping" and not (run.final or "").strip():
+        checks["answered"] = {"ok": False, "detail": "the agent gave no final answer"}
     names = [c.name for c in run.calls] or [str(e["action"]) for e in run.events if e.get("source") == "mcp"]
     return {
         "ok": error is None and all(c["ok"] for c in checks.values()),
@@ -663,7 +718,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "checks": checks,
         "tool_calls": len(names),
         "tool_names": names,
-        "sleepwalking": sleepwalking(names, None, run.risks),
+        "sleepwalking": unrequested(run, workflow_allow(wf)),  # with this workflow's own allow list
         "skills": run.skills,
         "final": (run.final or "")[-600:],
     }
@@ -703,6 +758,10 @@ async def main(args) -> int:
         print(f"no stack {args.stack!r}; declared: {sorted(stacks)} (benchmarks/stacks.yaml, or stacks: in a workflow file)")
         return 2
     STACK.update(stacks[args.stack])
+    # Environment overrides win over the stack file (configs/mcp_*_operator.yaml comments use them).
+    for field, variable in (("operator", "ASYNCROSCOPY_OPERATOR_URL"), ("tiled", "ASYNCROSCOPY_TILED_URI")):
+        if os.environ.get(variable):
+            STACK[field] = os.environ[variable]
     workflows = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack and (not args.only or wf["name"] in args.only)]
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
         print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have; nothing to run")
@@ -737,9 +796,11 @@ async def main(args) -> int:
             rows = []
             for i in range(args.n):
                 try:
+                    await ensure_healthy(live, baseline)
                     row = await run_once(live, wf, runner, available[runner], baseline)
                 except Exception as exc:  # a setup or stack failure: recorded, the suite goes on
-                    row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "infra_error": False, "seconds": 0, "checks": {}, "tool_names": [], "sleepwalking": []}
+                    row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "infra_error": isinstance(exc, InfraError),
+                           "seconds": 0, "checks": {}, "tool_names": [], "sleepwalking": []}
                 rows.append(row)
                 failed = [k for k, c in row["checks"].items() if not c["ok"]]
                 verdict = "INFRA" if row.get("infra_error") else ("PASS" if row["ok"] else "FAIL")

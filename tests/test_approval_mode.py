@@ -698,21 +698,84 @@ class TestRunJob:
             assert reply["error"]["code"] == "device_error" and reply["reservation_id"] == "r1" and "was released" in reply["note"]
         assert server._devices["Mapper"].released == [{"reservation_id": "r1"}]
 
-    def test_a_plan_over_the_endpoints_limits_never_starts(self, server_factory):
+    def test_a_plan_over_the_endpoints_limits_never_starts_by_either_path(self, server_factory):
         server, calls = self.mapper_server(server_factory)
         server.job_limits = {"max_duration_s": 3600.0}
-        original = server.tools["Mapper"]["reserve"]
-        server.tools["Mapper"]["reserve"] = lambda request: json.dumps({**json.loads(original(request)), "estimate": {"duration_s": 36000.0, "max_dose_e_per_a2": 10}})
+
+        def long_reserve(request):
+            calls.append(("reserve", json.loads(request)))
+            return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": {"duration_s": 36000.0, "max_dose_e_per_a2": 10}})
+
+        server.tools["Mapper"]["reserve"] = server._create_wrapper(long_reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper")
         reply = server.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["error"]["code"] == "plan_rejected" and reply["error"]["violations"][0]["what"] == "duration_s"
         assert "ask" in reply["error"]["message"] and reply["estimate"]["duration_s"] == 36000.0
-        assert [c[0] for c in calls] == ["reserve"] and server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+        direct = json.loads(server.tools["Mapper"]["reserve"]({"plan": {"fov_m": 2e-7}}))  # Mapper_reserve on the endpoint
+        assert direct["error"]["code"] == "plan_rejected"
+        assert [c[0] for c in calls] == ["reserve", "reserve"]  # never a start
+        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}, {"reservation_id": "r2"}]
+
+    def test_an_approved_retry_through_a_new_mcp_session_starts_the_held_reservation(self, server_factory, approvals_proxy):
+        """Agents open a new MCP session for every call (asyncroscopy.agents.mcp_tools): the retry must still match."""
+        import asyncio
+
+        from fastmcp import Client
+
+        server, calls = self.mapper_server(server_factory)
+        server.mcp.add_tool(server.run_job)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+
+        async def run_job_in_a_new_session():
+            async with Client(server.mcp) as client:  # a fresh client and session each time, as the agents do
+                return await client.call_tool("run_job", {"device": "Mapper", "plan": {"fov_m": 2e-7}}, raise_on_error=False)
+
+        held = asyncio.run(run_job_in_a_new_session())
+        text = held.content[0].text
+        assert held.is_error and "APPROVAL REQUIRED" in text
+        approvals_proxy.approve(json.dumps({"request_id": text.split("request_id=")[1].split(")")[0], "who": "alice"}))
+        started = asyncio.run(run_job_in_a_new_session())
+        assert not started.is_error and started.structured_content["job_id"] == "j-r1"
+        assert calls == [("reserve", {"plan": {"fov_m": 2e-7}}), ("start", "r1")]  # no second reservation or request
+
+    def test_each_call_in_its_own_http_session_still_finds_the_held_run(self, server_factory, approvals_proxy, monkeypatch):
+        """Over HTTP every agent call has a new mcp-session-id; caller and run id are what stay the same."""
+        import itertools
+
+        server, calls = self.mapper_server(server_factory)
+        sessions = itertools.count()
+        headers = {"x-asyncroscopy-caller": "general-agent", "x-asyncroscopy-run": "run-1"}
+        monkeypatch.setattr("fastmcp.server.dependencies.get_http_headers",
+                            lambda include_all=False: {**headers, "mcp-session-id": f"s{next(sessions)}"})
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        approvals_proxy.approve(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
+        assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
+        assert calls == [("reserve", {"plan": {"fov_m": 2e-7}}), ("start", "r1")]
+        headers["x-asyncroscopy-run"] = "run-2"  # another agent run with the same caller name: its own reservation
+        with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        assert [c[0] for c in calls].count("reserve") == 2
+
+    def test_a_sweep_waits_for_a_run_job_that_is_starting(self, server_factory):
+        import threading
+
+        server, _calls = self.mapper_server(server_factory)
+        server._held_runs[("c", "", "Mapper", "{}")] = {"reservation_id": "r9", "request_id": "", "device": "Mapper", "created": time.monotonic() - 3 * 3600, "summary": {}}
+        server._run_job_lock.acquire()  # a run_job reserving or starting
+        sweeper = threading.Thread(target=server._sweep_held, kwargs={"force": True})
+        sweeper.start()
+        sweeper.join(0.3)
+        assert sweeper.is_alive() and server._devices["Mapper"].released == []  # it waits
+        server._run_job_lock.release()
+        sweeper.join(5)
+        assert server._devices["Mapper"].released == [{"reservation_id": "r9"}]
 
     def test_two_callers_with_one_name_do_not_share_a_held_run(self, server_factory, approvals_proxy, monkeypatch):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         session = {"id": "s1"}
-        monkeypatch.setattr(type(server), "_session", staticmethod(lambda: session["id"]))
+        monkeypatch.setattr(type(server), "_run_id", staticmethod(lambda: session["id"]))
         with pytest.raises(ToolError):
             server.run_job("Mapper", {"fov_m": 2e-7})
         session["id"] = "s2"
@@ -735,3 +798,26 @@ class TestRunJob:
         info = server.endpoint_info()
         assert info["risks"]["Mapper_start"] == "high" and info["risks"]["Mapper_reserve"] == "low"
         assert info["risks"]["run_job"] == "high" and info["risks"]["view_data"] == "low" and info["job_devices"] == ["Mapper"]
+
+
+class TestRunJobResume:
+    def test_resume_starts_the_aborted_reservation_without_a_new_one(self, server_factory):
+        server, calls = TestRunJob.mapper_server(server_factory)
+        server._devices["Mapper"].finished = True
+        reply = server.run_job("Mapper", resume="r7")
+        assert reply["state"] == "done" and calls == [("start", "r7")]  # no reserve: the reservation holds the plan
+
+    def test_a_failed_resume_keeps_the_reservation(self, server_factory):
+        server, calls = TestRunJob.mapper_server(server_factory)
+        server._devices["Mapper"].start_fails = "raise"
+        with pytest.raises(ToolError, match="is kept, so the job can still be resumed"):
+            server.run_job("Mapper", resume="r7")
+        assert server._devices["Mapper"].released == []
+
+    def test_a_plan_and_a_resume_together_are_refused(self, server_factory):
+        server, calls = TestRunJob.mapper_server(server_factory)
+        with pytest.raises(ToolError, match="not both"):
+            server.run_job("Mapper", {"fov_m": 2e-7}, resume="r7")
+        with pytest.raises(ToolError, match="not both"):
+            server.run_job("Mapper")
+        assert calls == []

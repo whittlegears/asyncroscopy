@@ -61,6 +61,36 @@ def step_count(job: dict) -> int:
     return int(job["step_count"]) if "step_count" in job else len(job["steps"])
 
 
+def read_last_steps(path: Path, count: int) -> dict:
+    """The last ``count`` step records of a job's .steps.jsonl, read from the end of the file.
+
+    Start-up cost does not grow with the job's history: a job of a million steps reads only
+    its tail. A line cut short by a crash is skipped.
+    """
+    if not path.exists():
+        return {}
+    newest: deque = deque(maxlen=count)
+    with path.open("rb") as handle:
+        handle.seek(0, 2)
+        end = position = handle.tell()
+        block = 1 << 16
+        data = b""
+        while position > 0 and data.count(b"\n") <= count:
+            position = max(0, position - block)
+            handle.seek(position)
+            data = handle.read(end - position)
+        lines = data.split(b"\n")
+        if position > 0:
+            lines = lines[1:]  # the first line may start before the block
+    for line in lines[-(count + 1):]:
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        newest.append((str(row["index"]), row["record"]))
+    return dict(newest)
+
+
 def done_count(job: dict) -> int:
     """Steps done, from the job's sorted [start, end) ranges."""
     return sum(end - start for start, end in job["done_ranges"])
@@ -249,6 +279,10 @@ class JobDevice(Device):
     def on_suspend(self, job: dict, reason: str) -> None:
         """Called in the worker when a suspender pauses the job; leave the instrument waiting safely (e.g. beam blanked)."""
 
+    def example_plan(self, request: str) -> dict | None:
+        """The example plan shown with a refusal; a device may tailor it to the refused request."""
+        return self.PLAN_EXAMPLE
+
     def step_targets(self, job: dict) -> list[dict]:
         """What the steps will set, checked against limits at reserve: [{"step": i, "device": address,
         "attribute": name, "value": number}, ...]. A target may carry "min"/"max" for limits the device
@@ -320,18 +354,7 @@ class JobDevice(Device):
         return self._path(reservation_id).with_suffix(".steps.jsonl")
 
     def _read_steps(self, reservation_id: str) -> dict:
-        path = self._steps_path(reservation_id)
-        if not path.exists():
-            return {}
-        newest: deque = deque(maxlen=KEPT_STEP_RESULTS)
-        with path.open(encoding="utf-8") as handle:  # streamed: the file can hold millions of steps
-            for line in handle:
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:  # a line cut short by a crash
-                    continue
-                newest.append((str(row["index"]), row["record"]))
-        return dict(newest)
+        return read_last_steps(self._steps_path(reservation_id), KEPT_STEP_RESULTS)
 
     def _save(self, job: dict) -> None:
         """Write the job's small state file. Step results go to an append-only file instead,
@@ -410,8 +433,9 @@ class JobDevice(Device):
                 example = f" Example plan: {json.dumps(self.PLAN_EXAMPLE)}" if self.PLAN_EXAMPLE is not None else ""
                 return self._error("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}.{example}")
             message = exc.message if isinstance(exc, jsonschema.ValidationError) else f"{type(exc).__name__}: {exc}" if isinstance(exc, (TypeError, KeyError)) else str(exc)
-            if self.PLAN_EXAMPLE is not None:
-                message += f". Example plan: {json.dumps(self.PLAN_EXAMPLE)}"
+            example = self.example_plan(args[0] if args else "")
+            if example is not None:
+                message += f". Example plan: {json.dumps(example)}"
             return self._error("plan_rejected", message)
 
     # ------------------------------------------------------------------
@@ -461,6 +485,8 @@ class JobDevice(Device):
                 "grant_id": None,
                 "last_error": None,
                 "created": time.time(),
+                # Where this job's events start in the shared trace file, so reading them back costs this job, not the history.
+                "trace_offset": self._trace.path.stat().st_size if self._trace.path.exists() else 0,
             }
             self._save(job)  # if this fails, nothing is reserved
             self._jobs[reservation_id] = job

@@ -14,6 +14,7 @@ import asyncio
 import json
 import socket
 import sys
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -78,6 +79,24 @@ async def mcp_side():
             check(f"mode restored to {mode}", restored, "" if restored else reply[:160])
 
 
+def eds_points(key: str, meta: dict, cells: int = 3) -> list[dict]:
+    """EDS points the way the GUI reads them: metadata (older maps), then the POI layer's spatial cells."""
+    points = [p for p in meta.get("pois", []) if p.get("kind") == "eds_point"]
+    layer = meta.get("poi_layer", "poi")
+    try:
+        listing = get(f"/api/v1/search/{urllib.parse.quote(key)}/{layer}?fields=metadata&page[limit]=300")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return points
+        raise
+    counted = [c for c in listing.get("data") or [] if c["id"].startswith("c_") and (c["attributes"]["metadata"].get("count") or 0) > 0]
+    for cell in counted[:cells]:
+        batches = get(f"/api/v1/search/{urllib.parse.quote(key)}/{layer}/{cell['id']}?fields=metadata&page[limit]=300")
+        for batch in batches.get("data") or []:
+            points += [p for p in batch["attributes"]["metadata"].get("pois", []) if p.get("kind") == "eds_point"]
+    return points
+
+
 def tiled_side():
     query = "&".join([
         "filter[eq][condition][key]=kind",
@@ -89,8 +108,13 @@ def tiled_side():
     check("listStitchedMaps finds kind=stitched_map nodes", len(maps) > 0, f"{len(maps)} maps")
     if not maps:
         return
-    with_eds = [m for m in maps if any(p.get("kind") == "eds_point" for p in m["attributes"]["metadata"].get("pois", []))]
-    node = (with_eds or maps)[-1]
+    node = maps[-1]
+    eds = []
+    for candidate in reversed(maps):  # the newest map that has EDS points, if any
+        eds = eds_points(candidate["id"], candidate["attributes"]["metadata"])
+        if eds:
+            node = candidate
+            break
     key, meta = node["id"], node["attributes"]["metadata"]
     ok = isinstance(meta.get("pixel_size_m"), (int, float)) and meta["pixel_size_m"] > 0 and len(meta.get("origin_xy_m", [])) == 2 and len(meta.get("canvas_shape", [])) == 2
     check("parseMapMetadata required fields", ok, key)
@@ -111,7 +135,8 @@ def tiled_side():
     np_dtype = np.dtype(("<" if dtype.get("endianness", "little") == "little" else ">") + kind + str(size))
     values = np.frombuffer(buf, dtype=np_dtype)
     check("fetchRegion returns rows*cols values", values.size == r1 * c1, f"{values.size} values, dtype {np_dtype}")
-    eds = [p for p in meta.get("pois", []) if p.get("kind") == "eds_point" and p.get("links")]
+    eds = [p for p in eds if p.get("links")]
+    print(f"INFO {len(eds)} linked EDS points read from {key}")
     if eds:
         link = eds[0]["links"][0]
         n = get(f"/api/v1/metadata/{urllib.parse.quote(link)}")["data"]
