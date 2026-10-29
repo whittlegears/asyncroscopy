@@ -15,7 +15,9 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 
 | Piece | Where | What it does |
 | :-- | :-- | :-- |
-| `Mapper` | `asyncroscopy/instruments/electron_microscope/mapper.py` | One background job per map: serpentine tile grid inside a stage box, optional EDS at each tile, dose budget, abort with beam blank, resume after a restart. |
+| `Mapper` | `asyncroscopy/instruments/electron_microscope/mapper.py` | One background job per map, for any instrument: serpentine tile grid inside a stage box, budgets checked at reserve, abort with the instrument made safe, resume after a restart, then stitch, score and revisit. |
+| Instrument profiles | `asyncroscopy/jobs/map_profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
+| Routines | `asyncroscopy/routines/grid.py`, `dose.py`, `drift.py` | The pure arithmetic: tile grids, electron dose, the stitch's drift at a time. |
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with pyTEMlib's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
 | Approval mode | `asyncroscopy/safety/` | `auto` or `approve`; see [approval_mode.md](approval_mode.md). |
 | Map tools | pyTEMlib `mcp_server/map_tools.py` | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
@@ -32,6 +34,17 @@ A plan is JSON checked against `asyncroscopy/contracts/map_plan.schema.json`. Le
 ```
 
 `per_tile` is `[]` (images only), `["eds_point"]` (one spectrum at each tile centre) or `["eds_map"]` (a coarse spectrum image of every tile: much slower, only when asked for by name). `reserve` refuses a plan whose overlapping tiles, EDS spectra and revisit image together would exceed `dose_budget_e_per_a2` and returns a time and dose estimate.
+
+The fields after `overlap` are the STEM profile's. Another instrument's Mapper (its `instrument_profile`) takes the generic fields (`box_m` or `size_m` and `centre_m`, `fov_m`, `overlap`, `order`, `stitch`, `find_regions`, `revisit`, `budgets`, `label`) plus its own, and refuses a field it does not use by name. An AFM (the YAML twin's `afm.yaml`) maps with:
+
+```json
+{"size_m": [3e-6, 3e-6], "fov_m": 1e-6, "overlap": 0.25, "settings": {"setpoint_v": 0.4},
+ "budgets": {"time_s": 900, "tip_force_nn": 10}}
+```
+
+### Budgets
+
+`budgets` maps a name to a limit; `reserve` refuses the plan, before anything moves, when the worst case is over any of them, and the estimate's `budgets` says what each comes to. Every instrument has `time_s` (the estimated duration). The STEM and SEM profiles add `dose_e_per_a2` (the same as `dose_budget_e_per_a2`, below); a YAML instrument adds its file's `map.budgets`, such as the AFM's `tip_force_nn` (peak force, from the setpoint).
 
 ### Dose budget and beam current
 
@@ -50,7 +63,7 @@ job = json.loads(mapper.start(json.dumps({"reservation_id": reserved["reservatio
 print(json.loads(mapper.job_status(json.dumps({"job_id": job["job_id"]}))))
 ```
 
-Then stitch with the pyTEMlib server (`assemble_map`), or in Python with `pyTEMlib.image_tools.mosaic`.
+Then stitch with the pyTEMlib server (`assemble_map`), or in Python with `pyTEMlib.image_tools.mosaic`. The run file is the same for every instrument (tiles with a pixel size and a stage position each, plus `instrument_profile` in its attributes), so the analysis server stitches an AFM's height map like a STEM's.
 
 ## Exploring a map
 

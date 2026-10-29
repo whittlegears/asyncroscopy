@@ -2,14 +2,24 @@
 
 An agent (or a person, or a script) asks for a map in one call instead of
 issuing a thousand moves and acquisitions. The plan (asyncroscopy/contracts/
-map_plan.schema.json) fixes a stage box, field of view, overlap, detectors and
-per-tile actions such as one EDS spectrum at each tile centre. The worker
-visits tiles in serpentine order (to limit backlash) and never leaves the box.
-`reserve` refuses a plan whose dose anywhere (overlapping tiles, EDS
-spectra and a revisit image) would exceed the budget, and, on a stack that
-is not simulated, a budget computed from an assumed beam current; the plan
-cannot change after that, so there is no separate dose check while it runs.
-The beam is blanked whenever the job ends: done, aborted or failed.
+map_plan.schema.json) fixes a stage box, field of view, overlap and, for the
+instrument, its own fields (a STEM's detectors and per-tile EDS spectra, an
+AFM's setpoint). The worker visits tiles in serpentine order (to limit
+backlash) and never leaves the box.
+
+The Mapper is instrument-agnostic: what differs between a STEM, an SEM and an
+AFM is an instrument profile (asyncroscopy/jobs/map_profile.py), chosen with the
+``instrument_profile`` device property: ``stem`` (the default), ``sem``,
+``yaml`` (any YAML twin with an image acquisition) or one registered by a
+plug-in. The profile acquires each tile, makes the instrument safe between
+tiles and whenever the job stops (blanks the beam, retracts the tip), prepares
+before a move and recovers after it, and says what a plan costs. `reserve`
+refuses a plan over any budget it gives (``budgets``: electron dose for a beam,
+time for any instrument, tip force for an AFM) before anything moves, and, on a
+stack that is not simulated, a dose budget computed from an assumed beam
+current; the plan cannot change after that, so there is no separate budget
+check while it runs. The instrument is made safe whenever the job ends: done,
+aborted or failed.
 
 The job is a pipeline whose phases are steps of the same job, so abort,
 approval and progress cover all of them:
@@ -52,6 +62,9 @@ a twin), the clock the drift fit and revisits use.
 A dry run (plan ``"dry_run": true``) moves nothing: stage moves and acquisitions
 are recorded in the trace and checked against the plan box (see JobDevice), the
 beam is still blanked, no image or run file is made, and the summary says so.
+
+The grid, dose and drift arithmetic are pure functions in asyncroscopy/routines
+(grid.py, dose.py, drift.py); they are imported here under their old names.
 """
 
 from __future__ import annotations
@@ -59,7 +72,6 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
-import math
 import os
 import shutil
 import threading
@@ -75,8 +87,12 @@ from asyncroscopy.contracts import ENVELOPE_VERSION, load, validate
 from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.job_device import done_count
+from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
+from asyncroscopy.routines.dose import ELECTRON_CHARGE, eds_dose, frame_dose  # noqa: F401  (their old home; tests and plug-ins import them here)
+from asyncroscopy.routines.drift import drift_at
+from asyncroscopy.routines.grid import EDGE_TOLERANCE_M, compact_grid, grid_axes, inside_box, max_exposures, tile_at, tile_centres  # noqa: F401
 
-ELECTRON_CHARGE = 1.602176634e-19
+# A STEM plan's defaults (the generic ones plus the stem profile's); each profile has its own.
 PLAN_DEFAULTS = {
     "overlap": 0.15,
     "imsize": 512,
@@ -89,7 +105,7 @@ PLAN_DEFAULTS = {
     "stitch": True,
     "find_regions": 0,
 }
-EDGE_TOLERANCE_M = 1e-12
+LEGACY_BUDGETS = {"dose_budget_e_per_a2": "dose_e_per_a2"}  # plan fields that are one budget under another name
 RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
 RUN_LAYOUT = 2
 STAGE_POLL_S = 0.2  # how often a long stage move is checked for arrival (and the job for an abort)
@@ -105,30 +121,6 @@ REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-wi
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
 
-def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = None) -> tuple[np.ndarray, np.ndarray]:
-    """Tile-centre x and y coordinates covering ``box`` with every tile inside it; more than ``limit`` tiles is refused."""
-    x_min, x_max, y_min, y_max = box
-    step = fov * (1.0 - overlap)
-
-    def axis(lo: float, hi: float) -> np.ndarray:
-        span = hi - lo
-        if span < fov - EDGE_TOLERANCE_M:
-            raise ValueError(f"box side {span:.3e} m is smaller than the field of view {fov:.3e} m")
-        n = max(1, int(math.ceil((span - fov) / step - 1e-9)) + 1)
-        if limit is not None and n > limit:
-            raise ValueError(f"plan needs more than {limit} tiles; this Mapper allows at most {limit}")
-        if n == 1:
-            return np.array([(lo + hi) / 2.0])
-        # Spread the tiles evenly so the last one ends exactly at the box edge.
-        return np.linspace(lo + fov / 2.0, hi - fov / 2.0, n)
-
-    xs, ys = axis(x_min, x_max), axis(y_min, y_max)
-    if limit is not None and len(xs) * len(ys) > limit:
-        raise ValueError(f"plan needs {len(xs) * len(ys)} tiles; this Mapper allows at most {limit}")
-    return xs, ys
-
-
-# Names a caller (often a small model) uses for a field the plan calls something else.
 FIELD_SYNONYMS = {
     "max_dose_e_per_a2": "dose_budget_e_per_a2", "max_dose": "dose_budget_e_per_a2", "dose_limit": "dose_budget_e_per_a2",
     "dose_budget": "dose_budget_e_per_a2", "dose": "dose_budget_e_per_a2", "fov": "fov_m", "field_of_view_m": "fov_m",
@@ -159,76 +151,48 @@ def check_plan_fields(plan: dict) -> None:
     raise ValueError(f"unknown plan field(s): {', '.join(hints)}. Nothing was dropped or changed: resend the plan with the right names. Allowed fields: {', '.join(allowed)}")
 
 
-def compact_grid(xs, ys) -> dict:
-    """A grid as origin, step and count per axis (the tiles are evenly spaced)."""
-    return {
-        "rows": len(ys), "cols": len(xs),
-        "x0": float(xs[0]), "dx": float(xs[1] - xs[0]) if len(xs) > 1 else 0.0,
-        "y0": float(ys[0]), "dy": float(ys[1] - ys[0]) if len(ys) > 1 else 0.0,
-    }
+def profile_for(mapper) -> InstrumentProfile:
+    """The mapper's instrument profile (its ``instrument_profile`` property; ``stem`` when it has none), made once."""
+    name = getattr(mapper, "instrument_profile", None) or "stem"
+    profile = getattr(mapper, "_map_profile", None)
+    if profile is None or profile.name != name:
+        profile = get_profile(name)(mapper)
+        mapper._map_profile = profile
+    return profile
 
 
-def tile_at(grid: dict, order: str, index: int) -> dict:
-    """Tile ``index`` of the grid, in acquisition order (serpentine reverses every other row)."""
-    cols = grid["cols"]
-    row, k = divmod(int(index), cols)
-    col = cols - 1 - k if order == "serpentine" and row % 2 == 1 else k
-    return {"index": int(index), "row": row, "col": col, "x": grid["x0"] + col * grid["dx"], "y": grid["y0"] + row * grid["dy"]}
+def check_profile_fields(plan: dict, profile: InstrumentProfile) -> None:
+    """Refuse plan fields this instrument's profile does not use (a tip has no dwell time), by name, before anything else."""
+    allowed = GENERIC_PLAN_FIELDS | profile.plan_fields
+    unused = [k for k in plan if k not in allowed]
+    if unused:
+        raise ValueError(
+            f"{', '.join(map(repr, unused))} not used when mapping with the {profile.name!r} instrument profile ({profile.doc}). "
+            f"Nothing was run; resend the plan without them. Fields it takes: {', '.join(sorted(allowed))}"
+        )
 
 
-def tile_centres(box: list[float], fov: float, overlap: float, order: str, limit: int | None = None) -> list[dict]:
-    """Every tile of a (small) grid as a list; plans use ``compact_grid`` and ``tile_at`` instead."""
-    grid = compact_grid(*grid_axes(box, fov, overlap, limit))
-    return [tile_at(grid, order, k) for k in range(grid["rows"] * grid["cols"])]
+def plan_budgets(p: dict) -> dict:
+    """The plan's budgets by name: ``budgets`` plus fields that are a budget under an older name (dose_budget_e_per_a2)."""
+    budgets = dict(p.get("budgets") or {})
+    for field, name in LEGACY_BUDGETS.items():
+        if p.get(field) is not None:
+            budgets.setdefault(name, p[field])
+    return budgets
 
 
-def max_exposures(grid: dict, fov: float) -> int:
-    """Most tiles that cover any one point, from the actual tile spacing.
-
-    The grid spreads tiles evenly, so the real overlap can exceed the
-    requested one; the dose check must use the real spacing.
-    """
-
-    def per_axis(n: int, step: float) -> int:
-        return 1 if n < 2 or step <= 0 else min(n, int(math.ceil(fov / step - 1e-9)))
-
-    return per_axis(grid["cols"], grid["dx"]) * per_axis(grid["rows"], grid["dy"])
-
-
-def frame_dose(current_pa: float, dwell_s: float, fov_m: float, imsize: int) -> float:
-    """Electrons per square angstrom one frame gives."""
-    pixel_a = fov_m / imsize / 1e-10
-    return current_pa * 1e-12 * dwell_s / ELECTRON_CHARGE / (pixel_a**2)
-
-
-def eds_dose(current_pa: float, exposure_s: float, spread_m: float, per_tile: list, map_points: int, fov_m: float, exposures: int) -> float:
-    """Most electrons per square angstrom a tile's EDS spectra put on any ``spread_m`` square.
-
-    A parked beam's dose is counted over a ``spread_m`` square (the probe is far smaller, but damage
-    and contamination spread). An eds_map grid of ``map_points``^2 spectra can put several in one
-    square, and overlapping tiles stack their grids (``exposures``); one eds_point sits at each tile centre.
-    """
-    if "eds_point" in per_tile:
-        spectra = 1
-    elif "eds_map" in per_tile:
-        per_axis = min(int(map_points), int(math.floor(spread_m / (fov_m / int(map_points)) + 1e-9)) + 1)
-        spectra = per_axis * per_axis * int(exposures)
-    else:
-        return 0.0
-    return spectra * current_pa * 1e-12 * exposure_s / ELECTRON_CHARGE / (spread_m / 1e-10) ** 2
-
-
-def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
-    """The stitch's fitted drift (x, y in metres) at ``t_s`` after the first tile; extrapolated from the last segment."""
-    if not drift or len(drift.get("times_s", [])) < 2:
-        return 0.0, 0.0
-    times = np.asarray(drift["times_s"], dtype=np.float64)
-    xy = np.asarray(drift["xy_m"], dtype=np.float64)
-    if t_s <= times[-1]:
-        return float(np.interp(t_s, times, xy[:, 0])), float(np.interp(t_s, times, xy[:, 1]))
-    rate = (xy[-1] - xy[-2]) / max(times[-1] - times[-2], 1e-9)
-    end = xy[-1] + rate * (t_s - times[-1])
-    return float(end[0]), float(end[1])
+def check_budgets(budgets: dict, costs: dict[str, Cost], duration_s: float, profile: InstrumentProfile) -> dict | None:
+    """Refuse a plan over any budget it gives (every profile can budget time_s); what each budgeted cost comes to."""
+    if not budgets:
+        return None
+    costs = {**costs, TIME_BUDGET: Cost(duration_s, "s", why="the estimated duration of the whole job", advice="map a smaller area, find fewer regions, or shorten each tile")}
+    unknown = sorted(set(budgets) - set(costs))
+    if unknown:
+        raise ValueError(f"unknown budget(s) {unknown} for the {profile.name!r} instrument profile; it can budget {sorted(costs)}")
+    for name, limit in budgets.items():
+        if costs[name].value > float(limit):
+            raise ValueError(costs[name].refusal(limit))
+    return {name: {"value": round(costs[name].value, 3), "budget": limit, "units": costs[name].units} for name, limit in budgets.items()}
 
 
 def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, image_key, images, spectrum, spectrum_key) -> None:
@@ -336,7 +300,13 @@ class Mapper(JobDevice):
     # A 600 nm square around the current stage position; per_tile ["eds_point"] adds a spectrum at each tile.
     PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "per_tile": []}
 
-    microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to drive.")
+    instrument_profile = device_property(
+        dtype=str,
+        default_value="stem",
+        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/map_profile.py): stem (the default), sem, yaml "
+        "(a YAML twin with an image acquisition), or a profile registered by a plug-in.",
+    )
+    microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Instrument to drive (a microscope, or any device the instrument profile drives).")
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device.")
     eds_device_address = device_property(dtype=str, default_value="", doc="EDS settings device (needed for EDS per-tile actions).")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device; when set, the run file is registered with Tiled.")
@@ -406,113 +376,128 @@ class Mapper(JobDevice):
         except (tango.DevFailed, AttributeError, TypeError, ValueError):
             return time.time()
 
+    @staticmethod
+    def _tile_half(plan: dict, fov: float | None = None) -> tuple[float, float]:
+        """Half the width and height of an image of ``fov`` (default a tile); tiles may be rectangular (plan tile_m)."""
+        if fov is not None:
+            return fov / 2.0, fov / 2.0
+        width, height = plan.get("tile_m") or (plan["fov_m"], plan["fov_m"])
+        return float(width) / 2.0, float(height) / 2.0
+
     def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
         """A dry run's check of each recorded stage move: does the image it is for lie inside the plan box?"""
-        if name != "move_stage":
+        target = profile_for(self).move_target(job["resolved_plan"], name, arguments)
+        if target is None:
             return None
         plan = job["resolved_plan"]
         x_min, x_max, y_min, y_max = plan["box_m"]
-        x, y = (float(v) for v in list(arguments[0])[:2])
         step = self.current_step()
         phase = self.step_at(job, step)["phase"] if step is not None else "tiles"
-        half = float(plan["revisit"]["fov_m"] if phase == "revisit" else plan["fov_m"]) / 2.0
+        half_x, half_y = self._tile_half(plan, float(plan["revisit"]["fov_m"]) if phase == "revisit" else None)
         tol = EDGE_TOLERANCE_M
-        inside = x_min + half - tol <= x <= x_max - half + tol and y_min + half - tol <= y <= y_max - half + tol
-        return {"ok": inside, "inside_box": inside, "box_m": [x_min, x_max, y_min, y_max], "xy_m": [x, y], "image_half_width_m": half}
+        inside = all(
+            low + half - tol <= float(target[axis]) <= high - half + tol
+            for axis, low, high, half in (("x", x_min, x_max, half_x), ("y", y_min, y_max, half_y))
+            if axis in target
+        )
+        xy = [float(target["x"]), float(target["y"])] if "x" in target and "y" in target else {k: float(v) for k, v in target.items()}
+        return {"ok": inside, "inside_box": inside, "box_m": [x_min, x_max, y_min, y_max], "xy_m": xy, "image_half_width_m": half_x}
 
     # ------------------------------------------------------------------
     # Plan
     # ------------------------------------------------------------------
+    def read_job_kind(self) -> str:
+        return profile_for(self).job_kind or self.JOB_KIND
+
+    def read_plan_example(self) -> str:
+        example = profile_for(self).plan_example
+        return json.dumps(example) if example is not None else super().read_plan_example()
+
     def example_plan(self, request: str) -> dict | None:
+        profile = profile_for(self)
+        if profile.plan_example is not None:
+            return dict(profile.plan_example)
         example = dict(self.PLAN_EXAMPLE)
         if "dose" in request.lower():  # a caller who mentioned dose sees where a dose limit goes
             example["dose_budget_e_per_a2"] = 50.0
         return example
 
+    def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
+        """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves."""
+        for address, commands in profile.needed_commands(plan).items():
+            try:
+                offered = {str(n).lower() for n in self.proxy(address, timeout_s=3.0).get_command_list()}
+            except Exception as exc:  # DevFailed: the device is down; the job's first step would fail the same way
+                raise ValueError(f"the {profile.name!r} instrument profile drives {address}, which did not answer ({str(exc).strip().splitlines()[0][:200]})") from None
+            missing = [c for c in dict.fromkeys(commands) if c.lower() not in offered]
+            if missing:
+                raise ValueError(
+                    f"the {profile.name!r} instrument profile needs {', '.join(missing)} on {address}, which does not offer them; "
+                    "set this Mapper's instrument_profile to one the instrument supports"
+                )
+
     def resolve_plan(self, plan: dict) -> dict:
+        profile = profile_for(self)
         check_plan_fields(plan)
         validate(plan, "map_plan")
+        check_profile_fields(plan, profile)
         revisit_only = isinstance(plan.get("revisit"), dict) and ("points" in plan["revisit"] or "map" in plan["revisit"])
         if revisit_only:
             return self._resolve_revisit_only(plan)
         if ("box_m" in plan) == ("size_m" in plan):
             raise ValueError("give the area as box_m [x_min, x_max, y_min, y_max] or as size_m [width, height], not both or neither")
-        if "fov_m" not in plan:
+        p = {**GENERIC_PLAN_DEFAULTS, **profile.plan_defaults, **plan}
+        profile.resolve(p)
+        if "fov_m" not in p:
             raise ValueError("fov_m (the field of view of each tile, metres) is required: add \"fov_m\": 2e-7 (200 nm tiles) unless the request gives a tile size")
-        p = {**PLAN_DEFAULTS, **plan}
         if "size_m" in p:
             # The device does the arithmetic: callers (often small models) get centre +/- half wrong.
             width, height = (float(v) for v in p["size_m"])
-            cx, cy = (float(v) for v in p.get("centre_m") or list(self.proxy(self.microscope_device_address).get_stage())[:2])
+            cx, cy = (float(v) for v in (p.get("centre_m") or profile.current_xy()))
             p["box_m"] = [cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2]
         x_min, x_max, y_min, y_max = (float(v) for v in p["box_m"])
         if not (x_min < x_max and y_min < y_max):
             raise ValueError("box_m must be [x_min, x_max, y_min, y_max] with min < max")
-        if "eds_point" in p["per_tile"] and "eds_map" in p["per_tile"]:
-            raise ValueError("choose eds_point or eds_map, not both")
         if (p["find_regions"] or p.get("revisit")) and not (p["stitch"] and self.analysis_url):
             raise ValueError("find_regions and revisit need the map stitched: keep stitch on, on a Mapper with an analysis_url")
         if p.get("revisit") and not p["find_regions"]:
             raise ValueError("revisit images the regions find_regions finds (give find_regions > 0), or give revisit points [[x, y], ...] or an existing map (revisit map, top_k)")
-        imsize, dwell, fov = int(p["imsize"]), float(p["dwell_s"]), float(p["fov_m"])
+        fov = float(p["fov_m"])
         revisit = None
         if p.get("revisit"):
-            revisit = {"fov_m": float(p["revisit"]["fov_m"]), "imsize": int(p["revisit"].get("imsize", imsize)), "dwell_s": float(p["revisit"].get("dwell_s", dwell))}
+            revisit = profile.resolve_revisit(p, p["revisit"])
             if not fov * REVISIT_FOV_MIN_FRACTION <= revisit["fov_m"] <= fov:
                 raise ValueError(f"revisit fov_m must be between {fov * REVISIT_FOV_MIN_FRACTION:.3g} m (a twentieth of the tile) and the tile's {fov:.3g} m")
             p["revisit"] = revisit
-        grid = compact_grid(*grid_axes([x_min, x_max, y_min, y_max], fov, float(p["overlap"]), limit=int(self.max_tiles)))
+        tile_w, tile_h = profile.tile_size_m(p)
+        if tile_h != tile_w:
+            p["tile_m"] = [tile_w, tile_h]
+        grid = compact_grid(*grid_axes([x_min, x_max, y_min, y_max], tile_w, float(p["overlap"]), limit=int(self.max_tiles), fov_y=tile_h if tile_h != tile_w else None))
         tiles = grid["rows"] * grid["cols"]
         if tiles == 1:
             # One tile is an image, not a map: almost always the area's size put in fov_m. A strip one tile high is a map.
             raise ValueError(f"fov_m {fov:.3g} m covers the whole area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
 
-        beam = self._beam_current()
-        current = beam["pa"]
-        budget = p.get("dose_budget_e_per_a2")
-        self._refuse_assumed_current(beam, budget)
-        exposures = max_exposures(grid, fov)
-        tile_dose = frame_dose(current, dwell, fov, imsize) * exposures
         stitch = bool(p["stitch"] and self.analysis_url)
         regions = int(p["find_regions"]) if stitch else 0
         revisits = regions if revisit else 0
-        # A revisit adds its frame on top of whatever the tiles gave that spot; regions lie a scoring window apart,
-        # so one spot gets at most one revisit.
-        revisit_dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"]) if revisit else 0.0
-        # EDS spectra park the beam inside a tile, on top of its frames: counted where they land, conservatively added.
-        spectra_dose = eds_dose(current, float(p["eds_exposure_s"]), float(self.eds_dose_spread_m), p["per_tile"], int(p["eds_map_points"]), fov, exposures)
-        max_dose = tile_dose + revisit_dose + spectra_dose
-        if budget is not None and max_dose > float(budget):
-            parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-            raise ValueError(f"plan would give up to {max_dose:.3g} e/A^2 ({parts}), above the budget of {budget} e/A^2; widen revisit fov_m, lower dwell_s or eds_exposure_s")
-
-        frame_s = imsize * imsize * dwell
-        eds_s = 0.0
-        if "eds_point" in p["per_tile"]:
-            eds_s = float(p["eds_exposure_s"])
-        elif "eds_map" in p["per_tile"]:
-            eds_s = float(p["eds_exposure_s"]) * int(p["eds_map_points"]) ** 2
-        revisit_s = revisits * (float(self.estimate_move_s) + (revisit["imsize"] ** 2 * revisit["dwell_s"] if revisit else 0.0))
+        budgets = plan_budgets(p)
+        costs, extra = profile.costs(p, grid, revisit, revisits, budgets)
+        revisit_s = revisits * (float(self.estimate_move_s) + (profile.revisit_seconds(revisit) if revisit else 0.0))
+        duration = tiles * (float(self.estimate_move_s) + profile.tile_seconds(p)) + revisit_s
+        budgeted = check_budgets(budgets, costs, duration, profile)
         estimate = {
             "steps": tiles + int(stitch) + int(regions > 0) + revisits,
             "tiles": tiles,
-            "duration_s": round(tiles * (float(self.estimate_move_s) + frame_s + eds_s) + revisit_s, 1),
-            "max_dose_e_per_a2": round(max_dose, 3),
-            "beam_current_pa": current,
-            # The dose estimate is only as good as the current; say when it was assumed.
-            "beam_current_source": beam["source"],
+            "duration_s": round(duration, 1),
+            **extra,
             "phases": ["tiles"] + (["stitch"] if stitch else []) + (["score"] if regions else []) + (["revisit"] if revisits else []),
         }
-        if beam["source"] == "default":
-            estimate["beam_current_reason"] = beam["reason"]
-        if revisit:
-            estimate["revisit_dose_e_per_a2"] = round(revisit_dose, 3)
+        if budgeted:
+            estimate["budgets"] = budgeted
         if not stitch:
             estimate["stitch"] = "off" if not p["stitch"] else "this Mapper has no analysis_url; stitch the run with assemble_map"
-        if spectra_dose:
-            estimate["eds_dose_e_per_a2"] = round(spectra_dose, 3)
-            estimate["note"] = f"max_dose_e_per_a2 includes the EDS spectra's parked-beam dose, counted over {float(self.eds_dose_spread_m):.2g} m squares (eds_dose_spread_m)."
-        return {
+        resolved = {
             **p,
             "box_m": [x_min, x_max, y_min, y_max],
             "stitch": stitch,
@@ -521,19 +506,22 @@ class Mapper(JobDevice):
             "estimate": estimate,
             "grid": grid,
         }
+        if isinstance(self, JobDevice):  # a device (not a test's stand-in): the instrument must offer what the profile drives
+            self._check_needs(profile, resolved)
+        return resolved
 
     def _resolve_revisit_only(self, plan: dict) -> dict:
         """A plan that only images given points, or an existing map's best regions: no tiles, no stitch."""
-        p = {**PLAN_DEFAULTS, **plan}
+        profile = profile_for(self)
+        p = {**GENERIC_PLAN_DEFAULTS, **profile.plan_defaults, **plan}
         revisit = dict(p["revisit"])
         if ("points" in revisit) == ("map" in revisit):
             raise ValueError("give revisit points [[x, y], ...] or an existing map (revisit map, top_k), not both")
         if p.get("find_regions") or p.get("per_tile"):
             raise ValueError("a revisit-only plan takes no tiles: leave out find_regions and per_tile, or give an area to map")
+        profile.resolve(p)
+        revisit.update(profile.resolve_revisit(p, revisit))
         fov = float(revisit["fov_m"])
-        imsize = int(revisit.get("imsize", p["imsize"]))
-        dwell = float(revisit.get("dwell_s", p["dwell_s"]))
-        revisit.update({"fov_m": fov, "imsize": imsize, "dwell_s": dwell})
         half = fov / 2.0
         regions: list[dict] = []
         if "points" in revisit:
@@ -549,29 +537,30 @@ class Mapper(JobDevice):
             box = p.get("box_m") or list(info["stage_box_m"])
             count = int(revisit.get("top_k", 3))
         x_min, x_max, y_min, y_max = (float(v) for v in box)
-        beam = self._beam_current()
-        current = beam["pa"]
-        budget = p.get("dose_budget_e_per_a2")
-        self._refuse_assumed_current(beam, budget)
-        dose = frame_dose(current, dwell, fov, imsize)
-        if budget is not None and dose > float(budget):
-            raise ValueError(f"each revisit image would give {dose:.3g} e/A^2, above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s")
+        budgets = plan_budgets(p)
+        costs, extra = profile.revisit_only_costs(p, revisit, count, budgets)
+        duration = count * (float(self.estimate_move_s) + profile.revisit_seconds(revisit))
+        budgeted = check_budgets(budgets, costs, duration, profile)
         for r in regions:
             if not (x_min + half <= r["x_m"] <= x_max - half and y_min + half <= r["y_m"] <= y_max - half):
                 raise ValueError(f"revisit point ({r['x_m']:.3e}, {r['y_m']:.3e}) m is outside the approved area {[x_min, x_max, y_min, y_max]} for a {fov:.2e} m image")
         steps = count + (1 if "map" in revisit else 0)
         estimate = {
             "steps": steps, "tiles": 0, "revisits": count,
-            "duration_s": round(count * (float(self.estimate_move_s) + imsize * imsize * dwell), 1),
-            "max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3),
-            "beam_current_pa": current, "beam_current_source": beam["source"],
+            "duration_s": round(duration, 1),
+            **extra,
             "phases": (["select"] if "map" in revisit else []) + ["revisit"],
         }
-        return {
+        if budgeted:
+            estimate["budgets"] = budgeted
+        resolved = {
             **p, "fov_m": fov, "revisit": revisit, "box_m": [x_min, x_max, y_min, y_max], "stitch": False, "find_regions": 0,
             "step_count": steps, "estimate": estimate, "grid": {"rows": 0, "cols": 0, "x0": 0.0, "dx": 0.0, "y0": 0.0, "dy": 0.0},
             "regions": regions, "revisit_only": True,
         }
+        if isinstance(self, JobDevice):
+            self._check_needs(profile, resolved)
+        return resolved
 
     def step_at(self, job: dict, index: int) -> dict:
         if "steps" in job:  # a job saved before plans were computed lazily: tiles only
@@ -595,9 +584,8 @@ class Mapper(JobDevice):
 
     def step_targets(self, job: dict) -> list[dict]:
         """The stage x and y the plan goes to at its extremes (outermost tile centres, given revisit points),
-        checked at reserve against the STAGE device's limits, so a plan off the stage is refused before anything moves."""
-        if not self.stage_device_address:
-            return []
+        checked at reserve against the stage's limits (the profile says where they are: the STAGE device, or
+        the instrument's own stage settings), so a plan off the stage is refused before anything moves."""
         plan = job["resolved_plan"]
         grid = plan["grid"]
         xs: list[tuple[str, float]] = []
@@ -612,10 +600,7 @@ class Mapper(JobDevice):
             x_min, x_max, y_min, y_max = plan["box_m"]
             xs += [("revisit area", x_min), ("revisit area", x_max)]
             ys += [("revisit area", y_min), ("revisit area", y_max)]
-        stage = self.stage_device_address
-        return [{"step": s, "device": stage, "attribute": "x", "value": float(v)} for s, v in xs] + [
-            {"step": s, "device": stage, "attribute": "y", "value": float(v)} for s, v in ys
-        ]
+        return profile_for(self).stage_targets(plan, xs, ys)
 
     def _tile_count(self, job: dict) -> int:
         if "steps" in job:
@@ -706,19 +691,9 @@ class Mapper(JobDevice):
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
-        microscope = self.proxy(self.microscope_device_address)
-        scan = self.proxy(self.scan_device_address)
-        scan.imsize = int(plan["imsize"])
-        scan.dwell_time = float(plan["dwell_s"])
-        scan.scan_region = [0.0, 0.0, 1.0, 1.0]
-        microscope.set_fov(float(plan["fov_m"]))
-        current = list(microscope.get_stage())
-        job.setdefault("pose", {"z": float(plan.get("z_m", current[2])), "alpha": float(current[3]), "beta": float(current[4])})
-        if any(a in plan["per_tile"] for a in ("eds_point", "eds_map")) and self.eds_device_address:
-            eds = self.proxy(self.eds_device_address)
-            eds.exposure_time = float(plan["eds_exposure_s"])
-        # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
-        microscope.blank_beam()
+        # The instrument's settings for the plan, ending safe (beam blanked, tip retracted): it stays safe
+        # between tiles and is made unsafe only while a tile is acquired (see the profile's acquire_tile).
+        profile_for(self).setup(job)
         if job["resolved_plan"].get("revisit_only") or job.get("dry_run"):
             job["run_closed"] = True  # no tiles (or, in a dry run, no images), so no run file
         if job.get("run_closed"):
@@ -742,6 +717,7 @@ class Mapper(JobDevice):
             h5.attrs["grid"] = json.dumps({"rows": plan["grid"]["rows"], "cols": plan["grid"]["cols"]})
             h5.attrs["axes"] = "images: rows=+y, columns=+x; positions in stage metres"
             h5.attrs["microscope"] = self.microscope_device_address
+            h5.attrs["instrument_profile"] = profile_for(self).name
             h5.attrs["created"] = time.time()
         job["result_keys"]["run_file"] = str(path)
 
@@ -767,48 +743,41 @@ class Mapper(JobDevice):
     def _tile(self, job: dict, tile: dict) -> dict:
         plan = job["resolved_plan"]
         index = tile["index"]
-        x_min, x_max, y_min, y_max = plan["box_m"]
-        half = float(plan["fov_m"]) / 2.0
-        if not (x_min + half - EDGE_TOLERANCE_M <= tile["x"] <= x_max - half + EDGE_TOLERANCE_M and y_min + half - EDGE_TOLERANCE_M <= tile["y"] <= y_max - half + EDGE_TOLERANCE_M):
+        half_x, half_y = self._tile_half(plan)
+        if not inside_box(plan["box_m"], tile["x"], tile["y"], half_x, half_y):
             raise RuntimeError(f"tile {index} at ({tile['x']:.3e}, {tile['y']:.3e}) lies outside the plan box; refusing to move")
-        microscope = self.proxy(self.microscope_device_address)
-        pose = job["pose"]
-        microscope.move_stage([tile["x"], tile["y"], pose["z"], pose["alpha"], pose["beta"]])
-        if not self._wait_for_stage(job, microscope):
+        profile = profile_for(self)
+        if not self._move(job, profile, tile["x"], tile["y"]):
             return None  # aborted during a long move; a resume moves again
-        reported = [float(v) for v in microscope.get_stage()]
-        # Unblank only for this tile's acquisitions: a beam left on during the stage move, file
-        # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
-        # The tile is timed on the instrument's clock, not this computer's (on a twin with time_scale 0 the two
-        # differ by any factor): the stitch fits drift, and revisits extrapolate it, against these times.
-        frame_start = self._clock_s(microscope)
-        microscope.unblank_beam()
-        try:
-            image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
-            acquired = (frame_start + self._clock_s(microscope)) / 2.0  # the middle of the frame
-            spectrum, spectrum_key = None, None
-            if "eds_point" in plan["per_tile"]:
-                microscope.place_beam([0.5, 0.5])
-                spectrum_key = microscope.acquire_spectrum("eds")
-            elif "eds_map" in plan["per_tile"] and not job.get("dry_run"):
-                spectrum = self._spectrum_map(job, microscope, int(plan["eds_map_points"]))
-                spectrum_key = "eds_map"
-        finally:
-            microscope.blank_beam()
-        if spectrum_key == "eds_map" and spectrum is None:
-            return None  # aborted part way through the spectrum image; a resume redoes this tile
+        reported = [float(v) for v in profile.stage_reported(job)]
+        # The profile makes the instrument unsafe (unblanks the beam) only for this tile's acquisitions, timed on
+        # the instrument's clock, and safe again before returning, even on an error.
+        acquired_tile = profile.acquire_tile(job, tile)
+        if acquired_tile is None:
+            return None  # aborted part way through the tile (a spectrum image); a resume redoes this tile
+        image_key, acquired = acquired_tile["image_key"], acquired_tile["acquired"]
+        spectrum, spectrum_key = acquired_tile.get("spectrum"), acquired_tile.get("spectrum_key")
         job.setdefault("first_tile_s", acquired)
         if job.get("dry_run"):
             # The commands above were recorded, not sent: there is no image to read or store.
             return {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired, "acquisition": DRY_RUN_SKIPPED}
         images = read_acquisition(image_key, self._data_proxy())
-        if "eds_point" in plan["per_tile"]:
+        if spectrum is None and spectrum_key is not None:
             spectrum = read_acquisition(spectrum_key, self._data_proxy())
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key, "clock_s": acquired}
         if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
         write_tile(self._file(job), self._tile_count(job), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key)
         return record
+
+    @staticmethod
+    def _move(job: dict, profile: InstrumentProfile, x: float, y: float) -> bool:
+        """One stage move with the profile's preparation and recovery (a probe retracts, moves, approaches); False if aborted."""
+        profile.before_move(job)
+        if not profile.move(job, x, y):
+            return False
+        profile.after_move(job)
+        return True
 
     def _wait_for_stage(self, job: dict, microscope: tango.DeviceProxy) -> bool:
         """Wait for a long move to end (a microscope that returns before arriving says so in stage_moving); False if aborted.
@@ -829,24 +798,6 @@ class Mapper(JobDevice):
             if time.monotonic() > deadline:
                 raise RuntimeError(f"the stage still reports stage_moving after {float(self.stage_timeout_s):g} s (stage_timeout_s); check the stage, then resume the job")
             time.sleep(STAGE_POLL_S)
-
-    def _spectrum_map(self, job: dict, microscope: tango.DeviceProxy, points: int) -> dict | None:
-        coords = (np.arange(points) + 0.5) / points
-        cube = None
-        attrs: dict = {}
-        for r, fy in enumerate(coords):
-            for c, fx in enumerate(coords):
-                if self.aborting(job):  # points x points spectra can take long; stop with the beam blanked
-                    return None
-                microscope.place_beam([float(fx), float(fy)])
-                data = read_acquisition(microscope.acquire_spectrum("eds"), self._data_proxy())
-                array, attrs = next(iter(data.values()))
-                if cube is None:
-                    cube = np.zeros((points, points, len(array)), dtype=np.asarray(array).dtype)
-                cube[r, c] = array
-        attrs = dict(attrs)
-        attrs["spectrum_image_axes"] = "rows=+y, columns=+x, channels"
-        return {"spectrum_image": (cube, attrs)}
 
     # ------------------------------------------------------------------
     # Pipeline: stitch, score, revisit (on the analysis server)
@@ -1022,11 +973,11 @@ class Mapper(JobDevice):
         revisit = plan["revisit"]
         fov = float(revisit["fov_m"])
         if visit is None:
-            microscope = self.proxy(self.microscope_device_address)
+            profile = profile_for(self)
             # The map places content at stage reading + drift(t) (pyTEMlib's fit), so to put the region under
-            # the beam now the stage goes to its map position minus the drift, extrapolated to now on the
+            # the probe now the stage goes to its map position minus the drift, extrapolated to now on the
             # instrument's clock (the one the tiles were timed with).
-            now = self._clock_s(microscope)
+            now = profile.clock_s()
             dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
@@ -1040,22 +991,9 @@ class Mapper(JobDevice):
                 visits.append({"region": region["id"], "skipped": note})
                 return {"phase": "revisit", "skipped": note}
             x, y = cx, cy
-            pose = job["pose"]
-            microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
-            if not self._wait_for_stage(job, microscope):
+            if not self._move(job, profile, x, y):
                 return None
-            microscope.set_fov(fov)
-            scan = self.proxy(self.scan_device_address)
-            scan.imsize = int(revisit["imsize"])
-            scan.dwell_time = float(revisit["dwell_s"])
-            microscope.unblank_beam()
-            try:
-                image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
-            finally:
-                microscope.blank_beam()
-                microscope.set_fov(float(plan["fov_m"]))
-                scan.imsize = int(plan["imsize"])
-                scan.dwell_time = float(plan["dwell_s"])
+            image_key = profile.acquire_revisit(job, revisit)
             # clock_s: the instrument time the drift correction (drift_xy_m) was extrapolated to.
             visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
             if job.get("dry_run"):
@@ -1073,13 +1011,13 @@ class Mapper(JobDevice):
         return self.proxy(self.data_device_address) if self.data_device_address else None
 
     def on_stop(self, job: dict, reason: str) -> None:
-        self.proxy(self.microscope_device_address).blank_beam()
+        profile_for(self).make_safe(job)  # blank the beam, retract the tip
         if not job.get("run_closed"):
             self._write_trace(job)
 
     def on_finish(self, job: dict) -> dict:
-        # A finished map must not leave the beam parked on the last tile.
-        self.proxy(self.microscope_device_address).blank_beam()
+        # A finished map must not leave the beam parked (or the tip engaged) on the last tile.
+        profile_for(self).make_safe(job)
         self._close_run_file(job)
         self._link_pending(job)
         return {}

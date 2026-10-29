@@ -36,8 +36,8 @@ Limits to know before you write one:
 - One command or acquisition call may take at most 25 s, because the MCP server stops waiting at 30 s. A longer acquisition (a long exposure, many accumulations) is refused with a pointer to the job that runs it; inside a job there is no such limit.
 - While a job runs, `set_*` and `acquire*` calls are refused (the job owns the instrument); `get_*` reads and plain commands such as `laser_off` still work, and switching the source off makes the job's next acquisition fail safely.
 - A job runs acquisitions without arguments and steps over numeric settings only; a job has at most `max_points` points (default 100 000).
-- The data are shaped, not physical: peak positions, widths and heights follow your expressions, with the noise you choose. An image's `shape` is fixed, and its `spots` are drawn afresh on every call, so going back to a feature does not find the same one. Use it to rehearse a workflow and the agent's decisions, not to validate a measurement.
-- Job limits in the MCP config (`mcp.job_limits`) know a job's duration and an electron dose only; a limit on, say, tip force goes in the setting's `max` instead.
+- The data are shaped, not physical: peak positions, widths and heights follow your expressions, with the noise you choose. An image's `shape` is fixed. Its `spots` are drawn afresh on every call (`count`), so going back to a feature does not find the same one, unless you fix them on the sample with `x_m` and `y_m` (where the image centre is, usually `stage_x_m` and `stage_y_m`) and `per_um2`: then every image of a place shows the same spots, and a map of overlapping images stitches (see [Map any instrument](#map-any-instrument)). Use it to rehearse a workflow and the agent's decisions, not to validate a measurement.
+- Job limits in the MCP config (`mcp.job_limits`) know a job's duration and an electron dose only; a limit on, say, tip force goes in the setting's `max` instead, or, for maps, in the file's `map.budgets`.
 
 Test your file in-process, without starting servers, the way `tests/yaml_sim_afm_check.py` does:
 
@@ -263,6 +263,68 @@ No Tango database or ports are needed.
 **Instrument kept in its own repository?** Use `asyncroscopy.testing`: `instrument_context(devices_info)` starts your devices in a Tango test context (only one per Python process, so open it once in a session-scoped pytest fixture and share it between tests), and `mcp_server_for(devices_info, approvals_device_address=...)` builds the MCP server the agent would talk to, so you can check the tool descriptions it reads (`server.list_tool_descriptions()`) and which calls approve mode holds. `tests/out_of_tree_check.py` is a complete example. `server.list_tool_risks()` shows what approve mode would hold without calling anything. `instrument_context(..., process=True)` runs the devices in a child process, where Tango's 3 s timeout applies to calls from your test, as it does on the real launcher. Calls between devices in that one child process are not timed out, so it cannot catch a job that uses `tango.DeviceProxy` instead of `self.proxy()`; search your job devices for `DeviceProxy(` instead.
 
 **Instrument inside this repository?** Add your devices to the `devices_info` list in `tests/conftest.py`, next to `SimIndenter` and `IndentGrid`, and add a fixture that returns a proxy. All tests share one in-process `MultiDeviceTestContext`: PyTango can't start a second one in the same interpreter. Use `prop_path()` for any path property: the test context cuts property values at `:`, which breaks Windows drive letters.
+
+## Map any instrument
+
+The `Mapper` job device (`asyncroscopy/instruments/electron_microscope/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
+
+| Profile | Instrument | Budgets (plan `budgets`) |
+| :-- | :-- | :-- |
+| `stem` (default) | scanned images, optional EDS per tile (`per_tile`) | `dose_e_per_a2` (or the plan's `dose_budget_e_per_a2`), `time_s` |
+| `sem` | any microscope device offering `move_stage`, `get_stage`, `set_fov`, `acquire_scanned_image`, `blank_beam`, `unblank_beam`; no EDS | `dose_e_per_a2`, `time_s` |
+| `yaml` | a YAML instrument with an image acquisition and stage x/y settings | `time_s` and the file's `map.budgets` |
+
+Every profile can budget `time_s` (the estimated duration). A plan over any budget it gives is refused at `reserve`, before anything moves, with the cost and how to lower it; a budget the profile does not know is refused by name.
+
+### A YAML instrument gets maps for free
+
+A YAML device whose file has an image acquisition and stage settings offers `get_map_profile`, which tells a Mapper with `instrument_profile: yaml` everything it needs. With no `map:` section it is inferred: the first image acquisition, the settings `stage_x_m` and `stage_y_m` (or the first job's two axes), the setting in metres that the image's `pixel_size_m` uses as the field of view, and the first job's `before_move`, `after_move`, `on_stop` (run between tiles) and `settings`. A `map:` section says it explicitly and adds budgets; `examples/afm.yaml` has:
+
+```yaml
+map:
+  image: acquire_topography
+  field_of_view: scan_size_m       # a tile's width in metres; without one, fov_m is the image's fixed width
+  stage: [stage_x_m, stage_y_m]
+  before_move: [retract_tip]       # the tip is lifted for every stage move...
+  after_move: [approach_tip]       # ...and approaches again before the tile
+  safe: [retract_tip]              # between tiles, and whenever the map stops
+  settings: [setpoint_v, scan_rate_hz]    # what a plan's "settings" may set
+  budgets:
+    tip_force_nn: {per_tile: setpoint_v * 20, combine: max, units: nN, doc: peak tip force}
+```
+
+`combine: max` counts the worst single image (a peak force); `sum` adds every tile and revisit image (wear, exposure). For images that stitch, fix the image's `spots` on the sample (`x_m: stage_x_m`, `y_m: stage_y_m`, `per_um2`), as the AFM example does. A Mapper for it, in a launcher config:
+
+```yaml
+  mapper:
+    class_name: Mapper
+    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    properties:
+      instrument_profile: yaml
+      microscope_device_address: asyncroscopy/instrument/default   # the YAML device
+      stage_device_address: ""            # the stage limits come from the YAML settings
+      analysis_url: http://127.0.0.1:8003/mcp
+```
+
+Then `run_job(device="Mapper", plan={"size_m": [3e-6, 3e-6], "fov_m": 1e-6, "overlap": 0.25, "settings": {"setpoint_v": 0.4}, "budgets": {"tip_force_nn": 10}})`. `tests/test_map_profiles.py` maps the AFM example into a stitched height map this way, through an in-process analysis server, and checks the tip was retracted for every move.
+
+### Writing a profile
+
+For a Python instrument, subclass `InstrumentProfile` (`asyncroscopy/jobs/map_profile.py`), set `name`, and register it with `@register_profile`, or with the `asyncroscopy.map_profiles` entry point for a package of your own. The Mapper calls:
+
+| Method | When | Must |
+| :-- | :-- | :-- |
+| `resolve(p)` | at reserve, defaults merged | check and complete your own plan fields; `ValueError` refuses the plan |
+| `current_xy()` | for `size_m` without `centre_m` | read the stage |
+| `costs(p, grid, revisit, revisits, budgets)` | at reserve | return `({name: Cost}, extra estimate fields)` |
+| `setup(job)` | before the first step, and on resume | apply the plan's settings; end safe |
+| `before_move` / `move(job, x, y)` / `after_move` | around every move | `move` returns False if `self.mapper.aborting(job)` |
+| `stage_reported(job)` | after every move | where the stage says it is |
+| `acquire_tile(job, tile)` | every tile | return `{"image_key", "acquired"}` (optionally `spectrum_key`); end safe, even on an error |
+| `acquire_revisit(job, revisit)` | every revisit | image at `revisit["fov_m"]`, restore, end safe |
+| `make_safe(job)` | on finish, abort and failure | never raise for an instrument already safe |
+
+Declare `plan_fields` (fields beyond the generic ones; anything else is refused by name), `plan_defaults`, and `needs` (commands checked on the instrument at `reserve`); override `stage_targets` and `move_target` so reserve checks your stage limits and a dry run checks your moves. Reach the instrument only through `self.instrument()` or `self.mapper.proxy(...)`, so a dry run records instead of moving, and give every wait a deadline. `PinholeCamera` in `tests/test_map_profiles.py` is a complete profile in about 40 lines; `asyncroscopy/instruments/electron_microscope/map_profiles.py` (STEM, SEM) and `asyncroscopy/instruments/yaml_sim/map_profile.py` are the built-in ones.
 
 ## Digital twin first
 

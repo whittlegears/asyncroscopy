@@ -1,7 +1,7 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.5.0
+version: 1.6.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [map, mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
@@ -33,13 +33,15 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | "... and image them closer / at high magnification" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
 | "at most N e/Å²", "a dose limit of N", "N electrons per square angstrom" | `"dose_budget_e_per_a2": N` |
 
+Another instrument (an AFM)? Follow the Mapper's example plan; settings go in `settings`, limits (`time_s`, ...) in `budgets`.
+
 Every number the user states is a constraint: keep it in the plan. Never drop or relax one (a dose limit, a size, a field of view) to make a plan pass. If a field is refused, fix its name or form from the message and keep the value; if the value itself is refused, tell the user the limit and ask. Say in your answer which constraints the plan carries.
 
 If the request is unclear about the area, ask the user before starting.
 
 ## 2. Run the map
 
-1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says and call `run_job` again. A plan whose estimate is over the endpoint's limits (duration or dose) is refused before it starts: tell the user the estimate and ask; do not shrink it on your own. Check the estimate against the request: if it is far larger than what was asked (wrong units?), call `Mapper_abort` and ask the user.
+1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate`. An `error` means the plan was refused: fix what the message says and call `run_job` again. A plan whose estimate is over the endpoint's limits (duration or dose) is refused before it starts: tell the user the estimate and ask; do not shrink it on your own. Check the estimate against the request: if it is far larger than what was asked (wrong units?), call `Mapper_abort` and ask the user.
    - If it says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `run_job` again with exactly the same arguments. If `denied` or `expired`, stop and tell the user.
    - An endpoint with several Mappers names them `Mapper_<key>`: use that name as `device`.
    - If the user says not to wait (they want the job id now, or will stop it), add `"wait": false`, tell them the `job_id` and stop there.
@@ -52,11 +54,11 @@ When `done`, the reply's `summary` has:
 - `regions` (with `find_regions`): each with `x_m`, `y_m`, `score` and `reason`. `revisits` (with `revisit`): the high-magnification image of each region, already linked to its point of interest, and how many were `skipped` (too near the edge of the area). Report only the image keys it lists.
 - `stitch_error`, if stitching failed: the tiles are safe in `result_keys.run`; say so and give the `assemble_map` call it names. Do not run the map again.
 
-Before saying what the sample contains, look at the data: `view_data` with `{"key": <a spectrum key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements. If no peaks were detected at this exposure, say so; do not conclude an element is absent. To look at the map, zoom from the whole map to a detail: `map_info` gives the map's stage box; `get_region` with a large box returns a coarse preview, a small box around a region gives full resolution. Never walk the tiles one by one. `list_pois` lists the points of interest; `list_data` finds data when you have lost a key.
+Before saying what the sample contains, look at the data: `view_data` with `{"key": <a spectrum key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements. If no peaks were detected at this exposure, say so; do not conclude an element is absent. To look at the map, zoom in: `map_info` gives the map's stage box; `get_region` with a large box returns a coarse preview, a small box around a region gives full resolution. Never walk the tiles one by one. `list_pois` lists the points of interest; `list_data` finds data when you have lost a key.
 
 ## 4. More regions later
 
-To score an existing map again (another scorer, more regions), call `score_map` with `{"map": ..., "top_k": N}` and wait with `wait_for_job`. To image regions of an existing map closer without mapping again, `run_job` a revisit-only plan: `{"revisit": {"fov_m": 3e-8, "map": <map key>, "top_k": N}}` (its best N scored regions) or `{"revisit": {"fov_m": 3e-8, "points": [[x_m, y_m], ...]}}` (given stage points). Each image is linked to its point of interest; the dose budget and stage limits apply.
+To score an existing map again (another scorer, more regions), call `score_map` with `{"map": ..., "top_k": N}` and wait with `wait_for_job`. To image regions of an existing map closer without mapping again, `run_job` a revisit-only plan: `{"revisit": {"fov_m": 3e-8, "map": <map key>, "top_k": N}}` (its best N scored regions) or `{"revisit": {"fov_m": 3e-8, "points": [[x_m, y_m], ...]}}` (given stage points). Budgets and stage limits apply.
 
 ## Report
 

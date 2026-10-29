@@ -50,7 +50,7 @@ import tango
 from tango.server import device_property
 
 from asyncroscopy.data.data_reader import read_acquisition
-from asyncroscopy.instruments.electron_microscope.mapper import frame_dose
+from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.routines import focus
 
