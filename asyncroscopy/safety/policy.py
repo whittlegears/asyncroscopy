@@ -9,8 +9,9 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    like the rest of the policy: a command's name (split on "_" and CamelCase)
    has exactly one stop verb (STOP_VERBS, RETREAT_VERBS, or "off" as the last
    word) and every other word is something that verb may stop (STOP_OBJECTS;
-   MOTION_OBJECTS too after abort/stop/halt/pause; only RETREAT_OBJECTS for
-   retract/withdraw, a named DISENGAGE_OBJECTS word for disengage, and an
+   MOTION_OBJECTS too after abort/stop/halt/pause; a named RETREAT_OBJECTS word
+   for retract/withdraw (a bare one only on a probe device, ``is_probe_device``:
+   a syringe pump's withdraw aspirates), a named DISENGAGE_OBJECTS word for disengage, and an
    OFF_OBJECTS word before "off"), or it is a stop pair (STOP_PAIRS) with only
    STOP_OBJECTS beside it; "beam stop" is the beamstop, not a stop. So ``stop_scan``,
    ``AbortScan``, ``abort_approach``, ``beam_off`` and ``shutter_close`` are
@@ -46,9 +47,13 @@ STOP_OBJECTS = frozenset({
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
     "indenter", "head", "objective", "robot", "xray", "source",
 })
-# What "retract"/"withdraw" may move: a probe or Z away from the sample (a bare Retract means that on
-# an SPM). retract_shutter opens a beam path and retract_stage or retract_robot moves an axis or an arm.
-RETREAT_OBJECTS = frozenset({"tip", "probe", "head", "z", "indenter", "objective", "now"})
+# What "retract"/"withdraw" may move: a probe, needle or Z away from the sample. It must name one: a bare
+# Retract lifts the tip on an SPM, but a syringe pump's Withdraw aspirates. A bare one (or "retract_now")
+# is low only on a probe device (``probe=True``, see ``is_probe_device``). retract_shutter opens a beam
+# path, retract_stage or retract_robot moves an axis or an arm, and retract_screen uncovers the detectors.
+RETREAT_OBJECTS = frozenset({"tip", "probe", "head", "z", "indenter", "objective", "needle", "now"})
+# Words that make a device a probe instrument, whose bare retract/withdraw lifts the probe off the sample.
+PROBE_WORDS = frozenset({"approach", "engage", "indent"})
 # What "disengage" may take, and it must name one: disengage_motor or a bare Disengage can free an axis.
 DISENGAGE_OBJECTS = frozenset({"tip", "probe", "head"})
 # What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
@@ -115,10 +120,11 @@ def looks_like_stop(command: str) -> bool:
     return bool(set(_word_list(command)) & (STOP_VERBS | RETREAT_VERBS | {"off", "unload", "park", "estop", "cancel", "shutdown", "close", "blank", "lift", "safe"}))
 
 
-def is_safe_stop(command: str) -> bool:
+def is_safe_stop(command: str, probe: bool = False) -> bool:
     """Exactly one stop verb and nothing else but what it may stop (see STOP_OBJECTS), or a stop pair.
 
     "off" counts only as the last word (beam_off, lamp_off); "off_axis" and "kick_off" are not stops.
+    A bare retract or withdraw counts only on a probe device (``probe``; see ``is_probe_device``).
     """
     ordered = [w for w in _word_list(command) if w not in MODIFIERS]
     # "beam" then "stop" names the beamstop (BeamStopMove moves it out of the direct beam): one noun.
@@ -142,7 +148,8 @@ def is_safe_stop(command: str) -> bool:
     if verbs[0] == "disengage":
         return bool(before | after) and (before | after) <= DISENGAGE_OBJECTS
     if verbs[0] in RETREAT_VERBS:
-        return (before | after) <= RETREAT_OBJECTS
+        named = (before | after) - {"now"}
+        return (bool(named) or probe) and (before | after) <= RETREAT_OBJECTS
     allowed_after = STOP_OBJECTS | (MOTION_OBJECTS if verbs[0] in STOP_VERBS else frozenset())
     return before <= STOP_OBJECTS and after <= allowed_after
 
@@ -161,15 +168,16 @@ def check_overrides(overrides: dict[str, str] | None) -> dict[str, str]:
     return checked
 
 
-def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False, stem: bool = False) -> str:
+def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = None, envelope: bool = False, stem: bool = False, probe: bool = False) -> str:
     """"low" or "high" for one command. ``envelope``: the device implements the job envelope;
-    ``stem``: it acquires scanned images (see ``is_stem_device``)."""
+    ``stem``: it acquires scanned images (see ``is_stem_device``); ``probe``: it approaches a sample
+    with a probe, so a bare retract lifts it away (see ``is_probe_device``)."""
     key = _key(dev_class, command)
     matched = [level for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower())]
     if matched:  # overrides that disagree (a broad "*": low beside an exact high) never lower a command
         return "high" if "high" in matched else matched[0]
     name = command.lower()
-    if is_safe_stop(command):
+    if is_safe_stop(command, probe=probe):
         return "low"
     if envelope and name in ENVELOPE_LOW:
         return "low"
@@ -213,16 +221,41 @@ def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:
     """
     if risks is not None and tool_name in risks:
         return risks[tool_name]
+    if any(c in tool_name for c in "*?["):
+        return _glob_risk(tool_name, risks)
     device, _, command = tool_name.partition("_")
     if not command or not device[:1].isupper():
         return "high" if tool_name in NATIVE_HIGH else "low"
     return risk_of(device, command, envelope=command.lower() in ENVELOPE_VERBS)
 
 
+def _glob_risk(pattern: str, risks: dict[str, str] | None) -> str:
+    """A tool-name glob (a skill's ``tools: ["*_indent"]``) is high when any tool it may name is.
+
+    With the endpoint's table: high if a high tool there matches. Otherwise from the command part
+    alone: "*_indent" or "*_acquire_*" act, "*_get_*" and "Mapper*_abort" do not, a bare "*" may.
+    """
+    if risks is not None and any(level == "high" for name, level in risks.items() if fnmatchcase(name, pattern)):
+        return "high"
+    device, _, command = pattern.partition("_")
+    if not command or not command.strip("*?[]_"):  # "*" or "Mapper_*": every tool, or every command of a device
+        return "high" if not pattern.islower() or any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
+    if device[:1].islower():  # "analysis_job_*": a native tool family
+        return "high" if any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
+    # "*_indent" or "Mapper*_abort": the command decides, on any device of that name.
+    return risk_of(device.strip("*?[]") or "Any", command, envelope=command.lower() in ENVELOPE_VERBS)
+
+
 def is_stem_device(command_names) -> bool:
     """True for an electron microscope: it scans images and blanks a beam, so the STEM_LOW
     commands are beam settings. An AFM's acquire_scanned_image alone does not count."""
     return {"acquire_scanned_image", "blank_beam"} <= {c.lower() for c in command_names}
+
+
+def is_probe_device(command_names) -> bool:
+    """True for a device that brings a probe to the sample (an SPM's approach, an indenter's indent):
+    there a bare retract or withdraw lifts it away. A syringe pump's withdraw does not count."""
+    return any(set(_word_list(str(c))) & PROBE_WORDS for c in command_names)
 
 
 def is_envelope_device(command_names) -> bool:

@@ -90,7 +90,7 @@ class TestPolicy:
     def test_names_that_do_more_than_stop_are_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
 
-    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
+    @pytest.mark.parametrize("name", ["stop_scan", "AbortScan", "shutter_close", "blank_beam", "retract_tip", "withdraw_needle", "emergency_stop", "beam_off", "safe_state", "lamp_off", "halt", "abort_approach", "stop_move", "StopScan",
                                       "halt_xy", "stop_xyz", "stop_motors", "abort_autofocus", "stop_live", "withdraw_tip", "led_off", "illumination_off",
                                       "stop_indent", "abort_indent", "retract_indenter", "retract_head", "stop_imaging", "stop_exposure",
                                       "retract_objective", "xray_off", "stop_robot", "abort_protocol", "pause_protocol", "source_off",
@@ -111,6 +111,39 @@ class TestPolicy:
                                       "BeamStopMove", "beam_stop_move", "BeamStopX", "beam_stop_y", "BeamStop", "BeamStopScan"])
     def test_an_action_before_the_stop_verb_is_high(self, name):
         assert risk_of("AnyDevice", name) == "high"
+
+    @pytest.mark.parametrize("name", ["withdraw", "retract", "Withdraw", "Retract", "withdraw_now", "retract_now"])
+    def test_a_bare_retreat_verb_is_high_unless_the_device_brings_a_probe_to_the_sample(self, name):
+        # A syringe pump's withdraw aspirates; on an SPM or indenter a bare retract lifts the probe.
+        assert risk_of("SyringePump", name) == "high"
+        assert risk_of("SimIndenter", name, probe=True) == "low"
+
+    def test_probe_devices_are_recognised_by_their_approach_or_indent(self):
+        from asyncroscopy.safety.policy import is_probe_device
+
+        assert is_probe_device(["approach", "retract", "get_z"]) and is_probe_device(["indent", "retract"])
+        assert is_probe_device(["approach_tip", "retract_tip", "move_xy"]) and is_probe_device(["ApproachSurface", "Withdraw"])
+        assert not is_probe_device(["infuse", "withdraw", "get_volume"]) and not is_probe_device(["move_stage", "retract"])
+
+    def test_the_twins_named_retreats_stay_low(self):
+        for dev, command in [("AFMTwin", "retract_tip"), ("SimIndenter", "retract_indenter"), ("Fib", "withdraw_needle"), ("Spm", "retract_z")]:
+            assert risk_of(dev, command) == "low", command
+        assert risk_of("Microscope", "retract_screen") == "high"  # uncovers the detectors below it
+
+    @pytest.mark.parametrize("glob, level", [
+        ("*_indent", "high"), ("*_acquire_*", "high"), ("*_move_stage", "high"), ("*_start", "high"), ("*", "high"), ("Mapper_*", "high"),
+        ("run_*", "high"), ("*_get_*", "low"), ("Mapper*_abort", "low"), ("*_retract_tip", "low"), ("*_job_status", "low"), ("analysis_job_*", "low"),
+    ])
+    def test_a_tool_glob_is_high_when_its_command_acts(self, glob, level):
+        from asyncroscopy.safety.policy import tool_risk
+
+        assert tool_risk(glob) == level
+
+    def test_a_tool_glob_uses_the_endpoints_table_when_given(self):
+        from asyncroscopy.safety.policy import tool_risk
+
+        assert tool_risk("*_park", {"Stage_park": "high", "Other_get_x": "low"}) == "high"
+        assert tool_risk("*_park", {"Stage_park": "low"}) == "high"  # not lowered: the name alone still decides
 
     def test_place_beam_is_high_even_on_a_stem(self):
         assert risk_of("DigitalTwin", "place_beam", stem=True) == "high"
