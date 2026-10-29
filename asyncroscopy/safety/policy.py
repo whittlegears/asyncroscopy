@@ -181,6 +181,24 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
     return "high"
 
 
+READ_ONLY_NAMES = frozenset({"state", "status", "ping"})
+READ_ONLY_PREFIXES = ("get_", "list_")
+
+
+def is_read_only(dev_class: str, command: str, overrides: dict[str, str] | None = None) -> bool:
+    """True when the policy counts ``command`` as a pure read: the naming convention of (4) above
+    (``get_*``, ``list_*``, ``State``, ``Status``, ``ping``) and no deployment pattern marks it high.
+
+    Low risk is not the same thing: a safe stop (``blank_beam``) or a STEM_LOW setting is low but
+    writes. A dry run passes a command through only when this is true (jobs/recording_proxy.py).
+    """
+    name = command.lower()
+    if not (name in READ_ONLY_NAMES or name.startswith(READ_ONLY_PREFIXES)):
+        return False
+    key = _key(dev_class, command)
+    return not any(level == "high" for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower()))
+
+
 # Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
 NATIVE_HIGH = frozenset({"run_job"})
 

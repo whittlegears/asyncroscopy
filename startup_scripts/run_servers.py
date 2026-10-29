@@ -128,6 +128,21 @@ def _simulated(raw: dict, path: Path) -> bool:
     return value
 
 
+def _check_device_simulated(value, stack: bool, where: str, path: Path) -> None:
+    """Refuse a device-level ``simulated`` property that is not the stack's own flag (or not a boolean at all)."""
+    if value is None:
+        return
+    text = (value[0] if isinstance(value, list) and len(value) == 1 else value)
+    normalised = str(text).strip().lower()
+    if normalised not in ("true", "false"):
+        raise ValueError(f"{path}: {where}.properties.simulated must be true or false, got {value!r}")
+    if (normalised == "true") != stack:
+        raise ValueError(
+            f"{path}: {where}.properties.simulated is {normalised}, but the stack's top-level simulated is {str(stack).lower()}. "
+            "A stack is simulated or not as a whole: remove the device's own simulated property (it gets the stack's)"
+        )
+
+
 def _require(mapping, key: str, where: str):
     if not isinstance(mapping, dict) or key not in mapping:
         raise KeyError(f"Config section '{where}' is missing required key '{key}'")
@@ -225,9 +240,11 @@ def load_config(path: Path) -> Config:
     tiled = _require(raw, "tiled", "(top level)")
     simulated = _simulated(raw, path)
     instrument = _instrument_config(_require(raw, "instrument", "(top level)"))
-    # The stack flag reaches every device as its `simulated` property (a device's own setting wins).
-    for properties in [instrument.properties, *(device.properties for device in support_devices)]:
-        properties.setdefault("simulated", [str(simulated).lower()])
+    # The stack flag reaches every device as its `simulated` property. A device may repeat it, but never
+    # contradict it: one device saying simulated on a hardware stack would lift that device's hardware rules.
+    for where, properties in [("instrument", instrument.properties), *((f"devices.{d.key}", d.properties) for d in support_devices)]:
+        _check_device_simulated(properties.get("simulated"), simulated, where, path)
+        properties["simulated"] = [str(simulated).lower()]
 
     return Config(
         path=path,
