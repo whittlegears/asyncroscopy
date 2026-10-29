@@ -52,6 +52,7 @@ from tango.server import Device, attribute, command, device_property
 from asyncroscopy.contracts import ENVELOPE_VERSION
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.clock import InstrumentClock
 
 ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting"}
 RUNNING_STATES = {"queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}  # a worker owns the job
@@ -326,7 +327,10 @@ class JobDevice(Device):
         self._name = self.get_name()
         self._state_dir = Path(self.state_directory)
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._trace = TraceWriter(self.trace_path, source="job")
+        self._trace = TraceWriter(
+            self.trace_path, source="job", writer=self._name, defaults={"simulated": bool(self.simulated)},
+            clock=InstrumentClock(self.trace_clock_device()),
+        )
         self._suspenders = parse_suspenders(self.suspenders)  # a bad property fails Init with the reason
         self._reload()
         self.set_state(DevState.ON)
@@ -511,6 +515,7 @@ class JobDevice(Device):
                 "result_keys": {},
                 "job_ids": [],
                 "caller": body.get("caller"),
+                "run": body.get("run") or None,  # the agent run (X-Asyncroscopy-Run) the MCP server passes on, for the trace
                 "grant_id": None,
                 "last_error": None,
                 "created": time.time(),
@@ -623,7 +628,7 @@ class JobDevice(Device):
             # Each start records its own approval (none in auto mode); a resume never inherits an old one.
             started = {
                 **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id, "grant_id": body.get("grant_id"),
-                "caller": body.get("caller") or job.get("caller"), "state": "running", "last_error": None, "suspended": None,
+                "caller": body.get("caller") or job.get("caller"), "run": body.get("run") or job.get("run"), "state": "running", "last_error": None, "suspended": None,
             }
             previous = dict(job)
             self._save(started)  # if this fails, the reservation stays as it was and can be started again
@@ -654,8 +659,13 @@ class JobDevice(Device):
 
     @staticmethod
     def _dry(job: dict) -> dict:
-        """Trace fields of a dry-run job ({"dry_run": True}); nothing for a real one."""
-        return {"dry_run": True} if job.get("dry_run") else {}
+        """Trace fields every event of ``job`` carries: dry_run, and the agent run that started it (if known)."""
+        return {"dry_run": bool(job.get("dry_run")), "run": job.get("run")}
+
+    def trace_clock_device(self) -> str:
+        """The device whose clock_s stamps this job device's trace events; by default its microscope_device_address
+        when it has one. Step events use the clock_s their record reports. "" for none (this computer's time)."""
+        return str(getattr(self, "microscope_device_address", "") or "")
 
     def _worker(self, job: dict, job_id: str) -> None:
         abort = self._abort[job_id]
@@ -748,14 +758,14 @@ class JobDevice(Device):
         try:  # make the instrument safe before reporting the pause
             self.on_suspend(job, reason)
         except Exception as exc:
-            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=f"{type(exc).__name__}: {exc}")
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=f"{type(exc).__name__}: {exc}", **self._dry(job))
         with self._lock:
             if job["state"] != "running":  # aborting already
                 return False
             job["state"] = "paused_suspended"
             job["suspended"] = {"reason": reason, "since": time.time()}
             self._save(job)
-        self._trace.record(f"{cls}.suspended", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=reason)
+        self._trace.record(f"{cls}.suspended", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=reason, **self._dry(job))
         good_since = None
         while not abort.wait(max(0.05, float(self.suspender_poll_s))):
             problems = self._suspender_problems()
@@ -776,7 +786,7 @@ class JobDevice(Device):
                     job["state"] = "running"
                     job["suspended"] = None
                     self._save(job)
-                self._trace.record(f"{cls}.resumed", True, time.time(), job_id=job_id, run_id=job["reservation_id"])
+                self._trace.record(f"{cls}.resumed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
                 return True
             with self._lock:
                 job["suspended"] = {**job["suspended"], "reason": "conditions are good again", "resumes_in_s": round(wait_s - waited, 1)}
@@ -876,7 +886,7 @@ class JobDevice(Device):
             counts["performed" if performed else "recorded"] += 1
             counts["failed_checks"] += 0 if ok else 1
         self._trace.record(
-            name, ok, time.time(), dry_run=True, performed=performed, device=device, kind=kind, arguments=arguments,
+            name, ok, time.time(), dry_run=True, run=job.get("run"), performed=performed, device=device, kind=kind, arguments=arguments,
             check=check, job_id=job.get("job_id"), run_id=job["reservation_id"], plan_id=job.get("plan_id"),
             step=getattr(WORKER, "step", None), caller=job.get("caller"),
         )

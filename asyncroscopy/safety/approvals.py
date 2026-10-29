@@ -66,7 +66,7 @@ class Approvals(Device):
         self._lock = threading.Lock()
         self._requests: dict[str, dict] = {}
         self._grants: dict[str, dict] = {}
-        self._trace = TraceWriter(self.trace_path, source="approvals")
+        self._trace = TraceWriter(self.trace_path, source="approvals", writer=self.get_name(), defaults={"simulated": bool(self.simulated)})
         self._mode = "approve"
         mode = str(self.default_mode).strip().lower()
         if mode not in MODES:
@@ -109,7 +109,7 @@ class Approvals(Device):
         for request in self._requests.values():
             if request["state"] == "pending" and now - request["created"] > float(self.request_timeout_s):
                 request["state"] = "expired"
-                self._trace.record("Approvals.expire", True, now, request_id=request["request_id"], arguments=request["action"])
+                self._trace.record("Approvals.expire", True, now, request_id=request["request_id"], arguments=request["action"], run=request.get("run"))
         for grant in self._grants.values():
             if not grant["used"] and now - grant["created"] > float(self.grant_ttl_s):
                 grant["used"] = True
@@ -188,7 +188,7 @@ class Approvals(Device):
                 "state": "pending",
                 "created": time.time(),
             }
-        self._trace.record("Approvals.request", True, time.time(), request_id=request_id, caller=body.get("caller"), arguments={"action": action, "arguments": body.get("arguments")}, mode=self._mode)
+        self._trace.record("Approvals.request", True, time.time(), request_id=request_id, caller=body.get("caller"), run=body.get("run"), arguments={"action": action, "arguments": body.get("arguments")}, mode=self._mode)
         return json.dumps({"request_id": request_id, "state": "pending"})
 
     @command(dtype_out=str)
@@ -221,7 +221,7 @@ class Approvals(Device):
             grant_id = uuid.uuid4().hex[:12]
             self._grants[grant_id] = {"grant_id": grant_id, "fingerprint": req["fingerprint"], "action": req["action"], "request_id": req["request_id"], "who": body.get("who"), "created": time.time(), "used": False}
             req.update(state="approved", grant_id=grant_id, decided_by=body.get("who"))
-        self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"])
+        self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "grant_id": grant_id, "state": "approved"})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name", "reason": "..."}.')
@@ -234,7 +234,7 @@ class Approvals(Device):
             if req is None or req["state"] != "pending":
                 raise ValueError(f"request {body.get('request_id')!r} is not pending")
             req.update(state="denied", decided_by=body.get("who"), reason=body.get("reason") or req.get("reason"))
-        self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"])
+        self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}}.')
