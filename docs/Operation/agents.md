@@ -26,6 +26,7 @@ What `run_job` guarantees, so an agent cannot leave the instrument tied up:
 - A start held in approve mode keeps its reservation for the same caller and agent run. Agents send their run id with every call (`X-Asyncroscopy-Run`), because they open a new MCP session per call; two agents with one caller name stay apart by it. Asking again before the operator decides files no second request. A denied or expired request, or one nobody came back for within two hours, frees the reservation even if the agent never asks again.
 
 - An aborted job can be continued: `run_job(device, resume=<reservation_id>)` (no plan) starts the same reservation again, through the approval gate, and it goes on from the next step. A resume that fails to start keeps the reservation, so it can be tried again.
+- `run_job` waits up to 15 s, and an agent's own `run_job` call goes on waiting inside the call until the job ends. Pass `wait=false` when the user wants the job id now, or will stop the job: the call returns as soon as the job runs. An abort reply includes `to_resume`, the exact `run_job` call that continues the job.
 
 What the graphs do so a small model's context does not overflow (`asyncroscopy/agents/guards.py`), measured against `num_ctx`:
 

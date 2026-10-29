@@ -1,0 +1,91 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "01006e9",
+  "n": 1,
+  "started": 1793269137.4391837,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "workflows": {
+    "points_of_interest_on_map/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 326.0,
+          "caller": "wf-points_of_interest_on_map-general-062007-796",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth -55.5; answer numbers [8301.0, 7.0, 67.0, 5.0, 1.0, inf, 5.0, -5.554314217735959e-08]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "n  \n   - **Reason:** EDS point spectrum of tile 7  \n   - **Links:** `spectrum_eds_20261029T061915539582.h5`  \n\n10. **ID:** `map_8301f7c67ef5.h5:eds:5`  \n    - **Stage Coordinates:** x = 2.191787461048427e-8 m, y = -5.450247945717178e-8 m  \n    - **Kind:** eds_point  \n    - **Source:** run  \n    - **Reason:** EDS point spectrum of tile 5  \n    - **Links:** `spectrum_eds_20261029T061910984945.h5`  \n\n... (and so on for the remaining 10 points).  \n\nThe full list includes 20 points of interest, with 12 being `eds_point` (EDS spectra) and 8 being `candidate` points identified by the baseline scorer."
+        }
+      ]
+    },
+    "abort_then_resume/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 1366.4,
+          "caller": "wf-abort_then_resume-general-062546-066",
+          "checks": {
+            "resumed_after_abort": {
+              "ok": true,
+              "detail": "run f6abd5a93f04 aborted then done"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "run_job",
+            "run_job",
+            "Mapper_abort",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The mapping job has been resumed and completed. The map has **324 tiles**. The result keys are:\n- `run_file`: `outputs\\tiled_acquisitions\\maps\\map_f6abd5a93f04.h5`\n- `run`: `map_f6abd5a93f04.h5`\n- `map`: `map_f6abd5a93f04_map`\n\nThe map stitching was successful with a median residual of 0.003 pixels. The instrument is now in a safe state."
+        }
+      ]
+    }
+  },
+  "passed": 2,
+  "of": 2,
+  "sleepwalking_calls": 0
+}
