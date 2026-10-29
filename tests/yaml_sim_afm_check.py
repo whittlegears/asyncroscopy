@@ -14,8 +14,11 @@ from pathlib import Path
 import h5py
 import tango
 
-from asyncroscopy.instruments.yaml_sim.device import device_class
-from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path
+# The asyncroscopy beside this script (as pytest's pythonpath gives the tests), not another checkout's install.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from asyncroscopy.instruments.yaml_sim.device import device_class  # noqa: E402
+from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path  # noqa: E402
 
 work = Path(tempfile.mkdtemp(dir=sys.argv[1]))
 example = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"

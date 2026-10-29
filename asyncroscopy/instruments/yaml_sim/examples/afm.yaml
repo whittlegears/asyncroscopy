@@ -84,7 +84,9 @@ acquisitions:
     shape: [128, 128]
     pixel_size_m: scan_size_m / 128
     background: 0
-    spots: {count: 8, radius_px: 10, height: 2.0e-8}
+    # 20 nm high bumps fixed on the sample (x_m, y_m: where the image centre is), so overlapping
+    # height images of the same place agree and a map of them stitches.
+    spots: {per_um2: 30, radius_m: 2.0e-8, height: 2.0e-8, x_m: stage_x_m, y_m: stage_y_m}
     noise: gaussian
     noise_sigma: 2.0e-10
   acquire_force_curve:
@@ -112,3 +114,21 @@ jobs:
     settle_s: 0.2
     on_stop: [retract_tip]
     on_finish: [retract_tip]
+
+# How the Mapper (instrument_profile: yaml) tiles this instrument into a stitched height map:
+# one topography image per tile at a scan_size_m field of view, the tip lifted for every stage
+# move and between tiles, and a peak tip-force budget besides the time budget every map has.
+map:
+  image: acquire_topography
+  field_of_view: scan_size_m
+  stage: [stage_x_m, stage_y_m]
+  before_move: [retract_tip]
+  after_move: [approach_tip]
+  safe: [retract_tip]
+  settings: [setpoint_v, scan_rate_hz]
+  budgets:
+    tip_force_nn:
+      per_tile: setpoint_v * 20     # 20 nN per volt of setpoint: deflection sensitivity times spring constant
+      combine: max
+      units: nN
+      doc: peak force the tip presses on the sample (setpoint_v x 20 nN/V)

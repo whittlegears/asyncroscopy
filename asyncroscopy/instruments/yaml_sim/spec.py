@@ -59,6 +59,22 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         before_move: []                  # commands run at each point before its axes move (e.g. retract a probe)
         after_move: []                   # commands run at each point after it is reached, before acquiring (e.g. approach again)
         on_stop: [xray_off]              # commands run when the job is aborted or fails
+    map:                                 # optional: how the Mapper (instrument_profile yaml) tiles this instrument
+      image: acquire_topography          # the image acquisition per tile (default: the first image acquisition)
+      field_of_view: scan_size_m         # the setting that is a tile's width in metres (default: the one pixel_size_m uses, if in m)
+      stage: [stage_x_m, stage_y_m]      # the stage x and y settings (default: stage_x_m and stage_y_m, or a job's two axes)
+      before_move: [retract_tip]         # default: a job's before_move, after_move and on_stop (as safe)
+      after_move: [approach_tip]
+      safe: [retract_tip]                # run between tiles and whenever the map stops
+      settings: [setpoint_v]             # settings a map plan may set ("settings": {...}); default: a job's settings
+      budgets:                           # what a plan can be refused for besides time_s
+        tip_force_nn: {per_tile: "setpoint_v * 20", combine: max, units: nN, doc: peak tip force}
+
+An image's ``spots`` are drawn afresh for every image (``count`` of them), or,
+with ``x_m`` and ``y_m`` (expressions such as ``stage_x_m``: where the image
+centre is on the sample), fixed on the sample at ``per_um2`` per square
+micrometre, so overlapping images of the same place show the same spots and a
+map of them stitches.
 
 A single command or acquisition call is limited to 25 s (the MCP server stops
 waiting at 30 s); a job is not, because the agent waits for it with
@@ -111,9 +127,14 @@ ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis",
 AXIS_KEYS = {"start", "stop", "points", "label", "units"}
 PEAK_KEYS = {"position", "height", "fwhm", "width", "shape", "eta"}
 PEAK_SHAPES = {"gaussian", "lorentzian", "voigt"}
-SPOT_KEYS = {"count", "radius_px", "height"}
+SPOT_KEYS = {"count", "radius_px", "height", "x_m", "y_m", "per_um2", "radius_m"}
+SAMPLE_CELL_M = 1e-6  # spots fixed on the sample are drawn per square of this side, each from its own seed
+SAMPLE_CELLS_MAX = 40_000  # an image wider than this many cells is refused (a 200 um square)
 JOB_KEYS = {"doc", "axes", "settings", "acquire", "settle_s", "max_points", "requires", "before_move", "after_move", "on_stop", "on_finish"}
-TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs"}
+MAP_KEYS = {"image", "field_of_view", "stage", "before_move", "after_move", "safe", "settings", "budgets"}
+MAP_BUDGET_KEYS = {"per_tile", "per_revisit", "combine", "units", "doc"}
+MAP_COMMAND = "get_map_profile"  # the command a YAML device offers when its file can be mapped
+TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs", "map"}
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
 # Commands and attributes a job device (an instrument with jobs) has already.
@@ -339,6 +360,7 @@ class InstrumentSpec:
     acquisitions: dict[str, Acquisition]
     jobs: dict[str, Job] = field(default_factory=dict)
     setting_requires: dict[str, list[tuple[str, ast.Expression]]] = field(default_factory=dict)
+    map: "MapSection | None" = None  # the file's map: section, if it has one (map_section() infers one otherwise)
 
     def command_names(self) -> list[str]:
         names = [f"get_{n}" for n in self.settings] + [f"set_{n}" for n, q in self.settings.items() if q.settable]
@@ -515,6 +537,11 @@ def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisit
         spots = _check_keys(f"{where}.spots", raw.get("spots") or {}, SPOT_KEYS)
         for key in SPOT_KEYS & set(spots):
             number(f"spots.{key}", spots[key])
+        on_sample = {"x_m", "y_m", "per_um2", "radius_m"} & set(spots)
+        if on_sample and not {"x_m", "y_m", "per_um2"} <= set(spots):
+            raise SpecError(f"{where}.spots: spots fixed on the sample need x_m and y_m (where the image centre is, e.g. stage_x_m) and per_um2")
+        if on_sample and "count" in spots:
+            raise SpecError(f"{where}.spots: count is for spots drawn afresh in every image; spots fixed on the sample take per_um2")
     else:
         values = _check_keys(f"{where}.values", raw.get("values"), set(raw.get("values") or {}))
         if not values:
@@ -583,6 +610,184 @@ def _job(name: str, raw: Any, spec: "InstrumentSpec") -> Job:
     )
 
 
+@dataclass
+class MapBudget:
+    """One budget a map plan can give (``budgets: {name: limit}``): what a tile and a revisit image cost of it."""
+
+    name: str
+    per_tile: tuple[Any, ast.Expression | None]
+    per_revisit: tuple[Any, ast.Expression | None]
+    combine: str  # "max": the worst single image counts (a peak force); "sum": every image adds (wear, exposure)
+    units: str
+    doc: str
+
+
+@dataclass
+class MapSection:
+    """How the Mapper tiles this instrument (instrument_profile yaml): which image, stage, field of view and safe sequence."""
+
+    image: str
+    stage: list[str]
+    field_of_view: str | None = None
+    before_move: list[str] = field(default_factory=list)
+    after_move: list[str] = field(default_factory=list)
+    safe: list[str] = field(default_factory=list)
+    settings: list[str] = field(default_factory=list)
+    budgets: dict[str, MapBudget] = field(default_factory=dict)
+
+
+def _number_or_expression(where: str, raw: Any, names: set[str]) -> tuple[Any, ast.Expression | None]:
+    tree = _compile(where, raw, names)
+    if tree is None and (not isinstance(raw, (int, float)) or isinstance(raw, bool)):
+        raise SpecError(f"{where}: a number or an expression")
+    return raw, tree
+
+
+def _map(raw: Any, spec: InstrumentSpec) -> MapSection:
+    where = "map"
+    raw = _check_keys(where, raw, MAP_KEYS)
+    inferred = map_section(spec)
+    images = [n for n, a in spec.acquisitions.items() if a.kind == "image"]
+    image = raw.get("image", inferred.image if inferred else None)
+    if image not in images:
+        raise SpecError(f"{where}.image: {image!r} is not an image acquisition; image acquisitions: {images}")
+    if spec.acquisitions[image].inputs:
+        raise SpecError(f"{where}.image: {image!r} takes arguments; a map acquires its tiles without arguments")
+    stage = _names_list(f"{where}.stage", raw.get("stage", inferred.stage if inferred else None), spec.settings, "setting")
+    if len(stage) != 2:
+        raise SpecError(f"{where}.stage: the stage's x and y settings, e.g. [stage_x_m, stage_y_m]")
+    fov = raw.get("field_of_view", inferred.field_of_view if inferred else None)
+    for name in stage + ([fov] if fov else []):
+        if name not in spec.settings:
+            raise SpecError(f"{where}: {name!r} is not a setting")
+        quantity = spec.settings[name]
+        if not quantity.settable or quantity.type not in (int, float):
+            raise SpecError(f"{where}: {name!r} must be a settable number")
+    lists = {}
+    for key in ("before_move", "after_move", "safe"):
+        default = getattr(inferred, key) if inferred else []
+        lists[key] = _names_list(f"{where}.{key}", raw.get(key, default), spec.commands, "command")
+        for command_name in lists[key]:
+            if spec.commands[command_name].inputs:
+                raise SpecError(f"{where}.{key}: {command_name!r} takes arguments; list commands without arguments")
+    settings = _names_list(f"{where}.settings", raw.get("settings", inferred.settings if inferred else []), spec.settings, "setting")
+    for name in settings:
+        if not spec.settings[name].settable or name in stage or name == fov:
+            raise SpecError(f"{where}.settings: {name!r} must be settable and not the stage or field of view")
+    budgets = {}
+    names = set(spec.settings)
+    for name, item in _check_keys(f"{where}.budgets", raw.get("budgets") or {}, set(raw.get("budgets") or {})).items():
+        here = f"{where}.budgets.{_check_name(f'{where}.budgets', name)}"
+        item = _check_keys(here, item, MAP_BUDGET_KEYS)
+        if "per_tile" not in item:
+            raise SpecError(f"{here}.per_tile: what one tile costs of this budget (a number or an expression over the settings)")
+        combine = item.get("combine", "sum")
+        if combine not in ("max", "sum"):
+            raise SpecError(f"{here}.combine: max (the worst single image counts) or sum (every image adds)")
+        budgets[name] = MapBudget(
+            name=name,
+            per_tile=_number_or_expression(f"{here}.per_tile", item["per_tile"], names),
+            per_revisit=_number_or_expression(f"{here}.per_revisit", item.get("per_revisit", item["per_tile"]), names),
+            combine=combine, units=str(item.get("units", "")), doc=str(item.get("doc", "")).strip(),
+        )
+    return MapSection(image=image, stage=stage, field_of_view=fov, settings=settings, budgets=budgets, **lists)
+
+
+def map_section(spec: InstrumentSpec) -> MapSection | None:
+    """The file's map: section, or one inferred from it; None when the file has no image acquisition or no stage.
+
+    Inferred: the first image acquisition; the settings stage_x_m and stage_y_m, else the first job's two
+    axes; as field of view the one setting in metres that the image's pixel_size_m uses; the first
+    job's before_move, after_move, on_stop (as safe) and settings.
+    """
+    if spec.map is not None:
+        return spec.map
+    images = [n for n, a in spec.acquisitions.items() if a.kind == "image" and not a.inputs]
+    if not images:
+        return None
+    job = next(iter(spec.jobs.values()), None)
+    settable = {n for n, q in spec.settings.items() if q.settable and q.type in (int, float)}
+    if {"stage_x_m", "stage_y_m"} <= settable:
+        stage = ["stage_x_m", "stage_y_m"]
+    elif job is not None and len(job.axes) == 2:
+        stage = list(job.axes)
+    else:
+        return None
+    tree = spec.acquisitions[images[0]].trees.get("pixel_size_m")
+    used = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} if tree is not None else set()
+    metres = [n for n in sorted(used & settable) if spec.settings[n].units == "m" and n not in stage]
+    return MapSection(
+        image=images[0], stage=stage, field_of_view=metres[0] if len(metres) == 1 else None,
+        before_move=list(job.before_move) if job else [], after_move=list(job.after_move) if job else [],
+        safe=list(job.on_stop) if job else [], settings=[s for s in (job.settings if job else []) if s not in stage],
+    )
+
+
+def map_description(spec: InstrumentSpec, sim: "SimInstrument", overrides: dict | None = None) -> dict:
+    """What the Mapper needs to tile this instrument, evaluated at the current settings with ``overrides``.
+
+    ``overrides`` are settings a map would set (its field of view and plan settings), checked as a
+    set_<name> would check them; Refused names the first one out of range.
+    """
+    section = map_section(spec)
+    if section is None:
+        raise Refused("this instrument cannot be mapped: it needs an image acquisition and stage x and y settings (or a map: section)")
+    overrides = dict(overrides or {})
+    allowed = set(section.settings) | ({section.field_of_view} if section.field_of_view else set())
+    unknown = sorted(set(overrides) - allowed)
+    if unknown:
+        raise Refused(f"a map cannot set {unknown}; it may set {sorted(allowed)}")
+    with sim.lock:
+        scope = dict(sim.values)
+    for name, value in overrides.items():
+        try:
+            scope[name] = spec.settings[name].coerce(value)
+        except Refused:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise Refused(f"{name}: {exc}") from None
+    acquisition = spec.acquisitions[section.image]
+    rows, cols = acquisition.raw["shape"]
+    trees = acquisition.trees
+    pixel = float(evaluate(trees["pixel_size_m"], scope) if trees.get("pixel_size_m") is not None else acquisition.raw["pixel_size_m"])
+
+    def seconds(names: list[str]) -> float:
+        return sum(sim.seconds(spec.commands[n].duration, scope) for n in names)
+
+    tile_s = sim.seconds(acquisition.duration, scope) + seconds(section.before_move + section.after_move + section.safe)
+
+    def limits(name: str) -> dict:
+        q = spec.settings[name]
+        return {"setting": name, "min": q.min, "max": q.max, "units": q.units}
+
+    budgets = {}
+    for name, budget in section.budgets.items():
+        per_tile = float(evaluate(budget.per_tile[1], scope) if budget.per_tile[1] is not None else budget.per_tile[0])
+        per_revisit = float(evaluate(budget.per_revisit[1], scope) if budget.per_revisit[1] is not None else budget.per_revisit[0])
+        budgets[name] = {"per_tile": per_tile, "per_revisit": per_revisit, "combine": budget.combine, "units": budget.units, "doc": budget.doc}
+    commands = [f"get_{n}" for n in section.stage] + [f"set_{n}" for n in section.stage] + [section.image]
+    commands += [f"set_{n}" for n in sorted(allowed)] + section.before_move + section.after_move + section.safe + [MAP_COMMAND]
+    return {
+        "image": section.image,
+        "detector": str(acquisition.raw.get("detector", "image")),
+        "units": acquisition.units,
+        "shape": [int(rows), int(cols)],
+        "pixel_size_m": pixel,
+        "tile_m": [cols * pixel, rows * pixel],
+        "field_of_view": limits(section.field_of_view) if section.field_of_view else None,
+        "stage": {"x": limits(section.stage[0]), "y": limits(section.stage[1])},
+        "stage_xy_m": [float(scope[section.stage[0]]), float(scope[section.stage[1]])],
+        "before_move": section.before_move,
+        "after_move": section.after_move,
+        "safe": section.safe,
+        "settings": {n: {**limits(n), "value": scope[n]} for n in section.settings},
+        "plan_settings": {n: scope[n] for n in overrides},
+        "tile_s": tile_s,
+        "budgets": budgets,
+        "commands": list(dict.fromkeys(commands)),
+    }
+
+
 def load_spec(path: str | Path) -> InstrumentSpec:
     """Read and check an instrument YAML file; SpecError names the first problem."""
     path = Path(path)
@@ -610,7 +815,11 @@ def load_spec(path: str | Path) -> InstrumentSpec:
             spec.setting_requires[name] = _requires(f"settings.{name}", item["requires"], set(settings))
     for name, item in _check_keys("jobs", raw.get("jobs") or {}, set(raw.get("jobs") or {})).items():
         spec.jobs[_check_name("jobs", name)] = _job(name, item, spec)
+    if raw.get("map") is not None:
+        spec.map = _map(raw["map"], spec)
     names = spec.command_names()
+    if map_section(spec) is not None:
+        names.append(MAP_COMMAND)
     duplicates = sorted({n for n in names if names.count(n) > 1})
     if duplicates:
         raise SpecError(f"{path}: {duplicates} defined twice (settings make get_<name> and set_<name> commands)")
@@ -740,7 +949,14 @@ class SimInstrument:
             rows, cols = raw["shape"]
             image = np.full((rows, cols), num("background", raw.get("background", 0.0)))
             spots = raw.get("spots") or {}
-            if spots:
+            if "x_m" in spots:
+                pixel = num("pixel_size_m", raw["pixel_size_m"])
+                radius_m = num("spots.radius_m", spots["radius_m"]) if "radius_m" in spots else max(num("spots.radius_px", spots.get("radius_px", 3)), 0.5) * pixel
+                image += sample_spots(
+                    self.spec.seed, rows, cols, pixel, num("spots.x_m", spots["x_m"]), num("spots.y_m", spots["y_m"]),
+                    num("spots.per_um2", spots["per_um2"]), radius_m, num("spots.height", spots.get("height", 100)),
+                )
+            elif spots:
                 yy, xx = np.mgrid[0:rows, 0:cols]
                 radius = max(num("spots.radius_px", spots.get("radius_px", 3)), 0.5)
                 for _ in range(int(num("spots.count", spots.get("count", 5)))):
@@ -762,6 +978,38 @@ class SimInstrument:
                 scale = abs(sigma) if sigma is not None else np.sqrt(np.clip(signal, 0, None) + 1.0)
                 return signal + self.rng.normal(0, scale, signal.shape)
         return signal.astype(np.float64)
+
+
+def sample_spots(seed: int, rows: int, cols: int, pixel: float, cx: float, cy: float, per_um2: float, radius_m: float, height: float) -> np.ndarray:
+    """Gaussian spots fixed on the sample, seen by a ``rows`` x ``cols`` image of ``pixel`` metres centred on (cx, cy).
+
+    The sample is cut into SAMPLE_CELL_M squares, each with its own seed, so every image of the same
+    place shows the same spots whatever its size or position. Images use the stitcher's convention:
+    rows are +y, columns +x, and pixel (r, c) sits at cx + (c - (cols - 1) / 2) * pixel.
+    """
+    image = np.zeros((rows, cols))
+    if per_um2 <= 0 or pixel <= 0:
+        return image
+    radius = max(float(radius_m), 1e-12)
+    reach = 4.0 * radius
+    xs = cx + (np.arange(cols) - (cols - 1) / 2.0) * pixel
+    ys = cy + (np.arange(rows) - (rows - 1) / 2.0) * pixel
+    i0, i1 = math.floor((xs[0] - reach) / SAMPLE_CELL_M), math.floor((xs[-1] + reach) / SAMPLE_CELL_M)
+    j0, j1 = math.floor((ys[0] - reach) / SAMPLE_CELL_M), math.floor((ys[-1] + reach) / SAMPLE_CELL_M)
+    if (i1 - i0 + 1) * (j1 - j0 + 1) > SAMPLE_CELLS_MAX:
+        raise Refused(f"an image {cols * pixel:.3g} m wide is too large for spots fixed on the sample (at most {SAMPLE_CELLS_MAX} cells of {SAMPLE_CELL_M:g} m)")
+    expected = float(per_um2) * (SAMPLE_CELL_M / 1e-6) ** 2
+    for i in range(i0, i1 + 1):
+        for j in range(j0, j1 + 1):
+            rng = np.random.default_rng([int(seed) & 0xFFFFFFFF, (i + 2**31) & 0xFFFFFFFF, (j + 2**31) & 0xFFFFFFFF])
+            for sx, sy in rng.uniform(0.0, SAMPLE_CELL_M, size=(rng.poisson(expected), 2)) + (i * SAMPLE_CELL_M, j * SAMPLE_CELL_M):
+                c0, c1 = np.searchsorted(xs, sx - reach), np.searchsorted(xs, sx + reach)
+                r0, r1 = np.searchsorted(ys, sy - reach), np.searchsorted(ys, sy + reach)
+                if c0 < c1 and r0 < r1:
+                    dx2 = (xs[c0:c1] - sx) ** 2
+                    dy2 = (ys[r0:r1] - sy) ** 2
+                    image[r0:r1, c0:c1] += height * np.exp(-(dy2[:, None] + dx2[None, :]) / (2.0 * radius**2))
+    return image
 
 
 def peak_profile(x: np.ndarray, position: float, fwhm: float, eta: float) -> np.ndarray:

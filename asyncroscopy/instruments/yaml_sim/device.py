@@ -43,6 +43,7 @@ from tango.server import Device, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.yaml_sim.spec import (
+    MAP_COMMAND,
     MAX_DURATION_S,
     JobPlan,
     Refused,
@@ -51,6 +52,8 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     job_estimate,
     job_targets,
     load_spec,
+    map_description,
+    map_section,
     plan_example,
     resolve_job_plan,
 )
@@ -76,6 +79,10 @@ def _output_property():
     return device_property(dtype=str, default_value="outputs/yaml_sim", doc="Where acquisitions go when there is no DATA device.")
 
 
+def _time_scale_property():
+    return device_property(dtype=float, default_value=1.0, doc="Real seconds per simulated second of every duration_s (0: no waiting; tests and fast rehearsals).")
+
+
 class _Stopped(Exception):
     """A job's wait was cut short by an abort."""
 
@@ -87,6 +94,11 @@ def _resolve(path: str) -> Path:
     if not candidate.is_absolute() and not candidate.exists() and (PROJECT_DIR / candidate).exists():
         return PROJECT_DIR / candidate
     return candidate
+
+
+def _named(func, name: str, doc: str):
+    func.__name__, func.__doc__ = name, doc
+    return func
 
 
 def _refusing(func, *args, **kwargs):
@@ -111,13 +123,16 @@ class _YamlInstrument:
             self.set_state(DevState.FAULT)
             self.set_status(message)
             return False
-        self.sim = SimInstrument(spec)
+        scale = max(0.0, float(getattr(self, "time_scale", 1.0)))
+        self.sim = SimInstrument(spec, sleep=lambda seconds: time.sleep(seconds * scale) if scale else None)
         for name, quantity in spec.settings.items():
             self._build_setting(name, quantity)
         for name, cmd in spec.commands.items():
             self._build_command(name, cmd)
         for name, acquisition in spec.acquisitions.items():
             self._build_acquisition(name, acquisition)
+        if map_section(spec) is not None:
+            self._build_map_profile()
         self.set_state(DevState.ON)
         self.set_status(spec.description or f"Simulated instrument from {spec.path.name}")
         return True
@@ -191,6 +206,20 @@ class _YamlInstrument:
             call_with_request.__name__, call_with_request.__doc__ = name, doc
             self.add_command(command(f=call_with_request, dtype_in=str, dtype_out=dtype_out, doc_in=f":param request: JSON {{{fields}}}"), device_level=True)
 
+    def _build_map_profile(self) -> None:
+        """``get_map_profile``: what the Mapper (instrument_profile yaml) needs to tile this instrument, as JSON."""
+
+        def describe(request: str) -> str:
+            try:
+                overrides = (json.loads(request) if request.strip() else {}).get("settings") or {}
+                return json.dumps(map_description(self.sim.spec, self.sim, overrides))
+            except (Refused, ValueError, AttributeError) as exc:  # the caller's settings: say why, never fail the device
+                return json.dumps({"error": str(exc)})
+
+        doc = ("How a Mapper maps this instrument: its image acquisition, stage and field-of-view settings and limits, the commands run "
+               "around moves and between tiles, the time per tile and the map budgets, at the current settings with the given ones.")
+        self.add_command(command(f=_named(describe, MAP_COMMAND, doc), dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"settings": {name: value}} (may be {})'), device_level=True)
+
     def _build_command(self, name, cmd) -> None:
         self._add_call(name, cmd.doc, cmd.inputs, lambda argument: _refusing(self.sim.run_command, name, argument))
 
@@ -222,6 +251,7 @@ class YamlSimDevice(_YamlInstrument, Device):
     yaml_path = _yaml_path_property()
     data_device_address = _data_property()
     output_directory = _output_property()
+    time_scale = _time_scale_property()
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -234,6 +264,7 @@ class YamlSimJobDevice(_YamlInstrument, JobDevice):
     yaml_path = _yaml_path_property()
     data_device_address = _data_property()
     output_directory = _output_property()
+    time_scale = _time_scale_property()
 
     def init_device(self) -> None:
         JobDevice.init_device(self)

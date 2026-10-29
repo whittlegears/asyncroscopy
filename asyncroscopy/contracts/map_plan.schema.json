@@ -96,7 +96,26 @@
     "dose_budget_e_per_a2": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Refuse the plan if any point would receive more than this."
+      "description": "Refuse the plan if any point would receive more than this (electron-beam profiles: stem, sem). The same as budgets.dose_e_per_a2."
+    },
+    "budgets": {
+      "type": "object",
+      "description": "Refuse the plan at reserve, before anything moves, if it would spend more than any of these. Every instrument has time_s (the estimated duration); the profile adds its own: dose_e_per_a2 for an electron beam, and a YAML instrument's map budgets (an AFM's tip_force_nn).",
+      "additionalProperties": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Instrument settings for the whole map (yaml profile: the settings the instrument file's map section lists, e.g. an AFM's setpoint_v).",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "string",
+          "boolean"
+        ]
+      }
     },
     "order": {
       "enum": [
