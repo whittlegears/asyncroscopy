@@ -688,6 +688,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["beam_current_pa"] = self._detector_params.beam_current_pa
         # The twin delivers exactly its configured current, so it counts as measured (AutoScript: the screen current).
         parameters["beam_current_source"] = "measured"
+        parameters["beam_current_age_s"] = 0.0  # always current: nothing on the twin drifts it between readings
         parameters["beam_blanked"] = self._blanked
         parameters["simulated"] = True  # read by the Mapper's dose check when the stack sets no `simulated` flag
         return json.dumps(parameters)

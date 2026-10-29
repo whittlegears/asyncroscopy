@@ -148,7 +148,7 @@ class RecordingMicroscope:
 def mapper_stub(microscope, **extra):
     stub = SimpleNamespace(
         microscope_device_address="m", analysis_url="", max_tiles=10_000, estimate_move_s=1.0,
-        default_beam_current_pa=50.0, eds_dose_spread_m=1e-8, proxy=lambda address, timeout_s=None: microscope, **extra,
+        default_beam_current_pa=50.0, max_beam_current_age_s=900.0, eds_dose_spread_m=1e-8, proxy=lambda address, timeout_s=None: microscope, **extra,
     )
     for name in ("_beam_current", "_stack_simulated", "_refuse_assumed_current"):
         setattr(stub, name, getattr(Mapper, name).__get__(stub))
@@ -174,6 +174,20 @@ def test_budgeted_plan_with_an_assumed_current_is_refused_on_a_stack_that_is_not
     Mapper.resolve_plan(mapper_stub(microscope), {**PLAN, "dose_budget_e_per_a2": 1e3})
     with pytest.raises(ValueError, match="beam current is assumed"):
         Mapper.resolve_plan(mapper_stub(microscope, simulated=False), {**PLAN, "dose_budget_e_per_a2": 1e3})
+
+
+def test_budgeted_plan_with_a_stale_or_unaged_measured_current_is_refused_on_hardware(monkeypatch):
+    monkeypatch.delenv("ASYNCROSCOPY_SIMULATED", raising=False)
+    measured = {"beam_current_pa": 80.0, "beam_current_source": "measured"}
+    budget = {**PLAN, "dose_budget_e_per_a2": 1e3}
+    for parameters, reason in (({**measured, "beam_current_age_s": 3600.0}, "s old"), (measured, "no age")):
+        microscope = RecordingMicroscope(parameters)
+        with pytest.raises(ValueError, match="cannot be used for a dose budget") as refused:
+            Mapper.resolve_plan(mapper_stub(microscope, simulated=False), budget)
+        assert reason in str(refused.value) and microscope.calls == ["get_parameters"]
+    fresh = Mapper.resolve_plan(mapper_stub(RecordingMicroscope({**measured, "beam_current_age_s": 60.0}), simulated=False), budget)
+    assert fresh["estimate"]["beam_current_source"] == "measured"
+    Mapper.resolve_plan(mapper_stub(RecordingMicroscope({**measured, "beam_current_age_s": 3600.0}), simulated=True), budget)
 
 
 def test_autoscript_budgeted_plan_needs_the_screen_current(autoscript, monkeypatch):
