@@ -52,6 +52,16 @@ def test_instrument_notes_are_seeded_once_and_retrieved_by_relevance_within_a_ca
     assert memory.notes_for("unrelated words xyz") == ""
 
 
+def test_the_seeded_notes_give_the_stem_stage_hint_only_on_a_stem(tmp_path, monkeypatch):
+    for name, tools, stem in (("afm", {"AFMTwin_retract_tip", "AFMTwin_acquire_scanned_image", "Mapper_reserve", "Mapper_start"}, False),
+                              ("stem", {"DigitalTwin_acquire_scanned_image", "DigitalTwin_blank_beam", "DigitalTwin_move_stage"}, True)):
+        monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / name))
+        memory = Memory.from_env()
+        assert memory.seed_instrument(tools)
+        text = memory.instrument_file.read_text(encoding="utf-8")
+        assert ("STEM stage position" in text) is stem and "Lengths are metres" in text
+
+
 def test_a_met_goal_drafts_a_skill_from_the_calls_that_worked(memory):
     path, what = asyncio.run(distill(GOAL, RUN, memory, OFFERED, Namer(), "qwen3:8b", "run1"))
     assert what == "created draft eds_square_map"
