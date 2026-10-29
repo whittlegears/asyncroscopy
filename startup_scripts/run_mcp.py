@@ -39,6 +39,8 @@ class MCPConfig:
     approvals_device_address: str = ''
     risk: dict[str, str] = field(default_factory=dict)
     trace: str = ''
+    clock_device: str = ''  # instrument whose clock_s stamps trace events; empty: this computer's time
+    trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads; empty: trace's directory
     data_views: list[str] = field(default_factory=list)
     analysis_url: str = ''
     job_limits: dict[str, float] = field(default_factory=dict)
@@ -112,6 +114,8 @@ def load_config(path: Path) -> Config:
             approvals_device_address=_approvals_address(mcp, path),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             trace=str(mcp.get('trace') or ''),
+            clock_device=str(mcp.get('clock_device') or ''),
+            trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
             analysis_url=str(mcp.get('analysis_url') or ''),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
@@ -174,6 +178,10 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--risk-json', json.dumps(config.mcp.risk)])
     if config.mcp.trace:
         command.extend(['--trace', config.mcp.trace])
+    if config.mcp.clock_device:
+        command.extend(['--clock-device', config.mcp.clock_device])
+    if config.mcp.trace_follow:
+        command.extend(['--trace-follow-json', json.dumps(config.mcp.trace_follow)])
     if config.mcp.data_views:
         command.extend(['--data-views-json', json.dumps(config.mcp.data_views)])
     if config.mcp.analysis_url:

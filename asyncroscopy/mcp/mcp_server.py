@@ -42,6 +42,9 @@ from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
 from asyncroscopy.mcp import endpoint_auth
 from asyncroscopy.mcp.binding import bind_host, is_remote_host
+from asyncroscopy.trace.clock import InstrumentClock
+from asyncroscopy.trace import stream as trace_stream
+from pathlib import Path
 from fnmatch import fnmatchcase
 
 from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, looks_like_stop, operator_only, risk_of
@@ -176,6 +179,8 @@ class MCPServer:
         analysis_url: str | None = None,
         job_limits: dict[str, float] | None = None,
         auth: dict | None = None,
+        clock_device: str | None = None,
+        trace_follow: list[str] | None = None,
     ):
         """
         Args:
@@ -208,6 +213,10 @@ class MCPServer:
             auth: the MCP config's ``auth`` section (asyncroscopy.mcp.endpoint_auth): every request needs a
                 bearer token from WG1's token service, its subject is the caller and its scopes gate the tools.
                 None: no token check; the caller is X-Asyncroscopy-Caller, as before.
+            clock_device: Instrument whose clock_s stamps this server's trace events (simulated time on
+                a twin). Empty: this computer's time, marked "clock": "wall".
+            trace_follow: Trace files, directories or globs the operator endpoint's trace_since reads.
+                Empty: the directory of trace_path (every *.jsonl there).
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -226,7 +235,10 @@ class MCPServer:
         self.endpoint_role = endpoint_role
         self.approvals_device_address = approvals_device_address or None
         self.risk_overrides = check_overrides(risk_overrides)
-        self.trace = TraceWriter(trace_path, source="mcp") if trace_path else None
+        self.trace = TraceWriter(
+            trace_path, source="mcp", writer=f"mcp:{name}:{endpoint_role}", clock=InstrumentClock(clock_device or ""),
+        ) if trace_path else None
+        self.trace_follow = list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else []))
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
@@ -549,14 +561,15 @@ class MCPServer:
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
-            caller = self._caller()
+            caller, run = self._caller(), self._run_id() or None
             describe = None
             if envelope and command_name == "start" and call_args:
                 device = self._devices.get(tool_prefix or dev_class)
                 describe = (lambda: "Reserved plan: " + device.get_reservation(str(call_args[0]))) if device is not None else None
             gate = self._gate(unique_name, risk, arguments, caller, describe)
-            if envelope and command_name == "start" and call_args:
-                call_args = (self._with_grant(call_args[0], gate, caller), *call_args[1:])
+            if envelope and command_name in ("start", "reserve") and call_args:
+                # The job's own trace events then name who asked and the agent run (and, at start, the approval).
+                call_args = (self._with_grant(call_args[0], gate if command_name == "start" else None, caller, run), *call_args[1:])
             if self.auth is not None:  # an approve, deny or set_mode records the token's subject as who
                 call_args = endpoint_auth.stamp_who(dev_class, command_name, call_args, caller)
             via = {"via": self._via.name} if getattr(self._via, "name", None) else {}  # run_job's own reserve and start
@@ -569,9 +582,9 @@ class MCPServer:
                 result = self._augment_with_preview(command_name, normalized)
             except Exception as exc:
                 if self.tool_log is not None:
-                    self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
+                    self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc, caller=caller, run=run)
                 if self.trace is not None:
-                    self.trace.record(unique_name, False, started, arguments=arguments, duration_s=time.perf_counter() - t0, error=describe_error(exc), caller=caller, **gate, **via)
+                    self.trace.record(unique_name, False, started, arguments=arguments, duration_s=time.perf_counter() - t0, error=describe_error(exc), caller=caller, run=run, **gate, **via)
                 message = describe_error(exc)
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
@@ -583,10 +596,10 @@ class MCPServer:
             with self._failures_lock:
                 self._failures.pop(unique_name, None)
             if self.tool_log is not None:
-                self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized)
+                self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized, caller=caller, run=run)
             if self.trace is not None:
                 key = normalized if isinstance(normalized, str) and command_name.startswith("acquire") else None
-                self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, **gate, **via)
+                self.trace.record(unique_name, True, started, arguments=arguments, duration_s=time.perf_counter() - t0, result=normalized, result_key=key, caller=caller, run=run, **gate, **via)
             return result
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
@@ -694,11 +707,14 @@ class MCPServer:
         return wrapper
 
     @staticmethod
-    def _with_grant(request: Any, gate: dict, caller: str | None) -> Any:
-        """Tell a starting job who asked and which approval covers it, so its trace links to the grant.
+    def _with_grant(request: Any, gate: dict | None, caller: str | None, run: str | None = None) -> Any:
+        """Tell a job who asked, from which agent run, and (at start, ``gate``) which approval covers it,
+        so its trace links to the grant and the run.
 
         Added after the approval check, so it never changes the call's fingerprint.
         """
+        if gate is None and not caller and not run and '"run"' not in str(request):
+            return request  # a reserve with nothing to add goes through as it came
         if not isinstance(request, str):
             return request
         try:
@@ -709,10 +725,14 @@ class MCPServer:
             return request
         # Only the gate may say which approval covers a job; an agent-supplied grant_id is dropped.
         body.pop("grant_id", None)
-        if gate.get("grant_id"):
+        if gate and gate.get("grant_id"):
             body["grant_id"] = gate["grant_id"]
         if caller:
             body["caller"] = caller
+        # Likewise the run: only the X-Asyncroscopy-Run header names it, never the request body.
+        body.pop("run", None)
+        if run:
+            body["run"] = run
         return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
     # ------------------------------------------------------------------ auth (asyncroscopy.mcp.endpoint_auth)
@@ -766,7 +786,7 @@ class MCPServer:
             # Fail closed: without the Approvals device we cannot tell whether a person must approve.
             raise ToolError(f"{tool_name} is high risk and the approval service is unreachable ({describe_error(exc)}); not run.") from exc
         if self.trace is not None:
-            self.trace.record(tool_name, False, time.time(), arguments=arguments, error="approval_required", caller=caller, mode=mode, request_id=filed["request_id"])
+            self.trace.record(tool_name, False, time.time(), arguments=arguments, error="approval_required", caller=caller, run=self._run_id() or None, mode=mode, request_id=filed["request_id"])
         raise ApprovalHeld(
             f"APPROVAL REQUIRED: {tool_name} is held for an operator (request_id={filed['request_id']}). "
             "Call approval_status with this request_id until it is approved, then repeat exactly the same call. "
@@ -842,6 +862,25 @@ class MCPServer:
         self._sweep_held()
         return status
 
+    @tool()
+    def trace_since(
+        self, cursor: str = "", run: str | None = None, caller: str | None = None, device: str | None = None,
+        job: str | None = None, limit: int = 200, from_end: bool = False,
+    ) -> dict[str, Any]:
+        """Instrument Trace events written since `cursor`, in order, from every trace file of the stack (operator
+        endpoint only). Returns {"events": [...], "cursor": "...", "more": bool}: pass the cursor back to get the next
+        events, none twice. An empty cursor starts at the first event (from_end: at the current end). Filters: run (the
+        agent run id), caller, device (Tango name or tool prefix, e.g. Mapper), job (job_id or reservation id)."""
+        if not self.trace_follow:
+            raise ToolError("this endpoint has no trace to follow (set mcp.trace or mcp.trace_follow)")
+        try:
+            return trace_stream.trace_since(
+                self.trace_follow, cursor=cursor, limit=max(1, min(int(limit), 2000)), from_end=from_end,
+                run=run or None, caller=caller or None, device=device or None, job=job or None,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+
     # ------------------------------------------------------------------ run_job's reservations
     @staticmethod
     def _run_id() -> str:
@@ -872,7 +911,7 @@ class MCPServer:
             note = (f"{device} reservation {reservation_id} was not released: {reply['error'].get('message', reply['error'])}" if failed
                     else f"{device} reservation {reservation_id} was released")
         if self.trace is not None:
-            self.trace.record(f"{device}_release", "was released" in note, started, arguments={"reservation_id": reservation_id}, caller="run_job", result=note)
+            self.trace.record(f"{device}_release", "was released" in note, started, arguments={"reservation_id": reservation_id}, caller="run_job", run=self._run_id() or None, result=note)
         return note
 
     def _sweep_held(self, force: bool = False) -> list[str]:
@@ -1294,6 +1333,15 @@ class MCPServer:
             native_tools.extend([self.run_job, self.wait_for_job])
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
+        if self.endpoint_role == "operator" and self.trace_follow:
+            # The GUI follows the trace here; the agent endpoint does not offer it (it records arguments of every caller).
+            native_tools.append(self.trace_since)
+        if self.trace is not None and "simulated" not in self.trace.defaults and self.approvals_device_address \
+                and self.approvals_device_address.lower() in exported:
+            try:  # the stack's simulated flag, as its Approvals device holds it (run_servers' top-level simulated:)
+                self.trace.defaults["simulated"] = bool(self._approvals().get_simulated())
+            except Exception:
+                pass  # unknown: the events leave it out
         self._native_names = {getattr(t, "__name__", getattr(t, "name", "")) for t in native_tools}
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
@@ -1367,6 +1415,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--approvals-device-address", default="", help="Approvals device; empty disables the approval mode.")
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
+    parser.add_argument("--clock-device", default="", help="Instrument whose clock_s stamps trace events; empty: this computer's time.")
+    parser.add_argument("--trace-follow-json", default="[]", help="Trace files, directories or globs trace_since reads (operator); default: the --trace file's directory.")
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
     parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
@@ -1458,6 +1508,8 @@ def main(argv: list[str] | None = None) -> int:
         analysis_url=args.analysis_url or None,
         job_limits=json.loads(args.job_limits_json),
         auth=auth,
+        clock_device=args.clock_device or None,
+        trace_follow=json.loads(args.trace_follow_json) or None,
     )
     if args.transport == "streamable-http":
         print(
