@@ -44,6 +44,7 @@ mcp:
     Approvals: [request_status, list_pending]
     # The gate shows the operator the plan with it; run_job and the Mapper_* replies carry the plan.
     Mapper: [get_reservation]
+    Tuner: [get_reservation]
   # Optional Tango command allowlist. Leave empty to include all non-blocked
   # commands. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.

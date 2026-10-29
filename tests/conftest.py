@@ -37,6 +37,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import Digit
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
 from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.instruments.electron_microscope.tuner import Tuner
 from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
@@ -124,6 +125,7 @@ def tango_ctx(data_save_dir, job_dir):
                 },
                 {"name": "asyncroscopy/scan/mapping", "properties": {}},
                 {"name": "asyncroscopy/scan/drift", "properties": {}},
+                {"name": "asyncroscopy/scan/tuner", "properties": {}},
             ],
         },
         {
@@ -161,8 +163,12 @@ def tango_ctx(data_save_dir, job_dir):
             "devices": [
                 {
                     "name": "asyncroscopy/corrector/default",
-                    "properties": {"measurement_noise_fraction": 0.0},
-                }
+                    "properties": {"measurement_noise_fraction": 0.0, "measurement_noise_m": 0.0},
+                },
+                # tests/test_tuner.py: the tuner twin's corrector (noisy measurements, as by default),
+                # and a wrong-sign one whose corrections add instead of subtract.
+                {"name": "asyncroscopy/corrector/tuner", "properties": {}},
+                {"name": "asyncroscopy/corrector/wrongsign", "properties": {"correction_sign": -1.0}},
             ],
         },
         {
@@ -245,6 +251,52 @@ def tango_ctx(data_save_dir, job_dir):
                         "sample_particle_count": 20,
                         "dose_tracking": True,
                         "time_scale": 0.0,
+                    },
+                },
+                {
+                    # tests/test_tuner.py: a dense particle sample on a thin film, with a height gradient
+                    # (focus changes across the stage) and dose tracking; each test injects its own hidden
+                    # focus error with set_focus_error.
+                    "name": "asyncroscopy/digitaltwin/tuner",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/tuner",
+                        "corrector_device_address": "asyncroscopy/corrector/tuner",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        "sample_seed": 77,
+                        "sample_size_xy": 1e-6,
+                        "sample_particle_count": 2000,
+                        "support_thickness": 3e-9,
+                        "height_gradient_x": 0.02,
+                        "height_gradient_y": -0.01,
+                        "dose_tracking": True,
+                        "time_scale": 0.0,
+                    },
+                },
+            ],
+        },
+        {
+            "class": Tuner,
+            "devices": [
+                {
+                    "name": "asyncroscopy/tuner/default",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/tuner",
+                        "scan_device_address": "asyncroscopy/scan/tuner",
+                        "corrector_device_address": "asyncroscopy/corrector/tuner",
+                        "state_directory": prop_path(job_dir / "tuner" / "state"),
+                        "trace_path": prop_path(job_dir / "tuner" / "trace.jsonl"),
+                        "simulated": True,
+                    },
+                },
+                {
+                    "name": "asyncroscopy/tuner/wrongsign",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/tuner",
+                        "scan_device_address": "asyncroscopy/scan/tuner",
+                        "corrector_device_address": "asyncroscopy/corrector/wrongsign",
+                        "state_directory": prop_path(job_dir / "tuner_wrongsign" / "state"),
+                        "trace_path": prop_path(job_dir / "tuner_wrongsign" / "trace.jsonl"),
+                        "simulated": True,
                     },
                 },
             ],
