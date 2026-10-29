@@ -71,8 +71,10 @@ One YAML file in `benchmarks/workflows/` (or anywhere, passed with `--workflows 
 ```yaml
 stacks:                             # your own instrument (optional; names are shared across files)
   raman:
-    config: configs/raman_stack.yaml          # the run_servers config you start it with
-    tiled: http://127.0.0.1:9091              # mcp, operator, tiled: only where yours differ
+    config: configs/yaml_sim_raman.yaml       # the run_servers config you start it with
+    mcp: http://127.0.0.1:8100/mcp            # mcp, operator, tiled: only where yours differ from 8000, 8001, 9091
+    operator: http://127.0.0.1:8101/mcp
+    tiled: http://127.0.0.1:9191
 workflows:
   - name: raman_2d_band             # unique
     stack: raman                    # which stack must be running (default twin)

@@ -178,7 +178,7 @@ class Memory:
             "",
             "## Conventions",
             "",
-            "- Lengths are metres; a STEM stage position is [x, y, z, alpha, beta] (metres, degrees).",
+            "- Lengths are metres. Each command's description gives its arguments (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees).",
             "- Data are keys in Tiled; look at them with view_data (text or png).",
             "- High-risk calls may be held for an operator (APPROVAL REQUIRED); never try to approve them yourself.",
             "",

@@ -123,6 +123,11 @@ class TestPolicy:
     def test_overrides_come_first(self):
         assert risk_of("DigitalTwin", "move_stage", {"DigitalTwin.move_stage": "low"}) == "low"
 
+    def test_overrides_that_disagree_never_lower_a_command(self):
+        assert risk_of("DigitalTwin", "move_stage", {"*": "low", "DigitalTwin.move_stage": "high"}) == "high"
+        assert risk_of("DigitalTwin", "move_stage", {"DigitalTwin.move_stage": "high", "*": "low"}) == "high"
+        assert risk_of("DigitalTwin", "get_stage", {"*": "low"}) == "low"
+
     def test_operator_only(self):
         assert operator_only("Approvals", "approve")
         assert operator_only("DigitalTwin", "export_ground_truth")

@@ -313,10 +313,14 @@ class YamlSimJobDevice(_YamlInstrument, JobDevice):
         point = plan.point(index)
         sleep = self._sleeper(job)
         try:
+            for name in plan.job.before_move:  # e.g. retract a probe before the stage moves; a refusal fails the job
+                self.sim.run_command(name)
             for setting, value in point.items():
                 self.sim.set(setting, value)
             if plan.job.settle_s:
                 sleep(plan.job.settle_s)
+            for name in plan.job.after_move:  # e.g. approach the probe again at the new point
+                self.sim.run_command(name)
             keys = {}
             for name in plan.job.acquire:
                 keys[name] = self._acquire_and_save(

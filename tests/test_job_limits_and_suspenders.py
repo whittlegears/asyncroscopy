@@ -121,8 +121,17 @@ def test_a_plan_inside_the_limits_reserves_and_says_what_was_checked(tmp_path):
     assert reply["limits"] == {"targets": 2, "unchecked": []}
 
 
-def test_limits_that_cannot_be_read_are_reported_not_fatal(tmp_path):
+def test_limits_that_cannot_be_read_refuse_the_plan(tmp_path):
     job = Steps(tmp_path, {})
+    reply = job.call("reserve", {"plan": {"xs": [0.0, 9.0]}})
+    assert reply["error"]["code"] == "plan_rejected" and "could not be read" in reply["error"]["message"]
+    assert reply["error"]["unchecked"][0]["target"] == "test/stage/1/x"
+    assert job._jobs == {}
+
+
+def test_a_device_may_reserve_with_unread_limits_and_report_them(tmp_path):
+    job = Steps(tmp_path, {})
+    job.require_limits = False
     reply = job.call("reserve", {"plan": {"xs": [0.0, 9.0]}})
     assert "reservation_id" in reply
     assert reply["limits"]["unchecked"][0]["target"] == "test/stage/1/x"

@@ -17,7 +17,7 @@ The STEM devices (`instruments/electron_microscope/`) subclass the `Instrument` 
 
 ## 0. No Python: a simulated instrument from one YAML file
 
-To try an agent workflow on your instrument before writing a driver, describe it in a YAML file. Two examples ship in `asyncroscopy/instruments/yaml_sim/examples/`: `xrd.yaml`, a powder X-ray diffractometer, and `raman.yaml`, a confocal Raman microscope with a line-scan job. `configs/yaml_sim_xrd.yaml` runs the first on the twin's ports (stop the twin first); `configs/yaml_sim_raman.yaml` runs the second beside the twin, on its own ports ([second_stack.md](second_stack.md)):
+To try an agent workflow on your instrument before writing a driver, describe it in a YAML file. Three examples ship in `asyncroscopy/instruments/yaml_sim/examples/`: `xrd.yaml`, a powder X-ray diffractometer; `raman.yaml`, a confocal Raman microscope with a line-scan job; and `afm.yaml`, an atomic force microscope whose stage cannot move while the tip is down and whose force map lifts the tip around every move (start from it for any probe instrument). `configs/yaml_sim_xrd.yaml` runs the first on the twin's ports (stop the twin first); `configs/yaml_sim_raman.yaml` runs the second beside the twin, on its own ports ([second_stack.md](second_stack.md)):
 
 ```bash
 uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_xrd.yaml
@@ -26,17 +26,35 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 
 The file has four sections:
 
-- **`settings`**: each value becomes a Tango attribute and a `get_<name>` command, plus `set_<name>` unless `settable: false`. A setting has a `default`, and optionally `min`, `max`, `units`, `type` (`float`, `int`, `bool` or `str`), `choices` (the only values allowed, e.g. `["600", "1800"]` for a grating) and `doc`. Out-of-range values and values not in `choices` are refused, with the bounds or choices in the message.
+- **`settings`**: each value becomes a Tango attribute and a `get_<name>` command, plus `set_<name>` unless `settable: false`. A setting has a `default`, and optionally `min`, `max`, `units`, `type` (`float`, `int`, `bool` or `str`), `choices` (the only values allowed, e.g. `["600", "1800"]` for a grating), `requires` and `doc`. Out-of-range values and values not in `choices` are refused, with the bounds or choices in the message. **Put an interlock on the setting, not only on a command:** `move_xy` with `requires: ["not tip_engaged"]` does not stop `set_stage_x_m` or a job's axes, but `requires` on the `stage_x_m` setting stops every way of changing it.
 - **`commands`**: each one is a tool. A command has a `doc` (the agent's description) and optionally one `input` or several `inputs` (each with its own bounds or choices; with several, the tool takes them by name, e.g. `move_xy` with `x_m` and `y_m`), `requires` (checks such as `"tube_power_w > 0"`), `sets` (settings to change), `returns` and `duration_s`. A refused command changes nothing.
-- **`acquisitions`**: names start with `acquire`. Each produces simulated data, saves it through DATA, and returns its key, so agents look at it with `view_data`. `kind: spectrum` is a 1-D curve with an `axis` (start, stop, points, label, units), `peaks`, a `background` and `noise`. Each peak has a `position`, a `height`, an `fwhm` (full width at half maximum, in axis units) and a `shape`: `gaussian` (the default), `lorentzian` (Raman and most optical bands) or `voigt` (a pseudo-Voigt mix; `eta` is its Lorentzian fraction). Older files that give `width` mean a Gaussian's sigma, and still load. `kind: image` is a 2-D image with `shape`, `pixel_size_m` and random `spots`. `kind: value` returns named numbers as JSON. `units` says what the values are (default `counts`), and an acquisition may take `inputs` like a command.
-- **`jobs`** (optional): a run of acquisitions over many points, such as a line scan or a map. A job names the `axes` it steps over (settable numeric settings, e.g. the stage), the `settings` a plan may set for the whole run, the acquisitions to `acquire` at every point, a `settle_s` per point, `requires`, and the commands to run `on_stop` (aborted or failed, e.g. `laser_off`) and `on_finish`. With jobs, the device also has the job envelope, so the agent runs one with `run_job(device="RamanTwin", plan={"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 21}}, "settings": {"exposure_s": 2}})` (or `"points": [...]` for a list of positions) and waits with `wait_for_job`. Each point's values are checked against the settings' limits before anything moves, the reply carries a time estimate, and abort stops the job within a fraction of a second.
+- **`acquisitions`**: names start with `acquire`. Each produces simulated data, saves it through DATA, and returns its key, so agents look at it with `view_data`. `kind: spectrum` is a 1-D curve with an `axis` (start, stop, points, label, units), `peaks`, a `background` and `noise`. Each peak has a `position`, a `height`, an `fwhm` (full width at half maximum, in axis units) and a `shape`: `gaussian` (the default), `lorentzian` (Raman and most optical bands) or `voigt` (a pseudo-Voigt mix; `eta` is its Lorentzian fraction). Older files that give `width` mean a Gaussian's sigma, and still load. `kind: image` is a 2-D image with `shape`, `pixel_size_m` and random `spots`. `kind: value` returns named numbers as JSON. `units` says what the values are (default `counts`), and an acquisition may take `inputs` like a command. `noise` is `poisson` (counts only), `gaussian` or `none`: data in other units (metres of height, nN of force) need `noise: gaussian` with `noise_sigma` in those units, and a file that leaves it out is refused, because counting noise on a 20 nm height buries it. Gaussian noise keeps negative values (an adhesion dip).
+- **`jobs`** (optional): a run of acquisitions over many points, such as a line scan or a map. A job names the `axes` it steps over (settable numeric settings, e.g. the stage), the `settings` a plan may set for the whole run, the acquisitions to `acquire` at every point, a `settle_s` per point, `requires`, the commands to run at every point `before_move` (e.g. `retract_tip`) and `after_move` (e.g. `approach_tip`, before the acquisitions), and the commands to run `on_stop` (aborted or failed, e.g. `laser_off`) and `on_finish`. With jobs, the device also has the job envelope, so the agent runs one with `run_job(device="RamanTwin", plan={"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 21}}, "settings": {"exposure_s": 2}})` (or `"points": [...]` for a list of positions) and waits with `wait_for_job`. Each point's values are checked against the settings' limits before anything moves, the reply carries a time estimate, and abort stops the job within a fraction of a second.
 
 Limits to know before you write one:
 
 - One command or acquisition call may take at most 25 s, because the MCP server stops waiting at 30 s. A longer acquisition (a long exposure, many accumulations) is refused with a pointer to the job that runs it; inside a job there is no such limit.
 - While a job runs, `set_*` and `acquire*` calls are refused (the job owns the instrument); `get_*` reads and plain commands such as `laser_off` still work, and switching the source off makes the job's next acquisition fail safely.
 - A job runs acquisitions without arguments and steps over numeric settings only; a job has at most `max_points` points (default 100 000).
-- The data are shaped, not physical: peak positions, widths and heights follow your expressions, with Poisson or Gaussian noise. Use it to rehearse a workflow and the agent's decisions, not to validate a measurement.
+- The data are shaped, not physical: peak positions, widths and heights follow your expressions, with the noise you choose. An image's `shape` is fixed, and its `spots` are drawn afresh on every call, so going back to a feature does not find the same one. Use it to rehearse a workflow and the agent's decisions, not to validate a measurement.
+- Job limits in the MCP config (`mcp.job_limits`) know a job's duration and an electron dose only; a limit on, say, tip force goes in the setting's `max` instead.
+
+Test your file in-process, without starting servers, the way `tests/yaml_sim_afm_check.py` does:
+
+```python
+from asyncroscopy.instruments.yaml_sim.device import device_class
+from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path
+
+devices = [{"class": device_class("AFMTwin", jobs=True), "devices": [{"name": "asyncroscopy/instrument/default", "properties": {
+    "yaml_path": prop_path("my_afm.yaml"), "output_directory": prop_path("out"), "state_directory": prop_path("out/jobs")}}]}]
+with instrument_context(devices):
+    server = mcp_server_for(devices)                     # the agent endpoint, in-process
+    print(server.list_tool_risks())                      # what approve mode would hold
+    ran = server.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
+    print(server.wait_for_job(ran["job_id"], max_wait_s=30)["state"])
+```
+
+`class_name` (here `AFMTwin`) names the tools; `jobs=True` adds the job envelope when the file has `jobs:`. For the stack itself, copy `configs/yaml_sim_raman.yaml` with its two MCP configs (`configs/mcp_raman.yaml`, `configs/mcp_raman_operator.yaml`): they run beside the twin on their own ports and need no analysis server.
 
 Values in `sets`, `returns`, `requires`, `duration_s` and an acquisition's numbers may be expressions over the settings and the command's input: arithmetic, comparisons, `and`/`or`/`not`, `x if c else y`, and `abs`, `min`, `max`, `sqrt`, `exp`, `log`, `sin`, `cos`, `radians`, `degrees`. The full format is in the docstring of `asyncroscopy/instruments/yaml_sim/spec.py`. Unknown keys, impossible bounds and expressions naming unknown settings are refused when the file is loaded. Check a file before starting it:
 
@@ -137,6 +155,8 @@ You don't have to configure anything for the default policy:
 | `IndentGrid.get_reservation`, `State`, `Status` | low | read-only |
 | `IndentGrid.start` | high | one approval per grid in `approve` mode |
 | `IndentGrid.abort` | low | stop word |
+| `AFMTwin.retract_tip`, `withdraw_tip`, `disengage_tip` | low | stop words |
+| `AFMTwin.approach_tip`, `move_xy`, `set_*`, `acquire_*` | high | they touch or move over the sample |
 | `Init`, `Kill`, `RestartServer` on any device | not offered to agents | operator only |
 
 `set_fov` and `set_defocus` are low only on a device with both `acquire_scanned_image` and `blank_beam` (an electron microscope); on yours they are high, since an optical `set_defocus` drives the objective. To change any of these, add patterns to `mcp.safety.risk` in the MCP config, for example `{"SimIndenter.move_xy": "low"}`. `asyncroscopy/safety/policy.py` is the authority; see also [approval_mode.md](../Operation/approval_mode.md).

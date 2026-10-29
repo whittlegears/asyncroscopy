@@ -17,6 +17,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         units: s
         type: float                      # float (default), int, bool or str
         settable: true                   # false: get_ only
+        requires: ["exposure_s < 5 or not shutter_open"]   # optional checks on every change (the new value is in scope)
         doc: Counting time per point.
       grating:
         default: "1800"
@@ -44,6 +45,8 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         inputs: [...]                    # optional arguments, as for commands
         peaks:
           - {position: 28.44, height: 900, fwhm: 0.14, shape: gaussian}   # gaussian, lorentzian or voigt
+        noise: poisson                   # poisson (counts only), gaussian or none
+        noise_sigma: 2.0                 # gaussian's sigma in the data's units (needed unless units are counts)
         ...
     jobs:                                # optional: a job device for long or many-point runs
       line_scan:
@@ -53,6 +56,8 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         acquire: [acquire_scan]          # run at every point, in order
         settle_s: 0.2                    # simulated time to reach each point
         requires: ["tube_power_w > 0"]   # checked at reserve
+        before_move: []                  # commands run at each point before its axes move (e.g. retract a probe)
+        after_move: []                   # commands run at each point after it is reached, before acquiring (e.g. approach again)
         on_stop: [xray_off]              # commands run when the job is aborted or fails
 
 A single command or acquisition call is limited to 25 s (the MCP server stops
@@ -99,15 +104,15 @@ OPERATORS = (
     ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq, ast.IfExp,
 )
 
-SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices"}
+SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices", "requires"}
 INPUT_KEYS = {"name", "type", "min", "max", "units", "doc", "choices"}
 COMMAND_KEYS = {"doc", "input", "inputs", "requires", "sets", "returns", "duration_s"}
-ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis", "peaks", "background", "noise", "shape", "pixel_size_m", "spots", "values", "inputs", "units"}
+ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis", "peaks", "background", "noise", "shape", "pixel_size_m", "spots", "values", "inputs", "units", "noise_sigma"}
 AXIS_KEYS = {"start", "stop", "points", "label", "units"}
 PEAK_KEYS = {"position", "height", "fwhm", "width", "shape", "eta"}
 PEAK_SHAPES = {"gaussian", "lorentzian", "voigt"}
 SPOT_KEYS = {"count", "radius_px", "height"}
-JOB_KEYS = {"doc", "axes", "settings", "acquire", "settle_s", "max_points", "requires", "on_stop", "on_finish"}
+JOB_KEYS = {"doc", "axes", "settings", "acquire", "settle_s", "max_points", "requires", "before_move", "after_move", "on_stop", "on_finish"}
 TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs"}
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
@@ -320,6 +325,8 @@ class Job:
     requires: list[tuple[str, ast.Expression]] = field(default_factory=list)
     on_stop: list[str] = field(default_factory=list)
     on_finish: list[str] = field(default_factory=list)
+    before_move: list[str] = field(default_factory=list)
+    after_move: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -331,6 +338,7 @@ class InstrumentSpec:
     commands: dict[str, Command]
     acquisitions: dict[str, Acquisition]
     jobs: dict[str, Job] = field(default_factory=dict)
+    setting_requires: dict[str, list[tuple[str, ast.Expression]]] = field(default_factory=dict)
 
     def command_names(self) -> list[str]:
         names = [f"get_{n}" for n in self.settings] + [f"set_{n}" for n, q in self.settings.items() if q.settable]
@@ -458,8 +466,19 @@ def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisit
         if trees[key] is None and (not isinstance(value, (int, float)) or isinstance(value, bool)):
             raise SpecError(f"{where}.{key}: a number or an expression")
 
-    if raw.get("noise", "poisson") not in NOISES:
-        raise SpecError(f"{where}.noise: {raw.get('noise')!r} is not one of {sorted(NOISES)}")
+    noise, units = raw.get("noise", "poisson"), raw.get("units", "counts")
+    if noise not in NOISES:
+        raise SpecError(f"{where}.noise: {noise!r} is not one of {sorted(NOISES)}")
+    if kind != "value" and units != "counts":
+        # Poisson noise, or Gaussian noise of sigma sqrt(signal), only makes sense for counts: on metres or newtons it buries the signal.
+        if noise == "poisson":
+            raise SpecError(f"{where}.noise: Poisson noise is for counts; for {units} give noise: gaussian with noise_sigma (in {units}), or noise: none")
+        if noise == "gaussian" and "noise_sigma" not in raw:
+            raise SpecError(f"{where}.noise_sigma: Gaussian noise on {units} needs its sigma, in {units}")
+    if "noise_sigma" in raw:
+        if noise != "gaussian":
+            raise SpecError(f"{where}.noise_sigma: only Gaussian noise has a sigma")
+        number("noise_sigma", raw["noise_sigma"])
     if kind == "spectrum":
         axis = _check_keys(f"{where}.axis", raw.get("axis"), AXIS_KEYS)
         for key in ("start", "stop", "points"):
@@ -546,7 +565,7 @@ def _job(name: str, raw: Any, spec: "InstrumentSpec") -> Job:
     for acquisition in acquire:
         if spec.acquisitions[acquisition].inputs:
             raise SpecError(f"{where}.acquire: {acquisition!r} takes arguments; a job runs acquisitions without arguments")
-    for key in ("on_stop", "on_finish"):
+    for key in ("before_move", "after_move", "on_stop", "on_finish"):
         for command_name in _names_list(f"{where}.{key}", raw.get(key), spec.commands, "command"):
             if spec.commands[command_name].inputs:
                 raise SpecError(f"{where}.{key}: {command_name!r} takes arguments; list commands without arguments")
@@ -560,6 +579,7 @@ def _job(name: str, raw: Any, spec: "InstrumentSpec") -> Job:
         name=name, doc=str(raw["doc"]).strip(), axes=axes, settings=settings, acquire=acquire,
         settle_s=float(settle), max_points=max_points, requires=_requires(where, raw.get("requires"), set(spec.settings)),
         on_stop=list(raw.get("on_stop") or []), on_finish=list(raw.get("on_finish") or []),
+        before_move=list(raw.get("before_move") or []), after_move=list(raw.get("after_move") or []),
     )
 
 
@@ -583,6 +603,11 @@ def load_spec(path: str | Path) -> InstrumentSpec:
     for name, item in (raw.get("acquisitions") or {}).items():
         acquisitions[_check_name("acquisitions", name)] = _acquisition(name, item, settings)
     spec = InstrumentSpec(path, str(raw.get("description", "")).strip(), int(raw.get("seed", 0)), settings, commands, acquisitions)
+    for name, item in (raw.get("settings") or {}).items():
+        if (item or {}).get("requires"):
+            if not settings[name].settable:
+                raise SpecError(f"settings.{name}.requires: a read-only setting is never set")
+            spec.setting_requires[name] = _requires(f"settings.{name}", item["requires"], set(settings))
     for name, item in _check_keys("jobs", raw.get("jobs") or {}, set(raw.get("jobs") or {})).items():
         spec.jobs[_check_name("jobs", name)] = _job(name, item, spec)
     names = spec.command_names()
@@ -617,7 +642,10 @@ class SimInstrument:
         if not quantity.settable:
             raise Refused(f"{name} is read-only")
         with self.lock:
-            self.values[name] = quantity.coerce(value)
+            coerced = quantity.coerce(value)
+            # A setting's requires guard every way of changing it (set_<name>, a job's axes), like a command's.
+            self._check(f"set_{name}", self.spec.setting_requires.get(name, []), {**self.values, name: coerced})
+            self.values[name] = coerced
 
     def _check(self, name: str, requires, scope) -> None:
         for text, tree in requires:
@@ -703,7 +731,7 @@ class SimInstrument:
                 if eta is None:
                     eta = num(f"peaks[{i}].eta", peak.get("eta", 0.5))
                 signal += num(f"peaks[{i}].height", peak["height"]) * peak_profile(x, num(f"peaks[{i}].position", peak["position"]), fwhm, eta)
-            data = self._noisy(signal, raw.get("noise", "poisson"))
+            data = self._noisy(signal, raw.get("noise", "poisson"), num("noise_sigma", raw["noise_sigma"]) if "noise_sigma" in raw else None)
             attrs.update({"axis_offset": start, "axis_scale": (stop - start) / (points - 1), "axis_label": str(axis.get("label", "x")), "axis_units": str(axis.get("units", ""))})
         elif acquisition.kind == "image":
             rows, cols = raw["shape"]
@@ -715,20 +743,21 @@ class SimInstrument:
                 for _ in range(int(num("spots.count", spots.get("count", 5)))):
                     cy, cx = self.rng.uniform(0, rows), self.rng.uniform(0, cols)
                     image += num("spots.height", spots.get("height", 100)) * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * radius**2))
-            data = self._noisy(image, raw.get("noise", "poisson"))
+            data = self._noisy(image, raw.get("noise", "poisson"), num("noise_sigma", raw["noise_sigma"]) if "noise_sigma" in raw else None)
             attrs["pixel_size_m"] = num("pixel_size_m", raw["pixel_size_m"])
         else:
             values = {key: num(f"values.{key}", value) for key, value in raw["values"].items()}
             return kind_type, detector, None, values
         return kind_type, detector, data, attrs
 
-    def _noisy(self, signal: np.ndarray, noise: str) -> np.ndarray:
-        signal = np.clip(signal, 0, None)
+    def _noisy(self, signal: np.ndarray, noise: str, sigma: float | None = None) -> np.ndarray:
+        """Poisson counts (clipped at 0), or Gaussian noise of ``sigma`` (default sqrt(counts + 1)); otherwise signs are kept."""
         with self.lock:  # numpy Generators are not thread-safe
             if noise == "poisson":
-                return self.rng.poisson(signal).astype(np.float64)
+                return self.rng.poisson(np.clip(signal, 0, None)).astype(np.float64)
             if noise == "gaussian":
-                return signal + self.rng.normal(0, np.sqrt(signal + 1.0))
+                scale = abs(sigma) if sigma is not None else np.sqrt(np.clip(signal, 0, None) + 1.0)
+                return signal + self.rng.normal(0, scale, signal.shape)
         return signal.astype(np.float64)
 
 

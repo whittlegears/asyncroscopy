@@ -89,6 +89,11 @@ def make_team(model_replies, scripts, monkeypatch):
         return [tool(n) for n in TOOL_NAMES]
 
     monkeypatch.setattr(graph.config, "tools", tools)
+
+    async def info():  # never the live endpoint: a test must not pass or fail with whatever stack is running
+        return {"analysis_url": "http://127.0.0.1:8003/mcp"}
+
+    monkeypatch.setattr(graph.config, "info", info)
     built = []
 
     def specialist(role, tools_, task, notes):

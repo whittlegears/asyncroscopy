@@ -66,7 +66,7 @@ DATA_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
 # What kinds of instrument action a goal may take, read from tool names (any instrument, not only a STEM).
-CATEGORIES = ("job", "acquire", "move", "settings", "beam")
+CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
 # A goal file's no_unrequested with neither allow nor categories: running (and stopping) the job it asks for.
 DEFAULT_CATEGORIES = ["job"]
 ENVELOPE = ("job_status", "reserve", "start", "results", "abort", "release")  # longest-first matters for job_status
@@ -87,7 +87,8 @@ SPECTRUM = re.compile(
     re.I,
 )
 IMAGE = re.compile(
-    r"\b(?:take|taking|acquire|acquiring|capture|capturing|record|recording|get)\b[^.?!]{0,40}\b(?:image|images|picture|pictures|micrograph)s?\b"
+    r"\bimage\s+(?:a|an)\s+(?:[\w.-]+\s+){0,3}?(?:square|area|region|field|patch)\b"
+    r"|\b(?:take|taking|acquire|acquiring|capture|capturing|record|recording|get)\b[^.?!]{0,40}\b(?:image|images|picture|pictures|micrograph)s?\b"
     r"|\bimage\s+(?:it|them|that|this|there|each|the\s+region)\b|\bimaging\b|\bhigh(?:er)?[- ]magnification\b",
     re.I,
 )
@@ -117,6 +118,8 @@ def action_category(tool_name: str) -> str:
         return "acquire"
     if command.startswith(("move", "goto", "go_to", "drive", "jog")) or (command.startswith("set") and "stage" in command):
         return "move"
+    if re.search(r"(?:^|_)(?:approach|engage|disengage|land|retract|withdraw|lift)(?:_|$)", command):
+        return "probe"  # a scanning probe (AFM, STM) going onto or off the surface
     if re.search(r"(?:^|_)(?:un)?blank|beam|laser|xray|x_ray|lamp|shutter|emission|source|(?:^|_)hv(?:_|$)|_on$|_off$|^on$|^off$", command):
         return "beam"
     if command.startswith(("set", "adjust", "tune", "focus", "autofocus", "defocus", "change", "configure", "select")):
@@ -170,14 +173,18 @@ class Goal:
                 if not new_map:
                     criteria.append({"kind": "data", "data_kind": "image", "count": 1})
                 categories |= {"acquire", "settings", "beam"}
-            if ACQUIRE_ANY.search(statement) and "acquire" not in categories and not new_map:
-                # Some other acquisition (a diffractogram, a Raman spectrum by another name): data of any kind.
-                criteria.append({"kind": "data", "count": 1})
+            acquire_any = ACQUIRE_ANY.search(statement)
+            if acquire_any and "acquire" not in categories and not new_map:
+                # Some other acquisition (a diffractogram, a force curve): data of any kind, as many as a number says.
+                number = re.search(r"\b(\d+)\b", acquire_any.group(0))
+                criteria.append({"kind": "data", "count": int(number.group(1)) if number else 1})
                 categories |= {"acquire", "settings", "beam"}
             if MOVE.search(statement):
                 categories |= {"move", "acquire", "settings", "beam"} if re.search(r"\bfind\b", statement, re.I) else {"move"}
             if re.search(r"\b(?:set|change|adjust)\b[^.?!]{0,30}\b(?:defocus|focus|field of view|fov|magnification|exposure|power)\b", statement, re.I):
                 categories |= {"settings"}
+            if re.search(r"\b(?:approach|engage|land|retract|withdraw|lift)\w*\b[^.?!]{0,20}\b(?:tip|probe|cantilever|needle)\b|\b(?:tip|probe)\s+(?:up|down)\b", statement, re.I):
+                categories |= {"probe"}
             if re.search(r"\b(?:un)?blank\b|\blaser\s+(?:on|off)\b|\bswitch\s+(?:the\s+)?\w+\s+(?:on|off)\b|\bturn\s+(?:the\s+)?\w+\s+(?:on|off)\b", statement, re.I):
                 categories |= {"beam"}
         criteria += [{"kind": "no_unrequested", "categories": sorted(categories)}, {"kind": "grounded_answer"}]
@@ -509,6 +516,12 @@ class GoalChecker:
         return False, f"no {device} job this run started reached state done ({', '.join(seen) or 'none started'})"
 
     async def _check_map(self, c: dict, facts: Facts, answer: str):
+        if self.analysis is None and not c.get("min_pois"):
+            # No analysis server (a Raman, an AFM): nothing stitches, so the map is the job's own result.
+            done = [j for j, v in facts.jobs.items() if v["device"] not in ("analysis", "unknown") and v["state"] == "done"]
+            if done:
+                return True, f"job {done[-1]} finished (this instrument has no analysis server, so its map is the job's result)"
+            return False, "no job this run started reached state done (this instrument has no analysis server to stitch a map)"
         if not facts.map_keys:
             return False, "this run made no stitched map (the map job, or assemble_map on its run, gives one)"
         for key in sorted(facts.map_keys):
