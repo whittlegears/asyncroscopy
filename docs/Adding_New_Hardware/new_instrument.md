@@ -143,7 +143,22 @@ Inside `run_step`, reach other devices with `self.proxy(address)`, not `tango.De
 - `release`.
 - A state file per job, so a job interrupted by a restart can be started again and skips the steps already done.
 - One Instrument Trace line per step.
-- A dry run: `"dry_run": true` in any plan rehearses the job without moving anything. Inside your `run_step`, `self.proxy()` then passes reads through, runs `blank_beam`, and records every other command and attribute write in the trace without sending it. Your step code must not treat what a recorded command returns (`DRY_RUN_PLACEHOLDER`) as data: check `job.get("dry_run")` and skip reading results. Override `check_dry_call(job, device, name, arguments)` to check recorded calls against the plan (the Mapper checks each `move_stage` against its box). See [dry_run.md](../Operation/dry_run.md).
+- A dry run, once you opt in: `"dry_run": true` in a plan rehearses the job without moving anything. `SUPPORTS_DRY_RUN` is False by default, and `reserve` then refuses a dry-run plan with code `dry_run_unsupported`. Set it True only when every step copes with one. In a dry run `self.proxy()` passes reads through, runs `blank_beam`, and records every other command and attribute write in the trace without sending it, returning a placeholder (`DRY_RUN_PLACEHOLDER`), so a step must not parse what a command returns. `IndentGrid` is the pattern to copy:
+
+  ```python
+  SUPPORTS_DRY_RUN = True  # run_step below copes with a dry run
+
+  def run_step(self, job, index):
+      step = job["steps"][index]
+      indenter = self._indenter()
+      indenter.move_xy([step["x"], step["y"]])
+      reply = indenter.indent(job["resolved_plan"]["load_n"])
+      if job.get("dry_run"):  # recorded, not made: nothing to parse
+          return {"index": index, "x_m": step["x"], "y_m": step["y"], "indent": "skipped (dry run)"}
+      return {"index": index, "x_m": step["x"], "y_m": step["y"], **json.loads(reply)}
+  ```
+
+  Override `check_dry_call(job, device, name, arguments)` to check recorded calls against the plan (the Mapper checks each `move_stage` against its box). YAML job devices and the Tuner refuse dry runs. See [dry_run.md](../Operation/dry_run.md) for the whole pattern.
 
 For drift or other time-dependent fits, time steps with the instrument's `clock_s` attribute (every `Instrument` has one: Unix time by default; a simulator overrides `instrument_clock_s()` to report its simulated time), not `time.time()`.
 
