@@ -33,14 +33,22 @@ NOT_FOR_MODELS = ("list_skills", "endpoint_info")
 
 
 def is_stem_endpoint(names: Iterable[str]) -> bool:
-    """A STEM: one device both scans images and blanks a beam (an AFM scans too), or a Mapper.
+    """A STEM: one device both scans images and blanks a beam (an AFM scans too), the same test as
+    ``asyncroscopy.safety.policy.is_stem_device``.
 
-    move_stage, set_fov and the like are common to many instruments.
+    A Mapper alone does not make one: it maps any instrument (an AFM, or a YAML twin through the
+    ``yaml`` profile), and the curated STEM set would hide that instrument's own tools (an AFM's
+    retract_tip). move_stage, set_fov and the like are common to many instruments.
     """
     names = set(names)
-    return any(fnmatch.fnmatch(n, "Mapper*_reserve") for n in names) or any(
+    return any(
         n.endswith("_acquire_scanned_image") and f"{n[: -len('_acquire_scanned_image')]}_blank_beam" in names for n in names
     )
+
+
+def has_mapper(names: Iterable[str]) -> bool:
+    """The endpoint offers a Mapper (whose maps the analysis server stitches and scores)."""
+    return any(fnmatch.fnmatch(n, "Mapper*_reserve") for n in names)
 
 
 def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: list[str] | None = None) -> list[str]:
@@ -49,16 +57,20 @@ def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: li
     ``names``: the instrument endpoint's own tools (not the analysis server's). ``chosen``: globs a
     caller picked (ASYNCROSCOPY_AGENT_TOOLS); otherwise the curated STEM set on a STEM (with the
     analysis server's waits when the endpoint has no analysis server to wait through), else every
-    tool of the endpoint but its State/Status attributes (the analysis tools stitch and score STEM
-    maps). load_skill is always included, NOT_FOR_MODELS never.
+    tool of the endpoint but its State/Status attributes, plus the generic job and map tools when it
+    has a Mapper (the analysis tools stitch and score its maps). load_skill is always included,
+    NOT_FOR_MODELS never.
     """
     names = set(names)
+    waits = [] if has_analysis_url else ANALYSIS_WAITS
     if chosen:
         patterns = list(chosen)
     elif is_stem_endpoint(names):
-        patterns = DEFAULT_TOOLS + ([] if has_analysis_url else ANALYSIS_WAITS)
+        patterns = DEFAULT_TOOLS + waits
     else:
         patterns = sorted(n for n in names if not n.endswith(("_State", "_Status")))
+        if has_mapper(names):
+            patterns += [p for p in GENERIC_TOOLS + waits if p not in patterns]
     patterns = [p for p in patterns if p not in NOT_FOR_MODELS]
     return patterns if "load_skill" in patterns else patterns + ["load_skill"]
 
