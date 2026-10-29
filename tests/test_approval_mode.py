@@ -812,6 +812,8 @@ class TestRunJobResume:
     def test_an_abort_reply_says_how_to_resume(self):
         reply = json.loads(MCPServer._resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
         assert reply["to_resume"].startswith('run_job with {"device": "Mapper", "resume": "r1"}')
+        aborting = json.loads(MCPServer._resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborting"})))
+        assert aborting["to_resume"].startswith("once wait_for_job says aborted")
         done = json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "done"})
         assert MCPServer._resume_note("Mapper", done) == done
 

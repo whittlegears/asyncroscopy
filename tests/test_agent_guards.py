@@ -155,8 +155,10 @@ def test_run_job_with_wait_false_returns_while_the_job_runs():
         return ToolMessage(json.dumps({"job_id": "j1", "state": "running"}), tool_call_id="call-1", name="run_job")
 
     middleware = JobWaitMiddleware([SimpleNamespace(name="wait_for_job")], on_progress=None)
-    final = asyncio.run(middleware.awrap_tool_call(FakeToolRequest("run_job", {"device": "Mapper", "plan": {}, "wait": False}), handler))
-    assert json.loads(final.content)["state"] == "running" and seen == ["run_job"]
+    for wait in (False, "false", "False", 0):
+        seen.clear()
+        final = asyncio.run(middleware.awrap_tool_call(FakeToolRequest("run_job", {"device": "Mapper", "plan": {}, "wait": wait}), handler))
+        assert json.loads(final.content)["state"] == "running" and seen == ["run_job"]
 
 
 def test_waiting_stops_at_its_cap_and_says_the_job_goes_on(monkeypatch):

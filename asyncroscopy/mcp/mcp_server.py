@@ -379,7 +379,8 @@ class MCPServer:
             return reply
         if not isinstance(status, dict) or status.get("state") not in ("aborting", "aborted") or not status.get("reservation_id"):
             return reply
-        status["to_resume"] = f'run_job with {{"device": "{device}", "resume": "{status["reservation_id"]}"}} and no plan: it goes on from the next step'
+        resume = f'run_job with {{"device": "{device}", "resume": "{status["reservation_id"]}"}} and no plan: it goes on from the next step'
+        status["to_resume"] = resume if status["state"] == "aborted" else f"once wait_for_job says aborted, {resume}"
         return json.dumps(status)
 
     def _augment_with_preview(self, command_name: str, result: Any) -> Any:
@@ -938,8 +939,8 @@ class MCPServer:
             proxy = self._job_device(device)
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
-            if not wait and reply.get("state") in WAIT_NOTES:
-                reply["note"] = "The job runs in the background: give the user its job_id. Mapper_abort stops it; wait_for_job waits for it."
+            if not wait and reply.get("state") in ("queued", "running"):
+                reply["note"] = f"The job runs in the background: give the user its job_id. {device}_abort stops it; wait_for_job waits for it."
         return reply
 
     def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, key: tuple, resume: str | None = None) -> tuple[dict, dict]:
