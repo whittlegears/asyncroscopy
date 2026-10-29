@@ -95,6 +95,7 @@ STITCH_DEADLINE_S = (600.0, 0.05)  # base, plus per tile: the longest a stitch m
 SCORE_DEADLINE_S = 900.0
 TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
 REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
+REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
 
 
 def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -129,12 +130,21 @@ FIELD_SYNONYMS = {
 }
 
 
+REVISIT_ONLY_KEYS = ("map", "top_k", "points")  # fields of a revisit plan ({"revisit": {...}}) that do not exist at the top level
+
+
 def check_plan_fields(plan: dict) -> None:
     """Refuse unknown plan fields by name, with the closest allowed field and the full list, before anything else."""
     allowed = sorted(load("map_plan")["properties"])
     unknown = [k for k in plan if k not in allowed]
     if not unknown:
         return
+    revisit_keys = [k for k in unknown if k in REVISIT_ONLY_KEYS]
+    if revisit_keys:
+        # Fields of a revisit plan given at the top level: show the plan they belong in, with the caller's own values.
+        nested = {**(plan.get("revisit") if isinstance(plan.get("revisit"), dict) else {}), **{k: plan[k] for k in revisit_keys}}
+        nested.setdefault("fov_m", plan.get("fov_m", "<a few times smaller than the map's tiles>"))
+        raise ValueError(f"{', '.join(map(repr, revisit_keys))} belong inside revisit. Nothing was run; send the plan as {json.dumps({'revisit': nested}, default=str)}")
     hints = []
     for key in unknown:
         guess = FIELD_SYNONYMS.get(key) or next(iter(difflib.get_close_matches(key, allowed, n=1, cutoff=0.6)), None)
@@ -922,10 +932,15 @@ class Mapper(JobDevice):
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
-            if not (x_min + half <= x <= x_max - half and y_min + half <= y <= y_max - half):
+            # The image must stay inside the approved box. A region near its edge is still imaged, off centre,
+            # with the image moved inward, as long as the region keeps a margin inside that image.
+            cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov else None
+            cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov else None
+            if cx is None or cy is None or abs(cx - x) > REVISIT_EDGE_SHIFT * half or abs(cy - y) > REVISIT_EDGE_SHIFT * half:
                 note = f"region {region['id']} at ({x:.3e}, {y:.3e}) m (drift-corrected) is too close to the edge of the plan box for a {fov:.2e} m image; not visited"
                 visits.append({"region": region["id"], "skipped": note})
                 return {"phase": "revisit", "skipped": note}
+            x, y = cx, cy
             microscope = self.proxy(self.microscope_device_address)
             pose = job["pose"]
             microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])

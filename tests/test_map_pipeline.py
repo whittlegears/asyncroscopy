@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.instruments.electron_microscope.mapper import Mapper, REVISIT_EDGE_SHIFT
 
 pytestmark = [
     pytest.mark.slow,
@@ -125,11 +125,16 @@ def test_a_map_job_stitches_scores_and_revisits_with_every_spectrum_on_the_map(m
     for visit in visited:
         high_mag = [p for p in store.list_pois(map_key, kind="high_mag") if visit["image"] in p["links"]]
         assert len(high_mag) == 1 and f"poi:{visit['region']}" in high_mag[0]["links"]
-    box = PLAN["box_m"]
+    box, half = PLAN["box_m"], 1.5e-8
+    margin = half * (1 - REVISIT_EDGE_SHIFT)  # a region this close to the edge is imaged off centre, the image kept in the box
     for visit in summary["revisits"]["first"]:
         region = next(r for r in summary["regions"]["first"] if r["id"] == visit["region"])
-        inside = box[0] + 1.5e-8 <= region["x_m"] <= box[1] - 1.5e-8 and box[2] + 1.5e-8 <= region["y_m"] <= box[3] - 1.5e-8
-        assert ("image" in visit) == inside  # only regions a 30 nm image fits around, inside the box, are visited
+        inside = box[0] + margin <= region["x_m"] <= box[1] - margin and box[2] + margin <= region["y_m"] <= box[3] - margin
+        assert ("image" in visit) == inside
+        if "image" in visit:
+            x, y = visit["stage_xy_m"]
+            assert box[0] + half - 1e-12 <= x <= box[1] - half + 1e-12 and box[2] + half - 1e-12 <= y <= box[3] - half + 1e-12
+            assert abs(x - region["x_m"]) <= REVISIT_EDGE_SHIFT * half + 1e-12 and abs(y - region["y_m"]) <= REVISIT_EDGE_SHIFT * half + 1e-12
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
 
 

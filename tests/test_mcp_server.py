@@ -688,7 +688,8 @@ class TestMCPSpectrumPreview:
         monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: {"xrd_scan.h5": FakeArray()}[key])
         result = server._augment_with_preview("acquire_diffractogram", "xrd_scan.h5")
         assert isinstance(result, ToolResult)
-        assert [getattr(b, "type", "") for b in result.content] == ["text", "image"]
+        assert [getattr(b, "type", "") for b in result.content] == ["text", "text", "image"]
+        assert result.content[0].text == "xrd_scan.h5" and "peak" in result.content[1].text.lower()  # the summary a text-only model reads
 
         def missing(key, hints=True):
             raise mcp_server.tiled_client.DataKeyNotFound("no such key")

@@ -119,3 +119,10 @@ def test_the_done_reply_stays_short_however_many_tiles(mapper_proxy, analysis):
     big = bigger["summary"]
     assert big["grid"]["rows"] * big["grid"]["cols"] > tiles
     assert len(json.dumps(big)) < 4000 and len(json.dumps(big)) - len(json.dumps(summary)) < 200
+
+
+def test_revisit_fields_at_the_top_level_are_refused_with_the_plan_they_belong_in():
+    from asyncroscopy.instruments.electron_microscope.mapper import check_plan_fields
+    with pytest.raises(ValueError, match="belong inside revisit") as refused:
+        check_plan_fields({"map": "map_r1_map", "top_k": 3, "fov_m": 6e-8})
+    assert '{"revisit": {"map": "map_r1_map", "top_k": 3, "fov_m": 6e-08}}' in str(refused.value)

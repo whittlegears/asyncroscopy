@@ -59,6 +59,7 @@ def _without_param_name(desc: str) -> str:
 # show the capture without another call. A preview never fails the acquisition: for
 # PREVIEW_COMMANDS the result says why there is none; other commands just return.
 PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}
+PREVIEW_TEXT_CHARS = 1500  # the summary sent with an acquisition's preview (a spectrum's peak table fits)
 DATA_KEY = re.compile(r"^[\w.\-/]+(" + "|".join(re.escape(s) for s in REGISTRABLE_SUFFIXES) + r")$", re.IGNORECASE)
 # Data tools answer within this, so a slow or stuck Tiled cannot hang the agent.
 DATA_TOOL_DEADLINE_S = 20.0
@@ -405,7 +406,7 @@ class MCPServer:
             return result
 
         try:
-            _summary, png = self._with_deadline(
+            summary, png = self._with_deadline(
                 lambda: views.view(self._tiled_node(result, hints=False), result, "png"), lane="preview", deadline_s=PREVIEW_DEADLINE_S
             )
         except Exception as exc:  # the hardware already acquired: report, never raise
@@ -415,7 +416,11 @@ class MCPServer:
                 return result
             note = f"image preview unavailable ({exc}). The data were saved; look at them later with view_data(key={result!r}) instead of acquiring again."
             return ToolResult(content=[TextContent(type="text", text=result), TextContent(type="text", text=note)], structured_content={"result": result})
-        return ToolResult(content=[result, MCPImage(data=png, format="png")], structured_content={"result": result})
+        # The text summary (statistics; for a spectrum its peaks and candidate elements) goes with the picture,
+        # so a model that cannot see images still learns what it acquired without another call.
+        described = str(summary.get("text") or "")[:PREVIEW_TEXT_CHARS]
+        content = [TextContent(type="text", text=result)] + ([TextContent(type="text", text=described)] if described else []) + [MCPImage(data=png, format="png")]
+        return ToolResult(content=content, structured_content={"result": result})
 
     @staticmethod
     def _tango_type_to_python(cmd_type: CmdArgType) -> Any:
