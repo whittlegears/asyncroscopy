@@ -138,7 +138,7 @@ class Approvals(Device):
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode, "persisted": persisted}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous, "persisted": persisted})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "reason": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "reason": "..."}.')
     def request(self, request: str) -> str:
         """File a request for a held call; the same pending call returns the same request id."""
         body = self._load(request)
@@ -157,6 +157,7 @@ class Approvals(Device):
                 "action": action,
                 "arguments": body.get("arguments"),
                 "caller": body.get("caller"),
+                "run": body.get("run") or None,  # the agent run that made the call, so an operator can approve the rest of that run
                 "reason": body.get("reason"),
                 "fingerprint": key,
                 "state": "pending",

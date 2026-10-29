@@ -742,7 +742,7 @@ class MCPServer:
                     reason = describe()[:2000]
                 except Exception as exc:
                     reason = f"(could not read what this call will do: {describe_error(exc)})"
-            filed = json.loads(approvals.request(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller, "reason": reason})))
+            filed = json.loads(approvals.request(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller, "run": self._run_id() or None, "reason": reason})))
         except tango.DevFailed as exc:
             # Fail closed: without the Approvals device we cannot tell whether a person must approve.
             raise ToolError(f"{tool_name} is high risk and the approval service is unreachable ({describe_error(exc)}); not run.") from exc
