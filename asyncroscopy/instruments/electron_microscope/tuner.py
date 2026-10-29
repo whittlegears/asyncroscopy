@@ -160,8 +160,12 @@ def register_strategy(cls: type[Strategy]) -> type[Strategy]:
 
 
 def strategies() -> dict[str, type[Strategy]]:
-    """Registered strategies, including those installed with the ``asyncroscopy.focus_strategies`` entry point."""
+    """Registered strategies, including those named in ``ASYNCROSCOPY_PLUGINS`` (asyncroscopy/plugins.py)
+    and those installed with the ``asyncroscopy.focus_strategies`` entry point."""
     global _entry_points_loaded
+    from asyncroscopy.plugins import load_plugins
+
+    load_plugins()
     if not _entry_points_loaded:
         _entry_points_loaded = True
         from importlib.metadata import entry_points
