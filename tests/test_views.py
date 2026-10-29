@@ -114,7 +114,7 @@ def test_spectrum_text_lists_peaks_with_energies_and_xray_candidates():
     text = summary["text"]
 
     assert png is None
-    peaks = text.split("peaks (most significant first")[1].split("data (")[0].strip().splitlines()[2:]
+    peaks = text.split("peaks (strongest first")[1].split("data (")[0].strip().splitlines()[2:]
     energies = sorted(float(row.split(",")[0]) for row in peaks)
     assert len(energies) == 2
     assert abs(energies[0] - 1486.0) <= 10.0 and abs(energies[1] - 8040.0) <= 10.0
@@ -270,7 +270,7 @@ def test_escape_and_sum_peaks_are_flagged_not_named_as_elements():
 def test_png_mode_text_carries_the_summary():
     node = Recorded((2048,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}, values=gaussian_spectrum([1486.0, 8040.0]))
     summary, png = views.view(node, "eds.h5", "png")
-    assert png[:8] == PNG_MAGIC and "peaks (most significant first" in summary["text"] and "Al" in summary["text"]
+    assert png[:8] == PNG_MAGIC and "peaks (strongest first" in summary["text"] and "Al" in summary["text"]
     image = views.view(Recorded((64, 64), {"pixel_size_m": 1e-9}), "img.h5", "png")[0]["text"]
     assert "statistics of the pixels read" in image and "histogram" in image
 

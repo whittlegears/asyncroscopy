@@ -36,9 +36,10 @@ from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
+from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.agents.graphs.general import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
-from asyncroscopy.agents.skill_middleware import SkillMiddleware
+from asyncroscopy.agents.skill_middleware import SkillMiddleware, recursion_limit
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
@@ -63,7 +64,8 @@ HIDDEN = [
     "Approvals_*", "*_State", "*_Status", "*_Init",
 ]
 MAX_STEPS = 6
-STEP_RECURSION = 40
+STEP_TOOL_ROUNDS = 25  # tool calls one step may make (a long map is many wait_for_job calls)
+STEP_RECURSION = recursion_limit(STEP_TOOL_ROUNDS)
 ROLE_PROMPTS = {
     "operator": """You run the instrument for one step of a larger task. Tools act on the instrument or its digital twin.
 - Lengths are metres. A map is one Mapper job: run_job, then wait_for_job until done (its reply has the keys). Never a loop of moves.
@@ -109,12 +111,16 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def role_of(name: str, stem: bool = True) -> str | None:
+def role_of(name: str, stem: bool = True, analysis_waits: bool = True) -> str | None:
     """Which specialist a tool belongs to: a role, "shared" (both), or None (nobody).
 
     On a STEM endpoint the operator gets a curated set (a small model loses track with ~80
     microscope tools); on any other instrument it gets every device command, as ``general`` does.
+    ``analysis_waits``: wait_for_job also waits on analysis jobs (the endpoint has mcp.analysis_url);
+    when it does not, the analyst gets analysis_job_status and analysis_job_results instead.
     """
+    if not analysis_waits and name in ("analysis_job_status", "analysis_job_results"):
+        return "analyst"
     if any(fnmatch.fnmatchcase(name, p) for p in HIDDEN):
         return None
     if any(fnmatch.fnmatchcase(name, p) for p in SHARED):
@@ -154,8 +160,9 @@ class TeamGraph:
             self._all_names = {t.name for t in tools}
             self.memory.seed_instrument(self._all_names)
             stem = is_stem_endpoint(self._all_names)
-            self._tools = {role: [t for t in tools if role_of(t.name, stem) in (role, "shared")] for role in ROLES}
-            self._tools = {role: ts for role, ts in self._tools.items() if any(role_of(t.name, stem) == role for t in ts)}
+            waits = bool((await self.config.info()).get("analysis_url"))  # else the analyst needs analysis_job_*
+            self._tools = {role: [t for t in tools if role_of(t.name, stem, waits) in (role, "shared")] for role in ROLES}
+            self._tools = {role: ts for role, ts in self._tools.items() if any(role_of(t.name, stem, waits) == role for t in ts)}
         return self._tools
 
     def specialist(self, role: str, tools: list, task: str, notes: list[str]):
@@ -185,28 +192,32 @@ class TeamGraph:
         step = state["plan"][state["step"]]
         tools = (await self.tools_by_role())[step["agent"]]
         notes = list(state.get("notes", []))
-        task = step["task"] + (f"\n\nThe first try at this step failed: {notes[-1]}\nFix that and finish the step." if state.get("retried") else "")
+        task = step["task"]
+        if state.get("retried"):
+            task += f"\n\nThe first try at this step failed: {notes[-1]}\nFix that and finish the step."
+            running = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])]).active_jobs()
+            if running:  # never a second job while the first try's is still on the instrument
+                task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
+                        ". Wait for it with wait_for_job (its reply has the results); do not start another job."
         agent = self.specialist(step["agent"], tools, task, notes)
-        failed, applied = "", []
-        try:
-            result = await agent.ainvoke({"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
-            messages, applied = result["messages"], result.get("skills_applied") or []
-        except Exception as exc:  # the recursion limit, a model crash: the step failed
-            messages, failed = [], f"{type(exc).__name__}: {str(exc)[:300]}"
+        # A recursion limit, a timeout or a model crash keeps the calls made so far: a job started
+        # before the failure is still on the instrument and the retry must know about it.
+        result, failed = await run_keeping_partial(agent, {"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
+        messages, applied = result.get("messages", []), result.get("skills_applied") or []
         calls = trace_from_messages(messages)
         facts = Facts.from_calls(calls)
         said = messages[-1].content if messages and isinstance(messages[-1].content, str) else ""
         if not failed and calls and all(c.error for c in calls):
             failed = f"every call failed; last: {calls[-1].name}: {calls[-1].result[:300]}"
         note = f"[{step['agent']}] {step['task'][:120]} -> " + (f"FAILED: {failed}" if failed else said[:500]) + f" (facts: {facts.summary()})"
-        trace = list(state.get("trace", [])) + [c.__dict__ for c in calls]
+        trace = list(state.get("trace", [])) + [c.to_dict() for c in calls]
         skills = list(state.get("skills_applied", [])) + [{"step": state["step"], "agent": step["agent"], **a} for a in applied]
         if failed and not state.get("retried"):
             return {"notes": notes + [note], "trace": trace, "retried": True, "skills_applied": skills}
         return {"notes": notes + [note], "trace": trace, "retried": False, "step": state["step"] + 1, "skills_applied": skills}
 
     async def report(self, state: TeamState) -> TeamState:
-        facts = Facts.from_calls([Call(**c) for c in state.get("trace", [])])
+        facts = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])])
         notes = "\n".join(state.get("notes", [])) or "(no steps ran)"
         try:
             reply = await self.config.chat_model().ainvoke([
@@ -235,7 +246,7 @@ class TeamGraph:
 async def run_team(request: str, config: AgentConfig | None = None) -> tuple[str, list[Call], list[dict]]:
     """(answer, tool calls with replies, skills applied) for one request."""
     state = await TeamGraph(config).build().ainvoke({"request": request}, {"recursion_limit": 4 * MAX_STEPS + 6})
-    return state["answer"], [Call(**c) for c in state.get("trace", [])], state.get("skills_applied", [])
+    return state["answer"], [Call.from_dict(c) for c in state.get("trace", [])], state.get("skills_applied", [])
 
 
 def make_graph(config: dict | None = None):

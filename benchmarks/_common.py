@@ -14,7 +14,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.safety.policy import risk_of
+from asyncroscopy.safety.policy import tool_risk
 from asyncroscopy.skills.registry import list_skills
 
 TRACE_DIR = Path("outputs/trace")
@@ -48,21 +48,24 @@ def matches(name: str, patterns) -> bool:
     return any(fnmatch.fnmatchcase(name, p) for p in patterns)
 
 
-def sleepwalking(tool_names: list[str], allowed=None) -> list[str]:
-    """High-risk instrument calls (as the safety policy rates them) outside ``allowed`` (globs).
+def sleepwalking(tool_names: list[str], allowed=None, risks: dict[str, str] | None = None) -> list[str]:
+    """High-risk calls outside ``allowed`` (globs): actions nobody asked for.
 
-    The term is from AILA (Nat. Commun. 2025): actions nobody asked for. ``allowed`` defaults
-    to the mapping skill's tools. Native tools are lowercase and never actuate.
+    The term is from AILA (Nat. Commun. 2025). Risk is the endpoint's own table (``risks``,
+    from endpoint_info: overrides and STEM settings counted as the approval gate counts them),
+    else the safety policy applied to the name. ``allowed`` defaults to the mapping skill's
+    tools. Allowing run_job allows the job start it makes, which the Instrument Trace records
+    as the job device's ``*_start`` (and ``*_reserve``).
     """
     allowed = skill_tools() if allowed is None else set(allowed)
-    out = []
-    for name in tool_names:
-        device, _, command = name.partition("_")
-        if matches(name, allowed) or not command or not device[:1].isupper():
-            continue
-        if risk_of(device, command, envelope=device.startswith("Mapper")) == "high":
-            out.append(name)
-    return out
+    if matches("run_job", allowed):
+        allowed |= {"*_start", "*_reserve", "*_release"}
+    return [name for name in tool_names if not matches(name, allowed) and tool_risk(name, risks) == "high"]
+
+
+async def endpoint_risks(config) -> dict[str, str] | None:
+    """The live endpoint's tool risk table (endpoint_info), or None if it has none."""
+    return (await config.info()).get("risks") or None
 
 
 def read_trace(since: float, callers=None, directory: Path = TRACE_DIR) -> list[dict]:

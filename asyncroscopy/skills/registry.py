@@ -2,7 +2,10 @@
 
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
 description, version, min_asyncroscopy, envelope_schema, tools, requires,
-keywords) followed by instructions in Markdown.
+keywords, acts) followed by instructions in Markdown. ``acts`` says whether
+following the skill moves or exposes the instrument; when it is left out it
+is true if any of its ``tools`` is high risk by the safety policy. A request
+that only asks about data (``read_only_request``) never gets a skill that acts.
 
 Agents do not have to look skills up: ``select_skills`` matches a request's
 words against each skill's keywords, name and description (no model call,
@@ -37,6 +40,7 @@ from pathlib import Path
 import yaml
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
+from asyncroscopy.safety.policy import tool_risk
 
 HERE = Path(__file__).resolve().parent
 
@@ -54,6 +58,8 @@ class Skill:
     envelope_schema: str | None = None
     problem: str | None = None  # why it cannot be used here, if it cannot
     learned: bool = False  # drafted by an agent from a past run (promoted by an operator)
+    status: str | None = None  # a learned skill's review state: draft or promoted
+    acts: bool = False  # following it moves or exposes the instrument
 
     @property
     def available(self) -> bool:
@@ -79,12 +85,20 @@ def _installed_version() -> str | None:
         return None
 
 
-def _parse(path: Path) -> Skill:
+def read_front_matter(path: Path) -> tuple[dict, str]:
+    """(front matter, Markdown body) of a SKILL.md; ValueError if it has no front matter."""
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         raise ValueError(f"{path} has no front matter")
-    _, front, _body = text.split("---", 2)
+    _, front, body = text.split("---", 2)
     meta = yaml.safe_load(front) or {}
+    if not isinstance(meta, dict):
+        raise ValueError(f"{path} front matter is not a mapping")
+    return meta, re.sub(r"<!--.*?-->", "", body, flags=re.S).strip()  # notes to the skill's author never reach a prompt
+
+
+def _parse(path: Path) -> Skill:
+    meta, _body = read_front_matter(path)
     for key in ("name", "description"):
         if not meta.get(key):
             raise ValueError(f"{path} front matter is missing '{key}'")
@@ -98,7 +112,10 @@ def _parse(path: Path) -> Skill:
         keywords=[str(k) for k in meta.get("keywords") or []],
         min_asyncroscopy=meta.get("min_asyncroscopy"),
         envelope_schema=meta.get("envelope_schema"),
+        status=meta.get("status"),
     )
+    tools = skill.tools
+    skill.acts = bool(meta["acts"]) if "acts" in meta else any(tool_risk(str(t)) == "high" for t in tools)
     installed = _installed_version()
     if skill.min_asyncroscopy and installed and _version_tuple(installed) < _version_tuple(str(skill.min_asyncroscopy)):
         skill.problem = f"needs asyncroscopy >= {skill.min_asyncroscopy}, installed {installed}"
@@ -134,10 +151,9 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
         for path in sorted(learned.glob("*/SKILL.md")):
             try:
                 skill = _parse(path)
-                status = (yaml.safe_load(path.read_text(encoding="utf-8").split("---", 2)[1]) or {}).get("status")
             except (ValueError, yaml.YAMLError):
                 continue
-            if status == "promoted" and skill.name not in skills:  # drafts are never offered; shipped skills win
+            if skill.status == "promoted" and skill.name not in skills:  # drafts are never offered; shipped skills win
                 skill.learned = True
                 skills[skill.name] = skill
     if tool_names is not None:
@@ -154,7 +170,7 @@ def load_skill(name: str, tool_names: set[str] | None = None) -> str:
         if skill.name == name:
             if not skill.available:
                 raise RuntimeError(f"skill {name!r} cannot be used: {skill.problem}")
-            return skill.path.read_text(encoding="utf-8").split("---", 2)[2].strip()
+            return read_front_matter(skill.path)[1]
     raise KeyError(f"no skill named {name!r}; available: {[s.name for s in list_skills()]}")
 
 
@@ -204,14 +220,37 @@ def usable_by(skill: Skill, agent_tools: set[str]) -> bool:
     return not skill.tools or any(fnmatch.fnmatchcase(t, p) for p in skill.tools for t in agent_tools)
 
 
+# A request that only asks about data: a question, or a read verb, with no instruction to act.
+READ_CUE = re.compile(
+    r"\?\s*$|^\s*(?:is|are|was|were|does|do|did|where|when|why|who|show|list|count|read)\b"
+    r"|\b(?:what|which|how many|how much|is there|are there|tell me|show me|describe|list the|list all|look at|summari[sz]e|compare|explain)\b",
+    re.I | re.M,
+)
+ACTING = re.compile(
+    r"\b(?:take|acquire|capture|move|drive|go(?: back)? to|goto|start|resume|revisit|expose|unblank|"
+    r"(?:map|image|photograph|scan|survey|record|run|focus on)\s+(?:a|an|the|this|that|it|them|each|every|around|here|\d)"
+    r"|make\s+(?:a|an)\s+(?:\w+\s+)?map)\b",
+    re.I,
+)
+NEGATED = re.compile(r"\b(?:do not|don't|dont|never|without|no need to|not)\s+(?:\w+\s+){0,2}?(?:\w+)(?:\s+anything)?", re.I)
+
+
+def read_only_request(request: str) -> bool:
+    """True when a request only asks about stored data: a question or read verb, and no instruction
+    to act ("take", "acquire", "move", "map a ...", "image it"); negated actions ("do not acquire") do not count."""
+    text = NEGATED.sub(" ", request)
+    return bool(READ_CUE.search(request)) and not ACTING.search(text)
+
+
 def select_skills(request: str, agent_tools: set[str], endpoint_tools: set[str] | None = None, limit: int = MAX_MATCHED) -> list[Skill]:
     """The skills matching ``request`` for an agent holding ``agent_tools``, best first.
 
     ``requires`` is checked against ``endpoint_tools`` (the endpoint's full tool list; default
     ``agent_tools``), so an agent holding part of an endpoint still gets a skill whose other
-    steps another agent does.
+    steps another agent does. A read-only request never gets a skill that acts.
     """
-    skills = [s for s in list_skills(endpoint_tools or agent_tools) if usable_by(s, agent_tools)]
+    read_only = read_only_request(request)
+    skills = [s for s in list_skills(endpoint_tools or agent_tools) if usable_by(s, agent_tools) and not (read_only and s.acts)]
     ranked = sorted(skills, key=lambda s: match_score(s, request), reverse=True)
     return [s for s in ranked if match_score(s, request) >= MATCH_THRESHOLD][:limit]
 
@@ -228,7 +267,7 @@ def skills_text(names: list[str], endpoint_tools: set[str] | None = None, budget
         skill = known.get(name)
         if skill is None or not skill.available:
             continue
-        body = skill.path.read_text(encoding="utf-8").split("---", 2)[2].strip()
+        body = read_front_matter(skill.path)[1]
         if used + len(body) <= budget:
             parts.append(f"=== skill: {name} ===\n{body}")
             used += len(body)

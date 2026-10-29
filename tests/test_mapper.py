@@ -120,17 +120,19 @@ class TestRun:
         results = call(mapper_proxy, "results", {"job_id": started["job_id"]})
         validate(results, "envelope", "results_response")
         with h5py.File(results["result_keys"]["run_file"], "r") as h5:
-            tiles = h5["tiles"]
-            assert len(tiles) == N_TILES
-            for name in tiles:
-                x, y = tiles[name].attrs["commanded_xy_m"]
+            assert h5.attrs["run_layout"] == 2
+            assert h5["tiles"].shape == (N_TILES, 32, 32) and h5["tiles"].chunks == (1, 32, 32)
+            assert h5["written"][()].all()
+            for x, y in h5["commanded_xy_m"][()]:
                 assert -1.2e-7 + 4e-8 - 1e-15 <= x <= 1.2e-7 - 4e-8 + 1e-15
                 assert -8e-8 + 4e-8 - 1e-15 <= y <= 8e-8 - 4e-8 + 1e-15
-                assert tiles[name].shape == (32, 32)
-            assert len(h5["spectra"]) == N_TILES
-            assert h5["spectra/spectrum_00000"].shape == (2048,)
+            assert np.isfinite(h5["acquired_s"][()]).all() and np.isfinite(h5["stage_reported_m"][()]).all()
+            assert h5["spectra"].shape == (N_TILES, 2048)
+            assert all(k for k in h5["spectrum_keys"][()])
+            # The trace keeps the job's own events; each tile's position and time are in the arrays above.
             trace = [json.loads(line) for line in h5["trace"][()]]
-            assert sum(1 for e in trace if e["action"] == "Mapper.step") == N_TILES
+            assert any(e["action"] == "Mapper.reserve" for e in trace)
+            assert not any(e["action"] == "Mapper.step" for e in trace)
             assert json.loads(h5.attrs["plan"])["fov_m"] == pytest.approx(8e-8)
         assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True  # blanked when the job ends
         release_all(mapper_proxy, reserve["reservation_id"])
@@ -157,7 +159,7 @@ class TestRun:
         finished = Path(call(mapper_proxy, "results", {"job_id": resumed["job_id"]})["result_keys"]["run_file"])
         assert finished.suffix == ".h5" and not working.exists()
         with h5py.File(finished, "r") as h5:
-            assert len(h5["tiles"]) == N_TILES
+            assert h5["written"][()].all() and len(h5["tiles"]) == N_TILES
         release_all(mapper_proxy, reserve["reservation_id"])
 
     def test_abort_cuts_a_long_eds_map_step_short(self, mapper_proxy, mapping_twin_proxy):

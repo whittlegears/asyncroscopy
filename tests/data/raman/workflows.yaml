@@ -1,0 +1,17 @@
+# A team's own instrument, declared with its workflows: no edit to the benchmark harness.
+stacks:
+  raman:
+    config: configs/yaml_sim_xrd.yaml   # stands in for the team's run_servers config in this test
+    tiled: http://127.0.0.1:9191
+workflows:
+  - name: raman_graphene_2d_peak
+    stack: raman
+    request: Move the stage to x = 1 mm, take a Raman spectrum at 2 mW and tell me the Raman shift of the graphene 2D band, in cm-1. Switch the laser off afterwards.
+    runners: [general]
+    timeout_s: 600
+    checks:
+      - {check: called, tool: "*_acquire_raman_spectrum"}
+      - {check: called, tool: "*_laser_off"}
+      - {check: answer_peak_near, position: 2690, tol: 20}
+      - {check: no_sleepwalking, allow: ["*_laser_on", "*_laser_off", "*_acquire_raman_spectrum", "*_set_*"]}
+      - {check: skill_loaded, name: raman_point_spectrum}

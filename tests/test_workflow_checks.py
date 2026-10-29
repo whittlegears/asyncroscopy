@@ -236,6 +236,7 @@ def test_run_once_wires_setup_approval_trace_and_checks_together(monkeypatch):
     class FakeLive:
         def __init__(self):
             self.config = AgentConfig(model="fake")
+            self.risks = None
             self.modes, self.tidied, self.readings = [], [], iter([{"stage": [0, 0, 0, 0, 0]}, {"stage": [2e-7, 1e-7, 0, 0, 0]}])
 
         async def setup(self, name):
@@ -265,7 +266,7 @@ def test_run_once_wires_setup_approval_trace_and_checks_together(monkeypatch):
         seen["request"] = wf["request"].format(**facts)
         seen["caller"] = caller
         messages = [AIMessage("", tool_calls=[{"name": "view_data", "args": {"key": "map_r1.h5_map"}, "id": "1"}]), ToolMessage("ok", tool_call_id="1"), AIMessage("Done, imaged at 200 nm.")]
-        return messages, "Done, imaged at 200 nm."
+        return messages, "Done, imaged at 200 nm.", ["mapping"]
 
     def fake_trace(since, callers=None):
         events = [mcp("DigitalTwin_move_stage", ts=since + 1, caller=seen["caller"]), job("Mapper.step", ts=since + 2, caller=seen["caller"])]
@@ -287,6 +288,7 @@ def test_run_once_wires_setup_approval_trace_and_checks_together(monkeypatch):
     assert live.modes == ["approve", "auto"] and seen["operator"][1] == "approve"
     assert live.tidied and live.tidied[0][0]["run_id"] == "r1"
     assert row["tool_names"] == ["view_data"] and row["sleepwalking"] == []
+    assert row["skills"] == ["mapping"]
 
 
 def step(index, xy, key=None, spectrum=None, run_id="r1", ts=1.0):
@@ -377,3 +379,58 @@ def test_stitch_truth_measures_placement_against_where_the_twin_really_imaged():
 def test_run_keys_come_from_finished_jobs():
     events = [job("Mapper.done", result={"run": "map_r1.h5", "run_file": "x"}), job("Mapper.done", result=json.dumps({"run": "map_r2.h5"})), job("Mapper.aborted", result={"run": "map_r3.h5"})]
     assert run_workflows.run_keys(events) == ["map_r1.h5", "map_r2.h5"]
+
+
+RAMAN = Path(__file__).parent / "data" / "raman" / "workflows.yaml"
+
+
+def test_a_team_declares_its_own_stack_with_its_workflows():
+    stacks = run_workflows.load_stacks([RAMAN])
+    assert {"twin", "large", "xrd", "raman"} <= set(stacks)
+    assert stacks["raman"]["tiled"] == "http://127.0.0.1:9191" and stacks["raman"]["operator"] == "http://127.0.0.1:8001/mcp"
+    [wf] = run_workflows.load_workflows([RAMAN])
+    assert wf["stack"] == "raman"
+
+
+def test_a_check_with_a_wrong_parameter_fails_when_the_file_is_loaded(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("workflows:\n  - name: x\n    request: hi\n    checks:\n      - {check: answer_number_near, fact: tiles, tolerance: 1}\n", encoding="utf-8")
+    with pytest.raises(run_workflows.WorkflowError, match=r"answer_number_near.*its parameters: \['fact', 'tol'\]"):
+        run_workflows.load_workflows([bad])
+    unknown_stack = tmp_path / "stack.yaml"
+    unknown_stack.write_text("workflows:\n  - name: y\n    stack: afm\n    request: hi\n    checks:\n      - {check: answer_matches, pattern: ok}\n", encoding="utf-8")
+    with pytest.raises(run_workflows.WorkflowError, match="stack 'afm' is not declared"):
+        run_workflows.load_workflows([unknown_stack])
+
+
+def test_answer_peak_near_needs_the_peak_in_the_data_and_in_the_answer():
+    truth = {"spectra": {"raman_1.h5": {"peaks": [2688.5, 1582.0, 520.0], "units": "cm-1"}}}
+    run = Run(facts={"truth": truth}, final="The 2D band is at 2689 cm-1.")
+    assert CHECKS["answer_peak_near"](run, position=2690, tol=20)[0]
+    assert not CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="It is at 1582 cm-1."), position=2690, tol=20)[0]
+    assert not CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="3000"), position=3000, tol=20)[0]  # not in the data
+
+
+def test_skill_loaded_counts_skills_given_automatically():
+    assert CHECKS["skill_loaded"](Run(skills=["raman_point_spectrum"]), name="raman_point_spectrum")[0]
+    assert not CHECKS["skill_loaded"](Run(skills=["mapping"]), name="raman_point_spectrum")[0]
+
+
+def test_run_jobs_gated_start_is_allowed_with_run_job_and_overrides_count():
+    from benchmarks._common import sleepwalking
+
+    traced = ["Mapper_reserve", "Mapper_start", "Mapper_release"]  # what the trace records for one run_job
+    assert sleepwalking(traced) == []  # the mapping skill allows run_job, so its start
+    assert sleepwalking(traced, ["view_data"]) == ["Mapper_start"]
+    assert sleepwalking(["DigitalTwin_set_fov"], []) == ["DigitalTwin_set_fov"]
+    assert sleepwalking(["DigitalTwin_set_fov"], [], {"DigitalTwin_set_fov": "low"}) == []  # the endpoint's own table wins
+    assert sleepwalking(["Opentrons_get_tip"], [], {"Opentrons_get_tip": "high"}) == ["Opentrons_get_tip"]  # an override to high
+
+
+def test_the_truth_peak_is_the_one_view_data_lists_first():
+    from asyncroscopy.data import views
+
+    x = np.arange(2048, dtype=float)
+    y = 5 + 400 * np.exp(-0.5 * ((x - 300) / 3) ** 2) + 900 * np.exp(-0.5 * ((x - 1500) / 3) ** 2)
+    peaks = sorted(views.find_peaks(np.random.default_rng(1).poisson(y).astype(float), 3.0), key=lambda p: p.net, reverse=True)
+    assert abs(peaks[0].index - 1500) <= 2  # the strongest by net counts, as the text view lists it first

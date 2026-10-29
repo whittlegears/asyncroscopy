@@ -20,9 +20,12 @@ class AgentConfig:
     num_ctx: int = 8192
     temperature: float = 0.0
     mcp_url: str = DEFAULT_MCP_URL
-    analysis_url: str = DEFAULT_ANALYSIS_URL
+    # None: the analysis server the instrument endpoint is configured with (endpoint_info), so
+    # it is set in one place, the MCP config's mcp.analysis_url; ASYNCROSCOPY_ANALYSIS_URL overrides.
+    analysis_url: str | None = None
     caller: str = "agent"
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
+    _info: dict | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_env(cls, **overrides) -> AgentConfig:
@@ -32,7 +35,7 @@ class AgentConfig:
             model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER", cls.model_provider),
             num_ctx=int(env.get("ASYNCROSCOPY_NUM_CTX", cls.num_ctx)),
             mcp_url=env.get("ASYNCROSCOPY_MCP_URL", DEFAULT_MCP_URL),
-            analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL", DEFAULT_ANALYSIS_URL),
+            analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
             caller=env.get("ASYNCROSCOPY_CALLER", cls.caller),
         )
         for key, value in overrides.items():
@@ -54,7 +57,23 @@ class AgentConfig:
         return McpServer(self.mcp_url, {CALLER_HEADER: self.caller})
 
     def analysis(self) -> McpServer | None:
-        return McpServer(self.analysis_url, {CALLER_HEADER: self.caller}) if self.analysis_url else None
+        """The analysis server: the configured or endpoint-reported one, else the default; None when set to "" (none)."""
+        if self.analysis_url == "":
+            return None
+        return McpServer(self.analysis_url or DEFAULT_ANALYSIS_URL, {CALLER_HEADER: self.caller})
+
+    async def info(self) -> dict:
+        """The instrument endpoint's endpoint_info (tool risks, job devices, analysis server); {} if it has none."""
+        if self._info is None:
+            try:
+                result = await self.instrument().call("endpoint_info", {})
+                payload = getattr(result, "structured_content", None) if result is not None and not result.is_error else None
+                self._info = dict(payload or {})
+            except Exception:
+                self._info = {}
+            if self.analysis_url is None and self._info.get("analysis_url"):
+                self.analysis_url = self._info["analysis_url"]  # the MCP config's mcp.analysis_url
+        return self._info
 
     async def tools(self, include_analysis: bool = True, allow: list[str] | None = None):
         """LangChain tools from the instrument endpoint (and the analysis server), filtered by a glob allow-list."""
@@ -62,6 +81,7 @@ class AgentConfig:
             tools = await self.instrument().langchain_tools()
         except Exception as exc:
             raise ConnectionError(f"cannot reach the asyncroscopy MCP endpoint at {self.mcp_url}: {exc}") from exc
+        await self.info()
         analysis = self.analysis() if include_analysis else None
         if analysis is not None:
             try:

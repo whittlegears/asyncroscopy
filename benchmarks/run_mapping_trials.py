@@ -39,6 +39,7 @@ from langchain_core.messages import HumanMessage
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs.mapping import MappingGraph
+from asyncroscopy.agents.skill_middleware import recursion_limit
 
 HERE = Path(__file__).resolve().parent
 SIDE_M = 6e-7
@@ -90,7 +91,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     centre = json.loads(await instrument.call_text(f"{microscope}_get_stage"))[:2]
     started = time.time()
     try:
-        state = await graph.ainvoke({"messages": [HumanMessage(task["request"] + " Tell me the map key at the end.")]}, {"recursion_limit": 60})
+        state = await graph.ainvoke({"messages": [HumanMessage(task["request"] + " Tell me the map key at the end.")]}, {"recursion_limit": recursion_limit(25)})
         messages = state["messages"]
     except Exception as exc:  # recursion limit or a crash counts as a failed trial
         return {"seconds": round(time.time() - started, 1), "ok": False, "error": f"{type(exc).__name__}: {exc}", "checks": {}}
@@ -111,7 +112,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     checks["used_mapper_not_a_loop"] = sum(1 for c in calls if c["name"].endswith("_move_stage")) <= 2
     skills = sorted({c["args"].get("name", "") for c in calls if c["name"] == "load_skill"})
     tool_names = [c["name"] for c in calls]
-    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": tool_names, "sleepwalking": sleepwalking(tool_names), "skills_loaded": skills, "skills_applied": state.get("skills_applied", []), "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
+    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": tool_names, "sleepwalking": sleepwalking(tool_names, None, (await config.info()).get("risks")), "skills_loaded": skills, "skills_applied": state.get("skills_applied", []), "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
 
 
 async def main(args) -> None:

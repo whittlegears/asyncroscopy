@@ -21,8 +21,10 @@ import time
 from langchain_core.messages import HumanMessage
 
 from .config import AgentConfig
+from .skill_middleware import recursion_limit
 
 GRAPHS = ("mapping", "general", "team")
+GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is three graph steps with the skill middleware)
 
 
 async def run_named_graph(name: str, prompt: str, model: str | None = None) -> str:
@@ -83,7 +85,7 @@ async def _run(name: str, prompt: str, model: str | None, progress: bool = False
         from .graphs.general import make_graph
 
         graph = await make_graph({"configurable": {"model": model}})
-        state = await _final_state(graph, {"messages": [HumanMessage(prompt)]}, {"recursion_limit": 40}, progress, name)
+        state = await _final_state(graph, {"messages": [HumanMessage(prompt)]}, {"recursion_limit": recursion_limit(GENERAL_TOOL_ROUNDS)}, progress, name)
         return state["messages"][-1].content, False
     if name == "team":
         from .graphs.team import MAX_STEPS, TeamGraph

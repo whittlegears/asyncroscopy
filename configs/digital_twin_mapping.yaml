@@ -71,6 +71,11 @@ devices:
       scan_device_address: asyncroscopy/scan/default
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
+      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
+      # the twin reports stage positions to ~10 nm, plus scan distortion and drift.
+      analysis_url: http://127.0.0.1:8003/mcp
+      stage_sigma_m: 3.0e-8
+      max_drift_m_per_s: 5.0e-11
   # Approval mode (auto by default); switched from SciAgentGUI.
   approvals:
     class_name: Approvals

@@ -5,6 +5,7 @@ version: 1.0.0
 min_asyncroscopy: 0.1.0
 keywords: [approval, approve, held, operator, denied, permission]
 requires: [approval_status]
+acts: false
 tools: [approval_status]
 ---
 

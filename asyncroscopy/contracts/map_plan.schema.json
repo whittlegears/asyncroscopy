@@ -5,47 +5,149 @@
   "description": "What a Mapper job acquires. Lengths in metres, times in seconds. Give the area as box_m in stage coordinates, or as size_m around centre_m (default: the current stage position); tile centres never leave the box.",
   "schema_version": "1.0.0",
   "type": "object",
-  "required": ["fov_m"],
-  "oneOf": [{"required": ["box_m"]}, {"required": ["size_m"]}],
+  "required": [
+    "fov_m"
+  ],
+  "oneOf": [
+    {
+      "required": [
+        "box_m"
+      ]
+    },
+    {
+      "required": [
+        "size_m"
+      ]
+    }
+  ],
   "additionalProperties": false,
   "properties": {
     "box_m": {
       "type": "array",
       "description": "[x_min, x_max, y_min, y_max] in stage metres.",
-      "items": {"type": "number"},
+      "items": {
+        "type": "number"
+      },
       "minItems": 4,
       "maxItems": 4
     },
     "size_m": {
       "type": "array",
       "description": "[width, height] in metres; the Mapper centres the box on centre_m.",
-      "items": {"type": "number", "exclusiveMinimum": 0},
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
       "minItems": 2,
       "maxItems": 2
     },
     "centre_m": {
       "type": "array",
       "description": "[x, y] stage centre for size_m; defaults to the current stage position.",
-      "items": {"type": "number"},
+      "items": {
+        "type": "number"
+      },
       "minItems": 2,
       "maxItems": 2
     },
-    "fov_m": {"type": "number", "exclusiveMinimum": 0},
-    "overlap": {"type": "number", "minimum": 0, "maximum": 0.5, "default": 0.15},
-    "imsize": {"type": "integer", "minimum": 16, "maximum": 4096, "default": 512},
-    "dwell_s": {"type": "number", "exclusiveMinimum": 0, "default": 1e-6},
-    "detectors": {"type": "array", "items": {"type": "string"}, "minItems": 1, "default": ["haadf"]},
+    "fov_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "overlap": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0.5,
+      "default": 0.15
+    },
+    "imsize": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 4096,
+      "default": 512
+    },
+    "dwell_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1e-06
+    },
+    "detectors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "default": [
+        "haadf"
+      ]
+    },
     "per_tile": {
       "type": "array",
       "description": "Extra actions at every tile. eds_point is one spectrum at the tile centre; eds_map is a coarse spectrum image and must be asked for by name.",
-      "items": {"enum": ["eds_point", "eds_map"]},
+      "items": {
+        "enum": [
+          "eds_point",
+          "eds_map"
+        ]
+      },
       "default": []
     },
-    "eds_exposure_s": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
-    "eds_map_points": {"type": "integer", "minimum": 2, "maximum": 64, "default": 8},
-    "dose_budget_e_per_a2": {"type": "number", "exclusiveMinimum": 0, "description": "Refuse the plan if any point would receive more than this."},
-    "order": {"enum": ["serpentine", "raster"], "default": "serpentine"},
-    "z_m": {"type": "number", "description": "Stage z for every tile; defaults to the current z."},
-    "label": {"type": "string"}
+    "eds_exposure_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1.0
+    },
+    "eds_map_points": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 64,
+      "default": 8
+    },
+    "dose_budget_e_per_a2": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Refuse the plan if any point would receive more than this."
+    },
+    "order": {
+      "enum": [
+        "serpentine",
+        "raster"
+      ],
+      "default": "serpentine"
+    },
+    "z_m": {
+      "type": "number",
+      "description": "Stage z for every tile; defaults to the current z."
+    },
+    "label": {
+      "type": "string"
+    },
+    "stitch": {
+      "type": "boolean",
+      "default": true,
+      "description": "Stitch the finished run into a zoomable map on the analysis server (needs a Mapper with analysis_url); EDS point spectra become points of interest."
+    },
+    "find_regions": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0,
+      "description": "After stitching, score the map and add the best N regions as points of interest."
+    },
+    "revisit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fov_m"
+      ],
+      "properties": {
+        "fov_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Field of view of the higher-magnification image taken at each region."
+        }
+      },
+      "description": "Image each region find_regions found at higher magnification (inside the plan box only); the images are linked to their points of interest."
+    }
   }
 }

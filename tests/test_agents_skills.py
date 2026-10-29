@@ -121,3 +121,58 @@ def test_every_packaged_skill_loads_and_points_at_run_job_and_wait_for_job():
     for name in ("eds_survey", "explore_regions"):
         body = load_skill(name, STEM)
         assert "run_job" in body and "wait_for_job" in body and "Mapper_reserve" not in body
+
+
+# Requests that only ask about data never get a skill that acts (the review's examples and the
+# data-only workflows): a map key coming back must not lead a small model to start a new map.
+READ_ONLY = [
+    "What features are visible on the map abc123_map?",
+    "Which regions of map abc_map look different? Do not acquire anything.",
+    "Is there anything interesting in the latest image?",
+    "Show me the latest spectrum",
+    "What was the most recently acquired image? Describe it briefly (size, field of view and intensity range).",
+    "How many image tiles are in the map run map_r1.h5?",
+    "Look at the EDS spectrum spectrum_eds_1.h5. Which elements does it show?",
+    "List the points of interest on the stitched map map_r1_map with their stage coordinates.",
+    "The stitched map map_r1_map covers a large area. Show me an overview of the whole map, then zoom into its "
+    "highest-scoring point of interest and show that area at full resolution.",
+]
+
+
+@pytest.mark.parametrize("request_text", READ_ONLY)
+def test_a_read_only_request_never_gets_a_skill_that_acts(request_text):
+    acting = {s.name for s in list_skills(STEM) if s.acts}
+    assert acting >= {"mapping", "eds_survey", "explore_regions"}
+    messages = [HumanMessage(request_text), *tool_reply("view_data", "map map_r9_map, regions, spectrum_eds_2.h5", "c1")]
+    assert not {name for name, _ in applied(messages)} & acting
+    assert not {s.name for s in select_skills(request_text, STEM)} & acting
+
+
+def test_acting_requests_still_get_acting_skills():
+    assert "mapping" in [s.name for s in select_skills("Map a 300 nm square around the current stage position.", STEM)]
+    assert "explore_regions" in [s.name for s in select_skills("On map_r1_map, find the three most interesting regions and image them at high magnification.", STEM)]
+
+
+def test_memory_notes_are_read_once_per_run_and_share_the_skill_budget():
+    reads = []
+
+    def memory(request):
+        reads.append(request)
+        return "N" * 3000
+
+    middleware = SkillMiddleware("BASE", STEM, STEM, memory=memory)
+    messages = [HumanMessage("map a 600 nm square here")]
+    update = middleware.before_model({"messages": messages}, None)
+    for _ in range(3):
+        middleware._prompted(FakeRequest(messages, [SimpleNamespace(name="run_job")], update["skills_applied"]))
+    assert len(reads) == 1
+    prompt = middleware._prompted(FakeRequest(messages, [], update["skills_applied"])).system_message.content
+    assert len(prompt) <= len("BASE") + PROMPT_BUDGET_CHARS + 400  # skills and notes together stay inside the budget
+
+
+def test_every_shipped_skill_passes_the_skill_linter():
+    from asyncroscopy.agents.learning import lint_skill
+
+    for skill in list_skills(STEM):
+        if not skill.learned:
+            assert lint_skill(skill.path) == [], skill.name

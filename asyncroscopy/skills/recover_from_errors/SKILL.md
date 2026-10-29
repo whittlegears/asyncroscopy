@@ -4,6 +4,7 @@ description: Read a refused or failed call, fix its arguments and try once more;
 version: 1.0.0
 min_asyncroscopy: 0.1.0
 keywords: [error, failed, refused, retry, wrong, fix, broken, not working]
+acts: false
 tools: []
 ---
 

@@ -18,6 +18,15 @@ The agent MCP server (`asyncroscopy/mcp/agent_mcp_server.py`) runs the same grap
 
 Long experiments are one job: `run_job` (plan checked, then started, through the approval gate) and `wait_for_job` (waits on instrument jobs and on the analysis server's stitching and scoring jobs, and returns their `result_keys` and `summary` when done). The envelope's separate reserve/start/status/results/release tools stay on the endpoint for scripts and the `mapping` graph, but agents are not given them.
 
+What `run_job` guarantees, so an agent cannot leave the instrument tied up:
+
+- Every reply carries the plan's estimate (tiles, duration, dose), also when a held run is retried.
+- A plan whose estimate is over the endpoint's `mcp.job_limits` (`max_duration_s`, `max_dose_e_per_a2`; see `configs/mcp_dt.yaml`) is refused before it starts; the agent is told to ask the user. Only an operator raises the limits.
+- A start that fails (an error reply, a Tango failure, an unreachable approval service) releases the reservation it made, and says so.
+- A start held in approve mode keeps its reservation for the same caller and MCP session. Asking again before the operator decides files no second request. A denied or expired request, or one nobody came back for within two hours, frees the reservation even if the agent never asks again.
+
+`endpoint_info` (for agent programs, not given to models) reports each tool's risk as the approval gate sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.analysis_url` in the MCP config is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
+
 ## The team
 
 A small model loses track with many tools and long instructions, so the `team` graph never gives one agent both.
@@ -44,7 +53,9 @@ Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents nev
 | `inspect_data` | a data key came back, or the request asks about data |
 | `explore_regions` | a stitched map came back and the request asks for regions |
 
-At most four skills per run, within about 7000 characters; a skill that does not fit is listed by its description and only then is `load_skill` shown to the model. A skill is given only to an agent holding at least one of its tools. Which skills were applied, and why, is kept in the run's state as `skills_applied` (per step in the team, per attempt in a goal run).
+A request that only asks about data (a question, or "show", "describe", "list", "look at", with no instruction to take, move, map or image something; "do not acquire" counts as no instruction) never gets a skill that acts on the instrument (`acts: true` in its front matter), whatever comes back during the run.
+
+At most four skills per run, within about 7000 characters shared with the memory notes; a skill that does not fit is listed by its description and only then is `load_skill` shown to the model. A skill is given only to an agent holding at least one of its tools. Which skills were applied, and why, is kept in the run's state as `skills_applied` (per step in the team, per attempt in a goal run).
 
 | Shipped skill | When |
 | :-- | :-- |
@@ -75,13 +86,15 @@ criteria:
 budget: {max_seconds: 1800, max_tool_calls: 60, max_dose_e_per_a2: 200, max_attempts: 2}
 ```
 
-A goal given as a sentence gets criteria from its words: a map, `N` interesting regions, spectra or an image; `no_unrequested` and `grounded_answer` are always added.
+A goal given as a sentence gets criteria from its words: a map, `N` interesting regions, spectra or an image; `no_unrequested` and `grounded_answer` are always added. `no_unrequested` allows what the words ask for: an image allows the field of view, defocus, unblanking and the acquisition; "go to" or "revisit" allows a stage move; a map allows `run_job`. A goal that only asks about data allows no action.
 
-After each attempt a checker reads the tool calls and the servers' replies (including `run_job`'s job id and estimate and `wait_for_job`'s final `result_keys`), asks the live servers whether the keys exist (`map_info`, `list_pois`, `view_data`), and either accepts the result, retries with the unmet criteria as feedback, or stops and reports which criteria were not met and why. The exit code is 0 when the goal was reached and 1 otherwise. Through MCP: `query_agent(prompt, graph="team", goal=True)`, where the prompt is a sentence or the goal as JSON.
+Only what the run made counts: acquisitions, jobs it started and their results. Data found by `list_data` or opened with `view_data` never meets "take a spectrum", and a wait on someone else's job produces nothing.
+
+After each attempt a checker reads the tool calls and the servers' replies (including `run_job`'s job id and estimate and `wait_for_job`'s final `result_keys`), asks the live servers whether the keys exist (`map_info`, `list_pois`, `view_data`), and either accepts the result, retries with the unmet criteria as feedback, or stops and reports which criteria were not met and why. An attempt that hits the time budget or the recursion limit keeps the calls it made: the retry is told the keys this goal made and any job still running (wait for it; do not start another), and when the goal ends, jobs it started that are still running are aborted and the report says so. The exit code is 0 when the goal was reached and 1 otherwise. Through MCP: `query_agent(prompt, graph="team", goal=True)`, where the prompt is a sentence or the goal as JSON.
 
 ## Memory: Markdown the agent reads
 
-The agent keeps notes as plain Markdown in `$ASYNCROSCOPY_AGENT_MEMORY` (default `outputs/agent_memory`):
+The agent keeps notes as plain Markdown in `$ASYNCROSCOPY_AGENT_MEMORY` (default `outputs/agent_memory`, which git does not track; point it at a folder in your repository to keep the notes):
 
 | File | What | Written by |
 | :-- | :-- | :-- |
@@ -90,26 +103,33 @@ The agent keeps notes as plain Markdown in `$ASYNCROSCOPY_AGENT_MEMORY` (default
 | `experiments/<date>_<run>.md` | Request, goal, steps, keys produced, outcome, issues | Every goal run |
 | `skills/<name>/SKILL.md` | Skills learned from successful runs | Goal runs that were met (drafts) |
 
-Before each model call the sections that share the most words with the request are added to the prompt, at most about 1500 characters: never the whole folder.
+Once per run the sections that share the most words with the request are added to the prompt, at most about 1500 characters: never the whole folder. Data keys, map keys and ids in them are replaced by placeholders, so an agent never takes an earlier run's key for this one's.
+
+`$ASYNCROSCOPY_INSTRUMENT_NOTES` names a team's own instrument notes kept in its repository (for example `configs/instrument_notes/raman.md`); they are read as well, and no `INSTRUMENT.md` is seeded then.
+
+Nothing an agent writes here is reviewed before another run reads it, so it is kept small and checked: a lesson is one short line with keys and ids taken out, refused if it advises getting around approvals or safety, never added twice; `LESSONS.md` keeps the newest 100 and `experiments/` the newest 200 pages.
 
 ## Learned skills
 
 After a goal run the checker found **met**, the run's successful calls are turned into a draft skill: the steps in order (repeated waits collapsed) with their arguments, data keys and job ids replaced by placeholders, `tools:` limited to the tools actually used, and provenance (runs, dates, model, success count) in its front matter. One short model call names it and writes its description and keywords. The same tool sequence succeeding again raises the success count of the existing draft instead of making a new one. A run that was not met adds a lesson to `LESSONS.md` instead.
 
-Drafts are never given to an agent. Review and promote them:
+Drafts are never given to an agent. Check, review and promote skills with:
 
 ```bash
-uv run python -m asyncroscopy.agents.skills list
+uv run python -m asyncroscopy.agents.skills list                                  # every skill: shipped, lab, learned (drafts too) and problems
 uv run python -m asyncroscopy.agents.skills show <name>
-uv run python -m asyncroscopy.agents.skills promote <name> --check-endpoint
+uv run python -m asyncroscopy.agents.skills lint <name or path/to/SKILL.md>       # any skill, before you add it
+uv run python -m asyncroscopy.agents.skills promote <name> --check-endpoint       # learned drafts only
 ```
+
+A learned skill file that cannot be read is reported by `list` (exit code 1), not skipped.
 
 `ASYNCROSCOPY_AUTO_PROMOTE_AFTER=N` promotes a draft after N successes (default 0: never). Promotion re-checks the skill: not too long, no text about getting around approvals or safety, no operator-only tools, no hard-coded data keys, and (with `--check-endpoint`) only tools the agent endpoint offers. A promoted learned skill never replaces a shipped or lab skill of the same name, is given only to an agent offered every tool it lists, and only describes calls: every call still goes through the approval gate.
 
 ## For a hackathon team
 
-1. Copy `docs/Operation/templates/INSTRUMENT.md` to `outputs/agent_memory/INSTRUMENT.md` (or start the stack and run one agent request: it seeds one from your tool list) and fill in your limits, units and samples, in the words your requests will use.
-2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `asyncroscopy/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires` and `tools`, and list the steps. Agents get it as soon as a request matches.
+1. Copy `docs/Operation/templates/INSTRUMENT.md` into your repository (for example `configs/instrument_notes/<instrument>.md`) and set `ASYNCROSCOPY_INSTRUMENT_NOTES` to it, so the notes are versioned with your code (or start the stack and run one agent request: it seeds `outputs/agent_memory/INSTRUMENT.md` from your tool list). Fill in your limits, units and samples, in the words your requests will use.
+2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `asyncroscopy/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires`, `tools` and `acts`, list the steps, and check it with `python -m asyncroscopy.agents.skills lint <path>`. Agents get it as soon as a request matches.
 3. Run your workflow as a goal on the twin (`--goal`); look at the experiment page, the lesson or the learned draft it leaves, and promote drafts you agree with.
 
 ## Testing without a model

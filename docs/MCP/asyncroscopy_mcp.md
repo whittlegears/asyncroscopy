@@ -51,11 +51,27 @@ tool for each step of a job:
   `<device>_reserve` in the trials was followed by its start. The start still
   goes through the approval gate once, and the held request shows the operator
   the reserved plan. Repeating the same `run_job` after approval starts that
-  reservation; `approval_status` frees it if the request is denied or expires.
+  reservation (for the same caller and MCP session); repeating it before the
+  operator decides files no second request. A denied or expired request, or
+  one nobody came back for within two hours, frees the reservation on the next
+  `run_job`, `wait_for_job` or `approval_status` from anyone. A start that fails
+  releases the reservation it made. Every reply carries the estimate; a plan
+  whose estimate is over `mcp.job_limits` (`max_duration_s`,
+  `max_dose_e_per_a2`) is refused before it starts. The whole call stays under
+  25 s, waiting up to 15 s so a short job comes back finished.
 - `wait_for_job(job_id, device=None)`: waits on any job, an instrument job
   (`run_job`, `<device>_start`) or a stitching or scoring job on the analysis
   server named by `mcp.analysis_url`. When the job is done, the reply also
   has its results (`result_keys`, `summary`), so no `*_results` call follows.
+  A job device that does not answer is skipped (and named if the job is not
+  found elsewhere); an analysis server's error reply is passed on, not
+  swallowed. Without `mcp.analysis_url` agents get `analysis_job_status` and
+  `analysis_job_results` instead.
+- `endpoint_info()`: for agent programs, not given to models: each tool's risk
+  as the approval gate sees it (with this deployment's `safety.risk`
+  overrides), the job devices, `job_limits` and the analysis server. The agents
+  read the analysis server's address from it (so it is configured once, here),
+  and the goal checker and benchmarks read the risks.
 - Skills: since nearly every run began with `load_skill`, the agent no longer
   asks for skills. Before each model call it adds the skills that match the
   request and what has happened so far (an error, a held call, a data key;
@@ -66,9 +82,11 @@ tool for each step of a job:
 `list_skills` and `load_skill` stay on the endpoint for the `mapping` graph,
 SciAgentGUI and other clients. `configs/mcp_dt.yaml` hides from the agent
 endpoint the commands no agent needs (Tango `State`/`Status`, DATA's Tiled
-administration, the Approvals calls the gate makes itself, and
+administration, `Approvals.request_status` and `list_pending`, and
 `Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
-(`configs/mcp_operator.yaml`) keeps them.
+(`configs/mcp_operator.yaml`) keeps them. The Approvals commands that decide
+or file requests are never offered on an agent endpoint whatever the config
+says (`OPERATOR_ONLY` in `asyncroscopy/safety/policy.py`).
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.

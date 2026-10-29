@@ -1,10 +1,11 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.1.0
+version: 1.2.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 requires: [Mapper*_reserve]
+acts: true
 tools: [run_job, wait_for_job, Mapper_abort, approval_status, assemble_map, score_map, map_info, get_region, list_pois, add_poi, view_data, list_data]
 ---
 
@@ -26,31 +27,31 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | nothing about EDS, spectra or composition | no `per_tile` at all: images only |
 | "with EDS", "and a spectrum at each image" | `"per_tile": ["eds_point"]` (one spectrum at each tile centre) |
 | "spectrum image", "EDS map" of every tile | `"per_tile": ["eds_map"]`. Only when asked by name: it multiplies time and dose. |
-| nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` |
+| nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` (a sparse sample stitches better with `"overlap": 0.25`) |
+| "find the N most interesting regions" | `"find_regions": N` |
+| "... and image them closer / at high magnification" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
 
 If the request is unclear about the area, ask the user before starting.
 
 ## 2. Run the map
 
-1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says and call `run_job` again. If the estimate is over an hour, abort and ask the user.
+1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says and call `run_job` again. A plan whose estimate is over the endpoint's limits (duration or dose) is refused before it starts: tell the user the estimate and ask; do not shrink it on your own. Check the estimate against the request: if it is far larger than what was asked (wrong units?), call `Mapper_abort` and ask the user.
    - If it says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `run_job` again with exactly the same arguments. If `denied` or `expired`, stop and tell the user.
    - An endpoint with several Mappers names them `Mapper_<key>`: use that name as `device`.
-2. `wait_for_job` with `{"job_id": ...}` until `state` is `done`, `failed` or `aborted` (each call waits up to 25 s). When done, the reply has `result_keys.run` (the run in Tiled) and `summary.spectra` (where each EDS spectrum was taken). To stop early, call `Mapper_abort` (always allowed; the beam is blanked). **You are not done yet: go on to section 3 and stitch.**
+2. `wait_for_job` with `{"job_id": ...}` until `state` is `done`, `failed` or `aborted` (each call waits up to 25 s; a short map may already be `done` in the `run_job` reply). The job does everything else itself: it stitches the tiles into a map, puts every EDS spectrum on the map as a point of interest linked to its spectrum, scores the map when `find_regions` is set, and images each region when `revisit` is set. To stop early, call `Mapper_abort` (always allowed; the beam is blanked).
 
-## 3. Stitch and look
+## 3. Read what came back
 
-1. `assemble_map` with `{"run": result_keys.run}` returns a `job_id`. Wait with `wait_for_job` and that `job_id`; when done, its reply has `result_keys.map`.
-2. `map_info` gives the map's stage box. `get_region` with a stage box returns a preview image; never ask for raw pixels.
-3. For each EDS spectrum, `add_poi` at its `stage_xy_m` with `kind: "eds_point"` and `links: [its key]`.
-4. Before reporting what the sample contains, look at the data: `view_data` with `{"key": <a spectrum's key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements; `{"key": result_keys.run, "dataset": "tiles", "format": "text"}` describes the tiles. If a spectrum says no peaks were detected at this exposure, say so; do not conclude an element is absent. `list_data` finds the newest data when you have lost a key.
+When `done`, the reply's `summary` has:
+- `map`: the stitched map's key. `stitching`: its quality (`median_residual_px`, `fallback_tiles`, fitted `drift`).
+- `regions` (with `find_regions`): each with `x_m`, `y_m`, `score` and `reason`. `revisits` (with `revisit`): the high-magnification image of each region, already linked to its point of interest.
+- `stitch_error`, if stitching failed: the tiles are safe in `result_keys.run`; say so and give the `assemble_map` call it names. Do not run the map again.
 
-## 4. Find interesting regions and go back
+Before saying what the sample contains, look at the data: `view_data` with `{"key": <a spectrum key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements. If no peaks were detected at this exposure, say so; do not conclude an element is absent. To look at the map, zoom from the whole map to a detail: `map_info` gives the map's stage box; `get_region` with a large box returns a coarse preview, a small box around a region gives full resolution. Never walk the tiles one by one. `list_pois` lists the points of interest; `list_data` finds data when you have lost a key.
 
-Do this whenever the request asks for interesting, notable or unusual regions; listing the existing points of interest is not enough.
+## 4. More regions later
 
-1. `score_map` with `{"map": ..., "top_k": 3}`; wait with `wait_for_job`; its `summary.added_pois` lists regions with `x_m`, `y_m`, `score` and `reason`.
-2. To image one closer, run a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`), or move there and acquire once.
-3. Mark what you took with `add_poi` and `links`, so the map shows it.
+To score an existing map again (another scorer, more regions), call `score_map` with `{"map": ..., "top_k": N}` and wait with `wait_for_job`. To image one region closer, `run_job` a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`) and mark it with `add_poi` and `links`.
 
 ## Report
 

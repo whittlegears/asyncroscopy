@@ -1,0 +1,21 @@
+# Stacks the workflow benchmark can run on. A stack is a run_servers config and the
+# addresses of what it serves; workflows name one with `stack:`. A team adds its own
+# instrument here, or in its own workflow file under a top-level `stacks:` key with the
+# same fields, without editing the benchmark:
+#
+#   stacks:
+#     raman:
+#       config: configs/raman_stack.yaml          # the run_servers config it is started with
+#       mcp: http://127.0.0.1:8000/mcp            # agent endpoint
+#       operator: http://127.0.0.1:8001/mcp       # operator endpoint (approval workflows)
+#       tiled: http://127.0.0.1:9091              # Tiled server (truth read from the data)
+#
+# `config` only has to exist in this checkout: a stack whose config is missing is skipped.
+# The addresses default to the ones shown above.
+stacks:
+  twin:
+    config: configs/digital_twin_mapping.yaml
+  large:
+    config: configs/digital_twin_large_map.yaml
+  xrd:
+    config: configs/yaml_sim_xrd.yaml

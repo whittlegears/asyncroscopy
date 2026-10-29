@@ -1,6 +1,7 @@
 """Approval mode: the Approvals device, the MCP policy gate, endpoint roles and the trace."""
 
 import json
+import time
 
 import pytest
 import tango
@@ -461,6 +462,52 @@ class TestWaitForJob:
         with pytest.raises(ToolError, match="analysis server"):
             server.wait_for_job("nowhere")
 
+    def test_one_dead_job_device_does_not_stop_waiting_on_the_others(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Dead:
+            def job_status(self, request):
+                raise tango.DevFailed()
+
+        class Mapper:
+            def job_status(self, request):
+                if json.loads(request)["job_id"] != "j1":
+                    return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
+                return json.dumps({"job_id": "j1", "state": "failed", "last_error": "x"})
+
+        server._devices = {"Aaa": Dead(), "Mapper": Mapper()}
+        server._envelope_prefixes = {"Aaa", "Mapper"}
+        assert server.wait_for_job("j1")["state"] == "failed"
+        with pytest.raises(ToolError, match="not answering: \\['Aaa'\\]"):
+            server.wait_for_job("j-nowhere")
+
+    def test_an_analysis_error_reply_is_said_not_swallowed_and_old_servers_are_polled(self, monkeypatch):
+        from fastmcp import FastMCP
+        from fastmcp.exceptions import ToolError as AnalysisError
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        old = FastMCP("old analysis")  # an analysis_job_status without wait_s
+        polls = []
+
+        @old.tool
+        def analysis_job_status(job_id: str) -> dict:
+            if job_id == "broken":
+                raise AnalysisError("the job store is unreadable")
+            polls.append(job_id)
+            return {"job_id": job_id, "state": "done" if len(polls) > 1 else "running"}
+
+        @old.tool
+        def analysis_job_results(job_id: str) -> dict:
+            return {"result_keys": {"map": "map_r2_map"}}
+
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, analysis_url=old)
+        server._devices, server._envelope_prefixes = {}, set()
+        done = server.wait_for_job("a1", max_wait_s=5)
+        assert done["state"] == "done" and done["result_keys"] == {"map": "map_r2_map"} and len(polls) == 2
+        with pytest.raises(ToolError, match="job store is unreadable"):
+            server.wait_for_job("broken", max_wait_s=1)
+
     def test_a_job_still_running_at_the_deadline_says_to_wait_again(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
@@ -502,7 +549,7 @@ class TestWaitForJob:
 
         server._devices = {"Mapper": Job()}
         server._envelope_prefixes = {"Mapper"}
-        with pytest.raises(ToolError, match="analysis_job_status"):
+        with pytest.raises(ToolError, match="mcp.analysis_url"):
             server.wait_for_job("assemble-job-1", device="Mapper")
 
 
@@ -528,10 +575,22 @@ class TestRunJob:
         def start(request):
             body = json.loads(request)
             calls.append(("start", body["reservation_id"]))
+            if server._devices["Mapper"].start_fails == "raise":
+                raise RuntimeError("Tango: device not answering")
+            if server._devices["Mapper"].start_fails == "error":
+                return json.dumps({"schema_version": "1.1.0", "error": {"code": "device_error", "message": "a worker from before the device restarted"}})
             return json.dumps({"schema_version": "1.1.0", "job_id": "j-" + body["reservation_id"], "state": "queued"})
 
         class Device:
             finished = False  # True: the job is done by the time run_job looks
+            start_fails = ""  # "raise" or "error": the start does not succeed
+
+            def __init__(self):
+                self.released = []
+
+            def release(self, request):
+                self.released.append(json.loads(request))
+                return json.dumps({"state": "released"})
 
             def get_reservation(self, request):
                 return '{"plan": {"fov_m": 2e-07}}'
@@ -589,13 +648,90 @@ class TestRunJob:
 
     def test_a_denied_run_frees_the_instrument(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
-        released = []
-        server.tools["Mapper"]["release"] = lambda request: released.append(request) or "{}"
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
             server.run_job("Mapper", {"fov_m": 2e-7})
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
         approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "alice"}))
         status = server.approval_status(request_id)
-        assert status["state"] == "denied" and "released" in status["note"]
-        assert released == [{"reservation_id": "r1"}] and not server._held_runs
+        assert status["state"] == "denied" and "was released" in status["note"]
+        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}] and not server._held_runs
+
+    def test_a_denied_run_is_freed_even_if_the_agent_never_asks(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        approvals_proxy.deny(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
+        server._sweep_held(force=True)  # what any later run_job, wait_for_job or approval_status does
+        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}] and not server._held_runs
+
+    def test_asking_again_before_the_operator_decides_files_no_second_request(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        before = len(json.loads(approvals_proxy.list_pending()))
+        for _ in range(3):
+            with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
+                server.run_job("Mapper", {"fov_m": 2e-7})
+            assert "estimate" in str(held.value)  # what is held is said every time
+        assert len(json.loads(approvals_proxy.list_pending())) == before + 1
+        assert [c[0] for c in calls] == ["reserve"]  # one reservation; the gate held its start each time
+
+    def test_the_held_retry_reply_carries_the_estimate(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        approvals_proxy.approve(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9}  # the goal checker counts its dose
+
+    @pytest.mark.parametrize("failure", ["raise", "error"])
+    def test_a_start_that_fails_releases_the_reservation_it_made(self, server_factory, failure):
+        server, calls = self.mapper_server(server_factory)
+        server._devices["Mapper"].start_fails = failure
+        if failure == "raise":
+            with pytest.raises(ToolError, match="did not start.*was released.*r1"):
+                server.run_job("Mapper", {"fov_m": 2e-7})
+        else:
+            reply = server.run_job("Mapper", {"fov_m": 2e-7})
+            assert reply["error"]["code"] == "device_error" and reply["reservation_id"] == "r1" and "was released" in reply["note"]
+        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+
+    def test_a_plan_over_the_endpoints_limits_never_starts(self, server_factory):
+        server, calls = self.mapper_server(server_factory)
+        server.job_limits = {"max_duration_s": 3600.0}
+        original = server.tools["Mapper"]["reserve"]
+        server.tools["Mapper"]["reserve"] = lambda request: json.dumps({**json.loads(original(request)), "estimate": {"duration_s": 36000.0, "max_dose_e_per_a2": 10}})
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["error"]["code"] == "plan_rejected" and reply["error"]["violations"][0]["what"] == "duration_s"
+        assert "ask" in reply["error"]["message"] and reply["estimate"]["duration_s"] == 36000.0
+        assert [c[0] for c in calls] == ["reserve"] and server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+
+    def test_two_callers_with_one_name_do_not_share_a_held_run(self, server_factory, approvals_proxy, monkeypatch):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        session = {"id": "s1"}
+        monkeypatch.setattr(type(server), "_session", staticmethod(lambda: session["id"]))
+        with pytest.raises(ToolError):
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        session["id"] = "s2"
+        with pytest.raises(ToolError):
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        assert len([c for c in calls if c[0] == "reserve"]) == 2 and len(server._held_runs) == 2
+
+    def test_stale_held_runs_are_bounded(self, server_factory, monkeypatch):
+        server, _calls = self.mapper_server(server_factory)
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.MAX_HELD_RUNS", 2)
+        for i in range(4):
+            server._held_runs[("c", "", "Mapper", str(i))] = {"reservation_id": f"r{i}", "request_id": "", "device": "Mapper", "created": time.monotonic() - 10 + i, "summary": {}}
+        server._sweep_held(force=True)
+        assert sorted(h["reservation_id"] for h in server._held_runs.values()) == ["r2", "r3"]
+        assert server._devices["Mapper"].released == [{"reservation_id": "r0"}, {"reservation_id": "r1"}]
+
+    def test_endpoint_info_reports_the_gates_risks(self, server_factory):
+        server, _calls = self.mapper_server(server_factory)
+        server._native_names = {"run_job", "view_data"}
+        info = server.endpoint_info()
+        assert info["risks"]["Mapper_start"] == "high" and info["risks"]["Mapper_reserve"] == "low"
+        assert info["risks"]["run_job"] == "high" and info["risks"]["view_data"] == "low" and info["job_devices"] == ["Mapper"]

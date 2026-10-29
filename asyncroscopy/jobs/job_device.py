@@ -28,8 +28,10 @@ for Tango:
 
 from __future__ import annotations
 
+import bisect
 import json
 import threading
+from collections import deque
 import time
 import traceback
 import uuid
@@ -49,6 +51,54 @@ SUSPENDER_KEYS = {"attr", "min", "max", "equals", "resume_after_s", "label"}
 VIOLATIONS_SHOWN = 20  # violations listed in a refusal; the total is always given
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
 SUMMARY_STEPS = 50  # step records results returns by default; the rest are in the job's .steps.jsonl
+# Step records kept in memory (the newest); all of them stay in the job's .steps.jsonl. Bounds memory
+# for jobs of millions of steps; a device whose summary needs every record keeps its jobs below this.
+KEPT_STEP_RESULTS = 10_000
+
+
+def step_count(job: dict) -> int:
+    """How many steps the job has: a list from resolve_plan, or a step_count with step_at."""
+    return int(job["step_count"]) if "step_count" in job else len(job["steps"])
+
+
+def done_count(job: dict) -> int:
+    """Steps done, from the job's sorted [start, end) ranges."""
+    return sum(end - start for start, end in job["done_ranges"])
+
+
+def is_done(job: dict, index: int) -> bool:
+    ranges = job["done_ranges"]
+    k = bisect.bisect_right(ranges, [index, float("inf")]) - 1
+    return k >= 0 and ranges[k][0] <= index < ranges[k][1]
+
+
+def mark_done(job: dict, index: int) -> None:
+    """Add ``index``, merging ranges, so a job of a million steps stores a few numbers, not a million."""
+    ranges = job["done_ranges"]
+    if is_done(job, index):
+        return
+    k = bisect.bisect_right(ranges, [index, float("inf")])
+    joins_left = k > 0 and ranges[k - 1][1] == index
+    joins_right = k < len(ranges) and ranges[k][0] == index + 1
+    if joins_left and joins_right:
+        ranges[k - 1][1] = ranges[k][1]
+        del ranges[k]
+    elif joins_left:
+        ranges[k - 1][1] = index + 1
+    elif joins_right:
+        ranges[k][0] = index
+    else:
+        ranges.insert(k, [index, index + 1])
+
+
+def done_ranges_from(job: dict) -> list[list[int]]:
+    """Ranges from a saved job: new files store done_ranges, older ones a list of indices."""
+    if "done_ranges" in job:
+        return [[int(a), int(b)] for a, b in job["done_ranges"]]
+    rebuilt = {"done_ranges": []}
+    for index in job.get("done", []):
+        mark_done(rebuilt, int(index))
+    return rebuilt["done_ranges"]
 
 
 class JobError(Exception):
@@ -155,8 +205,21 @@ class JobDevice(Device):
     # Subclass hooks
     # ------------------------------------------------------------------
     def resolve_plan(self, plan: dict) -> dict:
-        """Validate and expand a plan. Return {"steps": [...], "estimate": {...}, ...}; raise ValueError to refuse."""
+        """Validate and expand a plan. Return {"steps": [...], "estimate": {...}, ...}; raise ValueError to refuse.
+
+        A plan of very many steps returns ``"step_count": n`` instead of the list and
+        implements ``step_at``, so no step list is held or saved.
+        """
         raise NotImplementedError(f"{type(self).__name__} must implement resolve_plan(plan)")
+
+    def step_at(self, job: dict, index: int) -> dict:
+        """Step ``index`` of the job; by default from the list resolve_plan returned."""
+        return job["steps"][index]
+
+    def phase(self, job: dict) -> str | None:
+        """A short description of what the job is doing now, shown by job_status; None for none."""
+        return None
+
 
     def run_step(self, job: dict, index: int) -> dict:
         """Do step ``index``; return a JSON-safe record of what it produced, or None if it stopped early for an abort (see aborting), so a resume runs it again."""
@@ -225,6 +288,8 @@ class JobDevice(Device):
                 # Never started; whoever reserved it is gone. Keeping it would leave the device busy.
                 job["state"] = "released"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted before this reservation was started; reserve again."}
+            job["done_ranges"] = done_ranges_from(job)
+            job.pop("done", None)
             job["step_results"] = self._read_steps(job["reservation_id"])
             self._jobs[job["reservation_id"]] = job
             for job_id in job.get("job_ids", []):
@@ -258,14 +323,15 @@ class JobDevice(Device):
         path = self._steps_path(reservation_id)
         if not path.exists():
             return {}
-        steps = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:  # a line cut short by a crash
-                continue
-            steps[str(row["index"])] = row["record"]
-        return steps
+        newest: deque = deque(maxlen=KEPT_STEP_RESULTS)
+        with path.open(encoding="utf-8") as handle:  # streamed: the file can hold millions of steps
+            for line in handle:
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:  # a line cut short by a crash
+                    continue
+                newest.append((str(row["index"]), row["record"]))
+        return dict(newest)
 
     def _save(self, job: dict) -> None:
         """Write the job's small state file. Step results go to an append-only file instead,
@@ -370,22 +436,24 @@ class JobDevice(Device):
                 raise  # sorted out by _guard: the caller's plan, or the device's bug
             except Exception as exc:
                 raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
-            if not isinstance(resolved, dict) or not isinstance(resolved.get("steps"), list):
+            lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
+            if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
                 # The device's own bug, not the caller's plan: say so, outside plan_rejected.
-                raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list, got {type(resolved).__name__}")
-            limits = self._check_limits({"plan": body["plan"], "resolved_plan": resolved, "steps": resolved["steps"]})
+                raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
+            shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
+            limits = self._check_limits({"plan": body["plan"], "resolved_plan": resolved, **shape})
             reservation_id = uuid.uuid4().hex[:12]
             job = {
                 "reservation_id": reservation_id,
                 "plan_id": uuid.uuid4().hex[:12],
                 "device": self._name,
                 "plan": body["plan"],
-                "resolved_plan": {k: v for k, v in resolved.items() if k != "steps"},
-                "steps": resolved["steps"],
-                "estimate": resolved.get("estimate", {"steps": len(resolved["steps"])}),
+                "resolved_plan": {k: v for k, v in resolved.items() if k not in {"steps", "step_count"}},
+                **shape,
+                "estimate": resolved.get("estimate", {"steps": step_count(shape)}),
                 "limits": limits,
                 "state": "reserved",
-                "done": [],
+                "done_ranges": [],
                 "step_results": {},
                 "result_keys": {},
                 "job_ids": [],
@@ -515,8 +583,8 @@ class JobDevice(Device):
         cls = type(self).__name__
         try:
             self.on_start(job)
-            for index in range(len(job["steps"])):
-                if index in job["done"]:
+            for index in range(step_count(job)):
+                if is_done(job, index):
                     continue
                 if abort.is_set():
                     break
@@ -529,8 +597,11 @@ class JobDevice(Device):
                         break
                     raise RuntimeError(f"{cls}.run_step returned None for step {index} without an abort; return a record of the step")
                 with self._lock:
-                    job["done"].append(index)
-                    job["step_results"][str(index)] = record
+                    mark_done(job, index)
+                    results = job["step_results"]
+                    results[str(index)] = record
+                    if len(results) > KEPT_STEP_RESULTS:
+                        del results[next(iter(results))]  # the oldest; it stays in .steps.jsonl
                     if generation == self._generation:
                         self._append_step(job, index, record)
                         self._save(job)
@@ -637,10 +708,11 @@ class JobDevice(Device):
                 "job_id": job.get("job_id", job["reservation_id"]),
                 "reservation_id": job["reservation_id"],
                 "state": job["state"],
-                "progress": {"done": len(job["done"]), "total": len(job["steps"])},
+                "progress": {"done": done_count(job), "total": step_count(job)},
                 "last_error": job["last_error"],
                 "pending_request_id": None,
                 "suspended": job.get("suspended"),
+                **({"phase": phase} if (phase := getattr(self, "phase", lambda _job: None)(job)) else {}),
             }
         )
 
@@ -678,7 +750,7 @@ class JobDevice(Device):
                 "job_id": job.get("job_id", job["reservation_id"]),
                 "state": job["state"],
                 "result_keys": dict(job["result_keys"]),
-                "summary": {"steps_done": len(job["done"]), "steps_total": len(job["steps"]), **self.summary(job)},
+                "summary": {"steps_done": done_count(job), "steps_total": step_count(job), **self.summary(job)},
             }
         return self._reply(reply)
 

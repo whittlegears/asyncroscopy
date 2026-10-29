@@ -6,22 +6,35 @@ servers' replies (never from the model's own text), verifies the keys it
 found against the live servers, and either accepts the attempt or returns
 the unmet criteria as feedback for a bounded retry.
 
+Only calls that make something count as producing it: an acquisition, a job
+the run started (run_job, ``<device>_start``, assemble_map, score_map) and the
+waits and results of those jobs. Listing or reading data (list_data,
+view_data, map_info, ...) never produces it: an old spectrum found by
+list_data does not meet "take a spectrum".
+
 Criteria (``{"kind": ..., ...}``):
 
 ==================== ============================================== ==========================================
 kind                 met when                                       options
 ==================== ============================================== ==========================================
-``job_done``         a job of ``device`` reported state ``done``    ``device`` (default ``Mapper``)
-``map``              a stitched map from this run opens (map_info)  ``min_pois``, ``poi_kind`` (list_pois)
-``data``             >= ``count`` keys of ``data_kind`` from this   ``data_kind`` (image, spectrum, ...),
-                     run open with view_data                        ``count`` (default 1)
-``no_unrequested``   no high-risk call outside ``allow`` patterns   ``allow`` (default: job tools)
-``grounded_answer``  every data key the answer names was produced   (none)
-                     or read in this run
+``job_done``         a job of ``device`` this run started finished  ``device`` (default ``Mapper``)
+``map``              a stitched map this run made opens (map_info)  ``min_pois``, ``poi_kind`` (list_pois)
+``data``             >= ``count`` keys of ``data_kind`` this run    ``data_kind`` (image, spectrum, ...),
+                     made open with view_data                       ``count`` (default 1)
+``no_unrequested``   no high-risk call outside ``allow`` patterns   ``allow`` (default: running jobs)
+``grounded_answer``  every data key the answer names came back      (none)
+                     from a server in this run
 ==================== ============================================== ==========================================
 
+Risk is the endpoint's own classification (``endpoint_info`` on the MCP server,
+so deployment overrides and STEM settings count as the gate counts them),
+or the safety policy applied to the name when the endpoint cannot be asked.
+
 A goal written as text (``--goal "..."``) gets criteria inferred from its
-words: a map, interesting regions, spectra or an image.
+words: a map, interesting regions, spectra or an image, and an ``allow`` list
+for ``no_unrequested`` that fits what it asks (an image allows the settings
+and acquisition an image needs; "go to" allows a stage move). A request that
+only asks about data gets no production criterion and allows no action.
 """
 
 from __future__ import annotations
@@ -35,15 +48,24 @@ from typing import Any
 
 import yaml
 
-from asyncroscopy.safety.policy import risk_of
+from asyncroscopy.safety.policy import tool_risk
+from asyncroscopy.skills.registry import read_only_request
 
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
 DATA_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b")
 # A stitched map key ends in _map and carries its run id (so tool names such as assemble_map do not match).
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*_map\b")
-# High-risk calls a goal allows by default: starting (and stopping) the job the request asked for
-# (run_job is a native tool and is not counted; the envelope's own tools are allowed when used directly).
-DEFAULT_ALLOW = ["*_start", "*_abort", "*_reserve", "*_release"]
+HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
+# High-risk calls a goal file allows when it names none: running (and stopping) the job it asks for.
+DEFAULT_ALLOW = ["run_job", "*_start", "*_reserve", "*_abort", "*_release"]
+JOB_TOOLS = ["run_job", "Mapper*_start", "Mapper*_reserve", "Mapper*_abort", "Mapper*_release"]
+IMAGE_TOOLS = ["*_acquire_scanned_image", "*_acquire_image", "*_acquire_camera_image", "*_set_fov", "*_set_defocus", "*_unblank_beam", "*_blank_beam", "*_place_beam"]
+SPECTRUM_TOOLS = ["*_acquire_spectrum", "*_acquire_eds*", "*_place_beam", "*_unblank_beam", "*_blank_beam", "*_set_fov"]
+MOVE_TOOLS = ["*_move_stage"]
+# Tools whose replies are what the run made; with ``_job_id`` below, waits and results of its own jobs.
+STARTERS = ("run_job", "assemble_map", "score_map")
+JOB_READERS = ("wait_for_job", "analysis_job_status", "analysis_job_results")
+ACTIVE = {"reserved", "queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}
 
 
 @dataclass
@@ -65,17 +87,27 @@ class Goal:
         """A goal with criteria inferred from its words (always grounded_answer and no_unrequested)."""
         text = statement.lower()
         criteria: list[dict] = []
-        if re.search(r"\bmap\b|\bmaps\b|\bmapping\b|\bsurvey\b", text):
-            entry: dict[str, Any] = {"kind": "map"}
-            wanted = re.search(r"(\d+)\s+(?:most\s+)?(?:interesting|notable|unusual)", text)
-            if wanted or re.search(r"interesting|notable|unusual|features?\b|regions? of interest", text):
-                entry.update(min_pois=int(wanted.group(1)) if wanted else 1, poi_kind="candidate")
-            criteria.append(entry)
-        if re.search(r"\beds\b|\bedx\b|spectr|composition|element", text):
-            criteria.append({"kind": "data", "data_kind": "spectrum", "count": 1})
-        if re.search(r"\b(?:take|acquire|capture)\b.*\bimage\b", text) and not any(c["kind"] == "map" for c in criteria):
-            criteria.append({"kind": "data", "data_kind": "image", "count": 1})
-        criteria += [{"kind": "no_unrequested"}, {"kind": "grounded_answer"}]
+        allow: list[str] = []
+        if not read_only_request(statement):
+            if re.search(r"\bmap\b|\bmaps\b|\bmapping\b|\bsurvey\b", text):
+                entry: dict[str, Any] = {"kind": "map"}
+                wanted = re.search(r"(\d+)\s+(?:most\s+)?(?:interesting|notable|unusual)", text)
+                if wanted or re.search(r"interesting|notable|unusual|features?\b|regions? of interest", text):
+                    entry.update(min_pois=int(wanted.group(1)) if wanted else 1, poi_kind="candidate")
+                criteria.append(entry)
+                allow += JOB_TOOLS
+            if re.search(r"\beds\b|\bedx\b|spectr|composition|element", text):
+                criteria.append({"kind": "data", "data_kind": "spectrum", "count": 1})
+                if not allow:  # a spectrum on its own, not one per map tile
+                    allow += SPECTRUM_TOOLS
+            imaging = re.search(r"\b(?:take|acquire|capture|record)\b.*\bimage\b|\bimage (?:it|them|that|this|there|each)\b|high(?:er)?[- ]magnification", text)
+            if imaging:
+                if not any(c["kind"] == "map" for c in criteria):
+                    criteria.append({"kind": "data", "data_kind": "image", "count": 1})
+                allow += IMAGE_TOOLS
+            if re.search(r"\bgo(?: back)? to\b|\bmove\b|\brevisit\b|\bdrive\b|\bat x\b|\bposition\b|high(?:er)?[- ]magnification|\bimage them\b", text):
+                allow += MOVE_TOOLS
+        criteria += [{"kind": "no_unrequested", "allow": sorted(set(allow))}, {"kind": "grounded_answer"}]
         return cls(statement, criteria, Budget(**budget))
 
     @classmethod
@@ -117,23 +149,44 @@ class Goal:
         return {"statement": self.statement, "criteria": self.criteria, "budget": asdict(self.budget)}
 
 
-# ---------------------------------------------------------------------- facts
+# ---------------------------------------------------------------------- calls
 @dataclass
 class Call:
+    """One tool call and the server's reply. The one record of a call for goals, graphs and benchmarks."""
+
     name: str
     args: dict
-    result: str
+    result: str = ""
     error: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return not self.error
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "args": self.args, "result": self.result, "error": self.error}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Call:
+        error = data.get("error")
+        if error is None and "ok" in data:
+            error = not data["ok"]
+        return cls(str(data.get("name", "")), dict(data.get("args") or {}), str(data.get("result", "")), bool(error))
 
 
 def trace_from_messages(messages) -> list[Call]:
-    """The tool calls in a LangChain message list, each with the server's reply."""
+    """The tool calls in a LangChain message list, each with the server's reply.
+
+    A call failed when it has no reply, its reply has status "error", or the reply text is a
+    tool error ("Error...", "APPROVAL REQUIRED...").
+    """
     replies = {getattr(m, "tool_call_id", None): m for m in messages if getattr(m, "type", "") == "tool"}
     calls = []
     for message in messages:
         for call in getattr(message, "tool_calls", None) or []:
             reply = replies.get(call.get("id"))
-            text = reply.content if reply is not None and isinstance(reply.content, str) else (json.dumps(reply.content) if reply is not None else "")
+            content = getattr(reply, "content", "") if reply is not None else ""
+            text = content if isinstance(content, str) else json.dumps(content, default=str)
             error = reply is None or getattr(reply, "status", "") == "error" or text.startswith(("Error", "APPROVAL REQUIRED"))
             calls.append(Call(call["name"], dict(call.get("args") or {}), text, error))
     return calls
@@ -156,51 +209,77 @@ def _walk(value: Any):
             yield from _walk(v)
 
 
-def _job_device(call: Call, job_id: str, jobs: dict) -> str:
-    """The device a job runs on: known from its start, else from the call that reported it."""
-    if job_id in jobs:
-        return jobs[job_id]["device"]
+def _job_id(call: Call) -> str | None:
+    """The job a wait/status/results call asks about (an argument, or inside a JSON "request")."""
+    if isinstance(call.args.get("job_id"), str):
+        return call.args["job_id"]
+    request = call.args.get("request")
+    body = _json(request) if isinstance(request, str) else request
+    return body.get("job_id") if isinstance(body, dict) and isinstance(body.get("job_id"), str) else None
+
+
+def _device(call: Call) -> str:
     if call.args.get("device"):
         return str(call.args["device"])
     device, _, command = call.name.partition("_")
     if command and device[:1].isupper():
         return device
-    if call.name.startswith(("analysis_", "assemble_", "score_")):
+    if call.name in ("assemble_map", "score_map") or call.name.startswith("analysis_"):
         return "analysis"
     return "unknown"
 
 
+def _is_starter(name: str) -> bool:
+    return name in STARTERS or (name.partition("_")[0][:1].isupper() and name.endswith("_start"))
+
+
+def _is_job_reader(name: str) -> bool:
+    return name in JOB_READERS or name.endswith(("_job_status", "_results"))
+
+
+def _is_acquisition(name: str) -> bool:
+    device, _, command = name.partition("_")
+    return bool(command) and device[:1].isupper() and command.startswith("acquire")
+
+
 @dataclass
 class Facts:
-    data_keys: set[str] = field(default_factory=set)
-    map_keys: set[str] = field(default_factory=set)
-    read_keys: set[str] = field(default_factory=set)  # keys the agent looked at (it may name them)
-    jobs: dict[str, dict] = field(default_factory=dict)  # job_id -> {"device", "state"}
+    data_keys: set[str] = field(default_factory=set)  # data this run made
+    map_keys: set[str] = field(default_factory=set)  # stitched maps this run made
+    seen_keys: set[str] = field(default_factory=set)  # every key a server returned in this run (the answer may name them)
+    jobs: dict[str, dict] = field(default_factory=dict)  # job_id -> {"device", "state"}, for jobs this run started
     dose_e_per_a2: float = 0.0
     high_risk: list[str] = field(default_factory=list)
     errors: int = 0
     calls: int = 0
 
     @classmethod
-    def from_calls(cls, calls: list[Call]) -> Facts:
+    def from_calls(cls, calls: list[Call], risks: dict[str, str] | None = None) -> Facts:
+        """Facts from the calls of one run. ``risks``: the endpoint's tool risk table (endpoint_info)."""
         facts = cls()
         for call in calls:
             facts.calls += 1
             if call.error:
                 facts.errors += 1
-            device, _, command = call.name.partition("_")
-            if command and device[:1].isupper() and risk_of(device, command, envelope=command in ("reserve", "start", "job_status", "abort", "results", "release")) == "high":
+            if tool_risk(call.name, risks) == "high":
                 facts.high_risk.append(call.name)
-            for value in call.args.values():
-                if isinstance(value, str):
-                    facts.read_keys.update(DATA_KEY.findall(value))
-                    facts.read_keys.update(MAP_KEY.findall(value))
             if call.error:
                 continue
+            facts.seen_keys.update(DATA_KEY.findall(call.result))
+            facts.seen_keys.update(MAP_KEY.findall(call.result))
             payload = _json(call.result)
-            if payload is None:
-                facts.data_keys.update(DATA_KEY.findall(call.result))
-                facts.map_keys.update(MAP_KEY.findall(call.result))
+            if (call.name.endswith("_reserve") or call.name == "run_job") and isinstance(payload, dict):
+                estimate = payload.get("estimate")
+                if isinstance(estimate, dict) and isinstance(estimate.get("max_dose_e_per_a2"), (int, float)):
+                    facts.dose_e_per_a2 += float(estimate["max_dose_e_per_a2"])
+            asked = _job_id(call)
+            produced = _is_acquisition(call.name) or _is_starter(call.name) or (_is_job_reader(call.name) and asked in facts.jobs)
+            if not produced:
+                continue
+            if payload is None or isinstance(payload, str):
+                text = payload if isinstance(payload, str) else call.result
+                facts.data_keys.update(DATA_KEY.findall(text))
+                facts.map_keys.update(MAP_KEY.findall(text))
                 continue
             for node in _walk(payload):
                 for key, value in node.items():
@@ -208,19 +287,22 @@ class Facts:
                         continue
                     if key == "map" or MAP_KEY.fullmatch(value):
                         facts.map_keys.add(value)
-                    elif DATA_KEY.fullmatch(value) and key in {"run", "key", "result", "spectrum_key"}:
+                    elif DATA_KEY.fullmatch(value) and key in {"run", "key", "result", "spectrum_key", "image_key"}:
                         facts.data_keys.add(value)
-                if "job_id" in node and isinstance(node.get("state"), str):
-                    facts.jobs[node["job_id"]] = {"device": _job_device(call, node["job_id"], facts.jobs), "state": node["state"]}
-                elif "job_id" in node and call.name in ("assemble_map", "score_map"):
-                    facts.jobs[node["job_id"]] = {"device": "analysis", "state": "queued"}
-                estimate = node.get("estimate")
-                if (call.name.endswith("_reserve") or call.name == "run_job") and isinstance(estimate, dict) and isinstance(estimate.get("max_dose_e_per_a2"), (int, float)):
-                    facts.dose_e_per_a2 += float(estimate["max_dose_e_per_a2"])
-            if isinstance(payload, str):
-                facts.data_keys.update(DATA_KEY.findall(payload))
-        facts.read_keys |= facts.data_keys | facts.map_keys
+                job_id = node.get("job_id")
+                if isinstance(job_id, str) and (_is_starter(call.name) or job_id in facts.jobs):
+                    previous = facts.jobs.get(job_id, {})
+                    state = node.get("state") if isinstance(node.get("state"), str) else previous.get("state", "queued")
+                    facts.jobs[job_id] = {"device": previous.get("device") or _device(call), "state": state}
+        facts.seen_keys |= facts.data_keys | facts.map_keys
         return facts
+
+    def active_jobs(self) -> dict[str, dict]:
+        """Jobs this run started that have not reached done, failed or aborted (as last reported)."""
+        return {j: v for j, v in self.jobs.items() if v["state"] in ACTIVE}
+
+    def produced(self) -> list[str]:
+        return sorted(self.map_keys | self.data_keys)
 
     def summary(self) -> str:
         parts = []
@@ -247,6 +329,10 @@ class Verdict:
         return "\n".join(f"- not yet: {r['why']}" for r in unmet)
 
 
+def _text_of(result) -> str:
+    return "".join(getattr(b, "text", "") for b in getattr(result, "content", []) or [])
+
+
 class GoalChecker:
     """Checks a goal's criteria against Facts, verifying keys on the live servers.
 
@@ -258,6 +344,7 @@ class GoalChecker:
     def __init__(self, instrument=None, analysis=None):
         self.instrument = instrument
         self.analysis = analysis
+        self._risks: dict[str, str] | None = None
 
     async def _ok(self, server, name: str, args: dict):
         if server is None:
@@ -267,6 +354,18 @@ class GoalChecker:
         except Exception:
             return False
         return None if result is None else (not result.is_error, result)
+
+    async def risks(self) -> dict[str, str] | None:
+        """The endpoint's tool risk table (endpoint_info), or None when it cannot be asked."""
+        if self._risks is None and self.instrument is not None:
+            opened = await self._ok(self.instrument, "endpoint_info", {})
+            if opened and opened[0]:
+                payload = getattr(opened[1], "structured_content", None) or _json(_text_of(opened[1])) or {}
+                self._risks = dict(payload.get("risks") or {}) or None
+        return self._risks
+
+    async def facts(self, calls: list[Call]) -> Facts:
+        return Facts.from_calls(calls, await self.risks())
 
     async def check(self, goal: Goal, facts: Facts, answer: str, seconds: float = 0.0) -> Verdict:
         results = []
@@ -283,17 +382,29 @@ class GoalChecker:
             over = f"{seconds:.0f} s is over the budget of {b.max_seconds:.0f} s"
         return Verdict(all(r["met"] for r in results) and not over, results, over)
 
+    async def stop_jobs(self, facts: Facts) -> list[Call]:
+        """Abort the jobs this run started that are still active (the run is over). Returns the calls made."""
+        made = []
+        for job_id, job in facts.active_jobs().items():
+            if job["device"] in ("analysis", "unknown") or self.instrument is None:
+                continue
+            args = {"request": json.dumps({"job_id": job_id})}
+            opened = await self._ok(self.instrument, f"{job['device']}_abort", args)
+            ok = bool(opened and opened[0])
+            made.append(Call(f"{job['device']}_abort", args, _text_of(opened[1]) if opened else "", not ok))
+        return made
+
     async def _check_job_done(self, c: dict, facts: Facts, answer: str):
         device = c.get("device", "Mapper")
         done = [j for j, v in facts.jobs.items() if v["device"].startswith(device) and v["state"] == "done"]
         if done:
             return True, f"{device} job {done[-1]} finished"
         seen = [f"{j} {v['state']}" for j, v in facts.jobs.items() if v["device"].startswith(device)]
-        return False, f"no {device} job reached state done ({', '.join(seen) or 'none started'})"
+        return False, f"no {device} job this run started reached state done ({', '.join(seen) or 'none started'})"
 
     async def _check_map(self, c: dict, facts: Facts, answer: str):
         if not facts.map_keys:
-            return False, "no stitched map was made (assemble_map on the run gives one)"
+            return False, "this run made no stitched map (the map job, or assemble_map on its run, gives one)"
         for key in sorted(facts.map_keys):
             opened = await self._ok(self.analysis, "map_info", {"map": key})
             if opened is False or (opened and not opened[0]):
@@ -308,12 +419,12 @@ class GoalChecker:
                 payload = getattr(listed[1], "structured_content", None)
                 payload = payload.get("result", payload) if isinstance(payload, dict) else payload
                 if payload is None:
-                    payload = _json("".join(getattr(b, "text", "") for b in getattr(listed[1], "content", []) or []))
+                    payload = _json(_text_of(listed[1]))
                 pois = payload if isinstance(payload, list) else []
             if len(pois) >= int(c["min_pois"]):
                 return True, f"map {key} has {len(pois)} {c.get('poi_kind', '')} points of interest".replace("  ", " ")
             return False, f"map {key} has {len(pois)} {c.get('poi_kind', '')} points of interest, {c['min_pois']} wanted (score_map adds them)".replace("  ", " ")
-        return False, f"the map keys from this run do not open: {sorted(facts.map_keys)}"
+        return False, f"the maps this run made do not open: {sorted(facts.map_keys)}"
 
     async def _check_data(self, c: dict, facts: Facts, answer: str):
         kind, wanted = c.get("data_kind"), int(c.get("count", 1))
@@ -325,17 +436,17 @@ class GoalChecker:
                 continue
             if not opened or not opened[0]:
                 continue
-            text = "".join(getattr(b, "text", "") for b in getattr(opened[1], "content", []) or [])
+            text = _text_of(opened[1])
             structured = getattr(opened[1], "structured_content", None) or {}
             kinds = {structured.get("kind")} | set(re.findall(r":\s*(\w+), shape", text)) | set(re.findall(r"\b(\w+)/:", text))
             if kind is None or kind in kinds or (kind == "spectrum" and ("spectra" in kinds or "spectrum_image" in kinds)) or (kind == "image" and ("tiles" in kinds or "image" in kinds)):
                 found.append(key)
         if len(found) >= wanted:
-            return True, f"{len(found)} {kind or 'data'} keys: {found[:3]}"
-        return False, f"{len(found)} {kind or 'data'} recorded in this run, {wanted} wanted"
+            return True, f"{len(found)} {kind or 'data'} keys this run made: {found[:3]}"
+        return False, f"{len(found)} {kind or 'data'} recorded in this run, {wanted} wanted (data found by listing or reading does not count)"
 
     async def _check_no_unrequested(self, c: dict, facts: Facts, answer: str):
-        allow = c.get("allow") or DEFAULT_ALLOW
+        allow = c["allow"] if "allow" in c else DEFAULT_ALLOW
         extra = [n for n in facts.high_risk if not any(fnmatch.fnmatchcase(n, p) for p in allow)]
         if extra:
             return False, f"instrument actions the goal did not need: {sorted(set(extra))}"
@@ -343,7 +454,7 @@ class GoalChecker:
 
     async def _check_grounded_answer(self, c: dict, facts: Facts, answer: str):
         named = set(DATA_KEY.findall(answer)) | set(MAP_KEY.findall(answer))
-        invented = sorted(k for k in named if k not in facts.read_keys)
+        invented = sorted(k for k in named if k not in facts.seen_keys)
         if invented:
-            return False, f"the answer names keys no tool returned: {invented[:5]}"
-        return True, "the answer names only real keys"
+            return False, f"the answer names keys no server returned in this run: {invented[:5]}"
+        return True, "the answer names only keys the servers returned"

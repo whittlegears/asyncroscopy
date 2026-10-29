@@ -6,6 +6,7 @@ min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [eds, edx, spectrum, spectra, composition, element, elements, chemistry, x-ray]
 requires: [Mapper*_reserve, view_data]
+acts: true
 tools: [run_job, wait_for_job, view_data, list_data, add_poi]
 ---
 

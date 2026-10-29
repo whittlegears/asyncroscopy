@@ -39,11 +39,19 @@ from langchain_core.messages import SystemMessage
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
 from asyncroscopy.skills import select_skills, skills_text
-from asyncroscopy.skills.registry import list_skills, usable_by
+from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS, list_skills, read_only_request, usable_by
 
 ASKS_ABOUT_DATA = re.compile(r"\b(?:what is in|look at|inspect|show me|analy[sz]e|peaks?|elements?|composition|latest (?:image|spectrum|data))\b", re.I)
-ASKS_FOR_REGIONS = re.compile(r"interesting|notable|unusual|regions?|features?|where to look", re.I)
+ASKS_FOR_REGIONS = re.compile(r"\b(?:\d+|three|two|five|the) (?:most )?(?:interesting|notable|unusual) (?:regions?|areas?|features?|spots?)\b|\bregions? of interest\b|\bwhere to look\b", re.I)
 MAX_APPLIED = 4  # skills one run may carry (the text budget applies on top)
+# The middleware adds a node before every model call, so one tool round (model, tools, this node) is
+# three graph steps: graphs size their recursion limits with recursion_limit(tool_rounds).
+STEPS_PER_TOOL_ROUND = 3
+
+
+def recursion_limit(tool_rounds: int) -> int:
+    """The LangGraph recursion limit that lets an agent with this middleware make ``tool_rounds`` tool calls."""
+    return STEPS_PER_TOOL_ROUND * tool_rounds + 3
 
 
 class SkillState(AgentState):
@@ -60,15 +68,20 @@ def _request(messages) -> str:
 
 
 def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
-    """The skills that apply to a conversation so far, in the order they first applied, each with why."""
-    usable = {s.name for s in list_skills(endpoint_tools or agent_tools) if usable_by(s, agent_tools)}
+    """The skills that apply to a conversation so far, in the order they first applied, each with why.
+
+    A request that only asks about data (``read_only_request``) never gets a skill that acts,
+    whatever comes back later: a map key in a reply must not lead to a new map.
+    """
+    request = _request(messages)
+    read_only = read_only_request(request)
+    usable = {s.name for s in list_skills(endpoint_tools or agent_tools) if usable_by(s, agent_tools) and not (read_only and s.acts)}
     applied: list[dict] = []
 
     def add(name: str, reason: str) -> None:
         if name in usable and len(applied) < MAX_APPLIED and all(a["skill"] != name for a in applied):
             applied.append({"skill": name, "reason": reason})
 
-    request = _request(messages)
     for skill in select_skills(request, agent_tools, endpoint_tools):
         add(skill.name, "matches the request")
     if ASKS_ABOUT_DATA.search(request):
@@ -99,6 +112,14 @@ class SkillMiddleware(AgentMiddleware):
         self.agent_tools = set(agent_tools)
         self.endpoint_tools = set(endpoint_tools or agent_tools)
         self.memory = memory
+        self._notes: dict[str, str] = {}  # memory notes per request: read once per run, not per model call
+
+    def _notes_for(self, request: str) -> str:
+        if self.memory is None:
+            return ""
+        if request not in self._notes:
+            self._notes[request] = self.memory(request) or ""
+        return self._notes[request]
 
     def _update(self, state) -> dict[str, Any] | None:
         applied = skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
@@ -114,14 +135,14 @@ class SkillMiddleware(AgentMiddleware):
     def _prompted(self, request):
         state = request.state
         applied = state.get("skills_applied") or skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
-        text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools)
+        notes = self._notes_for(_request(state["messages"]))
+        # One budget for skills and notes together: the prompt, tools and history share an 8k context.
+        text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools, budget=max(2000, PROMPT_BUDGET_CHARS - len(notes)))
         prompt = self.base_prompt
         if text:
             prompt += "\n\nSkills for this task (follow them):\n" + text
-        if self.memory is not None:
-            notes = self.memory(_request(state["messages"]))
-            if notes:
-                prompt += "\n\nNotes from earlier work on this instrument:\n" + notes
+        if notes:
+            prompt += "\n\nNotes from earlier work on this instrument (keys in them are from earlier runs, not this one):\n" + notes
         tools = request.tools if cut else [t for t in request.tools if getattr(t, "name", None) != "load_skill"]
         return request.override(system_message=SystemMessage(prompt), tools=tools)
 
