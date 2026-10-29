@@ -35,10 +35,11 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --dev
+        # The agent and ollama extras carry the agent code's dependencies; without them those tests cannot import.
+        run: uv sync --extra dev --extra agent --extra ollama --python 3.12
 
       # - name: Lint with ruff
       #   run: uv run ruff check .
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run --no-sync pytest -q -m "not slow" -rs

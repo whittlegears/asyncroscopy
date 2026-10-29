@@ -9,6 +9,13 @@ instrument:
 # Support device servers. class_name defaults to the key upper-cased
 # (camera -> CAMERA); add `class_name:` to a device only to override that.
 devices:
+  # The approval gate for agents on real hardware: starts in approve mode, so a person answers every
+  # high-risk call until they switch it to auto (SciAgentGUI's "Ask first" switch).
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
+    properties:
+      default_mode: approve
   aperture:
     class_name: AutoScriptAPERTURE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript

@@ -51,6 +51,20 @@ class Config:
     mcp: MCPConfig
 
 
+def _approvals_address(mcp: dict, path) -> str:
+    """The agent endpoint's approvals device. Without one every high-risk call runs unasked, so an agent
+    endpoint must name one (mcp.safety.approvals_device_address) or say allow_ungated: true on purpose."""
+    safety = mcp.get('safety') or {}
+    address = str(safety.get('approvals_device_address') or '')
+    if not address and str(mcp.get('endpoint_role', 'agent')) == 'agent' and safety.get('allow_ungated') is not True:
+        raise ValueError(
+            f"{path}: this agent endpoint names no approvals device, so agents could move hardware with no way for a person to hold a call. "
+            "Add the Approvals device to the run_servers config and set mcp.safety.approvals_device_address: asyncroscopy/approvals/default, "
+            "or, for a simulator only, mcp.safety.allow_ungated: true."
+        )
+    return address
+
+
 def _require(mapping: dict, key: str, where: str):
     if not isinstance(mapping, dict) or key not in mapping:
         raise KeyError(f"Config section '{where}' is missing required key '{key}'")
@@ -90,7 +104,7 @@ def load_config(path: Path) -> Config:
             include_only_functions=list(mcp.get('include_only_functions', [])),
             tool_log=str(mcp.get('tool_log') or ''),
             endpoint_role=str(mcp.get('endpoint_role', 'agent')),
-            approvals_device_address=str((mcp.get('safety') or {}).get('approvals_device_address') or ''),
+            approvals_device_address=_approvals_address(mcp, path),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             trace=str(mcp.get('trace') or ''),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),

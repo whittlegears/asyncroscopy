@@ -56,4 +56,6 @@ The mode is saved to the Approvals device's `mode_file` (default `outputs/approv
 
 If the `Approvals` device cannot be reached, high-risk agent calls are refused (the server cannot tell whether a person must approve) and low-risk calls still run.
 
+An agent endpoint must name its Approvals device (`mcp.safety.approvals_device_address`); `run_mcp.py` refuses to start one that does not, unless its config says `mcp.safety.allow_ungated: true` (for a simulator). The hardware configs (`Spectra300.yaml`, `Spectra300eels.yaml`, `covalent-*.yaml`) start their Approvals device with `default_mode: approve`, so on real hardware every high-risk agent call waits for a person until someone switches to `auto`.
+
 **Before an unattended agent run on a real instrument, switch to `approve`.** `auto` is the default so the digital twin and hackathon setups work with no extra steps.

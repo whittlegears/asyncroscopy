@@ -30,6 +30,12 @@ mcp:
   # wait_for_job also waits on assemble_map and score_map jobs; agents read this
   # address from the endpoint (endpoint_info). Empty: no analysis server.
   analysis_url: http://127.0.0.1:8003/mcp
+  # The approval gate. The hardware run_servers configs start an Approvals device in approve mode,
+  # so every high-risk agent call waits for a person (SciAgentGUI's chat, or the operator endpoint).
+  # This endpoint listens on 0.0.0.0: keep the gate on whenever other machines can reach it.
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    risk: {}
   # run_job refuses a plan whose estimate is over these (the agent must ask the user).
   job_limits:
     max_duration_s: 14400
