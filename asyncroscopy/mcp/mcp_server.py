@@ -813,6 +813,12 @@ class MCPServer:
         """Skills: procedures for kinds of experiment (e.g. mapping). Load one with load_skill before doing that kind of task."""
         return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in self._skills()]
 
+    def _load_skill_description(self) -> str:
+        """load_skill's description with the skill names this endpoint offers, so a model need not call list_skills first."""
+        names = [s.name for s in self._skills() if s.available]
+        listed = f" Skills here at startup: {', '.join(names)} (list_skills has descriptions and any learned since)." if names else ""
+        return (self.load_skill.__doc__ or "").strip() + listed
+
     @tool()
     def load_skill(self, name: str) -> str:
         """Full instructions of one skill from list_skills. Follow them for that kind of task."""
@@ -1344,6 +1350,8 @@ class MCPServer:
                 pass  # unknown: the events leave it out
         self._native_names = {getattr(t, "__name__", getattr(t, "name", "")) for t in native_tools}
         for native_tool in native_tools:
+            if native_tool == self.load_skill:
+                native_tool = Tool.from_function(self.load_skill, description=self._load_skill_description())
             self.mcp.add_tool(native_tool)
             if self.verbose:
                 print(f"Registered native tool: {native_tool.__name__}")

@@ -580,7 +580,7 @@ class TestMCPRegistration:
         calls = []
 
         def record_tool(method):
-            calls.append(method.__name__)
+            calls.append(getattr(method, "name", None) or method.__name__)  # load_skill is added as a Tool (its description names the skills)
 
         monkeypatch.setattr(server.mcp, "add_tool", record_tool)
         monkeypatch.setattr(server, "_find_tools", lambda: {})
