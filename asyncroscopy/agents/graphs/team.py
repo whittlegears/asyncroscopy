@@ -39,7 +39,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
 from asyncroscopy.agents.guards import JobWaitMiddleware
 from asyncroscopy.agents.graphs import run_keeping_partial
-from asyncroscopy.agents.graphs.general import is_stem_endpoint
+from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import SkillMiddleware, recursion_limit
 

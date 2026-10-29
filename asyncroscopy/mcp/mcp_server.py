@@ -793,7 +793,9 @@ class MCPServer:
 
     @tool()
     def endpoint_info(self) -> dict[str, Any]:
-        """For agent programs, not models: each tool's risk as the approval gate sees it, the job devices and the analysis server."""
+        """For agent programs, not models: each tool's risk as the approval gate sees it, the job devices, the
+        analysis server, and agent_tools: globs of the tools (here and on the analysis server) to give a model."""
+        from asyncroscopy.mcp.agent_tools import agent_tool_patterns
         from asyncroscopy.safety.policy import NATIVE_HIGH
 
         risks = dict(self.tool_risks)
@@ -805,6 +807,8 @@ class MCPServer:
             "stem_devices": sorted(self._stem_prefixes),
             "job_limits": self.job_limits,
             "risks": risks,
+            # The general agent's own selection (asyncroscopy.mcp.agent_tools), so other harnesses match it.
+            "agent_tools": agent_tool_patterns(self._all_tool_names(), bool(self.analysis_url)),
         }
 
     @tool()

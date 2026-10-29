@@ -12,7 +12,6 @@ errors with a request id, and the prompt says how to wait for them.
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import os
 
 from langchain.agents import create_agent
@@ -22,36 +21,13 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.guards import JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
+# Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
+from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model, is_stem_endpoint
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
 except ImportError:  # other providers load through init_chat_model
     pass
-
-# Tools every instrument endpoint and the pyTEMlib analysis server offer. Left out, from the trial
-# traces (benchmarks/results/tool_usage_analysis.md): calls that always come as a pair or are always
-# made first. run_job is reserve+start, wait_for_job also waits on analysis jobs and returns results,
-# and the skills are put in the prompt (load_skill is shown to the model only while one does not fit).
-GENERIC_TOOLS = [
-    "approval_status", "run_job", "wait_for_job", "list_devices", "list_data", "view_data",
-    "assemble_map", "score_map", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
-]
-# A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
-STEM_TOOLS = [
-    "*_get_stage", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
-    "*_set_fov", "*_get_fov", "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam", "Mapper*_abort",
-]
-DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
-# Only when the instrument endpoint has no mcp.analysis_url (so wait_for_job cannot wait on stitching
-# and scoring jobs) does an agent need the analysis server's own wait and results tools.
-ANALYSIS_WAITS = ["analysis_job_status", "analysis_job_results"]
-NOT_FOR_MODELS = ("list_skills", "endpoint_info")
-# An endpoint is a STEM when one device both scans images and blanks a beam (an AFM scans too),
-# or it has a Mapper: move_stage, set_fov and the like are common to many instruments.
-def is_stem_endpoint(names: set[str]) -> bool:
-    return any(fnmatch.fnmatch(n, "Mapper*_reserve") for n in names) or any(
-        n.endswith("_acquire_scanned_image") and f"{n[: -len('_acquire_scanned_image')]}_blank_beam" in names for n in names
-    )
 
 SYSTEM = """You operate a laboratory instrument (or its digital twin) through tools.
 
@@ -90,19 +66,16 @@ async def make_graph(config: dict | None = None):
     env_tools = [p.strip() for p in os.environ.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()]
     chosen = configurable.get("tools") or env_tools
     # Whether this is a STEM, and which skills apply, depend on the whole endpoint, not the curated subset.
-    offered = {t.name for t in await agent_config.tools(allow=["*"])}
-    defaults = DEFAULT_TOOLS if (await agent_config.info()).get("analysis_url") else DEFAULT_TOOLS + ANALYSIS_WAITS
-    tools = await agent_config.tools(allow=chosen or defaults)
-    stem = is_stem_endpoint(offered)
+    every = await agent_config.tools(allow=["*"])
+    offered = {t.name for t in every}
+    own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
+    stem = is_stem_endpoint(own)
+    # load_skill stays in, so the middleware can show it while a matched skill does not fit.
+    patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen)
+    tools = [t for t in every if for_model(t.name, patterns)]
     if not chosen and not stem:
-        # The analysis server's tools stitch and score STEM maps; another instrument gets its own tools only.
-        tools = [t for t in await agent_config.tools(include_analysis=False, allow=["*"]) if not t.name.endswith(("_State", "_Status"))]
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
-    # Skills come to the agent (it need not list them); endpoint_info is for agent programs, not models.
-    tools = [t for t in tools if t.name not in NOT_FOR_MODELS]
-    # load_skill stays registered so the middleware can show it while a matched skill does not fit.
-    tools += [t for t in await agent_config.tools(allow=["load_skill"]) if t.name not in {u.name for u in tools}]
     print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")
     template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
     names = {t.name for t in tools}
