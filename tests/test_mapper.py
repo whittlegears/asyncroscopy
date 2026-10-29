@@ -234,3 +234,41 @@ class TestRunFileName:
         path, note = Mapper._finalize_run_file(stub, job)
         assert path == tmp_path / "map_r.h5" and path.read_bytes() == b"tiles"
         assert "copied" in note
+
+
+def test_a_release_naming_the_reservation_bare_still_keeps_an_aborted_runs_tiles(mapper_proxy, mapping_twin_proxy):
+    reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "imsize": 256, "dwell_s": 2e-6}})
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    while call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["progress"]["done"] < 1:
+        time.sleep(0.01)
+    call(mapper_proxy, "abort", {"job_id": started["job_id"]})
+    working = Path(call(mapper_proxy, "results", {"job_id": started["job_id"]})["result_keys"]["run_file"])
+    assert json.loads(mapper_proxy.release(reserve["reservation_id"]))["state"] == "released"  # the id alone, as JobDevice accepts
+    final = working.with_name(working.name[: -len(".partial")])
+    assert final.exists() and not working.exists()
+
+
+def test_a_dose_budgeted_map_checks_the_current_again_at_start_and_on_resume(mapper_proxy, mapping_twin_proxy, monkeypatch):
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+
+    reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "dose_budget_e_per_a2": 1e6}})
+    budgeted = reserve["estimate"]["beam_current_pa"]
+    original = DigitalTwin._get_parameters
+
+    def raised(self):  # someone turned the current up after the plan was approved
+        parameters = json.loads(original(self))
+        parameters["beam_current_pa"] = budgeted * 2
+        return json.dumps(parameters)
+
+    monkeypatch.setattr(DigitalTwin, "_get_parameters", raised)
+    moves = len(json.loads(mapping_twin_proxy.export_ground_truth())["moves"])
+    for _attempt in ("start", "resume"):
+        started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+        status = wait(mapper_proxy, started["job_id"])
+        assert status["state"] == "failed" and "dose budget no longer holds" in status["last_error"]["message"], status
+        assert "above the" in status["last_error"]["message"] and status["progress"]["done"] == 0
+    assert len(json.loads(mapping_twin_proxy.export_ground_truth())["moves"]) == moves  # nothing moved
+    monkeypatch.setattr(DigitalTwin, "_get_parameters", original)
+    resumed = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    assert wait(mapper_proxy, resumed["job_id"])["state"] == "done"
+    release_all(mapper_proxy, reserve["reservation_id"])

@@ -26,9 +26,10 @@ performed)``; the job device writes it to the Instrument Trace with
 
 from __future__ import annotations
 
+from fnmatch import fnmatchcase
 from typing import Any, Callable
 
-from asyncroscopy.safety.policy import is_read_only
+from asyncroscopy.safety.policy import check_overrides, is_read_only
 
 DRY_RUN_PLACEHOLDER = "dry_run:not_performed"
 # Commands that really run in a dry run: blanking only makes the instrument safer.
@@ -62,8 +63,20 @@ class DryRunRefused(AttributeError):
 
 
 def is_read_command(name: str, dev_class: str = "", risk_overrides: dict[str, str] | None = None) -> bool:
-    """A command a dry run passes through: read-only by the safety policy, or one of the envelope's reads."""
-    return name.lower() in READ_COMMANDS or is_read_only(dev_class, name, risk_overrides)
+    """A command a dry run passes through: read-only by the safety policy, or one of the envelope's reads.
+
+    An override marking it high wins, written as "Class.command" or as the MCP tool name "Class_command"
+    (mcp.safety.risk takes both). When the device's class is unknown ("") and any override is high, a
+    read is recorded rather than risk passing through one the deployment marked high.
+    """
+    if name.lower() in READ_COMMANDS:
+        return True
+    high = [p.lower() for p, level in check_overrides(risk_overrides).items() if level == "high"]
+    if high and not dev_class:
+        return False
+    if any(fnmatchcase(f"{dev_class}_{name}".lower(), pattern) for pattern in high):
+        return False
+    return is_read_only(dev_class, name, risk_overrides)
 
 
 class RecordingProxy:

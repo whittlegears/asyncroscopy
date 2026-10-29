@@ -3,7 +3,10 @@
 ``auto`` (the default) lets every agent call through and the trace records
 that no person approved it. ``approve`` holds high-risk agent calls: the MCP
 server files a request here and refuses the call; once an operator approves,
-the same call (same tool, same arguments) succeeds once. Notebooks and
+the same call (same tool, same arguments) succeeds once, for the caller and
+agent run that asked: a request and its grant carry both (the token's subject
+when the endpoint checks tokens), and ``check`` matches them. A request or a
+check that names neither still pairs with one that names neither. Notebooks and
 scripts talk to Tango directly and are never held.
 
 On a stack that is not simulated (``simulated`` property, from run_servers'
@@ -40,6 +43,11 @@ AUTO_ON_HARDWARE = (
 def fingerprint(action: str, arguments) -> str:
     canonical = json.dumps(arguments, sort_keys=True, default=str)
     return hashlib.sha256(f"{action}\n{canonical}".encode()).hexdigest()[:16]
+
+
+def _who(body: dict) -> tuple:
+    """The caller and agent run a request or a check names (None for either it leaves out)."""
+    return (body.get("caller") or None, body.get("run") or None)
 
 
 def starting_mode(configured: str, saved: str) -> str:
@@ -165,7 +173,7 @@ class Approvals(Device):
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "reason": "..."}.')
     def request(self, request: str) -> str:
-        """File a request for a held call; the same pending call returns the same request id."""
+        """File a request for a held call; the same pending call from the same caller and run returns the same request id."""
         body = self._load(request)
         action = str(body.get("action", ""))
         if not action:
@@ -174,7 +182,8 @@ class Approvals(Device):
         with self._lock:
             self._expire()
             for existing in self._requests.values():
-                if existing["fingerprint"] == key and existing["state"] == "pending":
+                # Another caller's identical call is its own request: an approval must never cover someone else.
+                if existing["fingerprint"] == key and existing["state"] == "pending" and _who(existing) == _who(body):
                     return json.dumps({"request_id": existing["request_id"], "state": "pending"})
             request_id = uuid.uuid4().hex[:12]
             self._requests[request_id] = {
@@ -219,7 +228,10 @@ class Approvals(Device):
             if req is None or req["state"] != "pending":
                 raise ValueError(f"request {body.get('request_id')!r} is not pending")
             grant_id = uuid.uuid4().hex[:12]
-            self._grants[grant_id] = {"grant_id": grant_id, "fingerprint": req["fingerprint"], "action": req["action"], "request_id": req["request_id"], "who": body.get("who"), "created": time.time(), "used": False}
+            self._grants[grant_id] = {
+                "grant_id": grant_id, "fingerprint": req["fingerprint"], "action": req["action"], "request_id": req["request_id"],
+                "who": body.get("who"), "caller": req.get("caller"), "run": req.get("run"), "created": time.time(), "used": False,
+            }
             req.update(state="approved", grant_id=grant_id, decided_by=body.get("who"))
         self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "grant_id": grant_id, "state": "approved"})
@@ -237,15 +249,15 @@ class Approvals(Device):
         self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "..."}.')
     def check(self, request: str) -> str:
-        """Use an unused grant for exactly this call, if one exists. Called by the MCP server."""
+        """Use an unused grant for exactly this call from the caller and run it was asked for, if one exists. Called by the MCP server."""
         body = self._load(request)
         key = fingerprint(str(body.get("action", "")), body.get("arguments"))
         with self._lock:
             self._expire()
             for grant in self._grants.values():
-                if grant["fingerprint"] == key and not grant["used"]:
+                if grant["fingerprint"] == key and not grant["used"] and _who(grant) == _who(body):
                     grant["used"] = True
                     grant["used_at"] = time.time()
                     return json.dumps({"allowed": True, "grant_id": grant["grant_id"], "approved_by": grant["who"], "request_id": grant["request_id"]})

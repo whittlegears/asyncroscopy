@@ -10,13 +10,39 @@ Put `"dry_run": true` in the plan:
 run_job(device="Mapper", plan={"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "dry_run": True})
 ```
 
-Any job device takes it. `JobDevice` removes it from the plan before the device sees the plan. It is part of the plan, not the start request, for three reasons:
+`JobDevice` removes it from the plan before the device sees the plan. It is part of the plan, not the start request, for three reasons:
 
 - it is fixed at `reserve`;
 - the operator sees it (`get_reservation` starts with `"dry_run": true`);
 - a resume keeps it.
 
 A start request whose `dry_run` disagrees with the reservation is refused, so a rehearsal never turns into a real run. A dry-run `start` goes through the approval gate like a real start: in `approve` mode it waits for a person.
+
+## Which job devices take a dry run
+
+Only a device whose class sets `SUPPORTS_DRY_RUN = True`. Any other device refuses a dry-run plan at `reserve` with the error code `dry_run_unsupported`, naming itself, and reserves nothing. A dry run never half-works: a device that cannot rehearse says so before anything is held.
+
+| Device | Dry run |
+| :-- | :-- |
+| Mapper | yes: moves are recorded and checked, acquisitions and their analysis skipped |
+| IndentGrid (the worked example) | yes: moves and indents are recorded, no hardness is computed |
+| Tuner | no: every measurement reads an image or a corrector reply |
+| YAML instrument jobs | no: their steps drive the simulator directly, not through `proxy()`, so nothing would be recorded |
+
+In a dry run every recorded command returns the placeholder `"dry_run:not_performed"`, never what the instrument would have answered. A step that parses a reply (`json.loads(indenter.indent(...))`) breaks on it. To support dry runs, write each step so it records the call and skips the analysis, as `IndentGrid.run_step` does:
+
+```python
+def run_step(self, job, index):
+    step = job["steps"][index]
+    indenter = self._indenter()                      # self.proxy(...): records in a dry run
+    indenter.move_xy([step["x"], step["y"]])
+    reply = indenter.indent(job["resolved_plan"]["load_n"])
+    if job.get("dry_run"):                           # recorded, not made: nothing to analyse
+        return {"index": index, "x_m": step["x"], "y_m": step["y"], "indent": "skipped (dry run)"}
+    return {"index": index, "x_m": step["x"], "y_m": step["y"], **json.loads(reply)}
+```
+
+Then set `SUPPORTS_DRY_RUN = True` on the class, make `summary` cope with records that lack the analysed fields, and add a test that runs a dry-run job to `done` and shows the instrument did not move.
 
 ## What a dry run does
 
@@ -29,6 +55,8 @@ Inside the job's worker, `JobDevice.proxy()` returns a `RecordingProxy` (`asyncr
 | An AFM's `retract_tip` (and any other profile's safe-state command) | recorded, **not sent**: a dry run leaves the tip where it is, since retracting would disturb a tip someone may be using |
 | Every other command (`move_stage`, `unblank_beam`, `acquire_*`, `set_fov`, ...), every attribute write, and the DeviceProxy write methods (`write_attribute*`, `set_attribute_config`, `poll_attribute`, `write_pipe`, properties) | recorded in the trace, **not sent** |
 | Any other DeviceProxy method | refused (`DryRunRefused`): an unlisted method is assumed to write |
+
+Commands marked high in the MCP config's `mcp.safety.risk` are recorded even when their name says they only read: an SPM `get_image` that scans the tip is not run. The MCP server passes its high patterns with every reserve (`risk_overrides` in the request), and the job keeps them for its dry run, a resume included. A pattern may be written `Class.command` or as the tool name `Class_command`. A job reserved straight over Tango without them falls back to the naming convention alone.
 
 Each recorded call is an Instrument Trace event marked `dry_run: true`, with `performed`, `device`, `arguments` and `check`. The job device checks each call with `check_dry_call`. The Mapper checks every `move_stage`: the image it is for must lie inside the plan box (`check.inside_box`). A failed check makes the event `ok: false` and is counted in `results`. Every other event of the job (reserve, steps, end) also carries `dry_run: true`.
 
