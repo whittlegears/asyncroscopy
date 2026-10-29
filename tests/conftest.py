@@ -127,6 +127,21 @@ SPECIMEN_GOLDEN_PROPERTIES = {
 }
 
 
+# One instrument (MAPPING_TWIN_PROPERTIES), three specimens: tests/test_specimens.py runs the same Mapper
+# plan on each. Flat properties, because this test database cuts property values at ":".
+SPECIMENS_DIR = Path(__file__).resolve().parents[1] / "configs" / "specimens"
+SPECIMEN_TWINS = {
+    "procedural": {"specimen_source": "procedural"},
+    "crystal": {"specimen_source": "crystal"},
+    "recorded": {
+        "specimen_source": "recorded",
+        "specimen_path": prop_path(SPECIMENS_DIR / "recorded_example_haadf.png"),
+        "specimen_pixel_size_m": 1.5625e-9,
+        "specimen_labels_path": prop_path(SPECIMENS_DIR / "recorded_example_labels.json"),
+    },
+}
+
+
 @pytest.fixture(scope="session")
 def data_save_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("data-acquisitions")
@@ -159,6 +174,7 @@ def tango_ctx(data_save_dir, job_dir):
                 {"name": "asyncroscopy/scan/drift", "properties": {}},
                 {"name": "asyncroscopy/scan/livedrift", "properties": {}},
                 {"name": "asyncroscopy/scan/tuner", "properties": {}},
+                *({"name": f"asyncroscopy/scan/specimen_{source}", "properties": {}} for source in SPECIMEN_TWINS),
             ],
         },
         {
@@ -190,6 +206,7 @@ def tango_ctx(data_save_dir, job_dir):
                 {"name": "asyncroscopy/stage/parity", "properties": {}},
                 {"name": "asyncroscopy/stage/drift", "properties": {}},
                 {"name": "asyncroscopy/stage/livedrift", "properties": {}},
+                *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": {}} for source in SPECIMEN_TWINS),
             ],
         },
         {
@@ -303,6 +320,21 @@ def tango_ctx(data_save_dir, job_dir):
                     "name": "asyncroscopy/digitaltwin/specimen_golden",
                     "properties": {"acquisition_save_directory": prop_path(data_save_dir), **SPECIMEN_GOLDEN_PROPERTIES},
                 },
+                # tests/test_specimens.py: one instrument, three specimens, the same Mapper plan on each.
+                *(
+                    {
+                        "name": f"asyncroscopy/digitaltwin/specimen_{source}",
+                        "properties": {
+                            "scan_device_address": f"asyncroscopy/scan/specimen_{source}",
+                            "stage_device_address": f"asyncroscopy/stage/specimen_{source}",
+                            "eds_device_address": "asyncroscopy/eds/default",
+                            "acquisition_save_directory": prop_path(data_save_dir),
+                            **MAPPING_TWIN_PROPERTIES,
+                            **specimen,
+                        },
+                    }
+                    for source, specimen in SPECIMEN_TWINS.items()
+                ),
                 {
                     # tests/test_tuner.py: a dense particle sample on a thin film, with a height gradient
                     # (focus changes across the stage) and dose tracking; each test injects its own hidden
@@ -381,6 +413,23 @@ def tango_ctx(data_save_dir, job_dir):
                         "eds_dose_spread_m": 1e-8,
                     },
                 },
+                *(
+                    {
+                        "name": f"asyncroscopy/mapper/specimen_{source}",
+                        "properties": {
+                            "microscope_device_address": f"asyncroscopy/digitaltwin/specimen_{source}",
+                            "scan_device_address": f"asyncroscopy/scan/specimen_{source}",
+                            "eds_device_address": "asyncroscopy/eds/default",
+                            "stage_device_address": f"asyncroscopy/stage/specimen_{source}",
+                            "output_directory": prop_path(job_dir / "specimen" / source / "maps"),
+                            "state_directory": prop_path(job_dir / "specimen" / source / "state"),
+                            "trace_path": prop_path(job_dir / "specimen" / source / "trace.jsonl"),
+                            "estimate_move_s": 1.0,
+                            "simulated": True,
+                        },
+                    }
+                    for source in SPECIMEN_TWINS
+                ),
                 {
                     # Maps of the drifting twin below, for the one-time-source tests (test_dry_run_and_clock.py).
                     "name": "asyncroscopy/mapper/drift",

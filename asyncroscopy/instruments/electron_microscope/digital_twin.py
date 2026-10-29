@@ -31,7 +31,6 @@ from asyncroscopy.instruments.electron_microscope.twin import (
     DoseMap,
     EdsParams,
     EventRng,
-    SampleModel,
     SampleParams,
     ScanParams,
     SimClock,
@@ -53,6 +52,7 @@ from asyncroscopy.instruments.electron_microscope.twin.render import (
     RenderParams,
 )
 from asyncroscopy.instruments.electron_microscope.twin.sample_model import ELEMENTS
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.instruments.electron_microscope.twin.scan_distortion import frame_time
 
 __all__ = ["DEFAULT_ACQUISITION_DIR", "DigitalTwin"]
@@ -77,6 +77,13 @@ def _limit(value) -> float | None:
 class DigitalTwin(AtomisticDigitalTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
+    # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
+    # are the procedural source's settings and the other sources' defaults (seed, size, support, height).
+    specimen = _prop(str, "", "Specimen as a mapping (JSON or YAML), e.g. {source: recorded, path: ..., pixel_size_m: ...}; overrides the specimen_* properties.")
+    specimen_source = _prop(str, "procedural", "Specimen source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.")
+    specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
+    specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
+    specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
     # Sample (sample_seed, sample_particle_count, sample_size_xy come from the base class)
     particle_radius_mean = _prop(float, 1.6e-9, "Mean particle radius (m).")
     particle_radius_std = _prop(float, 0.2e-9, "Particle radius standard deviation (m).")
@@ -168,6 +175,16 @@ class DigitalTwin(AtomisticDigitalTwin):
         if bad:
             raise ValueError("digital twin configuration: " + "; ".join(bad))
 
+    def _specimen_options(self) -> dict:
+        """The specimen_* flat properties, overridden by the ``specimen`` mapping."""
+        mapping = parse_specimen(str(self.specimen or ""))
+        options: dict = {"source": str(mapping.get("source") or self.specimen_source or "procedural").strip()}
+        if options["source"] == "recorded":  # the flat shorthands are the recorded source's options
+            path, pixel, labels = str(self.specimen_path or "").strip(), float(self.specimen_pixel_size_m or 0.0), str(self.specimen_labels_path or "").strip()
+            options.update({k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v})
+        options.update(mapping)
+        return options
+
     def _generate_sample(self, seed: int) -> None:
         self._check_properties()
         self._rng = EventRng(int(seed))
@@ -176,27 +193,29 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._moving_until = 0.0  # monotonic time a long move ends (see _move_stage)
         self._acquisitions: list[dict] = []
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
-        self._sample = SampleModel(
-            SampleParams(
-                size_xy_m=float(self.sample_size_xy),
-                particle_count=int(self.sample_particle_count),
-                radius_mean_m=float(self.particle_radius_mean),
-                radius_std_m=float(self.particle_radius_std),
-                aspect_ratio=float(self.particle_aspect_ratio),
-                elements=elements,
-                support_thickness_m=float(self.support_thickness),
-                height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
-                cluster_count=int(self.sample_cluster_count),
-                cluster_radius_m=float(self.sample_cluster_radius),
-                cluster_fraction=float(self.sample_cluster_fraction),
+        # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
+        # is the instrument, which only asks the specimen for weights, densities, heights and features.
+        self._specimen = build_specimen(
+            self._specimen_options(),
+            SpecimenContext(
+                rng=self._rng,
+                sample=SampleParams(
+                    size_xy_m=float(self.sample_size_xy),
+                    particle_count=int(self.sample_particle_count),
+                    radius_mean_m=float(self.particle_radius_mean),
+                    radius_std_m=float(self.particle_radius_std),
+                    aspect_ratio=float(self.particle_aspect_ratio),
+                    elements=elements,
+                    support_thickness_m=float(self.support_thickness),
+                    height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
+                    cluster_count=int(self.sample_cluster_count),
+                    cluster_radius_m=float(self.sample_cluster_radius),
+                    cluster_fraction=float(self.sample_cluster_fraction),
+                ),
             ),
-            self._rng,
         )
-        if len(self._sample) < self._sample.requested_count:
-            self.warn_stream(
-                f"Placed {len(self._sample)} of {self._sample.requested_count} particles: the rest do not fit in "
-                f"{float(self.sample_size_xy):.2e} m. Increase sample_size_xy or reduce the count or radius."
-            )
+        for warning in self._specimen.warnings():
+            self.warn_stream(warning)
         self._stage = StageModel(
             StageParams(
                 bias_m=(float(self.stage_bias_x), float(self.stage_bias_y)),
@@ -214,7 +233,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             self._clock,
         )
         self._renderer = Renderer(
-            self._sample,
+            self._specimen,
             RenderParams(
                 z_exponent=float(self.haadf_z_exponent),
                 haadf_scale=float(self.haadf_scattering_scale),
@@ -245,7 +264,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             dead_time_s=float(self.eds_dead_time),
             voltage_v=float(self.acceleration_voltage),
         )
-        x_min, x_max, y_min, y_max = self._sample.bounds
+        x_min, x_max, y_min, y_max = self._specimen.bounds
         self._dose = DoseMap(
             DoseParams(
                 enabled=bool(self.dose_tracking),
@@ -254,7 +273,7 @@ class DigitalTwin(AtomisticDigitalTwin):
                 contamination_dose_e_per_a2=float(self.contamination_dose),
                 damage_critical_dose_e_per_a2=float(self.damage_critical_dose),
             ),
-            self._sample.bounds,
+            self._specimen.bounds,
             margin_m=(x_max - x_min) * 0.25,
         )
         self._blanked = False
@@ -270,7 +289,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         # The atom-renderer state of the base class is unused here.
         self._particle_records_base = []
         self._particle_records_view = []
-        self._all_sample_elements = sorted(set(elements))
+        self._all_sample_elements = sorted(set(self._specimen.element_symbols))
         self._world_bounds_ang = {
             "x_min": x_min / ANGSTROM,
             "x_max": x_max / ANGSTROM,
@@ -422,7 +441,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         """The column's effective C1 at the beam position (specimen height included) and its A1, in metres."""
         ab = self._aberrations()
         x, y = (float(v) for v in self._stage.true[:2] + self._image_shift)
-        c1 = ab.get("C10", 0.0) * 1e-9 - float(self._sample.height_at(x, y))
+        c1 = ab.get("C10", 0.0) * 1e-9 - float(self._specimen.height_at(x, y))
         a1 = [ab.get("C12a", 0.0) * 1e-9, ab.get("C12b", 0.0) * 1e-9]
         return {
             "c1_m": float(c1), "a1_m": a1, "a1_abs_m": float(np.hypot(*a1)),
@@ -522,15 +541,15 @@ class DigitalTwin(AtomisticDigitalTwin):
         detector = str(detector_list[0]).upper()
         xs, ys = frame["xs"], frame["ys"]
         cx, cy = float(xs.mean()), float(ys.mean())
-        visible = self._sample.in_box(float(xs.min()), float(xs.max()), float(ys.min()), float(ys.max()))
+        visible = self._specimen.in_box(float(xs.min()), float(xs.max()), float(ys.min()), float(ys.max()))
         fraction = self._renderer.render(
             xs,
             ys,
             frame["pixel_m"],
             detector,
             self._aberrations(),
-            support_angstrom=float(self.support_thickness) / ANGSTROM + self._dose.contamination_angstrom(cx, cy),
-            damage=self._dose.damage_factors(self._sample.centers, visible),
+            support_angstrom=self._support_angstrom(cx, cy),
+            damage=self._dose.damage_factors(self._specimen.feature_centers, visible),
         )
         rng = self._rng.for_event(f"detector_{detector}", frame["index"])
         params = replace(self._detector_params, beam_current_pa=self._beam_current_pa())
@@ -593,18 +612,17 @@ class DigitalTwin(AtomisticDigitalTwin):
             x, y = np.cos(a) * x - np.sin(a) * y, np.sin(a) * x + np.cos(a) * y
         return self._stage.true_xy_at(t) + np.array([x, y])
 
+    def _support_angstrom(self, x: float, y: float) -> float:
+        """Support film (the specimen's) plus contamination (the beam's doing) at a sample point, in angstrom."""
+        return float(self._specimen.support_thickness_m) / ANGSTROM + self._dose.contamination_angstrom(x, y)
+
     def _areal_density(self, xy: np.ndarray) -> dict[str, float]:
         """Atoms per square angstrom of each element along the beam at a sample point."""
-        density: dict[str, float] = {}
         x, y = float(xy[0]), float(xy[1])
-        for i in self._sample.in_box(x, x, y, y):
-            t = float(self._sample.thickness_at(int(i), np.array(x), np.array(y)))
-            if t > 0:
-                element = self._sample.elements[int(i)]
-                density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * t / ANGSTROM
-        support = float(self.support_thickness) / ANGSTROM + self._dose.contamination_angstrom(x, y)
+        density = dict(self._specimen.areal_density(x, y))
+        support = self._support_angstrom(x, y)
         if support > 0:
-            element = self._sample.params.support_element
+            element = self._specimen.support_element
             density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * support
         return density
 
@@ -691,6 +709,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["beam_current_age_s"] = 0.0  # always current: nothing on the twin drifts it between readings
         parameters["beam_blanked"] = self._blanked
         parameters["simulated"] = True  # read by the Mapper's dose check when the stack sets no `simulated` flag
+        parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 
     @command(dtype_out=str)
@@ -699,11 +718,15 @@ class DigitalTwin(AtomisticDigitalTwin):
 
         Blocked from agents in the MCP configs; tests and calibration scripts call it through Tango.
         """
+        specimen_truth = self._specimen.ground_truth()
         return json.dumps(
             {
                 "sample_seed": int(self.sample_seed),
-                "sample_bounds_m": list(self._sample.bounds),
-                "particles": self._sample.ground_truth(),
+                "sample_bounds_m": list(self._specimen.bounds),
+                # The particle list scorers compare against; empty when the source has none (a crystal
+                # film) or does not know them (a recorded image without labels: specimen.known is false).
+                "particles": specimen_truth.get("particles", []),
+                "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
                 "moves": [vars(m) for m in self._stage.history],
                 "acquisitions": self._acquisitions,
                 "simulated_time_s": self._clock.now(),
