@@ -28,7 +28,15 @@ def test_config_loads(path):
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if "instrument" in raw:
         config = _launcher("run_servers").load_config(path)
-        assert config.instrument.file.exists(), f"{path.name}: instrument file {config.instrument.file} missing"
+        if config.instrument.file is not None:
+            assert config.instrument.file.exists(), f"{path.name}: instrument file {config.instrument.file} missing"
+        else:  # given as module_name (load_config has checked it imports)
+            assert importlib.util.find_spec(config.instrument.module_name), f"{path.name}: {config.instrument.module_name} not importable"
+        yaml_path = config.instrument.properties.get("yaml_path")
+        if yaml_path:  # an instrument described in YAML: the file must load
+            from asyncroscopy.instruments.yaml_sim.spec import load_spec
+
+            load_spec(ROOT / yaml_path[0])
     elif "mcp" in raw:
         _launcher("run_mcp").load_config(path)
     elif "agent" in raw:

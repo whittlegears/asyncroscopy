@@ -15,11 +15,33 @@ import sidpy
 import tango
 
 from asyncroscopy.data import data as data_module
-from asyncroscopy.data.data import DATA, _acquisition_files, _catalog_database_uri, _read_directory, _registered_file
+from asyncroscopy.data.data import (
+    DATA,
+    KeyCollision,
+    RegistrationTimeout,
+    _acquisition_files,
+    _catalog_database_uri,
+    _live_owner,
+    _read_directory,
+    _reconcilable,
+    _registered_file,
+)
 from asyncroscopy.data.tiled_client import TiledUnavailable
 
 # A local port nothing listens on, so no test reaches a running Tiled.
 CLOSED_PORT = 9
+
+
+@pytest.fixture(autouse=True)
+def no_supervisor_left_running(monkeypatch, request):
+    """Stop any supervisor a test started, before its monkeypatches are undone (it could otherwise start a real Tiled)."""
+    yield
+    if "data_proxy" in request.fixturenames:
+        request.getfixturevalue("data_proxy").stop_tiled_server()
+
+
+def tiled_answers(monkeypatch):
+    monkeypatch.setattr("asyncroscopy.data.tiled_client.about", lambda uri, timeout_s=2.0: {"api_version": 0, "library_version": "test"})
 
 
 class FakeProcess:
@@ -67,6 +89,8 @@ class FakeClient:
 
 
 def use_client(monkeypatch, client, skip=False, delay=0.0):
+    tiled_answers(monkeypatch)
+
     async def fake_register(_client, path, **kwargs):
         client.registered.append(path)
         time.sleep(delay)
@@ -211,6 +235,19 @@ class TestDataDevice:
         assert returned["tiled_server"] == "no"
         assert "the OS does not say which process" in returned["tiled_server_status"]
 
+    def test_a_tiled_another_live_stack_runs_on_the_same_path_is_refused_not_killed(self, data_proxy, monkeypatch, tmp_path) -> None:
+        data_proxy.port = CLOSED_PORT
+        data_proxy.save_path = str(tmp_path)
+        monkeypatch.setattr(DATA, "_tiled_alive", lambda self: True)
+        starter = SimpleNamespace(pid=900, name=lambda: "python.exe", cmdline=lambda: ["python", "startup_scripts/run_servers.py"], parent=lambda: None)
+        leftover = LeftoverTiled(monkeypatch, ["python", "-m", "tiled", "serve", "catalog", "c.db", "--read", str(tmp_path)], str(tmp_path), parent=starter)
+
+        returned = json.loads(data_proxy.start_tiled_server())
+
+        assert returned["tiled_server"] == "no"
+        assert "another Tiled serving this save path is running (pid 77, started by python.exe pid 900)" in returned["tiled_server_status"]
+        assert not leftover.terminated
+
     def test_a_tiled_left_from_an_earlier_run_on_the_same_path_is_replaced_by_a_supervised_one(self, data_proxy, monkeypatch, tmp_path) -> None:
         # The leftover's --read is relative: it is resolved against its own working directory, not DATA's.
         (tmp_path / "acq").mkdir()
@@ -298,15 +335,34 @@ class TestDataDevice:
         assert client.registered == []
         assert "frame.h5" in client.nodes
 
-    def test_a_different_file_with_a_registered_name_is_refused(self, data_proxy, monkeypatch, tmp_path) -> None:
+    def test_a_different_file_with_a_registered_name_is_refused_not_deferred(self, data_proxy, monkeypatch, tmp_path) -> None:
+        # A collision must never pass for "Tiled is down": the key would point at another file.
         (tmp_path / "old").mkdir()
         (tmp_path / "new").mkdir()
         client = FakeClient([tmp_path / "old" / "frame.h5"])
         use_client(monkeypatch, client)
+        monkeypatch.setattr(DATA, "_will_reconcile", lambda self, path: True)
 
         with pytest.raises(tango.DevFailed, match="different entry 'frame.h5'"):
             data_proxy.register_path(str(tmp_path / "new" / "frame.h5"))
         assert client.registered == []
+        assert not json.loads(data_proxy.get_config())["tiled_server_status"].startswith("deferred")
+
+    def test_a_slow_registration_carries_on_in_the_background(self, data_proxy, monkeypatch, tmp_path) -> None:
+        saved = tmp_path / "frame.h5"
+        saved.write_bytes(b"fake-h5")
+        client = FakeClient()
+        use_client(monkeypatch, client, delay=1.0)
+        monkeypatch.setattr(data_module, "REGISTER_WAIT_SECONDS", 0.2)
+
+        started = time.monotonic()
+        assert data_proxy.register_path(str(saved)) == "frame.h5"
+        assert time.monotonic() - started < 1.0
+        assert "still registering in the background" in json.loads(data_proxy.get_config())["tiled_server_status"]
+        deadline = time.monotonic() + 5
+        while "frame.h5" not in client.nodes:
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
 
     def test_an_unsupported_file_type_fails_at_once_naming_the_supported_ones(self, data_proxy, monkeypatch, tmp_path) -> None:
         client = FakeClient()
@@ -332,6 +388,7 @@ class TestDataDevice:
             raise TiledUnavailable(f"Tiled at {uri} is not answering")
 
         monkeypatch.setattr("asyncroscopy.data.tiled_client.connect", down)
+        tiled_answers(monkeypatch)
         monkeypatch.setattr(DATA, "_will_reconcile", lambda self, path: True)
 
         assert data_proxy.register_path(str(saved)) == "frame.h5"
@@ -346,6 +403,7 @@ class TestDataDevice:
             raise TiledUnavailable(f"Tiled at {uri} is not answering")
 
         monkeypatch.setattr("asyncroscopy.data.tiled_client.connect", down)
+        tiled_answers(monkeypatch)
 
         with pytest.raises(tango.DevFailed, match="File registration failed: Tiled at .* is not answering"):
             data_proxy.register_path(str(saved))
@@ -442,6 +500,23 @@ class TestDataDevice:
         assert all(Path(p).is_file() for p in client.registered)
         assert "map_abc_map" in client.nodes
 
+    def test_reconcile_registers_a_file_with_a_clock_far_in_the_future(self, data_proxy, monkeypatch, tmp_path) -> None:
+        future = tmp_path / "future.h5"
+        future.write_bytes(b"x")
+        later = time.time() + 3600
+        os.utime(future, (later, later))
+        data_proxy.save_path = str(tmp_path)
+        use_client(monkeypatch, FakeClient())
+
+        result = json.loads(data_proxy.reconcile())
+
+        assert result["registered"] == ["future.h5"] and result["pending"] == []
+
+    def test_configured_settings_survive_init(self, data_proxy, tmp_path) -> None:
+        data_proxy.configure(json.dumps({"save_path": str(tmp_path / "kept")}))
+        data_proxy.Init()
+        assert json.loads(data_proxy.get_config())["save_path"] == str(tmp_path / "kept")
+
     def test_reconcile_reports_tiled_down(self, data_proxy, monkeypatch, tmp_path) -> None:
         data_proxy.save_path = str(tmp_path)
 
@@ -504,6 +579,7 @@ class TestDataDevice:
 
         monkeypatch.setattr("asyncroscopy.data.tiled_client.connect", lambda uri: FakeClient())
         monkeypatch.setattr("asyncroscopy.data.data.register", fake_register)
+        tiled_answers(monkeypatch)
 
         with pytest.raises(tango.DevFailed) as exc_info:
             data_proxy.register_path(str(requested_path))
@@ -523,15 +599,16 @@ def written_a_while_ago(path):
 
 
 class LeftoverTiled:
-    """A Tiled process found listening on the port, as psutil reports it."""
+    """A Tiled process found listening on the port, as psutil reports it; ``parent`` is its starter (None: gone)."""
 
-    def __init__(self, monkeypatch, command_line, cwd):
+    def __init__(self, monkeypatch, command_line, cwd, parent=None):
         self.terminated = False
         listener = SimpleNamespace(status=data_module.psutil.CONN_LISTEN, laddr=SimpleNamespace(port=CLOSED_PORT), pid=77)
         process = SimpleNamespace(
             name=lambda: "python.exe",
             cmdline=lambda: command_line,
             cwd=lambda: cwd,
+            parent=lambda: parent,
             terminate=lambda: setattr(self, "terminated", True),
             wait=lambda timeout: 0,
             kill=lambda: None,
@@ -713,6 +790,24 @@ class TestTiledSupervisor:
         device._gave_up = True
         assert not device._will_reconcile(inside)
 
+    def test_a_collision_raises_its_own_error_even_when_tiled_answers(self, monkeypatch, tmp_path) -> None:
+        (tmp_path / "old").mkdir()
+        client = FakeClient([tmp_path / "old" / "frame.h5"])
+        use_client(monkeypatch, client)
+        with pytest.raises(KeyCollision):
+            Supervised(FakeProcess())._register_one(client, str(tmp_path / "frame.h5"), "frame.h5")
+
+    def test_a_registration_tiled_never_finishes_raises_its_own_error(self, monkeypatch, tmp_path) -> None:
+        async def never(*args, **kwargs):
+            import asyncio
+
+            await asyncio.sleep(10)
+
+        monkeypatch.setattr("asyncroscopy.data.data.register", never)
+        monkeypatch.setattr(data_module, "REGISTER_TIMEOUT_SECONDS", 0.1)
+        with pytest.raises(RegistrationTimeout):
+            Supervised(FakeProcess())._register_one(FakeClient(), str(tmp_path / "frame.h5"), "frame.h5")
+
     def test_reconcile_and_an_acquisition_never_register_the_same_file_twice(self, monkeypatch, tmp_path) -> None:
         saved = tmp_path / "frame.h5"
         saved.write_bytes(b"x")
@@ -741,6 +836,41 @@ def test_registered_file_reads_a_windows_file_uri() -> None:
     node = SimpleNamespace(data_sources=lambda: [SimpleNamespace(assets=[SimpleNamespace(data_uri="file://localhost/C:/data/frame%20a.h5")])])
     assert _registered_file(node) == "C:/data/frame a.h5"
     assert _registered_file(SimpleNamespace(data_sources=lambda: [])) is None
+
+
+def test_a_failed_reconcile_is_retried_on_the_next_check(monkeypatch, tmp_path) -> None:
+    def down(uri):
+        raise TiledUnavailable("not answering")
+
+    monkeypatch.setattr("asyncroscopy.data.tiled_client.connect", down)
+    device = SimpleNamespace(_save_path=str(tmp_path), _host="127.0.0.1", _port=CLOSED_PORT, _reconcile_due=None, _tiled_server="yes", _tiled_server_status="")
+    device._uri = lambda: DATA._uri(device)
+    with pytest.raises(RuntimeError, match="reconcile failed"):
+        DATA.reconcile(device)
+    assert device._reconcile_due is not None
+
+
+def test_only_a_tiled_whose_starter_is_gone_counts_as_orphaned() -> None:
+    gone = SimpleNamespace(parent=lambda: None)
+    assert _live_owner(gone) is None
+    launcher = SimpleNamespace(pid=5, name=lambda: "python.exe", cmdline=lambda: ["python.exe", "-m", "tiled", "serve", "catalog"], parent=lambda: None)
+    assert _live_owner(SimpleNamespace(parent=lambda: launcher)) is None  # a venv launcher of the same command is stepped over
+    shell = SimpleNamespace(pid=6, name=lambda: "pwsh.exe", cmdline=lambda: ["pwsh.exe"], parent=lambda: None)
+    assert _live_owner(SimpleNamespace(parent=lambda: shell)) == "pwsh.exe pid 6"
+
+    def denied():
+        raise data_module.psutil.AccessDenied()
+
+    assert "cannot be inspected" in _live_owner(SimpleNamespace(parent=denied))
+
+
+def test_deferral_uses_the_same_rule_as_reconcile(tmp_path) -> None:
+    save = str(tmp_path)
+    assert _reconcilable(str(tmp_path / "maps" / "map_1.h5"), save)
+    assert not _reconcilable(str(tmp_path / ".cache" / "a.h5"), save)
+    assert not _reconcilable(str(tmp_path / "map_x_map" / "a.h5"), save)
+    assert not _reconcilable(str(tmp_path / ".a.h5"), save)
+    assert not _reconcilable(str(tmp_path.parent / "elsewhere.h5"), save)
 
 
 def test_the_read_directory_is_resolved_against_the_process_directory(tmp_path) -> None:

@@ -1,5 +1,6 @@
 import json
 import types
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -92,10 +93,12 @@ def test_save_acquisition_tiff_writes_one_registered_file_per_detector(tmp_path)
     # json-encoded into each TIFF's ImageDescription (nested dicts included).
     attrs = [{"GainIndex": index, "ImagingArea": {"Width": 512}} for index in range(len(detectors))]
 
-    stem = save_acquisition(object(), data_server, "stem_image", detectors, images, dataset_attrs=attrs, output_format=".tiff")
+    keys = json.loads(save_acquisition(object(), data_server, "stem_image", detectors, images, dataset_attrs=attrs, output_format=".tiff"))
 
+    assert len(keys) == len(detectors)
     for index, detector in enumerate(detectors):
-        path = tmp_path / f"{stem}_{detector}.tiff"
+        path = Path(keys[index])
+        assert path.name.endswith(f"_{detector}.tiff") and path.parent == tmp_path
         assert path.exists()
         assert np.array_equal(tifffile.imread(path), images[index])
         with tifffile.TiffFile(path) as tif:

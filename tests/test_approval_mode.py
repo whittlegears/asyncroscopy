@@ -425,6 +425,23 @@ class TestWaitForJob:
         assert status["state"] == "running" and status["progress"] == 0.4
         assert "wait_for_job again" in status["note"]
 
+    def test_paused_jobs_are_waited_through_and_explained(self, monkeypatch):
+        from asyncroscopy.jobs.job_device import RUNNING_STATES
+        from asyncroscopy.mcp.mcp_server import WAIT_NOTES
+
+        assert set(WAIT_NOTES) == RUNNING_STATES
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Job:
+            def job_status(self, request):
+                return json.dumps({"job_id": "j1", "state": "paused_suspended", "suspended": {"reason": "beam_current 2 < 10"}})
+
+        server._devices = {"Mapper": Job()}
+        server._envelope_prefixes = {"Mapper"}
+        status = server.wait_for_job("Mapper", "j1", max_wait_s=0)
+        assert "beam_current 2 < 10" in status["note"] and "resumes by itself" in status["note"]
+
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)

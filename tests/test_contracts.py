@@ -39,3 +39,9 @@ def test_pytemlib_copy_of_the_envelope_matches():
     ours = json.loads((HERE / "envelope.schema.json").read_text(encoding="utf-8"))
     theirs = json.loads(mcp_server.ENVELOPE_SCHEMA_PATH.read_text(encoding="utf-8"))
     assert ours == theirs, "pyTEMlib's envelope.schema.json has drifted from asyncroscopy's"
+
+
+def test_replies_carry_the_envelope_schema_version():
+    from asyncroscopy.contracts import ENVELOPE_VERSION
+
+    assert ENVELOPE_VERSION == load("envelope")["schema_version"]

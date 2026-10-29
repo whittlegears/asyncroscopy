@@ -16,7 +16,7 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 | Piece | Where | What it does |
 | :-- | :-- | :-- |
 | `Mapper` | `asyncroscopy/instruments/electron_microscope/mapper.py` | One background job per map: serpentine tile grid inside a stage box, optional EDS at each tile, dose budget, abort with beam blank, resume after a restart. |
-| Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with pyTEMlib's jobs. |
+| Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with pyTEMlib's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
 | Approval mode | `asyncroscopy/safety/` | `auto` or `approve`; see [approval_mode.md](approval_mode.md). |
 | Map tools | pyTEMlib `mcp_server/map_tools.py` | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
 | Graphs | `asyncroscopy/agents/graphs/` | `mapping`: the model only writes the plan. `general`: the model makes every call, using the `mapping` skill. |

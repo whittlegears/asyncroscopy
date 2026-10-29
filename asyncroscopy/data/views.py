@@ -20,6 +20,10 @@ data, ``pixel_size_m`` on images). For anything else, register a kind::
         matches=lambda ds: ds.ndim == 1 and "two_theta_start_deg" in ds.attrs,
         axis=lambda ds: Axis(ds.attrs["two_theta_start_deg"], ds.attrs["two_theta_step_deg"], "2θ", "deg"),
     ), before="profile")
+
+A kind's ``png`` returns (PNG bytes, what was read) or (PNG bytes, what was read,
+a short text summary); the summary goes with the picture, so an agent that cannot
+see images still learns the statistics and peaks.
 """
 
 from __future__ import annotations
@@ -46,8 +50,14 @@ MAX_LISTED = 200  # datasets walked inside one container
 MAX_GROUPS = 40  # entries listed per level of a container
 MAX_DEPTH = 3
 MAX_PEAKS = 8
-PEAK_SIGMA = 5.0  # a peak must stand this many noise sigmas above its local background
+PEAK_SIGMA = 5.0  # a peak's counts within its FWHM must stand this many sigmas above the background
 MAX_STRINGS = 50
+SI_ESCAPE_EV = 1740.0
+# Silicon-drift EDS detector resolution, as the twin models it (twin/eds_model.py).
+EDS_FWHM_MN_KA_EV = 130.0
+MN_KA_EV = 5895.0
+IMAGE_GROUPS = ("image", "tiles", "channels")  # looked at first: a run's pictures before its spectra
+SPECTRUM_GROUPS = ("spectrum_image", "spectrum", "spectra")
 
 
 @dataclass(frozen=True)
@@ -104,7 +114,7 @@ class ViewOptions:
 class Kind:
     name: str
     matches: Callable[[Dataset], bool]
-    png: Callable[[Dataset, ViewOptions], tuple[bytes, str]]
+    png: Callable[[Dataset, ViewOptions], tuple]
     text: Callable[[Dataset, ViewOptions], tuple[str, str]]
     description: str = ""
 
@@ -173,6 +183,10 @@ def _count(node: Any) -> int | None:
         return None
 
 
+def _join(base: str, name: str) -> str:
+    return f"{base}/{name}" if base else name
+
+
 def datasets(node: Any, key: str, limit: int = MAX_LISTED) -> list[Dataset]:
     """The arrays and tables inside ``node`` (itself, if it is one), at most ``limit``, at most 3 levels deep."""
     out: list[Dataset] = []
@@ -188,7 +202,7 @@ def datasets(node: Any, key: str, limit: int = MAX_LISTED) -> list[Dataset]:
             return
         attrs = _attrs(current)
         for child, value in _children(current):
-            walk(value, f"{path}/{child}" if path else child, depth + 1, attrs)
+            walk(value, _join(path, child), depth + 1, attrs)
             if len(out) >= limit:
                 return
 
@@ -205,7 +219,7 @@ def _first_dataset(node: Any, key: str, path: str = "", parent: dict | None = No
         return None
     attrs = _attrs(node)
     for child, value in islice(_children(node), MAX_GROUPS):
-        found = _first_dataset(value, key, f"{path}/{child}" if path else child, attrs, depth + 1)
+        found = _first_dataset(value, key, _join(path, child), attrs, depth + 1)
         if found is not None:
             return found
     return None
@@ -215,34 +229,45 @@ def is_map(node: Any) -> bool:
     return _family(node) == "container" and _attrs(node).get("kind") == "stitched_map"
 
 
+def resolve(node: Any, key: str, path: str) -> Any:
+    """The node at ``path`` inside ``key`` (a dataset or a group), or a ValueError listing what is there."""
+    current = node
+    for part in path.strip("/").split("/"):
+        try:
+            current = current[part]
+        except (KeyError, TypeError):
+            raise ValueError(f"{key!r} has no dataset {path!r}; it has:\n{container_listing(node)}") from None
+    return current
+
+
 def pick(node: Any, key: str, dataset: str | None = None, max_side: int = PREVIEW_MAX_SIDE) -> Dataset:
-    """The dataset to show for ``key``: ``dataset`` if given, else an image, a spectrum, a map level, the first."""
+    """The dataset to show for ``key``: ``dataset`` if given (inside it, if it is a group), else a picture
+    (image, a run's tiles or channels), a spectrum, a map level, else the first dataset."""
+    base = ""
+    if dataset:
+        base = dataset.strip("/")
+        target = resolve(node, key, base)
+        if _family(target) in ("array", "table"):
+            return as_dataset(target, key, base, _attrs(node))
+        node = target
     if _family(node) in ("array", "table"):
         return as_dataset(node, key)
-    if dataset:
-        current = node
-        for part in dataset.strip("/").split("/"):
-            try:
-                current = current[part]
-            except KeyError:
-                raise ValueError(f"{key!r} has no dataset {dataset!r}; it has:\n{container_listing(node)}") from None
-        return as_dataset(current, key, dataset.strip("/"), _attrs(node))
     if is_map(node):
         levels = sorted((d for d in datasets(node, key, limit=40) if d.path.startswith("level_") and d.ndim == 2), key=lambda d: d.nbytes)
         fitting = [d for d in levels if max(d.shape) <= 2 * max_side]
         if levels:
             return fitting[-1] if fitting else levels[0]
-    for prefix in ("image", "spectrum_image", "spectrum"):
+    for name in IMAGE_GROUPS + SPECTRUM_GROUPS:
         try:
-            child = node[prefix]
+            child = node[name]
         except (KeyError, TypeError):
             continue
-        found = _first_dataset(child, key, prefix, _attrs(node))
+        found = _first_dataset(child, key, _join(base, name), _attrs(node))
         if found is not None:
             return found
-    found = _first_dataset(node, key)
+    found = _first_dataset(node, key, base)
     if found is None:
-        raise ValueError(f"{key!r} holds no arrays or tables")
+        raise ValueError(f"{key!r}{' / ' + base if base else ''} holds no arrays or tables")
     return found
 
 
@@ -257,17 +282,21 @@ def container_listing(node: Any, prefix: str = "", depth: int = 0) -> str:
             lines.append(f"{prefix}{name}: {tuple(ds.shape)} {ds.dtype}" if family == "array" else f"{prefix}{name}: table")
             continue
         if family != "container":
+            lines.append(f"{prefix}{name}: {family}")
             continue
         count = _count(child)
+        counted = count if count is not None else "?"
         first = next(iter(_children(child)), None)
         if first is None:
             lines.append(f"{prefix}{name}/: empty")
         elif _family(first[1]) in ("array", "table"):
             ds = as_dataset(first[1], "", first[0])
-            lines.append(f"{prefix}{name}/: {count if count is not None else '?'} x {tuple(ds.shape)} {ds.dtype} (shape of {first[0]})")
+            lines.append(f"{prefix}{name}/: {counted} x {tuple(ds.shape)} {ds.dtype} (shape of {first[0]})")
         elif depth < MAX_DEPTH:
-            lines.append(f"{prefix}{name}/: {count if count is not None else '?'} groups")
+            lines.append(f"{prefix}{name}/: {counted} groups")
             lines.append(container_listing(child, f"{prefix}{name}/", depth + 1))
+        else:
+            lines.append(f"{prefix}{name}/: {counted} groups (deeper levels not listed; open one with dataset)")
     if len(children) > MAX_GROUPS:
         total = _count(node)
         lines.append(f"{prefix}... and {(total - MAX_GROUPS) if total else 'more'} more entries")
@@ -311,10 +340,13 @@ def _describe_slices(slices: tuple[slice | int, ...]) -> str:
     return "[" + ", ".join(parts) + "]"
 
 
-def _finite_region(region: list[float], length: int, what: str) -> list[float]:
-    if len(region) != length:
-        raise ValueError(what)
-    values = [float(v) for v in region]
+def _finite_region(region: Any, length: int, what: str) -> list[float]:
+    if not isinstance(region, (list, tuple)) or len(region) != length:
+        raise ValueError(f"{what}; got {region!r}")
+    try:
+        values = [float(v) for v in region]
+    except (TypeError, ValueError):
+        raise ValueError(f"{what}; got {region!r}") from None
     if not all(math.isfinite(v) for v in values):
         raise ValueError(f"region {region} must be finite numbers; {what}")
     return values
@@ -430,7 +462,7 @@ def to_pixels(values: np.ndarray, max_side: int) -> PILImage.Image:
     return image
 
 
-# ----------------------------------------------------------------- 1-D: spectra and profiles
+# ----------------------------------------------------------------- peaks
 
 
 def energy_axis(attrs: dict) -> Axis | None:
@@ -447,30 +479,79 @@ def energy_axis(attrs: dict) -> Axis | None:
     return None
 
 
-def find_peaks(values: np.ndarray, limit: int = MAX_PEAKS) -> list[int]:
-    """Indices of significant peaks, most significant first; none in pure noise.
+def eds_fwhm_ev(energy_ev: Any) -> np.ndarray:
+    """Silicon-drift detector line width at an energy (eV), at least 30 eV."""
+    return np.sqrt(np.maximum(EDS_FWHM_MN_KA_EV**2 + 2.5 * (np.asarray(energy_ev, dtype=np.float64) - MN_KA_EV), 30.0**2))
 
-    A peak must stand PEAK_SIGMA noise sigmas above a running-median background and be
-    wider than one channel. For count data the noise is at least sqrt(background).
+
+@dataclass(frozen=True)
+class Peak:
+    index: int  # channel in the values given
+    net: float  # counts within +-FWHM/2 above the background
+    significance: float  # net / its noise
+
+
+def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PEAKS) -> list[Peak]:
+    """Significant peaks, most significant first; none in pure noise.
+
+    For each local maximum, the values within +-FWHM/2 above a running-median background
+    are summed; the sum must exceed PEAK_SIGMA times its noise: sqrt(background summed over
+    the same channels) for count data, else the residual's scatter times sqrt(width).
+    ``fwhm_channels`` is the expected peak width in channels, one number or one per channel.
     """
-    from scipy.ndimage import median_filter
+    from scipy.ndimage import gaussian_filter1d, median_filter, uniform_filter1d
     from scipy.signal import find_peaks as scipy_peaks
+    from scipy.stats import norm, poisson
 
     data = np.nan_to_num(np.asarray(values, dtype=np.float64))
-    if data.size < 9 or data.max() == data.min():
+    n = data.size
+    if n < 9 or data.max() == data.min():
         return []
-    window = max(9, data.size // 40) | 1
-    background = median_filter(data, size=window, mode="nearest")
+    width = np.maximum(np.broadcast_to(np.asarray(fwhm_channels, dtype=np.float64), (n,)), 1.0)
+    window = int(max(9, 4 * np.median(width), n // 40))
+    window = min(window | 1, n - 1 if n % 2 == 0 else n)
+    counts = data.min() >= 0 and np.allclose(data, np.round(data))
+    # Background: the mean of side bands one line width away on each side, of the data clipped near
+    # a running median. The median alone is biased low for sparse counts (it is a whole number), which
+    # turns noise into peaks; a plain running mean would count a peak as its own background.
+    rough = median_filter(data, size=window, mode="nearest")
+    rough_scatter = 1.4826 * float(np.median(np.abs(data - rough))) or 1e-12
+    clipped = np.minimum(data, rough + 3.0 * (np.sqrt(np.maximum(rough, 1.0)) if counts else rough_scatter))
+    gap, band = int(math.ceil(float(np.median(width)))), max(8, int(3 * float(np.median(width))))
+    summed = np.concatenate(([0.0], np.cumsum(clipped)))
+    at = np.arange(n)
+    left_lo, left_hi = np.clip(at - gap - band, 0, n), np.clip(at - gap, 0, n)
+    right_lo, right_hi = np.clip(at + gap + 1, 0, n), np.clip(at + gap + 1 + band, 0, n)
+    taken = (left_hi - left_lo) + (right_hi - right_lo)
+    background = np.where(
+        taken > 0,
+        (summed[left_hi] - summed[left_lo] + summed[right_hi] - summed[right_lo]) / np.maximum(taken, 1),
+        uniform_filter1d(clipped, size=window, mode="nearest"),
+    )
     residual = data - background
-    sigma = np.full(data.size, 1.4826 * np.median(np.abs(residual - np.median(residual))))
-    if data.min() >= 0 and np.allclose(data, np.round(data)):  # counts: Poisson noise
-        sigma = np.maximum(sigma, np.sqrt(np.maximum(background, 1.0)))
-    sigma = np.maximum(sigma, 1e-3 * (data.max() - data.min()))
-    candidates, _ = scipy_peaks(data, width=1.5, distance=max(2, data.size // 200))
-    significance = residual[candidates] / sigma[candidates]
-    keep = candidates[significance > PEAK_SIGMA]
-    order = np.argsort(significance[significance > PEAK_SIGMA])[::-1][:limit]
-    return [int(keep[i]) for i in order]
+    scatter = max(1.4826 * float(np.median(np.abs(residual - np.median(residual)))), 1e-6 * float(data.max() - data.min()))
+    summed_residual = np.concatenate(([0.0], np.cumsum(residual)))
+    summed_background = np.concatenate(([0.0], np.cumsum(background)))
+    # Candidates: maxima of the residual smoothed to the expected line width (a matched filter),
+    # so a weak peak is centred by its shape, not by its noisiest channel.
+    smoothed = gaussian_filter1d(residual, sigma=max(0.5, float(np.median(width)) / 2.355), mode="nearest")
+    candidates, _ = scipy_peaks(smoothed, distance=max(1, int(np.median(width) // 2)))
+    peaks = []
+    for i in candidates:
+        half = max(1, int(round(width[i] / 2)))
+        lo, hi = max(0, i - half), min(n, i + half + 1)
+        net = summed_residual[hi] - summed_residual[lo]
+        channels, under = hi - lo, summed_background[hi] - summed_background[lo]
+        # The background under the peak is itself an estimate from `taken` channels: add its variance.
+        spread = 1.0 + channels / max(int(taken[i]), 1)
+        if counts:  # exact Poisson tail (sparse counts have heavier tails than a Gaussian), as a z-score
+            expected = max(under, 0.5)
+            z = float(norm.isf(max(poisson.sf(round(expected + net) - 1, expected), 1e-300))) / math.sqrt(spread)
+        else:
+            z = net / (scatter * math.sqrt(channels * spread))
+        if net > 0 and z > PEAK_SIGMA:
+            peaks.append(Peak(int(i), float(net), z))
+    return sorted(peaks, key=lambda p: p.significance, reverse=True)[:limit]
 
 
 @lru_cache(maxsize=1)
@@ -498,57 +579,75 @@ def _is_xray(ds: Dataset) -> bool:
     return "eds" in words or "edx" in words or "x-ray" in words or "xray" in words
 
 
+def _artefact(energy: float, stronger: list[float], tolerance: float) -> str:
+    """A note when an EDS peak may be a Si escape or a sum (pile-up) peak of a stronger one."""
+    for e in stronger:
+        if abs(energy - (e - SI_ESCAPE_EV)) <= tolerance:
+            return f"possible Si escape peak of the {_fmt(e)} eV peak"
+        if abs(energy - 2 * e) <= tolerance:
+            return f"possible sum peak (2 x {_fmt(e)} eV)"
+    return ""
+
+
 def _real(ds: Dataset) -> bool:
     return ds.dtype.kind in "uifcb"
+
+
+# ----------------------------------------------------------------- 1-D: spectra and profiles
 
 
 def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dataset], Axis | None], description: str = "") -> Kind:
     """A kind for 1-D data plotted against a calibrated axis, with its significant peaks marked and listed."""
 
-    def x_values(ds: Dataset, start: int, step: int, count: int) -> tuple[np.ndarray, Axis]:
-        a = axis(ds) or Axis(0.0, 1.0, "channel", "")
-        return a.offset + a.scale * (start + step * np.arange(count)), a
-
-    def scale_for(a: Axis, x: np.ndarray) -> tuple[float, str]:
-        if a.units == "eV" and x.size and np.nanmax(np.abs(x)) > 2000:
-            return 1e-3, "keV"
-        return 1.0, a.units
-
-    def peak_rows(ds: Dataset, x: np.ndarray, y: np.ndarray, a: Axis) -> list[tuple[float, float, str]]:
-        tolerance = max(2 * abs(a.scale), 30.0)
-        rows = []
-        for i in find_peaks(y):
-            candidates = xray_candidates(x[i], tolerance) if a.units == "eV" and _is_xray(ds) else []
-            rows.append((float(x[i]), float(y[i]), ", ".join(candidates)))
-        return rows
-
-    def png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
+    def describe(ds: Dataset, opts: ViewOptions):
         y, start, step, read = read_line(ds, opts, axis(ds))
-        x, a = x_values(ds, start, step, y.size)
-        factor, units = scale_for(a, x)
+        a = axis(ds) or Axis(0.0, 1.0, "channel", "")
+        x = a.offset + a.scale * (start + step * np.arange(y.size))
+        xray = a.units == "eV" and _is_xray(ds)
+        fwhm = eds_fwhm_ev(x) / abs(a.scale * step) if xray and a.scale else 3.0
+        rows = []
+        for peak in find_peaks(y, fwhm):
+            energy = float(x[peak.index])
+            note = ""
+            if xray:
+                tolerance = max(float(eds_fwhm_ev(energy)) / 2, 2 * abs(a.scale * step))
+                note = _artefact(energy, [row[0] for row in rows], tolerance) or ", ".join(xray_candidates(energy, tolerance))
+            rows.append((energy, peak.net, peak.significance, peak.index, note))
+        unit = f" {a.units}" if a.units else ""
+        total = float(np.nansum(np.asarray(y, dtype=np.float64)))
+        lines = [
+            f"{ds.shape[0]} channels; {a.label} {_fmt(x[0])} to {_fmt(x[-1])}{unit} ({_fmt(a.scale * step)}{unit} per value shown)" if y.size else "empty",
+            f"total {_fmt(total)}; {_stats(y)}",
+        ]
+        if rows:
+            lines += ["peaks (most significant first; net = counts within the line width above the background):",
+                      _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
+        elif xray:
+            lines.append(f"no peaks detected above noise at this exposure (total {_fmt(total)} counts); "
+                         "a longer exposure is needed to rule elements out")
+        else:
+            lines.append(f"no peaks stand {PEAK_SIGMA:g} sigma above the background")
+        return lines, read, x, y, a, rows
+
+    def png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
+        lines, read, x, y, a, rows = describe(ds, opts)
+        factor, units = (1e-3, "keV") if a.units == "eV" and x.size and np.nanmax(np.abs(x)) > 2000 else (1.0, a.units)
         figure = Figure(figsize=(6.4, 3.6), dpi=100)
         plot = figure.add_subplot()
         plot.plot(x * factor, y, linewidth=0.9)
-        for px, py, label in peak_rows(ds, x, y, a):
-            plot.annotate(f"{px * factor:.3g}" + (f"\n{label.split(',')[0]}" if label else ""), (px * factor, py),
+        for energy, _net, _sig, index, note in rows:
+            label = note.split(",")[0] if note and not note.startswith("possible") else ""
+            plot.annotate(f"{energy * factor:.3g}" + (f"\n{label}" if label else ""), (energy * factor, float(y[index])),
                           textcoords="offset points", xytext=(0, 4), ha="center", fontsize=7)
         plot.set_xlabel(f"{a.label} ({units})" if units else a.label)
         plot.set_ylabel(str(ds.attrs.get("units", "counts")))
         plot.set_title(ds.name, fontsize=8)
         figure.tight_layout()
-        return _png(figure), read
+        return _png(figure), read, "\n".join(lines)
 
     def text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-        y, start, step, read = read_line(ds, opts, axis(ds))
-        x, a = x_values(ds, start, step, y.size)
+        lines, read, x, y, a, _rows = describe(ds, opts)
         unit = f" {a.units}" if a.units else ""
-        lines = [
-            f"{ds.shape[0]} channels; {a.label} {_fmt(x[0])} to {_fmt(x[-1])}{unit} ({_fmt(a.scale * step)}{unit} per value shown)" if y.size else "empty",
-            f"total {_fmt(float(np.nansum(y)))}; {_stats(y)}",
-        ]
-        peaks = peak_rows(ds, x, y, a)
-        lines += ["peaks (strongest first):", _csv(f"{a.label}{unit},value,candidates", [(px, py, f'"{c}"' if c else "") for px, py, c in peaks])] if peaks \
-            else [f"no peaks stand {PEAK_SIGMA:g} sigma above the background"]
         bins = max(1, math.ceil(y.size / max(1, opts.max_rows)))
         if bins > 1:  # sum neighbouring channels so counts are kept
             usable = (y.size // bins) * bins
@@ -563,7 +662,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
     return Kind(name, matches, png, text, description)
 
 
-def _composition_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
+def _composition_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
     values = _read(ds, (slice(0, ds.shape[0]),))
     figure = Figure(figsize=(6.0, 3.5), dpi=100)
     plot = figure.add_subplot()
@@ -573,7 +672,7 @@ def _composition_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
     plot.set_xlabel("element")
     plot.set_ylabel("relative intensity")
     figure.tight_layout()
-    return _png(figure), f"read [0:{ds.shape[0]}]"
+    return _png(figure), f"read [0:{ds.shape[0]}]", _composition_text(ds, opts)[0]
 
 
 def _composition_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
@@ -589,22 +688,18 @@ def _has_elements(ds: Dataset) -> bool:
 # ----------------------------------------------------------------- strings
 
 
-def _strings(ds: Dataset) -> tuple[list[str], str]:
-    if not ds.shape:
-        return [str(_read(ds, ()))], "read all"
-    slices = (slice(0, min(ds.shape[0], MAX_STRINGS)), *(slice(0, min(n, 4)) for n in ds.shape[1:]))
-    values = _read(ds, slices).reshape(-1)
-    return [v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v) for v in values], "read " + _describe_slices(slices)
-
-
 def _strings_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
     raise ValueError(f"{ds.name} holds text ({ds.dtype}), which has no picture; use format text")
 
 
 def _strings_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-    values, read = _strings(ds)
-    lines = [f"{list(ds.shape)} text entries; the first {len(values)}:"] + [v[:300] for v in values]
-    return "\n".join(lines), read
+    if not ds.shape:
+        values, read = [_read(ds, ())], "read all"
+    else:
+        slices = (slice(0, min(ds.shape[0], MAX_STRINGS)), *(slice(0, min(n, 4)) for n in ds.shape[1:]))
+        values, read = list(_read(ds, slices).reshape(-1)), "read " + _describe_slices(slices)
+    texts = [v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v) for v in values]
+    return "\n".join([f"{list(ds.shape)} text entries; the first {len(texts)}:"] + [t[:300] for t in texts]), read
 
 
 # ----------------------------------------------------------------- 2-D and up
@@ -613,19 +708,7 @@ def _strings_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
 def image_kind(name: str, matches: Callable[[Dataset], bool], description: str = "", colormap: str | None = None) -> Kind:
     """A kind for pictures: percentile contrast, strided read, optional colour map for labels."""
 
-    def png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
-        values, read = read_image(ds, opts, target=opts.max_side)
-        if colormap:
-            from matplotlib import colormaps
-
-            labels = np.asarray(values, dtype=np.int64)
-            rgba = colormaps[colormap](labels % 20 / 19.0)
-            rgba[labels == 0] = (0, 0, 0, 1)
-            return _png(to_pixels((rgba[..., :3] * 255).astype(np.uint8), opts.max_side)), read
-        return _png(to_pixels(values, opts.max_side)), read
-
-    def text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-        values, read = read_image(ds, opts, target=1024)
+    def describe(ds: Dataset, values: np.ndarray) -> list[str]:
         lines = [f"{ds.shape[0]} x {ds.shape[1]} pixels{' x ' + str(ds.shape[2]) if ds.ndim == 3 else ''}, {ds.dtype}"]
         if ds.dtype.kind == "c":
             lines.append("complex values: statistics are of the magnitude")
@@ -638,53 +721,86 @@ def image_kind(name: str, matches: Callable[[Dataset], bool], description: str =
             stats = ds.attrs.get("area_statistics")
             if stats:
                 lines.append("area_statistics: " + json.dumps(stats)[:2000])
-            return "\n".join(lines), read
+            return lines
         if ds.dtype.kind == "b":
             lines.append(f"true: {int(values.sum())} of {values.size} pixels read")
-            return "\n".join(lines), read
-        lines.append(_stats(values))
+            return lines
+        lines.append("statistics of the pixels read: " + _stats(values))
         if ds.dtype.kind in "ui":
             top = np.iinfo(ds.dtype).max
             lines.append(f"saturated (= {top}): {_fmt(100.0 * float((values == top).mean()))}%")
         histogram = _histogram(values)
         if histogram:
             lines += ["histogram (value: count):", histogram]
-        grid_step = max(1, math.ceil(max(values.shape[:2]) / 16))
-        grid = np.asarray(values[::grid_step, ::grid_step], dtype=np.float64)
-        if grid.ndim == 3:
-            grid = grid.mean(axis=2)
-        lines += [f"every {grid_step}th pixel of what was read (rows top to bottom):",
-                  "\n".join(",".join(_fmt(v) for v in row) for row in grid[: opts.max_rows])]
+        return lines
+
+    def png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
+        values, read = read_image(ds, opts, target=opts.max_side)
+        brief = "\n".join(describe(ds, values))
+        if colormap:
+            from matplotlib import colormaps
+
+            labels = np.asarray(values, dtype=np.int64)
+            rgba = colormaps[colormap](labels % 20 / 19.0)
+            rgba[labels == 0] = (0, 0, 0, 1)
+            return _png(to_pixels((rgba[..., :3] * 255).astype(np.uint8), opts.max_side)), read, brief
+        return _png(to_pixels(values, opts.max_side)), read, brief
+
+    def text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
+        values, read = read_image(ds, opts, target=1024)
+        lines = describe(ds, values)
+        if not colormap and ds.dtype.kind != "b":
+            grid_step = max(1, math.ceil(max(values.shape[:2]) / 16))
+            grid = np.asarray(values[::grid_step, ::grid_step], dtype=np.float64)
+            if grid.ndim == 3:
+                grid = grid.mean(axis=2)
+            lines += [f"every {grid_step}th pixel of what was read (rows top to bottom):",
+                      "\n".join(",".join(_fmt(v) for v in row) for row in grid[: opts.max_rows])]
         return "\n".join(lines), read
 
     return Kind(name, matches, png, text, description)
 
 
+def _index(opts: ViewOptions) -> list[int] | None:
+    if opts.index is None:
+        return None
+    raw = [opts.index] if isinstance(opts.index, (int, np.integer)) else opts.index
+    try:
+        return [int(i) for i in raw]
+    except (TypeError, ValueError):
+        raise ValueError(f"index is a list of whole numbers (positions on the leading axes); got {opts.index!r}") from None
+
+
 def _frame(ds: Dataset, opts: ViewOptions) -> tuple[int, ...]:
     """Position on the leading axes of a stack: opts.index, else the middle."""
     lead = ds.shape[:-2]
-    if opts.index is None:
+    index = _index(opts)
+    if index is None:
         return tuple(n // 2 for n in lead)
-    if len(opts.index) != len(lead) or any(not 0 <= int(i) < n for i, n in zip(opts.index, lead)):
-        raise ValueError(f"index must give {len(lead)} positions within {list(lead)}")
-    return tuple(int(i) for i in opts.index)
+    if len(index) != len(lead) or any(not 0 <= i < n for i, n in zip(index, lead)):
+        raise ValueError(f"index must give {len(lead)} positions within {list(lead)}; got {index}")
+    return tuple(index)
 
 
-def _stack_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
+def _stack_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
     frame = _frame(ds, opts)
     values, read = read_image(ds, opts, target=opts.max_side, frame=frame)
-    return _png(to_pixels(values, opts.max_side)), read
+    return _png(to_pixels(values, opts.max_side)), read, _stack_lines(ds, frame, values)
 
 
-def _stack_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-    frame = _frame(ds, opts)
-    values, read = read_image(ds, opts, target=1024, frame=frame)
+def _stack_lines(ds: Dataset, frame: tuple[int, ...], values: np.ndarray) -> str:
     lines = [f"shape {list(ds.shape)} {ds.dtype}; showing the frame at index {list(frame)} (pass index to choose another)"]
     for attr in ("scan_shape", "axes", "spectrum_image_axes"):
         if attr in ds.attrs:
             lines.append(f"{attr}: {ds.attrs[attr]}")
     lines.append(f"frame: {_stats(values)}")
-    return "\n".join(lines), read
+    return "\n".join(lines)
+
+
+def _stack_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
+    frame = _frame(ds, opts)
+    values, read = read_image(ds, opts, target=1024, frame=frame)
+    return _stack_lines(ds, frame, values), read
 
 
 def _is_spectrum_image(ds: Dataset) -> bool:
@@ -700,8 +816,7 @@ def _read_cube(ds: Dataset, opts: ViewOptions) -> tuple[np.ndarray, str, int]:
         r0, r1 = _span(a, b, rows, "rows")
         c0, c1 = _span(c, d, cols, "columns")
     size = (r1 - r0) * (c1 - c0) * channels * ds.dtype.itemsize
-    spatial = min(max(r1 - r0, c1 - c0), math.ceil(math.sqrt(size / MAX_READ_BYTES))) if size > MAX_READ_BYTES else 1
-    spatial = max(1, spatial)
+    spatial = max(1, min(max(r1 - r0, c1 - c0), math.ceil(math.sqrt(size / MAX_READ_BYTES)))) if size > MAX_READ_BYTES else 1
     left = math.ceil((r1 - r0) / spatial) * math.ceil((c1 - c0) / spatial) * channels * ds.dtype.itemsize
     spectral = max(1, math.ceil(left / MAX_READ_BYTES))
     slices = (slice(r0, r1, spatial), slice(c0, c1, spatial), slice(0, channels, spectral))
@@ -710,47 +825,53 @@ def _read_cube(ds: Dataset, opts: ViewOptions) -> tuple[np.ndarray, str, int]:
 
 def _spectrum_at(ds: Dataset, opts: ViewOptions) -> Dataset:
     """The spectrum at index [row, col] of a spectrum image, as its own 1-D dataset."""
-    if len(opts.index) != 2 or not (0 <= int(opts.index[0]) < ds.shape[0] and 0 <= int(opts.index[1]) < ds.shape[1]):
-        raise ValueError(f"index for a spectrum image is one [row, col] position within {list(ds.shape[:2])}")
-    row, col = int(opts.index[0]), int(opts.index[1])
+    index = _index(opts)
+    if len(index) != 2 or not (0 <= index[0] < ds.shape[0] and 0 <= index[1] < ds.shape[1]):
+        raise ValueError(f"index for a spectrum image is one [row, col] position within {list(ds.shape[:2])}; got {index}")
+    row, col = index
     line = _Loaded(np.asarray(ds.node.read((row, col, slice(0, ds.shape[2])))), ds.attrs)
     return Dataset(ds.key, f"{ds.path}[{row},{col}]", line, (ds.shape[2],), ds.dtype, ds.attrs, ds.parent_attrs)
 
 
-def _spectrum_image_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
-    if opts.index is not None:
-        single = _spectrum_at(ds, opts)
-        return detect(single).png(single, ViewOptions(max_side=opts.max_side))
-    cube, read, step = _read_cube(ds, opts)
-    axis = energy_axis(ds.attrs) or Axis(0.0, 1.0, "channel", "")
-    figure = Figure(figsize=(8.0, 3.4), dpi=100)
-    left, right = figure.add_subplot(1, 2, 1), figure.add_subplot(1, 2, 2)
-    left.imshow(np.asarray(to_pixels(cube.sum(axis=2), opts.max_side)), cmap="gray")
-    left.set_title("summed intensity", fontsize=8)
-    left.axis("off")
-    right.plot(axis.values(0, ds.shape[2], step)[: cube.shape[2]], cube.sum(axis=(0, 1)), linewidth=0.9)
-    right.set_xlabel(f"{axis.label} ({axis.units})" if axis.units else axis.label)
-    right.set_title("summed spectrum", fontsize=8)
-    figure.tight_layout()
-    return _png(figure), read
-
-
-def _spectrum_image_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-    if opts.index is not None:
-        single = _spectrum_at(ds, opts)
-        body, read = detect(single).text(single, ViewOptions(max_rows=opts.max_rows))
-        return f"spectrum at position {list(opts.index)}:\n{body}", read
-    cube, read, step = _read_cube(ds, opts)
+def _summed_lines(ds: Dataset, cube: np.ndarray, step: int) -> tuple[list[str], np.ndarray, np.ndarray, Axis]:
     axis = energy_axis(ds.attrs) or Axis(0.0, 1.0, "channel", "")
     summed = cube.sum(axis=(0, 1))
     x = axis.values(0, ds.shape[2], step)[: summed.size]
     lines = [f"spectrum image {ds.shape[0]} x {ds.shape[1]} positions x {ds.shape[2]} channels, {ds.dtype}",
              f"{axis.label} {_fmt(x[0])} to {_fmt(x[-1])} {axis.units}".rstrip(),
              "index [row, col] shows the spectrum at one position; region [row0, row1, col0, col1] sums part of it"]
-    peaks = find_peaks(summed)
+    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if axis.units == "eV" and _is_xray(ds) and axis.scale else 3.0
+    peaks = find_peaks(summed, fwhm)
     if peaks:
-        lines += ["peaks of the summed spectrum:", _csv(f"{axis.label},value", [(float(x[i]), float(summed[i])) for i in peaks])]
-    return "\n".join(lines), read
+        lines += ["peaks of the summed spectrum:", _csv(f"{axis.label},net,sigma", [(float(x[p.index]), p.net, p.significance) for p in peaks])]
+    return lines, summed, x, axis
+
+
+def _spectrum_image_png(ds: Dataset, opts: ViewOptions) -> tuple:
+    if opts.index is not None:
+        single = _spectrum_at(ds, opts)
+        return detect(single).png(single, ViewOptions(max_side=opts.max_side))
+    cube, read, step = _read_cube(ds, opts)
+    lines, summed, x, axis = _summed_lines(ds, cube, step)
+    figure = Figure(figsize=(8.0, 3.4), dpi=100)
+    left, right = figure.add_subplot(1, 2, 1), figure.add_subplot(1, 2, 2)
+    left.imshow(np.asarray(to_pixels(cube.sum(axis=2), opts.max_side)), cmap="gray")
+    left.set_title("summed intensity", fontsize=8)
+    left.axis("off")
+    right.plot(x, summed, linewidth=0.9)
+    right.set_xlabel(f"{axis.label} ({axis.units})" if axis.units else axis.label)
+    right.set_title("summed spectrum", fontsize=8)
+    figure.tight_layout()
+    return _png(figure), read, "\n".join(lines)
+
+
+def _spectrum_image_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
+    if opts.index is not None:
+        single = _spectrum_at(ds, opts)
+        body, read = detect(single).text(single, ViewOptions(max_rows=opts.max_rows))
+        return f"spectrum at position {_index(opts)}:\n{body}", read
+    cube, read, step = _read_cube(ds, opts)
+    return "\n".join(_summed_lines(ds, cube, step)[0]), read
 
 
 TABLE_MAX_ROWS = 1000
@@ -764,7 +885,11 @@ def _table_frame(ds: Dataset, opts: ViewOptions):
     return frame.head(rows), f"read first {rows} rows" + (" (of the first partition)" if callable(read_partition) else "")
 
 
-def _table_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
+def _table_columns(frame) -> str:
+    return "columns: " + ", ".join(f"{c} ({frame[c].dtype})" for c in frame.columns)
+
+
+def _table_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
     frame, read = _table_frame(ds, ViewOptions(max_rows=TABLE_MAX_ROWS))
     numeric = [c for c in frame.columns if np.issubdtype(frame[c].dtype, np.number)]
     if not numeric:
@@ -780,13 +905,12 @@ def _table_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
         plot.plot(frame[numeric[0]].to_numpy(), linewidth=0.9)
         plot.set_ylabel(str(numeric[0]))
     figure.tight_layout()
-    return _png(figure), read
+    return _png(figure), read, _table_columns(frame)
 
 
 def _table_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
     frame, read = _table_frame(ds, opts)
-    columns = ", ".join(f"{c} ({frame[c].dtype})" for c in frame.columns)
-    return f"columns: {columns}\n{frame.to_csv(index=False, lineterminator=chr(10), float_format='%.6g').rstrip()}", read
+    return f"{_table_columns(frame)}\n{frame.to_csv(index=False, lineterminator=chr(10), float_format='%.6g').rstrip()}", read
 
 
 KINDS: list[Kind] = [
@@ -803,6 +927,11 @@ KINDS: list[Kind] = [
     Kind("stack", lambda ds: ds.ndim >= 3 and _real(ds), _stack_png, _stack_text, "frames (tilt series, 4-D STEM): one frame shown"),
     Kind("table", lambda ds: ds.family == "table", _table_png, _table_text, "rows and columns"),
 ]
+
+
+def kind_names() -> list[str]:
+    """Every kind list_data can report: the registered ones, plus map and unreadable."""
+    return [k.name for k in KINDS] + ["map", "unreadable"]
 
 
 def register_kind(kind: Kind, *, before: str | None = None) -> None:
@@ -834,12 +963,17 @@ def _map_text(node: Any) -> str:
 
 
 def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts: ViewOptions | None = None) -> tuple[dict, bytes | None]:
-    """Look at ``key``: (summary with its text, PNG bytes or None). fmt is "png" or "text"."""
+    """Look at ``key``: (summary with its text, PNG bytes or None). fmt is "png" or "text".
+
+    In png format the text still carries the kind's short summary (statistics, peaks),
+    so an agent that cannot see the picture learns what it shows.
+    """
     if fmt not in ("png", "text"):
         raise ValueError('format is "png" or "text"')
     opts = opts or ViewOptions()
     opts.max_side = int(min(max(64, opts.max_side), 1024))
     opts.max_rows = int(min(max(1, opts.max_rows), 1000))
+    group = resolve(node, key, dataset) if dataset else node
     ds = pick(node, key, dataset, opts.max_side)
     kind = detect(ds)
     summary: dict[str, Any] = {"key": key, "dataset": ds.path, "kind": kind.name, "shape": list(ds.shape), "dtype": str(ds.dtype)}
@@ -847,12 +981,16 @@ def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts
     for attr in ("acquisition_type", "detector", "units"):
         if attr in ds.attrs:
             header.append(f"{attr}: {ds.attrs[attr]}")
-    if dataset is None and _family(node) == "container":
-        header.insert(0, _map_text(node) if is_map(node) else "contains:\n" + container_listing(node) + "\n(choose one with dataset)")
+    if _family(group) == "container":
+        where = f"{dataset.strip('/')}/" if dataset else ""
+        listing = _map_text(group) if is_map(group) else f"{where or key} contains:\n" + container_listing(group, where) + \
+            f"\nshowing {ds.path}; choose another with dataset"
+        header.insert(0, listing)
     png = None
     if fmt == "png":
-        png, read = kind.png(ds, opts)
-        body = ""
+        drawn = kind.png(ds, opts)
+        png, read = drawn[0], drawn[1]
+        body = drawn[2] if len(drawn) > 2 else ""
     else:
         body, read = kind.text(ds, opts)
     summary["read"] = read

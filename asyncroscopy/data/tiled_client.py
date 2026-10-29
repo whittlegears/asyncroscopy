@@ -100,7 +100,9 @@ def about(uri: str, timeout_s: float = 2.0) -> dict | None:
     return None
 
 
-CONNECTION_ERRORS = (httpx.TransportError, OSError)
+# Failures that mean Tiled cannot be reached. Not OSError in general: FileExistsError,
+# FileNotFoundError and TimeoutError are OSErrors too, and mean something else.
+CONNECTION_ERRORS = (httpx.TransportError, ConnectionError)
 
 
 def unavailable(uri: str, exc: BaseException) -> TiledUnavailable:

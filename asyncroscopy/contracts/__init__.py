@@ -9,7 +9,7 @@ from pathlib import Path
 import jsonschema
 
 HERE = Path(__file__).resolve().parent
-ENVELOPE_VERSION = "1.0.0"
+ENVELOPE_VERSION = "1.1.0"  # the envelope schema's schema_version
 
 
 @cache

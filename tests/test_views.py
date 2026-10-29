@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -113,7 +114,7 @@ def test_spectrum_text_lists_peaks_with_energies_and_xray_candidates():
     text = summary["text"]
 
     assert png is None
-    peaks = text.split("peaks (strongest first):")[1].split("data (")[0].strip().splitlines()[1:]
+    peaks = text.split("peaks (most significant first")[1].split("data (")[0].strip().splitlines()[2:]
     energies = sorted(float(row.split(",")[0]) for row in peaks)
     assert len(energies) == 2
     assert abs(energies[0] - 1486.0) <= 10.0 and abs(energies[1] - 8040.0) <= 10.0
@@ -230,14 +231,69 @@ def test_bad_format_is_refused():
 def test_noise_has_no_peaks_and_a_real_peak_on_noise_is_found():
     rng = np.random.default_rng(1)
     attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
-    for mean in (2.0, 200.0):
-        noise = rng.poisson(mean, 2048).astype(np.float64)
-        summary, _ = views.view(Recorded((2048,), attrs, values=noise), "noise.h5", "text")
-        assert "no peaks stand" in summary["text"], mean
-        assert views.find_peaks(noise) == []
+    energy = np.arange(2048) * 10.0
+    eds_width = views.eds_fwhm_ev(energy) / 10.0
+    false_peaks = 0
+    for seed in range(20):
+        for mean in (2.0, 200.0):
+            noise = np.random.default_rng(seed).poisson(mean, 2048).astype(np.float64)
+            false_peaks += len(views.find_peaks(noise, eds_width)) + len(views.find_peaks(noise))
+    assert false_peaks == 0
+    summary, _ = views.view(Recorded((2048,), attrs, values=rng.poisson(2.0, 2048).astype(np.float64)), "noise.h5", "text")
+    assert "no peaks detected above noise at this exposure" in summary["text"] and "longer exposure" in summary["text"]
     signal = rng.poisson(gaussian_spectrum([6404.0])).astype(np.float64)
-    peaks = views.find_peaks(signal)
-    assert len(peaks) == 1 and abs(peaks[0] * 10.0 - 6404.0) <= 20.0
+    peaks = views.find_peaks(signal, eds_width)
+    assert len(peaks) == 1 and abs(peaks[0].index * 10.0 - 6404.0) <= 20.0
+
+
+def test_a_weak_peak_is_found_from_its_summed_counts():
+    energy = np.arange(2048) * 10.0
+    width = views.eds_fwhm_ev(energy) / 10.0
+    sigma_ch = float(views.eds_fwhm_ev(8040.0)) / 2.355 / 10.0
+    line = np.exp(-0.5 * ((np.arange(2048) - 804) / sigma_ch) ** 2) / (sigma_ch * np.sqrt(2 * np.pi))
+    for net_counts, needed in ((80.0, 20), (60.0, 14)):  # on 2 counts per channel; one channel never stands 5 sigma out
+        found = 0
+        for seed in range(20):
+            counts = np.random.default_rng(seed).poisson(2.0 + net_counts * line).astype(np.float64)
+            found += any(abs(p.index - 804) <= 3 for p in views.find_peaks(counts, width))
+        assert found >= needed, (net_counts, found)
+
+
+def test_escape_and_sum_peaks_are_flagged_not_named_as_elements():
+    spectrum = 5.0 + gaussian_spectrum([6404.0]) + 0.05 * gaussian_spectrum([6404.0 - 1740.0]) + 0.03 * gaussian_spectrum([12808.0])
+    node = Recorded((2048,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}, values=spectrum)
+    text = views.view(node, "fe.h5", "text")[0]["text"]
+    assert re.search(r'^46\d\d,.*"possible Si escape peak of the 64\d\d eV peak"$', text, re.MULTILINE)
+    assert re.search(r'^1\.28\de\+04,.*"possible sum peak \(2 x 64\d\d eV\)"$', text, re.MULTILINE)
+
+
+def test_png_mode_text_carries_the_summary():
+    node = Recorded((2048,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}, values=gaussian_spectrum([1486.0, 8040.0]))
+    summary, png = views.view(node, "eds.h5", "png")
+    assert png[:8] == PNG_MAGIC and "peaks (most significant first" in summary["text"] and "Al" in summary["text"]
+    image = views.view(Recorded((64, 64), {"pixel_size_m": 1e-9}), "img.h5", "png")[0]["text"]
+    assert "statistics of the pixels read" in image and "histogram" in image
+
+
+def test_a_group_named_as_dataset_lists_its_members_and_shows_the_first():
+    run = Container({"tiles": Container({f"tile_{i:05d}": Recorded((16, 16)) for i in range(5)}),
+                     "spectra": Container({"spectrum_00000": Recorded((64,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0})})})
+    summary, _ = views.view(run, "run.h5", "text", dataset="tiles")
+    assert summary["dataset"] == "tiles/tile_00000"
+    assert "tiles/ contains:" in summary["text"] and "tiles/tile_00004" in summary["text"]
+
+
+def test_deep_groups_are_still_listed():
+    deep = Container({"a": Container({"b": Container({"c": Container({"d": Container({"e": Container({"f": Recorded((4,))})})})})})})
+    assert "a/b/c/d/: 1 groups (deeper levels not listed" in views.container_listing(deep)
+
+
+def test_a_bare_index_is_accepted_and_a_bad_one_explained():
+    stack = Recorded((5, 8, 8))
+    views.view(stack, "tilt.h5", "png", opts=ViewOptions(index=3))
+    assert stack.reads[-1][0] == 3
+    with pytest.raises(ValueError, match="whole numbers"):
+        views.view(stack, "tilt.h5", "png", opts=ViewOptions(index=["x"]))
 
 
 def test_every_group_of_a_large_mapper_run_is_listed():
@@ -257,7 +313,7 @@ def test_every_group_of_a_large_mapper_run_is_listed():
                  "channels/BF/: 400 x (128, 128) uint16", "spectra/: 400 x (2048,) float64", "spectrum_image: (20, 20, 2048) float64",
                  "trace: (5,) <U40"):
         assert line in text, line
-    assert views.pick(run, "run.h5").path == "spectrum_image"
+    assert views.pick(run, "run.h5").path == "tiles/tile_00000"
 
 
 def test_text_bool_and_complex_data_have_text_views():

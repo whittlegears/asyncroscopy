@@ -8,8 +8,11 @@ import h5py
 import numpy as np
 import pytest
 
+from types import SimpleNamespace
+
 from asyncroscopy.contracts import validate
-from asyncroscopy.instruments.electron_microscope.mapper import tile_centres
+from asyncroscopy.instruments.electron_microscope import mapper as mapper_module
+from asyncroscopy.instruments.electron_microscope.mapper import Mapper, tile_centres
 
 
 def call(proxy, verb, payload):
@@ -169,6 +172,22 @@ class TestRun:
         assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
         release_all(mapper_proxy, reserve["reservation_id"])
 
+    def test_releasing_an_aborted_run_keeps_its_tiles_under_the_final_name(self, mapper_proxy, mapping_twin_proxy):
+        reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "imsize": 256, "dwell_s": 2e-6}})
+        started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+        while call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["progress"]["done"] < 1:
+            time.sleep(0.01)
+        call(mapper_proxy, "abort", {"job_id": started["job_id"]})
+        working = Path(call(mapper_proxy, "results", {"job_id": started["job_id"]})["result_keys"]["run_file"])
+        assert working.name.endswith(".h5.partial")
+
+        release_all(mapper_proxy, reserve["reservation_id"])
+
+        final = working.with_name(working.name[: -len(".partial")])
+        assert final.exists() and not working.exists()
+        with h5py.File(final, "r") as h5:
+            assert len(h5["tiles"]) >= 1
+
     def test_release_refuses_a_running_job(self, mapper_proxy):
         reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "imsize": 256}})
         started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
@@ -176,3 +195,32 @@ class TestRun:
         assert refused["error"]["code"] == "bad_state"
         call(mapper_proxy, "abort", {"job_id": started["job_id"]})
         release_all(mapper_proxy, reserve["reservation_id"])
+
+
+class TestRunFileName:
+    """A finished run file gets its final name even when Windows keeps the .partial open."""
+
+    def stub(self, tmp_path):
+        stub = SimpleNamespace()
+        stub._run_path = lambda job: Mapper._run_path(stub, job)
+        stub._file = lambda job: Mapper._file(stub, job)
+        return stub, {"run_path": str(tmp_path / "map_r.h5")}
+
+    def test_a_partial_file_is_renamed(self, tmp_path):
+        stub, job = self.stub(tmp_path)
+        (tmp_path / "map_r.h5.partial").write_bytes(b"tiles")
+        path, note = Mapper._finalize_run_file(stub, job)
+        assert path == tmp_path / "map_r.h5" and note is None and path.read_bytes() == b"tiles"
+
+    def test_a_file_that_cannot_be_renamed_is_copied_and_the_job_still_finishes(self, tmp_path, monkeypatch):
+        stub, job = self.stub(tmp_path)
+        (tmp_path / "map_r.h5.partial").write_bytes(b"tiles")
+        monkeypatch.setattr(mapper_module, "RENAME_RETRY_DELAYS_S", (0.0, 0.0))
+
+        def locked(self, target):
+            raise PermissionError("the file is open in another process")
+
+        monkeypatch.setattr(Path, "replace", locked)
+        path, note = Mapper._finalize_run_file(stub, job)
+        assert path == tmp_path / "map_r.h5" and path.read_bytes() == b"tiles"
+        assert "copied" in note
