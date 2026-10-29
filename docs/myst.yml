@@ -57,6 +57,7 @@ project:
     - title: Digital Twin
       children:
         - file: digital_twin.md
+        - file: Operation/specimens.md
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md
