@@ -52,6 +52,8 @@ from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_a
 
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
+from asyncroscopy.evaluate import RunData
+from asyncroscopy.evaluate import score_run as evaluator_scores
 
 HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
@@ -73,6 +75,10 @@ TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner + specialists + repor
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
+# Evaluators (asyncroscopy.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
+# The default reads no data; information, resolution and dose read the run's images from Tiled (set by --evaluators).
+EVALUATORS = ["time"]
+SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
 
 
 # ------------------------------------------------------------------ workflow files
@@ -711,6 +717,10 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
     if runner != "mapping" and not (run.final or "").strip():
         checks["answered"] = {"ok": False, "detail": "the agent gave no final answer"}
     names = [c.name for c in run.calls] or [str(e["action"]) for e in run.events if e.get("source") == "mcp"]
+    try:  # extra columns only: an evaluator that fails is recorded, the row's verdict stays as the checks gave it
+        scores = evaluator_scores(RunData(caller, run.events, tiled_uri=STACK.get("tiled")), EVALUATORS)
+    except Exception as exc:
+        scores = {"error": f"{type(exc).__name__}: {exc}"}
     return {
         "ok": error is None and all(c["ok"] for c in checks.values()),
         "error": error,
@@ -723,24 +733,37 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "sleepwalking": unrequested(run, workflow_allow(wf)),  # with this workflow's own allow list
         "skills": run.skills,
         "final": (run.final or "")[-600:],
+        "scores": scores,
     }
 
 
 # ------------------------------------------------------------------ reports
 
 
+def score_median(rows: list[dict], column: str) -> str:
+    """Median of one evaluator objective ("time.idle_s") over a workflow's rows, for the Markdown table."""
+    evaluator, _, objective = column.partition(".")
+    values = sorted(
+        v for v in ((r.get("scores") or {}).get(evaluator, {}).get(objective, {}).get("value") for r in rows if isinstance(r.get("scores"), dict))
+        if isinstance(v, (int, float))
+    )
+    return f"{values[len(values) // 2]:.3g}" if values else "-"
+
+
 def markdown(results: dict) -> str:
+    columns = results.get("score_columns") or []
     lines = [
         f"# Workflow benchmark: {results['model']}, stack {results['stack']}, {results.get('git', '?')}",
         "",
-        "| workflow | runner | passed | median s | failed checks |",
-        "|---|---|---|---|---|",
+        "| workflow | runner | passed | median s | failed checks |" + "".join(f" {c} |" for c in columns),
+        "|---|---|---|---|---|" + "---|" * len(columns),
     ]
     for key, value in results["workflows"].items():
         name, runner = key.rsplit("/", 1)
         failed = sorted({label for r in value["rows"] for label, c in r["checks"].items() if not c["ok"]} | {"error" for r in value["rows"] if r.get("error")})
         seconds = sorted(r["seconds"] for r in value["rows"]) or [0]
-        lines.append(f"| {name} | {runner} | {value['passed']}/{value['of']} | {seconds[len(seconds) // 2]:.0f} | {', '.join(failed) or '-'} |")
+        extra = "".join(f" {score_median(value['rows'], c)} |" for c in columns)
+        lines.append(f"| {name} | {runner} | {value['passed']}/{value['of']} | {seconds[len(seconds) // 2]:.0f} | {', '.join(failed) or '-'} |{extra}")
     lines += ["", f"Passed {results['passed']} of {results['of']} runs; sleepwalking calls: {results['sleepwalking_calls']}."]
     return "\n".join(lines) + "\n"
 
@@ -784,7 +807,10 @@ async def main(args) -> int:
     await live.discover()
     await warm_up(config)
     baseline = await live.snapshot()
-    results = {"model": args.model, "stack": args.stack, "git": git_head(), "n": args.n, "started": time.time(), "runners": available, "workflows": {}}
+    EVALUATORS[:] = [n.strip() for n in args.evaluators.split(",") if n.strip()]
+    SCORE_COLUMNS[:] = [c.strip() for c in args.score_columns.split(",") if c.strip()]
+    results = {"model": args.model, "stack": args.stack, "git": git_head(), "n": args.n, "started": time.time(), "runners": available,
+               "evaluators": EVALUATORS, "score_columns": SCORE_COLUMNS, "workflows": {}}
     out = Path(args.out or HERE / "results" / f"workflows_{args.stack}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     for wf in workflows:
@@ -831,4 +857,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", default=os.environ.get("ASYNCROSCOPY_MODEL", "qwen3:8b"))
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")
+    parser.add_argument("--evaluators", default=",".join(EVALUATORS),
+                        help="asyncroscopy.evaluate evaluators scored on each run's trace (extra columns, never pass/fail); "
+                        "information, resolution and dose read the run's images from Tiled.")
+    parser.add_argument("--score-columns", default=",".join(SCORE_COLUMNS), help="evaluator.objective medians added to the Markdown table.")
     sys.exit(asyncio.run(main(parser.parse_args())))
