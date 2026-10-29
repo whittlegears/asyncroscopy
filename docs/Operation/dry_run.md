@@ -26,6 +26,7 @@ Inside the job's worker, `JobDevice.proxy()` returns a `RecordingProxy` (`asyncr
 | :-- | :-- |
 | Attribute reads, the read-only DeviceProxy methods (`read_attribute`, `get_attribute_config`, ...), commands read-only by the safety policy (`get_*`, `list_*`, `State`, `Status`, unless `risk_overrides` mark one high), `job_status`, `results` | pass through |
 | `blank_beam` | really runs (blanking only makes the instrument safer) and is recorded |
+| An AFM's `retract_tip` (and any other profile's safe-state command) | recorded, **not sent**: a dry run leaves the tip where it is, since retracting would disturb a tip someone may be using |
 | Every other command (`move_stage`, `unblank_beam`, `acquire_*`, `set_fov`, ...), every attribute write, and the DeviceProxy write methods (`write_attribute*`, `set_attribute_config`, `poll_attribute`, `write_pipe`, properties) | recorded in the trace, **not sent** |
 | Any other DeviceProxy method | refused (`DryRunRefused`): an unlisted method is assumed to write |
 
