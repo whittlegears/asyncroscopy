@@ -155,7 +155,7 @@ async def main(args: argparse.Namespace) -> int:
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
 
         # The same as one run_job call: the wait's reply carries the results.
-        tile = {"size_m": [1.6e-7, 1.6e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
+        tile = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
         ran = json.loads(text(await call(agent, "run_job", {"device": "Mapper", "plan": tile})))
         status = {}
         deadline = time.time() + args.timeout
@@ -185,7 +185,7 @@ async def main(args: argparse.Namespace) -> int:
                 again = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
                 report("the approval is single use", again.is_error)
             # A held job start shows the operator the plan it would run, not just an id.
-            small = {"size_m": [1.6e-7, 1.6e-7], "fov_m": 1.6e-7, "imsize": 64}
+            small = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64}
             reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": small})})))
             if "reservation_id" in reserved:
                 held = await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})}, raise_on_error=False)
