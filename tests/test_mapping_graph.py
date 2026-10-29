@@ -170,7 +170,45 @@ def test_plan_completion_repairs_small_model_slips(model_plan, request_text, exp
     plan = MappingGraph._complete_plan(model_plan, context, request_text)
     for key, value in expect.items():
         numeric = isinstance(value, (int, float)) or (isinstance(value, list) and all(isinstance(v, (int, float)) for v in value))
-        assert plan[key] == (pytest.approx(value) if numeric else value)
+        assert plan.get(key, []) == (pytest.approx(value) if numeric else value)  # no per_tile field means images only
+
+
+SEM_CONTEXT = {"stage_position_m": [0.025, 0.012, 0.004, 0, 0], "fov_m": 1e-3, "microscope": "SEM", "eds": False}
+
+
+@pytest.mark.parametrize("context", [SEM_CONTEXT, {**SEM_CONTEXT, "fov_m": 1e-5}, {**SEM_CONTEXT, "fov_m": None}])
+def test_an_sem_scale_plan_in_metres_is_not_rescaled(context):
+    plan = {"box_m": [0.020, 0.030, 0.010, 0.014], "fov_m": 2e-3}
+    got = MappingGraph._complete_plan(dict(plan), context, "map this 10 x 4 mm area", from_model=True)
+    assert got["fov_m"] == pytest.approx(2e-3)  # 2 mm stays 2 mm, not 2 nm
+    assert got["box_m"] == pytest.approx(plan["box_m"])  # a stage at x = 25 mm stays there, not at 25 nm
+    centred = MappingGraph._complete_plan({"size_m": [0.01, 0.004], "fov_m": 2e-3}, context, "", from_model=False)
+    assert centred["box_m"] == pytest.approx([0.020, 0.030, 0.010, 0.014])
+    assert "per_tile" not in got and "per_tile" not in centred  # the sem profile refuses even an empty per_tile
+
+
+def test_an_sem_without_eds_gets_no_eds_even_when_the_request_mentions_composition():
+    got = MappingGraph._complete_plan({"box_m": [0.020, 0.030, 0.010, 0.014], "fov_m": 2e-3, "per_tile": ["eds_point"]}, SEM_CONTEXT, "map this area and show the composition")
+    assert "per_tile" not in got
+
+
+def test_the_stem_unit_repair_is_unchanged_by_the_instrument_scale():
+    from asyncroscopy.agents.graphs.mapping import _plausible_limits
+
+    stem = {"sample_bounds_m": [-5e-7, 5e-7, -5e-7, 5e-7], "stage_position_m": [0, 0, 0, 0, 0], "fov_m": 2e-7}
+    assert _plausible_limits(stem) == (1e-3, 1e-2)  # the old cut-offs
+    got = MappingGraph._complete_plan({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, stem, "map the sample")
+    assert got["fov_m"] == pytest.approx(2e-7) and got["box_m"] == pytest.approx([-5e-7, 5e-7, -5e-7, 5e-7])
+
+
+def test_the_plan_prompt_names_the_instrument_and_offers_eds_only_when_it_has_it():
+    from asyncroscopy.agents.graphs.mapping import plan_prompt
+
+    stem = plan_prompt({"microscope": "DigitalTwin", "eds": True})
+    sem = plan_prompt(SEM_CONTEXT)
+    assert "DigitalTwin" in stem and '"per_tile"' in stem and "eds_point" in stem
+    assert "SEM" in sem and "per_tile" not in sem and "eds" not in sem.replace('"eds": false', "")
+    assert "1 mm = 1e-3 m" in sem
 
 
 def test_an_area_inside_one_tile_is_refused_as_an_image_not_a_map():
