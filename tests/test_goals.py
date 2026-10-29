@@ -477,3 +477,11 @@ def test_a_dose_the_user_states_is_a_budget_checked_against_the_job_estimates():
     verdict = check(Goal(goal.statement, [], goal.budget), [reserve], "done", FakeServer())
     assert not verdict.met and "over the budget of 20.0" in verdict.over_budget
     assert Goal.from_text("Map a 1 um square.").budget.max_dose_e_per_a2 is None
+
+
+def test_a_restitched_map_key_is_still_a_map_key():
+    from asyncroscopy.agents.goals import MAP_KEY
+
+    assert MAP_KEY.search("now map_f22dde7faf84_map_20261029T023056_33d6.").group(0) == "map_f22dde7faf84_map_20261029T023056_33d6"
+    assert MAP_KEY.search("map_f22dde7faf84_map").group(0) == "map_f22dde7faf84_map"
+    assert MAP_KEY.search("call assemble_map then score_map") is None
