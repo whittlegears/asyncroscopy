@@ -432,7 +432,11 @@ def _near(a, b, tol: float) -> bool:
 
 def _top_scored(run: Run, n: int) -> list[dict]:
     scored = [p for p in _poi_records(run, only_setup_map=True) if str(p.get("source", "")).startswith("scorer") and p.get("score") is not None]
-    return sorted(scored, key=lambda p: -float(p["score"]))[:n]
+    top: list[dict] = []
+    for p in sorted(scored, key=lambda p: -float(p["score"])):  # scoring a map twice marks the same regions again
+        if not any(_near((q["x_m"], q["y_m"]), (p["x_m"], p["y_m"]), 1e-9) for q in top):
+            top.append(p)
+    return top[:n]
 
 
 def _step_results(run: Run) -> list[dict]:
@@ -492,6 +496,7 @@ def visited_regions(run: Run, n: int = 3, tol: float = 1.0e-7) -> tuple[bool, st
         if isinstance(pos, (list, tuple)) and len(pos) >= 2:
             moves.append(pos[:2])
     moves += [plan["centre_m"][:2] for plan in _plans(run) if plan.get("centre_m")]
+    moves += [s["stage_xy_m"][:2] for s in _step_results(run) if s.get("phase") == "revisit" and s.get("stage_xy_m")]  # a map job's revisits
     unvisited = [(round(p["x_m"] * 1e9), round(p["y_m"] * 1e9)) for p in top if not any(_near(m, (p["x_m"], p["y_m"]), tol) for m in moves)]
     box = _map_box(run)
     outside = [m for m in moves if box and not (box[0] - tol <= m[0] <= box[1] + tol and box[2] - tol <= m[1] <= box[3] + tol)]
@@ -506,7 +511,7 @@ def images_linked_to_regions(run: Run, n: int = 3, tol: float = 1.0e-7) -> tuple
     if len(top) < n:
         return False, f"only {len(top)} scored points"
     images = {str(e.get("result_key") or e.get("result")) for e in _device_events(run, "*_acquire_scanned_image", ok=True)}
-    images |= {s.get("key") for s in _step_results(run) if s.get("key")}
+    images |= {s.get("key") or s.get("image") for s in _step_results(run) if s.get("key") or s.get("image")}
     pois = _poi_records(run)
     unlinked = []
     for p in top:

@@ -78,9 +78,10 @@ workflows:
 
   - name: abort_then_resume
     runners: [general]
-    timeout_s: 1500
+    timeout_s: 2400
     turns:
-      - say: Start mapping a 1 micrometre square around the current position. Do not wait for it to finish; tell me the job id as soon as it is running.
+      # Large enough (about 300 tiles) that the map is still running when a slow local model gets to "stop".
+      - say: Start mapping a 3 micrometre square around the current position. Do not wait for it to finish; tell me the job id as soon as it is running.
       - wait_for: {job_steps_at_least: 3, timeout_s: 300}
         say: Stop that map now.
       - say: Resume the map you stopped and let it finish. Then tell me how many tiles it has.
