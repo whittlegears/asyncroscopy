@@ -25,6 +25,15 @@ devices:
       scan_device_address: asyncroscopy/scan/default
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
+  # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
+  tuner:
+    class_name: Tuner
+    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      corrector_device_address: asyncroscopy/corrector/default
+      data_device_address: asyncroscopy/data/default
   # Approval mode (auto by default); switched from SciAgentGUI.
   approvals:
     class_name: Approvals

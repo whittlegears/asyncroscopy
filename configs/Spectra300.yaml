@@ -49,6 +49,20 @@ devices:
       # Goniometer readout error and drift bound for the stitch; placeholders until first light measures them.
       stage_sigma_m: 5.0e-8
       max_drift_m_per_s: 5.0e-11
+  # Autofocus and stigmation jobs (docs/Operation/autofocus.md). OptiSTEM C1A1 is the strategy here
+  # (decision D2); the corrector strategy is refused until first light's sign test settles the CEOS
+  # correction's sign and units (then set allow_corrector_writes: true). The dose budget needs a
+  # measured beam current, as for the Mapper; autofocus_frames is a placeholder to calibrate.
+  tuner:
+    class_name: Tuner
+    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      corrector_device_address: asyncroscopy/corrector/default
+      data_device_address: asyncroscopy/data/default
+      autofocus_frames: 8
+      allow_corrector_writes: false
   scan:      { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }
   stage:
     class_name: AutoScriptSTAGE

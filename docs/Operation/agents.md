@@ -71,6 +71,7 @@ At most four skills per run, within about 7000 characters shared with the memory
 | `mapping` | Map an area as tiles, stitch it, find regions |
 | `eds_survey` | Composition: EDS at each tile, then read the spectra |
 | `explore_regions` | After a map: rank regions, go back closer, mark them |
+| `focus` | Autofocus and stigmation as one Tuner job, never a hand loop over `set_defocus` |
 | `inspect_data` | Find and read images, spectra and maps; judge peaks and noise |
 | `approval_etiquette` | A call is held, approved, denied or expired |
 | `find_feature_then_measure` | Find a particle or feature in an image, then a spectrum or closer image on it |

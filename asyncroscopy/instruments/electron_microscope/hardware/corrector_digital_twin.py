@@ -27,10 +27,18 @@ DEFAULT_ABERRATIONS = {
 
 
 class DigitalTwinCorrector(CORRECTOR):
-    """Simulate CEOS commands while retaining the same inputs and JSON shape."""
+    """Simulate CEOS commands while retaining the same inputs and JSON shape.
+
+    A measurement is the hidden truth plus noise (both on by default), so a
+    measure-then-correct loop does not converge by construction. ``correction_sign``
+    -1 makes a correction add instead of subtract: the wrong-sign corrector a
+    first-light sign test guards against.
+    """
 
     random_seed = device_property(dtype=int, default_value=1729)
-    measurement_noise_fraction = device_property(dtype=float, default_value=0.0)
+    measurement_noise_fraction = device_property(dtype=float, default_value=0.02, doc="Measurement noise, as a fraction of each coefficient.")
+    measurement_noise_m = device_property(dtype=float, default_value=0.5e-9, doc="Measurement noise floor (m), added to every coefficient.")
+    correction_sign = device_property(dtype=float, default_value=1.0, doc="1: a correction subtracts the value sent (CEOS as assumed); -1: it adds (a wrong-sign backend).")
 
     def init_device(self) -> None:
         self._response_id = 1
@@ -61,14 +69,15 @@ class DigitalTwinCorrector(CORRECTOR):
     def _measured_aberrations(self) -> dict[str, list[float]]:
         coefficients = copy.deepcopy(self._simulation_aberrations)
         noise_fraction = max(0.0, float(self.measurement_noise_fraction))
-        if noise_fraction == 0.0:
+        noise_floor = max(0.0, float(self.measurement_noise_m))
+        if noise_fraction == 0.0 and noise_floor == 0.0:
             return coefficients
         import numpy as np
 
         rng = np.random.default_rng(int(self.random_seed) + self._response_id)
         for name, values in coefficients.items():
             coefficients[name] = [
-                float(value + rng.normal(0.0, max(abs(value), 1e-12) * noise_fraction))
+                float(value + rng.normal(0.0, float(np.hypot(abs(value) * noise_fraction, noise_floor)) or 1e-30))
                 for value in values
             ]
         return coefficients
@@ -96,8 +105,9 @@ class DigitalTwinCorrector(CORRECTOR):
             raise ValueError(
                 f"Aberration {name} expects {len(current)} value(s), got {len(values)}"
             )
+        sign = 1.0 if float(self.correction_sign) >= 0 else -1.0
         self._simulation_aberrations[name] = [
-            float(existing - correction)
+            float(existing - sign * correction)
             for existing, correction in zip(current, values)
         ]
         return self._response(

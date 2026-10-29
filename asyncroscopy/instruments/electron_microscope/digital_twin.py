@@ -18,6 +18,7 @@ from dataclasses import replace
 
 import numpy as np
 import tango
+from tango import DevVarFloatArray
 from tango.server import attribute, command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
@@ -91,6 +92,16 @@ class DigitalTwin(AtomisticDigitalTwin):
     min_fov = _prop(float, 1e-9, "Smallest field of view accepted (m).")
     max_fov = _prop(float, 1e-4, "Largest field of view accepted (m).")
     max_defocus = _prop(float, 1e-5, "Largest |defocus| accepted (m); render cost grows with defocus squared.")
+    max_image_shift = _prop(float, 1e-6, "Largest |image shift| per axis accepted (m).")
+    max_stigmator = _prop(float, 1e-6, "Largest |stigmator| component accepted (m of A1).")
+    # Focus truth the operator does not see: get_defocus and get_stigmator never include it. A twin
+    # started with these set is defocused and astigmatic, and its images are blurred accordingly, so a
+    # focus routine has to find the correction from the images (export_ground_truth reports the residual).
+    focus_offset_m = _prop(float, 0.0, "Hidden focus error (m) added to C1; not reported by get_defocus.")
+    astigmatism_offset_a_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, first component (m); not reported by get_stigmator.")
+    astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
+    autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
+    autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
     # Optics and detector
     acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
     convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
@@ -247,6 +258,13 @@ class DigitalTwin(AtomisticDigitalTwin):
             margin_m=(x_max - x_min) * 0.25,
         )
         self._blanked = False
+        self._image_shift = np.zeros(2, dtype=np.float64)
+        self._stigmator = np.zeros(2, dtype=np.float64)
+        self._autofocus_runs = 0
+        self._focus_error = {
+            "c1_m": float(self.focus_offset_m),
+            "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
+        }
         self._last_written_stage: np.ndarray | None = None
         self._stage_position = self._stage.true.copy()
         # The atom-renderer state of the base class is unused here.
@@ -366,6 +384,71 @@ class DigitalTwin(AtomisticDigitalTwin):
         return self._stage.reported.copy()
 
     # ------------------------------------------------------------------
+    # Image shift, stigmator and the simulated vendor autofocus
+    # ------------------------------------------------------------------
+    def _set_image_shift(self, shift) -> None:
+        value = np.asarray(shift, dtype=np.float64)
+        limit = float(self.max_image_shift)
+        if value.shape != (2,) or not np.all(np.isfinite(value)):
+            raise ValueError(f"image shift must be [x, y] in metres, got {np.atleast_1d(value).tolist()}")
+        if np.any(np.abs(value) > limit):
+            raise ValueError(f"image shift must be within +/-{limit} m per axis (did you pass nanometres?), got {value.tolist()}")
+        self._image_shift = value
+
+    def _get_image_shift(self):
+        return self._image_shift.copy()
+
+    @command(dtype_in=DevVarFloatArray, doc_in=":param stigmator: [a, b] objective stigmator in metres of A1.")
+    def set_stigmator(self, stigmator) -> None:
+        """Set the objective stigmator: the two A1 components it adds to the column, in metres (twin only)."""
+        value = np.asarray(stigmator, dtype=np.float64)
+        limit = float(self.max_stigmator)
+        if value.shape != (2,) or not np.all(np.isfinite(value)):
+            raise ValueError(f"stigmator must be [a, b] in metres, got {np.atleast_1d(value).tolist()}")
+        if np.any(np.abs(value) > limit):
+            raise ValueError(f"stigmator must be within +/-{limit} m per component, got {value.tolist()}")
+        self._stigmator = value
+
+    @command(dtype_out=DevVarFloatArray)
+    def get_stigmator(self):
+        """Read the objective stigmator [a, b] in metres; the column's own astigmatism is not included."""
+        return self._stigmator.copy()
+
+    def set_focus_error(self, c1_m: float, a1_m=(0.0, 0.0)) -> None:
+        """Test and bench hook, not a Tango command: replace the hidden focus error, as a new specimen would."""
+        self._focus_error = {"c1_m": float(c1_m), "a1_m": [float(a1_m[0]), float(a1_m[1])]}
+
+    def _focus_truth(self) -> dict:
+        """The column's effective C1 at the beam position (specimen height included) and its A1, in metres."""
+        ab = self._aberrations()
+        x, y = (float(v) for v in self._stage.true[:2] + self._image_shift)
+        c1 = ab.get("C10", 0.0) * 1e-9 - float(self._sample.height_at(x, y))
+        a1 = [ab.get("C12a", 0.0) * 1e-9, ab.get("C12b", 0.0) * 1e-9]
+        return {
+            "c1_m": float(c1), "a1_m": a1, "a1_abs_m": float(np.hypot(*a1)),
+            "defocus_m": float(self._defocus), "stigmator_m": self._stigmator.tolist(),
+        }
+
+    def _auto_focus(self) -> None:
+        """Stand-in for OptiSTEM C1A1: scans autofocus_frames frames, then zeroes C1 and A1 to within autofocus_residual_m."""
+        self._refuse_while_moving()
+        scan = self._detector_proxies.get("scan")
+        imsize, dwell = (int(scan.imsize), float(scan.dwell_time)) if scan is not None else (256, 1e-6)
+        blanked = self._blanked
+        self._blanked = False  # the vendor routine unblanks for its own scans
+        try:
+            for _ in range(max(0, int(self.autofocus_frames))):
+                self._scan_frame(imsize, dwell, [0.0, 0.0, 1.0, 1.0])
+        finally:
+            self._blanked = blanked
+        self._autofocus_runs += 1
+        rng = self._rng.for_event("autofocus", self._autofocus_runs)
+        residual = max(0.0, float(self.autofocus_residual_m))
+        truth = self._focus_truth()
+        self._defocus = check_defocus(self._defocus - truth["c1_m"] + rng.normal(0.0, residual), self.max_defocus)
+        self._stigmator = self._stigmator - np.asarray(truth["a1_m"]) + rng.normal(0.0, residual, size=2)
+
+    # ------------------------------------------------------------------
     # Imaging
     # ------------------------------------------------------------------
     def _aberrations(self) -> dict:
@@ -376,7 +459,14 @@ class DigitalTwin(AtomisticDigitalTwin):
                 coefficients = json.loads(corrector.get_aberrations_coeff_sim())
             except (tango.DevFailed, AttributeError, ValueError):
                 coefficients = None
-        return aberrations_nm(coefficients, float(self.acceleration_voltage), float(self._defocus))
+        ab = aberrations_nm(coefficients, float(self.acceleration_voltage), float(self._defocus))
+        # The hidden focus error and the stigmator, neither of which the corrector sees.
+        error = getattr(self, "_focus_error", {"c1_m": 0.0, "a1_m": [0.0, 0.0]})
+        stigmator = getattr(self, "_stigmator", np.zeros(2))
+        ab["C10"] = float(ab.get("C10", 0.0)) + error["c1_m"] * 1e9
+        ab["C12a"] = float(ab.get("C12a", 0.0)) + (error["a1_m"][0] + float(stigmator[0])) * 1e9
+        ab["C12b"] = float(ab.get("C12b", 0.0)) + (error["a1_m"][1] + float(stigmator[1])) * 1e9
+        return ab
 
     def _scan_frame(self, imsize: int, dwell_time: float, scan_region) -> dict:
         """Lay out one scan: pixel coordinates on the sample, timing, and the ground-truth record."""
@@ -393,7 +483,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             (left, top, min(1.0, left + width), min(1.0, top + height)),
             float(dwell_time),
             self._scan_params,
-            self._stage.true_xy_at,
+            self._beam_xy_at,
             t0,
             self._rng.for_event("scan", index),
         )
@@ -420,6 +510,10 @@ class DigitalTwin(AtomisticDigitalTwin):
         }
         self._acquisitions.append(record)
         return {"xs": xs, "ys": ys, "index": index, "pixel_m": pixel, "dwell_s": float(dwell_time), "record": record}
+
+    def _beam_xy_at(self, t: float) -> np.ndarray:
+        """Where the scan is centred at sim time ``t``: the true stage position plus the image shift."""
+        return np.asarray(self._stage.true_xy_at(t), dtype=np.float64) + self._image_shift
 
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list, scan_region=None, frame=None) -> np.ndarray:
         """Render one detector channel; pass ``frame`` to share one scan between detectors."""
@@ -613,6 +707,7 @@ class DigitalTwin(AtomisticDigitalTwin):
                 "acquisitions": self._acquisitions,
                 "simulated_time_s": self._clock.now(),
                 "dose": self._dose.summary(),
+                "focus": {**self._focus_truth(), "hidden_error": self._focus_error},
             }
         )
 

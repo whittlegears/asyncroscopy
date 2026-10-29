@@ -267,9 +267,6 @@ def test_acquisitions_return_the_same_shapes(backend):
 # AutoScript below. Implementing one in the twin fails test_twin_gaps_are_as_documented: move it into
 # the shared checks above.
 TWIN_LACKS = {
-    "auto_focus": (),
-    "set_image_shift": ([1e-9, 2e-9],),
-    "get_image_shift": (),
     "set_beam_tilt": ([0.1, -0.1],),
     "get_beam_tilt": (),
     "set_diffraction_shift": ([1e-7, 0.0],),
@@ -278,7 +275,26 @@ TWIN_LACKS = {
     "get_screen_current": (),
 }
 # Twin-only, by design: export_ground_truth (hidden truth for scoring), the stage_moving attribute
-# (the twin's long moves return early; AutoScript's absolute_move returns on arrival), simulated_time_s.
+# (the twin's long moves return early; AutoScript's absolute_move returns on arrival), simulated_time_s,
+# and set_stigmator/get_stigmator (the objective stigmator is not wired to AutoScript yet; the Tuner
+# offers image-metric stigmation only where the microscope has them).
+
+
+def test_image_shift_round_trips_and_refuses_out_of_range(backend):
+    backend.call("set_image_shift", [1e-9, 2e-9])
+    assert [float(v) for v in backend.call("get_image_shift")] == pytest.approx([1e-9, 2e-9])
+    with pytest.raises(REFUSED):
+        backend.call("set_image_shift", [1.0, 0.0])
+    backend.call("set_image_shift", [0.0, 0.0])
+
+
+def test_auto_focus_runs_the_vendor_routine_or_its_stand_in(backend):
+    backend.call("set_defocus", 4e-8)
+    backend.call("auto_focus")
+    if backend.client is not None:
+        assert [c["path"] for c in backend.client.writes("auto_functions")] == ["auto_functions.run_opti_stem"]
+    else:  # the twin's OptiSTEM stand-in sets C1 to its hidden truth (zero here) within its residual
+        assert abs(float(backend.call("get_defocus"))) < 1e-8
 
 
 @pytest.mark.parametrize("command", sorted(TWIN_LACKS))
