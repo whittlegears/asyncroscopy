@@ -898,8 +898,8 @@ class MCPServer:
         return proxy
 
     @tool()
-    def run_job(self, device: str, plan: dict[str, Any] | None = None, resume: str | None = None) -> dict[str, Any]:
-        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask. To continue a job that was aborted, pass resume=<its reservation_id> and no plan: it goes on from the next step (through the approval gate, like any start)."""
+    def run_job(self, device: str, plan: dict[str, Any] | None = None, resume: str | None = None, wait: bool = True) -> dict[str, Any]:
+        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask. To continue a job that was aborted, pass resume=<its reservation_id> and no plan: it goes on from the next step (through the approval gate, like any start). wait=false returns as soon as the job runs (when the user wants the job id now, or to stop it later)."""
         began = time.monotonic()
         tools = self.tools.get(device) if device in self._envelope_prefixes else None
         if not tools or "reserve" not in tools or "start" not in tools:
@@ -919,11 +919,13 @@ class MCPServer:
         if "error" in started:
             return started
         reply = {**summary, **{k: v for k, v in started.items() if k != "schema_version"}}
-        wait_s = max(0.0, min(RUN_JOB_WAIT_S, RUN_JOB_BUDGET_S - (time.monotonic() - began)))
+        wait_s = max(0.0, min(RUN_JOB_WAIT_S if wait else 0.0, RUN_JOB_BUDGET_S - (time.monotonic() - began)))
         if started.get("job_id"):
             proxy = self._job_device(device)
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
+            if not wait and reply.get("state") in WAIT_NOTES:
+                reply["note"] = "The job runs in the background: give the user its job_id. Mapper_abort stops it; wait_for_job waits for it."
         return reply
 
     def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, key: tuple, resume: str | None = None) -> tuple[dict, dict]:
