@@ -690,7 +690,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["beam_current_source"] = "measured"
         parameters["beam_current_age_s"] = 0.0  # always current: nothing on the twin drifts it between readings
         parameters["beam_blanked"] = self._blanked
-        parameters["simulated"] = True  # read by the Mapper's dose check when the stack sets no `simulated` flag
+        parameters["simulated"] = True  # for clients; job devices take the stack's `simulated` property, never this
         return json.dumps(parameters)
 
     @command(dtype_out=str)

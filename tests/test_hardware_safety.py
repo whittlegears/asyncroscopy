@@ -22,6 +22,7 @@ import yaml
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
 from asyncroscopy.instruments.electron_microscope.tuner import TuneContext, TuneFailed, Tuner
+from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, DryRunRefused, RecordingProxy
 from asyncroscopy.mcp.binding import bind_host, is_loopback_host, is_remote_host
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, usable_beam_current
@@ -186,6 +187,7 @@ class FakeCorrector:
 def tuner_stub(microscope, simulated=True, corrector=None, **extra):
     """Tuner's own methods on a plain object (a Tango device cannot be built without a server)."""
     methods = {name: value for name, value in vars(Tuner).items() if callable(value) or isinstance(value, staticmethod)}
+    methods["_stack_simulated"] = JobDevice._stack_simulated  # the stack's simulated flag, read as every job device reads it
     cls = type("TunerStub", (), methods)
     stub = cls()
     scan = SimpleNamespace(imsize=64, dwell_time=1e-6, scan_region=[0.0, 0.0, 1.0, 1.0])

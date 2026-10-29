@@ -193,13 +193,28 @@ class TestApprovalsDevice:
 
     def test_request_approve_check_is_single_use(self, approvals_proxy):
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [1, 2, 3, 0, 0]}}
-        request_id = json.loads(approvals_proxy.request(json.dumps({**call, "caller": "agent-1"})))["request_id"]
-        assert json.loads(approvals_proxy.request(json.dumps(call)))["request_id"] == request_id
-        assert not json.loads(approvals_proxy.check(json.dumps(call)))["allowed"]
+        mine = {**call, "caller": "agent-1"}
+        request_id = json.loads(approvals_proxy.request(json.dumps(mine)))["request_id"]
+        assert json.loads(approvals_proxy.request(json.dumps(mine)))["request_id"] == request_id
+        assert not json.loads(approvals_proxy.check(json.dumps(mine)))["allowed"]
         json.loads(approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"})))
-        first = json.loads(approvals_proxy.check(json.dumps(call)))
+        first = json.loads(approvals_proxy.check(json.dumps(mine)))
         assert first["allowed"] and first["approved_by"] == "operator"
-        assert not json.loads(approvals_proxy.check(json.dumps(call)))["allowed"]
+        assert not json.loads(approvals_proxy.check(json.dumps(mine)))["allowed"]
+
+    def test_a_grant_covers_only_the_caller_and_run_that_asked(self, approvals_proxy):
+        call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [4, 4, 0, 0, 0]}}
+        alice = {**call, "caller": "alice", "run": "run-1"}
+        request_id = json.loads(approvals_proxy.request(json.dumps(alice)))["request_id"]
+        # The same call from someone else is their own request, never merged into alice's.
+        others = [json.loads(approvals_proxy.request(json.dumps(body)))["request_id"] for body in ({**call, "caller": "mallory", "run": "run-1"}, {**alice, "run": "run-2"}, call)]
+        assert request_id not in others and len(set(others)) == 3
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
+        for body in ({**call, "caller": "mallory", "run": "run-1"}, {**alice, "run": "run-2"}, call):
+            assert not json.loads(approvals_proxy.check(json.dumps(body)))["allowed"], body
+        assert json.loads(approvals_proxy.check(json.dumps(alice)))["allowed"]
+        for other in others:
+            approvals_proxy.deny(json.dumps({"request_id": other, "who": "operator"}))
 
     def test_a_pending_request_names_its_agent_run(self, approvals_proxy):
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [7, 1, 0, 0, 0]}}
@@ -883,3 +898,108 @@ class TestRunJobResume:
         with pytest.raises(ToolError, match="not both"):
             server.run_job("Mapper")
         assert calls == []
+
+
+MEASURED = {"duration_s": 60.0, "max_dose_e_per_a2": 5.0, "beam_current_pa": 50.0, "beam_current_source": "measured", "beam_current_age_s": 0.0}
+
+
+class TestEndpointGuards:
+    """What the agent endpoint checks on its own: job limits at every start, the dose cap's current, bound grants, dry-run risks."""
+
+    @staticmethod
+    def server_with(server_factory, tango_ctx, estimate, hardware=True, limits=None):
+        server, calls = TestRunJob.mapper_server(server_factory)
+        server.job_limits = limits if limits is not None else {"max_dose_e_per_a2": 100.0}
+        if hardware:  # the stack's Approvals device says simulated: false
+            hw = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/approvals/hardware"))
+            server._approvals = lambda: hw
+
+        def reserve(request):
+            calls.append(("reserve", json.loads(request)))
+            return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": dict(estimate)})
+
+        server.tools["Mapper"]["reserve"] = server._create_wrapper(reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper")
+        server._devices["Mapper"].get_reservation = lambda request: json.dumps({"reservation_id": json.loads(request)["reservation_id"], "estimate": dict(estimate)})
+        return server, calls
+
+    @pytest.mark.parametrize("estimate, why", [
+        ({**MEASURED, "beam_current_source": "default", "beam_current_reason": "the microscope reports an assumed current"}, "assumed current"),
+        ({**MEASURED, "beam_current_reason": "the screen-current measurement is 3600 s old"}, "s old"),
+        ({k: v for k, v in MEASURED.items() if k != "max_dose_e_per_a2"}, "gives no dose"),
+        ({**MEASURED, "max_dose_e_per_a2": None}, "gives no dose"),
+    ])
+    def test_on_hardware_the_dose_cap_refuses_a_dose_it_cannot_check(self, server_factory, tango_ctx, estimate, why):
+        server, calls = self.server_with(server_factory, tango_ctx, estimate)
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["error"]["code"] == "plan_rejected" and why in reply["error"]["message"], reply
+        assert [c[0] for c in calls] == ["reserve"] and server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+
+    def test_a_measured_dose_and_a_job_without_a_dose_both_run_on_hardware(self, server_factory, tango_ctx, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        afm = {"duration_s": 60.0, "steps": 9, "budgets": {"tip_force_nn": {"value": 2.0, "budget": 5.0, "units": "nN"}}}
+        for estimate in (MEASURED, afm):
+            server, calls = self.server_with(server_factory, tango_ctx, estimate)
+            server._gate = lambda *args, **kwargs: {"mode": "approve", "approved_by": "test"}  # the approval itself is tested elsewhere
+            assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1", estimate
+
+    def test_the_twin_runs_with_its_measured_current(self, server_factory, tango_ctx, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        assumed = {**MEASURED, "beam_current_source": "default", "beam_current_reason": "assumed"}
+        server, _calls = self.server_with(server_factory, tango_ctx, assumed, hardware=False)  # a simulated stack
+        assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
+
+    def test_a_start_of_a_reservation_over_the_limits_never_starts(self, server_factory, tango_ctx):
+        long = {**MEASURED, "duration_s": 36000.0}
+        server, calls = self.server_with(server_factory, tango_ctx, long, hardware=False, limits={"max_duration_s": 3600.0})
+        # Someone reserved it straight over Tango (or on another endpoint); this endpoint starts it directly or as a resume.
+        direct = json.loads(server.tools["Mapper"]["start"]({"reservation_id": "r9"}))
+        assert direct["error"]["code"] == "plan_rejected" and direct["error"]["violations"][0]["what"] == "duration_s"
+        resumed = server.run_job("Mapper", resume="r9")
+        assert resumed["error"]["code"] == "plan_rejected"
+        assert calls == []  # the device's start was never called
+        server._devices["Mapper"].get_reservation = lambda request: (_ for _ in ()).throw(RuntimeError("device not answering"))
+        unread = json.loads(server.tools["Mapper"]["start"]({"reservation_id": "r9"}))
+        assert "could not read the reservation" in unread["error"]["message"] and calls == []
+
+    def test_a_reserve_carries_the_endpoints_high_risk_overrides_for_a_dry_run(self, server_factory):
+        server, calls = TestRunJob.mapper_server(server_factory)
+        server.risk_overrides = {"AFMTwin.get_image": "high", "Mapper_reserve": "low"}
+        server.tools["Mapper"]["reserve"]({"plan": {"fov_m": 2e-7, "dry_run": True}})
+        assert calls[-1] == ("reserve", {"plan": {"fov_m": 2e-7, "dry_run": True}, "risk_overrides": {"AFMTwin.get_image": "high"}})
+
+    def test_an_approval_is_used_only_by_the_caller_who_asked(self, server_factory, approvals_proxy, monkeypatch):
+        server = server_factory()
+        calls = []
+        wrapper = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "move_stage", "DigitalTwin")
+        headers = {"x-asyncroscopy-caller": "alice", "x-asyncroscopy-run": "run-1"}
+        monkeypatch.setattr("fastmcp.server.dependencies.get_http_headers", lambda include_all=False: dict(headers))
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            wrapper("target-7")
+        alice_request = str(held.value).split("request_id=")[1].split(")")[0]
+        headers["x-asyncroscopy-caller"] = "mallory"
+        with pytest.raises(ToolError) as other:
+            wrapper("target-7")
+        mallory_request = str(other.value).split("request_id=")[1].split(")")[0]
+        assert mallory_request != alice_request  # never merged into alice's request
+        approvals_proxy.approve(json.dumps({"request_id": alice_request, "who": "operator"}))
+        with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
+            wrapper("target-7")  # alice's grant does not run mallory's call
+        assert calls == []
+        headers["x-asyncroscopy-caller"] = "alice"
+        assert wrapper("target-7") == "ok" and calls == ["target-7"]
+        approvals_proxy.deny(json.dumps({"request_id": mallory_request, "who": "operator"}))
+
+    def test_a_device_in_fault_is_named_in_a_safety_line(self, monkeypatch, capsys):
+        class Faulty(TestEndpointRoles.FakeProxy):
+            def state(self):
+                return tango.DevState.FAULT if "instrument" in self.name else tango.DevState.ON
+
+            def status(self):
+                return "afm.yaml: settings.stage_x_m.max must be a number"
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: TestEndpointRoles.FakeDb())
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", Faulty)
+        MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)._find_tools()
+        lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[safety]")]
+        assert len(lines) == 1 and "asyncroscopy/instrument/default is in FAULT" in lines[0] and "stage_x_m.max" in lines[0]

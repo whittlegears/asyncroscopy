@@ -261,6 +261,9 @@ class YamlSimDevice(_YamlInstrument, Device):
 class YamlSimJobDevice(_YamlInstrument, JobDevice):
     """An instrument file with jobs: its commands plus the job envelope, so run_job runs a job."""
 
+    # No dry runs: the steps drive the simulator directly, not through proxy(), so nothing would be recorded.
+    SUPPORTS_DRY_RUN = False
+
     yaml_path = _yaml_path_property()
     data_device_address = _data_property()
     output_directory = _output_property()

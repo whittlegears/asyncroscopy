@@ -102,3 +102,22 @@ def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DE
             "Insert the screen, call get_screen_current, retract the screen, then reserve again"
         )
     return current
+
+
+# How far the current may rise between reserve and start before the dose budget no longer holds.
+START_CURRENT_TOLERANCE = 0.05
+
+
+def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
+    """The current, checked again when a job with a dose budget starts or resumes; raises ``BeamCurrentRefused``.
+
+    The approval may come long after the reserve: the current must still be usable for a budget, and no more
+    than ``START_CURRENT_TOLERANCE`` above ``budgeted_pa``, the current the budget was checked with.
+    """
+    current = usable_beam_current(parameters, simulated, max_age_s, default_pa)
+    budgeted = _number(budgeted_pa)
+    if budgeted is None or budgeted <= 0:
+        raise BeamCurrentRefused(f"the reservation does not say which beam current its dose budget was checked with ({budgeted_pa!r}); reserve again")
+    if current.pa > budgeted * (1 + START_CURRENT_TOLERANCE):
+        raise BeamCurrentRefused(f"the beam current is now {current.pa:g} pA, above the {budgeted:g} pA the dose budget was checked with; reserve again")
+    return current

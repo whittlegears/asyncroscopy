@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import time
 from typing import Any
 
@@ -65,7 +64,7 @@ from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.routines import focus
-from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, usable_beam_current
+from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, check_current_at_start, usable_beam_current
 
 CORRECTIONS = ("focus", "stigmation")
 PLAN_DEFAULTS: dict[str, Any] = {
@@ -485,6 +484,9 @@ class Tuner(JobDevice):
 
     JOB_KIND = "autofocus and astigmatism correction (strategies: optistem, image_metric, corrector), bounded and restored on abort"
     PLAN_EXAMPLE = {"corrections": ["focus"], "strategy": "image_metric", "dose_budget_e_per_a2": 3000.0}
+    # No dry runs: every measurement reads an image or a corrector reply, which a dry run does not produce.
+    # Rehearse a tune on a simulated stack instead.
+    SUPPORTS_DRY_RUN = False
 
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to tune.")
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device (image size and dwell for the tuning images).")
@@ -508,16 +510,6 @@ class Tuner(JobDevice):
     # ------------------------------------------------------------------
     # Plan
     # ------------------------------------------------------------------
-    def _stack_simulated(self, parameters: dict) -> bool:
-        """The stack's ``simulated`` property where it has one, else ASYNCROSCOPY_SIMULATED, else what the microscope reports (as the Mapper)."""
-        flag = getattr(self, "simulated", None)
-        if flag is not None:
-            return bool(flag)
-        env = os.environ.get("ASYNCROSCOPY_SIMULATED", "").strip().lower()
-        if env:
-            return env in ("1", "true", "yes", "on")
-        return bool(parameters.get("simulated", False))
-
     def _capabilities(self, microscope) -> set:
         commands = {c.cmd_name for c in microscope.command_list_query()}
         caps = set()
@@ -563,7 +555,7 @@ class Tuner(JobDevice):
             parameters = json.loads(microscope.get_parameters())
         except (tango.DevFailed, ValueError, TypeError):
             parameters = {}
-        simulated = self._stack_simulated(parameters)
+        simulated = self._stack_simulated()
         capabilities = self._capabilities(microscope)
         lacking = set(strategy.needs) - capabilities
         if lacking:
@@ -671,12 +663,12 @@ class Tuner(JobDevice):
         except (tango.DevFailed, ValueError, TypeError):
             parameters = {}
         try:
-            beam = usable_beam_current(parameters, bool(plan["simulated"]), float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
+            check_current_at_start(
+                parameters, bool(plan["simulated"]), plan["estimate"].get("beam_current_pa"),
+                float(self.max_beam_current_age_s), float(self.default_beam_current_pa),
+            )
         except BeamCurrentRefused as exc:
             raise TuneFailed("beam_current", f"at start: {exc}") from exc
-        budgeted = float(plan["estimate"]["beam_current_pa"])
-        if beam.pa > budgeted * 1.05:
-            raise TuneFailed("beam_current", f"the beam current is now {beam.pa:g} pA, above the {budgeted:g} pA the dose budget was checked with; reserve again")
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]

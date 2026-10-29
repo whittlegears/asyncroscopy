@@ -353,6 +353,8 @@ def test_the_afm_example_lifts_the_tip_around_every_move_as_a_tango_job_device(t
     outcome = json.loads(done.stdout.strip().splitlines()[-1])
     assert "set_stage_x_m refused: it needs not tip_engaged" in outcome["set_stage_engaged"] and outcome["stage_after_refusal"] == 0.0
     assert outcome["stage_after_set"] == 1e-4
+    assert outcome["dry_run"]["error"]["code"] == "dry_run_unsupported" and "AFMTwin does not support dry runs" in outcome["dry_run"]["error"]["message"]
+    assert outcome["stage_after_dry_run"] == 1e-4
     assert outcome["job_state"] == "done" and outcome["curves"] == 3 and outcome["curve_units"] == "nN" and outcome["curve_min"] < -0.5
     assert outcome["tip_after_job"] is False and outcome["stage_after_job"] == 2e-4
 

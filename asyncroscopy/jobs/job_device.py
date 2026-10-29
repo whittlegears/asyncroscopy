@@ -30,12 +30,17 @@ is reserved, approved and started like any other, but inside its worker ``proxy(
 returns a ``RecordingProxy``: reads pass through, ``blank_beam`` really runs, and every
 other command or attribute write is recorded in the trace (``dry_run: true``), checked
 by ``check_dry_call`` and not performed. ``dry_run`` is part of the plan, so it is fixed
-at reserve, shown to the operator who approves the start, and kept on a resume.
+at reserve, shown to the operator who approves the start, and kept on a resume. Only a device that
+sets ``SUPPORTS_DRY_RUN`` takes one: its steps must cope with the placeholder a recorded command
+returns. Any other device refuses ``dry_run`` at reserve, naming itself. The reserve request may carry
+``risk_overrides`` (the MCP server passes its ``mcp.safety.risk``); a command they mark high is
+recorded in a dry run even when its name says it only reads (an SPM ``get_image`` scans the tip).
 """
 
 from __future__ import annotations
 
 import bisect
+import copy
 import json
 import threading
 from collections import deque
@@ -52,6 +57,7 @@ from tango.server import Device, attribute, command, device_property
 from asyncroscopy.contracts import ENVELOPE_VERSION
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.safety.policy import check_overrides
 from asyncroscopy.trace.clock import InstrumentClock
 
 ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting"}
@@ -231,6 +237,9 @@ class JobDevice(Device):
     JOB_KIND = "background job"
     # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
     PLAN_EXAMPLE: dict | None = None
+    # True when run_step copes with a dry run: every recorded command returns DRY_RUN_PLACEHOLDER (no
+    # image, no reply to parse). False (the default): reserve refuses a dry_run plan, naming the device.
+    SUPPORTS_DRY_RUN = False
     # Workers still finishing a step when the device was last re-initialised (see delete_device).
     _stale_workers: tuple = ()
     _generation = 0
@@ -297,6 +306,10 @@ class JobDevice(Device):
     def current_step() -> int | None:
         """The step this worker thread is running (None outside a step)."""
         return getattr(WORKER, "step", None)
+
+    def _stack_simulated(self) -> bool:
+        """Whether this stack drives a simulator: the ``simulated`` property run_servers sets (False, real hardware, by default)."""
+        return bool(getattr(self, "simulated", False))
 
     def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
         """In a dry run, check one recorded call against the plan: {"ok": bool, ...}, or None for no check.
@@ -386,10 +399,23 @@ class JobDevice(Device):
     def _save(self, job: dict) -> None:
         """Write the job's small state file. Step results go to an append-only file instead,
         so saving after each of thousands of steps does not rewrite all earlier results."""
-        state = {k: v for k, v in job.items() if k != "step_results"}
         tmp = self._path(job["reservation_id"]).with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, default=_json_default), encoding="utf-8")
+        tmp.write_text(json.dumps(self._snapshot(job), default=_json_default), encoding="utf-8")
         tmp.replace(self._path(job["reservation_id"]))
+
+    def _snapshot(self, job: dict) -> dict:
+        """A deep copy of the job without its step results, taken under the lock. Hooks (live drift, the
+        Mapper's pipeline) change parts of the job outside the lock; a copy taken while one does can fail
+        with "changed size during iteration", so it is tried again rather than losing the save."""
+        with self._lock:
+            for attempt in range(5):
+                try:
+                    return copy.deepcopy({k: v for k, v in job.items() if k != "step_results"})
+                except RuntimeError:
+                    if attempt == 4:
+                        raise
+                    time.sleep(0.001)
+        raise AssertionError("unreachable")
 
     def _append_step(self, job: dict, index: int, record: dict) -> None:
         with self._steps_path(job["reservation_id"]).open("a", encoding="utf-8") as handle:
@@ -481,6 +507,15 @@ class JobDevice(Device):
         dry_run = body["plan"].pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
         if not isinstance(dry_run, bool):
             raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
+        if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
+            raise JobError(
+                "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
+                "does not produce (SUPPORTS_DRY_RUN is false). Nothing was reserved; rehearse this job on a simulated stack",
+            )
+        try:  # the deployment's risk patterns (mcp.safety.risk), so a dry run records a get_* command marked high
+            risk_overrides = check_overrides(body.get("risk_overrides"))
+        except (ValueError, AttributeError) as exc:
+            raise JobError("bad_request", f"risk_overrides: {exc}") from exc
         self._refuse_if_busy()  # a quick answer for a busy device, before reading the instrument
         # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
         # outside the lock keeps abort, release and a running job's progress from waiting behind it.
@@ -510,6 +545,7 @@ class JobDevice(Device):
                 "limits": limits,
                 "state": "reserved",
                 "dry_run": dry_run,
+                "risk_overrides": risk_overrides,
                 "done_ranges": [],
                 "step_results": {},
                 "result_keys": {},
@@ -799,12 +835,14 @@ class JobDevice(Device):
 
     def _status(self, request: str) -> str:
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
+        with self._lock:  # the worker changes done_ranges under this lock
+            done = done_count(job)
         return self._reply(
             {
                 "job_id": job.get("job_id", job["reservation_id"]),
                 "reservation_id": job["reservation_id"],
                 "state": job["state"],
-                "progress": {"done": done_count(job), "total": step_count(job)},
+                "progress": {"done": done, "total": step_count(job)},
                 "last_error": job["last_error"],
                 "pending_request_id": None,
                 "suspended": job.get("suspended"),
@@ -862,14 +900,15 @@ class JobDevice(Device):
         """A proxy to another device whose commands may take longer than Tango's 3 s default
         (a stage move, an autofocus): use this, not a bare DeviceProxy, inside run_step.
 
-        Inside the worker of a dry-run job it is a RecordingProxy: reads pass through,
-        blank_beam runs, and every other command and attribute write is recorded, not sent.
+        Inside the worker of a dry-run job it is a RecordingProxy: reads pass through (except
+        commands the job's risk_overrides mark high), blank_beam runs, and every other command and
+        attribute write is recorded, not sent.
         """
         proxy = tango.DeviceProxy(address)
         proxy.set_timeout_millis(int(1000 * (timeout_s if timeout_s is not None else self.step_timeout_s)))
         job = getattr(WORKER, "job", None)
         if job is not None and job.get("dry_run"):
-            return RecordingProxy(proxy, address, lambda *call: self._record_dry_call(job, *call))
+            return RecordingProxy(proxy, address, lambda *call: self._record_dry_call(job, *call), job.get("risk_overrides") or None)
         return proxy
 
     def _record_dry_call(self, job: dict, device: str, name: str, kind: str, arguments, performed: bool) -> None:

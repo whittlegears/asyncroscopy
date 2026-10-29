@@ -45,6 +45,9 @@ with instrument_context(devices):
     afm["retract_tip"]()
     outcome["set_stage_retracted"] = attempt(afm["set_stage_x_m"], 1e-4)
     outcome["stage_after_set"] = proxy.stage_x_m
+    # The job's steps drive the simulator directly, so a dry run could record nothing: it is refused, nothing moves.
+    outcome["dry_run"] = server.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
+    outcome["stage_after_dry_run"] = proxy.stage_x_m
     ran = server.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
     deadline = time.monotonic() + 90
     status = ran

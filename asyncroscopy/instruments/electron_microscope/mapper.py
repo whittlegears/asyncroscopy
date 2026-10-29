@@ -93,7 +93,7 @@ from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.jobs import JobDevice, live_drift
 from asyncroscopy.jobs.job_device import done_count
 from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
-from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, beam_current
+from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, check_current_at_start
 from asyncroscopy.routines.dose import ELECTRON_CHARGE, eds_dose, frame_dose  # noqa: F401  (their old home; tests and plug-ins import them here)
 from asyncroscopy.routines.drift import drift_at
 from asyncroscopy.routines.grid import EDGE_TOLERANCE_M, compact_grid, grid_axes, inside_box, max_exposures, tile_at, tile_centres  # noqa: F401
@@ -313,6 +313,8 @@ class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images (optionally an EDS spectrum at each) over a stage box, stitched into a zoomable map when it finishes"
     # A 600 nm square around the current stage position; per_tile ["eds_point"] adds a spectrum at each tile.
     PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "per_tile": []}
+    # A dry run rehearses the moves and skips every acquisition and its analysis (DRY_RUN_SKIPPED).
+    SUPPORTS_DRY_RUN = True
 
     instrument_profile = device_property(
         dtype=str,
@@ -358,7 +360,7 @@ class Mapper(JobDevice):
             parameters = json.loads(self.proxy(self.microscope_device_address).get_parameters())
         except (tango.DevFailed, ValueError, TypeError) as error:
             failure = f"get_parameters failed: {str(error).strip()[:200]}"
-        beam = beam_current(parameters, self._stack_simulated(parameters), float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
+        beam = beam_current(parameters, self._stack_simulated(), float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
         current = {"simulated": beam.simulated, "pa": beam.pa, "source": beam.source, "refused": beam.refused}
         if beam.age_s is not None:
             current["age_s"] = beam.age_s
@@ -366,16 +368,22 @@ class Mapper(JobDevice):
             current["reason"] = failure or parameters.get("beam_current_reason") or beam.refused or "the microscope reports an assumed current"
         return current
 
-    def _stack_simulated(self, parameters: dict) -> bool:
-        """Whether this stack drives a simulation: the stack's ``simulated`` device property where it has one,
-        else ASYNCROSCOPY_SIMULATED, else what the microscope reports (the twin says true; AutoScript nothing, so false)."""
-        flag = getattr(self, "simulated", None)
-        if flag is not None:
-            return bool(flag)
-        env = os.environ.get("ASYNCROSCOPY_SIMULATED", "").strip().lower()
-        if env:
-            return env in ("1", "true", "yes", "on")
-        return bool(parameters.get("simulated", False))
+    def _check_current_at_start(self, job: dict) -> None:
+        """A plan with a dose budget, at start and on every resume: the approval may come long after the reserve, so
+        the current must still be usable and no higher than the one the budget was checked with (routines/beam.py)."""
+        if "dose_e_per_a2" not in plan_budgets(job["resolved_plan"]):
+            return
+        try:
+            parameters = json.loads(self.proxy(self.microscope_device_address).get_parameters())
+        except (tango.DevFailed, ValueError, TypeError):
+            parameters = {}
+        try:
+            check_current_at_start(
+                parameters, self._stack_simulated(), job["estimate"].get("beam_current_pa"),
+                float(self.max_beam_current_age_s), float(self.default_beam_current_pa),
+            )
+        except BeamCurrentRefused as exc:
+            raise RuntimeError(f"the map's dose budget no longer holds at start: {exc}") from exc
 
     def _refuse_assumed_current(self, current: dict, budget) -> None:
         """A dose budget means nothing with an assumed current on a real instrument: refuse it there."""
@@ -720,6 +728,7 @@ class Mapper(JobDevice):
 
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
+        self._check_current_at_start(job)  # before anything is set: a refusal leaves the job resumable, nothing changed
         # The instrument's settings for the plan, ending safe (beam blanked, tip retracted): it stays safe
         # between tiles and is made unsafe only while a tile is acquired (see the profile's acquire_tile).
         profile_for(self).setup(job)
@@ -1073,7 +1082,7 @@ class Mapper(JobDevice):
         """Release; an unfinished run gets its final name and is sent for stitching in the background, so its tiles stay reachable."""
         reply = super()._release(request)
         try:
-            reservation_id = json.loads(request)["reservation_id"]
+            reservation_id = self._parse(request, "reservation_id")["reservation_id"]
             job = self._jobs.get(reservation_id)
             if job is not None and not job.get("run_closed") and self._file(job).exists():
                 self._close_run_file(job)
