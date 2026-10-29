@@ -37,6 +37,18 @@ JSON_REQUEST = type("CommandInfo", (), {
 })()
 
 
+def rotate(src, dst, timeout_s: float = 5.0):
+    """Rename like a log rotator on Windows must: a reader or writer may hold the file open for a moment."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            return os.replace(src, dst)
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.02)
+
+
 def wait_until(condition, timeout_s: float, what: str):
     deadline = time.monotonic() + timeout_s
     while not condition():
@@ -224,10 +236,10 @@ def test_rotation_while_following_loses_and_repeats_nothing(tmp_path):
     burst(5, "first")
     wait_until(lambda: len(sub.events) >= 4, 5, "the first events")
     burst(3, "unread")  # written, then the file is rotated before the follower reads them
-    os.replace(jobs, tmp_path / "jobs.jsonl.1")
+    rotate(jobs, tmp_path / "jobs.jsonl.1")
     burst(4, "second")
-    os.replace(tmp_path / "jobs.jsonl.1", tmp_path / "jobs.jsonl.2")  # and rotated again: .1 -> .2, jobs -> .1
-    os.replace(jobs, tmp_path / "jobs.jsonl.1")
+    rotate(tmp_path / "jobs.jsonl.1", tmp_path / "jobs.jsonl.2")  # and rotated again: .1 -> .2, jobs -> .1
+    rotate(jobs, tmp_path / "jobs.jsonl.1")
     burst(4, "third")
     events = assert_live_matches_retrospective(sub, tmp_path, run="r")
     assert len(events) == len(written) == 32
@@ -244,7 +256,7 @@ def test_cursor_carries_on_across_rotation_with_none_twice(tmp_path):
     first = trace_since(tmp_path, limit=3, job="j1")
     assert [e["step"] for e in first["events"]] == [0, 1, 2] and first["more"]
     writer.record("x", True, time.time(), step=5, job_id="j1")
-    os.replace(path, tmp_path / "jobs.jsonl.1")
+    rotate(path, tmp_path / "jobs.jsonl.1")
     writer.record("x", True, time.time(), step=6, job_id="j1")
     time.sleep(0.6)
     rest = trace_since(tmp_path, cursor=first["cursor"], job="j1")

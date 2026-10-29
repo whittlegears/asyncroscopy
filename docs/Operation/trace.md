@@ -79,6 +79,7 @@ Lines are never delivered twice and never missed in these cases:
 - **The file is rotated.** The file is renamed, say `jobs.jsonl` to `jobs.jsonl.1`, and a new one is started. The follower finds the renamed file by its identity, reads what it had not yet read, and then reads the new file.
 
 Name rotated files `<name>.jsonl.<n>`. Rotate the `.seq` sidecar with its file, or leave it in place.
+On Windows a rename fails (`PermissionError`, WinError 32) while a writer or the follower has the file open for its brief append or read; a rotation script there should retry the rename for a moment.
 
 pyTEMlib's `analysis.jsonl` lines have no `written`, so the reader orders them by `ts`, the time the call started. A live follower may therefore show an analysis call later than `read_trace` places it.
 
