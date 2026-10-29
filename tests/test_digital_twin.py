@@ -90,6 +90,11 @@ class TestDigitalTwin:
             image_a_again = h5["image/HAADF"][()]
         assert np.array_equal(image_a, image_a_again)
 
+    def test_a_stage_position_given_to_place_beam_says_how_to_get_there(self, twin_proxy: tango.DeviceProxy):
+        with pytest.raises(tango.DevFailed, match="call move_stage to that point first"):
+            twin_proxy.place_beam([2.5e-7, -1.0e-7])
+        twin_proxy.place_beam([0.5, 0.5])
+
     def test_spectrum_is_repeatable_at_same_pose_and_beam(
         self,
         twin_proxy: tango.DeviceProxy,

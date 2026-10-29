@@ -186,6 +186,13 @@ class ElectronMicroscope(Instrument):
     @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param position: [x, y] beam position as fractions (0-1) of the field of view; [0.5, 0.5] is the centre.')
     def place_beam(self, position) -> None:
         """Set resting beam position, [0:1]."""
+        x, y = (float(v) for v in list(position)[:2])
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            # Agents pass stage coordinates (metres) here; say what the command takes and how to reach a stage point.
+            raise ValueError(
+                f"place_beam takes [x, y] as fractions of the current image (0 to 1, [0.5, 0.5] is the centre), got [{x:g}, {y:g}]. "
+                "To put the beam on a stage point given in metres, call move_stage to that point first, then place_beam [0.5, 0.5]."
+            )
         self._place_beam(position)
 
     @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.')
