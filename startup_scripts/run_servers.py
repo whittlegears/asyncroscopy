@@ -623,6 +623,20 @@ def wait_for_device(device_name: str, timeout: int, process=None) -> float:
     raise TimeoutError(f"{device_name} did not become ready after {timeout}s. Last error: {last_error}")
 
 
+def isolate_approvals(devices: list[DeviceConfig], isolated_dir: Path | None) -> None:
+    """Keep an isolated stack's approval mode in its own folder.
+
+    The Approvals device saves its mode (auto or approve) to mode_file and restores it on restart. Two
+    stacks in one checkout would otherwise share outputs/approvals/mode.json, and one stack switched to
+    approve would come back in the other after a restart. A mode_file the config sets is kept.
+    """
+    if isolated_dir is None:
+        return
+    for device in devices:
+        if device.module_name == "asyncroscopy.safety.approvals" and "mode_file" not in device.properties:
+            device.properties["mode_file"] = [str(isolated_dir / "approvals" / "mode.json")]
+
+
 def register_devices(devices: list[DeviceConfig], instrument_properties: dict[str, list[str]]) -> None:
     database = tango.Database()
     status_line("OK", "database", f"{database.get_db_host()}:{database.get_db_port()}")
@@ -905,6 +919,7 @@ def main(argv: list[str] | None = None) -> int:
 
             print_section(3, total_steps, "Registering devices")
             if should_register_devices:
+                isolate_approvals(devices, isolated_dir)
                 register_devices(devices, registered_instrument_properties)
             else:
                 status_line("SKIP", "device registration")

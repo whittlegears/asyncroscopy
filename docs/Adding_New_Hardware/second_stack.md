@@ -15,6 +15,7 @@ with the Raman example's ready configs as a working reference:
 |---|---|---|---|
 | Tango database port | 9094 | 9194 | `tango.port` in the stack config and in **both** MCP configs |
 | Tango database file and process records | project root | `outputs/stacks/raman/` | `--isolated <dir>` when starting the stack |
+| Saved approval mode (auto or approve) | `outputs/approvals/mode.json` | `outputs/stacks/raman/approvals/mode.json` | `mode_file` on the Approvals device, or `--isolated <dir>` (which puts it in that folder when the config sets none) |
 | Tiled port | 9091 | 9191 | `tiled.port` |
 | Acquisition folder (holds Tiled's catalog) | `outputs/tiled_acquisitions` | `outputs/raman_acquisitions` | `tiled.acquisition_dir`; two Tiled servers must not share one |
 | Agent MCP endpoint | 8000 | 8100 | `mcp.http_port` in the agent MCP config |

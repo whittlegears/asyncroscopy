@@ -341,3 +341,22 @@ def test_launcher_identity_reads_yaml_and_isolated_in_either_form(tmp_path):
     assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))) is None
     default = run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "startup_scripts/run_servers.py")))
     assert default == run_servers.stack_identity(run_servers.DEFAULT_CONFIG_PATH, None)
+
+
+def test_an_isolated_stack_keeps_its_own_approval_mode_file(tmp_path):
+    approvals = run_servers.DeviceConfig(key="approvals", class_name="Approvals", module_name="asyncroscopy.safety.approvals")
+    stage = run_servers.DeviceConfig(key="stage", class_name="TestStage", module_name="asyncroscopy.instruments.electron_microscope.hardware.TestStage")
+    run_servers.isolate_approvals([approvals, stage], tmp_path)
+    assert approvals.properties["mode_file"] == [str(tmp_path / "approvals" / "mode.json")] and "mode_file" not in stage.properties
+    configured = run_servers.DeviceConfig(key="approvals", class_name="Approvals", module_name="asyncroscopy.safety.approvals", properties={"mode_file": ["mine.json"]})
+    run_servers.isolate_approvals([configured], tmp_path)
+    assert configured.properties["mode_file"] == ["mine.json"]
+    shared = run_servers.DeviceConfig(key="approvals", class_name="Approvals", module_name="asyncroscopy.safety.approvals")
+    run_servers.isolate_approvals([shared], None)
+    assert "mode_file" not in shared.properties
+
+
+def test_the_raman_stack_does_not_share_the_twins_approval_mode():
+    config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / "yaml_sim_raman.yaml")
+    approvals = next(d for d in config.support_devices if d.module_name == "asyncroscopy.safety.approvals")
+    assert approvals.properties["mode_file"] != ["outputs/approvals/mode.json"]

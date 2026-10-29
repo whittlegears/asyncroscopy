@@ -30,6 +30,9 @@ devices:
   approvals:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
+    properties:
+      # Its own saved mode: the twin's outputs/approvals/mode.json would carry this stack's approve mode over to the twin.
+      mode_file: outputs/stacks/raman/approvals/mode.json
 
 tiled:
   host: localhost
