@@ -47,7 +47,7 @@ from asyncroscopy.trace import stream as trace_stream
 from pathlib import Path
 from fnmatch import fnmatchcase
 
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, looks_like_stop, operator_only, risk_of
+from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_probe_device, is_stem_device, looks_like_stop, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
@@ -272,6 +272,7 @@ class MCPServer:
         self._prefix_class: dict[str, str] = {}
         self._envelope_prefixes: set[str] = set()
         self._stem_prefixes: set[str] = set()
+        self._probe_prefixes: set[str] = set()  # devices that bring a probe to the sample: a bare retract lifts it away
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
         self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
@@ -556,9 +557,10 @@ class MCPServer:
 
         envelope = (tool_prefix or dev_class) in self._envelope_prefixes
         stem = (tool_prefix or dev_class) in self._stem_prefixes
+        probe = (tool_prefix or dev_class) in self._probe_prefixes
         key = f"{dev_class}.{command_name}"
         matched = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower()) or fnmatchcase(key.lower(), pattern.lower())]
-        default = risk_of(dev_class, command_name, envelope=envelope, stem=stem)
+        default = risk_of(dev_class, command_name, envelope=envelope, stem=stem, probe=probe)
         # Overrides that disagree (a broad "*": low and an exact "Mapper_start": high) never lower a tool: high wins.
         risk = ("high" if "high" in matched else matched[0]) if matched else default
         if risk == "low" and default == "high":
@@ -1301,7 +1303,7 @@ class MCPServer:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
             families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
-        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys, self._lowered):
+        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._probe_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys, self._lowered):
             table.clear()
         for device_name, dev, dev_class in opened:
             prefix = dev_class
@@ -1323,6 +1325,8 @@ class MCPServer:
                 commands = dev.command_list_query()
                 if is_stem_device(c.cmd_name for c in commands):
                     self._stem_prefixes.add(prefix)
+                if is_probe_device(c.cmd_name for c in commands):
+                    self._probe_prefixes.add(prefix)
                 if is_envelope_device(c.cmd_name for c in commands):
                     self._envelope_prefixes.add(prefix)
                     try:

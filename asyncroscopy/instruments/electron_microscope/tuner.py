@@ -65,6 +65,7 @@ from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.routines import focus
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, check_current_at_start, usable_beam_current
+from asyncroscopy.plugins import unknown_hint
 
 CORRECTIONS = ("focus", "stigmation")
 PLAN_DEFAULTS: dict[str, Any] = {
@@ -540,7 +541,7 @@ class Tuner(JobDevice):
         p["corrections"] = [c for c in CORRECTIONS if c in corrections]
         registry = strategies()
         if p["strategy"] not in registry:
-            raise ValueError(f"unknown strategy {p['strategy']!r}; registered: {sorted(registry)}")
+            raise ValueError(f"unknown strategy {p['strategy']!r}; registered: {sorted(registry)}{unknown_hint()}")
         for key in ("focus_range_m", "stig_range_m", "max_step_m", "fov_m", "dwell_s", "dose_budget_e_per_a2", "corrector_target_m"):
             if isinstance(p[key], bool) or not isinstance(p[key], (int, float)) or not float(p[key]) > 0:
                 raise ValueError(f"{key} must be a number > 0, got {p[key]!r}")
