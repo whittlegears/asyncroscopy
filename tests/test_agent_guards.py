@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from asyncroscopy.agents.guards import JobWaitMiddleware, context_chars, fit_messages, repeats
+from asyncroscopy.agents.guards import looping, JobWaitMiddleware, context_chars, fit_messages, repeats
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
 
 TOOLS = {"run_job", "wait_for_job", "view_data", "list_data", "Mapper_reserve", "Mapper_abort", "approval_status", "load_skill"}
@@ -64,6 +64,16 @@ def test_the_whole_model_call_fits_the_context():
     total = len(out.system_message.content) + chars(out.messages) + sum(len(t.description) + 80 for t in out.tools)
     assert total <= context_chars(8192)
     assert out.messages[0].content == REQUEST
+
+
+def test_cycling_over_the_same_calls_is_a_loop_but_going_back_once_is_not():
+    a, b = {"key": "one.h5"}, {"key": "two.h5"}
+    back_once = [HumanMessage(REQUEST), *round_(1, args=a, reply="image one"), *round_(2, args=b, reply="image two"), *round_(3, args=a, reply="image one")]
+    assert looping(back_once) == 0
+    third = back_once + round_(4, args=b, reply="image two") + round_(5, args=a, reply="image one")
+    assert looping(third) == 1
+    assert looping(third + round_(6, args=b, reply="image two") + round_(7, args=a, reply="image one")) == 2
+    assert looping(back_once + round_(4, args=a, reply="image one, changed")) == 0
 
 
 def test_a_repeated_call_is_pointed_out_then_the_run_stops_honestly():

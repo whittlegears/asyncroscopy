@@ -60,6 +60,8 @@ Rules:
 - If a tool says APPROVAL REQUIRED with a request_id, call approval_status until it is approved, then repeat the same call once. If denied or expired, stop and tell the user.
 - Data come back as keys; look at them with {readers}, never ask for raw arrays.
 - Never end your turn by saying what you will do next: make that tool call now. Fix a refused call and call again; stop only when the task is done or impossible.
+- Every value the user gives is theirs: if the instrument refuses it as out of range, tell the user the limit and stop; never set a different value in its place.
+- Do every step the user asked for, in order, before answering; never say a step was done unless a tool call did it.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone.{extra}"""
 
 STEM_RULES = """

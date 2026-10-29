@@ -45,7 +45,8 @@ class FakeInstrument:
             self.status_polls += 1
             return reply({"job_id": "j1", "state": "done" if self.status_polls > 1 else "running", "progress": {"done": 25, "total": 25}})
         if name == "Mapper_results":
-            return reply({"state": "done", "result_keys": {"run": "map_r1.h5"}, "summary": {"spectra": [{"index": 0, "stage_xy_m": [1e-7, 1e-7], "key": "spectrum_0.h5"}]}})
+            keys = {"run": "map_r1.h5", **({"map": "map_r1_map"} if self.stitched else {})}
+            return reply({"state": "done", "result_keys": keys, "summary": {"spectra": {"taken": 1, "first_keys": ["spectrum_0.h5"]}}})
         if name == "Mapper_release":
             return reply({"state": "released"})
         if name == "Mapper_abort":
@@ -71,8 +72,8 @@ class FakeAnalysis:
             if arguments["job_id"] == "assemble_map":
                 return {"result_keys": {"map": "map_r1_map"}}
             return {"summary": {"added_pois": [{"kind": "candidate", "x_m": 2e-7, "y_m": -1e-7, "score": 0.8, "reason": "particles"}]}}
-        if name == "add_poi":
-            return {"id": "poi1", **arguments}
+        if name == "list_pois":
+            return {"total": 1, "pois": [{"id": "poi1", "kind": "eds_point", "x_m": 1e-7, "y_m": 1e-7, "links": ["spectrum_0.h5"]}]}
         raise AssertionError(name)
 
 
@@ -85,9 +86,10 @@ def fast_polls(monkeypatch):
     monkeypatch.setattr(mapping, "POLL_S", 0.0)
 
 
-def make(hold=False, approval="approved"):
+def make(hold=False, approval="approved", stitched=True):
     g = MappingGraph(AgentConfig(analysis_url="x"))
     g.instrument, g.analysis = FakeInstrument(hold, approval), FakeAnalysis()
+    g.instrument.stitched = stitched
     return g
 
 
@@ -100,12 +102,20 @@ def test_full_run_with_approval_hold():
     assert not state.get("error"), state
     assert g.instrument.calls.count("Mapper_start") == 2  # held, then repeated once approved
     assert "approval_status" in g.instrument.calls and "Mapper_release" in g.instrument.calls
-    assert g.analysis.calls[:1] == ["assemble_map"] and "score_map" in g.analysis.calls
+    assert "assemble_map" not in g.analysis.calls and "score_map" in g.analysis.calls  # the Mapper job stitched its own run
     kinds = [p["kind"] for p in state["pois"]]
     assert kinds.count("eds_point") == 1 and kinds.count("candidate") == 1
     assert "after operator approval" in state["report"] and "Interesting region" in state["report"]
     # State carries keys and coordinates, never arrays.
     assert len(json.dumps(state, default=str)) < 20_000
+
+
+def test_a_run_the_job_did_not_stitch_is_stitched_here():
+    g = make(stitched=False)
+    state = run(g, {"request": "map the whole sample with EDS", "plan": dict(PLAN)})
+    assert not state.get("error"), state
+    assert g.analysis.calls[:2] == ["assemble_map", "analysis_job_status"] and state["map_key"] == "map_r1_map"
+    assert [p["kind"] for p in state["pois"]] == ["eds_point"]
 
 
 def test_denied_approval_ends_with_reason_and_releases():

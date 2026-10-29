@@ -39,7 +39,7 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import SystemMessage
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, NEW_MAP
-from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, fit_messages, repeats, stop_message, tool_rounds, tools_chars
+from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, fit_messages, looping, stop_message, tool_rounds, tools_chars
 from asyncroscopy.skills import select_skills, skills_text
 from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS, list_skills, read_only_request, usable_by
 
@@ -167,7 +167,7 @@ class SkillMiddleware(AgentMiddleware):
         hide = not cut and read_only_request(_request(state["messages"]))
         tools = [t for t in request.tools if getattr(t, "name", None) != "load_skill"] if hide else request.tools
         messages = request.messages
-        if repeats(messages) == 1:
+        if looping(messages) == 1:
             name = tool_rounds(messages)[-1][0]
             prompt += REPEAT_NOTE.format(name=name)
         # The messages get what the prompt and the tool schemas leave of the context.
@@ -175,11 +175,11 @@ class SkillMiddleware(AgentMiddleware):
         return request.override(system_message=SystemMessage(prompt), tools=tools, messages=fit_messages(messages, max(2000, room)))
 
     def wrap_model_call(self, request, handler):
-        if repeats(request.messages) >= 2:  # the third identical round: stop rather than loop
+        if looping(request.messages) == 2:  # a third identical round in a row, or a fourth in a cycle: stop rather than loop
             return ModelResponse(result=[stop_message(request.messages)])
         return handler(self._prompted(request))
 
     async def awrap_model_call(self, request, handler):
-        if repeats(request.messages) >= 2:
+        if looping(request.messages) == 2:
             return ModelResponse(result=[stop_message(request.messages)])
         return await handler(await asyncio.to_thread(self._prompted, request))

@@ -347,13 +347,15 @@ class Live:
             plan = {"size_m": [size, size], "fov_m": fov, "per_tile": per_tile, "eds_exposure_s": 0.2}
             results = await self.run_map(plan, timeout_s=7200)
             run_key = results.get("result_keys", {}).get("run")
-            stitched = await self.analysis_job("assemble_map", {"run": run_key}, timeout_s=3600)
-            map_key = stitched["result_keys"]["map"]
+            map_key = results.get("result_keys", {}).get("map")  # the Mapper job stitches its own run
+            if not map_key:
+                stitched = await self.analysis_job("assemble_map", {"run": run_key}, timeout_s=3600)
+                map_key = stitched["result_keys"]["map"]
             if scored:
                 await self.analysis_job("score_map", {"map": map_key, "top_k": 3})
             pois = await self.pois(map_key)
             info = await self.map_info(map_key)
-            spectra = [s["key"] for s in results.get("summary", {}).get("spectra", []) if s.get("key")]
+            spectra = (results.get("summary", {}).get("spectra") or {}).get("first_keys", [])
             tiles = len(results.get("steps", [])) or (results.get("summary", {}).get("grid") or {}).get("rows", 0) * (results.get("summary", {}).get("grid") or {}).get("cols", 0)
             poi = pois[0] if pois else [None, None]
             facts = {
