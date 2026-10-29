@@ -1,6 +1,7 @@
 """FastMCP bridge for asyncroscopy Tango devices."""
 
 import argparse
+import asyncio
 import base64
 import importlib
 import inspect
@@ -110,6 +111,7 @@ _NEXT_STEP = {
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
+RUN_JOB_WAIT_S = 15.0  # run_job waits this long after starting, so a short job needs no wait_for_job
 
 # From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
@@ -154,6 +156,7 @@ class MCPServer:
         risk_overrides: dict[str, str] | None = None,
         trace_path: str | None = None,
         database=None,
+        analysis_url: str | None = None,
     ):
         """
         Args:
@@ -177,6 +180,8 @@ class MCPServer:
             trace_path: Instrument Trace JSONL file. Off when empty.
             database: Stands in for the Tango database (anything with get_device_exported);
                 asyncroscopy.testing uses it to serve the devices of a test context.
+            analysis_url: MCP URL of the analysis server (pyTEMlib), so wait_for_job also
+                waits on its stitching and scoring jobs. Off when empty.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -198,6 +203,12 @@ class MCPServer:
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
+        self.analysis_url = analysis_url or None
+        # (caller, device, plan) -> (reservation, approval request) of a run_job whose start is held, so
+        # repeating the same run_job after approval starts that reservation instead of a new one, and a
+        # denied or expired request frees it (approval_status).
+        self._held_runs: dict[tuple[str, str, str], tuple[str, str]] = {}
+        self._held_runs_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
         # Filled by _find_tools; set here so a wrapper built before it sees empty sets, not an AttributeError.
@@ -720,30 +731,119 @@ class MCPServer:
         """State of an approval request: pending, approved, denied or expired. After 'approved', repeat the held call unchanged."""
         if self.approvals_device_address is None:
             return {"request_id": request_id, "state": "approved", "note": "this server has no approval mode"}
-        return json.loads(self._approvals().request_status(request_id))
+        status = json.loads(self._approvals().request_status(request_id))
+        if status.get("state") in {"denied", "expired"}:
+            with self._held_runs_lock:
+                held = next(((k, v) for k, v in self._held_runs.items() if v[1] == request_id), None)
+                if held is not None:
+                    del self._held_runs[held[0]]
+            if held is not None:
+                # A run_job held on this request reserved the device; nothing will start it now.
+                device, reservation_id = held[0][1], held[1][0]
+                self.tools[device]["release"]({"reservation_id": reservation_id})
+                status["note"] = f"{device} reservation {reservation_id} was released"
+        return status
 
-    @tool()
-    def wait_for_job(self, device: str, job_id: str, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:
-        """Wait until a background job finishes (or max_wait_s, at most 25 s, passes) and return its status. device is the job device's tool prefix (the part before _start, e.g. "Mapper" or "IndentGrid"). Use this instead of calling <device>_job_status over and over."""
+    def _job_device(self, device: str) -> DeviceProxy:
         proxy = self._devices.get(device)
         if proxy is None or device not in self._envelope_prefixes:
             raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
-        deadline = time.monotonic() + min(max(float(max_wait_s), 0.0), JOB_WAIT_MAX_S)
-        while True:
-            # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
+        return proxy
+
+    @tool()
+    def run_job(self, device: str, plan: dict[str, Any]) -> dict[str, Any]:
+        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done."""
+        tools = self.tools.get(device) if device in self._envelope_prefixes else None
+        if not tools or "reserve" not in tools or "start" not in tools:
+            raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
+        key = (self._caller() or "", device, json.dumps(plan, sort_keys=True, default=str))
+        with self._held_runs_lock:
+            held = (self._held_runs.get(key) or (None, None))[0]
+        reserved: dict[str, Any] = {"reservation_id": held} if held else {}
+        if not held:
+            reserved = json.loads(tools["reserve"]({"plan": plan}))
+            if "error" in reserved:
+                return reserved
+        try:
+            # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
+            started = json.loads(tools["start"]({"reservation_id": reserved["reservation_id"]}))
+        except ToolError as exc:
+            if "APPROVAL REQUIRED" not in str(exc):
+                raise
+            request_id = re.search(r"request_id=(\w+)", str(exc))
+            with self._held_runs_lock:
+                self._held_runs[key] = (reserved["reservation_id"], request_id.group(1) if request_id else "")
+            raise ToolError(str(exc).replace("repeat exactly the same call", "repeat this run_job call unchanged")) from exc
+        with self._held_runs_lock:
+            self._held_runs.pop(key, None)
+        if held and "error" in started:  # the held reservation is gone (released or expired): plan afresh
+            return self.run_job(device, plan)
+        reply = {**{k: v for k, v in reserved.items() if k != "schema_version"}, **started}
+        if "error" not in started and started.get("job_id"):
+            proxy = self._job_device(device)
+            status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
+            reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + RUN_JOB_WAIT_S))
+        return reply
+
+    @tool()
+    def wait_for_job(self, job_id: str, device: str | None = None, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:
+        """Wait for any background job (a map from run_job, or assemble_map / score_map on the analysis server) to finish, at most max_wait_s (25 s) per call, and return its state. When it is done the reply also has its results (result_keys, summary). device (e.g. "Mapper") is optional. Call again while the state is still active."""
+        budget = min(max(float(max_wait_s), 0.0), JOB_WAIT_MAX_S)
+        if device and device not in self._envelope_prefixes:
+            raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}"
+                            + ("; leave device out for analysis jobs" if self.analysis_url else ""))
+        for candidate in [device] if device else sorted(self._envelope_prefixes):
+            proxy = self._job_device(candidate)
             status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
-            if status.get("error", {}).get("code") == "unknown_job":
-                raise ToolError(
-                    f"{job_id!r} is not a {device} job. Jobs started by assemble_map or score_map run on the analysis "
-                    "server: wait for them with analysis_job_status and wait_s=25."
-                )
+            if status.get("error", {}).get("code") != "unknown_job":
+                return self._wait_on_device(proxy, job_id, status, time.monotonic() + budget)
+        if self.analysis_url:
+            return self._wait_on_analysis(job_id, budget)
+        raise ToolError(
+            f"no job {job_id!r} on {device or 'any job device here'}. Jobs started by assemble_map or score_map run on "
+            "the analysis server: wait for them with analysis_job_status and wait_s=25."
+        )
+
+    def _wait_on_device(self, proxy: DeviceProxy, job_id: str, status: dict, deadline: float) -> dict[str, Any]:
+        while True:
+            if "error" in status:
+                return status
             state = status.get("state")
-            if "error" in status or state not in WAIT_NOTES:
+            if state not in WAIT_NOTES:
+                if state == "done":
+                    results = json.loads(proxy.results(json.dumps({"job_id": job_id})))
+                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results})
                 return status
             if time.monotonic() >= deadline:
                 reason = (status.get("suspended") or {}).get("reason", "")
                 return {**status, "note": WAIT_NOTES[state].format(reason=reason)}
             time.sleep(1.0)
+            # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
+            status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
+
+    def _wait_on_analysis(self, job_id: str, budget: float) -> dict[str, Any]:
+        """Wait on a stitching or scoring job of the analysis server; when it is done, add its results."""
+        from fastmcp import Client
+
+        async def call() -> dict[str, Any]:
+            async with Client(self.analysis_url, timeout=budget + 15) as client:
+                reply = await client.call_tool("analysis_job_status", {"job_id": job_id, "wait_s": budget}, raise_on_error=False)
+                status = dict(reply.structured_content or {})
+                if status.get("state") == "done":
+                    results = (await client.call_tool("analysis_job_results", {"job_id": job_id}, raise_on_error=False)).structured_content or {}
+                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results})
+                return status
+
+        try:
+            # Sync tools run in FastMCP's worker threads, which have no event loop of their own.
+            status = asyncio.run(call())
+        except Exception as exc:
+            raise ToolError(f"the analysis server at {self.analysis_url} did not answer ({type(exc).__name__}: {exc}); call wait_for_job again shortly") from exc
+        if status.get("error", {}).get("code") == "unknown_job":
+            raise ToolError(f"no job {job_id!r} on any job device here or on the analysis server")
+        if status.get("state") in {"queued", "running"}:
+            status["note"] = WAIT_NOTES["running"]
+        return status
 
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
         """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
@@ -907,7 +1007,7 @@ class MCPServer:
 
         native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill]
         if self._envelope_prefixes:
-            native_tools.append(self.wait_for_job)
+            native_tools.extend([self.run_job, self.wait_for_job])
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
         for native_tool in native_tools:
@@ -983,6 +1083,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
+    parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
     return parser.parse_args(argv)
 
 
@@ -1038,6 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
         approvals_device_address=args.approvals_device_address or None,
         risk_overrides=json.loads(args.risk_json),
         trace_path=args.trace or None,
+        analysis_url=args.analysis_url or None,
     )
     if args.transport == "streamable-http":
         print(

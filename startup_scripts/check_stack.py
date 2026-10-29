@@ -49,7 +49,7 @@ async def call(client: Client, tool: str, args: dict | None = None, raise_on_err
     return await client.call_tool(tool, args or {}, raise_on_error=raise_on_error)
 
 
-async def check_analysis(args: argparse.Namespace, run_key: str) -> None:
+async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) -> None:
     """Stitch the run on the pyTEMlib MCP server, look at it, score it and mark a point."""
     analysis = Client(StreamableHttpTransport(args.pytemlib))
     async with analysis:
@@ -85,6 +85,15 @@ async def check_analysis(args: argparse.Namespace, run_key: str) -> None:
         report("scorer adds points of interest inside the map", len(added) == 2 and all(x0 <= p["x_m"] <= x1 and y0 <= p["y_m"] <= y1 for p in added))
         poi = await structured("add_poi", {"map": map_key, "x_m": (x0 + x1) / 2, "y_m": (y0 + y1) / 2, "kind": "check", "reason": "check_stack"})
         report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
+        # One wait for every kind of job: the agent endpoint's wait_for_job also waits on analysis jobs.
+        again = await structured("assemble_map", {"run": run_key})
+        status = {}
+        deadline = time.time() + args.timeout
+        while "job_id" in again and time.time() < deadline:
+            status = json.loads(text(await call(agent, "wait_for_job", {"job_id": again["job_id"]})))
+            if status.get("state") in {"done", "failed", "aborted"}:
+                break
+        report("wait_for_job waits on an analysis job and returns its map key", status.get("result_keys", {}).get("map", "").endswith("_map"), json.dumps(status)[:200])
 
 
 def unreachable(*urls: str) -> list[str]:
@@ -142,8 +151,19 @@ async def main(args: argparse.Namespace) -> int:
                 report("agent can find the newest image (list_data) and see it (view_data png)",
                        any(getattr(block, "type", "") == "image" for block in getattr(picture, "content", []) or []), str(newest))
                 if args.pytemlib:
-                    await check_analysis(args, results["result_keys"]["run"])
+                    await check_analysis(args, results["result_keys"]["run"], agent)
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
+
+        # The same as one run_job call: the wait's reply carries the results.
+        tile = {"size_m": [1.6e-7, 1.6e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
+        ran = json.loads(text(await call(agent, "run_job", {"device": "Mapper", "plan": tile})))
+        status = {}
+        deadline = time.time() + args.timeout
+        while "job_id" in ran and time.time() < deadline:
+            status = json.loads(text(await call(agent, "wait_for_job", {"job_id": ran["job_id"]})))
+            if status.get("state") in {"done", "failed", "aborted"}:
+                break
+        report("run_job then wait_for_job maps and returns the run key", "run" in status.get("result_keys", {}), json.dumps(status)[:200])
 
         # Approval mode: hold, approve, retry once; then put back the mode the operator had.
         mode_before = text(await call(operator, "Approvals_get_mode")).strip().strip('"')

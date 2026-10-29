@@ -3,7 +3,8 @@
   "dependencies": ["."],
   "graphs": {
     "mapping": "./asyncroscopy/agents/graphs/mapping.py:graph",
-    "general": "./asyncroscopy/agents/graphs/general.py:make_graph"
+    "general": "./asyncroscopy/agents/graphs/general.py:make_graph",
+    "team": "./asyncroscopy/agents/graphs/team.py:make_graph"
   },
   "env": ".env",
   "python_version": "3.12"

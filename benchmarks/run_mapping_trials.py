@@ -32,32 +32,16 @@ import sys
 import time
 from pathlib import Path
 
-PROJECT_DIR = Path(__file__).resolve().parents[1]
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
-
+# benchmarks/ for _common, which also puts the project on sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _common import is_infra_error, out_of_box_moves, sleepwalking, warm_up
 from langchain_core.messages import HumanMessage
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs.mapping import MappingGraph
-from asyncroscopy.safety.policy import risk_of
-from asyncroscopy.skills.registry import list_skills
 
 HERE = Path(__file__).resolve().parent
 SIDE_M = 6e-7
-SKILL_TOOLS = set(next(s.tools for s in list_skills() if s.name == "mapping"))
-
-
-def sleepwalking(tool_names: list[str]) -> list[str]:
-    """High-risk instrument calls the mapping skill does not list (native tools are lowercase and never actuate)."""
-    out = []
-    for name in tool_names:
-        device, _, command = name.partition("_")
-        if name in SKILL_TOOLS or not command or not device[:1].isupper():
-            continue
-        if risk_of(device, command, envelope=device == "Mapper") == "high":
-            out.append(name)
-    return out
 
 TASKS = {
     "map_square": {"request": "Map a 600 nm square around the current stage position.", "eds": False, "score": False},
@@ -111,7 +95,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     except Exception as exc:  # recursion limit or a crash counts as a failed trial
         return {"seconds": round(time.time() - started, 1), "ok": False, "error": f"{type(exc).__name__}: {exc}", "checks": {}}
     calls = [c for m in messages for c in (getattr(m, "tool_calls", None) or [])]
-    reserve = next((c for c in reversed(calls) if c["name"] == "Mapper_reserve"), None)
+    reserve = next((c for c in reversed(calls) if c["name"] in ("run_job", "Mapper_reserve")), None)
     plan = None
     if reserve:
         args = reserve["args"]
@@ -127,30 +111,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     checks["used_mapper_not_a_loop"] = sum(1 for c in calls if c["name"].endswith("_move_stage")) <= 2
     skills = sorted({c["args"].get("name", "") for c in calls if c["name"] == "load_skill"})
     tool_names = [c["name"] for c in calls]
-    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": tool_names, "sleepwalking": sleepwalking(tool_names), "skills_loaded": skills, "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
-
-
-def out_of_box_moves(trace_path: Path, since: float) -> int:
-    """Mapper steps whose reported stage position lies outside their plan box (should always be 0)."""
-    if not trace_path.exists():
-        return -1
-    return sum(1 for line in trace_path.read_text(encoding="utf-8").splitlines() if '"Mapper.step"' in line and '"ok": false' in line and json.loads(line).get("ts", 0) >= since and "outside the plan box" in line)
-
-
-# A crash of the model server itself (seen with Ollama on a 6 GB GPU on the first load after a
-# restart) says nothing about the agent; such rows are reported apart and left out of the pass rate.
-INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error")
-
-
-async def warm_up(config: AgentConfig) -> None:
-    """Load the model once before the first trial, retrying if the first load crashes the server."""
-    for attempt in range(3):
-        try:
-            await config.chat_model().ainvoke("Reply with OK.")
-            return
-        except Exception as exc:
-            print(f"warm-up {attempt + 1} failed: {exc}", flush=True)
-            await asyncio.sleep(5)
+    return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": tool_names, "sleepwalking": sleepwalking(tool_names), "skills_loaded": skills, "skills_applied": state.get("skills_applied", []), "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
 
 
 async def main(args) -> None:
@@ -167,7 +128,7 @@ async def main(args) -> None:
                     row = await runner(config, task)
                 except Exception as exc:
                     row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "checks": {}}
-                row["infra_error"] = any(marker in (row.get("error") or "") for marker in INFRA_ERRORS)
+                row["infra_error"] = is_infra_error(row.get("error"))
                 rows.append(row)
                 verdict = "INFRA" if row["infra_error"] else ("PASS" if row["ok"] else "FAIL")
                 print(f"{name:16s} {runner_name:8s} #{i + 1:2d} {verdict} {row.get('seconds', 0):6.1f}s  {json.dumps(row.get('checks'))}  {row.get('error') or ''}", flush=True)

@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
-from asyncroscopy.agents.run import run_named_graph
+from asyncroscopy.agents.run import run_goal_text, run_named_graph
 from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, DEFAULT_MODEL, Agent, AgentSwarm
 
 
@@ -102,17 +102,26 @@ class AgentMCPServer:
             print("  - set_max_steps(max_steps: int) -> int")
             print(f"\nInheriting tools from MCP servers: {', '.join(self.mcp_urls)}")
 
-    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: str = "") -> str:
+    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: str = "", goal: bool = False) -> str:
         """
         Ask the agents to carry out a request and return the response.
 
         graph: "" uses the agent swarm; "mapping" runs the fixed map workflow
         (plan, reserve, approval, run, stitch, score, report); "general" runs
-        the single tool-using agent with skills.
+        the single tool-using agent with skills; "team" runs a planner with an
+        operator and an analyst agent.
+        goal: treat the prompt as a goal (a sentence, or JSON with statement,
+        criteria and budget): the team (or general, if graph says so) works
+        until the goal is checked as met from the servers' replies, retrying
+        with feedback within the budget; the reply starts with whether it was met.
         If `include_transcript` is true (default), the routing decisions,
         tool calls, and generated text will also be included above the final answer.
         """
         async with self._query_lock:
+            if goal:
+                stripped = prompt.strip()
+                spec = json.loads(stripped) if stripped.startswith("{") else stripped
+                return (await run_goal_text(spec, graph if graph in ("team", "general") else "team", model=self.swarm.model))[0]
             if graph:
                 return await run_named_graph(graph, prompt, model=self.swarm.model)
             return await self.swarm.query(prompt, include_transcript=include_transcript)

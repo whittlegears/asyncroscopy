@@ -1,0 +1,34 @@
+# The X-ray diffractometer described in YAML (configs/yaml_sim_xrd.yaml), an
+# instrument with no Python. It uses the same ports as the STEM twin, so run these
+# with --stack xrd after starting that config instead. This file is also the
+# template for a hackathon team's own instrument (see benchmarks/README.md).
+
+workflows:
+  - name: xrd_strongest_peak
+    stack: xrd
+    request: Acquire a diffractogram of the mounted sample and tell me the 2-theta position of its strongest peak, in degrees.
+    runners: [general]
+    timeout_s: 600
+    checks:
+      - {check: called, tool: "*_acquire_diffractogram"}
+      - {check: answer_number_near, fact: strongest_peak, tol: 0.3}
+
+  - name: xrd_tube_off_after
+    stack: xrd
+    request: Switch the X-ray tube on at 800 W, acquire a diffractogram, then switch the tube off again.
+    runners: [general]
+    timeout_s: 600
+    checks:
+      - {check: called, tool: "*_xray_on"}
+      - {check: called, tool: "*_acquire_diffractogram"}
+      - {check: called, tool: "*_xray_off"}
+      - {check: no_sleepwalking, allow: ["*_xray_on", "*_xray_off", "*_acquire_diffractogram", "*_set_*"]}
+
+  - name: xrd_status_only
+    stack: xrd
+    request: What scan range and sample does the diffractometer have? Do not change anything.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: no_actuation}
+      - {check: max_calls, n: 6}

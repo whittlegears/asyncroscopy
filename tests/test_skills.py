@@ -2,14 +2,14 @@
 
 import pytest
 
-from asyncroscopy.skills import list_skills, load_skill
+from asyncroscopy.skills import list_skills, load_skill, skills_text
 
 
 def test_mapping_skill_is_listed_and_loads():
     names = {s.name: s for s in list_skills()}
     assert "mapping" in names and names["mapping"].available
     text = load_skill("mapping")
-    assert "Mapper_reserve" in text and not text.startswith("---")
+    assert "run_job" in text and "wait_for_job" in text and not text.startswith("---")
 
 
 def test_unknown_skill_names_the_available_ones():
@@ -58,6 +58,18 @@ def test_mcp_skill_tools(monkeypatch):
         server.load_skill("mapping")  # this endpoint has no Mapper
     server.tools = {"Mapper": {"reserve": None}}
     assert any(s["name"] == "mapping" and s["available"] for s in server.list_skills())
-    assert "Mapper_reserve" in server.load_skill("mapping")
+    assert "run_job" in server.load_skill("mapping")
     with pytest.raises(ToolError):
         server.load_skill("nope")
+
+
+def test_chosen_skills_go_into_the_prompt_in_full_while_they_fit(tmp_path, monkeypatch):
+    for name, body in (("alpha", "A" * 300), ("beta", "B" * 300)):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "SKILL.md").write_text(f"---\nname: {name}\ndescription: the {name} task\n---\n{body}", encoding="utf-8")
+    monkeypatch.setattr("asyncroscopy.skills.registry.skill_dirs", lambda: [tmp_path])
+    text, cut = skills_text(["alpha", "beta"], set(), budget=1000)
+    assert not cut and "A" * 300 in text and "B" * 300 in text
+    text, cut = skills_text(["alpha", "beta"], set(), budget=400)
+    assert cut == ["beta"] and "A" * 300 in text and "the beta task" in text and "B" * 300 not in text and "load_skill" in text
+    assert skills_text(["nope"], set()) == ("", [])

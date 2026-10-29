@@ -818,6 +818,9 @@ class TestDataViewsHook:
             config = run_mcp.load_config(path)
             assert config.mcp.data_views == expected
             assert "--data-views-json" in run_mcp.build_command(config)
+        # The agent endpoint's config names the analysis server, so wait_for_job covers its jobs too.
+        command = run_mcp.build_command(run_mcp.load_config(Path(__file__).resolve().parents[1] / "configs" / "mcp_dt.yaml"))
+        assert command[command.index("--analysis-url") + 1] == "http://127.0.0.1:8003/mcp"
 
     def test_a_data_views_module_that_does_not_import_stops_the_server_with_its_name(self, capsys) -> None:
         code = mcp_server.main([

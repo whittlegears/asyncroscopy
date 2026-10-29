@@ -1,0 +1,44 @@
+# Questions about data already stored. The agent must answer from list_data /
+# view_data (and pyTEMlib's map tools) without moving or acquiring anything.
+
+workflows:
+  - name: describe_latest_image
+    setup: [image]
+    request: What was the most recently acquired image? Describe it briefly (size, field of view and intensity range).
+    runners: [general]
+    timeout_s: 240
+    checks:
+      - {check: called, tool: list_data}
+      - {check: called, tool: view_data}
+      - {check: no_actuation}
+      - {check: stage_unchanged}
+
+  - name: count_tiles_in_run
+    setup: [map]
+    request: How many image tiles are in the map run {run_key}?
+    runners: [general]
+    timeout_s: 240
+    checks:
+      - {check: called, tool: view_data}
+      - {check: answer_number_near, fact: tiles, tol: 0.5}
+      - {check: no_actuation}
+
+  - name: short_exposure_spectrum
+    setup: [map]
+    request: Look at the EDS spectrum {spectrum_key}. Which elements does it show?
+    runners: [general]
+    timeout_s: 240
+    checks:
+      - {check: called, tool: view_data}
+      - {check: answer_eds_consistent}
+      - {check: no_actuation}
+
+  - name: points_of_interest_on_map
+    setup: [map]
+    request: List the points of interest on the stitched map {map_key} with their stage coordinates.
+    runners: [general]
+    timeout_s: 240
+    checks:
+      - {check: called, tool: list_pois}
+      - {check: answer_number_near, fact: poi_x_nm, tol: 2.0}
+      - {check: no_actuation}
