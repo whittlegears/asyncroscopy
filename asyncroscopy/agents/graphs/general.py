@@ -25,7 +25,7 @@ except ImportError:  # other providers load through init_chat_model
 
 # Tools every instrument endpoint and the pyTEMlib analysis server offer.
 GENERIC_TOOLS = [
-    "Approvals_get_mode", "approval_status", "wait_for_job", "list_skills", "load_skill", "list_devices", "get_data_from_key",
+    "Approvals_get_mode", "approval_status", "wait_for_job", "list_skills", "load_skill", "list_devices", "list_data", "view_data",
     "assemble_map", "score_map", "analysis_job_status", "analysis_job_results", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
 ]
 # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
@@ -84,5 +84,5 @@ async def make_graph(config: dict | None = None):
     skills = "; ".join(f"{s.name}: {s.description}" for s in available if s.available) or "none"
     template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
     names = {t.name for t in tools}
-    readers = " or ".join(r for r in ("get_region", "get_data_from_key") if r in names) or "the instrument's own read tools"
+    readers = " or ".join(r for r in ("view_data", "get_region") if r in names) or "the instrument's own read tools"
     return create_agent(agent_config.chat_model(), tools, system_prompt=template.replace("{skills}", skills).replace("{extra}", STEM_RULES if stem else "").replace("{readers}", readers))

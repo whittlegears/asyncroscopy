@@ -134,8 +134,13 @@ async def main(args: argparse.Namespace) -> int:
             results = json.loads(text(await call(agent, "Mapper_results", {"request": json.dumps({"job_id": job_id})})))
             report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
             if "run" in results.get("result_keys", {}):
-                data = await call(agent, "get_data_from_key", {"key": results["result_keys"]["run"], "max_values": 4})
-                report("agent can read the map back by key", "tiles" in text(data) or bool(getattr(data, "structured_content", None)))
+                data = await call(agent, "view_data", {"key": results["result_keys"]["run"], "format": "text"})
+                report("agent can read the map run back by key (view_data text)", "tiles/" in text(data), text(data)[:200])
+                listed = json.loads(text(await call(agent, "list_data", {"kind": "image", "limit": 1})))
+                newest = (listed.get("data") or [{}])[0].get("key")
+                picture = await call(agent, "view_data", {"key": newest, "format": "png"}) if newest else None
+                report("agent can find the newest image (list_data) and see it (view_data png)",
+                       any(getattr(block, "type", "") == "image" for block in getattr(picture, "content", []) or []), str(newest))
                 if args.pytemlib:
                     await check_analysis(args, results["result_keys"]["run"])
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})

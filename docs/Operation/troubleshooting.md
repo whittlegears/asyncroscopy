@@ -24,6 +24,10 @@ tracked process bound to the save path you enter, and stops it on Ctrl+C.
 Changing `data.save_path` on the DATA device also restarts the managed Tiled
 server on the new path, so the server and the save path can't drift apart.
 
+### Tiled stops, restarts, or refuses to start
+
+Read `json.loads(data.get_config())` on the DATA device: `tiled_server_status` says why, and `tiled_log` names the log file with Tiled's own output (`outputs/logs/tiled/`). DATA restarts a Tiled it started when it exits or stops answering, and gives up after 5 restarts in 10 minutes; fix the cause from the log, then call `start_tiled_server`. "port 9091 is used by ..." means another program, or a Tiled serving another directory, holds the port: stop it (the message gives its pid) or change `tiled.port` in the YAML. Files saved while Tiled was down are registered when it is back; to do it by hand, call `data.reconcile()`.
+
 ### Tiled (or the whole stack) fails to start after pulling new changes
 
 Delete the stale `.db` files — both the Tiled catalog db and the Tango database

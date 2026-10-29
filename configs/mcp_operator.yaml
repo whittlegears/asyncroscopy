@@ -31,7 +31,7 @@ mcp:
       - RestartServer
   # Optional Tango command allowlist. Leave empty to include all non-blocked
   # commands. Entries may be "command" or "Class.command".
-  # list_devices and get_data_from_key are always included.
+  # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""

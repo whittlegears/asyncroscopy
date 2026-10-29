@@ -43,10 +43,10 @@ def load_image(microscope: tango.DeviceProxy, key: str) -> np.ndarray:
             node = h5["image"] if "image" in h5 else h5
             first = next(iter(node))
             return np.asarray(node[first][()], dtype=np.float64)
-    from tiled.client import from_uri
+    from asyncroscopy.data import tiled_client
 
-    data = tango.DeviceProxy(json.loads(microscope.get_parameters()).get("data_device_address", "asyncroscopy/data/default"))
-    node = from_uri(json.loads(data.get_config())["uri"])[key]
+    address = json.loads(microscope.get_parameters()).get("data_device_address", "asyncroscopy/data/default")
+    node = tiled_client.node_for_key(key, tiled_client.uri_from_data_device(address))
     while hasattr(node, "keys") and not hasattr(node, "read"):
         node = node[list(node.keys())[0]]
     return np.asarray(node.read(), dtype=np.float64)

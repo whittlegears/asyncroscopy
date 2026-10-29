@@ -24,9 +24,9 @@ class FakeDataProxy:
     def stop_tiled_server(self):
         self.stop_called = True
 
-    def register_save_path(self):
+    def reconcile(self):
         self.register_called = True
-        return '{"registered_path": "outputs/tiled_acquisitions"}'
+        return '{"registered": ["a.h5"], "already": 3, "failed": []}'
 
 
 def test_get_data_proxy_sets_extended_timeout(monkeypatch):
@@ -47,15 +47,22 @@ def test_stop_tiled_server_uses_extended_data_proxy_timeout(monkeypatch):
     assert proxy.stop_called is True
 
 
-def test_register_tiled_save_path_uses_startup_registration_timeout(monkeypatch):
+def test_reconcile_tiled_uses_startup_registration_timeout(monkeypatch):
     proxy = FakeDataProxy()
     monkeypatch.setattr(run_servers.tango, "DeviceProxy", lambda _: proxy)
 
-    result = run_servers.register_tiled_save_path()
+    result = run_servers.reconcile_tiled()
 
     assert proxy.timeout_millis == run_servers.TILED_STARTUP_REGISTRATION_TIMEOUT_MILLIS
     assert proxy.register_called is True
-    assert result == {"registered_path": "outputs/tiled_acquisitions"}
+    assert result == {"registered": ["a.h5"], "already": 3, "failed": []}
+
+
+def test_the_default_tiled_key_is_flagged_only_off_this_machine():
+    assert run_servers.tiled_key_warning("127.0.0.1", "secret") is None
+    assert run_servers.tiled_key_warning("localhost", "secret") is None
+    assert run_servers.tiled_key_warning("0.0.0.0", "a-real-key") is None
+    assert "default API key" in run_servers.tiled_key_warning("0.0.0.0", "secret")
 
 
 def test_load_spectra300_config_starts_servers_only():

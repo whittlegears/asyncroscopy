@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import base64
 from dataclasses import dataclass
@@ -23,8 +24,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult
 
+from asyncroscopy.data.data_reader import numpy_to_python
+from asyncroscopy.mcp import mcp_server
 from asyncroscopy.mcp.mcp_server import COMMAND_TIMEOUT_MILLIS, MCPServer
 
 
@@ -388,7 +392,7 @@ class TestMCPSerialization:
             "list": [np.uint8(6)],
         }
 
-        converted = MCPServer._numpy_to_python(payload)
+        converted = numpy_to_python(payload)
 
         assert converted == {
             "array": [1, 2],
@@ -418,11 +422,11 @@ class TestMCPSerialization:
             "nested": {"values": [3, [[4, 5]]]},
         }
 
-    def test_get_data_from_key_reads_remote_tiled_preview(self, monkeypatch) -> None:
+    def test_view_data_describes_an_image_as_text_and_png(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
         class FakeArray:
-            metadata = {"detector": "HAADF"}
+            metadata = {"detector": "HAADF", "pixel_size_m": 1e-9}
             shape = (3, 3)
             dtype = np.dtype("int64")
 
@@ -433,34 +437,74 @@ class TestMCPSerialization:
         class FakeContainer(dict):
             metadata = {"source": "microscope"}
 
-        tiled_node = FakeContainer(image=FakeContainer(HAADF=FakeArray()))
-
-        class FakeDataProxy:
-            def get_config(self):
-                return json.dumps({"uri": "http://microscope:9091"})
-
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy())
-        monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri",
-            lambda uri: {"frame.h5": tiled_node},
-        )
-
+        node = FakeContainer(image=FakeContainer(HAADF=FakeArray()))
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
-        result = server.get_data_from_key("frame.h5", max_values=4)
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: {"frame.h5": node}[key])
 
-        assert result["key"] == "frame.h5"
-        assert result["uri"] == "http://microscope:9091"
-        assert result["format"] == "hdf5"
-        assert result["attrs"] == {"source": "microscope"}
-        assert result["datasets"] == [
-            {
-                "name": "image/HAADF",
-                "shape": [3, 3],
-                "dtype": "int64",
-                "attrs": {"detector": "HAADF"},
-                "preview": [0, 1, 2, 3],
-            }
-        ]
+        text = server.view_data("frame.h5", format="text")
+        assert text.structured_content["kind"] == "image"
+        assert text.structured_content["dataset"] == "image/HAADF"
+        assert "3 x 3 pixels" in text.content[0].text
+        assert not text.content[0].text.startswith("[")  # plain text, not a JSON-encoded list
+        assert not [b for b in text.content if getattr(b, "type", "") == "image"]
+
+        png = server.view_data("frame.h5")
+        images = [b for b in png.content if getattr(b, "type", "") == "image"]
+        assert len(images) == 1 and base64.b64decode(images[0].data)[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_view_data_errors_reach_the_agent_as_tool_errors(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+
+        def missing(key, hints=True):
+            raise mcp_server.tiled_client.DataKeyNotFound(f"Tiled has no key {key!r}.")
+
+        monkeypatch.setattr(server, "_tiled_node", missing)
+        with pytest.raises(ToolError, match="has no key 'nope.h5'"):
+            server.view_data("nope.h5")
+
+    def test_a_stuck_tiled_read_ends_at_the_deadline(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DATA_TOOL_DEADLINE_S", 0.2)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: time.sleep(2))
+
+        started = time.monotonic()
+        with pytest.raises(ToolError, match="did not answer"):
+            server.view_data("slow.h5")
+        assert time.monotonic() - started < 1.5
+
+    def test_list_data_lists_newest_first_and_filters(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        class FakeArray:
+            def __init__(self, shape, metadata):
+                self.shape, self.metadata, self.dtype = shape, metadata, np.dtype("float64")
+
+            def read(self, slices=None):
+                return np.zeros(self.shape)[slices] if slices else np.zeros(self.shape)
+
+        class FakeContainer(dict):
+            metadata: dict = {}
+
+        spectrum = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
+        client = FakeContainer(
+            [
+                ("old_image.h5", FakeContainer(image=FakeArray((8, 8), {"detector": "HAADF"}))),
+                ("spectrum_eds.h5", FakeContainer(spectrum=FakeArray((64,), spectrum))),
+                ("new_image.h5", FakeContainer(image=FakeArray((8, 8), {"detector": "HAADF"}))),
+            ]
+        )
+        monkeypatch.setattr(mcp_server.tiled_client, "uri_from_data_device", lambda address: "http://tiled")
+        monkeypatch.setattr(mcp_server.tiled_client, "connect", lambda uri: client)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+
+        listed = server.list_data()
+        assert [d["key"] for d in listed["data"]] == ["new_image.h5", "spectrum_eds.h5", "old_image.h5"]
+        assert listed["data"][1]["kind"] == "spectrum" and listed["data"][1]["detector"] == "eds"
+        assert [d["key"] for d in server.list_data(kind="image")["data"]] == ["new_image.h5", "old_image.h5"]
+        assert [d["key"] for d in server.list_data(search="SPECTRUM")["data"]] == ["spectrum_eds.h5"]
+        assert [d["key"] for d in server.list_data(limit=1, offset=1)["data"]] == ["spectrum_eds.h5"]
 
 
 class TestMCPServerTypeMapping:
@@ -543,7 +587,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"get_data_from_key", "list_devices", "list_skills", "load_skill"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill"}
 
 
 class TestMCPCommandTimeout:
@@ -580,22 +624,6 @@ class TestMCPCommandTimeout:
 class TestMCPSpectrumPreview:
     png_magic = b"\x89PNG\r\n\x1a\n"
 
-    def test_spectrum_png_labeled_and_unlabeled(self) -> None:
-        labeled = MCPServer._spectrum_to_png_bytes(
-            np.array([0.5, 0.3, 0.2]), ["Au", "Pt", "Fe"]
-        )
-        unlabeled = MCPServer._spectrum_to_png_bytes(np.arange(64, dtype=np.float64))
-
-        assert labeled[: len(self.png_magic)] == self.png_magic
-        assert unlabeled[: len(self.png_magic)] == self.png_magic
-
-    def test_element_labels_parse_json_and_reject_malformed(self) -> None:
-        assert MCPServer._element_labels({"elements": '["Au", "Pt"]'}) == ["Au", "Pt"]
-        assert MCPServer._element_labels({"elements": ["Fe"]}) == ["Fe"]
-        assert MCPServer._element_labels({"elements": "not json"}) is None
-        assert MCPServer._element_labels({"elements": [1, 2]}) is None
-        assert MCPServer._element_labels({}) is None
-
     def test_acquire_spectrum_result_gains_png_preview(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
@@ -610,18 +638,8 @@ class TestMCPSpectrumPreview:
 
         node = FakeContainer(spectrum=FakeSpectrum())
 
-        class FakeDataProxy:
-            def get_config(self):
-                return json.dumps({"uri": "http://microscope:9091"})
-
-        monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy()
-        )
-        monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri", lambda uri: {"spectrum_eds.h5": node}
-        )
-
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: {"spectrum_eds.h5": node}[key])
         result = server._augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
@@ -638,26 +656,15 @@ class TestMCPSpectrumPreview:
         class FakeContainer(dict):
             metadata: dict = {}
 
-        class FakeDataProxy:
-            def get_config(self):
-                return json.dumps({"uri": "http://microscope:9091"})
-
-        monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy()
-        )
-        monkeypatch.setattr(
-            "asyncroscopy.mcp.mcp_server.from_uri",
-            lambda uri: {"spectrum_eds.h5": FakeContainer()},
-        )
-
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: {"spectrum_eds.h5": FakeContainer()}[key])
         result = server._augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"result": "spectrum_eds.h5"}
         texts = [getattr(block, "text", "") for block in result.content]
         assert any("image preview unavailable" in text for text in texts)
-        assert any("no 1D dataset" in text for text in texts)
+        assert any("holds no arrays" in text for text in texts)
 
     def test_unrelated_commands_keep_plain_results(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -667,3 +674,135 @@ class TestMCPSpectrumPreview:
         assert server._augment_with_preview("get_stage", "[0.0,0.0]") == "[0.0,0.0]"
         assert server._augment_with_preview("acquire_spectrum", "") == ""
         assert server._augment_with_preview("acquire_spectrum", 42) == 42
+
+    def test_other_acquire_commands_get_a_preview_but_no_failure_note(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        class FakeArray:
+            metadata = {"axis_offset": 10.0, "axis_scale": 0.02, "axis_label": "two_theta", "axis_units": "deg"}
+
+            def read(self):
+                return np.sin(np.linspace(0, 6, 200)) ** 2
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: {"xrd_scan.h5": FakeArray()}[key])
+        result = server._augment_with_preview("acquire_diffractogram", "xrd_scan.h5")
+        assert isinstance(result, ToolResult)
+        assert [getattr(b, "type", "") for b in result.content] == ["text", "image"]
+
+        def missing(key, hints=True):
+            raise mcp_server.tiled_client.DataKeyNotFound("no such key")
+
+        monkeypatch.setattr(server, "_tiled_node", missing)
+        assert server._augment_with_preview("acquire_diffractogram", "ok") == "ok"
+
+
+class TestDataToolRobustness:
+    @pytest.fixture
+    def server(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        return MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+
+    def test_a_preview_that_breaks_never_fails_the_acquisition(self, server, monkeypatch) -> None:
+        def broken(key, hints=True):
+            raise RuntimeError("401 Unauthorized: wrong Tiled API key")
+
+        monkeypatch.setattr(server, "_tiled_node", broken)
+        result = server._augment_with_preview("acquire_scanned_image", "scan_20261028.h5")
+        assert isinstance(result, ToolResult) and result.structured_content == {"result": "scan_20261028.h5"}
+        assert any("401 Unauthorized" in getattr(block, "text", "") for block in result.content)
+
+    def test_view_data_turns_unexpected_errors_into_tool_errors(self, server, monkeypatch) -> None:
+        def broken(key, hints=True):
+            raise KeyError("a plug-in kind looked up a missing attribute")
+
+        monkeypatch.setattr(server, "_tiled_node", broken)
+        with pytest.raises(ToolError, match="could not read the data"):
+            server.view_data("frame.h5")
+
+    def test_only_results_that_look_like_data_keys_are_previewed(self, server, monkeypatch) -> None:
+        looked_up = []
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: looked_up.append(key))
+        tableau = json.dumps({"C1": 1e-9, "A1": [2e-9, 0.1]})
+        assert server._augment_with_preview("acquire_tableau", tableau) == tableau
+        assert server._augment_with_preview("acquire_spectrum", "no such thing") == "no such thing"
+        assert looked_up == []
+
+    def test_a_full_lane_answers_busy_and_other_lanes_still_work(self, monkeypatch) -> None:
+        release = threading.Event()
+        lane = mcp_server._Lane("view_data", 1)
+        monkeypatch.setitem(mcp_server._lanes, "view", lane)
+        with pytest.raises(ToolError, match="did not answer"):
+            MCPServer._with_deadline(release.wait, lane="view", deadline_s=0.1)
+        with pytest.raises(ToolError, match="still waiting for Tiled"):
+            MCPServer._with_deadline(lambda: "x", lane="view", deadline_s=0.1)
+        assert MCPServer._with_deadline(lambda: "listed", lane="list", deadline_s=1.0) == "listed"
+        release.set()
+        time.sleep(0.2)
+        assert MCPServer._with_deadline(lambda: "free again", lane="view", deadline_s=1.0) == "free again"
+
+    def test_list_data_keeps_going_past_unreadable_entries_and_reports_more_exactly(self, server, monkeypatch) -> None:
+        class FakeArray:
+            metadata: dict = {}
+            dtype = np.dtype("float64")
+
+            def __init__(self, shape):
+                self.shape = shape
+
+            def read(self, slices=None):
+                return np.zeros(self.shape)
+
+        class Broken:
+            metadata: dict = {}
+            structure_family = "array"
+
+            @property
+            def shape(self):
+                raise RuntimeError("500 Internal Server Error")
+
+        client = {"a.h5": FakeArray((4, 4)), "bad.h5": Broken(), "c.h5": FakeArray((4, 4))}
+        monkeypatch.setattr(mcp_server.tiled_client, "uri_from_data_device", lambda address: "http://tiled")
+        monkeypatch.setattr(mcp_server.tiled_client, "connect", lambda uri: client)
+
+        listed = server.list_data()
+        assert [(d["key"], d["kind"]) for d in listed["data"]] == [("c.h5", "image"), ("bad.h5", "unreadable"), ("a.h5", "image")]
+        assert listed["more"] is False and listed["looked"].startswith("looked at the newest 3 of 3")
+        assert server.list_data(limit=3)["more"] is False
+        page = server.list_data(limit=2)
+        assert [d["key"] for d in page["data"]] == ["c.h5", "bad.h5"] and page["more"] is True
+        assert [d["key"] for d in server.list_data(limit=2, offset=2)["data"]] == ["a.h5"]
+        assert server.list_data(limit=2, offset=2)["more"] is False
+
+
+class TestDataViewsHook:
+    def test_data_views_accepts_one_module_or_a_list(self, tmp_path) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("launcher_run_mcp_views", Path(__file__).resolve().parents[1] / "startup_scripts" / "run_mcp.py")
+        run_mcp = importlib.util.module_from_spec(spec)
+        sys.modules["launcher_run_mcp_views"] = run_mcp
+        spec.loader.exec_module(run_mcp)
+        base = (Path(__file__).resolve().parents[1] / "configs" / "mcp_dt.yaml").read_text(encoding="utf-8")
+        for value, expected in (("mypkg.views", ["mypkg.views"]), ("[a.views, b.views]", ["a.views", "b.views"])):
+            path = tmp_path / "mcp.yaml"
+            path.write_text(base.replace("\nmcp:\n", f"\nmcp:\n  data_views: {value}\n", 1), encoding="utf-8")
+            config = run_mcp.load_config(path)
+            assert config.mcp.data_views == expected
+            assert "--data-views-json" in run_mcp.build_command(config)
+
+    def test_a_data_views_module_that_does_not_import_stops_the_server_with_its_name(self, capsys) -> None:
+        code = mcp_server.main([
+            "--name", "t", "--tango-host", "h", "--tango-port", "1", "--transport", "stdio", "--http-host", "h", "--http-port", "1",
+            "--blocked-classes-json", "[]", "--blocked-functions-json", "{}", "--data-device-address", "d",
+            "--data-views-json", '["no_such_views_module_xyz"]',
+        ])
+        assert code == 1
+        assert "mcp.data_views lists 'no_such_views_module_xyz'" in capsys.readouterr().err
+
+
+def test_list_data_never_asks_tiled_for_a_page_larger_than_it_serves():
+    from tiled.server.dependencies import MAX_PAGE_SIZE
+
+    from asyncroscopy.mcp.mcp_server import LIST_DATA_WINDOW
+
+    assert LIST_DATA_WINDOW <= MAX_PAGE_SIZE

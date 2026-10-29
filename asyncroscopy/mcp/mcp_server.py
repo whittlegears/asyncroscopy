@@ -2,25 +2,20 @@
 
 import argparse
 import base64
+import importlib
 import inspect
-import io
 import re
 import json
 import socket
+import sys
 import threading
 import time
 import traceback
-from typing import Annotated, Any, Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from typing import Annotated, Any, Callable, Literal
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-import numpy as np
-from PIL import Image as PILImage
+import httpx
 from pydantic import Field
-from tiled.client import from_uri
 
 import tango
 from tango import Database, DeviceProxy, CommandInfo, CmdArgType
@@ -39,8 +34,10 @@ from fastmcp.exceptions import ToolError
 from fastmcp.tools import tool, Tool, ToolResult
 from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
+from mcp.types import TextContent
 
-from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.data import tiled_client, views
+from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
 from fnmatch import fnmatchcase
 
@@ -49,19 +46,43 @@ from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envel
 ENDPOINT_ROLES = ("agent", "operator")
 CALLER_HEADER = "x-asyncroscopy-caller"
 
-# Tango commands that acquire and save data, returning its DATA/Tiled key as a
-# plain string. Their tool wrappers additionally fetch the array back from Tiled and
-# attach an inline PNG preview, so chat clients that already render MCP image content
-# blocks (e.g. SciAgentGUI) display the capture without any extra tool call.
-# Image commands are previewed as a grayscale rendering of the first 2D dataset;
-# spectrum commands as a plot of the first 1D dataset.
 def _without_param_name(desc: str) -> str:
     """A parameter's description without its ":param name:" prefix, which only names it."""
     return re.sub(r"^(?::param|@param)\s+\w+:\s*", "", desc.strip())
 
 
-IMAGE_PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image"}
-SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
+# acquire* commands whose result is a data key (a file name such as
+# "spectrum_eds_20261028T101500.h5") get a PNG of what they saved, drawn by
+# asyncroscopy.data.views, so clients that render MCP image blocks (e.g. SciAgentGUI)
+# show the capture without another call. A preview never fails the acquisition: for
+# PREVIEW_COMMANDS the result says why there is none; other commands just return.
+PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}
+DATA_KEY = re.compile(r"^[\w.\-/]+\.(h5|hdf5|nxs|tif|tiff)$", re.IGNORECASE)
+# Data tools answer within this, so a slow or stuck Tiled cannot hang the agent.
+DATA_TOOL_DEADLINE_S = 20.0
+PREVIEW_DEADLINE_S = 10.0
+LIST_DATA_WINDOW = 300  # newest keys list_data looks through; Tiled refuses pages larger than 300
+LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
+
+
+class _Lane:
+    """A small thread pool with a slot count: work that outlives its deadline keeps its slot until it ends,
+    so a stuck Tiled fills one lane with a clear "busy" answer instead of starving every data tool."""
+
+    def __init__(self, name: str, slots: int):
+        self.name, self.slots = name, slots
+        self.pool = ThreadPoolExecutor(max_workers=slots, thread_name_prefix=f"data-{name}")
+        self.free = threading.BoundedSemaphore(slots)
+
+    def run(self, fn: Callable[[], Any], deadline_s: float) -> Any:
+        if not self.free.acquire(blocking=False):
+            raise ToolError(f"{self.slots} earlier {self.name} calls are still waiting for Tiled; try again shortly.")
+        future = self.pool.submit(fn)
+        future.add_done_callback(lambda _f: self.free.release())
+        return future.result(timeout=deadline_s)
+
+
+_lanes = {"view": _Lane("view_data", 4), "list": _Lane("list_data", 2), "preview": _Lane("preview", 2)}
 
 # Tango's client default of 3000 ms is shorter than a real acquisition: the digital
 # twin's first acquire_camera_image takes over 3 s cold, so the call died with
@@ -123,7 +144,7 @@ class MCPServer:
             blocked_functions: Command names to exclude, keyed by Tango class name.
                 Use "*" for global blocks.
             blocked_classes: Tango device class names to skip entirely.
-            data_device_address: Tango DATA device used by get_data_from_key.
+            data_device_address: Tango DATA device whose Tiled server list_data and view_data read.
             include_only_functions (list[str], optional): Command names/patterns to allow exclusively.
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
@@ -202,254 +223,113 @@ class MCPServer:
                 pass
         return available
 
+    def _tiled_node(self, key: str, hints: bool = True) -> Any:
+        """The Tiled node for a DATA/Tiled key, through the DATA device's Tiled address.
+
+        With hints, a missing key's error names keys that start with it (a scan of the
+        catalog); without, a missing key is a plain KeyError.
+        """
+        uri = tiled_client.uri_from_data_device(self.data_device_address)
+        return tiled_client.node_for_key(key, uri) if hints else tiled_client.connect(uri)[key]
+
+    @staticmethod
+    def _with_deadline(fn: Callable[[], Any], lane: str = "view", deadline_s: float | None = None) -> Any:
+        """Run a data read in its lane within the deadline; every failure becomes an error the agent can act on."""
+        deadline_s = DATA_TOOL_DEADLINE_S if deadline_s is None else deadline_s
+        try:
+            return _lanes[lane].run(fn, deadline_s)
+        except ToolError:
+            raise
+        except FutureTimeout:
+            raise ToolError(f"Tiled did not answer within {deadline_s:.0f} s. Try again, or ask for less (a region, or format text).") from None
+        except (tiled_client.TiledUnavailable, tiled_client.DataKeyNotFound, ValueError) as exc:
+            raise ToolError(str(exc)) from exc
+        except (httpx.TransportError, OSError) as exc:
+            raise ToolError(f"Tiled stopped answering ({type(exc).__name__}: {exc}); try again in a few seconds.") from exc
+        except Exception as exc:  # an HTTP error status, a plug-in kind's bug, data this view cannot draw
+            raise ToolError(f"could not read the data ({type(exc).__name__}: {exc})") from exc
+
     @tool()
-    def get_data_from_key(
+    def list_data(self, kind: str | None = None, search: str | None = None, limit: int = 20, offset: int = 0) -> dict[str, Any]:
+        """Stored data, newest registered first: key, kind (image, spectrum, spectrum_image, stack, map, table, ...), shape, detector. Filter by kind or by part of the key; look at one with view_data. Looks through the newest 500 keys (files registered after a Tiled outage count as new); any older key can still be opened with view_data. If more is true, call again with offset = offset + limit."""
+        return self._with_deadline(lambda: self._list_data(kind, search, max(1, min(int(limit), 100)), max(0, int(offset))), lane="list")
+
+    def _list_data(self, kind: str | None, search: str | None, limit: int, offset: int) -> dict[str, Any]:
+        uri = tiled_client.uri_from_data_device(self.data_device_address)
+        client = tiled_client.connect(uri)
+        items = client.items()
+        tail = getattr(items, "tail", None)
+        window = list(tail(LIST_DATA_WINDOW)) if callable(tail) else list(items)[-LIST_DATA_WINDOW:]
+        total = views._count(client)
+        deadline = time.monotonic() + LIST_DATA_BUDGET_S
+        found: list[dict[str, Any]] = []
+        matched = scanned = 0
+        stopped = None
+        for key, node in reversed(window):
+            if time.monotonic() > deadline:
+                stopped = f"stopped after {LIST_DATA_BUDGET_S:.0f} s"
+                break
+            scanned += 1
+            if search and search.lower() not in key.lower():
+                continue
+            try:
+                entry = views.summarize(node, key)
+            except Exception as exc:  # one unreadable entry must not hide the rest
+                entry = {"key": key, "kind": "unreadable", "note": f"{type(exc).__name__}: {exc}"[:200]}
+            if kind and entry.get("kind") != kind:
+                continue
+            matched += 1
+            if matched <= offset:
+                continue
+            if len(found) == limit:  # one match past the page: there is more
+                break
+            found.append(entry)
+        more = matched > offset + len(found) or (stopped is not None)
+        looked = f"looked at the newest {scanned} of {total if total is not None else '?'} keys" + (f" ({stopped})" if stopped else "")
+        return numpy_to_python({"uri": uri, "data": found, "more": more, "looked": looked, "kinds": [k.name for k in views.KINDS] + ["map", "unreadable"]})
+
+    @tool()
+    def view_data(
         self,
         key: str,
-        max_values: int = 64,
-        data_device_address: str | None = None,
-    ) -> dict[str, Any]:
-        """Read a remote DATA/Tiled key and return dataset metadata plus small previews."""
-        address = data_device_address or self.data_device_address
-        data = DeviceProxy(address)
-        config = json.loads(data.get_config())
-        uri = config.get("uri")
-        if not uri:
-            raise RuntimeError(f"DATA device {address!r} did not provide a Tiled URI")
-
-        client = from_uri(uri)
-        try:
-            node = client[key]
-        except KeyError as exc:
-            raise FileNotFoundError(
-                f"Could not resolve data key {key!r} from Tiled server {uri!r}"
-            ) from exc
-
-        return describe_tiled_node(key, uri, node, max_values=max_values)
-
-    @staticmethod
-    def _find_first_2d_array(node: Any, prefer_key: str | None = None) -> np.ndarray | None:
-        """Recursively search a Tiled node for the first readable 2D dataset.
-
-        Acquisition writers (see asyncroscopy/data/data_writer.py) group image
-        datasets under an "image/<detector>" path, so ``prefer_key`` lets callers
-        check that group first before falling back to a full walk.
-        """
-
-        def search(current: Any) -> np.ndarray | None:
-            read = getattr(current, "read", None)
-            if callable(read):
-                try:
-                    array = np.asarray(read())
-                except Exception:
-                    return None
-                return array if array.ndim == 2 else None
-
-            keys = getattr(current, "keys", None)
-            if callable(keys):
-                for child_name in keys():
-                    try:
-                        found = search(current[child_name])
-                    except Exception:
-                        continue
-                    if found is not None:
-                        return found
-            return None
-
-        if prefer_key is not None:
-            try:
-                found = search(node[prefer_key])
-                if found is not None:
-                    return found
-            except Exception:
-                pass
-        return search(node)
-
-    @staticmethod
-    def _array_to_png_bytes(array: np.ndarray, max_side: int = 1024) -> bytes:
-        """Normalize a 2D array to 8-bit grayscale and encode it as PNG."""
-        values = np.asarray(array, dtype=np.float64)
-        finite = values[np.isfinite(values)]
-        low, high = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
-        normalized = (values - low) / (high - low) if high > low else np.zeros_like(values)
-        pixels = np.clip(normalized, 0.0, 1.0)
-        image = PILImage.fromarray((pixels * 255).astype(np.uint8), mode="L")
-        if max(image.size) > max_side:
-            scale = max_side / max(image.size)
-            new_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
-            image = image.resize(new_size, PILImage.NEAREST)
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return buffer.getvalue()
-
-    def _resolve_tiled_node(self, key: str) -> Any:
-        """Resolve a DATA/Tiled key to its Tiled node via the DATA device's config."""
-        data = DeviceProxy(self.data_device_address)
-        config = json.loads(data.get_config())
-        uri = config.get("uri")
-        if not uri:
-            raise RuntimeError("the DATA device's config carries no Tiled uri")
-        return from_uri(uri)[key]
-
-    def _fetch_image_preview(self, key: str) -> tuple[MCPImage | None, str | None]:
-        """Fetch a captured image from Tiled and render it as a PNG preview.
-
-        Returns (preview, None) on success and (None, reason) on any failure
-        (unreachable Tiled server, key not yet registered, no 2D dataset found),
-        so the acquisition tool can still return its text key and state why no
-        preview accompanies it. Swallowing the reason made a Tiled outage
-        indistinguishable from a command that never produces images.
-        """
-        try:
-            node = self._resolve_tiled_node(key)
-            array = self._find_first_2d_array(node, prefer_key="image")
-            if array is None:
-                return None, f"no 2D dataset was found under key {key!r} in Tiled"
-            return MCPImage(data=self._array_to_png_bytes(array), format="png"), None
-        except Exception as exc:
-            if self.verbose:
-                print(f"[image preview] could not build preview for {key!r}: {exc}")
-            return None, f"{type(exc).__name__}: {exc}"
-
-    @staticmethod
-    def _find_first_1d_array(
-        node: Any, prefer_key: str | None = None
-    ) -> tuple[np.ndarray, dict[str, Any]] | None:
-        """Recursively search a Tiled node for the first readable 1D dataset.
-
-        Returns (array, metadata) so the caller can label the plot from the
-        dataset's HDF5 attributes (see data_writer.save_acquisition, which
-        stores spectra under a "spectrum" dataset name).
-        """
-
-        def search(current: Any) -> tuple[np.ndarray, dict[str, Any]] | None:
-            read = getattr(current, "read", None)
-            if callable(read):
-                try:
-                    array = np.asarray(read())
-                except Exception:
-                    return None
-                if array.ndim != 1 or array.size == 0:
-                    return None
-                metadata = dict(getattr(current, "metadata", {}) or {})
-                return array, metadata
-
-            keys = getattr(current, "keys", None)
-            if callable(keys):
-                for child_name in keys():
-                    try:
-                        found = search(current[child_name])
-                    except Exception:
-                        continue
-                    if found is not None:
-                        return found
-            return None
-
-        if prefer_key is not None:
-            try:
-                found = search(node[prefer_key])
-                if found is not None:
-                    return found
-            except Exception:
-                pass
-        return search(node)
-
-    @staticmethod
-    def _element_labels(metadata: dict[str, Any]) -> list[str] | None:
-        """Extract per-channel element labels from a spectrum dataset's attrs.
-
-        data_writer json-encodes non-scalar HDF5 attrs, so "elements" may arrive
-        as a JSON string or as a list. Returns None when absent or malformed,
-        in which case the preview falls back to an unlabeled channel axis.
-        """
-        raw = metadata.get("elements")
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except json.JSONDecodeError:
-                return None
-        if isinstance(raw, (list, tuple)) and raw and all(isinstance(item, str) for item in raw):
-            return list(raw)
-        return None
-
-    @staticmethod
-    def _spectrum_to_png_bytes(values: np.ndarray, labels: list[str] | None = None) -> bytes:
-        """Render a 1D spectrum as a PNG plot.
-
-        With one label per value (the digital twin's per-element composition
-        spectra) this draws a labeled bar chart; otherwise a line plot against
-        channel index, which is the only axis honestly known without calibration.
-        """
-        counts = np.asarray(values, dtype=np.float64)
-        figure, axes = plt.subplots(figsize=(6.0, 3.5), dpi=120)
-        try:
-            if labels is not None and len(labels) == len(counts):
-                positions = np.arange(len(counts))
-                axes.bar(positions, counts)
-                axes.set_xticks(positions)
-                axes.set_xticklabels(labels)
-                axes.set_xlabel("element")
-                axes.set_ylabel("relative intensity")
-            else:
-                axes.plot(np.arange(counts.size), counts, linewidth=1.0)
-                axes.set_xlabel("channel")
-                axes.set_ylabel("counts")
-            figure.tight_layout()
-            buffer = io.BytesIO()
-            figure.savefig(buffer, format="png")
-            return buffer.getvalue()
-        finally:
-            plt.close(figure)
-
-    def _fetch_spectrum_preview(self, key: str) -> tuple[MCPImage | None, str | None]:
-        """Fetch an acquired spectrum from Tiled and render it as a PNG plot.
-
-        Same contract as _fetch_image_preview: (preview, None) on success,
-        (None, reason) on failure so the tool result states why no preview
-        accompanies the key.
-        """
-        try:
-            node = self._resolve_tiled_node(key)
-            found = self._find_first_1d_array(node, prefer_key="spectrum")
-            if found is None:
-                return None, f"no 1D dataset was found under key {key!r} in Tiled"
-            array, metadata = found
-            labels = self._element_labels(metadata)
-            return MCPImage(data=self._spectrum_to_png_bytes(array, labels), format="png"), None
-        except Exception as exc:
-            if self.verbose:
-                print(f"[spectrum preview] could not build preview for {key!r}: {exc}")
-            return None, f"{type(exc).__name__}: {exc}"
+        format: Literal["png", "text"] = "png",
+        dataset: str | None = None,
+        region: list[float] | None = None,
+        index: list[int] | None = None,
+        max_side: int = views.PREVIEW_MAX_SIDE,
+    ) -> ToolResult:
+        """Look at stored data by key (from an acquisition, a job's results, or list_data). png: a picture (images contrast-stretched, spectra plotted against energy with peaks marked). text: shape, units, statistics, peaks and a small CSV. dataset: one array inside a file (the text lists them). region: an image's [row0, row1, col0, col1] in pixels, or a spectrum's [min, max] in its axis units (eV). index: which frame of a stack or 4-D dataset. Never returns raw arrays."""
+        options = views.ViewOptions(region=region, index=index, max_side=max_side)
+        summary, png = self._with_deadline(lambda: views.view(self._tiled_node(key), key, format, dataset, options), lane="view")
+        # A TextContent block, not a bare str: FastMCP joins a list of only strings into one JSON array.
+        content: list[Any] = [TextContent(type="text", text=summary["text"])]
+        if png is not None:
+            content.append(MCPImage(data=png, format="png"))
+        return ToolResult(content=content, structured_content=numpy_to_python(summary))
 
     def _augment_with_preview(self, command_name: str, result: Any) -> Any:
-        """Attach an inline image preview to known acquisition commands.
+        """Attach a PNG of what an acquire command saved; never fails the acquisition.
 
-        Returns a ToolResult with both a text content block (the Tiled key,
-        unchanged for existing callers) and an image content block, plus
-        structured_content matching the tool's auto-generated {"result": str}
-        output schema — a bare (text, Image) tuple would leave structured_content
-        empty and fail client-side output-schema validation. When the preview
-        cannot be built, a text block states the reason instead of the image, so
-        the failure is visible to the operator and the model rather than silent.
+        Returns a ToolResult with the Tiled key as text (unchanged for existing
+        callers) and the image, plus structured_content matching the tool's
+        {"result": str} output schema; a bare (text, Image) tuple would fail
+        client-side output-schema validation. For PREVIEW_COMMANDS a failed preview
+        is reported in a text block, so a Tiled outage is visible, not silent.
         """
-        if not isinstance(result, str) or not result:
+        if not isinstance(result, str) or not command_name.startswith("acquire") or not DATA_KEY.match(result.strip()):
             return result
-        if command_name in IMAGE_PREVIEW_COMMANDS:
-            preview, failure = self._fetch_image_preview(result)
-        elif command_name in SPECTRUM_PREVIEW_COMMANDS:
-            preview, failure = self._fetch_spectrum_preview(result)
-        else:
-            return result
-        if preview is None:
-            return ToolResult(
-                content=[result, f"image preview unavailable: {failure}"],
-                structured_content={"result": result},
-            )
-        return ToolResult(content=[result, preview], structured_content={"result": result})
 
-    @staticmethod
-    def _hdf5_attrs_to_json(attrs: Any) -> dict[str, Any]:
-        return {key: MCPServer._numpy_to_python(value) for key, value in attrs.items()}
+        try:
+            _summary, png = self._with_deadline(
+                lambda: views.view(self._tiled_node(result, hints=False), result, "png"), lane="preview", deadline_s=PREVIEW_DEADLINE_S
+            )
+        except Exception as exc:  # the hardware already acquired: report, never raise
+            if self.verbose:
+                print(f"[preview] could not build a preview for {result!r}: {exc}")
+            if command_name not in PREVIEW_COMMANDS:
+                return result
+            return ToolResult(content=[result, f"image preview unavailable: {exc}"], structured_content={"result": result})
+        return ToolResult(content=[result, MCPImage(data=png, format="png")], structured_content={"result": result})
 
     @staticmethod
     def _tango_type_to_python(cmd_type: CmdArgType) -> Any:
@@ -490,25 +370,11 @@ class MCPServer:
         return Any
 
     @staticmethod
-    def _numpy_to_python(obj: Any) -> Any:
-        """Recursively convert numpy types to Python types for JSON serialization."""
-        if isinstance(obj, np.ndarray):
-            return MCPServer._numpy_to_python(obj.tolist())
-        if isinstance(obj, np.generic):
-            return obj.item()
-        if isinstance(obj, dict):
-            return {k: MCPServer._numpy_to_python(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            conv = [MCPServer._numpy_to_python(v) for v in obj]
-            return tuple(conv) if isinstance(obj, tuple) else conv
-        return obj
-
-    @staticmethod
     def _normalize_command_result(out_type: CmdArgType, result: Any) -> Any:
         """Convert Tango command output into JSON-safe data for MCP transport."""
 
         # Convert numpy types (including nested containers) to native Python types
-        result = MCPServer._numpy_to_python(result)
+        result = numpy_to_python(result)
         if out_type != CmdArgType.DevEncoded:
             return result
 
@@ -695,7 +561,7 @@ class MCPServer:
                     # One canonical text for one call, whatever form it came in, so the
                     # approval fingerprint of a retried call matches its grant.
                     arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
-                return _run({param_name: self._numpy_to_python(arg)}, arg)
+                return _run({param_name: numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[arg_type | None, Field(description=clean_desc)], default=None)]
             params += [inspect.Parameter(f, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[Any, Field(description=f"Same as {param_name}.{f}.")], default=None) for f in fields]
@@ -705,7 +571,7 @@ class MCPServer:
             def wrapper(*args, **kwargs):
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
-                return _run({param_name: self._numpy_to_python(arg)}, arg)
+                return _run({param_name: numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -1005,7 +871,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices, self.list_skills, self.load_skill]
+        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill]
         if self._envelope_prefixes:
             native_tools.append(self.wait_for_job)
         if self.approvals_device_address is not None:
@@ -1082,6 +948,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--approvals-device-address", default="", help="Approvals device; empty disables the approval mode.")
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
+    parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
     return parser.parse_args(argv)
 
 
@@ -1117,6 +984,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    for module in json.loads(args.data_views_json):
+        try:
+            importlib.import_module(module)  # registers its data kinds for view_data and previews
+        except Exception as exc:
+            print(f"MCP ERROR: mcp.data_views lists {module!r}, which could not be imported: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 1
     server = MCPServer(
         name=args.name,
         tango_host=args.tango_host,

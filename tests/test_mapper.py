@@ -2,6 +2,7 @@
 
 import json
 import time
+from pathlib import Path
 
 import h5py
 import numpy as np
@@ -142,12 +143,17 @@ class TestRun:
         done_at_abort = aborted["progress"]["done"]
         assert done_at_abort < N_TILES
         assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+        # Until the job finishes the run file is .partial, so DATA's reconcile cannot register it half-written.
+        working = Path(call(mapper_proxy, "results", {"job_id": started["job_id"]})["result_keys"]["run_file"])
+        assert working.name.endswith(".h5.partial") and working.exists()
 
         resumed = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
         status = wait(mapper_proxy, resumed["job_id"])
         assert status["state"] == "done"
         assert status["progress"]["done"] == N_TILES
-        with h5py.File(call(mapper_proxy, "results", {"job_id": resumed["job_id"]})["result_keys"]["run_file"], "r") as h5:
+        finished = Path(call(mapper_proxy, "results", {"job_id": resumed["job_id"]})["result_keys"]["run_file"])
+        assert finished.suffix == ".h5" and not working.exists()
+        with h5py.File(finished, "r") as h5:
             assert len(h5["tiles"]) == N_TILES
         release_all(mapper_proxy, reserve["reservation_id"])
 

@@ -49,6 +49,23 @@ Conventions the rest of the stack relies on:
 - **Return within a second; run anything longer as a job.** Tango runs one command per device at a time, so while a 6 s scan command is running, even a safe stop sent to that device waits for it (and the MCP server gives up after 30 s while the hardware keeps going). A command that takes longer than about a second should be a job on a `JobDevice` (section 2), or start its work in a thread, return at once, and report progress through a `get_*` command.
 - **Refuse unsafe arguments in the device** (`raise ValueError(...)`), not in the agent. The limit then applies to notebooks, the GUI and every agent. Expose the limits (the example's `get_limits`) so a job device can check a whole plan before it starts.
 - **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/instruments/electron_microscope/mapper.py` does this for every tile. The MCP server attaches a preview, read back through the DATA device, to any command named `acquire_camera_image`, `acquire_scanned_image` or `acquire_spectrum` (without a reachable DATA device the result says the preview is unavailable), and records a result's key in the trace for commands whose name starts with `acquire`.
+- **Write attributes that say how to read your data.** Agents look at stored data with `view_data` (a PNG or text, never raw arrays), which picks a view from the data's shape and attributes. A 1-D dataset with `axis_offset`, `axis_scale`, `axis_label` and `axis_units` (or `energy_offset_ev` and `energy_dispersion_ev`) is plotted against that axis with its peaks listed; a 2-D one with `pixel_size_m` is shown as an image with its field of view; 3-D and 4-D data show one frame (`index` picks it). Commands named `acquire*` get the same PNG attached to their result. If your data needs its own drawing (a diffractogram in 2θ, a force curve), register a kind in a module and list it under `mcp.data_views` in your MCP YAML:
+
+  ```python
+  # asyncroscopy/instruments/x_ray_diffractometer/views.py
+  from asyncroscopy.data.views import Axis, line_kind, register_kind
+
+  register_kind(line_kind(
+      "diffractogram",
+      matches=lambda ds: ds.ndim == 1 and "two_theta_start_deg" in ds.attrs,
+      axis=lambda ds: Axis(ds.attrs["two_theta_start_deg"], ds.attrs["two_theta_step_deg"], "2θ", "deg"),
+  ), before="profile")
+  ```
+
+  ```yaml
+  mcp:
+    data_views: [asyncroscopy.instruments.x_ray_diffractometer.views]
+  ```
 - **Start `doc_in` with "JSON" for an object argument** (`doc_in=':param plan: JSON {...}'`). Only then does the MCP server accept an object from the model and normalise it, so a retried call matches the approval it was given.
 - **Argument names come from the Python signature.** `command` writes `:param load_n:` into `doc_in` for you; with plain `tango.server.command` you must write it yourself, or the agent's argument is called `arg`.
 

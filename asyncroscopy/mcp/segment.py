@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, TypedDict, cast
 from uuid import uuid4
 
@@ -12,7 +11,8 @@ import tango
 from scipy import ndimage
 from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, command, device_property
-from tiled.client import from_uri
+
+from asyncroscopy.data import tiled_client
 
 try:
     import torch
@@ -230,13 +230,10 @@ class SEGMENTATION(Device):
                 f"DATA device {self.data_device_address!r} did not provide a Tiled URI"
             )
 
-        client = from_uri(uri)
         try:
-            node = client[key]
-        except KeyError as exc:
-            raise FileNotFoundError(
-                f"Could not resolve data key {key!r} from Tiled server {uri!r}"
-            ) from exc
+            node = tiled_client.node_for_key(key, uri)
+        except tiled_client.DataKeyNotFound as exc:
+            raise FileNotFoundError(str(exc)) from exc
         return _read_first_array(node)
 
     def segment_image(self, image: np.ndarray) -> list[SAM2Mask]:
@@ -349,10 +346,7 @@ class SEGMENTATION(Device):
             area_stats, _ = self.area_statistics(areas)
             labels = _label_areas(areas, prepared.shape[:2])
             key = f"segmentation_{uuid4().hex}"
-            tiled = from_uri(
-                json.loads(data_proxy.get_config())["uri"],
-                api_key=os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret"),
-            )
+            tiled = tiled_client.connect(json.loads(data_proxy.get_config())["uri"])
             tiled.write_array(
                 labels,
                 key=key,
