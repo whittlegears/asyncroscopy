@@ -320,7 +320,7 @@ class TestAutoScriptMicroscope:
         )
         microscope._detector_proxies = {"data": FakeDataServer(tmp_path)}
 
-        stem = AutoScriptMicroscope._acquire_camera_image(
+        key = AutoScriptMicroscope._acquire_camera_image(
             microscope,
             imsize=512,
             exposure_time=0.1,
@@ -329,7 +329,7 @@ class TestAutoScriptMicroscope:
             output_format=".tiff",
         )
 
-        assert (tmp_path / f"{stem}_BM-Ceta.tiff").exists()
+        assert key.endswith("_BM-Ceta.tiff") and Path(key).exists()
 
     def test_camera_device_can_select_flucam(
         self,

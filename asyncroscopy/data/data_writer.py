@@ -65,7 +65,8 @@ def save_acquisition(
     """Save one acquisition and return its DATA/Tiled key.
 
     ``.h5`` writes all detectors into one stacked file; ``.tiff`` writes one
-    file per detector sharing a timestamp (TIFF cannot stack), registering each.
+    file per detector sharing a timestamp (TIFF cannot stack), registering each,
+    and returns that file's key, or a JSON list of keys for several detectors.
     """
     if output_format not in (".h5", ".tiff"):
         raise ValueError(f"Unsupported output_format {output_format!r}; expected '.h5' or '.tiff'")
@@ -80,12 +81,12 @@ def save_acquisition(
         directory = Path(save_dir).expanduser()
         directory.mkdir(parents=True, exist_ok=True)
         stem = f"{acquisition_type}_{datetime.now().strftime('%Y%m%dT%H%M%S%f')}"
+        keys = []
         for index, (source, detector) in enumerate(zip(data_list, detector_list)):
             path = directory / f"{stem}_{detector}.tiff"
             _write_tiff(source, path, attrs_list[index])
-            if data_server is not None:
-                data_server.register_path(str(path))
-        return stem
+            keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
+        return keys[0] if len(keys) == 1 else json.dumps(keys)
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
     detector_label = "_".join([str(detector) for detector in detector_list])

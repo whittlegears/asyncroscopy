@@ -51,11 +51,14 @@ DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # Suffixes Tiled 0.2 registers from a file (tiled.mimetypes plus the stdlib's image/tiff); Tiled skips others silently.
 REGISTRABLE_SUFFIXES = (".h5", ".hdf5", ".hdf", ".nxs", ".tif", ".tiff")
-# How long one registration may take before register_path gives up waiting. Tiled's
-# registration runs in a worker thread that cannot be interrupted, so a request
-# already sent can finish later; each request is itself bounded by tiled_client.TIMEOUT.
+# register_path answers within about REGISTER_WAIT_SECONDS plus a 2 s check that Tiled
+# answers, well inside the 12 s the instrument devices give DATA. A registration that
+# takes longer carries on in the background, and reconcile catches it if it fails.
+REGISTER_WAIT_SECONDS = 8.0
+# How long a background registration may run before it is reported as failed.
 REGISTER_TIMEOUT_SECONDS = 20
 RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone: they may still be being written
+FUTURE_MTIME_SLACK_SECONDS = 60.0  # a file "modified" further in the future than this has a wrong clock, not a writer
 CATALOG_INIT_TIMEOUT_SECONDS = 60
 TILED_LOG_DIR = Path(os.environ.get("ASYNCROSCOPY_LOG_DIR", "outputs/logs")) / "tiled"
 TILED_LOGS_KEPT = 5
@@ -83,8 +86,9 @@ class DATA(Device):
         restart_tiled = getattr(self, "_restart_tiled_after_init", False)
         self._tiled_lock = getattr(self, "_tiled_lock", None) or threading.RLock()
         self._register_lock = getattr(self, "_register_lock", None) or threading.Lock()
-        self._host, self._port = self._parse_uri(os.environ.get("ASYNCROSCOPY_TILED_URI", DEFAULT_TILED_URI))
-        self._save_path = os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", DEFAULT_ACQUISITION_DIR)
+        if not hasattr(self, "_host"):  # values set through configure() survive Init
+            self._host, self._port = self._parse_uri(os.environ.get("ASYNCROSCOPY_TILED_URI", DEFAULT_TILED_URI))
+            self._save_path = os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", DEFAULT_ACQUISITION_DIR)
         self._api_key = tiled_client.api_key()
         self._tiled_process = None
         self._tiled_serve_path = None
@@ -106,10 +110,10 @@ class DATA(Device):
 
     def delete_device(self) -> None:
         self._restart_tiled_after_init = getattr(self, "_want_tiled", False)
-        self._supervisor_stop.set()
         with self._tiled_lock:  # waits for a restart in progress to finish
+            supervisor = self._detach_supervisor()
             self._stop_tiled_processes()
-        self._stop_supervisor()
+        _join(supervisor)
         super().delete_device()
 
     def read_host(self) -> str:
@@ -180,6 +184,7 @@ class DATA(Device):
     def start_tiled_server(self, timeout=30) -> str:
         """Start the catalog HTTP server without a filesystem watcher, and supervise it."""
         with self._tiled_lock:
+            recovering = self._gave_up or bool(self._restart_times)
             self._gave_up = False
             self._restart_times.clear()
             self._next_restart_at = 0.0
@@ -187,6 +192,8 @@ class DATA(Device):
             result = self._start_tiled(timeout)
             if self._tiled_server == "yes" and self._tiled_process is not None:
                 self._want_tiled = True
+                if recovering:
+                    self._reconcile_due = time.monotonic()
                 self._start_supervisor()
             return result
 
@@ -261,11 +268,11 @@ class DATA(Device):
     def stop_tiled_server(self) -> str:
         with self._tiled_lock:
             self._want_tiled = False
-            self._supervisor_stop.set()
+            supervisor = self._detach_supervisor()
             self._stop_tiled_processes()
             self._tiled_server = "yes" if self._tiled_alive() else "no"
             self._tiled_server_status = "stopped managed Tiled processes"
-        self._stop_supervisor()
+        _join(supervisor)
         return self.get_config()
 
     @command(dtype_in=str, dtype_out=str)
@@ -274,9 +281,10 @@ class DATA(Device):
 
         Registering a file that is already registered returns its key unchanged
         (Tiled itself would delete the existing entry on a second registration).
-        If the supervised Tiled is down, the key is returned and the file is
-        registered by ``reconcile`` once Tiled is back; otherwise a Tiled outage
-        is an error, as nothing would register the file later.
+        Answers within about 10 s: a registration that takes longer carries on in
+        the background. If the supervised Tiled is down, the key is returned and
+        the file is registered by ``reconcile`` once Tiled is back; otherwise a
+        Tiled outage is an error, as nothing would register the file later.
         """
         path = path.strip()
         key = PureWindowsPath(path).name if _is_windows_drive_path(path) else Path(path).name
@@ -287,12 +295,19 @@ class DATA(Device):
                 f"supported: {' '.join(REGISTRABLE_SUFFIXES)}"
             )
 
+        uri = self._uri()
         try:
-            client = tiled_client.connect(self._uri())
-            self._register_one(client, path, key)
+            if tiled_client.about(uri) is None:
+                raise TiledUnavailable(f"Tiled at {uri} is not answering (no Tiled about-document at {uri}/api/v1/)")
+            finished = _run_bounded(
+                lambda: self._register_one(tiled_client.connect(uri), path, key),
+                REGISTER_WAIT_SECONDS,
+                on_late_error=lambda exc: self.warn_stream(f"Background registration of {key} failed: {exc}"),
+            )
         except Exception as exc:
             if isinstance(exc, TiledUnavailable) and self._will_reconcile(path):
                 self._tiled_server_status = f"deferred: Tiled down; {key} registers when it is back ({exc})"
+                self._reconcile_due = time.monotonic()
                 self.warn_stream(self._tiled_server_status)
                 return key
             message = (
@@ -303,39 +318,44 @@ class DATA(Device):
             )
             self._tiled_server_status = message
             raise RuntimeError(message) from exc
+        if not finished:
+            self._tiled_server_status = f"{key} is still registering in the background; it appears in Tiled when done"
+            self._reconcile_due = time.monotonic() + REGISTER_TIMEOUT_SECONDS
+            return key
         self._tiled_server_status = "running; registered path"
         return key
 
     def _will_reconcile(self, path: str) -> bool:
         """Whether the supervisor will register ``path`` once Tiled is back."""
         supervising = self._supervisor is not None and self._supervisor.is_alive()
-        return self._want_tiled and not self._gave_up and supervising and _is_under(path, self._save_path)
+        return self._want_tiled and not self._gave_up and supervising and _reconcilable(path, self._save_path)
 
     def _register_one(self, client, path: str, key: str) -> None:
         """Register ``path`` under ``key`` unless that same file is already there; raise for a different one.
 
         Holds a lock so the supervisor's reconcile and an acquisition cannot register
         the same new file at once (Tiled deletes an entry on a colliding registration).
+        Raises TiledUnavailable only when Tiled cannot be reached.
         """
+        uri = self._uri()
         with self._register_lock:
+            existing = _reach(uri, lambda: _lookup(client, key))
+            if existing is not None:
+                registered = _registered_file(existing)
+                if registered is not None and _same_file(registered, path):
+                    return
+                raise KeyCollision(
+                    f"Tiled already has a different entry {key!r} ({registered or 'not a registered file'}); "
+                    "rename the new file, since registering it would delete the existing entry"
+                )
             try:
-                existing = _lookup(client, key)
-                if existing is not None:
-                    registered = _registered_file(existing)
-                    if registered is not None and _same_file(registered, path):
-                        return
-                    raise FileExistsError(
-                        f"Tiled already has a different entry {key!r} ({registered or 'not a registered file'}); "
-                        "rename the new file, since registering it would delete the existing entry"
-                    )
-                asyncio.run(asyncio.wait_for(
+                _reach(uri, lambda: asyncio.run(asyncio.wait_for(
                     register(client, path, walkers=[ONE_NODE_PER_FILE_WALKER], key_from_filename=identity),
                     REGISTER_TIMEOUT_SECONDS,
-                ))
-                registered_now = _lookup(client, key)
-            except CONNECTION_ERRORS as exc:
-                raise tiled_client.unavailable(self._uri(), exc) from exc
-            if registered_now is None:
+                )))
+            except (asyncio.TimeoutError, TimeoutError) as exc:
+                raise RegistrationTimeout(f"Tiled did not finish registering {key} within {REGISTER_TIMEOUT_SECONDS} s") from exc
+            if _reach(uri, lambda: _lookup(client, key)) is None:
                 raise FileNotFoundError(
                     f"Tiled skipped {path}: it could not be read as {Path(key).suffix} (or it is not under the served save path)"
                 )
@@ -414,8 +434,9 @@ class DATA(Device):
         result = {"save_path": str(save_path), "registered": [], "already": 0, "pending": [], "failed": []}
         try:
             client = tiled_client.connect(self._uri())
-            existing = set(client.keys())
+            existing = set(_reach(self._uri(), client.keys))
         except Exception as exc:
+            self._reconcile_due = time.monotonic()  # the supervisor tries again on its next check
             self._tiled_server_status = f"reconcile failed: {exc}"
             raise RuntimeError(self._tiled_server_status) from exc
         seen: set[str] = set()
@@ -425,10 +446,11 @@ class DATA(Device):
                 result["already"] += 1
                 continue
             try:
-                if now - file.stat().st_mtime < RECENT_WRITE_SECONDS:
-                    result["pending"].append(file.name)
-                    continue
+                age = now - file.stat().st_mtime
             except OSError:
+                continue
+            if -FUTURE_MTIME_SLACK_SECONDS < age < RECENT_WRITE_SECONDS:
+                result["pending"].append(file.name)
                 continue
             if file.name in seen:
                 result["failed"].append({"path": str(file), "error": "another file with this name was registered from the save path"})
@@ -437,9 +459,18 @@ class DATA(Device):
             try:
                 self._register_one(client, str(file), file.name)
                 result["registered"].append(file.name)
+            except TiledUnavailable as exc:
+                result["failed"].append({"path": str(file), "error": f"{type(exc).__name__}: {exc}"})
+                result["unreachable"] = True
+                break
             except Exception as exc:
                 result["failed"].append({"path": str(file), "error": f"{type(exc).__name__}: {exc}"})
-        self._reconcile_due = time.monotonic() + RECENT_WRITE_SECONDS if result["pending"] else None
+        if result.get("unreachable"):
+            self._reconcile_due = time.monotonic()
+        elif result["pending"]:
+            self._reconcile_due = time.monotonic() + RECENT_WRITE_SECONDS
+        else:
+            self._reconcile_due = None
         self._tiled_server_status = (
             f"running; reconciled save path ({len(result['registered'])} registered, "
             f"{len(result['pending'])} still being written, {len(result['failed'])} failed)"
@@ -498,11 +529,11 @@ class DATA(Device):
     def _replace_leftover_tiled(self) -> tuple[str | None, str]:
         """Deal with a Tiled already answering on our port: (refusal, note).
 
-        A Tiled left by an earlier run of this stack (``tiled serve`` reading this
-        save path) is stopped, so a supervised one can replace it. Anything else,
-        or a Tiled whose process cannot be identified, is refused, since one
-        serving another directory or with another API key would fail every
-        registration later.
+        A Tiled orphaned by an earlier run of this stack (``tiled serve`` reading
+        this save path, whose starting process is gone) is stopped, so a supervised
+        one can replace it. Anything else is refused: one serving another
+        directory or with another API key would fail every registration later,
+        and one whose starter still runs belongs to another stack or an operator.
         """
         pid = self._listener_pid()
         if not isinstance(pid, int):
@@ -523,6 +554,12 @@ class DATA(Device):
             return (
                 f"port {self._port} is used by a Tiled ({name} pid {pid}) serving {served or 'an unknown directory'}, "
                 f"not {self._save_path}; stop it or change tiled.port in the YAML"
+            ), ""
+        owner = _live_owner(process)
+        if owner is not None:
+            return (
+                f"another Tiled serving this save path is running (pid {pid}, started by {owner}); "
+                "stop it or use another tiled.port"
             ), ""
         try:
             process.terminate()
@@ -558,12 +595,11 @@ class DATA(Device):
         self._supervisor = threading.Thread(target=self._supervise, args=(self._supervisor_stop,), name="tiled-supervisor", daemon=True)
         self._supervisor.start()
 
-    def _stop_supervisor(self) -> None:
+    def _detach_supervisor(self):
+        """Signal the current supervisor to stop (call with the lock held); join the returned thread after releasing it."""
         self._supervisor_stop.set()
-        supervisor = self._supervisor
-        if supervisor is not None and supervisor is not threading.current_thread():
-            supervisor.join(timeout=SUPERVISE_INTERVAL_SECONDS + 1)
-        self._supervisor = None
+        supervisor, self._supervisor = self._supervisor, None
+        return supervisor
 
     def _supervise(self, stop: threading.Event) -> None:
         while not stop.wait(SUPERVISE_INTERVAL_SECONDS):
@@ -713,6 +749,53 @@ def _quiet_log_config() -> Path | None:
     return path
 
 
+class KeyCollision(RuntimeError):
+    """The key is taken by a different file; registering would delete the existing entry."""
+
+
+class RegistrationTimeout(RuntimeError):
+    """Tiled did not finish a registration in time."""
+
+
+def _reach(uri: str, call):
+    """Run a call to Tiled, turning a failure to reach it (and only that) into TiledUnavailable."""
+    try:
+        return call()
+    except CONNECTION_ERRORS as exc:
+        raise tiled_client.unavailable(uri, exc) from exc
+
+
+def _run_bounded(call, wait_s: float, on_late_error) -> bool:
+    """Run ``call`` in a worker thread; True if it finished within ``wait_s`` (re-raising its error), False if it is still running."""
+    outcome: dict = {}
+
+    def work() -> None:
+        try:
+            call()
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=work, name="tiled-register", daemon=True)
+    worker.start()
+    worker.join(wait_s)
+    if worker.is_alive():
+        def report() -> None:
+            worker.join()
+            if "error" in outcome:
+                on_late_error(outcome["error"])
+
+        threading.Thread(target=report, name="tiled-register-report", daemon=True).start()
+        return False
+    if "error" in outcome:
+        raise outcome["error"]
+    return True
+
+
+def _join(thread) -> None:
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=SUPERVISE_INTERVAL_SECONDS + 1)
+
+
 def _lookup(client, key: str):
     try:
         return client[key]
@@ -754,6 +837,39 @@ def _is_ours(pid: int, our_pid: int) -> bool:
         return any(parent.pid == our_pid for parent in psutil.Process(pid).parents())
     except psutil.Error:
         return True  # cannot tell: do not restart a Tiled that answers
+
+
+def _live_owner(process) -> str | None:
+    """'<name> pid <N>' of the live process that started this Tiled, or None if it is an orphan.
+
+    Steps over parents that are the same ``tiled serve`` command (a venv's python.exe
+    starts the real interpreter as a child). When this cannot be told, the Tiled is
+    treated as owned, so it is never stopped by mistake.
+    """
+    try:
+        current = process
+        while True:
+            parent = current.parent()  # psutil returns None when the parent is gone (it also checks pid reuse)
+            if parent is None:
+                return None
+            command_line = parent.cmdline()
+            if "serve" in command_line and any("tiled" in part for part in command_line):
+                current = parent
+                continue
+            return f"{parent.name()} pid {parent.pid}"
+    except psutil.NoSuchProcess:
+        return None
+    except psutil.Error as exc:
+        return f"a process that cannot be inspected ({type(exc).__name__})"
+
+
+def _reconcilable(path: str, save_path: str) -> bool:
+    """Whether reconcile would find ``path``: under the save path, outside dot-directories and Tiled's storage."""
+    if not _is_under(path, save_path):
+        return False
+    relative = Path(os.path.relpath(os.path.abspath(path), os.path.abspath(save_path)))
+    *directories, name = relative.parts
+    return not name.startswith(".") and not any(d.startswith(".") or d.endswith("_map") for d in directories)
 
 
 def _read_directory(command_line: list[str], cwd: str) -> str | None:

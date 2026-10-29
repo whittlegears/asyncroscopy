@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import time
 from pathlib import Path
 
@@ -47,6 +48,7 @@ PLAN_DEFAULTS = {
     "order": "serpentine",
 }
 EDGE_TOLERANCE_M = 1e-12
+RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
 
 
 def tile_centres(box: list[float], fov: float, overlap: float, order: str, limit: int | None = None) -> list[dict]:
@@ -185,6 +187,43 @@ class Mapper(JobDevice):
         final = self._run_path(job)
         return final if final.exists() else final.with_name(final.name + ".partial")
 
+    def _finalize_run_file(self, job: dict) -> tuple[Path, str | None]:
+        """Give the run file its final ``.h5`` name; (path, note). Never raises: the data is complete either way.
+
+        On Windows a rename fails while anything has the file open, so it is retried
+        for a few seconds and then copied instead.
+        """
+        final = self._run_path(job)
+        working = self._file(job)
+        if working == final:
+            return final, None
+        last: OSError | None = None
+        for delay in RENAME_RETRY_DELAYS_S:
+            time.sleep(delay)
+            try:
+                working.replace(final)
+                return final, None
+            except OSError as exc:
+                last = exc
+        try:
+            shutil.copy2(working, final)
+        except OSError as exc:
+            return working, f"the run file could not be renamed ({last}) or copied ({exc}); it stays at {working}"
+        try:
+            working.unlink()
+        except OSError:
+            return final, f"the run file was in use, so it was copied to {final.name}; {working.name} is left behind ({last})"
+        return final, f"the run file was in use, so it was copied to {final.name} ({last})"
+
+    def _register_run(self, path: Path) -> tuple[str | None, str | None]:
+        """Register a finished run file with DATA; (key, note). A failure is a note: the data is on disk."""
+        if not self.data_device_address or path.suffix != ".h5":
+            return None, None
+        try:
+            return self.proxy(self.data_device_address).register_path(str(path)), None
+        except Exception as exc:  # Tango raises DevFailed
+            return None, f"the run file is complete but was not registered with Tiled ({exc}); DATA's reconcile registers it later"
+
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
         microscope = self.proxy(self.microscope_device_address)
@@ -200,6 +239,14 @@ class Mapper(JobDevice):
             eds.exposure_time = float(plan["eds_exposure_s"])
         # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
         microscope.blank_beam()
+        final = self._run_path(job)
+        if final.exists():  # on_start runs only for unfinished jobs
+            # A job persisted before run files were .partial wrote the final name directly;
+            # move it back so reconcile does not register it half-written.
+            try:
+                final.replace(final.with_name(final.name + ".partial"))
+            except OSError:
+                pass
         path = self._file(job)
         path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(path, "a") as h5:
@@ -311,14 +358,36 @@ class Mapper(JobDevice):
         # A finished map must not leave the beam parked on the last tile.
         self.proxy(self.microscope_device_address).blank_beam()
         self._write_trace(job)
-        path = self._run_path(job)
-        working = self._file(job)
-        if working != path:
-            working.replace(path)
+        path, note = self._finalize_run_file(job)
+        key, register_note = self._register_run(path)
         keys = {"run_file": str(path)}
-        if self.data_device_address:
-            keys["run"] = self.proxy(self.data_device_address).register_path(str(path))
+        if key is not None:
+            keys["run"] = key
+        notes = [n for n in (note, register_note) if n]
+        if notes:
+            keys["run_file_note"] = "; ".join(notes)
         return keys
+
+    def _release(self, request: str) -> str:
+        """Release, then give an unfinished (aborted or failed) run its final name, so its tiles stay reachable."""
+        reply = super()._release(request)
+        try:
+            reservation_id = json.loads(request)["reservation_id"]
+            job = self._jobs.get(reservation_id)
+            if job is not None and job.get("result_keys", {}).get("run_file") and self._file(job).name.endswith(".partial") and self._file(job).exists():
+                path, note = self._finalize_run_file(job)
+                key, register_note = self._register_run(path)
+                with self._lock:
+                    job["result_keys"]["run_file"] = str(path)
+                    if key is not None:
+                        job["result_keys"]["run"] = key
+                    notes = [n for n in (note, register_note) if n]
+                    if notes:
+                        job["result_keys"]["run_file_note"] = "; ".join(notes)
+                    self._save(job)
+        except Exception as exc:  # the release itself succeeded; never turn it into an error
+            self.warn_stream(f"Released, but the run file was not finalized: {exc}")
+        return reply
 
     def _write_trace(self, job: dict) -> None:
         events = [e for e in read_tool_log(self.trace_path) if e.get("run_id") == job["reservation_id"]]

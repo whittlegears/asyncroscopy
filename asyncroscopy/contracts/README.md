@@ -37,6 +37,21 @@ class MyScan(JobDevice):
 
 The base class handles threading, state, abort, resume and tracing. Outside Python, implement the same JSON shapes; validate against the schema with any JSON Schema library.
 
+## Limits and suspenders
+
+Two checks run in the base class, after Bluesky's `check_limits` and suspenders:
+
+- **Limits at reserve.** Implement `step_targets(job)` to say what each step will set: `[{"step": i, "device": address, "attribute": name, "value": number}, ...]`. `reserve` reads each attribute's Tango `min_value`/`max_value` (set them on your device's attributes) and refuses the plan with `plan_rejected` and a `violations` list (step, device, attribute, value, min, max) before anything moves. A target may carry its own `"min"`/`"max"` for limits the device reports some other way. A target whose limits cannot be read is listed under `limits.unchecked` in the reply instead of blocking the plan.
+- **Suspenders between steps.** The `suspenders` device property is a JSON list of conditions on other devices' attributes:
+
+  ```yaml
+  mapper:
+    properties:
+      suspenders: '[{"attr": "lab/source/1/emission_current_ua", "min": 10, "resume_after_s": 30, "label": "emission current"}]'
+  ```
+
+  Each condition gives `min`, `max` or `equals`; an attribute that cannot be read counts as bad. Watch the source itself, not a value that also drops when the job blanks the beam between steps (the Mapper does). The digital twin has no such attribute yet. Before each step, a bad condition calls `on_suspend` (make the instrument safe there, e.g. blank the beam) and pauses the job in state `paused_suspended`, with the reason in `job_status`'s `suspended`. The job resumes by itself once every condition that tripped has been good for its `resume_after_s`. `abort` works while paused; `release` asks for an abort first. Conditions are checked between steps only, so keep steps short where a condition must stop work quickly.
+
 ## Versioning
 
-Each schema carries `schema_version`. A change that breaks an existing caller raises the major version. Copies of a schema in other repositories (the pyTEMlib fork keeps one for its jobs) must match byte for byte; `tests/test_contracts.py` checks this when both are installed.
+Each schema carries `schema_version`. A change that breaks an existing caller raises the major version; an addition raises the minor version (envelope 1.1.0 added the `paused_suspended` state, `job_status`'s `suspended`, `reserve`'s `limits` and an error's `violations`). Replies carry the envelope's version. Copies of a schema in other repositories (the pyTEMlib fork keeps one for its jobs) must match byte for byte; `tests/test_contracts.py` checks this when both are installed.

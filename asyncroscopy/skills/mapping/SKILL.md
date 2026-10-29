@@ -5,7 +5,7 @@ version: 1.0.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 requires: [Mapper*_reserve]
-tools: [Mapper_reserve, Mapper_start, wait_for_job, Mapper_job_status, Mapper_results, Mapper_abort, Mapper_release, approval_status, assemble_map, score_map, analysis_job_status, analysis_job_results, map_info, get_region, list_pois, add_poi]
+tools: [Mapper_reserve, Mapper_start, wait_for_job, Mapper_job_status, Mapper_results, Mapper_abort, Mapper_release, approval_status, assemble_map, score_map, analysis_job_status, analysis_job_results, map_info, get_region, list_pois, add_poi, view_data, list_data]
 ---
 
 # Mapping a sample
@@ -45,6 +45,7 @@ Tool names below assume one Mapper. An endpoint with several names them `Mapper_
 1. `assemble_map` with `{"run": result_keys.run}` returns a `job_id`. Wait with `analysis_job_status` and `{"job_id": ..., "wait_s": 25}` until `state` is `done` (not `wait_for_job`: that is for instrument jobs). Then `analysis_job_results` gives `result_keys.map`.
 2. `map_info` gives the map's stage box. `get_region` with a stage box returns a preview image; never ask for raw pixels.
 3. For each EDS spectrum, `add_poi` at its `stage_xy_m` with `kind: "eds_point"` and `links: [its key]`.
+4. Before reporting what the sample contains, look at the data: `view_data` with `{"key": <a spectrum's key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements; `{"key": result_keys.run, "dataset": "tiles", "format": "text"}` describes the tiles. If a spectrum says no peaks were detected at this exposure, say so; do not conclude an element is absent. `list_data` finds the newest data when you have lost a key.
 
 ## 4. Find interesting regions and go back
 

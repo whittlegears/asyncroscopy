@@ -1,0 +1,38 @@
+# An instrument with no Python: the X-ray diffractometer described in
+# asyncroscopy/instruments/yaml_sim/examples/xrd.yaml, run as a Tango device
+# with DATA (so its scans are saved to Tiled) and approval mode.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_xrd.yaml
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
+#
+# The tools are named after class_name: XRDTwin_xray_on, XRDTwin_acquire_diffractogram, ...
+# For your own instrument, copy the example YAML, change class_name and yaml_path,
+# and check the file first:
+#   uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml
+
+instrument:
+  class_name: XRDTwin
+  module_name: asyncroscopy.instruments.yaml_sim.device
+  description: "Simulated powder X-ray diffractometer described in YAML"
+  properties:
+    yaml_path: asyncroscopy/instruments/yaml_sim/examples/xrd.yaml
+    data_device_address: asyncroscopy/data/default
+
+devices:
+  data:
+    module_name: asyncroscopy.data.data
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
+
+tiled:
+  host: localhost
+  port: 9091
+  acquisition_dir: outputs/tiled_acquisitions
+  autostart: true
+  register_on_startup: false
+
+tango:
+  host: localhost
+  port: 9094
+  reset_database_file: true

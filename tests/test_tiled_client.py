@@ -75,6 +75,13 @@ def test_when_the_os_will_not_list_listeners_it_falls_back_to_connecting(monkeyp
     assert not tiled_client._nothing_listening("http://127.0.0.1:9")
 
 
+def test_only_failures_to_reach_tiled_count_as_unavailable():
+    assert issubclass(httpx.ConnectError, tiled_client.CONNECTION_ERRORS)
+    assert issubclass(ConnectionRefusedError, tiled_client.CONNECTION_ERRORS)
+    for other in (FileExistsError, FileNotFoundError, TimeoutError, PermissionError):
+        assert not issubclass(other, tiled_client.CONNECTION_ERRORS)
+
+
 def test_the_tiled_client_retries_only_briefly():
     from tiled.client import utils
 

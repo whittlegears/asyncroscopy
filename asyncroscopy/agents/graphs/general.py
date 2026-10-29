@@ -61,8 +61,9 @@ async def make_graph(config: dict | None = None):
 
     Tools: ``configurable["tools"]``, else ASYNCROSCOPY_AGENT_TOOLS (comma-separated globs), else the
     STEM set when the endpoint has a STEM (a scanned-image or Mapper tool), otherwise every tool on
-    the endpoint. ASYNCROSCOPY_AGENT_PROMPT replaces the system prompt; the literal text {skills}
-    in it is replaced by the skill list (other braces, such as JSON examples, are left alone).
+    the endpoint. ASYNCROSCOPY_AGENT_PROMPT replaces the system prompt; in it the literal text
+    {skills} becomes the skill list, {readers} the tools that look at data (view_data, get_region)
+    and {extra} the STEM rules on a STEM endpoint (other braces, such as JSON examples, are left alone).
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     agent_config = AgentConfig.from_env(

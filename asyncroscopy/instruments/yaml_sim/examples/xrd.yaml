@@ -1,0 +1,108 @@
+# A powder X-ray diffractometer, described without Python.
+#
+# Start it with configs/yaml_sim_xrd.yaml. The MCP server then offers, among others:
+#   XRDTwin_get_tube_power_w   XRDTwin_set_tube_power_w   XRDTwin_xray_on
+#   XRDTwin_xray_off (a safe stop: never held)   XRDTwin_acquire_diffractogram
+# Check a file before starting it:
+#   uv run python -m asyncroscopy.instruments.yaml_sim.spec asyncroscopy/instruments/yaml_sim/examples/xrd.yaml
+
+description: Simulated powder X-ray diffractometer (Cu K-alpha, Bragg-Brentano) with a Si + Al2O3 sample.
+seed: 0
+
+settings:
+  tube_power_w:
+    default: 0
+    min: 0
+    max: 1600
+    units: W
+    settable: false
+    doc: X-ray tube power; switch the tube with xray_on and xray_off
+  start_deg:
+    default: 20
+    min: 5
+    max: 140
+    units: deg
+    doc: First 2-theta angle of a scan
+  stop_deg:
+    default: 80
+    min: 6
+    max: 150
+    units: deg
+    doc: Last 2-theta angle of a scan
+  step_count:
+    default: 1201
+    min: 11
+    max: 20001
+    type: int
+    doc: Number of points in a scan
+  count_time_s:
+    default: 0.002
+    min: 0.0005
+    max: 0.01
+    units: s
+    doc: Counting time per point
+  sample_name:
+    default: Si + Al2O3 standard
+    type: str
+    settable: false
+    doc: Mounted sample
+
+commands:
+  xray_on:
+    doc: Switch the X-ray tube on at the given power. Scans need the tube on.
+    input: {name: power_w, min: 100, max: 1600, units: W, doc: Tube power}
+    sets: {tube_power_w: power_w}
+    duration_s: 0.5
+    returns: {tube_power_w: tube_power_w, state: "on"}
+  xray_off:
+    doc: Switch the X-ray tube off. Always allowed.
+    sets: {tube_power_w: 0}
+    returns: {tube_power_w: 0, state: "off"}
+  get_status:
+    doc: Tube power, scan range and sample, as JSON.
+    returns:
+      tube_power_w: tube_power_w
+      scan_deg: [start_deg, stop_deg]
+      seconds_per_scan: step_count * count_time_s
+      sample: sample_name
+
+acquisitions:
+  acquire_diffractogram:
+    doc: Scan 2-theta from start_deg to stop_deg and save the diffractogram (counts against 2-theta). Needs the tube on.
+    kind: spectrum
+    detector: point_detector
+    requires: ["tube_power_w > 0", "stop_deg > start_deg"]
+    duration_s: step_count * count_time_s
+    axis: {start: start_deg, stop: stop_deg, points: step_count, label: 2-theta, units: deg}
+    background: 20 * tube_power_w / 1600
+    noise: poisson
+    peaks:
+      # Si (Cu K-alpha)
+      - {position: 28.44, height: 900 * tube_power_w / 1600, width: 0.06}
+      - {position: 47.30, height: 550 * tube_power_w / 1600, width: 0.07}
+      - {position: 56.12, height: 320 * tube_power_w / 1600, width: 0.08}
+      - {position: 69.13, height: 90 * tube_power_w / 1600, width: 0.09}
+      - {position: 76.38, height: 120 * tube_power_w / 1600, width: 0.10}
+      # Al2O3 (corundum)
+      - {position: 25.58, height: 300 * tube_power_w / 1600, width: 0.06}
+      - {position: 35.15, height: 450 * tube_power_w / 1600, width: 0.07}
+      - {position: 43.36, height: 500 * tube_power_w / 1600, width: 0.07}
+      - {position: 52.55, height: 220 * tube_power_w / 1600, width: 0.08}
+      - {position: 57.50, height: 480 * tube_power_w / 1600, width: 0.08}
+      - {position: 68.21, height: 260 * tube_power_w / 1600, width: 0.09}
+  acquire_camera_image:
+    doc: Take a picture of the mounted sample with the alignment camera and save it.
+    kind: image
+    detector: alignment_camera
+    shape: [240, 320]
+    pixel_size_m: 2.0e-5
+    background: 40
+    spots: {count: 12, radius_px: 6, height: 120}
+    noise: poisson
+  acquire_tube_readings:
+    doc: Read the tube's voltage, current and anode temperature, as JSON.
+    kind: value
+    values:
+      voltage_kv: "40 if tube_power_w > 0 else 0"
+      current_ma: tube_power_w / 40
+      anode_temperature_c: 25 + tube_power_w * 0.03

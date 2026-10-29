@@ -74,6 +74,24 @@ the microscope filesystem mounted):
   pixels or a spectrum in its axis units; `index` picks a frame of a stack or
   4-D dataset; `dataset` picks one array inside a file.
 
+In png format the text block still carries the summary (statistics, peaks), so
+a text-only agent learns what the picture shows. EDS peaks are found from their
+counts summed over the detector's line width against the local background (5
+sigma, with the exact Poisson tail for counts); a peak that may be a Si escape or
+a sum peak of a stronger one is flagged as such rather than named as an element,
+and a spectrum with no significant peak says a longer exposure is needed before
+an element can be ruled out.
+
+`list_data` looks through the newest 300 keys in registration order (files
+registered after a Tiled outage count as new). `offset` counts keys from the
+newest; when `more` is true, call again with `offset = next_offset`. A scan cut
+short by its 12 s budget also continues from `next_offset`.
+
+Known gap: vendor metadata stored as XML leaf tags (Thermo `AdornedImage`
+files written by `data_writer`) is copied into HDF5 attributes under the
+vendor's tag names, which the views do not interpret. Such images show no pixel
+size or field of view until the writer also stores `pixel_size_m`.
+
 Reads are sliced and strided on the Tiled server under a byte cap, and each call
 ends within 20 s, so a 4-D dataset or a run with hundreds of tiles cannot hang the
 agent. Acquire commands get the same PNG attached to their result. The drawing

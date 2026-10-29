@@ -711,6 +711,8 @@ class TestDataToolRobustness:
         result = server._augment_with_preview("acquire_scanned_image", "scan_20261028.h5")
         assert isinstance(result, ToolResult) and result.structured_content == {"result": "scan_20261028.h5"}
         assert any("401 Unauthorized" in getattr(block, "text", "") for block in result.content)
+        assert any("instead of acquiring again" in getattr(block, "text", "") for block in result.content)
+        assert not any("try again" in getattr(block, "text", "").lower() for block in result.content)
 
     def test_view_data_turns_unexpected_errors_into_tool_errors(self, server, monkeypatch) -> None:
         def broken(key, hints=True):
@@ -766,12 +768,39 @@ class TestDataToolRobustness:
 
         listed = server.list_data()
         assert [(d["key"], d["kind"]) for d in listed["data"]] == [("c.h5", "image"), ("bad.h5", "unreadable"), ("a.h5", "image")]
-        assert listed["more"] is False and listed["looked"].startswith("looked at the newest 3 of 3")
+        assert listed["more"] is False and listed["next_offset"] is None
+        assert listed["looked"] == "looked at keys 0 to 3 of the newest 3 (of 3 in all)"
         assert server.list_data(limit=3)["more"] is False
         page = server.list_data(limit=2)
         assert [d["key"] for d in page["data"]] == ["c.h5", "bad.h5"] and page["more"] is True
         assert [d["key"] for d in server.list_data(limit=2, offset=2)["data"]] == ["a.h5"]
         assert server.list_data(limit=2, offset=2)["more"] is False
+        assert page["next_offset"] == 2
+        with pytest.raises(ToolError, match="unknown kind 'imgae'"):
+            server.list_data(kind="imgae")
+
+    def test_list_data_cut_short_by_its_budget_resumes_where_it_stopped(self, server, monkeypatch) -> None:
+        class FakeArray:
+            metadata: dict = {}
+            dtype = np.dtype("float64")
+            shape = (4, 4)
+
+            def read(self, slices=None):
+                return np.zeros(self.shape)
+
+        client = {f"k{i}.h5": FakeArray() for i in range(5)}
+        monkeypatch.setattr(mcp_server.tiled_client, "uri_from_data_device", lambda address: "http://tiled")
+        monkeypatch.setattr(mcp_server.tiled_client, "connect", lambda uri: client)
+        monkeypatch.setattr(mcp_server, "LIST_DATA_BUDGET_S", 0.0)
+        pages, offset = 0, 0
+        while True:
+            page = server.list_data(kind="spectrum", offset=offset)
+            pages += 1
+            if not page["more"]:
+                break
+            assert page["next_offset"] > offset and "continue with offset" in page["looked"]
+            offset = page["next_offset"]
+        assert pages == 5
 
 
 class TestDataViewsHook:
@@ -797,7 +826,7 @@ class TestDataViewsHook:
             "--data-views-json", '["no_such_views_module_xyz"]',
         ])
         assert code == 1
-        assert "mcp.data_views lists 'no_such_views_module_xyz'" in capsys.readouterr().err
+        assert "MCP ERROR: mcp.data_views lists 'no_such_views_module_xyz'" in capsys.readouterr().out
 
 
 def test_list_data_never_asks_tiled_for_a_page_larger_than_it_serves():
