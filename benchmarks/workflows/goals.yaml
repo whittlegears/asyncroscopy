@@ -17,7 +17,7 @@ workflows:
     timeout_s: 1500
     checks:
       - {check: job_finished}
-      - {check: called, tool: score_map}
+      - {check: regions_scored}
       - {check: called, tool: "*_acquire_spectrum"}
       - {check: answer_eds_consistent}
       - {check: no_sleepwalking, allow: ["Mapper*", "*_acquire_*", "*_place_beam", "*_set_fov", "*_move_stage", "*_unblank_beam", "*_blank_beam"]}

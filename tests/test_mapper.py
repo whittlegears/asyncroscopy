@@ -163,8 +163,8 @@ class TestRun:
         release_all(mapper_proxy, reserve["reservation_id"])
 
     def test_abort_cuts_a_long_eds_map_step_short(self, mapper_proxy, mapping_twin_proxy):
-        # One tile with a 64 x 64 spectrum image: thousands of spectra in a single step.
-        plan = {"size_m": [8e-8, 8e-8], "fov_m": 8e-8, "imsize": 32, "dwell_s": 1e-6, "per_tile": ["eds_map"], "eds_map_points": 64}
+        # Tiles with a 64 x 64 spectrum image each: thousands of spectra in a single step.
+        plan = {"size_m": [1.2e-7, 1.2e-7], "fov_m": 8e-8, "imsize": 32, "dwell_s": 1e-6, "per_tile": ["eds_map"], "eds_map_points": 64}
         reserve = call(mapper_proxy, "reserve", {"plan": plan})
         started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
         time.sleep(1.0)
@@ -173,6 +173,11 @@ class TestRun:
         assert status["state"] == "aborted" and status["progress"]["done"] == 0
         assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
         release_all(mapper_proxy, reserve["reservation_id"])
+
+    def test_a_tile_as_large_as_the_area_is_refused_with_the_way_to_image_one_place(self, mapper_proxy):
+        refused = call(mapper_proxy, "reserve", {"plan": {"size_m": [1e-6, 1e-6], "fov_m": 1e-6}})
+        assert refused["error"]["code"] == "plan_rejected"
+        assert "one tile" in refused["error"]["message"] and "revisit" in refused["error"]["message"]
 
     def test_releasing_an_aborted_run_keeps_its_tiles_under_the_final_name(self, mapper_proxy, mapping_twin_proxy):
         reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "imsize": 256, "dwell_s": 2e-6}})

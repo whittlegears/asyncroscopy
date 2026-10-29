@@ -51,7 +51,6 @@ class MapState(TypedDict, total=False):
     approval_request_id: str
     released: bool  # the reservation is already released; error paths must not release (or abort) it again
     run_key: str
-    spectra: list
     map_key: str
     pois: list
     report: str
@@ -330,23 +329,25 @@ class MappingGraph:
         if status["state"] != "done":
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}", "released": True}
         keys = results.get("result_keys", {})
-        return {"run_key": keys.get("run") or keys.get("run_file"), "spectra": results.get("summary", {}).get("spectra", []), "released": True}
+        summary = results.get("summary", {})
+        if summary.get("stitch_error"):
+            return {"error": summary["stitch_error"], "released": True}
+        return {"run_key": keys.get("run") or keys.get("run_file"), "map_key": keys.get("map") or summary.get("map"), "released": True}
 
     async def stitch(self, state: MapState) -> MapState:
-        job = await self.analysis.call_json("assemble_map", {"run": state["run_key"]})
-        if "error" in job:
-            return {"error": f"stitching was refused: {job['error']['message']}"}
-        results = await self._analysis_job(job["job_id"])
-        if results.get("state") != "done":
-            return {"error": f"stitching {results.get('state')}"}
-        map_key = results["result_keys"]["map"]
-        pois = []
-        for spectrum in state.get("spectra", []):
-            x, y = spectrum["stage_xy_m"]
-            poi = await self.analysis.call_json("add_poi", {"map": map_key, "x_m": x, "y_m": y, "kind": "eds_point", "reason": f"EDS point spectrum, tile {spectrum['index']}", "links": [spectrum["key"]]})
-            if "id" in poi:
-                pois.append(poi)
-        return {"map_key": map_key, "pois": pois}
+        # The Mapper job stitches its own run and links every EDS spectrum as a point of interest;
+        # stitch here only when the job had no analysis endpoint to do it.
+        map_key = state.get("map_key")
+        if not map_key:
+            job = await self.analysis.call_json("assemble_map", {"run": state["run_key"]})
+            if "error" in job:
+                return {"error": f"stitching was refused: {job['error']['message']}"}
+            results = await self._analysis_job(job["job_id"])
+            if results.get("state") != "done":
+                return {"error": f"stitching {results.get('state')}"}
+            map_key = results["result_keys"]["map"]
+        listed = await self.analysis.call_json("list_pois", {"map": map_key})
+        return {"map_key": map_key, "pois": [p for p in listed.get("pois", []) if isinstance(p, dict)]}
 
     async def score(self, state: MapState) -> MapState:
         job = await self.analysis.call_json("score_map", {"map": state["map_key"], "top_k": 3})

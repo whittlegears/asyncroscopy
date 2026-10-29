@@ -142,6 +142,20 @@ def repeats(messages: list) -> int:
     return count
 
 
+def cycles(messages: list) -> int:
+    """How many earlier tool rounds, in a row or not, the latest one repeats exactly: a model cycling
+    over the same few calls loops as surely as one repeating a single call. Going back to a place
+    once is normal, so callers allow more of these than of repeats in a row."""
+    rounds = tool_rounds(messages)
+    return rounds[:-1].count(rounds[-1]) if rounds else 0
+
+
+def looping(messages: list) -> int:
+    """0: no loop; 1: point the repeat out; 2: stop the run."""
+    in_row, anywhere = repeats(messages), cycles(messages)
+    return 2 if in_row >= 2 or anywhere >= 3 else 1 if in_row == 1 or anywhere == 2 else 0
+
+
 # ---------------------------------------------------------------------- waiting inside one tool call
 def _json(text: str) -> Any:
     try:
@@ -251,7 +265,7 @@ class JobWaitMiddleware(AgentMiddleware):
         return self._final(request, first, status, time.monotonic() - began, checks)
 
 
-STOP_TEXT = ("I stopped: the same call ({name}) gave the same result three times in a row, so trying it again "
+STOP_TEXT = ("I stopped: the same call ({name}) gave the same result three times, so trying it again "
              "would not change anything. Here is what I have so far: {reply}")
 REPEAT_NOTE = ("\n\nYou already called {name} with these arguments and got this result. Do not call it again: "
                "answer the user from it, or do something different.")
