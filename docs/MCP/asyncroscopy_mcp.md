@@ -51,14 +51,21 @@ tool for each step of a job:
   `<device>_reserve` in the trials was followed by its start. The start still
   goes through the approval gate once, and the held request shows the operator
   the reserved plan. Repeating the same `run_job` after approval starts that
-  reservation (for the same caller and MCP session); repeating it before the
+  reservation (for the same caller and agent run, `X-Asyncroscopy-Run`: agents
+  open a new MCP session per call); repeating it before the
   operator decides files no second request. A denied or expired request, or
   one nobody came back for within two hours, frees the reservation on the next
   `run_job`, `wait_for_job` or `approval_status` from anyone. A start that fails
   releases the reservation it made. Every reply carries the estimate; a plan
   whose estimate is over `mcp.job_limits` (`max_duration_s`,
-  `max_dose_e_per_a2`) is refused before it starts. The whole call stays under
+  `max_dose_e_per_a2`) is refused before it starts, by run_job and by a direct
+  `<device>_reserve` alike. The reserve and start run_job makes are traced with
+  `via: "run_job"`. The whole call stays under
   25 s, waiting up to 15 s so a short job comes back finished.
+- `run_job(device, resume=<reservation_id>)`: continue an aborted job. No
+  plan: the reservation holds it, and starting it again (through the gate)
+  goes on from the next step. A resume that does not start keeps the
+  reservation. A plan and a resume together are refused.
 - `wait_for_job(job_id, device=None)`: waits on any job, an instrument job
   (`run_job`, `<device>_start`) or a stitching or scoring job on the analysis
   server named by `mcp.analysis_url`. When the job is done, the reply also

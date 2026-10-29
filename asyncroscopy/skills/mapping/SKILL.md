@@ -1,9 +1,10 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.2.0
+version: 1.3.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
+keywords: [map, mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
 requires: [Mapper*_reserve]
 acts: true
 tools: [run_job, wait_for_job, Mapper_abort, approval_status, assemble_map, score_map, map_info, get_region, list_pois, add_poi, view_data, list_data]
@@ -30,6 +31,9 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` (a sparse sample stitches better with `"overlap": 0.25`) |
 | "find the N most interesting regions" | `"find_regions": N` |
 | "... and image them closer / at high magnification" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
+| "at most N e/Å²", "a dose limit of N", "N electrons per square angstrom" | `"dose_budget_e_per_a2": N` |
+
+Every number the user states is a constraint: keep it in the plan. Never drop or relax one (a dose limit, a size, a field of view) to make a plan pass. If a field is refused, fix its name or form from the message and keep the value; if the value itself is refused, tell the user the limit and ask. Say in your answer which constraints the plan carries.
 
 If the request is unclear about the area, ask the user before starting.
 
@@ -38,7 +42,7 @@ If the request is unclear about the area, ask the user before starting.
 1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate` (tiles, duration_s, max_dose_e_per_a2). An `error` means the plan was refused: fix what the message says and call `run_job` again. A plan whose estimate is over the endpoint's limits (duration or dose) is refused before it starts: tell the user the estimate and ask; do not shrink it on your own. Check the estimate against the request: if it is far larger than what was asked (wrong units?), call `Mapper_abort` and ask the user.
    - If it says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `run_job` again with exactly the same arguments. If `denied` or `expired`, stop and tell the user.
    - An endpoint with several Mappers names them `Mapper_<key>`: use that name as `device`.
-2. `wait_for_job` with `{"job_id": ...}` until `state` is `done`, `failed` or `aborted` (each call waits up to 25 s; a short map may already be `done` in the `run_job` reply). The job does everything else itself: it stitches the tiles into a map, puts every EDS spectrum on the map as a point of interest linked to its spectrum, scores the map when `find_regions` is set, and images each region when `revisit` is set. To stop early, call `Mapper_abort` (always allowed; the beam is blanked).
+2. `wait_for_job` with `{"job_id": ...}`: it waits until the job is `done`, `failed` or `aborted`, however long that takes, and returns once (a short map may already be `done` in the `run_job` reply). If it says the job is still running after a long wait, tell the user it is running and its `job_id`. The job does everything else itself: it stitches the tiles into a map, puts every EDS spectrum on the map as a point of interest linked to its spectrum, scores the map when `find_regions` is set, and images each region when `revisit` is set. To stop early, call `Mapper_abort` (always allowed; the beam is blanked). To continue an aborted map later, call `run_job` with `{"device": "Mapper", "resume": <its reservation_id>}` and no plan: it goes on from the next tile.
 
 ## 3. Read what came back
 
@@ -51,7 +55,7 @@ Before saying what the sample contains, look at the data: `view_data` with `{"ke
 
 ## 4. More regions later
 
-To score an existing map again (another scorer, more regions), call `score_map` with `{"map": ..., "top_k": N}` and wait with `wait_for_job`. To image one region closer, `run_job` a small map around it (`"size_m"` of a few fields of view, `"centre_m": [x_m, y_m]`, smaller `fov_m`) and mark it with `add_poi` and `links`.
+To score an existing map again (another scorer, more regions), call `score_map` with `{"map": ..., "top_k": N}` and wait with `wait_for_job`. To image regions of an existing map closer without mapping again, `run_job` a revisit-only plan: `{"revisit": {"fov_m": 3e-8, "map": <map key>, "top_k": N}}` (its best N scored regions) or `{"revisit": {"fov_m": 3e-8, "points": [[x_m, y_m], ...]}}` (given stage points). Each image is linked to its point of interest; the dose budget and stage limits apply.
 
 ## Report
 

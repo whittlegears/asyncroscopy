@@ -13,11 +13,12 @@ literature magnitudes. See docs/digital_twin.md.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 
 import numpy as np
 import tango
-from tango.server import command, device_property
+from tango.server import attribute, command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
@@ -59,6 +60,16 @@ ANGSTROM = 1e-10
 
 def _prop(dtype, default, doc):
     return device_property(dtype=dtype, default_value=default, doc=doc)
+
+
+MOVE_BLOCK_S = 2.0  # longest real time one command may wait for a stage move
+
+
+def _limit(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):  # "Not specified"
+        return None
 
 
 class DigitalTwin(AtomisticDigitalTwin):
@@ -104,6 +115,8 @@ class DigitalTwin(AtomisticDigitalTwin):
     stage_backlash_y = _prop(float, 0.0, "y shortfall when the move direction reverses (m).")
     stage_speed = _prop(float, 5e-6, "Stage speed (m/s), sets move duration.")
     stage_move_overhead = _prop(float, 0.0, "Fixed time per stage move (s).")
+    stage_travel_m = _prop(float, 1e-3, "Largest |x| and |y| the stage may go to (m), used when the STAGE device gives no limits.")
+    stage_z_travel_m = _prop(float, 5e-4, "Largest |z| the stage may go to (m), used when the STAGE device gives no limits.")
     stage_settle_drift = _prop(float, 0.0, "Drift speed right after a move (m/s), decays with stage_settle_tau.")
     stage_settle_tau = _prop(float, 30.0, "Settling time constant (s).")
     drift_rate_per_min = _prop(float, 0.0, "Thermal drift (m/min).")
@@ -148,6 +161,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._rng = EventRng(int(seed))
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
+        self._moving_until = 0.0  # monotonic time a long move ends (see _move_stage)
         self._acquisitions: list[dict] = []
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
         self._sample = SampleModel(
@@ -284,10 +298,20 @@ class DigitalTwin(AtomisticDigitalTwin):
         if not np.allclose(proxy_position, known, rtol=0.0, atol=1e-15):
             self._apply_move(proxy_position)
 
-    def _apply_move(self, position) -> None:
-        self._stage.move(position)
+    def _apply_move(self, position, wait: bool = True) -> None:
+        self._stage.move(position, wait=wait)
         self._stage_position = self._stage.true.copy()
         self._write_stage_proxy(self._stage.reported)
+
+    stage_moving = attribute(dtype=bool, doc="True while a long stage move is under way; moves and acquisitions are refused until it is false.")
+
+    def read_stage_moving(self) -> bool:
+        return time.monotonic() < self._moving_until
+
+    def _refuse_while_moving(self) -> None:
+        left = self._moving_until - time.monotonic()
+        if left > 0:
+            raise ValueError(f"the stage is still moving (about {left:.0f} s left); wait until stage_moving is false")
 
     def _move_stage(self, position):
         if len(position) != 5:
@@ -296,25 +320,34 @@ class DigitalTwin(AtomisticDigitalTwin):
         if not np.all(np.isfinite(target)):
             raise ValueError(f"Stage position must be finite numbers, got {list(position)}")
         self._check_stage_limits(target)
-        self._apply_move(target)
+        self._refuse_while_moving()
+        # A command must never hold the device for long: other clients (blank_beam, an abort) queue
+        # behind it. A move whose real wait would exceed MOVE_BLOCK_S returns at once instead, with
+        # stage_moving true until the stage would have arrived.
+        real = self._clock.real_seconds(self._stage.move_seconds(target))
+        if real <= MOVE_BLOCK_S:
+            self._apply_move(target)
+            return
+        self._apply_move(target, wait=False)
+        self._moving_until = time.monotonic() + real
 
     def _check_stage_limits(self, target: np.ndarray) -> None:
         """Refuse a move the STAGE device would refuse, before the twin's own model moves."""
         stage = self._detector_proxies.get("stage")
-        if stage is None:
-            return
+        travel = {"x": float(self.stage_travel_m), "y": float(self.stage_travel_m), "z": float(self.stage_z_travel_m)}
         for axis, value in zip(("x", "y", "z", "alpha", "beta"), target):
-            try:
-                config = stage.get_attribute_config(axis)
-            except (tango.DevFailed, AttributeError):
-                continue
-            for bound, outside in ((config.min_value, lambda b: value < b), (config.max_value, lambda b: value > b)):
+            low = high = None
+            if stage is not None:
                 try:
-                    limit = float(bound)
-                except (TypeError, ValueError):  # "Not specified"
-                    continue
-                if outside(limit):
-                    raise ValueError(f"stage {axis} = {value} is outside the stage limits [{config.min_value}, {config.max_value}]")
+                    config = stage.get_attribute_config(axis)
+                    low, high = _limit(config.min_value), _limit(config.max_value)
+                except (tango.DevFailed, AttributeError):
+                    pass
+            if axis in travel:  # the twin's own travel, where the STAGE device sets none
+                low = -travel[axis] if low is None else low
+                high = travel[axis] if high is None else high
+            if (low is not None and value < low) or (high is not None and value > high):
+                raise ValueError(f"stage {axis} = {value:.6g} is outside the stage limits [{low}, {high}]")
 
     def _set_fov(self, fov) -> None:
         fov = float(fov)
@@ -423,6 +456,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         scan_region: list[float] = [0.0, 0.0, 1.0, 1.0],
         output_format: str = ".h5",
     ) -> str:
+        self._refuse_while_moving()
         detectors = list(dict.fromkeys(d.upper() for d in detector_list))  # "HAADF" and "haadf" are one detector
         unknown = [d for d in detectors if d not in DETECTOR_SCALE]
         if unknown:
@@ -486,7 +520,12 @@ class DigitalTwin(AtomisticDigitalTwin):
             density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * support
         return density
 
+    def _acquire_camera_image(self, *args, **kwargs):
+        self._refuse_while_moving()
+        return super()._acquire_camera_image(*args, **kwargs)
+
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
+        self._refuse_while_moving()
         self._sync_stage_from_proxy()
         self._acq_index += 1
         index = self._acq_index

@@ -18,6 +18,7 @@ import os
 from langchain.agents import create_agent
 
 from asyncroscopy.agents.config import AgentConfig
+from asyncroscopy.agents.guards import JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
 
@@ -43,6 +44,7 @@ DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
 # Only when the instrument endpoint has no mcp.analysis_url (so wait_for_job cannot wait on stitching
 # and scoring jobs) does an agent need the analysis server's own wait and results tools.
 ANALYSIS_WAITS = ["analysis_job_status", "analysis_job_results"]
+NOT_FOR_MODELS = ("list_skills", "endpoint_info")
 # An endpoint is a STEM when one device both scans images and blanks a beam (an AFM scans too),
 # or it has a Mapper: move_stage, set_fov and the like are common to many instruments.
 def is_stem_endpoint(names: set[str]) -> bool:
@@ -75,7 +77,8 @@ async def make_graph(config: dict | None = None):
     and memory notes are appended to it for each model call; a {skills} placeholder is ignored.
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    agent_config = AgentConfig.from_env(
+    # A caller (the goal graph) may hand over its own AgentConfig, so this agent's calls join its run ledger.
+    agent_config = configurable.get("agent_config") or AgentConfig.from_env(
         model=configurable.get("model"),
         caller=configurable.get("caller") or os.environ.get("ASYNCROSCOPY_CALLER", "general-agent"),
     )
@@ -91,7 +94,8 @@ async def make_graph(config: dict | None = None):
         tools = [t for t in await agent_config.tools(include_analysis=False, allow=["*"]) if not t.name.endswith(("_State", "_Status"))]
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
-    tools = [t for t in tools if t.name != "list_skills"]  # skills come to the agent; it need not list them
+    # Skills come to the agent (it need not list them); endpoint_info is for agent programs, not models.
+    tools = [t for t in tools if t.name not in NOT_FOR_MODELS]
     # load_skill stays registered so the middleware can show it while a matched skill does not fit.
     tools += [t for t in await agent_config.tools(allow=["load_skill"]) if t.name not in {u.name for u in tools}]
     print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")
@@ -100,5 +104,6 @@ async def make_graph(config: dict | None = None):
     readers = " or ".join(r for r in ("view_data", "get_region") if r in names) or "the instrument's own read tools"
     prompt = template.replace("{skills}", "").replace("{extra}", STEM_RULES if stem else "").replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
-    skills = SkillMiddleware(prompt, names, offered, memory=memory.notes_for)
-    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills])
+    skills = SkillMiddleware(prompt, names, offered, memory=memory.notes_for, num_ctx=agent_config.num_ctx)
+    waits = JobWaitMiddleware(tools, deadline=agent_config.deadline)  # a job of any length is one tool round
+    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits])

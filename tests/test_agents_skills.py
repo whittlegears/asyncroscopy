@@ -94,6 +94,7 @@ def test_the_number_and_size_of_skills_are_capped():
 class FakeRequest:
     def __init__(self, messages, tools, applied=None):
         self.state = {"messages": messages, **({"skills_applied": applied} if applied is not None else {})}
+        self.messages = messages
         self.tools = tools
 
     def override(self, **changes):
@@ -104,13 +105,16 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
     middleware = SkillMiddleware("BASE", STEM, STEM, memory=lambda request: "INSTRUMENT: twin" if "map" in request else "")
     messages = [HumanMessage("map a 600 nm square here")]
     update = middleware.before_model({"messages": messages}, None)
-    assert update["skills_applied"][0] == {"skill": "mapping", "reason": "matches the request"}
+    assert update["skills_applied"][0] == {"skill": "mapping", "reason": "the request asks for a new map", "in_prompt": True}
     assert middleware.before_model({"messages": messages, **update}, None) is None  # nothing new: no state write
     tools = [SimpleNamespace(name="run_job"), SimpleNamespace(name="load_skill")]
     out = middleware._prompted(FakeRequest(messages, tools, update["skills_applied"]))
     prompt = out.system_message.content
     assert prompt.startswith("BASE") and "=== skill: mapping ===" in prompt and "INSTRUMENT: twin" in prompt
-    assert [t.name for t in out.tools] == ["run_job"]  # every skill fitted: no load_skill
+    assert [t.name for t in out.tools] == ["run_job", "load_skill"]  # an acting request may need a skill the rules did not pick
+    reading = [HumanMessage("Show me the latest spectrum")]
+    out = middleware._prompted(FakeRequest(reading, tools, middleware.before_model({"messages": reading}, None)["skills_applied"]))
+    assert [t.name for t in out.tools] == ["run_job"]  # a read-only request with every skill fitted: no load_skill
 
 
 def test_every_packaged_skill_loads_and_points_at_run_job_and_wait_for_job():
@@ -176,3 +180,68 @@ def test_every_shipped_skill_passes_the_skill_linter():
     for skill in list_skills(STEM):
         if not skill.learned:
             assert lint_skill(skill.path) == [], skill.name
+
+
+# Acting unless clearly read-only: wrongly treating these as read-only would keep the skills they need away.
+ACTING_PHRASINGS = [
+    "Show me a map of a new area",
+    "show me a new image",
+    "Can you get an image at higher magnification of region 2?",
+    "Measure an EDS spectrum here and tell me the elements",
+    "Do a 1 um map please",
+    "Perform a survey of the sample?",
+    "Can you check whether there is copper by taking a spectrum?",
+    "Tell me what is at x=1um by imaging it",
+    "Is the beam blanked? If not, blank it.",
+    "What does the sample look like?",  # no reference to stored data: it may need a new image
+]
+
+
+@pytest.mark.parametrize("request_text", ACTING_PHRASINGS)
+def test_requests_act_unless_clearly_read_only(request_text):
+    from asyncroscopy.skills.registry import read_only_request
+
+    assert not read_only_request(request_text)
+
+
+@pytest.mark.parametrize("request_text", READ_ONLY)
+def test_questions_about_existing_data_and_do_not_acquire_stay_read_only(request_text):
+    from asyncroscopy.skills.registry import read_only_request
+
+    assert read_only_request(request_text)
+
+
+def test_each_turn_is_judged_by_its_own_request():
+    first = [HumanMessage("Show me the latest spectrum"), AIMessage("It shows Cu.")]
+    assert not {name for name, _ in applied(first)} & {"mapping", "eds_survey", "explore_regions"}
+    later = first + [HumanMessage("Now map a 600 nm square around here.")]
+    assert "mapping" in {name for name, _ in applied(later)}
+
+
+def test_the_benchmark_counts_only_skills_whose_text_reached_the_prompt():
+    from benchmarks.run_workflows import skills_of
+
+    assert skills_of([{"skill": "mapping", "in_prompt": True}, {"skill": "eds_survey", "in_prompt": False}, {"skill": "inspect_data"}]) == ["mapping", "inspect_data"]
+
+
+MICROSCOPE = STEM | {"DigitalTwin_acquire_scanned_image", "DigitalTwin_acquire_spectrum", "DigitalTwin_place_beam",
+                     "DigitalTwin_move_stage", "DigitalTwin_get_stage", "DigitalTwin_set_fov"}
+
+
+@pytest.mark.parametrize("request_text", [
+    "Survey a 2 um area and give me an overview of the sample.",
+    "Make a quick map of the area around the stage, then find the 3 most interesting regions.",
+    "Acquire a 3x3 tiled map at 400 nm field of view.",
+])
+def test_a_request_for_a_new_map_always_gets_the_mapping_procedure_first(request_text):
+    assert [a["skill"] for a in skills_for([HumanMessage(request_text)], MICROSCOPE, MICROSCOPE)][:1] == ["mapping"]
+
+
+def test_a_map_without_eds_does_not_get_the_eds_survey():
+    names = [a["skill"] for a in skills_for([HumanMessage("Map a 600 nm square without EDS spectra.")], MICROSCOPE, MICROSCOPE)]
+    assert "mapping" in names and "eds_survey" not in names
+
+
+def test_finding_a_feature_then_measuring_it_gets_its_own_skill():
+    names = [s.name for s in select_skills("Find the brightest particle in an image and take a spectrum on it.", MICROSCOPE)]
+    assert names[:1] == ["find_feature_then_measure"]

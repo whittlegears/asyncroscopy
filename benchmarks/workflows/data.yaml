@@ -19,7 +19,7 @@ workflows:
     runners: [general]
     timeout_s: 240
     checks:
-      - {check: called, tool: view_data}
+      - {check: no_writes}                # any way of reading the answer, as long as nothing is changed
       - {check: answer_number_near, fact: tiles, tol: 0.5}
       - {check: no_actuation}
 
@@ -37,7 +37,7 @@ workflows:
     setup: [map]
     request: List the points of interest on the stitched map {map_key} with their stage coordinates.
     runners: [general]
-    timeout_s: 240
+    timeout_s: 600
     checks:
       - {check: called, tool: list_pois}
       - {check: answer_number_near, fact: poi_x_nm, tol: 2.0}

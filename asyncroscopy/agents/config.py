@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import fnmatch
 import os
+import uuid
 from dataclasses import dataclass, field
 
 from .mcp_tools import McpServer
@@ -11,6 +13,7 @@ from .mcp_tools import McpServer
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
 CALLER_HEADER = "X-Asyncroscopy-Caller"
+RUN_HEADER = "X-Asyncroscopy-Run"  # one agent run: run_job finds a held start again by caller and run
 
 
 @dataclass
@@ -25,6 +28,14 @@ class AgentConfig:
     analysis_url: str | None = None
     caller: str = "agent"
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
+    # One id per agent run, sent with every call: agents open a new MCP session per call, so the
+    # server recognises a retried run_job by caller and run id.
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # Every instrument call of this run as its reply arrives (see McpServer), so a run stopped part
+    # way still knows which jobs it started.
+    ledger: list = field(default_factory=list, repr=False, compare=False)
+    # time.monotonic() after which an agent stops waiting on jobs (a goal's time budget); None: no limit.
+    deadline: float | None = None
     _info: dict | None = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -53,26 +64,34 @@ class AgentConfig:
 
         return init_chat_model(model=self.model, model_provider=self.model_provider, temperature=self.temperature)
 
+    def for_run(self, **changes) -> AgentConfig:
+        """A copy for another agent run: a new run id and ledger (and any other changes, e.g. caller)."""
+        return dataclasses.replace(self, run_id=uuid.uuid4().hex[:12], ledger=[], **changes)
+
+    def _headers(self) -> dict[str, str]:
+        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id}
+
     def instrument(self) -> McpServer:
-        return McpServer(self.mcp_url, {CALLER_HEADER: self.caller})
+        return McpServer(self.mcp_url, self._headers(), ledger=self.ledger)
 
     def analysis(self) -> McpServer | None:
-        """The analysis server: the configured or endpoint-reported one, else the default; None when set to "" (none)."""
+        """The analysis server: the configured or endpoint-reported one, else the default; None when there is none ("")."""
         if self.analysis_url == "":
             return None
-        return McpServer(self.analysis_url or DEFAULT_ANALYSIS_URL, {CALLER_HEADER: self.caller})
+        return McpServer(self.analysis_url or DEFAULT_ANALYSIS_URL, self._headers(), ledger=self.ledger)
 
     async def info(self) -> dict:
         """The instrument endpoint's endpoint_info (tool risks, job devices, analysis server); {} if it has none."""
         if self._info is None:
             try:
-                result = await self.instrument().call("endpoint_info", {})
+                result = await McpServer(self.mcp_url, self._headers()).call("endpoint_info", {})
                 payload = getattr(result, "structured_content", None) if result is not None and not result.is_error else None
                 self._info = dict(payload or {})
             except Exception:
                 self._info = {}
-            if self.analysis_url is None and self._info.get("analysis_url"):
-                self.analysis_url = self._info["analysis_url"]  # the MCP config's mcp.analysis_url
+            if self.analysis_url is None and "analysis_url" in self._info:
+                # The MCP config's mcp.analysis_url; empty there means this instrument has no analysis server.
+                self.analysis_url = self._info["analysis_url"] or ""
         return self._info
 
     async def tools(self, include_analysis: bool = True, allow: list[str] | None = None):

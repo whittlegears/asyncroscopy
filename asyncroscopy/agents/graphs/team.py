@@ -36,6 +36,7 @@ from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
+from asyncroscopy.agents.guards import JobWaitMiddleware
 from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.agents.graphs.general import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
@@ -60,7 +61,7 @@ ROLES = {
 SHARED = ["wait_for_job", "approval_status", "load_skill"]
 # Never given to a specialist: covered by run_job / wait_for_job, skills come to the agent, and the operator side of approvals is the operator's.
 HIDDEN = [
-    "*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", "list_skills",
+    "*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", "list_skills", "endpoint_info",
     "Approvals_*", "*_State", "*_Status", "*_Init",
 ]
 MAX_STEPS = 6
@@ -170,8 +171,9 @@ class TeamGraph:
         names = {t.name for t in tools}
         known = ("\n\nWhat earlier steps produced:\n" + "\n".join(notes[-4:])) if notes else ""
         prompt = ROLE_PROMPTS[role] + known
-        skills = SkillMiddleware(prompt, names, self._all_names or names, memory=self.memory.notes_for)
-        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills])
+        skills = SkillMiddleware(prompt, names, self._all_names or names, memory=self.memory.notes_for, num_ctx=self.config.num_ctx)
+        waits = JobWaitMiddleware(tools, deadline=self.config.deadline)
+        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits])
 
     # ------------------------------------------------------------------ nodes
     async def plan(self, state: TeamState) -> TeamState:

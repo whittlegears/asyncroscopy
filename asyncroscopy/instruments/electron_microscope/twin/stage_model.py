@@ -60,7 +60,14 @@ class StageModel:
         self._walk_time = 0.0
         self.history: list[MoveRecord] = []
 
-    def move(self, target) -> None:
+    def move_seconds(self, target) -> float:
+        """Simulated time a move to ``target`` takes."""
+        target = np.asarray(target, dtype=np.float64)
+        distance = float(np.hypot(*(target[:2] - self.commanded[:2])))
+        p = self.params
+        return p.move_overhead_s + (distance / p.speed_m_s if p.speed_m_s > 0 else 0.0)
+
+    def move(self, target, wait: bool = True) -> None:
         target = np.asarray(target, dtype=np.float64)
         if target.shape != (5,):
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
@@ -87,7 +94,7 @@ class StageModel:
         if p.reported_noise_std_m > 0:
             reported[:3] += rng.normal(0.0, p.reported_noise_std_m, size=3)
 
-        self.clock.advance(p.move_overhead_s + (distance / p.speed_m_s if p.speed_m_s > 0 else 0.0))
+        self.clock.advance(p.move_overhead_s + (distance / p.speed_m_s if p.speed_m_s > 0 else 0.0), wait=wait)
         if distance > 0:
             self._settle_start = self.clock.now()
             angle = rng.uniform(0.0, 2.0 * np.pi)

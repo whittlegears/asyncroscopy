@@ -21,9 +21,17 @@ Long experiments are one job: `run_job` (plan checked, then started, through the
 What `run_job` guarantees, so an agent cannot leave the instrument tied up:
 
 - Every reply carries the plan's estimate (tiles, duration, dose), also when a held run is retried.
-- A plan whose estimate is over the endpoint's `mcp.job_limits` (`max_duration_s`, `max_dose_e_per_a2`; see `configs/mcp_dt.yaml`) is refused before it starts; the agent is told to ask the user. Only an operator raises the limits.
+- A plan whose estimate is over the endpoint's `mcp.job_limits` (`max_duration_s`, `max_dose_e_per_a2`; see `configs/mcp_dt.yaml`) is refused before it starts, whether it comes through `run_job` or a direct `<device>_reserve`; the agent is told to ask the user. Only an operator raises the limits.
 - A start that fails (an error reply, a Tango failure, an unreachable approval service) releases the reservation it made, and says so.
-- A start held in approve mode keeps its reservation for the same caller and MCP session. Asking again before the operator decides files no second request. A denied or expired request, or one nobody came back for within two hours, frees the reservation even if the agent never asks again.
+- A start held in approve mode keeps its reservation for the same caller and agent run. Agents send their run id with every call (`X-Asyncroscopy-Run`), because they open a new MCP session per call; two agents with one caller name stay apart by it. Asking again before the operator decides files no second request. A denied or expired request, or one nobody came back for within two hours, frees the reservation even if the agent never asks again.
+
+- An aborted job can be continued: `run_job(device, resume=<reservation_id>)` (no plan) starts the same reservation again, through the approval gate, and it goes on from the next step. A resume that fails to start keeps the reservation, so it can be tried again.
+
+What the graphs do so a small model's context does not overflow (`asyncroscopy/agents/guards.py`), measured against `num_ctx`:
+
+- One tool round per job: when the model calls `wait_for_job`, the call itself keeps waiting until the job ends (up to its estimated duration x1.5 + 2 min, else an hour, and never past the run's deadline) and returns one reply with `waited_s`. A job still running at the cap says so; the model is not asked to poll.
+- Before every model call the messages are fitted to what the system prompt and the tool schemas leave: the system prompt, the first and the latest request and the latest tool reply (cut at 6000 characters) are kept; older tool replies become one-line digests, and the oldest finished rounds go first. The skills and memory notes share at most a quarter of the context.
+- A call repeated with the same arguments and the same result: the second time the model is told so in the prompt; the third time the run stops with an honest answer saying what was repeated, instead of looping to the recursion limit.
 
 `endpoint_info` (for agent programs, not given to models) reports each tool's risk as the approval gate sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.analysis_url` in the MCP config is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
 
@@ -43,7 +51,7 @@ A small model loses track with many tools and long instructions, so the `team` g
 
 Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents never have to look for them: before every model call `SkillMiddleware` (`asyncroscopy/agents/skill_middleware.py`) decides, by fixed rules and without a model call, which skills apply and writes them into the prompt.
 
-- From the request: the best one or two by `keywords`, name and description.
+- From the request: the best one or two by `keywords`, name and description; a request for a new map always gets `mapping` first. Negated words ("without EDS spectra") do not count.
 - As the task develops, once each:
 
 | Skill | Added when |
@@ -53,7 +61,7 @@ Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents nev
 | `inspect_data` | a data key came back, or the request asks about data |
 | `explore_regions` | a stitched map came back and the request asks for regions |
 
-A request that only asks about data (a question, or "show", "describe", "list", "look at", with no instruction to take, move, map or image something; "do not acquire" counts as no instruction) never gets a skill that acts on the instrument (`acts: true` in its front matter), whatever comes back during the run.
+A request counts as acting unless it is clearly read-only: it says not to act ("do not acquire anything"), or it is a question about data that already exist (a key, "the latest", "the stitched map") with no instruction to act anywhere in it ("show me a new image", "by taking a spectrum", "blank it" all act). Taking an acting request for read-only would keep the skills it needs away; the opposite is still held by the risk policy and the approval gate. A read-only request never gets a skill that acts on the instrument (`acts: true` in its front matter), whatever comes back during the run. Each turn of a conversation is judged by its own latest request, and `load_skill` is hidden only from a read-only request whose skills all fitted.
 
 At most four skills per run, within about 7000 characters shared with the memory notes; a skill that does not fit is listed by its description and only then is `load_skill` shown to the model. A skill is given only to an agent holding at least one of its tools. Which skills were applied, and why, is kept in the run's state as `skills_applied` (per step in the team, per attempt in a goal run).
 
@@ -64,7 +72,8 @@ At most four skills per run, within about 7000 characters shared with the memory
 | `explore_regions` | After a map: rank regions, go back closer, mark them |
 | `inspect_data` | Find and read images, spectra and maps; judge peaks and noise |
 | `approval_etiquette` | A call is held, approved, denied or expired |
-| `recover_from_errors` | A refused or failed call: fix it, do not repeat it |
+| `find_feature_then_measure` | Find a particle or feature in an image, then a spectrum or closer image on it |
+| `recover_from_errors` | A refused or failed call: fix the form, never a value the user stated; after a timeout read the state first; never "reset" by unblanking or toggling |
 
 ## Goals
 
@@ -86,11 +95,18 @@ criteria:
 budget: {max_seconds: 1800, max_tool_calls: 60, max_dose_e_per_a2: 200, max_attempts: 2}
 ```
 
-A goal given as a sentence gets criteria from its words: a map, `N` interesting regions, spectra or an image; `no_unrequested` and `grounded_answer` are always added. `no_unrequested` allows what the words ask for: an image allows the field of view, defocus, unblanking and the acquisition; "go to" or "revisit" allows a stage move; a map allows `run_job`. A goal that only asks about data allows no action.
+A goal given as a sentence gets only the criteria its words make plain, because a criterion the request did not ask for makes the retry push work nobody wanted:
 
-Only what the run made counts: acquisitions, jobs it started and their results. Data found by `list_data` or opened with `view_data` never meets "take a spectrum", and a wait on someone else's job produces nothing.
+- a new map from "map a 600 nm square", "make an overview map", "do a 1 um map" (never from a map the request names: "on the map X" or a key), with `N` interesting regions when it asks for them;
+- spectra or images from an acquisition verb on them ("take an EDS spectrum", "image them at high magnification"), and data of any kind from "acquire a diffractogram"; "without EDS" takes spectra away;
+- `no_unrequested` with the categories of action the words ask for, read from tool names on any instrument: `job` (run_job and the job envelope), `acquire` (`acquire*` ...), `move` (`move*`, `set_stage*`), `settings` (`set_*`), `beam` (blanking, `*_on`/`*_off`). An image allows acquire, settings and beam; "go to" or "revisit" allows move; a map allows job. It is checked against the endpoint's own risk table, and reported as not checked when that is unavailable rather than guessed;
+- `grounded_answer`, always.
 
-After each attempt a checker reads the tool calls and the servers' replies (including `run_job`'s job id and estimate and `wait_for_job`'s final `result_keys`), asks the live servers whether the keys exist (`map_info`, `list_pois`, `view_data`), and either accepts the result, retries with the unmet criteria as feedback, or stops and reports which criteria were not met and why. An attempt that hits the time budget or the recursion limit keeps the calls it made: the retry is told the keys this goal made and any job still running (wait for it; do not start another), and when the goal ends, jobs it started that are still running are aborted and the report says so. The exit code is 0 when the goal was reached and 1 otherwise. Through MCP: `query_agent(prompt, graph="team", goal=True)`, where the prompt is a sentence or the goal as JSON.
+When the words are unclear the goal has fewer criteria, not wrong ones. A goal file states exactly what you want and is the precise path; inference is a convenience. "Do not wait" (or `leave_running: true` in a goal file) means the job it starts is left running at the end.
+
+Only what the run made counts: acquisitions, jobs it started and their results, and the stitching of a run it acquired. Data found by `list_data` or opened with `view_data`, a wait on someone else's job, and scoring or re-stitching an existing map never count.
+
+After each attempt a checker reads the tool calls and the servers' replies (including `run_job`'s job id and estimate and `wait_for_job`'s final `result_keys`), asks the live servers whether the keys exist (`map_info`, `list_pois`, `view_data`), and either accepts the result, retries with the unmet criteria as feedback, or stops and reports which criteria were not met and why. A dose the request states ("at most 20 e/A^2") becomes the goal's dose budget, checked against the jobs' estimates. Every instrument call of a goal run is recorded as its reply arrives (the run's ledger), so an attempt that hits the time budget or the recursion limit, even in the middle of a team step, still knows the jobs it started: the retry is told the keys this goal made and any job still running (wait for it; do not start another), and when the goal ends, jobs it started that are still running are aborted (unless the request said not to wait) and the report says so. A `run_job` whose reply never arrived before the run stopped is not known; the job device's own busy rule still keeps a second job from starting. The exit code is 0 when the goal was reached and 1 otherwise. Through MCP: `query_agent(prompt, graph="team", goal=True)`, where the prompt is a sentence or the goal as JSON.
 
 ## Memory: Markdown the agent reads
 

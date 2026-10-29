@@ -18,9 +18,14 @@ class SimClock:
     def now(self) -> float:
         return self._now
 
-    def advance(self, seconds: float) -> float:
+    def advance(self, seconds: float, wait: bool = True) -> float:
+        """Move simulated time on; with ``wait`` also sleep the real time it stands for."""
         seconds = max(0.0, float(seconds))
         self._now += seconds
-        if self.time_scale > 0.0 and seconds > 0.0:
+        if wait and self.time_scale > 0.0 and seconds > 0.0:
             time.sleep(seconds * self.time_scale)
         return self._now
+
+    def real_seconds(self, seconds: float) -> float:
+        """How long ``seconds`` of simulated time take in real time."""
+        return max(0.0, float(seconds)) * self.time_scale

@@ -579,9 +579,28 @@ def xray_candidates(energy_ev: float, tolerance_ev: float) -> list[str]:
     return [name for _d, name in sorted(near)[:3]]
 
 
-def _is_xray(ds: Dataset) -> bool:
+def is_xray(ds: Dataset) -> bool:
     words = " ".join(str(ds.attrs.get(k, "")) + " " + str(ds.parent_attrs.get(k, "")) for k in ("detector", "acquisition_type", "technique")).lower()
     return "eds" in words or "edx" in words or "x-ray" in words or "xray" in words
+
+
+def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, xray: bool, step: int = 1) -> list[tuple[float, float, float, int, str]]:
+    """The significant peaks of 1-D data, strongest (net counts) first: (position, net, sigma, index, note).
+
+    The one peak finder: view_data lists these, and the benchmarks' truth is read with it. An X-ray
+    spectrum uses the detector's line width and names candidate lines (or flags escape and sum peaks);
+    any other axis a width of a few channels.
+    """
+    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if xray and axis.scale else 3.0
+    rows: list[tuple[float, float, float, int, str]] = []
+    for peak in find_peaks(y, fwhm):
+        position = float(x[peak.index])
+        note = ""
+        if xray:
+            tolerance = max(float(eds_fwhm_ev(position)) / 2, 2 * abs(axis.scale * step))
+            note = _artefact(position, [row[0] for row in rows], tolerance) or ", ".join(xray_candidates(position, tolerance))
+        rows.append((position, peak.net, peak.significance, peak.index, note))
+    return sorted(rows, key=lambda row: row[1], reverse=True)
 
 
 def _artefact(energy: float, stronger: list[float], tolerance: float) -> str:
@@ -608,17 +627,8 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         y, start, step, read = read_line(ds, opts, axis(ds))
         a = axis(ds) or Axis(0.0, 1.0, "channel", "")
         x = a.offset + a.scale * (start + step * np.arange(y.size))
-        xray = a.units == "eV" and _is_xray(ds)
-        fwhm = eds_fwhm_ev(x) / abs(a.scale * step) if xray and a.scale else 3.0
-        rows = []
-        for peak in find_peaks(y, fwhm):
-            energy = float(x[peak.index])
-            note = ""
-            if xray:
-                tolerance = max(float(eds_fwhm_ev(energy)) / 2, 2 * abs(a.scale * step))
-                note = _artefact(energy, [row[0] for row in rows], tolerance) or ", ".join(xray_candidates(energy, tolerance))
-            rows.append((energy, peak.net, peak.significance, peak.index, note))
-        rows.sort(key=lambda row: row[1], reverse=True)  # strongest first: the order a person (and benchmarks' truth) means
+        xray = a.units == "eV" and is_xray(ds)
+        rows = line_peaks(x, y, a, xray, step)
         unit = f" {a.units}" if a.units else ""
         total = float(np.nansum(np.asarray(y, dtype=np.float64)))
         lines = [
@@ -846,7 +856,7 @@ def _summed_lines(ds: Dataset, cube: np.ndarray, step: int) -> tuple[list[str], 
     lines = [f"spectrum image {ds.shape[0]} x {ds.shape[1]} positions x {ds.shape[2]} channels, {ds.dtype}",
              f"{axis.label} {_fmt(x[0])} to {_fmt(x[-1])} {axis.units}".rstrip(),
              "index [row, col] shows the spectrum at one position; region [row0, row1, col0, col1] sums part of it"]
-    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if axis.units == "eV" and _is_xray(ds) and axis.scale else 3.0
+    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if axis.units == "eV" and is_xray(ds) and axis.scale else 3.0
     peaks = find_peaks(summed, fwhm)
     if peaks:
         lines += ["peaks of the summed spectrum:", _csv(f"{axis.label},net,sigma", [(float(x[p.index]), p.net, p.significance) for p in peaks])]

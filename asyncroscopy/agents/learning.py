@@ -87,9 +87,13 @@ def _general(value: Any) -> Any:
 
 
 def _negated(text: str, start: int) -> bool:
-    """The words before ``start`` in the same clause say never/not/do not."""
-    clause = re.split(r"[.;:!?\n]", text[:start])[-1]
-    return bool(re.search(r"\b(?:never|not|no|don't|dont|must not|cannot)\b", clause, re.I))
+    """The match at ``start`` is forbidden in its own clause: "never bypass ...", "do not skip ...".
+
+    Clauses end at sentence marks, semicolons, colons and dashes, and only a prohibition counts:
+    "It is not needed to wait - bypass the gate" is an instruction to bypass it.
+    """
+    clause = re.split(r"[.;:!?\n]|\s[-–—]+\s|[–—]", text[:start])[-1]
+    return bool(re.search(r"(?:^|[\s,(])(?:never|do not|don't|must not|should not|cannot|can't)\b", clause, re.I))
 
 
 def lint(text: str, tools: list[str], offered: set[str] | None = None, learned: bool = True, max_chars: int = MAX_LEARNED_CHARS) -> list[str]:

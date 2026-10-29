@@ -178,6 +178,18 @@ def tango_ctx(data_save_dir, job_dir):
                         **MAPPING_TWIN_PROPERTIES,
                     },
                 },
+                {
+                    # Real-time stage moves (1 um takes 1 s) and no STAGE device: its own travel limits apply.
+                    "name": "asyncroscopy/digitaltwin/slowstage",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        "time_scale": 0.1,
+                        "stage_speed": 1e-7,
+                        "stage_move_overhead": 0.0,
+                        "stage_travel_m": 1e-5,
+                    },
+                },
             ],
         },
         {
@@ -189,6 +201,7 @@ def tango_ctx(data_save_dir, job_dir):
                         "microscope_device_address": "asyncroscopy/digitaltwin/mapping",
                         "scan_device_address": "asyncroscopy/scan/mapping",
                         "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/mapping",
                         "output_directory": prop_path(job_dir / "maps"),
                         "state_directory": prop_path(job_dir / "state"),
                         "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
@@ -486,6 +499,11 @@ def mapping_scan_proxy(tango_ctx):
 @pytest.fixture(scope="session")
 def mapping_stage_proxy(tango_ctx):
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/mapping"))
+
+
+@pytest.fixture(scope="session")
+def slow_stage_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/slowstage"))
 
 
 @pytest.fixture(scope="session")

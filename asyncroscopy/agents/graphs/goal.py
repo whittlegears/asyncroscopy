@@ -38,6 +38,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, Goal, GoalChecker, trace_from_messages
 from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.agents.learning import distill, lesson
+from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import recursion_limit
 
@@ -68,7 +69,7 @@ class GoalGraph:
         self.goal = goal
         self.worker = worker
         self.config = config or AgentConfig.from_env(caller=f"goal-{worker}")
-        self.checker = checker or GoalChecker(self.config.instrument(), self.config.analysis())
+        self._checker = checker  # built on first use, after the endpoint said which analysis server it has
         self._run_worker = run_worker or self._default_worker
         self.memory = memory or Memory.from_env()
         self.learn = learn
@@ -91,6 +92,15 @@ class GoalGraph:
                         ". Wait for it with wait_for_job; do not start another job."
         return text
 
+    async def checker(self) -> GoalChecker:
+        """The checker: its own calls (view_data, map_info, aborts) go to the servers without entering the run's ledger."""
+        if self._checker is None:
+            await self.config.info()
+            analysis = self.config.analysis()
+            self._checker = GoalChecker(McpServer(self.config.mcp_url, self.config._headers()),
+                                        McpServer(analysis.url, analysis.headers) if analysis is not None else None)
+        return self._checker
+
     async def _default_worker(self, request: str, remaining_s: float) -> tuple[str, list[Call], list, str]:
         """(answer, calls, skills applied, what went wrong or ""): a failed or timed-out run keeps the calls it made."""
         if self.worker == "team":
@@ -101,7 +111,7 @@ class GoalGraph:
             return state.get("answer", ""), [Call.from_dict(c) for c in state.get("trace", [])], state.get("skills_applied", []), failed
         from asyncroscopy.agents.graphs.general import make_graph
 
-        graph = await make_graph({"configurable": {"model": self.config.model, "caller": self.config.caller}})
+        graph = await make_graph({"configurable": {"agent_config": self.config}})  # its calls go into this goal's ledger
         state, failed = await run_keeping_partial(graph, {"messages": [HumanMessage(request)]},
                                                   {"recursion_limit": recursion_limit(self.goal.budget.max_tool_calls)}, timeout=remaining_s)
         messages = state.get("messages", [])
@@ -109,7 +119,7 @@ class GoalGraph:
         return answer, trace_from_messages(messages), state.get("skills_applied", []), failed
 
     async def _facts(self, trace: list) -> Facts:
-        return await self.checker.facts([Call.from_dict(c) for c in trace])
+        return await (await self.checker()).facts([Call.from_dict(c) for c in trace])
 
     # ------------------------------------------------------------------ nodes
     async def work(self, state: GoalState) -> GoalState:
@@ -119,6 +129,8 @@ class GoalGraph:
         attempt = state.get("attempt", 0) + 1
         skills: list = []
         facts = await self._facts(trace) if trace else None
+        ledger_start = len(self.config.ledger)
+        self.config.deadline = started + self.goal.budget.max_seconds  # waits inside a tool call stop there too
         try:
             answer, calls, *rest = await self._run_worker(self.request(state.get("feedback", ""), facts), max(1.0, remaining))
             skills = rest[0] if rest else []
@@ -128,13 +140,18 @@ class GoalGraph:
             answer, calls = f"stopped: the time budget of {self.goal.budget.max_seconds:.0f} s ran out", []
         except Exception as exc:
             answer, calls = f"the agent failed: {type(exc).__name__}: {str(exc)[:300]}", []
+        # The ledger has every call whose reply arrived, in order, even from a step or attempt that was
+        # stopped part way (a team's state only grows when a step ends): it knows every job started.
+        recorded = [Call.from_dict(c) for c in self.config.ledger[ledger_start:]]
+        if len(recorded) > len(calls):
+            calls = recorded
         applied = list(state.get("skills_applied", [])) + [{"attempt": attempt, **s} for s in skills]
         return {"answer": answer, "trace": trace + [c.to_dict() for c in calls], "attempt": attempt, "started": started,
                 "skills_applied": applied, "run_id": state.get("run_id") or uuid.uuid4().hex[:12]}
 
     async def check(self, state: GoalState) -> GoalState:
         facts = await self._facts(state.get("trace", []))
-        verdict = await self.checker.check(self.goal, facts, state.get("answer", ""), time.monotonic() - state["started"])
+        verdict = await (await self.checker()).check(self.goal, facts, state.get("answer", ""), time.monotonic() - state["started"])
         return {"verdict": {"met": verdict.met, "results": verdict.results, "over_budget": verdict.over_budget}, "feedback": verdict.feedback(), "met": verdict.met}
 
     def route(self, state: GoalState) -> str:
@@ -152,8 +169,11 @@ class GoalGraph:
         facts = await self._facts(state.get("trace", []))
         head = "Goal reached." if verdict["met"] else ("Goal stopped: " + verdict["over_budget"] if verdict["over_budget"] else "Goal not reached.")
         lines = [head, f"Goal: {self.goal.statement}", f"Attempts: {state['attempt']}; {facts.summary()}."]
-        stopped = await self.checker.stop_jobs(facts)  # the goal is over: nothing it started keeps running
-        if stopped:
+        running = facts.active_jobs()
+        if running and self.goal.leave_running:  # the request said to start it and not wait
+            lines.append("Left running, as asked: " + ", ".join(f"job {j} on {v['device']}" for j, v in running.items()))
+        elif running:  # the goal is over: nothing it started keeps running
+            stopped = await (await self.checker()).stop_jobs(facts)
             lines.append("Stopped jobs this goal had left running: " + "; ".join(f"{c.name} {c.args.get('request', '')}{' (FAILED: ' + c.result[:120] + ')' if c.error else ''}" for c in stopped))
         lines += [f"{'met' if r['met'] else 'NOT met'}: {r['why']}" for r in verdict["results"]]
         skills = state.get("skills_applied", [])
