@@ -248,3 +248,5 @@ aws-use/
 .processes/
 .langgraph_api/
 .pytest_tmp*/
+# Isolated stacks (run_servers.py --isolated); the docs put them under outputs/stacks/, which is ignored too.
+.stack_*/

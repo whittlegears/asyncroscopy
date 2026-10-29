@@ -78,18 +78,18 @@ acquisitions:
     noise: poisson
     peaks:
       # Si (Cu K-alpha)
-      - {position: 28.44, height: 900 * tube_power_w / 1600, width: 0.06}
-      - {position: 47.30, height: 550 * tube_power_w / 1600, width: 0.07}
-      - {position: 56.12, height: 320 * tube_power_w / 1600, width: 0.08}
-      - {position: 69.13, height: 90 * tube_power_w / 1600, width: 0.09}
-      - {position: 76.38, height: 120 * tube_power_w / 1600, width: 0.10}
+      - {position: 28.44, height: 900 * tube_power_w / 1600, fwhm: 0.141}
+      - {position: 47.30, height: 550 * tube_power_w / 1600, fwhm: 0.165}
+      - {position: 56.12, height: 320 * tube_power_w / 1600, fwhm: 0.188}
+      - {position: 69.13, height: 90 * tube_power_w / 1600, fwhm: 0.212}
+      - {position: 76.38, height: 120 * tube_power_w / 1600, fwhm: 0.235}
       # Al2O3 (corundum)
-      - {position: 25.58, height: 300 * tube_power_w / 1600, width: 0.06}
-      - {position: 35.15, height: 450 * tube_power_w / 1600, width: 0.07}
-      - {position: 43.36, height: 500 * tube_power_w / 1600, width: 0.07}
-      - {position: 52.55, height: 220 * tube_power_w / 1600, width: 0.08}
-      - {position: 57.50, height: 480 * tube_power_w / 1600, width: 0.08}
-      - {position: 68.21, height: 260 * tube_power_w / 1600, width: 0.09}
+      - {position: 25.58, height: 300 * tube_power_w / 1600, fwhm: 0.141}
+      - {position: 35.15, height: 450 * tube_power_w / 1600, fwhm: 0.165}
+      - {position: 43.36, height: 500 * tube_power_w / 1600, fwhm: 0.165}
+      - {position: 52.55, height: 220 * tube_power_w / 1600, fwhm: 0.188}
+      - {position: 57.50, height: 480 * tube_power_w / 1600, fwhm: 0.188}
+      - {position: 68.21, height: 260 * tube_power_w / 1600, fwhm: 0.212}
   acquire_camera_image:
     doc: Take a picture of the mounted sample with the alignment camera and save it.
     kind: image

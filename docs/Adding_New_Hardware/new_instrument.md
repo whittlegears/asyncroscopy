@@ -17,18 +17,26 @@ The STEM devices (`instruments/electron_microscope/`) subclass the `Instrument` 
 
 ## 0. No Python: a simulated instrument from one YAML file
 
-To try an agent workflow on your instrument before writing a driver, describe it in a YAML file. `asyncroscopy/instruments/yaml_sim/examples/xrd.yaml` is a powder X-ray diffractometer written this way, and `configs/yaml_sim_xrd.yaml` runs it:
+To try an agent workflow on your instrument before writing a driver, describe it in a YAML file. Two examples ship in `asyncroscopy/instruments/yaml_sim/examples/`: `xrd.yaml`, a powder X-ray diffractometer, and `raman.yaml`, a confocal Raman microscope with a line-scan job. `configs/yaml_sim_xrd.yaml` runs the first on the twin's ports (stop the twin first); `configs/yaml_sim_raman.yaml` runs the second beside the twin, on its own ports ([second_stack.md](second_stack.md)):
 
 ```bash
 uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_xrd.yaml
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-The file has three sections:
+The file has four sections:
 
-- **`settings`**: each value becomes a Tango attribute and a `get_<name>` command, plus `set_<name>` unless `settable: false`. A setting has a `default`, and optionally `min`, `max`, `units`, `type` (`float`, `int`, `bool` or `str`) and `doc`. Out-of-range values are refused, with the bounds in the message.
-- **`commands`**: each one is a tool. A command has a `doc` (the agent's description) and optionally one `input` (with its own bounds), `requires` (checks such as `"tube_power_w > 0"`), `sets` (settings to change), `returns` and `duration_s`. A refused command changes nothing.
-- **`acquisitions`**: names start with `acquire`. Each produces simulated data, saves it through DATA, and returns its key, so agents look at it with `view_data`. `kind: spectrum` is a 1-D curve with an `axis` (start, stop, points, label, units), `peaks`, a `background` and `noise`. `kind: image` is a 2-D image with `shape`, `pixel_size_m` and random `spots`. `kind: value` returns named numbers as JSON.
+- **`settings`**: each value becomes a Tango attribute and a `get_<name>` command, plus `set_<name>` unless `settable: false`. A setting has a `default`, and optionally `min`, `max`, `units`, `type` (`float`, `int`, `bool` or `str`), `choices` (the only values allowed, e.g. `["600", "1800"]` for a grating) and `doc`. Out-of-range values and values not in `choices` are refused, with the bounds or choices in the message.
+- **`commands`**: each one is a tool. A command has a `doc` (the agent's description) and optionally one `input` or several `inputs` (each with its own bounds or choices; with several, the tool takes them by name, e.g. `move_xy` with `x_m` and `y_m`), `requires` (checks such as `"tube_power_w > 0"`), `sets` (settings to change), `returns` and `duration_s`. A refused command changes nothing.
+- **`acquisitions`**: names start with `acquire`. Each produces simulated data, saves it through DATA, and returns its key, so agents look at it with `view_data`. `kind: spectrum` is a 1-D curve with an `axis` (start, stop, points, label, units), `peaks`, a `background` and `noise`. Each peak has a `position`, a `height`, an `fwhm` (full width at half maximum, in axis units) and a `shape`: `gaussian` (the default), `lorentzian` (Raman and most optical bands) or `voigt` (a pseudo-Voigt mix; `eta` is its Lorentzian fraction). Older files that give `width` mean a Gaussian's sigma, and still load. `kind: image` is a 2-D image with `shape`, `pixel_size_m` and random `spots`. `kind: value` returns named numbers as JSON. `units` says what the values are (default `counts`), and an acquisition may take `inputs` like a command.
+- **`jobs`** (optional): a run of acquisitions over many points, such as a line scan or a map. A job names the `axes` it steps over (settable numeric settings, e.g. the stage), the `settings` a plan may set for the whole run, the acquisitions to `acquire` at every point, a `settle_s` per point, `requires`, and the commands to run `on_stop` (aborted or failed, e.g. `laser_off`) and `on_finish`. With jobs, the device also has the job envelope, so the agent runs one with `run_job(device="RamanTwin", plan={"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 21}}, "settings": {"exposure_s": 2}})` (or `"points": [...]` for a list of positions) and waits with `wait_for_job`. Each point's values are checked against the settings' limits before anything moves, the reply carries a time estimate, and abort stops the job within a fraction of a second.
+
+Limits to know before you write one:
+
+- One command or acquisition call may take at most 25 s, because the MCP server stops waiting at 30 s. A longer acquisition (a long exposure, many accumulations) is refused with a pointer to the job that runs it; inside a job there is no such limit.
+- While a job runs, `set_*` and `acquire*` calls are refused (the job owns the instrument); `get_*` reads and plain commands such as `laser_off` still work, and switching the source off makes the job's next acquisition fail safely.
+- A job runs acquisitions without arguments and steps over numeric settings only; a job has at most `max_points` points (default 100 000).
+- The data are shaped, not physical: peak positions, widths and heights follow your expressions, with Poisson or Gaussian noise. Use it to rehearse a workflow and the agent's decisions, not to validate a measurement.
 
 Values in `sets`, `returns`, `requires`, `duration_s` and an acquisition's numbers may be expressions over the settings and the command's input: arithmetic, comparisons, `and`/`or`/`not`, `x if c else y`, and `abs`, `min`, `max`, `sqrt`, `exp`, `log`, `sin`, `cos`, `radians`, `degrees`. The full format is in the docstring of `asyncroscopy/instruments/yaml_sim/spec.py`. Unknown keys, impossible bounds and expressions naming unknown settings are refused when the file is loaded. Check a file before starting it:
 
@@ -182,7 +190,7 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 
 `startup_scripts/check_stack.py` checks the STEM twin stack (Mapper, stitching, EDS); it is not a check for other instruments. For yours, run your copy of `tests/test_new_instrument_example.py`.
 
-To run a second stack beside the twin (or two teams on one machine), give it its own Tango database and ports: `uv run startup_scripts/run_servers.py --yaml configs/mylab.yaml --isolated .stack_mylab`, with different `tango.port` and `tiled.port` in that YAML.
+To run a second stack beside the twin (or two teams on one machine), give it its own Tango database, ports and acquisition folder, and start it with `--isolated outputs/stacks/mylab`; [second_stack.md](second_stack.md) is the whole recipe, with the Raman example's ready configs. Without `--isolated`, a launcher refuses to start while another stack runs, rather than stopping it (add `--replace` to stop it on purpose).
 
 ## 5. Let the general agent use it
 

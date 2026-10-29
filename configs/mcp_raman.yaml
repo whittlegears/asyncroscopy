@@ -1,0 +1,39 @@
+# Agent MCP endpoint for the Raman twin (configs/yaml_sim_raman.yaml), beside the
+# STEM twin's endpoints (8000 agent, 8001 operator, 8003 pyTEMlib):
+#
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman.yaml
+#
+# Point an agent at it with ASYNCROSCOPY_MCP_URL=http://127.0.0.1:8100/mcp.
+# See docs/Adding_New_Hardware/second_stack.md.
+
+tango:
+  host: localhost
+  port: 9194
+
+mcp:
+  name: Raman_MCP
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8100
+  data_device_address: asyncroscopy/data/default
+  quiet: true
+  blocked_classes:
+    - DataBase
+    - DServer
+  blocked_functions:
+    "*":
+      - Init
+      - Kill
+      - RestartServer
+      - State
+      - Status
+    DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+  include_only_functions: []
+  tool_log: ""
+  # No map analysis for a Raman microscope: wait_for_job waits on this stack's job devices only.
+  analysis_url: ""
+  endpoint_role: agent
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    risk: {}
+  trace: outputs/trace/mcp_raman.jsonl

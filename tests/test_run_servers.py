@@ -264,3 +264,80 @@ def test_instrument_kept_outside_the_repository_is_given_by_module_name(tmp_path
     outside = run_servers.PROJECT_DIR.parent / "mylab" / "scope.py"
     with pytest.raises(ValueError, match="module_name"):
         run_servers.python_file_to_module(outside)
+
+
+# --- another stack's ports and database file are not this launcher's to clear ---
+
+TWIN = run_servers.PROJECT_DIR / "configs" / "digital_twin_mapping.yaml"
+RAMAN = run_servers.PROJECT_DIR / "configs" / "yaml_sim_raman.yaml"
+
+
+def launcher(ppid, config, *extra):
+    return run_servers.ProcessInfo(ppid, ("python", "startup_scripts/run_servers.py", "--yaml", str(config), *extra), str(run_servers.PROJECT_DIR))
+
+
+def twin_running():
+    """The STEM twin's stack as process listings show it: uv wrapper, launcher, Tango database, Tiled."""
+    return {
+        100: run_servers.ProcessInfo(1, ("uv", "run", "startup_scripts/run_servers.py", "--yaml", "configs/digital_twin_mapping.yaml"), str(run_servers.PROJECT_DIR)),
+        101: launcher(100, "configs/digital_twin_mapping.yaml"),
+        102: run_servers.ProcessInfo(101, ("python", "-m", "tango.databaseds.database", "2")),
+        103: run_servers.ProcessInfo(101, ("python", "-m", "tiled", "serve", "catalog")),
+    }
+
+
+def me(snapshot, config, *extra):
+    snapshot[900] = launcher(1, config, *extra)
+    return {900}
+
+
+def test_a_second_non_isolated_stack_would_share_the_twins_database_file():
+    snapshot = twin_running()
+    mine = run_servers.stack_identity(RAMAN, None)
+    conflicts = run_servers.stack_conflicts(snapshot, mine, me(snapshot, "configs/yaml_sim_raman.yaml"), {9194: set(), 9191: set()}, share_database_file=True)
+    assert len(conflicts) == 1 and "same Tango database file" in conflicts[0][0] and conflicts[0][1] == 100  # the uv wrapper: stopping it stops the tree
+    assert "digital_twin_mapping.yaml" in conflicts[0][0]
+
+
+def test_an_isolated_stack_on_its_own_ports_is_left_alone_by_the_twin_and_leaves_it_alone():
+    snapshot = twin_running()
+    isolated = run_servers.PROJECT_DIR / "outputs" / "stacks" / "raman"
+    mine = run_servers.stack_identity(RAMAN, isolated)
+    my_pids = me(snapshot, "configs/yaml_sim_raman.yaml", "--isolated", "outputs/stacks/raman")
+    assert run_servers.stack_conflicts(snapshot, mine, my_pids, {9194: set(), 9191: set()}, share_database_file=False) == []
+
+
+def test_an_isolated_stack_on_the_twins_ports_is_refused_naming_the_twin():
+    snapshot = twin_running()
+    mine = run_servers.stack_identity(RAMAN, run_servers.PROJECT_DIR / "outputs" / "stacks" / "raman")
+    my_pids = me(snapshot, "configs/yaml_sim_raman.yaml", "--isolated", "outputs/stacks/raman")
+    conflicts = run_servers.stack_conflicts(snapshot, mine, my_pids, {9094: {102}, 9091: {103}}, share_database_file=False)
+    assert [pid for _, pid in conflicts] == [100]  # one entry for the twin, not one per port
+    assert "listening on ports 9091, 9094" in conflicts[0][0]
+    text = run_servers.explain_conflicts(conflicts, RAMAN)
+    assert "--isolated outputs/stacks/<name>" in text and "--replace" in text and "second_stack.md" in text
+
+
+def test_restarting_the_same_config_still_clears_its_own_leftovers():
+    snapshot = twin_running()
+    mine = run_servers.stack_identity(TWIN, None)
+    my_pids = me(snapshot, "configs/digital_twin_mapping.yaml")
+    assert run_servers.stack_conflicts(snapshot, mine, my_pids, {9094: {102}, 9091: {103}}, share_database_file=True) == []
+    # A crashed run's orphans (launcher gone) are cleared too.
+    orphans = {7: run_servers.ProcessInfo(1, ("python", "-m", "tango.databaseds.database", "2")), 8: run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))}
+    assert run_servers.stack_conflicts(orphans, mine, me(orphans, "configs/digital_twin_mapping.yaml"), {9094: {7}, 9091: {8}}, share_database_file=True) == []
+
+
+def test_a_foreign_program_on_the_port_is_named_not_killed():
+    snapshot = {55: run_servers.ProcessInfo(1, ("C:/Program Files/Other/server.exe", "--port", "9091"))}
+    mine = run_servers.stack_identity(TWIN, None)
+    conflicts = run_servers.stack_conflicts(snapshot, mine, me(snapshot, "configs/digital_twin_mapping.yaml"), {9091: {55}}, share_database_file=True)
+    assert conflicts == [("port 9091 is used by server.exe (pid 55), which is not an asyncroscopy stack", 55)]
+
+
+def test_launcher_identity_reads_yaml_and_isolated_in_either_form(tmp_path):
+    info = run_servers.ProcessInfo(1, ("uv", "run", "startup_scripts/run_servers.py", "--yaml=configs/a.yaml", "--isolated", "outputs/stacks/a"), str(tmp_path))
+    assert run_servers.launcher_identity(info) == run_servers.stack_identity(tmp_path / "configs" / "a.yaml", tmp_path / "outputs" / "stacks" / "a")
+    assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))) is None
+    default = run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "startup_scripts/run_servers.py")))
+    assert default == run_servers.stack_identity(run_servers.DEFAULT_CONFIG_PATH, None)
