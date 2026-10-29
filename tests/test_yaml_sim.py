@@ -327,6 +327,17 @@ def test_a_setting_requires_guards_every_change_of_it():
     assert afm.get("stage_x_m") == 1e-4
 
 
+def test_a_command_that_sets_a_guarded_setting_answers_to_its_requires(tmp_path):
+    text = AFM.read_text(encoding="utf-8").replace(
+        "commands:\n", "commands:\n  home_stage:\n    doc: Stage to 0, 0 (no guard of its own).\n    sets: {stage_x_m: 0.0, stage_y_m: 0.0}\n", 1)
+    afm = SimInstrument(load_spec(write(tmp_path, text)), sleep=lambda seconds: None)
+    afm.set("stage_x_m", 1e-4)
+    afm.run_command("approach_tip")
+    with pytest.raises(Refused, match="home_stage refused: it needs not tip_engaged"):
+        afm.run_command("home_stage")
+    assert afm.get("stage_x_m") == 1e-4
+
+
 def test_noise_in_the_datas_own_units_keeps_small_and_negative_signals():
     afm = SimInstrument(load_spec(AFM), sleep=lambda seconds: None)
     afm.run_command("approach_tip")
