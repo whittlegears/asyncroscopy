@@ -164,6 +164,23 @@ def test_a_plug_in_source_needs_only_the_interface():
         SPECIMENS.pop("test_slab", None)
 
 
+def test_the_documented_example_source_works():
+    """docs/Operation/specimens.md's 40-line source, run from the page itself."""
+    page = (ROOT / "docs" / "Operation" / "specimens.md").read_text(encoding="utf-8")
+    code = next(block for block in page.split("```python\n")[1:] if "class CrossGrating" in block).split("```")[0]
+    assert len(code.strip().splitlines()) <= 50
+    try:
+        exec(compile(code, "specimens.md", "exec"), {"__name__": "specimens_doc"})
+        grating = build_specimen({"source": "cross_grating", "pitch_m": 1e-7}, _context(size_xy_m=1e-6))
+        image = _render(grating, 4e-7, 64)
+        assert image.max() > 0.05 and image.min() < 0.01  # lines and holes
+        assert np.allclose(image[:, :16], image[:, 16:32], atol=0.02)  # 16 pixels is one 100 nm pitch
+        assert grating.areal_density(1e-9, 5e-8) == {"Au": pytest.approx(0.059 * 200)}
+        assert grating.areal_density(5e-8, 5e-8) == {}
+    finally:
+        SPECIMENS.pop("cross_grating", None)
+
+
 @pytest.mark.parametrize(
     "text, expected",
     [
