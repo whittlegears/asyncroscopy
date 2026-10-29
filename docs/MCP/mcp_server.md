@@ -96,11 +96,15 @@ For MCP-only behavior, add it directly to `MCPServer`. The required native tools
 today are:
 
 - `list_devices`
-- `get_data_from_key`
+- `list_data`: stored data, newest first, with each key's kind and shape
+- `view_data`: one key as a PNG or as text (statistics, peaks, a small CSV)
 
-`get_data_from_key` reads an acquired key through the Tiled HTTP URI reported by
-the DATA device and returns dataset metadata plus a small preview. This works
+Both read through the Tiled HTTP URI reported by the DATA device, so they work
 when MCP and the microscope are on different computers without a shared mount.
+They slice on the server, never return raw arrays, and end within 20 s. The
+drawing is in `asyncroscopy/data/views.py`; modules listed under
+`mcp.data_views` in the MCP YAML are imported first, so an instrument can add its
+own data kinds there.
 
 ## Blacklisting
 

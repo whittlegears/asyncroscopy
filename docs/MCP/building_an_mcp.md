@@ -50,7 +50,7 @@ If the device is live, MCP discovers `CAMERA.set_exposure` automatically.
 ## Add A Native MCP Helper
 
 Add native helpers directly to `MCPServer` when the behavior is not a Tango
-device command. Current examples are `list_devices` and `get_data_from_key`.
+device command. Current examples are `list_devices`, `list_data` and `view_data`.
 
 ```python
 from fastmcp import tool
@@ -58,9 +58,11 @@ from fastmcp import tool
 
 class MCPServer:
     @tool()
-    def get_data_from_key(self, key: str) -> dict:
+    def list_data(self, kind: str | None = None, search: str | None = None, limit: int = 20, offset: int = 0) -> dict:
         ...
 ```
+
+Add the method to the `native_tools` list in `MCPServer.setup()`.
 
 Use this path for cross-device helpers, data lookups, or MCP-specific
 convenience commands. Do not create a separate subclass for normal asyncroscopy

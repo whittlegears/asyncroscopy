@@ -38,6 +38,7 @@ class MCPConfig:
     approvals_device_address: str = ''
     risk: dict[str, str] = field(default_factory=dict)
     trace: str = ''
+    data_views: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,17 @@ def _require(mapping: dict, key: str, where: str):
     if not isinstance(mapping, dict) or key not in mapping:
         raise KeyError(f"Config section '{where}' is missing required key '{key}'")
     return mapping[key]
+
+
+def _module_list(value, where: str) -> list[str]:
+    """One module name or a list of them."""
+    if value is None or value == '':
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    raise ValueError(f"{where} must be a module name or a list of module names, not {value!r}")
 
 
 def load_config(path: Path) -> Config:
@@ -79,6 +91,7 @@ def load_config(path: Path) -> Config:
             approvals_device_address=str((mcp.get('safety') or {}).get('approvals_device_address') or ''),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             trace=str(mcp.get('trace') or ''),
+            data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
         ),
     )
 
@@ -119,6 +132,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--risk-json', json.dumps(config.mcp.risk)])
     if config.mcp.trace:
         command.extend(['--trace', config.mcp.trace])
+    if config.mcp.data_views:
+        command.extend(['--data-views-json', json.dumps(config.mcp.data_views)])
     return command
 
 

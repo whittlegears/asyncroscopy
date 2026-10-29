@@ -111,8 +111,8 @@ def test_segment_writes_labels_to_tiled_and_returns_key(monkeypatch) -> None:
     data_proxy = FakeDataProxy()
     tiled = FakeTiledClient()
     monkeypatch.setattr(
-        "asyncroscopy.mcp.segment.from_uri",
-        lambda uri, api_key=None: tiled,
+        "asyncroscopy.data.tiled_client.connect",
+        lambda uri: tiled,
     )
     device = SimpleNamespace(
         _get_data_proxy=lambda: data_proxy,

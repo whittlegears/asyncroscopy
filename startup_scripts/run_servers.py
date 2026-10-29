@@ -349,6 +349,7 @@ def status_line(status: str, message: str, detail: str = "") -> None:
         "OK": Style.green,
         "RUN": Style.cyan,
         "WAIT": Style.yellow,
+        "WARN": Style.yellow,
         "FAIL": Style.red,
         "SKIP": Style.dim,
     }
@@ -468,10 +469,21 @@ def get_data_proxy() -> tango.DeviceProxy:
     return data
 
 
-def register_tiled_save_path() -> dict:
+def reconcile_tiled() -> dict:
+    """Register the acquisition files Tiled does not have yet (one by one; never the directory)."""
     data = get_data_proxy()
     data.set_timeout_millis(TILED_STARTUP_REGISTRATION_TIMEOUT_MILLIS)
-    return json.loads(data.register_save_path())
+    return json.loads(data.reconcile())
+
+
+def tiled_key_warning(tiled_host: str, api_key: str) -> str | None:
+    """A warning when Tiled is reachable from other machines with the well-known default API key."""
+    if tiled_host.strip().lower() in {"127.0.0.1", "localhost", "::1"} or api_key != "secret":
+        return None
+    return (
+        f"Tiled listens on {tiled_host} with the default API key 'secret': anyone on the network can read and "
+        "write data. Set ASYNCROSCOPY_TILED_API_KEY (and the same key in SciAgentGUI's Tiled settings)."
+    )
 
 
 def stop_tiled_server() -> None:
@@ -530,6 +542,8 @@ def print_summary(
         print()
         print(f"  {color('TILED_URI', Style.bold):<18} {tiled_config['uri']}")
         print(f"  {color('TILED_SERVING', Style.bold):<18} {tiled_config['tiled_server_serving']}")
+        if tiled_config.get("tiled_log"):
+            print(f"  {color('TILED_LOG', Style.bold):<18} {tiled_config['tiled_log']}")
     print()
     print(color("All asyncroscopy servers are ready.", Style.bold + Style.green))
 
@@ -599,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         should_start_tiled = prompt_bool("Start Tiled HTTP server", config.tiled.autostart)
         should_register_tiled = prompt_bool(
-            "Register acquisition directory with Tiled on startup (can be slow)",
+            "Register acquisition files Tiled is missing on startup (can be slow)",
             config.tiled.register_on_startup,
         )
         clear_first = prompt_bool("Clear old processes first", True)
@@ -713,16 +727,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
 
             if should_start_tiled:
+                warning = tiled_key_warning(tiled_host, os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret"))
+                if warning:
+                    status_line("WARN", "Tiled API key", warning)
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
                 if tiled_config["tiled_server"] != "yes":
                     raise RuntimeError(f"Tiled HTTP server failed to start: {tiled_config['tiled_server_status']}")
                 status_line("OK", "Tiled HTTP server", f"{tiled_config['uri']} serving {tiled_config['tiled_server_serving']}")
                 
                 if should_register_tiled:
-                    status_line("WAIT", "Tiled startup registration", "registering acquisition directory; this can take a while")
-                    tiled_registration = register_tiled_save_path()
-                    tiled_config.update(tiled_registration)
-                    status_line("OK", "Tiled startup registration", tiled_registration["registered_path"])
+                    status_line("WAIT", "Tiled startup registration", "registering acquisition files Tiled is missing; this can take a while")
+                    reconciled = reconcile_tiled()
+                    detail = f"{len(reconciled['registered'])} registered, {reconciled['already']} already there, {len(reconciled.get('pending', []))} still being written"
+                    if reconciled["failed"]:
+                        detail += f", {len(reconciled['failed'])} failed (first: {reconciled['failed'][0]['error']})"
+                    status_line("WARN" if reconciled["failed"] else "OK", "Tiled startup registration", detail)
                 else:
                     status_line("SKIP", "Tiled startup registration", "register_on_startup=false; files register manually")
             else:

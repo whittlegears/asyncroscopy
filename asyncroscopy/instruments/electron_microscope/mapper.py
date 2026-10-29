@@ -12,7 +12,8 @@ budgeted). The beam is blanked whenever the job ends: done, aborted or
 failed.
 
 Every tile, its reported stage position and any spectra go into one HDF5 run
-file, ``maps/map_<run>.h5``, which is registered with Tiled when the job
+file, ``maps/map_<run>.h5`` (``.h5.partial`` while the job runs, so DATA does not
+register it half-written), which is registered with Tiled when the job
 finishes. Analysis (stitching, scoring) reads that file; nothing in it depends
 on the vendor or on whether the microscope was the digital twin.
 """
@@ -179,6 +180,11 @@ class Mapper(JobDevice):
             job["run_path"] = str(base / f"map_{job['reservation_id']}.h5")
         return Path(job["run_path"])
 
+    def _file(self, job: dict) -> Path:
+        """Where the run file is now: ``<run>.h5.partial`` until the job finishes, so DATA's reconcile leaves it alone."""
+        final = self._run_path(job)
+        return final if final.exists() else final.with_name(final.name + ".partial")
+
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
         microscope = self.proxy(self.microscope_device_address)
@@ -194,7 +200,7 @@ class Mapper(JobDevice):
             eds.exposure_time = float(plan["eds_exposure_s"])
         # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
         microscope.blank_beam()
-        path = self._run_path(job)
+        path = self._file(job)
         path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(path, "a") as h5:
             h5.attrs["schema_version"] = ENVELOPE_VERSION
@@ -243,7 +249,7 @@ class Mapper(JobDevice):
         if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
 
-        with h5py.File(self._run_path(job), "a") as h5:
+        with h5py.File(self._file(job), "a") as h5:
             for n, (name, (array, attrs)) in enumerate(sorted(images.items())):
                 detector = str(attrs.get("detector", name.rsplit("/", 1)[-1])).upper()
                 group = h5.require_group("tiles") if n == 0 else h5.require_group(f"channels/{detector}")
@@ -306,6 +312,9 @@ class Mapper(JobDevice):
         self.proxy(self.microscope_device_address).blank_beam()
         self._write_trace(job)
         path = self._run_path(job)
+        working = self._file(job)
+        if working != path:
+            working.replace(path)
         keys = {"run_file": str(path)}
         if self.data_device_address:
             keys["run"] = self.proxy(self.data_device_address).register_path(str(path))
@@ -313,7 +322,7 @@ class Mapper(JobDevice):
 
     def _write_trace(self, job: dict) -> None:
         events = [e for e in read_tool_log(self.trace_path) if e.get("run_id") == job["reservation_id"]]
-        path = self._run_path(job)
+        path = self._file(job)
         if not path.exists():
             return
         with h5py.File(path, "a") as h5:
@@ -334,7 +343,7 @@ class Mapper(JobDevice):
             "grid": plan.get("grid"),
             "box_m": plan.get("box_m"),
             "fov_m": plan.get("fov_m"),
-            "run_file": str(self._run_path(job)),
+            "run_file": str(self._file(job)),
             # Where each EDS point spectrum was taken, so a map can mark them (capped to keep replies small).
             "spectra": sorted(spectra, key=lambda s: s["index"])[: self.MAX_SUMMARY_SPECTRA],
         }

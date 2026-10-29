@@ -11,10 +11,16 @@ This avoids:
 - Flaky multi-context issues from spinning up multiple separate servers
 """
 
+import os
+
 import pytest
 
 import numpy as np
 import tango
+
+# The DATA device must never reach a developer's running Tiled (its default is
+# 127.0.0.1:9091): point it at a closed local port for the whole session.
+os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
 from tango.test_context import MultiDeviceTestContext
 
 from asyncroscopy.testing import prop_path
