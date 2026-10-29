@@ -145,6 +145,26 @@ class SpecError(ValueError):
     """The YAML file does not describe a valid instrument; the message names the place."""
 
 
+# Verbs that make a get_/list_ command's doc read as an action: the safety policy never holds a get_
+# or list_ command, so one that indents, moves or dispenses would run unasked in approve mode.
+ACTION_VERBS = frozenset({
+    "make", "move", "indent", "pick", "place", "aspirate", "dispense", "start", "run", "apply", "scan", "drive",
+    "approach", "engage", "heat", "fire", "inject", "pump", "mill", "cut", "write", "expose", "trigger", "load", "push",
+})
+
+
+def _reads_as_action(doc: str) -> str | None:
+    """The action verb a doc starts with ("Make one indent ...", "Moves the stage ..."), or None."""
+    words = re.findall(r"[a-z]+", doc.lower())
+    if not words:
+        return None
+    first = words[0]
+    for verb in (first, first[:-1] if first.endswith("s") else None, first[:-2] if first.endswith("es") else None):
+        if verb in ACTION_VERBS:
+            return verb
+    return None
+
+
 class Refused(ValueError):
     """A command or acquisition was refused: an argument out of range or a failed requirement."""
 
@@ -361,6 +381,7 @@ class InstrumentSpec:
     jobs: dict[str, Job] = field(default_factory=dict)
     setting_requires: dict[str, list[tuple[str, ast.Expression]]] = field(default_factory=dict)
     map: "MapSection | None" = None  # the file's map: section, if it has one (map_section() infers one otherwise)
+    warnings: list[str] = field(default_factory=list)  # loads, but probably not what was meant (printed at load)
 
     def command_names(self) -> list[str]:
         names = [f"get_{n}" for n in self.settings] + [f"set_{n}" for n, q in self.settings.items() if q.settable]
@@ -828,6 +849,17 @@ def load_spec(path: str | Path) -> InstrumentSpec:
     taken = sorted(set(names) & JOB_DEVICE_NAMES) if spec.jobs else []
     if taken:
         raise SpecError(f"{path}: {taken} are the job device's own commands (an instrument with jobs has them); rename yours")
+    for name, command in spec.commands.items():
+        verb = _reads_as_action(command.doc) if name.startswith(("get_", "list_")) else None
+        if verb:
+            spec.warnings.append(
+                f"{path}: commands.{name}: its doc reads as an action ({verb!r}: {command.doc[:60]!r}), but the safety policy "
+                f"treats every get_ and list_ command as a read and never holds it for approval. If it acts, rename it "
+                f"(e.g. {verb}_{name[4:] if name.startswith('get_') else name[5:]}), or mark it high in the MCP config: "
+                f"mcp.safety.risk: {{\"<class_name>.{name}\": \"high\"}}"
+            )
+    for message in spec.warnings:  # stderr, so the device server's console and the check below both show it
+        print(f"[yaml_sim] WARNING {message}", file=sys.stderr)
     return spec
 
 

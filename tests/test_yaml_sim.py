@@ -377,3 +377,31 @@ def test_the_raman_example_runs_jobs_as_a_tango_job_device(tmp_path):
     assert "busy: job" in outcome["busy_set"] and "busy: job" in outcome["busy_acquire"]
     assert json.loads(outcome["status_while_running"])["laser_power_mw"] == 5.0  # reading still works
     assert outcome["aborted_state"] == "aborted" and outcome["laser_after_abort"] == 0.0  # on_stop switched the laser off
+
+
+def test_a_get_command_whose_doc_reads_as_an_action_is_warned_about_at_load(tmp_path, capsys):
+    spec = load_spec(write(tmp_path, """
+description: An indenter whose hardness reading makes an indent.
+settings:
+  max_load_mn: {default: 5.0, min: 0.1, max: 50.0, units: mN, doc: Peak load.}
+commands:
+  get_hardness:
+    doc: Make one indent at max_load_mn and return hardness in GPa.
+    returns: {hardness_gpa: 9.0}
+  get_tip_area:
+    doc: Return the calibrated tip area (nothing moves).
+    returns: 24.5
+  list_moves:
+    doc: Moves the stage through every saved point.
+    returns: "done"
+"""))
+    assert len(spec.warnings) == 2
+    hardness = next(w for w in spec.warnings if "get_hardness" in w)
+    assert "'make'" in hardness and "never holds it" in hardness and '"<class_name>.get_hardness": "high"' in hardness
+    assert any("list_moves" in w and "'move'" in w for w in spec.warnings)
+    assert "[yaml_sim] WARNING" in capsys.readouterr().err  # loud: on the device server's console
+
+
+def test_the_shipped_examples_load_without_action_warnings():
+    for path in sorted(EXAMPLE.parent.glob("*.yaml")):
+        assert load_spec(path).warnings == [], path.name
