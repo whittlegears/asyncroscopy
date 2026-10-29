@@ -34,7 +34,10 @@ class AtomisticDigitalTwin(ElectronMicroscope):
     # ------------------------------------------------------------------
     # Device properties — configure in Tango DB per deployment
     # ------------------------------------------------------------------
-    
+
+    # A twin is a simulator unless its stack config says otherwise (run_servers' simulated:).
+    simulated = device_property(dtype=bool, default_value=True, doc="True when this stack drives a simulator; set from run_servers' top-level simulated:.")
+
     sample_seed = device_property(
         dtype=int,
         default_value=12345,

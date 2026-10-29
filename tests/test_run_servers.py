@@ -141,7 +141,8 @@ def test_load_mcp_config():
     assert config.mcp.name == "Spectra300_MCP"
     assert config.tango_host == "10.46.217.241"
     assert config.tango_port == 9094
-    assert config.mcp.http_host == "0.0.0.0"
+    assert config.mcp.http_host == "127.0.0.1"  # a hardware endpoint: other machines only with allow_remote_bind
+    assert config.mcp.allow_remote_bind is False
     assert config.mcp.http_port == 8000
     assert config.mcp.blocked_classes == ["DataBase", "DServer"]
     assert config.mcp.blocked_functions == {"*": ["Init", "Kill", "RestartServer"]}

@@ -14,6 +14,9 @@
 # The file has a jobs: section, so the device also has the job envelope: an agent
 # runs a line scan with run_job(device="RamanTwin", plan=...) and wait_for_job.
 
+# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: RamanTwin
   module_name: asyncroscopy.instruments.yaml_sim.device

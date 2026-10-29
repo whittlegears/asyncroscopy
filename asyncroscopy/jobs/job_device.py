@@ -24,6 +24,13 @@ for Tango:
   (state ``paused_suspended``, with the reason in ``job_status``); it resumes by
   itself once every condition has been good for ``resume_after_s``. Abort works
   while paused.
+
+Dry run (decision D3 of docs/designs/concepts_brief.md): a plan with ``"dry_run": true``
+is reserved, approved and started like any other, but inside its worker ``proxy()``
+returns a ``RecordingProxy``: reads pass through, ``blank_beam`` really runs, and every
+other command or attribute write is recorded in the trace (``dry_run: true``), checked
+by ``check_dry_call`` and not performed. ``dry_run`` is part of the plan, so it is fixed
+at reserve, shown to the operator who approves the start, and kept on a resume.
 """
 
 from __future__ import annotations
@@ -43,6 +50,7 @@ from tango import DevState
 from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
+from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from asyncroscopy.mcp.tool_log import TraceWriter
 
 ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting"}
@@ -54,6 +62,9 @@ SUMMARY_STEPS = 50  # step records results returns by default; the rest are in t
 # Step records kept in memory (the newest); all of them stay in the job's .steps.jsonl. Bounds memory
 # for jobs of millions of steps; a device whose summary needs every record keeps its jobs below this.
 KEPT_STEP_RESULTS = 10_000
+# The job (and step) the current worker thread runs, so proxy() knows a dry run. Per thread, and each worker
+# thread runs one job, so one object serves every device; _worker sets it, so it needs nothing from init_device.
+WORKER = threading.local()
 
 
 def step_count(job: dict) -> int:
@@ -231,6 +242,7 @@ class JobDevice(Device):
     suspenders = device_property(dtype=str, default_value="", doc='JSON list of conditions checked between steps, e.g. [{"attr": "sys/beam/1/current_pa", "min": 10, "resume_after_s": 30}]; a bad one pauses the job until it has been good again for resume_after_s.')
     suspender_poll_s = device_property(dtype=float, default_value=1.0, doc="How often a paused job re-reads its suspender conditions.")
     require_limits = device_property(dtype=bool, default_value=True, doc="Refuse a plan when an attribute it sets has limits that cannot be read (False: reserve it and list them under limits.unchecked).")
+    simulated = device_property(dtype=bool, default_value=False, doc="True when the stack drives a simulator (run_servers' top-level simulated:); False, the default, means real hardware.")
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -279,6 +291,16 @@ class JobDevice(Device):
 
     def on_suspend(self, job: dict, reason: str) -> None:
         """Called in the worker when a suspender pauses the job; leave the instrument waiting safely (e.g. beam blanked)."""
+
+    @staticmethod
+    def current_step() -> int | None:
+        """The step this worker thread is running (None outside a step)."""
+        return getattr(WORKER, "step", None)
+
+    def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
+        """In a dry run, check one recorded call against the plan: {"ok": bool, ...}, or None for no check.
+        Default: no check. The Mapper checks every move_stage against the plan box."""
+        return None
 
     def example_plan(self, request: str) -> dict | None:
         """The example plan shown with a refusal; a device may tailor it to the refused request."""
@@ -451,6 +473,10 @@ class JobDevice(Device):
         body = self._parse(request, "plan")
         if not isinstance(body["plan"], dict):
             raise JobError("bad_request", "'plan' must be an object")
+        body["plan"] = dict(body["plan"])
+        dry_run = body["plan"].pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
+        if not isinstance(dry_run, bool):
+            raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
         self._refuse_if_busy()  # a quick answer for a busy device, before reading the instrument
         # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
         # outside the lock keeps abort, release and a running job's progress from waiting behind it.
@@ -479,6 +505,7 @@ class JobDevice(Device):
                 "estimate": resolved.get("estimate", {"steps": step_count(shape)}),
                 "limits": limits,
                 "state": "reserved",
+                "dry_run": dry_run,
                 "done_ranges": [],
                 "step_results": {},
                 "result_keys": {},
@@ -492,13 +519,14 @@ class JobDevice(Device):
             }
             self._save(job)  # if this fails, nothing is reserved
             self._jobs[reservation_id] = job
-        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"])
+        self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"], **self._dry(job))
         return self._reply(
             {
                 "reservation_id": reservation_id,
                 "plan_id": job["plan_id"],
                 "resolved_plan": job["resolved_plan"],
                 "estimate": job["estimate"],
+                **({"dry_run": True} if dry_run else {}),
                 **({"limits": limits} if limits["targets"] else {}),
             }
         )
@@ -567,7 +595,8 @@ class JobDevice(Device):
             job = self._jobs.get(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
-            return self._reply({k: job.get(k) for k in ("reservation_id", "plan_id", "plan", "resolved_plan", "estimate", "state", "caller")})
+            # dry_run comes first: the operator approving the start must see whether anything will move.
+            return self._reply({"dry_run": bool(job.get("dry_run")), **{k: job.get(k) for k in ("reservation_id", "plan_id", "plan", "resolved_plan", "estimate", "state", "caller")}})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.")
     def start(self, request: str) -> str:
@@ -582,6 +611,9 @@ class JobDevice(Device):
                 raise JobError("unknown_reservation", f"no reservation {body['reservation_id']!r}")
             if job["state"] not in RESUMABLE_STATES:
                 raise JobError("bad_state", f"reservation is {job['state']}")
+            if "dry_run" in body and bool(body["dry_run"]) != bool(job.get("dry_run")):
+                # A start never turns a rehearsal into a real run (or back): the approved plan decides.
+                raise JobError("bad_request", f"this reservation is {'a dry run' if job.get('dry_run') else 'a real run'}; dry_run is set in the plan at reserve, not at start")
             active = self._active()
             if active is not None and active is not job:
                 raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}")
@@ -620,10 +652,16 @@ class JobDevice(Device):
         with tango.EnsureOmniThread():
             self._worker(job, job_id)
 
+    @staticmethod
+    def _dry(job: dict) -> dict:
+        """Trace fields of a dry-run job ({"dry_run": True}); nothing for a real one."""
+        return {"dry_run": True} if job.get("dry_run") else {}
+
     def _worker(self, job: dict, job_id: str) -> None:
         abort = self._abort[job_id]
         generation = self._generation
         cls = type(self).__name__
+        WORKER.job, WORKER.step = job, None  # this thread's job: proxy() checks it for a dry run
         try:
             self.on_start(job)
             for index in range(step_count(job)):
@@ -634,6 +672,7 @@ class JobDevice(Device):
                 if self._suspenders and not self._hold_while_suspended(job, job_id, abort):
                     break  # aborted while paused
                 started = time.time()
+                WORKER.step = index
                 record = self.run_step(job, index)
                 if record is None:
                     if abort.is_set():  # the step stopped early for the abort and did not finish
@@ -653,6 +692,9 @@ class JobDevice(Device):
                     run_id=job["reservation_id"], step=index, grant_id=job.get("grant_id"), caller=job.get("caller"),
                     result=record, result_key=record.get("key") if isinstance(record, dict) else None,
                     stage_reported_m=record.get("stage_reported_m") if isinstance(record, dict) else None,
+                    # The instrument's own clock (simulated time on a twin), when the step reports it.
+                    **({"clock_s": record["clock_s"]} if isinstance(record, dict) and "clock_s" in record else {}),
+                    **self._dry(job),
                 )
             if abort.is_set():
                 self.on_stop(job, "aborted")
@@ -666,7 +708,7 @@ class JobDevice(Device):
                 state = "done"
         except Exception as exc:  # any failure leaves the instrument safe and the job resumable
             job["last_error"] = {"code": "step_failed", "message": f"{type(exc).__name__}: {exc}"}
-            self._trace.record(f"{cls}.step", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=job["last_error"]["message"], result=traceback.format_exc(limit=3))
+            self._trace.record(f"{cls}.step", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=job["last_error"]["message"], result=traceback.format_exc(limit=3), **self._dry(job))
             try:
                 self.on_stop(job, "failed")
             except Exception as stop_exc:  # report, but never mask the original failure
@@ -677,7 +719,8 @@ class JobDevice(Device):
             job["finished"] = time.time()
             if generation == self._generation:  # after a re-init the reloaded copy owns the file
                 self._save(job)
-        self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"))
+        self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"), **self._dry(job))
+        WORKER.job = WORKER.step = None
 
     def _suspender_problems(self) -> list[tuple[int, str]]:
         """(index, reason) for every suspender condition that is bad now; an unreadable attribute counts as bad."""
@@ -795,6 +838,8 @@ class JobDevice(Device):
                 "result_keys": dict(job["result_keys"]),
                 "summary": {"steps_done": done_count(job), "steps_total": step_count(job), **self.summary(job)},
             }
+            if job.get("dry_run"):
+                reply["dry_run"] = {"recorded": 0, "performed": 0, "failed_checks": 0, **job.get("dry_run_calls", {})}
         return self._reply(reply)
 
     def summary(self, job: dict) -> dict:
@@ -805,10 +850,36 @@ class JobDevice(Device):
 
     def proxy(self, address: str, timeout_s: float | None = None) -> tango.DeviceProxy:
         """A proxy to another device whose commands may take longer than Tango's 3 s default
-        (a stage move, an autofocus): use this, not a bare DeviceProxy, inside run_step."""
+        (a stage move, an autofocus): use this, not a bare DeviceProxy, inside run_step.
+
+        Inside the worker of a dry-run job it is a RecordingProxy: reads pass through,
+        blank_beam runs, and every other command and attribute write is recorded, not sent.
+        """
         proxy = tango.DeviceProxy(address)
         proxy.set_timeout_millis(int(1000 * (timeout_s if timeout_s is not None else self.step_timeout_s)))
+        job = getattr(WORKER, "job", None)
+        if job is not None and job.get("dry_run"):
+            return RecordingProxy(proxy, address, lambda *call: self._record_dry_call(job, *call))
         return proxy
+
+    def _record_dry_call(self, job: dict, device: str, name: str, kind: str, arguments, performed: bool) -> None:
+        """Trace one call a dry run recorded (or, for blanking, performed), with the plan's check of it."""
+        check = None
+        if not performed:
+            try:
+                check = self.check_dry_call(job, device, name, arguments)
+            except Exception as exc:  # a broken check is reported, never mistaken for a pass
+                check = {"ok": False, "reason": f"check_dry_call failed: {type(exc).__name__}: {exc}"}
+        ok = check is None or bool(check.get("ok", True))
+        with self._lock:
+            counts = job.setdefault("dry_run_calls", {"recorded": 0, "performed": 0, "failed_checks": 0})
+            counts["performed" if performed else "recorded"] += 1
+            counts["failed_checks"] += 0 if ok else 1
+        self._trace.record(
+            name, ok, time.time(), dry_run=True, performed=performed, device=device, kind=kind, arguments=arguments,
+            check=check, job_id=job.get("job_id"), run_id=job["reservation_id"], plan_id=job.get("plan_id"),
+            step=getattr(WORKER, "step", None), caller=job.get("caller"),
+        )
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.', doc_out="Frees the instrument for the next reservation.")
     def release(self, request: str) -> str:

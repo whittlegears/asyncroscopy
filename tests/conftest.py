@@ -76,6 +76,24 @@ MAPPING_TWIN_PROPERTIES = {
     "time_scale": 0.0,
 }
 
+DRIFT_TWIN_PROPERTIES = {
+    **MAPPING_TWIN_PROPERTIES,
+    "sample_seed": 7,
+    "stage_move_noise_std": 5e-10,
+    "stage_bias_x": 0.0,
+    "stage_bias_y": 0.0,
+    "stage_reported_noise_std": 2e-10,
+    "stage_backlash_x": 0.0,
+    "stage_backlash_y": 0.0,
+    "stage_move_overhead": 2.0,  # long moves, short frames: little drift within a frame
+    "drift_rate_per_min": 6e-8,  # 1 nm/s, steady (no random walk, no settling)
+    "scan_line_jitter_px": 0.0,
+    "scan_shear": 0.0,
+    "dose_tracking": False,
+    "time_scale": 0.0,
+}
+
+
 @pytest.fixture(scope="session")
 def data_save_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("data-acquisitions")
@@ -105,6 +123,7 @@ def tango_ctx(data_save_dir, job_dir):
                     },
                 },
                 {"name": "asyncroscopy/scan/mapping", "properties": {}},
+                {"name": "asyncroscopy/scan/drift", "properties": {}},
             ],
         },
         {
@@ -134,6 +153,7 @@ def tango_ctx(data_save_dir, job_dir):
                 },
                 {"name": "asyncroscopy/stage/mapping", "properties": {}},
                 {"name": "asyncroscopy/stage/parity", "properties": {}},
+                {"name": "asyncroscopy/stage/drift", "properties": {}},
             ],
         },
         {
@@ -177,6 +197,17 @@ def tango_ctx(data_save_dir, job_dir):
                         "stage_device_address": "asyncroscopy/stage/mapping",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         **MAPPING_TWIN_PROPERTIES,
+                    },
+                },
+                {
+                    # Strong steady drift and a precise stage, run with time_scale 0: the drift fit and
+                    # revisits must use the twin's clock (clock_s), not this computer's.
+                    "name": "asyncroscopy/digitaltwin/drift",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/drift",
+                        "stage_device_address": "asyncroscopy/stage/drift",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        **DRIFT_TWIN_PROPERTIES,
                     },
                 },
                 {
@@ -232,6 +263,7 @@ def tango_ctx(data_save_dir, job_dir):
                         "state_directory": prop_path(job_dir / "state"),
                         "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
                         "estimate_move_s": 1.0,
+                        "simulated": True,
                     },
                 },
                 {
@@ -247,6 +279,21 @@ def tango_ctx(data_save_dir, job_dir):
                         "eds_dose_spread_m": 1e-8,
                     },
                 },
+                {
+                    # Maps of the drifting twin below, for the one-time-source tests (test_dry_run_and_clock.py).
+                    "name": "asyncroscopy/mapper/drift",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/drift",
+                        "scan_device_address": "asyncroscopy/scan/drift",
+                        "stage_device_address": "asyncroscopy/stage/drift",
+                        "output_directory": prop_path(job_dir / "drift" / "maps"),
+                        "state_directory": prop_path(job_dir / "drift" / "state"),
+                        "trace_path": prop_path(job_dir / "drift" / "trace.jsonl"),
+                        "stage_sigma_m": 3e-9,
+                        "max_drift_m_per_s": 2e-8,
+                        "simulated": True,
+                    },
+                },
             ],
         },
         {
@@ -254,8 +301,13 @@ def tango_ctx(data_save_dir, job_dir):
             "devices": [
                 {
                     "name": "asyncroscopy/approvals/default",
-                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "mode_file": prop_path(job_dir / "approvals_mode.json"), "request_timeout_s": 600},
-                }
+                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals.jsonl"), "mode_file": prop_path(job_dir / "approvals_mode.json"), "request_timeout_s": 600, "simulated": True},
+                },
+                {
+                    # The gate of a stack that is not simulated (simulated: false): auto mode is refused.
+                    "name": "asyncroscopy/approvals/hardware",
+                    "properties": {"trace_path": prop_path(job_dir / "trace" / "approvals_hw.jsonl"), "mode_file": prop_path(job_dir / "approvals_hw_mode.json"), "simulated": False},
+                },
             ],
         },
         # The worked example from docs/Adding_New_Hardware/new_instrument.md.

@@ -8,6 +8,10 @@
   "required": [],
   "additionalProperties": false,
   "properties": {
+    "dry_run": {
+      "type": "boolean",
+      "description": "Rehearse the plan without moving anything: reads pass through, stage moves and acquisitions are recorded in the trace (dry_run: true) and checked against the box, nothing is acquired, the beam is still blanked. Taken by every job device; approved like a real start."
+    },
     "box_m": {
       "type": "array",
       "description": "[x_min, x_max, y_min, y_max] in stage metres.",

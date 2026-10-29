@@ -309,6 +309,11 @@ class DigitalTwin(AtomisticDigitalTwin):
     def read_stage_moving(self) -> bool:
         return time.monotonic() < self._moving_until
 
+    def instrument_clock_s(self) -> float:
+        """clock_s is the simulated clock that drift, moves and frames run on, whatever time_scale is."""
+        clock = getattr(self, "_clock", None)
+        return clock.now() if clock is not None else 0.0
+
     def _refuse_while_moving(self) -> None:
         left = self._moving_until - time.monotonic()
         if left > 0:

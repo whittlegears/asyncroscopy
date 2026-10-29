@@ -3,6 +3,10 @@
 #
 #   uv run startup_scripts/run_servers.py --yaml configs/ThinkPad-utkarsh-covalent-setup.yaml
 
+# Real hardware: approval auto mode is refused, and the MCP endpoint binds 127.0.0.1 unless
+# its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
+simulated: false
+
 instrument:
   class_name: AutoScriptMicroscope
   file: asyncroscopy/instruments/electron_microscope/auto_script.py

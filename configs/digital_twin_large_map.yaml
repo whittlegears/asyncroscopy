@@ -9,6 +9,9 @@
 # maps, stitching and zooming; use digital_twin_mapping.yaml to rehearse timing.
 # Measured sizes and times are in docs/Operation/large_maps.md.
 
+# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: DigitalTwin
   file: asyncroscopy/instruments/electron_microscope/digital_twin.py

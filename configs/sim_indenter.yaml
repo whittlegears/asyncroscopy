@@ -7,6 +7,9 @@
 # Every device below gets the Tango name asyncroscopy/<key>/default, and the
 # instrument is asyncroscopy/instrument/default.
 
+# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: SimIndenter
   file: asyncroscopy/instruments/nano_indenter/sim_indenter.py

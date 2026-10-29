@@ -27,6 +27,11 @@
     "plan_id": {"type": ["string", "null"]},
     "job_id": {"type": ["string", "null"]},
     "step": {"type": ["integer", "null"]},
-    "stage_reported_m": {"type": ["array", "null"], "items": {"type": "number"}}
+    "stage_reported_m": {"type": ["array", "null"], "items": {"type": "number"}},
+    "dry_run": {"type": "boolean", "description": "True on every event of a dry-run job; absent on a real one."},
+    "performed": {"type": "boolean", "description": "Dry run only: true for the calls that really ran (blank_beam), false for those only recorded."},
+    "device": {"type": "string", "description": "Dry run only: the device a recorded call was addressed to."},
+    "check": {"type": ["object", "null"], "description": "Dry run only: the job's check of a recorded call, e.g. a move_stage against the plan box."},
+    "clock_s": {"type": "number", "description": "The instrument's clock when a step finished: simulated seconds on a twin, Unix time on hardware."}
   }
 }

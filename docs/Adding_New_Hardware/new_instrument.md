@@ -141,6 +141,9 @@ Inside `run_step`, reach other devices with `self.proxy(address)`, not `tango.De
 - `release`.
 - A state file per job, so a job interrupted by a restart can be started again and skips the steps already done.
 - One Instrument Trace line per step.
+- A dry run: `"dry_run": true` in any plan rehearses the job without moving anything. Inside your `run_step`, `self.proxy()` then passes reads through, runs `blank_beam`, and records every other command and attribute write in the trace without sending it. Your step code must not treat what a recorded command returns (`DRY_RUN_PLACEHOLDER`) as data: check `job.get("dry_run")` and skip reading results. Override `check_dry_call(job, device, name, arguments)` to check recorded calls against the plan (the Mapper checks each `move_stage` against its box). See [dry_run.md](../Operation/dry_run.md).
+
+For drift or other time-dependent fits, time steps with the instrument's `clock_s` attribute (every `Instrument` has one: Unix time by default; a simulator overrides `instrument_clock_s()` to report its simulated time), not `time.time()`.
 
 ## 3. What the safety policy makes of it
 
@@ -163,9 +166,12 @@ You don't have to configure anything for the default policy:
 
 ## 4. Config and launch
 
-`configs/sim_indenter.yaml` names the instrument file and the other devices. Each device gets the Tango name `asyncroscopy/<key>/default`, and the instrument is `asyncroscopy/instrument/default`. The `data` device and the `tiled` and `tango` sections are required: the launcher starts Tiled through the DATA device. The instrument gets a `<key>_device_address` property for every device; other devices only get the properties you list:
+`configs/sim_indenter.yaml` names the instrument file and the other devices. Each device gets the Tango name `asyncroscopy/<key>/default`, and the instrument is `asyncroscopy/instrument/default`. The `data` device and the `tiled` and `tango` sections are required: the launcher starts Tiled through the DATA device. The instrument gets a `<key>_device_address` property for every device; other devices only get the properties you list.
+
+Every device also gets `simulated`, from the config's top-level `simulated:`. Set it to `true` for a simulator and `false` for real hardware; a config without it counts as hardware. On a stack that is not simulated, the Approvals device refuses `auto` mode, and the MCP endpoint binds 127.0.0.1 unless its config sets `allow_remote_bind: true` ([dry_run.md](../Operation/dry_run.md)).
 
 ```yaml
+simulated: true
 instrument:
   class_name: SimIndenter
   file: asyncroscopy/instruments/nano_indenter/sim_indenter.py
