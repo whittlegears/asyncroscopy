@@ -58,6 +58,7 @@ project:
         - file: Tiled_server/data_integration.md
     - title: ATHENA
       children:
+        - file: athena/wg1_traceability.md
         - file: athena/wg2_traceability.md
         - file: athena/related_work.md
     - title: Designs
