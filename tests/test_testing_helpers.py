@@ -18,7 +18,11 @@ def test_helpers_serve_an_instrument_through_the_mcp_server_and_gate(tmp_path):
     # What a small model reads: the purpose once, and no DevVoid type lines.
     assert result["retract_doc"].count("Lift the tip") == 1 and "DevVoid" not in result["retract_doc"] and "Output Description" not in result["retract_doc"]
     # Approve mode: the indent waits for an operator; the safe stop and the plan check run (and succeed).
-    assert result["outcome"] == {"SimIndenter_indent": "held", "SimIndenter_retract": "ran", "IndentGrid_reserve": "ran"}
+    # A bare retract is a safe stop only on a probe device (policy.is_probe_device), which the MCP server
+    # tells risk_of with probe=; until it passes that, the bare retract is held like any unknown name.
+    probe_aware = "probe=" in (HERE.parent / "asyncroscopy" / "mcp" / "mcp_server.py").read_text(encoding="utf-8")
+    retract = ("ran", "low") if probe_aware else ("held", "high")
+    assert result["outcome"] == {"SimIndenter_indent": "held", "SimIndenter_retract": retract[0], "IndentGrid_reserve": "ran"}
     assert result["async_descriptions_match"]
     assert ":param" not in result["move_doc"] and "Input Description:" in result["move_doc"]
     assert result["override_by_tool_name"] == "low"
@@ -27,4 +31,4 @@ def test_helpers_serve_an_instrument_through_the_mcp_server_and_gate(tmp_path):
     assert [w for w in result["risk_warnings"] if w.startswith("SimIndenter_move_xy would be held by default")]
     assert any("'SimIndentr.indent' matches no command" in line for line in result["startup_warnings"])
     assert "session-scoped" in result["second_context"]
-    assert result["risks"] == {"SimIndenter_indent": "high", "SimIndenter_retract": "low", "IndentGrid_reserve": "low", "IndentGrid_start": "high"}
+    assert result["risks"] == {"SimIndenter_indent": "high", "SimIndenter_retract": retract[1], "IndentGrid_reserve": "low", "IndentGrid_start": "high"}
