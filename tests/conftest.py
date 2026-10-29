@@ -133,6 +133,7 @@ def tango_ctx(data_save_dir, job_dir):
                     "properties": {},
                 },
                 {"name": "asyncroscopy/stage/mapping", "properties": {}},
+                {"name": "asyncroscopy/stage/parity", "properties": {}},
             ],
         },
         {
@@ -190,6 +191,31 @@ def tango_ctx(data_save_dir, job_dir):
                         "stage_travel_m": 1e-5,
                     },
                 },
+                {
+                    # An ideal twin (every effect off) that tests/test_parity.py compares with AutoScript on the fake client.
+                    "name": "asyncroscopy/digitaltwin/parity",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/parity",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        "sample_particle_count": 10,
+                    },
+                },
+                {
+                    # Ideal stage and scan with dose tracking, for tests/test_dose_aware.py: its DoseMap cell
+                    # (2 um / 200 = 10 nm) matches the dose Mapper's eds_dose_spread_m.
+                    "name": "asyncroscopy/digitaltwin/dose",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        "sample_size_xy": 2e-6,
+                        "sample_particle_count": 20,
+                        "dose_tracking": True,
+                        "time_scale": 0.0,
+                    },
+                },
             ],
         },
         {
@@ -207,7 +233,20 @@ def tango_ctx(data_save_dir, job_dir):
                         "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
                         "estimate_move_s": 1.0,
                     },
-                }
+                },
+                {
+                    "name": "asyncroscopy/mapper/dose",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/dose",
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "output_directory": prop_path(job_dir / "dose" / "maps"),
+                        "state_directory": prop_path(job_dir / "dose" / "state"),
+                        "trace_path": prop_path(job_dir / "dose" / "trace" / "jobs.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "eds_dose_spread_m": 1e-8,
+                    },
+                },
             ],
         },
         {
@@ -511,6 +550,26 @@ def mapper_proxy(tango_ctx):
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/default"))
     proxy.set_timeout_millis(60_000)
     return proxy
+
+
+@pytest.fixture(scope="session")
+def dose_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/dose"))
+
+
+@pytest.fixture(scope="session")
+def dose_mapper_proxy(tango_ctx):
+    proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/dose"))
+    proxy.set_timeout_millis(60_000)
+    return proxy
+
+
+@pytest.fixture(scope="session")
+def parity_twin_device(tango_ctx):
+    """The parity twin's device object itself (the context runs in this process), so tests/test_parity.py
+    runs each command's body on it exactly as it does on AutoScriptMicroscope over the fake client."""
+    tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/parity")).ping()
+    return tango.Util.instance().get_device_by_name("asyncroscopy/digitaltwin/parity")
 
 
 @pytest.fixture(scope="session")

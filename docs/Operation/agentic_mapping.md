@@ -28,10 +28,17 @@ A plan is JSON checked against `asyncroscopy/contracts/map_plan.schema.json`. Le
 
 ```json
 {"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 2e-7, "overlap": 0.15, "imsize": 512, "dwell_s": 1e-6,
- "detectors": ["haadf"], "per_tile": ["eds_point"], "eds_exposure_s": 1.0, "dose_budget_e_per_a2": 100}
+ "detectors": ["haadf"], "per_tile": ["eds_point"], "eds_exposure_s": 0.5, "dose_budget_e_per_a2": 300}
 ```
 
-`per_tile` is `[]` (images only), `["eds_point"]` (one spectrum at each tile centre) or `["eds_map"]` (a coarse spectrum image of every tile: much slower, only when asked for by name). `reserve` refuses a plan whose overlapping tiles would exceed `dose_budget_e_per_a2` and returns a time and dose estimate.
+`per_tile` is `[]` (images only), `["eds_point"]` (one spectrum at each tile centre) or `["eds_map"]` (a coarse spectrum image of every tile: much slower, only when asked for by name). `reserve` refuses a plan whose overlapping tiles, EDS spectra and revisit image together would exceed `dose_budget_e_per_a2` and returns a time and dose estimate.
+
+### Dose budget and beam current
+
+- The estimate's `max_dose_e_per_a2` counts the frames where tiles overlap, a revisit image, and the EDS spectra. A spectrum's parked-beam dose is counted over a square of side `eds_dose_spread_m` (a Mapper property, 10 nm by default); an `eds_map` grid can put several spectra in one square. `eds_dose_e_per_a2` gives the EDS share.
+- The current comes from the microscope's `get_parameters`: `beam_current_pa` with `beam_current_source` `measured` or `default` (then `beam_current_reason` says why). The twin reports its configured current as measured. The Spectra 300 (AutoScript) reports `default` until the screen current is measured: insert the screen, call `get_screen_current`, then retract it.
+- On a stack that is not simulated, `reserve` refuses a plan with a dose budget when the current is `default`. The stack counts as simulated when its `simulated` property says so, else when `ASYNCROSCOPY_SIMULATED` is set to true, else when the microscope reports `"simulated": true` (the twin does).
+- `set_screen_current` writes the monochromator focus only for a current inside the calibrated range (`calibrate_screen_current`, screen inserted); any other value is refused before anything is written.
 
 ## From Python, without an agent
 
