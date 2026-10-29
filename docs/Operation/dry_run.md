@@ -24,9 +24,10 @@ Inside the job's worker, `JobDevice.proxy()` returns a `RecordingProxy` (`asyncr
 
 | Call | In a dry run |
 | :-- | :-- |
-| Attribute reads, `read_attribute`, `get_attribute_config`, `get_*`, `list_*`, `State`, `Status`, `job_status`, `results` | pass through |
+| Attribute reads, the read-only DeviceProxy methods (`read_attribute`, `get_attribute_config`, ...), commands read-only by the safety policy (`get_*`, `list_*`, `State`, `Status`, unless `risk_overrides` mark one high), `job_status`, `results` | pass through |
 | `blank_beam` | really runs (blanking only makes the instrument safer) and is recorded |
-| Every other command (`move_stage`, `unblank_beam`, `acquire_*`, `set_fov`, ...) and every attribute write | recorded in the trace, **not sent** |
+| Every other command (`move_stage`, `unblank_beam`, `acquire_*`, `set_fov`, ...), every attribute write, and the DeviceProxy write methods (`write_attribute*`, `set_attribute_config`, `poll_attribute`, `write_pipe`, properties) | recorded in the trace, **not sent** |
+| Any other DeviceProxy method | refused (`DryRunRefused`): an unlisted method is assumed to write |
 
 Each recorded call is an Instrument Trace event marked `dry_run: true`, with `performed`, `device`, `arguments` and `check`. The job device checks each call with `check_dry_call`. The Mapper checks every `move_stage`: the image it is for must lie inside the plan box (`check.inside_box`). A failed check makes the event `ok: false` and is counted in `results`. Every other event of the job (reserve, steps, end) also carries `dry_run: true`.
 

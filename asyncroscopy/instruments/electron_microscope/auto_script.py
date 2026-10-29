@@ -506,6 +506,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """Calibrate the screen current (pA) against the monochromator focus (V); the screen must be inserted."""
         if self._microscope.detectors.screen.position != "Inserted":
             raise ValueError("insert the screen (set_screen 'inserted') before calibrating the screen current")
+        self._measured_beam_current = None  # the series below sweeps the monochromator focus
         original_gun_lens = self._microscope.optics.monochromator.focus
         gun_lens_series = np.linspace(*SCREEN_CALIBRATION_FOCUS_V)
 
@@ -555,31 +556,71 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
     def _set_screen_current(self, current) -> None:
         """set screen current in pA"""
+        self._measured_beam_current = None  # the monochromator focus sets the current: the old reading no longer holds
         if self.screen_current_calibration is None:
             self.warn_stream("Screen current calibration not available. running calibration (should take 15 seconds).")
             self._calibrate_screen_current()
         self._microscope.optics.monochromator.focus = self._screen_current_focus(current)
 
+    def _current_conditions(self) -> dict | None:
+        """What sets the beam current, as AutoScript reports it: the monochromator focus, spot size, optical and
+        illumination mode, high tension and the aperture mechanisms. None when any of it cannot be read."""
+        try:
+            optics = self._microscope.optics
+            conditions = {
+                "monochromator_focus_v": float(optics.monochromator.focus),
+                "spot_size": optics.spot_size_index,
+                "optical_mode": str(optics.optical_mode),
+                "illumination_mode": str(optics.illumination_mode),
+                "acceleration_voltage": float(optics.acceleration_voltage.value),
+            }
+            for mechanism_type in optics.aperture_mechanisms.get_available():
+                mechanism = optics.aperture_mechanisms.get_mechanism(mechanism_type)
+                if not mechanism.is_enabled:
+                    conditions[f"aperture_{mechanism_type}"] = "Disabled"
+                elif mechanism.insertion_state == "Retracted":
+                    conditions[f"aperture_{mechanism_type}"] = "Retracted"
+                else:
+                    conditions[f"aperture_{mechanism_type}"] = str(mechanism.aperture.name)
+            return conditions
+        except Exception as error:  # cannot tell what the current depends on: no reading can be trusted
+            self.warn_stream(f"could not read the optics that set the beam current: {error}")
+            return None
+
     def _get_screen_current(self) -> float:
-        """get screen current in pA; with the screen inserted it is the beam current, kept for get_parameters"""
+        """get screen current in pA; with the screen inserted it is the beam current, kept for get_parameters
+        together with the optics it was measured under, so a later change to them makes it stale"""
         screen_current = self._microscope.detectors.screen.measure_current() * 1e12
         if screen_current > 0 and self._microscope.detectors.screen.position == "Inserted":
-            self._measured_beam_current = {"pa": float(screen_current), "at": time.time()}
+            self._measured_beam_current = {"pa": float(screen_current), "at": time.time(), "conditions": self._current_conditions()}
         return screen_current
 
     def _beam_current(self) -> dict:
-        """beam_current_pa with its provenance: "measured" from the screen, or "default" with the reason."""
+        """beam_current_pa with its provenance: "measured" from the screen, or "default" with the reason.
+
+        A reading counts as measured only while the optics that set the current are as they were when it was
+        taken (``_current_conditions``): a spot size, aperture, mode, high tension or monochromator change made
+        by any device, script or person makes it stale, and it is reported as "default" again."""
         measured = getattr(self, "_measured_beam_current", None)
+        reason = "no screen-current measurement since connecting: insert the screen, call get_screen_current, then retract it"
         if measured:
-            return {
-                "beam_current_pa": measured["pa"],
-                "beam_current_source": "measured",
-                "beam_current_age_s": round(time.time() - measured["at"], 1),
-            }
+            then = measured.get("conditions")
+            now = self._current_conditions() if then is not None else None
+            if then is not None and now == then:
+                return {
+                    "beam_current_pa": measured["pa"],
+                    "beam_current_source": "measured",
+                    "beam_current_age_s": round(time.time() - measured["at"], 1),
+                }
+            if then is None or now is None:
+                reason = "the optics that set the beam current could not be read, so the last screen reading cannot be trusted: measure it again"
+            else:
+                changed = sorted(k for k in set(then) | set(now) if then.get(k) != now.get(k))
+                reason = f"the optics changed since the screen current was measured ({', '.join(changed)}): measure it again"
         return {
             "beam_current_pa": float(self.nominal_beam_current_pa),
             "beam_current_source": "default",
-            "beam_current_reason": "no screen-current measurement since connecting: insert the screen, call get_screen_current, then retract it",
+            "beam_current_reason": reason,
         }
 
     def _get_stage(self) -> np.ndarray:
