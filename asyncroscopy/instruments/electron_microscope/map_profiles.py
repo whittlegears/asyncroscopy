@@ -13,7 +13,8 @@ a real instrument when the beam current is only assumed.
 STEM adds per-tile EDS (``eds_point``: one spectrum at each tile centre;
 ``eds_map``: a coarse spectrum image), which needs ``place_beam`` and
 ``acquire_spectrum``. SEM is the same beam and dose model without them; any
-device offering the subset above maps as an SEM.
+device offering the subset above maps as an SEM. Live drift tracking (plan
+``drift.track``) also needs ``set_image_shift`` and ``get_image_shift``.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from asyncroscopy.routines.grid import max_exposures
 
 BEAM_COMMANDS = ("move_stage", "get_stage", "set_fov", "acquire_scanned_image", "blank_beam", "unblank_beam")
 EDS_COMMANDS = ("place_beam", "acquire_spectrum")
+IMAGE_SHIFT_LIMIT_M = 1e-6
 STEM_PLAN_DEFAULTS = {
     "imsize": 512,
     "dwell_s": 1e-6,
@@ -44,6 +46,16 @@ class ElectronBeamProfile(InstrumentProfile):
     plan_fields = frozenset({"imsize", "dwell_s", "detectors", "dose_budget_e_per_a2", "z_m"})
     plan_defaults = {k: STEM_PLAN_DEFAULTS[k] for k in ("imsize", "dwell_s", "detectors")}
     needs = {"microscope_device_address": BEAM_COMMANDS}
+    # Live drift tracking moves the beam with set_image_shift (the beam shift in STEM on AutoScript).
+    # 1 um is the twin's own limit (max_image_shift) and well inside a Spectra's beam-shift range.
+    image_shift_limit_m = IMAGE_SHIFT_LIMIT_M
+    image_shift_commands = ("set_image_shift", "get_image_shift")
+
+    def get_image_shift(self, job: dict) -> list[float]:
+        return [float(v) for v in list(self.instrument().get_image_shift())[:2]]
+
+    def set_image_shift(self, job: dict, xy: list[float]) -> None:
+        self.instrument().set_image_shift([float(xy[0]), float(xy[1])])
 
     # -- plan ------------------------------------------------------------
     def current_xy(self) -> tuple[float, float]:
