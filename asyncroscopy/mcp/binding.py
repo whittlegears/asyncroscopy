@@ -12,6 +12,7 @@ from __future__ import annotations
 import ipaddress
 
 LOOPBACK_FALLBACK = "127.0.0.1"
+WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean "every interface"; reached locally on loopback
 
 
 def is_loopback_host(host: str) -> bool:

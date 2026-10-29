@@ -32,13 +32,12 @@ The config is validated here without importing FastMCP, so the launcher can chec
 
 from __future__ import annotations
 
-import ipaddress
-
-from asyncroscopy.mcp.binding import is_loopback_host
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from asyncroscopy.mcp.binding import is_loopback_host
 
 ROLES = ("read", "operate", "approve")
 # Scopes a WG1 token carries, and the roles each grants. A deployment can map its own scope names
@@ -50,7 +49,6 @@ DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
 }
 # Approvals commands whose "who" names the person deciding; with auth it is the token's subject.
 DECIDING_COMMANDS = frozenset({"approve", "deny", "set_mode"})
-LOOPBACK_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 @dataclass(frozen=True)

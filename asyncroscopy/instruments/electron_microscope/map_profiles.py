@@ -97,17 +97,26 @@ class ElectronBeamProfile(InstrumentProfile):
         extra = {
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
-            # The dose estimate is only as good as the current; say when it was assumed.
-            "beam_current_source": beam["source"],
+            # The dose estimate is only as good as the current; say when it was assumed (or is too old to rely on).
+            **self.current_fields(beam),
         }
-        if beam["source"] == "default":
-            extra["beam_current_reason"] = beam["reason"]
         if revisit:
             extra["revisit_dose_e_per_a2"] = round(revisit_dose, 3)
         if spectra_dose:
             extra["eds_dose_e_per_a2"] = round(spectra_dose, 3)
             extra["note"] = f"max_dose_e_per_a2 includes the EDS spectra's parked-beam dose, counted over {float(mapper.eds_dose_spread_m):.2g} m squares (eds_dose_spread_m)."
         return {"dose_e_per_a2": Cost(max_dose, "e/A^2", why=parts, advice=advice)}, extra
+
+    @staticmethod
+    def current_fields(beam: dict) -> dict:
+        """The estimate's account of the current: where it came from, its age, and why a dose budget may not rely on it."""
+        fields = {"beam_current_source": beam["source"]}
+        if "age_s" in beam:
+            fields["beam_current_age_s"] = beam["age_s"]
+        reason = beam.get("reason") if beam["source"] == "default" else beam.get("refused")
+        if reason:
+            fields["beam_current_reason"] = reason
+        return fields
 
     def revisit_only_costs(self, p, revisit, count, budgets):
         beam = self.mapper._beam_current()
@@ -116,7 +125,7 @@ class ElectronBeamProfile(InstrumentProfile):
         self.mapper._refuse_assumed_current(beam, budget)
         dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"])
         message = "each revisit image would give {value:.3g} e/A^2, above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s"
-        extra = {"max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3), "beam_current_pa": current, "beam_current_source": beam["source"]}
+        extra = {"max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3), "beam_current_pa": current, **self.current_fields(beam)}
         return {"dose_e_per_a2": Cost(dose, "e/A^2", message=message)}, extra
 
     def stage_targets(self, plan, xs, ys):
