@@ -177,10 +177,10 @@ def test_can_start_scan_data_and_microscope_servers(tango_database, tmp_path) ->
 
     try:
         for device in [scan_device, data_device]:
-            wait_for_device(host, port, device, timeout=20)
+            wait_for_device(host, port, device, timeout=60)  # the first start imports Tiled; on a loaded laptop that can take well over 20 s
 
         managed.append(start_device_server("asyncroscopy.instruments.electron_microscope.auto_script", "microscope_instance", env))
-        wait_for_device(host, port, microscope_device, timeout=20)
+        wait_for_device(host, port, microscope_device, timeout=60)
 
         scan = tango.DeviceProxy(device_url(host, port, scan_device))
         data = tango.DeviceProxy(device_url(host, port, data_device))
