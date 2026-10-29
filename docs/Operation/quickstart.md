@@ -1,6 +1,6 @@
 # Quick start: from clone to an agent mapping the digital twin
 
-This takes a fresh machine to a running digital twin, both MCP endpoints, the pyTEMlib analysis server and a local-model agent that maps a sample. It was written while doing exactly that on Windows 11; macOS and Linux differ only where noted.
+This takes a fresh machine to a running digital twin, both MCP endpoints, the pyTEMlib analysis server and a local-model agent that maps a sample. It was written while doing exactly that on Windows 11 and checked from a fresh clone on Ubuntu (WSL2); macOS and Linux differ only where noted.
 
 Nothing here needs a microscope, vendor software or a GPU. A GPU makes the local model faster.
 
@@ -10,7 +10,7 @@ Nothing here needs a microscope, vendor software or a GPU. A GPU makes the local
 | :-- | :-- | :-- |
 | uv (installs Python 3.12 for you) | `winget install astral-sh.uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Git | `winget install Git.Git` | usually present |
-| Ollama (local models) | `winget install Ollama.Ollama` | see ollama.com |
+| Ollama (local models) | `winget install Ollama.Ollama` | `curl -fsSL https://ollama.com/install.sh \| sh` (Linux); the app from ollama.com (macOS) |
 
 **Open a new terminal after installing uv**: installers add uv to `PATH`, and a terminal that was already open does not see the change. Check with `uv --version`.
 
@@ -43,6 +43,8 @@ uv run pytest -q -m "not slow"
 `--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, keep the clone's path short (under about 60 characters, such as `C:\src\asyncroscopy`): some installed DLLs have long names, and a deeply nested folder pushes them past Windows' path limit (see Troubleshooting).
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine; `pyproject.toml` caps the fast-moving dependencies (sidpy, SciFiReaders, tiled, fastmcp, numpy, LangChain/LangGraph) below their next breaking release so a fresh clone still gets a tested combination. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
+
+The first `uv sync` takes 5 to 10 minutes: it resolves about 400 packages (there is no lock file) and downloads about 4 GB into `.venv` and uv's cache. Later syncs take seconds.
 
 The test suite starts real Tango devices in-process. Without the slow tests, pytest prints its summary after 1 to 2 minutes on a laptop (the first run is the slowest and prints nothing for about the first minute while it imports everything); the devices then shut down and keep printing INFO lines ("Connected to detector proxy", "Restarting managed Tiled server") for up to a minute more. That is normal; let it finish. `uv run pytest -q` runs everything, including the two timing tests that `-m "not slow"` deselects. All tests should pass; five are skipped on purpose (two need the optional `diffraction` extra; three use Tango's database-mode device discovery, which cannot run in the same Python process as the in-process test devices). The DeprecationWarnings in the summary come from dependencies and are harmless. Add `-rs` to see why each was skipped. Running the tests leaves the working tree unchanged (set `ASYNCROSCOPY_WRITE_BENCHMARKS=1` to update `benchmarks/results/twin_render.json` on purpose).
 
@@ -86,6 +88,18 @@ if (-not $uv) {
 }
 ```
 
+On Linux or macOS, the same in the background from bash (each server in its own process group, so one `kill` stops it with its children):
+
+```bash
+setsid uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml > servers.log 2> servers.err & echo $! > servers.pid
+until grep -q 'Leave this terminal open' servers.log; do sleep 1; done          # about a minute
+setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml > mcp_dt.log 2> mcp_dt.err & echo $! > mcp_dt.pid
+setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml > mcp_op.log 2> mcp_op.err & echo $! > mcp_op.pid
+setsid uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003 > pytem.log 2> pytem.err & echo $! > pytem.pid
+```
+
+Stop them with `for f in servers mcp_dt mcp_op pytem; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.mcp_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.
+
 Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers (in the same PowerShell window; from another one, see Troubleshooting); check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
 
 ```bash
@@ -126,7 +140,7 @@ If you use SciAgentGUI, this checks that the stack answers the way the GUI expec
 uv run startup_scripts/check_gui_contract.py
 ```
 
-The checks use whatever stack is on these ports, so two people testing on one machine share it. Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected. Right after `check_stack.py`, `check_gui_contract.py` prints `SKIP spectrum check`: the check map has no EDS points. It is expected; after an EDS map (section 5) the spectrum check runs.
+The checks use whatever stack is on these ports, so two people testing on one machine share it. Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected.
 
 Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
 
@@ -140,7 +154,7 @@ uv run python -m asyncroscopy.agents.run mapping "Map a 600 nm square around the
 uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the current position and find the 3 most interesting regions"
 ```
 
-Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). All settings are listed in `asyncroscopy/agents/__init__.py`.
+Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
 
 The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 15 of 15 on the final code. See `docs/athena/wg2_traceability.md`.
 

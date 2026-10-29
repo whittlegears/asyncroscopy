@@ -360,3 +360,17 @@ def test_the_raman_stack_does_not_share_the_twins_approval_mode():
     config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / "yaml_sim_raman.yaml")
     approvals = next(d for d in config.support_devices if d.module_name == "asyncroscopy.safety.approvals")
     assert approvals.properties["mode_file"] != ["outputs/approvals/mode.json"]
+
+
+def test_a_launcher_stops_its_servers_on_sigterm_once():
+    import signal
+
+    before = signal.getsignal(signal.SIGTERM)
+    try:
+        process_manager.stop_on_termination()
+        handler = signal.getsignal(signal.SIGTERM)
+        with pytest.raises(KeyboardInterrupt):
+            handler(signal.SIGTERM, None)
+        assert handler(signal.SIGTERM, None) is None  # a second copy during cleanup is ignored
+    finally:
+        signal.signal(signal.SIGTERM, before)

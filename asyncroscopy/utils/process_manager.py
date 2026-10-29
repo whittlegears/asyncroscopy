@@ -25,6 +25,27 @@ if str(PROJECT_DIR) not in sys.path:
 _warned_no_uv = False
 
 
+def stop_on_termination() -> None:
+    """Make SIGTERM (and SIGHUP) stop a launcher the way Ctrl+C does, so its children are shut down.
+
+    A launcher's servers run in their own process groups (start_new_session), so a `kill` that
+    ends only the launcher would leave them listening. Only the first signal raises: a second
+    one arriving during cleanup (a wrapper such as `uv run` forwarding a copy) is ignored.
+    """
+    stopping = False
+
+    def interrupt(_signum, _frame) -> None:
+        nonlocal stopping
+        if stopping:
+            return
+        stopping = True
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupt)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, interrupt)
+
+
 def find_uv() -> str | None:
     """Return the path of the uv executable, or None if there is none.
 
