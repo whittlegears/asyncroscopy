@@ -124,7 +124,7 @@ uv sync --extra agent --extra ollama --extra dev
 ## Running Tests
 
 ```bash
-uv run pytest -q -m "not slow"   # summary after about 40 s; device shutdown logs can follow for a minute more
+uv run pytest -q -m "not slow"   # about 1,200 tests: 5-7 min on a laptop; device shutdown logs can follow for a minute more
 uv run pytest -q                 # everything, including timing tests: about a minute and a half
 ```
 

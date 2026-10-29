@@ -419,7 +419,7 @@ class MappingGraph:
         plan = state["plan"]
         box = plan["box_m"]
         lines = [
-            f"Mapped {_length(box[1] - box[0])} x {_length(box[3] - box[2])} with {state.get('estimate', {}).get('steps', '?')} tiles "
+            f"Mapped {_length(box[1] - box[0])} x {_length(box[3] - box[2])} with {state.get('estimate', {}).get('tiles', state.get('estimate', {}).get('steps', '?'))} tiles "
             f"of {_length(plan['fov_m'])}" + (" and an EDS spectrum at each tile" if "eds_point" in plan.get("per_tile", []) else "") + ".",
             f"Run data: {state.get('run_key')}.",
         ]
