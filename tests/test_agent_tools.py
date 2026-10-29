@@ -91,3 +91,45 @@ def test_a_stem_gets_the_curated_set_and_the_analysis_waits_only_without_an_anal
 def test_another_instrument_gets_its_own_tools_but_not_state_or_analysis(endpoint, monkeypatch, tmp_path):
     picked, _ = general_agent_tools(endpoint(RAMAN, ""), monkeypatch, tmp_path)
     assert "Raman_set_laser_power" in picked and "Raman_State" not in picked and "assemble_map" not in picked
+
+
+# An AFM YAML twin mapped through the yaml profile: the Mapper must not make it look like a STEM.
+AFM_MAPPED = {
+    "AFMTwin": ["approach_tip", "retract_tip", "move_xy", "get_status", "acquire_topography", "acquire_force_curve",
+                "get_setpoint_v", "set_setpoint_v", "get_map_profile", "reserve", "start", "abort", "job_status", "results",
+                "release", "State", "Status"],
+    "Mapper": ["reserve", "start", "job_status", "results", "release", "abort", "get_reservation", "State"],
+}
+
+
+def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_tools(endpoint, monkeypatch, tmp_path):
+    from asyncroscopy.mcp.agent_tools import is_stem_endpoint
+
+    server = endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp")
+    assert not is_stem_endpoint(server._all_tool_names())
+    picked, _ = general_agent_tools(server, monkeypatch, tmp_path)
+    for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"):
+        assert tool in picked, tool
+    assert "assemble_map" in picked and "score_map" in picked  # its maps are stitched and scored too
+    assert "AFMTwin_State" not in picked and "analysis_job_status" not in picked
+    without, _ = general_agent_tools(endpoint(AFM_MAPPED, ""), monkeypatch, tmp_path)
+    assert set(without) - set(picked) == {"analysis_job_status", "analysis_job_results"}
+
+
+def test_the_stem_twins_curated_set_is_unchanged(endpoint):
+    from asyncroscopy.mcp.agent_tools import DEFAULT_TOOLS, is_stem_endpoint
+
+    server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
+    assert is_stem_endpoint(server._all_tool_names())
+    assert server.endpoint_info()["agent_tools"] == DEFAULT_TOOLS + ["load_skill"]
+
+
+def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(tmp_path, monkeypatch):
+    from asyncroscopy.agents.graphs.team import TeamGraph
+
+    monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))
+    names = [f"{prefix}_{c}" for prefix, cs in AFM_MAPPED.items() for c in cs] + NATIVE
+    config = EndpointConfig(names, {"analysis_url": "http://127.0.0.1:8003/mcp"})
+    roles = asyncio.run(TeamGraph(config).tools_by_role())
+    operator = {t.name for t in roles["operator"]}
+    assert {"AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"} <= operator
