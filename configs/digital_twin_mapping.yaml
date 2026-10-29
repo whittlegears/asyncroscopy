@@ -15,6 +15,11 @@ instrument:
   description: "Mapping digital twin: 2 um sample, stage error, drift, scan distortion, EDS spectra, dose"
   timeout_seconds: 120
   properties:
+    # The procedural specimen (the default) is built from the sample_* and particle_* properties below.
+    # Swap it without touching the instrument: digital_twin_recorded.yaml, digital_twin_crystal.yaml and
+    # docs/Operation/specimens.md.
+    specimen:
+      source: procedural
     sample_seed: 12345
     sample_size_xy: 2.0e-6
     sample_particle_count: 400

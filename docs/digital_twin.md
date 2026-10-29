@@ -21,7 +21,7 @@ uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 | Random streams | `twin/rng.py` | One seeded stream per kind of event (stage move n, acquisition n, ...). Repeating an acquisition gets fresh noise; rerunning the same script reproduces the run. |
 | Clock | `twin/clock.py` | Simulated time. Moves, frames and spectra take as long as they would on the instrument. `time_scale` sets how much real time passes (1 = real waiting, 0 = none). |
 | Stage | `twin/stage_model.py` | Keeps **commanded**, **true** and **reported** positions. True = commanded + bias + Gaussian error + backlash on reversal. Reported = commanded + small readback error. Adds settling drift after each move and thermal drift over time. |
-| Sample | `twin/sample_model.py` | A table of ellipsoidal particles (element, centre, semi-axes, orientation) on a carbon support film. A 2 um, 400-particle sample is a few kilobytes. |
+| Sample | `twin/specimen.py`, `twin/sample_model.py` | A swappable specimen ([specimens.md](Operation/specimens.md)). The default `procedural` one is a table of ellipsoidal particles (element, centre, semi-axes, orientation) on a carbon support film; a 2 um, 400-particle sample is a few kilobytes. `recorded` images an image file, `crystal` a polycrystalline film. |
 | Scan | `twin/scan_distortion.py` | Where each pixel really lands: drift during the frame, line jitter, flyback compression, scan rotation and shear, field-of-view calibration error. |
 | Rendering | `twin/render.py` | Pixel >= 0.2 nm: projected thickness x Z^1.7 per particle, Gaussian probe blur. Pixel < 0.2 nm: atoms built for the particles in view only, convolved with the pyTEMlib probe from the current aberrations. HAADF, ADF and BF have their own contrast. |
 | Optics | `twin/optics.py` | Aberrations from the corrector twin (if connected) plus `set_defocus`. Defocus and astigmatism blur the image, so autofocus has a real objective. |
@@ -55,6 +55,7 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 
 | Group | Properties |
 | :-- | :-- |
+| Specimen | `specimen` (a mapping such as `{source: recorded, path: ..., pixel_size_m: ...}`), or `specimen_source`, `specimen_path`, `specimen_pixel_size_m`, `specimen_labels_path`; see [specimens.md](Operation/specimens.md) |
 | Sample | `sample_seed`, `sample_size_xy`, `sample_particle_count`, `particle_radius_mean`, `particle_radius_std`, `particle_aspect_ratio`, `particle_elements` (comma list of Au, Pt, Pd, Ag, Cu, Ni, Fe, Si, C), `support_thickness`, `height_gradient_x/y` |
 | Optics | `acceleration_voltage`, `convergence_angle_mrad`, `beam_current_pa`, `haadf_z_exponent`, `haadf_scattering_scale`, `atomic_pixel_threshold` |
 | Detector | `detector_gain`, `detector_offset`, `detector_read_noise` |
