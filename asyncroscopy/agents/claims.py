@@ -62,7 +62,8 @@ FINAL_STATE = r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+b
 SETTING_ALIASES = {"fov": ("fov", "field of view"), "defocus": ("defocus", "focus")}
 
 ACQUIRED = re.compile(
-    r"\b(?:took|acquired|captured|recorded|collected)\s+(?:(?:an?|the|one|two|three|four|five|some|several|new|\d+)\s+)?(?:[\w-]+\s+){0,3}?"
+    # Only the agent saying it did it: "the latest acquired image" describes data, it claims nothing.
+    r"(?:\b(?:I|we)\s+(?:then\s+|also\s+|first\s+|have\s+|successfully\s+|just\s+)*|\b(?:and|then)\s+)(?:took|acquired|captured|recorded|collected)\s+(?:(?:an?|the|one|two|three|four|five|some|several|new|\d+)\s+)?(?:[\w-]+\s+){0,3}?"
     r"(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?|data|frames?)\b"
     r"|\b(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?)\s+(?:was|were|has\s+been|have\s+been)\s+(?:taken|acquired|captured|recorded|collected)\b"
     r"|\bI\s+(?:then\s+|also\s+|first\s+|have\s+|successfully\s+)*imaged\b",
