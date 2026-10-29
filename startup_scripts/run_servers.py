@@ -32,7 +32,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
 # selects a different config AND runs headlessly (no prompts).
@@ -277,10 +277,195 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Run a separate stack with its database and process state in DIR, "
-        "leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
+        help="Run a separate stack with its database and process state in DIR "
+        "(e.g. outputs/stacks/raman), leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Stop another stack (or program) that holds this config's ports or shares its "
+        "Tango database file. Without it, the launcher refuses and says how to run beside it.",
     )
     return parser.parse_args(argv)
+
+
+# --- Other stacks ---------------------------------------------------------
+# A launcher started without --isolated scours its Tango and Tiled ports and
+# deletes the project-root Tango database file. That is right for this config's
+# own leftovers (a crashed earlier run) and wrong for anyone else's stack.
+
+LAUNCHER_NAME = "run_servers.py"
+ORPHAN_MARKERS = ("tango.databaseds", "tiled", "asyncroscopy.")  # processes an earlier stack leaves behind
+
+
+@dataclass(frozen=True)
+class ProcessInfo:
+    ppid: int
+    tokens: tuple[str, ...]
+    cwd: str | None = None
+
+
+@dataclass(frozen=True)
+class OtherStack:
+    identity: tuple[str, str]  # (config path, isolated directory or "")
+    pid: int
+    config: str  # for messages, relative to the repository where possible
+
+
+def _normalized(path: Path) -> str:
+    text = str(path.resolve())
+    return text.lower() if os.name == "nt" else text
+
+
+def stack_identity(config_path: Path, isolated_dir: Path | None) -> tuple[str, str]:
+    return _normalized(config_path), _normalized(isolated_dir) if isolated_dir else ""
+
+
+def _flag(tokens: list[str], flag: str) -> str | None:
+    for index, token in enumerate(tokens):
+        if token == flag and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(flag + "="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def launcher_identity(info: ProcessInfo) -> tuple[str, str] | None:
+    """The (config, isolated) of a run_servers.py launcher's command line (or its ``uv run`` wrapper), else None."""
+    tokens = list(info.tokens)
+    start = next((i for i, token in enumerate(tokens) if Path(token).name == LAUNCHER_NAME), None)
+    if start is None:
+        return None
+    args = tokens[start + 1:]
+    base = Path(info.cwd) if info.cwd else PROJECT_DIR
+    config, isolated = _flag(args, "--yaml"), _flag(args, "--isolated")
+    config_path = DEFAULT_CONFIG_PATH if config is None else Path(config) if Path(config).is_absolute() else base / config
+    isolated_dir = None if isolated is None else Path(isolated) if Path(isolated).is_absolute() else base / isolated
+    return stack_identity(config_path, isolated_dir)
+
+
+def _shown(identity: tuple[str, str]) -> str:
+    config = Path(identity[0])
+    try:
+        text = config.relative_to(_normalized(PROJECT_DIR)).as_posix()
+    except ValueError:
+        text = str(config)
+    return text + (f" (isolated in {identity[1]})" if identity[1] else "")
+
+
+def process_snapshot() -> dict[int, ProcessInfo]:
+    """Every visible process: parent, command line and working directory."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a declared dependency
+        return {}
+    snapshot = {}
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        try:
+            cwd = proc.cwd()
+        except (psutil.Error, OSError):
+            cwd = None
+        snapshot[proc.info["pid"]] = ProcessInfo(proc.info.get("ppid") or 0, tuple(proc.info.get("cmdline") or ()), cwd)
+    return snapshot
+
+
+def ancestors(pid: int, snapshot: dict[int, ProcessInfo]) -> list[int]:
+    chain, seen = [], {pid}
+    while pid in snapshot and len(chain) < 64:
+        pid = snapshot[pid].ppid
+        if pid in seen or pid <= 0:
+            break
+        seen.add(pid)
+        chain.append(pid)
+    return chain
+
+
+def running_stacks(snapshot: dict[int, ProcessInfo], mine: tuple[str, str], my_pids: set[int]) -> dict[tuple[str, str], OtherStack]:
+    """Live launchers of other stacks, one per (config, isolated), each by its outermost process (so stopping it stops the tree)."""
+    found: dict[tuple[str, str], OtherStack] = {}
+    for pid, info in snapshot.items():
+        identity = launcher_identity(info)
+        if identity is None or identity == mine or pid in my_pids:
+            continue
+        parent = snapshot.get(info.ppid)
+        if parent is not None and launcher_identity(parent) == identity:
+            continue  # the wrapper above it is the one to stop
+        found[identity] = OtherStack(identity, pid, _shown(identity))
+    return found
+
+
+def stack_conflicts(
+    snapshot: dict[int, ProcessInfo],
+    mine: tuple[str, str],
+    my_pids: set[int],
+    listeners: dict[int, set[int]],
+    share_database_file: bool,
+) -> list[tuple[str, int]]:
+    """(reason, pid to stop with --replace) for everything this start would wrongly stop or clobber.
+
+    ``listeners`` maps each port this start clears to the PIDs listening on it.
+    A listener belonging to this config's own stack (another or a crashed run of
+    it) and an orphan an earlier stack left behind are not conflicts: clearing
+    them is the launcher's job. ``share_database_file``: this start uses the
+    project-root Tango database file, which no other non-isolated stack may use.
+    """
+    stacks = running_stacks(snapshot, mine, my_pids)
+    conflicts: list[tuple[str, int]] = []
+    if share_database_file:
+        for stack in stacks.values():
+            if not stack.identity[1]:
+                conflicts.append((f"{stack.config} (launcher pid {stack.pid}) uses the same Tango database file (neither stack is --isolated)", stack.pid))
+    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # another stack -> (pid to stop, its ports)
+    for port, pids in sorted(listeners.items()):
+        for pid in sorted(pids):
+            if pid in my_pids or pid not in snapshot:
+                continue
+            owner = next((launcher_identity(snapshot[a]) for a in [pid, *ancestors(pid, snapshot)] if a in snapshot and launcher_identity(snapshot[a])), None)
+            if owner == mine:
+                continue
+            if owner is not None:
+                stack = stacks.get(owner)
+                ports = held.setdefault(owner, (stack.pid if stack else pid, []))[1]
+                if port not in ports:
+                    ports.append(port)
+                continue
+            tokens = snapshot[pid].tokens
+            if any(marker in token for token in tokens for marker in ORPHAN_MARKERS):
+                continue  # left behind by an earlier stack whose launcher is gone
+            name = Path(tokens[0]).name if tokens else "a program"
+            conflicts.append((f"port {port} is used by {name} (pid {pid}), which is not an asyncroscopy stack", pid))
+    for owner, (pid, ports) in held.items():
+        listed = ", ".join(str(p) for p in ports)
+        conflicts.append((f"{_shown(owner)} (launcher pid {pid}) is listening on port{'s' if len(ports) > 1 else ''} {listed}", pid))
+    return conflicts
+
+
+def stop_tree(pid: int) -> None:
+    """Stop a process and everything it started (--replace)."""
+    import psutil
+
+    try:
+        root = psutil.Process(pid)
+        family = [*root.children(recursive=True), root]
+    except psutil.Error:
+        return
+    for proc in family:
+        try:
+            proc.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(family, timeout=10)
+
+
+def explain_conflicts(conflicts: list[tuple[str, int]], config_path: Path) -> str:
+    lines = ["This start would stop or clobber something that is not this config's own stack:"]
+    lines += [f"  - {reason}" for reason, _ in conflicts]
+    lines += [
+        f"To run beside it, give {config_path.name} its own tango.port and tiled.port and start it with",
+        "  --isolated outputs/stacks/<name>   (docs/Adding_New_Hardware/second_stack.md).",
+        "To stop it and start this config instead, run again with --replace.",
+    ]
+    return "\n".join(lines)
 
 
 def instrument_cleanup_patterns(config: Config) -> set[str]:
@@ -661,6 +846,22 @@ def main(argv: list[str] | None = None) -> int:
         clear_first = False
         environment["PYTANGO_DATABASE_NAME"] = str(isolated_dir / "tango_database.db")
         manager_kwargs = {"name": f"run_servers_{port}", "state_dir": isolated_dir / ".processes"}
+
+    snapshot = process_snapshot()
+    my_pids = {os.getpid(), *ancestors(os.getpid(), snapshot)}
+    ports = ([port] if start_database else []) + ([tiled_port] if should_start_tiled else []) if clear_first else []
+    conflicts = stack_conflicts(
+        snapshot, stack_identity(config_path, isolated_dir), my_pids,
+        {p: listening_pids(p) or set() for p in ports},
+        share_database_file=isolated_dir is None and start_database,
+    )
+    if conflicts and not args.replace:
+        print(color(explain_conflicts(conflicts, config_path), Style.bold + Style.red))
+        return 1
+    if conflicts:
+        for reason, pid in conflicts:
+            print(f"  STOP  {reason} (--replace)")
+            stop_tree(pid)
 
     try:
         with ProcessManager(**manager_kwargs) as manager:

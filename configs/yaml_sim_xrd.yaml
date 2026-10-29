@@ -6,6 +6,9 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 #
 # The tools are named after class_name: XRDTwin_xray_on, XRDTwin_acquire_diffractogram, ...
+# It uses the STEM twin's ports and database: stop the twin first (the launcher refuses
+# while it runs), or run it beside the twin as configs/yaml_sim_raman.yaml does
+# (docs/Adding_New_Hardware/second_stack.md).
 # For your own instrument, copy the example YAML, change class_name and yaml_path,
 # and check the file first:
 #   uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml

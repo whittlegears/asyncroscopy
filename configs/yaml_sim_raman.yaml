@@ -1,0 +1,45 @@
+# An instrument with no Python, beside the STEM twin: the Raman microscope in
+# asyncroscopy/instruments/yaml_sim/examples/raman.yaml, with DATA (its spectra go
+# to its own Tiled) and approval mode, on ports that do not clash with the twin.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_raman.yaml --isolated outputs/stacks/raman
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman.yaml            # agent endpoint, port 8100
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman_operator.yaml   # operator endpoint, port 8101
+#
+# --isolated keeps this stack's Tango database and process records in its own
+# folder, so it never touches the twin's. Every port and the acquisition folder
+# differ from the twin's (Tango 9094, Tiled 9091, outputs/tiled_acquisitions).
+# See docs/Adding_New_Hardware/second_stack.md.
+#
+# The file has a jobs: section, so the device also has the job envelope: an agent
+# runs a line scan with run_job(device="RamanTwin", plan=...) and wait_for_job.
+
+instrument:
+  class_name: RamanTwin
+  module_name: asyncroscopy.instruments.yaml_sim.device
+  description: "Simulated Raman microscope described in YAML"
+  properties:
+    yaml_path: asyncroscopy/instruments/yaml_sim/examples/raman.yaml
+    data_device_address: asyncroscopy/data/default
+    state_directory: outputs/stacks/raman/jobs
+    trace_path: outputs/trace/raman_jobs.jsonl
+
+devices:
+  data:
+    module_name: asyncroscopy.data.data
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
+
+tiled:
+  host: localhost
+  port: 9191
+  # Its own folder: Tiled keeps its catalog database here, and two Tiled servers must not share one.
+  acquisition_dir: outputs/raman_acquisitions
+  autostart: true
+  register_on_startup: false
+
+tango:
+  host: localhost
+  port: 9194
+  reset_database_file: true

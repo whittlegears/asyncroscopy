@@ -1,0 +1,139 @@
+# A confocal Raman microscope (532 nm), described without Python.
+#
+# Start it with configs/yaml_sim_raman.yaml (on its own, or beside the STEM twin:
+# docs/Adding_New_Hardware/second_stack.md). Because it has a jobs: section the
+# device also has the job envelope, so the MCP server offers, among others:
+#   RamanTwin_laser_on   RamanTwin_laser_off (a safe stop: never held)
+#   RamanTwin_move_xy    RamanTwin_acquire_raman_spectrum
+#   run_job(device="RamanTwin", plan=...) for line scans and maps, then wait_for_job
+# Check a file before starting it:
+#   uv run python -m asyncroscopy.instruments.yaml_sim.spec asyncroscopy/instruments/yaml_sim/examples/raman.yaml
+
+description: Simulated confocal Raman microscope (532 nm laser) with a silicon wafer carrying a graphene flake at x > 0.
+seed: 1
+
+settings:
+  laser_power_mw:
+    default: 0
+    min: 0
+    max: 50
+    units: mW
+    settable: false
+    doc: Laser power at the sample; switch the laser with laser_on and laser_off
+  exposure_s:
+    default: 1.0
+    min: 0.01
+    max: 60
+    units: s
+    doc: Exposure time per accumulation
+  accumulations:
+    default: 1
+    min: 1
+    max: 20
+    type: int
+    doc: Number of exposures summed into one spectrum
+  grating:
+    default: "1800"
+    type: str
+    choices: ["600", "1800"]
+    doc: Grating in lines per mm; 1800 resolves narrower bands, 600 covers the range with more signal
+  objective:
+    default: 100x
+    type: str
+    choices: [10x, 50x, 100x]
+    doc: Objective in use
+  stage_x_m:
+    default: 0.0
+    min: -0.005
+    max: 0.005
+    units: m
+    doc: Stage x position
+  stage_y_m:
+    default: 0.0
+    min: -0.005
+    max: 0.005
+    units: m
+    doc: Stage y position
+  focus_z_m:
+    default: 0.0
+    min: -0.0001
+    max: 0.0001
+    units: m
+    doc: Focus offset from the sample surface (0 is in focus)
+  sample_name:
+    default: graphene on Si/SiO2
+    type: str
+    settable: false
+    doc: Mounted sample
+
+commands:
+  laser_on:
+    doc: Switch the 532 nm laser on at the given power at the sample. Spectra need the laser on. Graphene burns above 10 mW.
+    input: {name: power_mw, min: 0.1, max: 50, units: mW, doc: Laser power at the sample}
+    sets: {laser_power_mw: power_mw}
+    duration_s: 0.5
+    returns: {laser_power_mw: laser_power_mw, state: "on"}
+  laser_off:
+    doc: Switch the laser off. Always allowed.
+    sets: {laser_power_mw: 0}
+    returns: {laser_power_mw: 0, state: "off"}
+  move_xy:
+    doc: Move the stage to (x_m, y_m) in metres.
+    inputs:
+      - {name: x_m, min: -0.005, max: 0.005, units: m, doc: Stage x}
+      - {name: y_m, min: -0.005, max: 0.005, units: m, doc: Stage y}
+    sets: {stage_x_m: x_m, stage_y_m: y_m}
+    duration_s: 0.5
+    returns: {stage_m: [stage_x_m, stage_y_m]}
+  get_status:
+    doc: Laser power, exposure, grating, objective, stage position, focus and sample, as JSON.
+    returns:
+      laser_power_mw: laser_power_mw
+      exposure_s: exposure_s
+      accumulations: accumulations
+      seconds_per_spectrum: exposure_s * accumulations
+      grating: grating
+      objective: objective
+      stage_m: [stage_x_m, stage_y_m]
+      focus_z_m: focus_z_m
+      sample: sample_name
+
+acquisitions:
+  acquire_raman_spectrum:
+    doc: Record a Raman spectrum (counts against Raman shift in cm-1, 100 to 3200) at the current stage position. Needs the laser on. One call is limited to 25 s (exposure_s x accumulations); longer spectra and line scans run as the line_scan job.
+    kind: spectrum
+    detector: ccd
+    units: counts
+    requires: ["laser_power_mw > 0"]
+    duration_s: exposure_s * accumulations
+    axis: {start: 100, stop: 3200, points: 1024, label: Raman shift, units: cm-1}
+    background: (50 + 2 * laser_power_mw * exposure_s) * accumulations
+    noise: poisson
+    peaks:
+      # Bands are Lorentzian; widths are full widths at half maximum, broader on the 600 grating.
+      # Si first-order phonon; a focus error weakens every band.
+      - {position: 520.7, shape: lorentzian, fwhm: "3.5 if grating == '1800' else 8", height: "800 * laser_power_mw * exposure_s * accumulations * exp(-(focus_z_m / 2e-6) ** 2)"}
+      # Graphene G and 2D bands, only on the flake (x > 0)
+      - {position: 1582, shape: lorentzian, fwhm: "15 if grating == '1800' else 20", height: "(150 if stage_x_m > 0 else 0) * laser_power_mw * exposure_s * accumulations * exp(-(focus_z_m / 2e-6) ** 2)"}
+      - {position: 2690, shape: lorentzian, fwhm: "30 if grating == '1800' else 35", height: "(400 if stage_x_m > 0 else 0) * laser_power_mw * exposure_s * accumulations * exp(-(focus_z_m / 2e-6) ** 2)"}
+  acquire_brightfield_image:
+    doc: Take a white-light camera image of the sample at the current position and save it.
+    kind: image
+    detector: camera
+    units: counts
+    shape: [480, 640]
+    pixel_size_m: "1.0e-6 / (10 if objective == '10x' else 50 if objective == '50x' else 100) * 10"
+    background: 80
+    spots: {count: 5, radius_px: 20, height: 60}
+    noise: poisson
+
+jobs:
+  line_scan:
+    doc: Raman spectra along a line or over a grid of stage positions (axes stage_x_m, stage_y_m with start, stop and points), with the exposure and accumulations for the whole scan. Needs the laser on; the laser is switched off if the scan is aborted or fails.
+    axes: [stage_x_m, stage_y_m]
+    settings: [exposure_s, accumulations, grating]
+    acquire: [acquire_raman_spectrum]
+    settle_s: 0.2
+    max_points: 100000
+    requires: ["laser_power_mw > 0"]
+    on_stop: [laser_off]
