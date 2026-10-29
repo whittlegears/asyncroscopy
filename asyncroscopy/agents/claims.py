@@ -87,6 +87,13 @@ DEFERS = re.compile(
     re.I,
 )
 
+# An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
+ANNOUNCES = re.compile(
+    r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+us|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
+    r"(?:take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare)\b",
+    re.I,
+)
+
 CORRECTION = ("Check before you answer: your answer says things no tool call in this run did or returned:\n{items}\n"
               "Make the missing tool call now if the request needs it, or answer again without these claims. "
               "Say only what the tool replies show.")
@@ -281,6 +288,18 @@ def _action_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
+def _unfinished_claims(answer: str) -> list[Claim]:
+    """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
+    tail = _sentences(answer)[-2:]
+    if any("?" in sentence for sentence in tail):
+        return []  # a question to the user is a fair place to stop
+    for sentence in tail:
+        m = ANNOUNCES.search(sentence)
+        if m:
+            return [Claim("unfinished", sentence.strip()[:160], "the answer announces this step but ends without doing it; make the call now, or say why it cannot be done")]
+    return []
+
+
 def check_answer(messages: list, answer: str, tool_names=(), context: str = "") -> list[Claim]:
     """The claims in ``answer`` that the tool calls in ``messages`` do not support (see the module docstring).
 
@@ -299,6 +318,7 @@ def check_answer(messages: list, answer: str, tool_names=(), context: str = "") 
             claims.append(Claim("key", key, "no tool returned this key in this run"))
     claims += _setting_claims(answer, _Settings(calls, tool_names))
     claims += _action_claims(answer, calls)
+    claims += _unfinished_claims(answer)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
         m = DEFERS.search(answer)
         if m:
