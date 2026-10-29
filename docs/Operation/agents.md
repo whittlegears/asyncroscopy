@@ -36,6 +36,8 @@ What the graphs do so a small model's context does not overflow (`asyncroscopy/a
 
 `endpoint_info` (for agent programs, not given to models) reports each tool's risk as the approval gate sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.analysis_url` in the MCP config is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
 
+An endpoint with `mcp.auth` needs a bearer token: agents send `ASYNCROSCOPY_MCP_TOKEN` as `Authorization: Bearer` to the instrument and analysis endpoints, and the endpoint takes the caller from the token's subject instead of `ASYNCROSCOPY_CALLER`. See [Remote access](remote_access.md).
+
 ## The team
 
 A small model loses track with many tools and long instructions, so the `team` graph never gives one agent both.

@@ -10,11 +10,23 @@ restarts.
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain_core.tools import StructuredTool, ToolException
+
+# A bearer token for endpoints that verify tokens (the MCP config's mcp.auth; docs/Operation/remote_access.md).
+TOKEN_ENV = "ASYNCROSCOPY_MCP_TOKEN"
+
+
+def bearer_header(token: str | None) -> dict[str, str]:
+    """{"Authorization": "Bearer <token>"}, or {} without a token."""
+    token = (token or "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def result_text(result) -> str:
@@ -40,6 +52,8 @@ class McpServer:
     def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0, ledger: list | None = None):
         self.url = url
         self.headers = dict(headers or {})
+        if not any(k.lower() == "authorization" for k in self.headers):  # e.g. the swarm, which builds its own headers
+            self.headers.update(bearer_header(os.environ.get(TOKEN_ENV)))
         self.timeout_s = timeout_s
         self.ledger = ledger
 
