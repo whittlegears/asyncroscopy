@@ -40,6 +40,7 @@ from asyncroscopy.data import tiled_client, views
 from asyncroscopy.data.data import REGISTRABLE_SUFFIXES
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
+from asyncroscopy.mcp import endpoint_auth
 from fnmatch import fnmatchcase
 
 from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, looks_like_stop, operator_only, risk_of
@@ -173,6 +174,7 @@ class MCPServer:
         database=None,
         analysis_url: str | None = None,
         job_limits: dict[str, float] | None = None,
+        auth: dict | None = None,
     ):
         """
         Args:
@@ -202,12 +204,16 @@ class MCPServer:
             job_limits: {"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses a plan
                 whose estimate is over either (the agent must ask the user; an operator raises the
                 limit in the config). Empty: no limit beyond the job device's own.
+            auth: the MCP config's ``auth`` section (asyncroscopy.mcp.endpoint_auth): every request needs a
+                bearer token from WG1's token service, its subject is the caller and its scopes gate the tools.
+                None: no token check; the caller is X-Asyncroscopy-Caller, as before.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
         # ``database`` replaces the Tango database lookup (asyncroscopy.testing passes a device list).
         self.database = database if database is not None else Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
+        self.auth = None  # set at the end of __init__ (the role gate reads the risk tables made below)
 
         self.blocked_functions = {key: list(value) for key, value in blocked_functions.items()}
         self.blocked_classes = list(blocked_classes)
@@ -252,6 +258,7 @@ class MCPServer:
         self._risk_keys: dict[str, str] = {}  # tool name -> "Class.command", the other name overrides match
         self._lowered: set[str] = set()  # tools an override made low that the policy would hold
         self.risk_warnings: list[str] = []  # what setup() printed as [safety] lines
+        self.auth = endpoint_auth.attach(self, auth)  # None without mcp.auth; see the auth section below
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -549,6 +556,8 @@ class MCPServer:
             gate = self._gate(unique_name, risk, arguments, caller, describe)
             if envelope and command_name == "start" and call_args:
                 call_args = (self._with_grant(call_args[0], gate, caller), *call_args[1:])
+            if self.auth is not None:  # an approve, deny or set_mode records the token's subject as who
+                call_args = endpoint_auth.stamp_who(dev_class, command_name, call_args, caller)
             via = {"via": self._via.name} if getattr(self._via, "name", None) else {}  # run_job's own reserve and start
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
@@ -705,15 +714,19 @@ class MCPServer:
             body["caller"] = caller
         return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
-    @staticmethod
-    def _caller() -> str | None:
-        """Who is calling, from the X-Asyncroscopy-Caller header; None outside an HTTP request."""
+    # ------------------------------------------------------------------ auth (asyncroscopy.mcp.endpoint_auth)
+    def _caller(self) -> str | None:
+        """Who is calling: with mcp.auth, the verified token's subject; without, the self-reported
+        X-Asyncroscopy-Caller header. None outside an HTTP request."""
+        if self.auth is not None:
+            return endpoint_auth.token_subject()
         try:
             from fastmcp.server.dependencies import get_http_headers
 
             return get_http_headers().get(CALLER_HEADER) or None
         except Exception:
             return None
+    # ------------------------------------------------------------------ end auth
 
     def _approvals(self) -> DeviceProxy:
         proxy = DeviceProxy(self.approvals_device_address)
@@ -1357,6 +1370,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
     parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated (its Approvals device says so); otherwise such a stack binds 127.0.0.1.")
+    parser.add_argument("--auth-json", default="", help="The MCP config's auth section (bearer-token verification); empty: none.")
     return parser.parse_args(argv)
 
 
@@ -1411,11 +1425,17 @@ def bind_host(requested: str, allow_remote_bind: bool, simulated: bool) -> tuple
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
+    auth = json.loads(args.auth_json) if args.auth_json else None
     if args.transport == "streamable-http":
         simulated = args.http_host.strip() in WILDCARD_HOSTS and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address)
         args.http_host, note = bind_host(args.http_host, args.allow_remote_bind, simulated)
         if note:
             print(note, flush=True)
+        if not auth and not endpoint_auth.is_loopback(args.http_host):  # run_mcp checks this too; a direct start must not skip it
+            refused = endpoint_auth.remote_without_auth(args.http_host, stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address), auth)
+            if refused:
+                print(f"MCP ERROR: {refused}", flush=True)
+                return 1
         bind_error = check_port_free(args.http_host, args.http_port)
         if bind_error:
             # "MCP ERROR:" is parsed by startup GUIs; keep the prefix stable.
@@ -1449,6 +1469,7 @@ def main(argv: list[str] | None = None) -> int:
         trace_path=args.trace or None,
         analysis_url=args.analysis_url or None,
         job_limits=json.loads(args.job_limits_json),
+        auth=auth,
     )
     if args.transport == "streamable-http":
         print(

@@ -45,6 +45,7 @@ project:
         - file: Operation/large_maps.md
         - file: Operation/autofocus.md
         - file: Operation/approval_mode.md
+        - file: Operation/remote_access.md
         - file: Operation/dry_run.md
         - file: Operation/run-servers.md
         - file: Operation/deployment_notes.md

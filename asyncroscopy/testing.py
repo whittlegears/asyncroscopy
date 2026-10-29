@@ -113,11 +113,14 @@ def mcp_server_for(
     endpoint_role: str = "agent",
     risk_overrides: dict[str, str] | None = None,
     trace_path: str | Path = "",
+    auth: dict | None = None,
 ) -> TestMCPServer:
     """The MCP server the agent would talk to, over the devices of a running ``instrument_context``.
 
     Give ``approvals_device_address`` (an Approvals device in the same context) to exercise
     the approval mode; without it every call runs, as on a server with no Approvals device.
+    ``auth`` is the MCP config's auth section (bearer tokens; see asyncroscopy.mcp.endpoint_auth):
+    serve ``server.mcp.http_app()`` and call it with tokens from startup_scripts/dev_tokens.py.
     """
     names = [device["name"] for group in devices_info for device in group["devices"]]
     server = TestMCPServer(
@@ -133,6 +136,7 @@ def mcp_server_for(
         risk_overrides=risk_overrides,
         trace_path=str(trace_path),
         database=_DeviceList(names),
+        auth=auth,
     )
     server.setup(print_summary=False)
     return server

@@ -17,7 +17,7 @@ mcp:
   name: Spectra300_MCP
   transport: streamable-http
   http_host: 127.0.0.1
-  # allow_remote_bind: true   # only with http_host 0.0.0.0, and only with the approval gate on
+  # allow_remote_bind: true   # only with http_host 0.0.0.0, the approval gate on, and mcp.auth set
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
@@ -39,6 +39,12 @@ mcp:
   safety:
     approvals_device_address: asyncroscopy/approvals/default
     risk: {}
+  # Bearer tokens from ATHENA WG1's token service (docs/Operation/remote_access.md). Required before this
+  # hardware endpoint binds beyond 127.0.0.1; run_mcp.py refuses to start it otherwise.
+  # auth:
+  #   jwks_url: https://tokens.athena.example/.well-known/jwks.json
+  #   issuer: https://tokens.athena.example
+  #   audience: asyncroscopy:spectra300
   # run_job refuses a plan whose estimate is over these (the agent must ask the user).
   job_limits:
     max_duration_s: 14400

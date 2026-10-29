@@ -8,7 +8,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
-from .mcp_tools import McpServer
+from .mcp_tools import TOKEN_ENV, McpServer, bearer_header
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
@@ -27,6 +27,10 @@ class AgentConfig:
     # it is set in one place, the MCP config's mcp.analysis_url; ASYNCROSCOPY_ANALYSIS_URL overrides.
     analysis_url: str | None = None
     caller: str = "agent"
+    # A bearer token from WG1's token service (or startup_scripts/dev_tokens.py), sent as Authorization:
+    # Bearer to the instrument and analysis endpoints. With mcp.auth the endpoint takes the caller from the
+    # token's subject and ignores the caller header. None: no token (an endpoint without mcp.auth).
+    token: str | None = field(default=None, repr=False)
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
     # One id per agent run, sent with every call: agents open a new MCP session per call, so the
     # server recognises a retried run_job by caller and run id.
@@ -48,6 +52,7 @@ class AgentConfig:
             mcp_url=env.get("ASYNCROSCOPY_MCP_URL", DEFAULT_MCP_URL),
             analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
             caller=env.get("ASYNCROSCOPY_CALLER", cls.caller),
+            token=env.get(TOKEN_ENV) or None,
         )
         for key, value in overrides.items():
             if value is not None:
@@ -69,7 +74,7 @@ class AgentConfig:
         return dataclasses.replace(self, run_id=uuid.uuid4().hex[:12], ledger=[], **changes)
 
     def _headers(self) -> dict[str, str]:
-        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id}
+        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **bearer_header(self.token)}
 
     def instrument(self) -> McpServer:
         return McpServer(self.mcp_url, self._headers(), ledger=self.ledger)

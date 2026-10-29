@@ -17,6 +17,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
@@ -43,6 +44,8 @@ class MCPConfig:
     job_limits: dict[str, float] = field(default_factory=dict)
     # http_host 0.0.0.0 on a stack that is not simulated (its Approvals device says) binds 127.0.0.1 unless this is true.
     allow_remote_bind: bool = False
+    # Bearer-token verification (WG1's token service); None: no token check (docs/Operation/remote_access.md).
+    auth: AuthSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -113,8 +116,26 @@ def load_config(path: Path) -> Config:
             analysis_url=str(mcp.get('analysis_url') or ''),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
+            # A relative public_key_file is read from the project directory (outputs/dev_tokens/... for dev tokens).
+            auth=AuthSettings.from_config(mcp.get('auth'), base_dir=PROJECT_DIR),
         ),
     )
+
+
+def remote_auth_problem(config: Config, simulated=None) -> str | None:
+    """Why this endpoint must not start: a stack that is not simulated, reachable from other machines,
+    with no mcp.auth. ``simulated``: a callable (tango_host, tango_port, approvals address) -> bool; by
+    default the stack's Approvals device is asked, as the server itself does."""
+    mcp = config.mcp
+    if mcp.auth is not None or mcp.transport != 'streamable-http' or is_loopback(mcp.http_host):
+        return None
+    if simulated is None:
+        from asyncroscopy.mcp.mcp_server import stack_simulated as simulated
+    is_simulated = bool(simulated(config.tango_host, config.tango_port, mcp.approvals_device_address or None))
+    from asyncroscopy.mcp.mcp_server import bind_host
+
+    bound, _note = bind_host(mcp.http_host, mcp.allow_remote_bind, is_simulated)
+    return remote_without_auth(bound, is_simulated, mcp.auth)
 
 
 def build_command(config: Config) -> list[str]:
@@ -161,6 +182,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--job-limits-json', json.dumps(config.mcp.job_limits)])
     if config.mcp.allow_remote_bind:
         command.append('--allow-remote-bind')
+    if config.mcp.auth is not None:
+        command.extend(['--auth-json', config.mcp.auth.to_json()])
     return command
 
 
@@ -177,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.yaml)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(f'Config error: {exc}', file=sys.stderr)
+        return 1
+    refused = remote_auth_problem(config)
+    if refused:
+        print(f'Config error: {config.path}: {refused}', file=sys.stderr)
         return 1
 
     env = {**os.environ, 'TANGO_HOST': f'{config.tango_host}:{config.tango_port}', 'PYTHONUNBUFFERED': '1'}
