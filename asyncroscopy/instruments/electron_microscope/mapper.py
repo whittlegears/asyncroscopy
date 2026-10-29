@@ -348,7 +348,7 @@ class Mapper(JobDevice):
         if ("box_m" in plan) == ("size_m" in plan):
             raise ValueError("give the area as box_m [x_min, x_max, y_min, y_max] or as size_m [width, height], not both or neither")
         if "fov_m" not in plan:
-            raise ValueError("fov_m (the field of view of each tile, metres) is required: a tile is much smaller than the area (2e-7 when the request gives no tile size)")
+            raise ValueError("fov_m (the field of view of each tile, metres) is required: add \"fov_m\": 2e-7 (200 nm tiles) unless the request gives a tile size")
         p = {**PLAN_DEFAULTS, **plan}
         if "size_m" in p:
             # The device does the arithmetic: callers (often small models) get centre +/- half wrong.
