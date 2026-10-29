@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 from asyncroscopy.skills.registry import content_words, learned_dir
 
 NOTES_BUDGET_CHARS = 1500  # about 400 tokens of notes per model call
@@ -178,7 +179,8 @@ class Memory:
             "",
             "## Conventions",
             "",
-            "- Lengths are metres. Each command's description gives its arguments (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees).",
+            "- Lengths are metres. Each command's description gives its arguments"
+            + (" (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees)." if is_stem_endpoint(tool_names) else "."),
             "- Data are keys in Tiled; look at them with view_data (text or png).",
             "- High-risk calls may be held for an operator (APPROVAL REQUIRED); never try to approve them yourself.",
             "",
