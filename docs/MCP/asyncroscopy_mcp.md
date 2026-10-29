@@ -84,6 +84,11 @@ tool for each step of a job:
   (`asyncroscopy/mcp/agent_tools.py`): the curated STEM set on a STEM, else
   every tool but State/Status; never `endpoint_info` or `list_skills`. Other
   harnesses (SciAgentGUI) give the model only these.
+- `action_space()`: for agent programs, not given to models: every tool with
+  its canonical role (`stage.move`, `acquire.image`, ...), arguments with
+  units and ranges, risk and whether it acts or only observes; the readable
+  state; each job device's plan schema and example; and which instruments are
+  STEM, probe or job devices. See `docs/Operation/action_space.md`.
 - Skills: since nearly every run began with `load_skill`, the agent no longer
   asks for skills. Before each model call it adds the skills that match the
   request and what has happened so far (an error, a held call, a data key;

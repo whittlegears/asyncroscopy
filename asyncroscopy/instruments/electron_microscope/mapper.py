@@ -313,6 +313,7 @@ class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images (optionally an EDS spectrum at each) over a stage box, stitched into a zoomable map when it finishes"
     # A 600 nm square around the current stage position; per_tile ["eds_point"] adds a spectrum at each tile.
     PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "per_tile": []}
+    PLAN_SCHEMA = "map_plan"  # resolve_plan validates every plan against it
     # A dry run rehearses the moves and skips every acquisition and its analysis (DRY_RUN_SKIPPED).
     SUPPORTS_DRY_RUN = True
 

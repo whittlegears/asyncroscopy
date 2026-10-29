@@ -266,6 +266,7 @@ class MCPServer:
         self._last_sweep = 0.0
         self._simulated: bool | None = None  # the stack's simulated flag once the Approvals device has said it
         self._native_names: set[str] = set()
+        self._registered: dict[str, Tool] = {}  # tool name -> the MCP tool (description, input schema), for action_space
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
         # Filled by _find_tools; set here so a wrapper built before it sees empty sets, not an AttributeError.
@@ -878,6 +879,16 @@ class MCPServer:
         }
 
     @tool()
+    def action_space(self) -> dict[str, Any]:
+        """For agent programs, not models: what can be controlled and observed here. Every tool with its
+        canonical role (stage.move, acquire.image, ...; the same on every instrument whatever the command is
+        called), arguments with units and ranges, risk and whether it acts or only observes; the readable
+        state; each job device's plan schema and example; and which instruments are STEM, probe or job devices."""
+        from asyncroscopy.mcp.action_space import build
+
+        return build(self)
+
+    @tool()
     def approval_status(self, request_id: str) -> dict[str, Any]:
         """State of an approval request: pending, approved, denied or expired. After 'approved', repeat the held call unchanged."""
         if self.approvals_device_address is None:
@@ -1430,7 +1441,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info]
+        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info, self.action_space]
         if self._envelope_prefixes:
             native_tools.extend([self.run_job, self.wait_for_job])
         if self.approvals_device_address is not None:
@@ -1448,9 +1459,11 @@ class MCPServer:
         for native_tool in native_tools:
             if native_tool == self.load_skill:
                 native_tool = Tool.from_function(self.load_skill, description=self._load_skill_description())
-            self.mcp.add_tool(native_tool)
+            added = self.mcp.add_tool(native_tool)
+            if isinstance(added, Tool):
+                self._registered[added.name] = added
             if self.verbose:
-                print(f"Registered native tool: {native_tool.__name__}")
+                print(f"Registered native tool: {getattr(native_tool, 'name', None) or native_tool.__name__}")
 
         num_device_tools = 0
         for dev_class in wrapped_tools:
@@ -1458,6 +1471,7 @@ class MCPServer:
                 try:
                     tool_obj = Tool.from_function(wrapped_func)
                     self.mcp.add_tool(tool_obj)
+                    self._registered[tool_obj.name] = tool_obj
                     num_device_tools += 1
                 except Exception as e:
                     if self.verbose:

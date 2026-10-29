@@ -28,8 +28,9 @@ DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
 # Only when the instrument endpoint has no mcp.analysis_url (so wait_for_job cannot wait on stitching
 # and scoring jobs) does an agent need the analysis server's own wait and results tools.
 ANALYSIS_WAITS = ["analysis_job_status", "analysis_job_results"]
-# For agent programs: skills come to the agent in its prompt, and endpoint_info is not a model's business.
-NOT_FOR_MODELS = ("list_skills", "endpoint_info")
+# For agent programs: skills come to the agent in its prompt, and endpoint_info is not a model's business;
+# action_space is a long document a controller program reads once, far too big for a small model's context.
+NOT_FOR_MODELS = ("list_skills", "endpoint_info", "action_space")
 
 
 def is_stem_endpoint(names: Iterable[str]) -> bool:

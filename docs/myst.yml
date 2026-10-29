@@ -42,6 +42,7 @@ project:
         - file: Operation/quickstart.md
         - file: Operation/agentic_mapping.md
         - file: Operation/agents.md
+        - file: Operation/action_space.md
         - file: Operation/large_maps.md
         - file: Operation/autofocus.md
         - file: Operation/approval_mode.md
