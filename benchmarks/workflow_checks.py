@@ -635,8 +635,10 @@ def answer_number_near(run: Run, fact: str, tol: float) -> tuple[bool, str]:
     truth = _number((run.facts.get("truth") or {}).get(fact))
     if truth is None:
         return False, f"no truth for {fact}"
-    numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?(?:[eE]-?\d+)?", run.final or "")]
-    close = [n for n in numbers if abs(n - truth) <= tol]
+    numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", run.final or "")]
+    # A length fact in nm may be answered in metres (2.05e-07 m), as the tools give it.
+    readings = numbers + ([n * 1e9 for n in numbers if 0 < abs(n) < 1e-3] if fact.endswith("_nm") else [])
+    close = [n for n in readings if abs(n - truth) <= tol]
     return bool(close), f"truth {truth:.4g}; answer numbers {numbers[:8]}"
 
 

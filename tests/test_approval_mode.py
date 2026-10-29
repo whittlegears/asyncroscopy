@@ -809,6 +809,12 @@ class TestRunJob:
 
 
 class TestRunJobResume:
+    def test_an_abort_reply_says_how_to_resume(self):
+        reply = json.loads(MCPServer._resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
+        assert reply["to_resume"].startswith('run_job with {"device": "Mapper", "resume": "r1"}')
+        done = json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "done"})
+        assert MCPServer._resume_note("Mapper", done) == done
+
     def test_resume_starts_the_aborted_reservation_without_a_new_one(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
         server._devices["Mapper"].finished = True
