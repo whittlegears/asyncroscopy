@@ -230,6 +230,7 @@ class JobDevice(Device):
     step_timeout_s = device_property(dtype=float, default_value=120.0, doc="Timeout of proxies made with proxy(): the longest one instrument command may take.")
     suspenders = device_property(dtype=str, default_value="", doc='JSON list of conditions checked between steps, e.g. [{"attr": "sys/beam/1/current_pa", "min": 10, "resume_after_s": 30}]; a bad one pauses the job until it has been good again for resume_after_s.')
     suspender_poll_s = device_property(dtype=float, default_value=1.0, doc="How often a paused job re-reads its suspender conditions.")
+    require_limits = device_property(dtype=bool, default_value=True, doc="Refuse a plan when an attribute it sets has limits that cannot be read (False: reserve it and list them under limits.unchecked).")
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -450,22 +451,23 @@ class JobDevice(Device):
         body = self._parse(request, "plan")
         if not isinstance(body["plan"], dict):
             raise JobError("bad_request", "'plan' must be an object")
+        self._refuse_if_busy()  # a quick answer for a busy device, before reading the instrument
+        # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
+        # outside the lock keeps abort, release and a running job's progress from waiting behind it.
+        try:
+            resolved = self.resolve_plan(body["plan"])
+        except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
+            raise  # sorted out by _guard: the caller's plan, or the device's bug
+        except Exception as exc:
+            raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
+        lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
+        if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
+            # The device's own bug, not the caller's plan: say so, outside plan_rejected.
+            raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
+        shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
+        limits = self._check_limits({"plan": body["plan"], "resolved_plan": resolved, **shape})
         with self._lock:
-            active = self._active()
-            if active is not None:
-                raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}; release or abort it first")
-            try:
-                resolved = self.resolve_plan(body["plan"])
-            except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
-                raise  # sorted out by _guard: the caller's plan, or the device's bug
-            except Exception as exc:
-                raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
-            lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
-            if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
-                # The device's own bug, not the caller's plan: say so, outside plan_rejected.
-                raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
-            shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
-            limits = self._check_limits({"plan": body["plan"], "resolved_plan": resolved, **shape})
+            self._refuse_if_busy()  # another reserve may have won while this one read the instrument
             reservation_id = uuid.uuid4().hex[:12]
             job = {
                 "reservation_id": reservation_id,
@@ -501,6 +503,12 @@ class JobDevice(Device):
             }
         )
 
+    def _refuse_if_busy(self) -> None:
+        with self._lock:
+            active = self._active()
+            if active is not None:
+                raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}; release or abort it first")
+
     def _check_limits(self, job: dict) -> dict:
         """Check what step_targets says the steps will set; raise plan_rejected listing every violation."""
         try:
@@ -523,6 +531,12 @@ class JobDevice(Device):
             value = float(target["value"])
             if (low is not None and value < low) or (high is not None and value > high):
                 violations.append({"step": target["step"], "device": key[0], "attribute": key[1], "value": value, "min": low, "max": high})
+        if unchecked and getattr(self, "require_limits", True):
+            shown = "; ".join(f"{k} ({r})" for k, r in list(unchecked.items())[:3])
+            raise JobError(
+                "plan_rejected", f"the limits of {len(unchecked)} attribute(s) the plan sets could not be read, so the plan cannot be checked: {shown}. Nothing moved.",
+                unchecked=[{"target": k, "reason": r} for k, r in unchecked.items()][:VIOLATIONS_SHOWN],
+            )
         if violations:
             shown = "; ".join(
                 f"step {v['step']} sets {v['device']}/{v['attribute']} to {v['value']:g}, outside [{v['min']}, {v['max']}]" for v in violations[:3]
@@ -583,6 +597,9 @@ class JobDevice(Device):
             self._save(started)  # if this fails, the reservation stays as it was and can be started again
             job.update(started)
             self._job_index[job_id] = job["reservation_id"]
+            for finished in [j for j, t in self._threads.items() if not t.is_alive()]:  # a long-lived server keeps no dead workers
+                self._threads.pop(finished, None)
+                self._abort.pop(finished, None)
             self._abort[job_id] = threading.Event()
             thread = threading.Thread(target=self._omni_worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
             self._threads[job_id] = thread

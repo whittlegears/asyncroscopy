@@ -66,6 +66,12 @@ def xrd() -> SimInstrument:
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: []}}", "list the acquisitions"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v], on_stop: [halt]}}", "['halt'] are not commands"),
     ("settings: {x: {default: 0}}\ncommands: {abort: {doc: Stop.}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v]}}", "job device's own commands"),
+    ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, units: m, shape: [8, 8], pixel_size_m: 1.0e-9}}", "Poisson noise is for counts"),
+    ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, units: m, noise: gaussian, shape: [8, 8], pixel_size_m: 1.0e-9}}", "needs its sigma, in m"),
+    ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, noise_sigma: 2, shape: [8, 8], pixel_size_m: 1.0e-9}}", "only Gaussian noise has a sigma"),
+    ("settings: {x: {default: 0, settable: false, requires: [\"x > 1\"]}}", "read-only setting is never set"),
+    ("settings: {x: {default: 0, requires: [\"y > 1\"]}}", "names 'y'"),
+    ("settings: {x: {default: 0}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v], before_move: [lift]}}", "['lift'] are not commands"),
 ])
 def test_a_bad_file_is_refused_at_load_naming_the_place(tmp_path, text, message):
     with pytest.raises(SpecError) as raised:
@@ -305,6 +311,39 @@ def test_a_job_plan_is_resolved_estimated_and_bounded():
     ]:
         with pytest.raises(ValueError, match=message):
             resolve_job_plan(spec, plan, sim.values)
+
+
+AFM = EXAMPLE.with_name("afm.yaml")
+
+
+def test_a_setting_requires_guards_every_change_of_it():
+    afm = SimInstrument(load_spec(AFM), sleep=lambda seconds: None)
+    afm.run_command("approach_tip")
+    with pytest.raises(Refused, match="set_stage_x_m refused: it needs not tip_engaged"):
+        afm.set("stage_x_m", 1e-4)
+    assert afm.get("stage_x_m") == 0.0
+    afm.run_command("retract_tip")
+    afm.set("stage_x_m", 1e-4)
+    assert afm.get("stage_x_m") == 1e-4
+
+
+def test_noise_in_the_datas_own_units_keeps_small_and_negative_signals():
+    afm = SimInstrument(load_spec(AFM), sleep=lambda seconds: None)
+    afm.run_command("approach_tip")
+    _kind, _detector, height, attrs = afm.acquire("acquire_topography")
+    assert attrs["units"] == "m" and height.max() > 1e-8 and np.percentile(np.abs(height), 5) < 1e-9  # 20 nm features over 0.2 nm noise
+    _kind, _detector, curve, _attrs = afm.acquire("acquire_force_curve")
+    assert curve.min() < -0.5  # the adhesion dip survives: Gaussian noise does not clip at zero
+
+
+def test_the_afm_example_lifts_the_tip_around_every_move_as_a_tango_job_device(tmp_path):
+    done = subprocess.run([sys.executable, str(HERE / "yaml_sim_afm_check.py"), str(tmp_path)], capture_output=True, text=True, timeout=240, check=False)
+    assert done.returncode == 0, done.stderr[-2000:]
+    outcome = json.loads(done.stdout.strip().splitlines()[-1])
+    assert "set_stage_x_m refused: it needs not tip_engaged" in outcome["set_stage_engaged"] and outcome["stage_after_refusal"] == 0.0
+    assert outcome["stage_after_set"] == 1e-4
+    assert outcome["job_state"] == "done" and outcome["curves"] == 3 and outcome["curve_units"] == "nN" and outcome["curve_min"] < -0.5
+    assert outcome["tip_after_job"] is False and outcome["stage_after_job"] == 2e-4
 
 
 def test_the_raman_example_runs_jobs_as_a_tango_job_device(tmp_path):

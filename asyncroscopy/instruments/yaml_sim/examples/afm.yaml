@@ -1,0 +1,114 @@
+# An atomic force microscope: a probe that must be lifted before the stage moves, height
+# images in metres and force curves in nN. It shows what a probe instrument needs from the
+# format: interlocks on settings (requires), a safe sequence at every job point
+# (before_move / after_move), and noise given in the data's own units (noise_sigma).
+description: Simulated atomic force microscope over a calibration grating (20 nm high features).
+seed: 7
+
+settings:
+  tip_engaged:
+    default: false
+    type: bool
+    settable: false
+    doc: True while the tip is on the surface in feedback; change it with approach_tip and retract_tip.
+  setpoint_v:
+    default: 0.5
+    min: 0.05
+    max: 2.0
+    units: V
+    doc: Deflection setpoint; a higher one presses harder and can break the tip.
+  scan_size_m:
+    default: 1.0e-6
+    min: 1.0e-8
+    max: 9.0e-5
+    units: m
+    doc: Side of the square scan.
+  scan_rate_hz:
+    default: 10
+    min: 0.1
+    max: 20
+    units: Hz
+    doc: Lines per second.
+  stage_x_m:
+    default: 0.0
+    min: -0.002
+    max: 0.002
+    units: m
+    requires: ["not tip_engaged"]   # also guards set_stage_x_m and a job's axes: never drag an engaged tip
+    doc: Coarse stage x.
+  stage_y_m:
+    default: 0.0
+    min: -0.002
+    max: 0.002
+    units: m
+    requires: ["not tip_engaged"]
+    doc: Coarse stage y.
+
+commands:
+  approach_tip:
+    doc: Bring the tip onto the surface at the current setpoint. Images and force curves need it.
+    sets: {tip_engaged: true}
+    duration_s: 2
+    returns: {tip_engaged: tip_engaged}
+  retract_tip:
+    doc: Lift the tip off the surface. Always allowed.
+    sets: {tip_engaged: false}
+    duration_s: 0.5
+    returns: {tip_engaged: tip_engaged}
+  move_xy:
+    doc: Move the coarse stage to (x_m, y_m). Refused while the tip is engaged; retract it first.
+    requires: ["not tip_engaged"]
+    inputs:
+      - {name: x_m, min: -0.002, max: 0.002, units: m, doc: Stage x}
+      - {name: y_m, min: -0.002, max: 0.002, units: m, doc: Stage y}
+    sets: {stage_x_m: x_m, stage_y_m: y_m}
+    duration_s: 1
+    returns: {stage_m: [stage_x_m, stage_y_m]}
+  get_status:
+    doc: Tip state, setpoint, scan size and rate, and stage position as JSON.
+    returns:
+      tip_engaged: tip_engaged
+      setpoint_v: setpoint_v
+      scan_size_m: scan_size_m
+      scan_rate_hz: scan_rate_hz
+      stage_m: [stage_x_m, stage_y_m]
+
+acquisitions:
+  acquire_topography:
+    doc: One 128 x 128 height image (metres) at the current position; needs the tip engaged. Takes 128 / scan_rate_hz seconds.
+    kind: image
+    detector: height
+    units: m
+    requires: ["tip_engaged"]
+    duration_s: 128 / scan_rate_hz
+    shape: [128, 128]
+    pixel_size_m: scan_size_m / 128
+    background: 0
+    spots: {count: 8, radius_px: 10, height: 2.0e-8}
+    noise: gaussian
+    noise_sigma: 2.0e-10
+  acquire_force_curve:
+    doc: One force-distance curve (deflection in nN against Z in nm) at the current point; needs the tip engaged.
+    kind: spectrum
+    detector: deflection
+    units: nN
+    requires: ["tip_engaged"]
+    duration_s: 0.5
+    axis: {start: -50, stop: 200, points: 500, label: Z piezo, units: nm}
+    background: 0
+    noise: gaussian
+    noise_sigma: 0.05
+    peaks:
+      - {position: 0, shape: lorentzian, fwhm: 5, height: "-2 * setpoint_v"}   # the adhesion dip, negative
+
+jobs:
+  force_map:
+    doc: Force curves over a grid of stage positions. At every point the tip is lifted, the stage moves, and the tip approaches again; it is lifted at the end and if the map stops.
+    axes: [stage_x_m, stage_y_m]
+    settings: [setpoint_v]
+    acquire: [acquire_force_curve]
+    before_move: [retract_tip]
+    after_move: [approach_tip]
+    settle_s: 0.2
+    on_stop: [retract_tip]
+    on_finish: [retract_tip]

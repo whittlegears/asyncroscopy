@@ -766,8 +766,8 @@ async def main(args) -> int:
             STACK[field] = os.environ[variable]
     workflows = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack and (not args.only or wf["name"] in args.only)]
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
-        print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have; nothing to run")
-        return 0
+        print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have: fix config: in its stacks: entry")
+        return 2
     available = runners_available()
     if args.graph:
         available["custom"] = args.graph

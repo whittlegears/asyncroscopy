@@ -41,7 +41,7 @@ The base class handles threading, state, abort, resume and tracing. Outside Pyth
 
 Two checks run in the base class, after Bluesky's `check_limits` and suspenders:
 
-- **Limits at reserve.** Implement `step_targets(job)` to say what each step will set: `[{"step": i, "device": address, "attribute": name, "value": number}, ...]`. `reserve` reads each attribute's Tango `min_value`/`max_value` (set them on your device's attributes) and refuses the plan with `plan_rejected` and a `violations` list (step, device, attribute, value, min, max) before anything moves. A target may carry its own `"min"`/`"max"` for limits the device reports some other way. A target whose limits cannot be read is listed under `limits.unchecked` in the reply instead of blocking the plan.
+- **Limits at reserve.** Implement `step_targets(job)` to say what each step will set: `[{"step": i, "device": address, "attribute": name, "value": number}, ...]`. `reserve` reads each attribute's Tango `min_value`/`max_value` (set them on your device's attributes) and refuses the plan with `plan_rejected` and a `violations` list (step, device, attribute, value, min, max) before anything moves. A target may carry its own `"min"`/`"max"` for limits the device reports some other way. A target whose limits cannot be read refuses the plan (`plan_rejected` with an `unchecked` list), because the plan cannot be checked; a device that sets its `require_limits` property to false reserves it anyway and lists those targets under `limits.unchecked` in the reply.
 - **Suspenders between steps.** The `suspenders` device property is a JSON list of conditions on other devices' attributes:
 
   ```yaml

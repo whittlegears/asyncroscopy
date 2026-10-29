@@ -115,6 +115,7 @@ JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
 RUN_JOB_WAIT_S = 15.0  # run_job waits this long after starting, so a short job needs no wait_for_job
 RUN_JOB_BUDGET_S = 25.0  # run_job as a whole (reserve, gate, start, wait) stays under the 30 s client timeout
 HELD_SWEEP_S = 5.0  # how often held run_job reservations are checked against their approval requests
+SWEEP_BUDGET_S = 3.0  # the most one sweep spends asking the Approvals device about held runs
 HELD_MAX_S = 2 * 3600.0  # a held reservation nobody came back for is released after this long
 MAX_HELD_RUNS = 32  # held reservations kept at once; the oldest is released beyond this
 
@@ -143,6 +144,14 @@ def _placeholder_doc(text: str) -> bool:
     t = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", text.strip())
     t = "\n".join(line for line in t.splitlines() if not line.strip().startswith(":type")).strip().lower()
     return t in ("", "uninitialised", "uninitialized", "none", "(not documented)") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
+
+class ApprovalHeld(ToolError):
+    """A high-risk call held for an operator; ``request_id`` is the approval request to wait on."""
+
+    def __init__(self, message: str, request_id: str):
+        super().__init__(message)
+        self.request_id = request_id
+
 
 class MCPServer:
     def __init__(
@@ -518,7 +527,8 @@ class MCPServer:
         key = f"{dev_class}.{command_name}"
         matched = [level for pattern, level in self.risk_overrides.items() if fnmatchcase(unique_name.lower(), pattern.lower()) or fnmatchcase(key.lower(), pattern.lower())]
         default = risk_of(dev_class, command_name, envelope=envelope, stem=stem)
-        risk = matched[0] if matched else default
+        # Overrides that disagree (a broad "*": low and an exact "Mapper_start": high) never lower a tool: high wins.
+        risk = ("high" if "high" in matched else matched[0]) if matched else default
         if risk == "low" and default == "high":
             self._lowered.add(unique_name)
         self.tool_risks[unique_name] = risk
@@ -738,10 +748,11 @@ class MCPServer:
             raise ToolError(f"{tool_name} is high risk and the approval service is unreachable ({describe_error(exc)}); not run.") from exc
         if self.trace is not None:
             self.trace.record(tool_name, False, time.time(), arguments=arguments, error="approval_required", caller=caller, mode=mode, request_id=filed["request_id"])
-        raise ToolError(
+        raise ApprovalHeld(
             f"APPROVAL REQUIRED: {tool_name} is held for an operator (request_id={filed['request_id']}). "
             "Call approval_status with this request_id until it is approved, then repeat exactly the same call. "
-            "If it is denied, do not retry; report to the user."
+            "If it is denied, do not retry; report to the user.",
+            filed["request_id"],
         )
 
     def _tool_names(self) -> set[str]:
@@ -849,23 +860,28 @@ class MCPServer:
             if not force and now - self._last_sweep < HELD_SWEEP_S:
                 return []
             self._last_sweep = now
+        # Ask the Approvals device before taking the run_job lock, within SWEEP_BUDGET_S in all: a slow or
+        # hung approvals service must not hold up every run_job and wait_for_job behind this sweep.
+        with self._held_runs_lock:
+            entries = list(self._held_runs.items())
+        stale = []
+        budget_end = time.monotonic() + SWEEP_BUDGET_S
+        for key, held in entries:
+            state = None
+            if held["request_id"] and self.approvals_device_address and time.monotonic() < budget_end:
+                try:
+                    state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
+                except Exception:
+                    budget_end = 0.0  # the service is not answering; the rest wait for the next sweep
+            if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
+                stale.append((key, held))
         with self._run_job_lock:  # never while a run_job is reserving or starting
             with self._held_runs_lock:
-                entries = list(self._held_runs.items())
-            stale = []
-            for key, held in entries:
-                state = None
-                if held["request_id"] and self.approvals_device_address:
-                    try:
-                        state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
-                    except Exception:
-                        state = None
-                if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
-                    stale.append(key)
-            with self._held_runs_lock:
+                # Only the entries looked at above: one a run_job resumed or replaced meanwhile is not stale.
+                gone = [k for k, held in stale if self._held_runs.get(k) is held]
                 ordered = sorted(self._held_runs, key=lambda k: self._held_runs[k]["created"])
-                stale += [k for k in ordered[: max(0, len(ordered) - MAX_HELD_RUNS)] if k not in stale]
-                removed = [self._held_runs.pop(k) for k in stale if k in self._held_runs]
+                gone += [k for k in ordered[: max(0, len(ordered) - MAX_HELD_RUNS)] if k not in gone]
+                removed = [self._held_runs.pop(k) for k in gone]
             return [self._release(h["device"], h["reservation_id"]) for h in removed]
 
     def _limit_reservation(self, device: str, reply: Any) -> Any:
@@ -981,12 +997,11 @@ class MCPServer:
             # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
             started = json.loads(tools["start"]({"reservation_id": reservation_id}))
         except Exception as exc:
-            request_id = re.search(r"request_id=(\w+)", str(exc)) if "APPROVAL REQUIRED" in str(exc) else None
-            if request_id is not None:
+            if isinstance(exc, ApprovalHeld):
                 with self._held_runs_lock:
-                    self._held_runs[key] = {"reservation_id": reservation_id, "request_id": request_id.group(1), "device": device,
+                    self._held_runs[key] = {"reservation_id": reservation_id, "request_id": exc.request_id, "device": device,
                                             "created": time.monotonic(), "summary": summary}
-                raise ToolError(self._held_message(device, request_id.group(1), reservation_id, summary)) from exc
+                raise ToolError(self._held_message(device, exc.request_id, reservation_id, summary)) from exc
             with self._held_runs_lock:
                 self._held_runs.pop(key, None)
             note = self._release_unless_resumed(device, summary)

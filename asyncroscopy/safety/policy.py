@@ -165,9 +165,9 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
     """"low" or "high" for one command. ``envelope``: the device implements the job envelope;
     ``stem``: it acquires scanned images (see ``is_stem_device``)."""
     key = _key(dev_class, command)
-    for pattern, level in check_overrides(overrides).items():
-        if fnmatchcase(key, pattern.lower()):
-            return level
+    matched = [level for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower())]
+    if matched:  # overrides that disagree (a broad "*": low beside an exact high) never lower a command
+        return "high" if "high" in matched else matched[0]
     name = command.lower()
     if is_safe_stop(command):
         return "low"

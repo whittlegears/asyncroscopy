@@ -5,13 +5,13 @@
 #
 #   stacks:
 #     raman:
-#       config: configs/raman_stack.yaml          # the run_servers config it is started with
-#       mcp: http://127.0.0.1:8000/mcp            # agent endpoint
-#       operator: http://127.0.0.1:8001/mcp       # operator endpoint (approval workflows)
-#       tiled: http://127.0.0.1:9091              # Tiled server (truth read from the data)
+#       config: configs/yaml_sim_raman.yaml       # the run_servers config it is started with
+#       mcp: http://127.0.0.1:8100/mcp            # agent endpoint (default 8000)
+#       operator: http://127.0.0.1:8101/mcp       # operator endpoint, for approval workflows (default 8001)
+#       tiled: http://127.0.0.1:9191              # Tiled server, where truth is read from the data (default 9091)
 #
-# `config` only has to exist in this checkout: a stack whose config is missing is skipped.
-# The addresses default to the ones shown above.
+# `config` must exist in this checkout; running a stack whose config is missing is an error.
+# The addresses default to the twin's ports (8000, 8001, 9091); give the ones yours uses.
 stacks:
   twin:
     config: configs/digital_twin_mapping.yaml
@@ -19,3 +19,8 @@ stacks:
     config: configs/digital_twin_large_map.yaml
   xrd:
     config: configs/yaml_sim_xrd.yaml
+  raman:
+    config: configs/yaml_sim_raman.yaml
+    mcp: http://127.0.0.1:8100/mcp
+    operator: http://127.0.0.1:8101/mcp
+    tiled: http://127.0.0.1:9191

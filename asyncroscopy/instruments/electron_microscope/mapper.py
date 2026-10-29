@@ -310,6 +310,7 @@ class Mapper(JobDevice):
     output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written when there is no DATA device; with one, they go in its save path (which Tiled serves) under maps/.")
     max_tiles = device_property(dtype=int, default_value=4_000_000, doc="Refuse plans with more tiles than this (a 2000 x 2000 grid by default).")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
+    stage_timeout_s = device_property(dtype=float, default_value=600.0, doc="Longest one stage move may report stage_moving before the job fails (beam blanked; resumable).")
     default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa.")
     analysis_url = device_property(dtype=str, default_value="", doc="pyTEMlib analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
     stage_sigma_m = device_property(
@@ -704,7 +705,12 @@ class Mapper(JobDevice):
         return record
 
     def _wait_for_stage(self, job: dict, microscope: tango.DeviceProxy) -> bool:
-        """Wait for a long move to end (a microscope that returns before arriving says so in stage_moving); False if aborted."""
+        """Wait for a long move to end (a microscope that returns before arriving says so in stage_moving); False if aborted.
+
+        A stage still moving after stage_timeout_s (a stuck encoder, a lost arrival signal) fails the
+        step, so the job stops with the beam blanked and can be resumed, rather than waiting forever.
+        """
+        deadline = time.monotonic() + float(self.stage_timeout_s)
         while True:
             try:
                 moving = bool(microscope.read_attribute("stage_moving").value)
@@ -714,6 +720,8 @@ class Mapper(JobDevice):
                 return True
             if self.aborting(job):
                 return False
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"the stage still reports stage_moving after {float(self.stage_timeout_s):g} s (stage_timeout_s); check the stage, then resume the job")
             time.sleep(STAGE_POLL_S)
 
     def _spectrum_map(self, job: dict, microscope: tango.DeviceProxy, points: int) -> dict | None:
