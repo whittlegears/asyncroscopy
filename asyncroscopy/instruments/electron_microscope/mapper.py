@@ -5,11 +5,11 @@ issuing a thousand moves and acquisitions. The plan (asyncroscopy/contracts/
 map_plan.schema.json) fixes a stage box, field of view, overlap, detectors and
 per-tile actions such as one EDS spectrum at each tile centre. The worker
 visits tiles in serpentine order (to limit backlash) and never leaves the box.
-`reserve` refuses a plan whose dose anywhere (overlapping tiles plus a
-revisit image) would exceed the budget; the plan cannot change after that,
-so there is no separate dose check while it runs (EDS point spectra are
-reported, not budgeted). The beam is blanked whenever the job ends: done,
-aborted or failed.
+`reserve` refuses a plan whose dose anywhere (overlapping tiles, EDS
+spectra and a revisit image) would exceed the budget, and, on a stack that
+is not simulated, a budget computed from an assumed beam current; the plan
+cannot change after that, so there is no separate dose check while it runs.
+The beam is blanked whenever the job ends: done, aborted or failed.
 
 The job is a pipeline whose phases are steps of the same job, so abort,
 approval and progress cover all of them:
@@ -194,6 +194,23 @@ def frame_dose(current_pa: float, dwell_s: float, fov_m: float, imsize: int) -> 
     return current_pa * 1e-12 * dwell_s / ELECTRON_CHARGE / (pixel_a**2)
 
 
+def eds_dose(current_pa: float, exposure_s: float, spread_m: float, per_tile: list, map_points: int, fov_m: float, exposures: int) -> float:
+    """Most electrons per square angstrom a tile's EDS spectra put on any ``spread_m`` square.
+
+    A parked beam's dose is counted over a ``spread_m`` square (the probe is far smaller, but damage
+    and contamination spread). An eds_map grid of ``map_points``^2 spectra can put several in one
+    square, and overlapping tiles stack their grids (``exposures``); one eds_point sits at each tile centre.
+    """
+    if "eds_point" in per_tile:
+        spectra = 1
+    elif "eds_map" in per_tile:
+        per_axis = min(int(map_points), int(math.floor(spread_m / (fov_m / int(map_points)) + 1e-9)) + 1)
+        spectra = per_axis * per_axis * int(exposures)
+    else:
+        return 0.0
+    return spectra * current_pa * 1e-12 * exposure_s / ELECTRON_CHARGE / (spread_m / 1e-10) ** 2
+
+
 def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
     """The stitch's fitted drift (x, y in metres) at ``t_s`` after the first tile; extrapolated from the last segment."""
     if not drift or len(drift.get("times_s", [])) < 2:
@@ -321,7 +338,13 @@ class Mapper(JobDevice):
     max_tiles = device_property(dtype=int, default_value=4_000_000, doc="Refuse plans with more tiles than this (a 2000 x 2000 grid by default).")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     stage_timeout_s = device_property(dtype=float, default_value=600.0, doc="Longest one stage move may report stage_moving before the job fails (beam blanked; resumable).")
-    default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa.")
+    default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa; a dose budget on a stack that is not simulated refuses it.")
+    eds_dose_spread_m = device_property(
+        dtype=float,
+        default_value=1e-8,
+        doc="Side of the square (m) an EDS spectrum's parked-beam dose is counted over in the dose budget. The probe is "
+        "far smaller; 10 nm is a typical damage and contamination spread, and the twin's dose cell on a 2 um sample.",
+    )
     analysis_url = device_property(dtype=str, default_value="", doc="pyTEMlib analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
     stage_sigma_m = device_property(
         dtype=float,
@@ -331,15 +354,42 @@ class Mapper(JobDevice):
     )
     max_drift_m_per_s = device_property(dtype=float, default_value=5e-11, doc="Most the sample drifts relative to the stage (m/s); bounds the stitching search and the fitted drift. 0: no drift model.")
 
-    def _beam_current_pa(self) -> tuple[float, str]:
-        """(current, source): "microscope" when reported, "default_beam_current_pa" when assumed."""
+    def _beam_current(self) -> dict:
+        """The current dose estimates use: {"pa", "source" ("measured" or "default"), "reason" (when default), "simulated"}."""
+        parameters: dict = {}
+        reason = "the microscope does not report beam_current_pa"
         try:
             parameters = json.loads(self.proxy(self.microscope_device_address).get_parameters())
-            if "beam_current_pa" in parameters:
-                return float(parameters["beam_current_pa"]), "microscope"
-        except (tango.DevFailed, ValueError, TypeError):
-            pass
-        return float(self.default_beam_current_pa), "default_beam_current_pa"
+        except (tango.DevFailed, ValueError, TypeError) as error:
+            reason = f"get_parameters failed: {str(error).strip()[:200]}"
+        current = {"simulated": self._stack_simulated(parameters)}
+        if parameters.get("beam_current_pa") is not None:
+            source = parameters.get("beam_current_source", "measured")  # a twin reporting no provenance reports its own current
+            current.update(pa=float(parameters["beam_current_pa"]), source="measured" if source == "measured" else "default")
+            if current["source"] == "default":
+                current["reason"] = parameters.get("beam_current_reason") or "the microscope reports an assumed current"
+            return current
+        return {**current, "pa": float(self.default_beam_current_pa), "source": "default", "reason": f"default_beam_current_pa: {reason}"}
+
+    def _stack_simulated(self, parameters: dict) -> bool:
+        """Whether this stack drives a simulation: the stack's ``simulated`` device property where it has one,
+        else ASYNCROSCOPY_SIMULATED, else what the microscope reports (the twin says true; AutoScript nothing, so false)."""
+        flag = getattr(self, "simulated", None)
+        if flag is not None:
+            return bool(flag)
+        env = os.environ.get("ASYNCROSCOPY_SIMULATED", "").strip().lower()
+        if env:
+            return env in ("1", "true", "yes", "on")
+        return bool(parameters.get("simulated", False))
+
+    def _refuse_assumed_current(self, current: dict, budget) -> None:
+        """A dose budget means nothing with an assumed current on a real instrument: refuse it there."""
+        if budget is not None and current["source"] == "default" and not current["simulated"]:
+            raise ValueError(
+                f"this plan has a dose budget, but the beam current is assumed ({current['pa']:g} pA; {current['reason']}). "
+                "On an instrument the budget needs a measured current: insert the screen and call get_screen_current, "
+                "or leave out dose_budget_e_per_a2"
+            )
 
     # ------------------------------------------------------------------
     # Plan
@@ -388,19 +438,24 @@ class Mapper(JobDevice):
             # One tile is an image, not a map: almost always the area's size put in fov_m. A strip one tile high is a map.
             raise ValueError(f"fov_m {fov:.3g} m covers the whole area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
 
-        current, current_source = self._beam_current_pa()
-        tile_dose = frame_dose(current, dwell, fov, imsize) * max_exposures(grid, fov)
+        beam = self._beam_current()
+        current = beam["pa"]
+        budget = p.get("dose_budget_e_per_a2")
+        self._refuse_assumed_current(beam, budget)
+        exposures = max_exposures(grid, fov)
+        tile_dose = frame_dose(current, dwell, fov, imsize) * exposures
         stitch = bool(p["stitch"] and self.analysis_url)
         regions = int(p["find_regions"]) if stitch else 0
         revisits = regions if revisit else 0
         # A revisit adds its frame on top of whatever the tiles gave that spot; regions lie a scoring window apart,
         # so one spot gets at most one revisit.
         revisit_dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"]) if revisit else 0.0
-        max_dose = tile_dose + revisit_dose
-        budget = p.get("dose_budget_e_per_a2")
+        # EDS spectra park the beam inside a tile, on top of its frames: counted where they land, conservatively added.
+        spectra_dose = eds_dose(current, float(p["eds_exposure_s"]), float(self.eds_dose_spread_m), p["per_tile"], int(p["eds_map_points"]), fov, exposures)
+        max_dose = tile_dose + revisit_dose + spectra_dose
         if budget is not None and max_dose > float(budget):
-            parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-            raise ValueError(f"plan would give up to {max_dose:.3g} e/A^2 ({parts}), above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s")
+            parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
+            raise ValueError(f"plan would give up to {max_dose:.3g} e/A^2 ({parts}), above the budget of {budget} e/A^2; widen revisit fov_m, lower dwell_s or eds_exposure_s")
 
         frame_s = imsize * imsize * dwell
         eds_s = 0.0
@@ -416,17 +471,18 @@ class Mapper(JobDevice):
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
             # The dose estimate is only as good as the current; say when it was assumed.
-            "beam_current_source": current_source,
+            "beam_current_source": beam["source"],
             "phases": ["tiles"] + (["stitch"] if stitch else []) + (["score"] if regions else []) + (["revisit"] if revisits else []),
         }
+        if beam["source"] == "default":
+            estimate["beam_current_reason"] = beam["reason"]
         if revisit:
             estimate["revisit_dose_e_per_a2"] = round(revisit_dose, 3)
         if not stitch:
             estimate["stitch"] = "off" if not p["stitch"] else "this Mapper has no analysis_url; stitch the run with assemble_map"
-        if "eds_point" in p["per_tile"]:
-            estimate["note"] = "EDS point spectra concentrate dose at each tile centre; that dose is not in max_dose_e_per_a2."
-        elif "eds_map" in p["per_tile"]:
-            estimate["note"] = "The EDS spectrum image parks the beam at eds_map_points x eds_map_points points per tile; that dose is not in max_dose_e_per_a2."
+        if spectra_dose:
+            estimate["eds_dose_e_per_a2"] = round(spectra_dose, 3)
+            estimate["note"] = f"max_dose_e_per_a2 includes the EDS spectra's parked-beam dose, counted over {float(self.eds_dose_spread_m):.2g} m squares (eds_dose_spread_m)."
         return {
             **p,
             "box_m": [x_min, x_max, y_min, y_max],
@@ -464,9 +520,11 @@ class Mapper(JobDevice):
             box = p.get("box_m") or list(info["stage_box_m"])
             count = int(revisit.get("top_k", 3))
         x_min, x_max, y_min, y_max = (float(v) for v in box)
-        current, current_source = self._beam_current_pa()
-        dose = frame_dose(current, dwell, fov, imsize)
+        beam = self._beam_current()
+        current = beam["pa"]
         budget = p.get("dose_budget_e_per_a2")
+        self._refuse_assumed_current(beam, budget)
+        dose = frame_dose(current, dwell, fov, imsize)
         if budget is not None and dose > float(budget):
             raise ValueError(f"each revisit image would give {dose:.3g} e/A^2, above the budget of {budget} e/A^2; widen revisit fov_m or lower dwell_s")
         for r in regions:
@@ -477,7 +535,7 @@ class Mapper(JobDevice):
             "steps": steps, "tiles": 0, "revisits": count,
             "duration_s": round(count * (float(self.estimate_move_s) + imsize * imsize * dwell), 1),
             "max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3),
-            "beam_current_pa": current, "beam_current_source": current_source,
+            "beam_current_pa": current, "beam_current_source": beam["source"],
             "phases": (["select"] if "map" in revisit else []) + ["revisit"],
         }
         return {

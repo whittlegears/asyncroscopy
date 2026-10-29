@@ -25,6 +25,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
     AtomisticDigitalTwin,
 )
+from asyncroscopy.instruments.electron_microscope.limits import check_defocus, check_fov, check_scan
 from asyncroscopy.instruments.electron_microscope.twin import (
     DoseMap,
     EdsParams,
@@ -350,16 +351,10 @@ class DigitalTwin(AtomisticDigitalTwin):
                 raise ValueError(f"stage {axis} = {value:.6g} is outside the stage limits [{low}, {high}]")
 
     def _set_fov(self, fov) -> None:
-        fov = float(fov)
-        if not (np.isfinite(fov) and float(self.min_fov) <= fov <= float(self.max_fov)):
-            raise ValueError(f"field of view must be between {self.min_fov} and {self.max_fov} m, got {fov}")
-        self._fov = fov
+        self._fov = check_fov(fov, self.min_fov, self.max_fov)
 
     def _set_defocus(self, defocus) -> None:
-        defocus = float(defocus)
-        if not (np.isfinite(defocus) and abs(defocus) <= float(self.max_defocus)):
-            raise ValueError(f"defocus must be within +/-{self.max_defocus} m (did you pass nanometres?), got {defocus}")
-        self._defocus = defocus
+        self._defocus = check_defocus(defocus, self.max_defocus)
 
     def _get_stage(self):
         self._sync_stage_from_proxy()
@@ -383,15 +378,9 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._sync_stage_from_proxy()
         self._acq_index += 1
         index = self._acq_index
-        region = tuple(float(v) for v in scan_region) if scan_region is not None else (0.0, 0.0, 1.0, 1.0)
         # SCAN, AutoScript and the tilt twin all use [left, top, width, height] in fractions of the field.
-        if len(region) != 4 or not all(np.isfinite(region)):
-            raise ValueError(f"scan_region must be four finite numbers [left, top, width, height], got {list(region)}")
+        region = check_scan(imsize, dwell_time, scan_region)
         left, top, width, height = region
-        if not (left >= 0 and top >= 0 and width > 0 and height > 0 and left + width <= 1 + 1e-9 and top + height <= 1 + 1e-9):
-            raise ValueError(f"scan_region [left, top, width, height] must lie inside the field (0..1), got {list(region)}")
-        if not (np.isfinite(imsize) and int(imsize) >= 1 and np.isfinite(dwell_time) and float(dwell_time) > 0):
-            raise ValueError(f"imsize must be >= 1 and dwell_time > 0, got {imsize}, {dwell_time}")
         t0 = self._clock.now()
         xs, ys = pixel_sample_coordinates(
             int(imsize),
@@ -598,7 +587,10 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
         parameters["beam_current_pa"] = self._detector_params.beam_current_pa
+        # The twin delivers exactly its configured current, so it counts as measured (AutoScript: the screen current).
+        parameters["beam_current_source"] = "measured"
         parameters["beam_blanked"] = self._blanked
+        parameters["simulated"] = True  # read by the Mapper's dose check when the stack sets no `simulated` flag
         return json.dumps(parameters)
 
     @command(dtype_out=str)

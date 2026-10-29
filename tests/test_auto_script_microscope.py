@@ -406,6 +406,8 @@ class TestAutoScriptMicroscope:
     def test_defocus_helpers_read_and_write_autoscript_optics(self) -> None:
         optics = types.SimpleNamespace(defocus=0.0)
         microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        microscope._tango_properties = {}
+        microscope.max_defocus = 1e-5
         microscope._microscope = types.SimpleNamespace(optics=optics)
 
         AutoScriptMicroscope._set_defocus(microscope, 8e-9)

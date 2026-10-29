@@ -40,12 +40,18 @@ try:
     from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem, ExposureTimeType
     from autoscript_tem_microscope_client.structures import Region, Rectangle
     from autoscript_tem_microscope_client.structures import StemAcquisitionSettings, EdsAcquisitionSettings, RunOptiStemSettings, CameraAcquisitionSettings
+    from autoscript_tem_microscope_client.structures import RunObjectiveAutoStigmatorSettings
 
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
 
+from asyncroscopy.instruments.electron_microscope.limits import check_defocus, check_fov, check_scan
+
 AUTOSCRIPT_STEM_OUTPUT_DIRECTORY = Path(r"Y:\AutoScript TEM")
+# Screen-current calibration: monochromator focus series (V) and the wait for the current to settle at each step.
+SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
+SCREEN_SETTLE_S = 1.0
 
 
 class AutoScriptMicroscope(ElectronMicroscope):
@@ -88,6 +94,17 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
     )
+    # Software limits, checked before a value is sent; the same defaults as the digital twin's, so both refuse the
+    # same values (tests/test_parity.py). Narrow them to the Spectra 300's working range at first light.
+    min_fov = device_property(dtype=float, default_value=1e-9, doc="Smallest field of view accepted (m).")
+    max_fov = device_property(dtype=float, default_value=1e-4, doc="Largest field of view accepted (m).")
+    max_defocus = device_property(dtype=float, default_value=1e-5, doc="Largest |defocus| accepted (m).")
+    nominal_beam_current_pa = device_property(
+        dtype=float,
+        default_value=50.0,
+        doc="Reported as beam_current_pa, with beam_current_source 'default', until the screen current has been "
+        "measured (insert the screen, then get_screen_current). Dose budgets on hardware refuse it.",
+    )
 
     # ------------------------------------------------------------------
     # Attributes
@@ -107,7 +124,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         unit = "m",
         # min_value= TODO: set these
         # max_value= TODO: set these
-        doc="Current field of view in micrometers",
+        doc="Current field of view in metres",
     )
 
     defocus = attribute(
@@ -117,7 +134,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         unit = "m",
         # min_value= TODO: set these
         # max_value= TODO: set these
-        doc="Current defocus in micrometers",
+        doc="Current defocus in metres (e.g. 2e-8 for 20 nm)",
     )
 
     camera_length = attribute(
@@ -157,6 +174,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._connect_hardware()
         self._connect_detector_proxies()
         self.screen_current_calibration = None
+        self._measured_beam_current = None  # {"pa": ..., "at": time.time()} from the last screen-current reading
         # Without a client, report FAULT instead of looking connected.
         if self._connect_error:
             self.set_state(DevState.FAULT)
@@ -193,6 +211,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             "stage": self.stage_device_address,
             "scan": self.scan_device_address,
             "camera": self.camera_device_address,
+            "corrector": self.corrector_device_address,
             "data": self.data_device_address,
         }
         for name, address in addresses.items():
@@ -249,15 +268,23 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # Commands pertaining to setting children attributes, e.g. stage position, scan parameters, EDS settings, etc. --> iuser accesses it in a jupyter notebook using the device proxy
     # ------------------------------------------------------------------
 
-    @command
+    @command(dtype_out=tango.DevVarFloatArray)
     def register_stage(self):
-        """Read the live stage position from hardware and publish it onto the
-        STAGE child device.
+        """Read the live stage position from the instrument: [x, y, z, alpha, beta], x/y/z in metres, tilts in degrees.
 
-        Call this from the notebook before reading the STAGE device so its
-        x/y/z/alpha attributes reflect the current hardware position.
+        Nothing is written back: the AutoScript STAGE device reads the same hardware, and a write there
+        is a stage move. A STAGE device that reports another position (a cached settings device) is logged.
         """
-        self._get_stage()
+        position = self._get_stage()
+        stage = self._detector_proxies.get("stage")
+        if stage is not None:
+            try:
+                reported = np.asarray(stage.position, dtype=float)
+                if reported.shape != position.shape or not np.allclose(reported[:3], position[:3], atol=1e-9, equal_nan=True):
+                    self.warn_stream(f"STAGE device reports {reported.tolist()}, the instrument {position.tolist()}")
+            except (tango.DevFailed, AttributeError, TypeError, ValueError) as error:
+                self.warn_stream(f"could not compare with the STAGE device: {error}")
+        return position
 
 
     # ------------------------------------------------------------------
@@ -274,6 +301,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
+        scan_region = list(check_scan(imsize, dwell_time, scan_region))  # refused here, before the instrument
         detector_list = [d.upper() for d in detector_list]
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
@@ -400,9 +428,17 @@ class AutoScriptMicroscope(ElectronMicroscope):
             y = float(position[1])
             self._microscope.optics.paused_scan_beam_position = [x, y]
 
+    def _is_stem(self) -> bool:
+        """True in STEM mode. AutoScript's OpticalMode.STEM is "Stem"; compare without case, in one place."""
+        return str(self._microscope.optics.optical_mode).lower() == "stem"
+
+    def _is_diffraction(self) -> bool:
+        """True when the projector is in diffraction (ProjectorMode.DIFFRACTION, "Diffraction")."""
+        return str(self._microscope.optics.projector_mode).lower() == "diffraction"
+
     def _set_fov(self, fov) -> None:
         """set field of view in meters"""
-        self._microscope.optics.scan_field_of_view = fov
+        self._microscope.optics.scan_field_of_view = check_fov(fov, self.min_fov, self.max_fov)
 
     def _get_fov(self) -> float:
         """get field of view in meters"""
@@ -430,19 +466,19 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._microscope.optics.blanker.unblank()
     def _set_defocus(self, defocus) -> None:
         """Set defocus in meters."""
+        defocus = check_defocus(defocus, self.max_defocus)  # refused here, before the instrument
         optics = getattr(self._microscope, "optics", None)
         if optics is None:
             raise AttributeError("Microscope object has no optics")
 
         if hasattr(optics, "defocus"):
-            optics.defocus = float(defocus)
+            optics.defocus = defocus
             return
 
-        mode = str(getattr(optics, "optical_mode", "")).lower()
-        if mode == "stem":
-            optics.focusing.stem.objective.defocus = float(defocus)
+        if self._is_stem():
+            optics.focusing.stem.objective.defocus = defocus
         else:
-            optics.focusing.tem.defocus = float(defocus)
+            optics.focusing.tem.defocus = defocus
 
     def _get_defocus(self) -> float:
         """Get defocus in meters."""
@@ -453,8 +489,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if hasattr(optics, "defocus"):
             return float(optics.defocus)
 
-        mode = str(getattr(optics, "optical_mode", "")).lower()
-        if mode == "stem":
+        if self._is_stem():
             return float(optics.focusing.stem.objective.defocus)
         return float(optics.focusing.tem.defocus)
     
@@ -468,172 +503,203 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
 
     def _calibrate_screen_current(self) -> None:
-        """ calibrate screen current with monchromator focus"""
+        """Calibrate the screen current (pA) against the monochromator focus (V); the screen must be inserted."""
+        if self._microscope.detectors.screen.position != "Inserted":
+            raise ValueError("insert the screen (set_screen 'inserted') before calibrating the screen current")
         original_gun_lens = self._microscope.optics.monochromator.focus
-        gun_lens_series = np.linspace(10, 150, 15)
+        gun_lens_series = np.linspace(*SCREEN_CALIBRATION_FOCUS_V)
 
         # series of measurements
         current_series = []
-        for val in gun_lens_series:
-            self._microscope.optics.monochromator.focus = val
-            time.sleep(1)
-            screen_current = self._microscope.detectors.screen.measure_current()
-            current_series.append(screen_current)
+        try:
+            for val in gun_lens_series:
+                self._microscope.optics.monochromator.focus = float(val)
+                time.sleep(SCREEN_SETTLE_S)
+                current_series.append(self._microscope.detectors.screen.measure_current())
+        finally:
+            self._microscope.optics.monochromator.focus = original_gun_lens
         current_series = np.array(current_series) * 1e12
-        self._microscope.optics.monochromator.focus = original_gun_lens
 
-        # fit a polynomial and save:
+        # fit a polynomial and save, with the span it is valid over:
         coeffs = np.polyfit(gun_lens_series, current_series, 11)
-        poly_func = np.poly1d(coeffs)
-        self.screen_current_calibration = poly_func
+        self.screen_current_calibration = np.poly1d(coeffs)
+        self.screen_current_calibration_range = {
+            "focus_v": (float(gun_lens_series.min()), float(gun_lens_series.max())),
+            "current_pa": (float(current_series.min()), float(current_series.max())),
+        }
+
+    def _screen_current_focus(self, current: float) -> float:
+        """The monochromator focus (V) that gives ``current`` pA, refused unless it lies inside the calibrated span.
+
+        The calibration is a degree-11 polynomial through 15 points: outside the measured focus span its
+        roots are extrapolation, and writing one would be an unbounded write to the gun.
+        """
+        span = self.screen_current_calibration_range
+        low_v, high_v = span["focus_v"]
+        low_pa, high_pa = span["current_pa"]
+        current = float(current)
+        if not (math.isfinite(current) and low_pa <= current <= high_pa):
+            raise ValueError(
+                f"screen current {current:g} pA is outside the calibrated range {low_pa:.4g} to {high_pa:.4g} pA "
+                f"(monochromator focus {low_v:g} to {high_v:g} V); nothing was written"
+            )
+        roots = (self.screen_current_calibration - current).r
+        real = roots[np.abs(roots.imag) <= 1e-6 * np.maximum(1.0, np.abs(roots.real))].real
+        inside = real[(real >= low_v) & (real <= high_v)]
+        if inside.size == 0:
+            raise ValueError(
+                f"no monochromator focus inside the calibrated {low_v:g} to {high_v:g} V gives {current:g} pA "
+                f"(roots {np.round(real, 3).tolist()}); recalibrate the screen current; nothing was written"
+            )
+        return float(np.max(inside))  # the largest in-span root, as before
 
     def _set_screen_current(self, current) -> None:
         """set screen current in pA"""
-        if self.screen_current_calibration is not None:
-            poly_func = self.screen_current_calibration
-            adjusted_poly = poly_func - current
-            x_candidates = adjusted_poly.r
-            x_real = x_candidates[np.isreal(x_candidates)].real
-            x_real = np.max(x_real)  # choose the largest real root as the gun lens value
-            self._microscope.optics.monochromator.focus = float(x_real)
-        else:
+        if self.screen_current_calibration is None:
             self.warn_stream("Screen current calibration not available. running calibration (should take 15 seconds).")
             self._calibrate_screen_current()
-
-            poly_func = self.screen_current_calibration
-            adjusted_poly = poly_func - current
-            x_candidates = adjusted_poly.r
-            x_real = x_candidates[np.isreal(x_candidates)].real
-            x_real = np.max(x_real)  # choose the largest real root as the gun lens value
-            self._microscope.optics.monochromator.focus = float(x_real)
+        self._microscope.optics.monochromator.focus = self._screen_current_focus(current)
 
     def _get_screen_current(self) -> float:
-        """get screen current in pA"""
+        """get screen current in pA; with the screen inserted it is the beam current, kept for get_parameters"""
         screen_current = self._microscope.detectors.screen.measure_current() * 1e12
+        if screen_current > 0 and self._microscope.detectors.screen.position == "Inserted":
+            self._measured_beam_current = {"pa": float(screen_current), "at": time.time()}
         return screen_current
 
-    def _get_stage(self):
-        """Get the current stage position as a list of floats [x, y, z, alpha, beta]."""
-        # set proxy attributes with current stage position
-        stage = self._detector_proxies["stage"]
+    def _beam_current(self) -> dict:
+        """beam_current_pa with its provenance: "measured" from the screen, or "default" with the reason."""
+        measured = getattr(self, "_measured_beam_current", None)
+        if measured:
+            return {
+                "beam_current_pa": measured["pa"],
+                "beam_current_source": "measured",
+                "beam_current_age_s": round(time.time() - measured["at"], 1),
+            }
+        return {
+            "beam_current_pa": float(self.nominal_beam_current_pa),
+            "beam_current_source": "default",
+            "beam_current_reason": "no screen-current measurement since connecting: insert the screen, call get_screen_current, then retract it",
+        }
 
-        # TODO: add beta value check
+    def _get_stage(self) -> np.ndarray:
+        """The instrument's stage position [x, y, z, alpha, beta]: x/y/z in metres, tilts in degrees.
+
+        Read from the AutoScript client itself, so it is right (and works) whatever the STAGE device holds.
+        """
         position = self._microscope.specimen.stage.position
-        position = np.array(position)
+        tilts = [float("nan") if v is None else math.degrees(float(v)) for v in (position.a, position.b)]
+        if math.isnan(tilts[1]):
+            tilts[1] = 0.0  # single-tilt holder: no beta
+        return np.array([float(position.x), float(position.y), float(position.z), *tilts], dtype=np.float64)
 
-        stage.x = float(position[1])
-        stage.y = float(position[0])
-        stage.z = float(position[2])
-        stage.alpha = float(math.degrees(position[3]))
-
-        if position[4] is not None:
-            return position
-        else:
-            return position[:4]
-        
-    
     def _get_parameters(self):
+        optics = self._microscope.optics
         status = {'system': self._microscope.service.system.name,
                 'vacuum': self._microscope.vacuum.state,
                 'column_valves': self._microscope.vacuum.column_valves.state,
-                'is_accelerator_on': self._microscope.optics.is_accelerator_on,
-                'acceleration_voltage': self._microscope.optics.acceleration_voltage.value,
-                'optical_mode': self._microscope.optics.optical_mode,
-                'illumination_mode': self._microscope.optics.illumination_mode,
-                'objective_lens_mode': self._microscope.optics.objective_lens_mode,
-                'projector_mode': self._microscope.optics.projector_mode,
-                #'convergence_angle': self._microscope.optics.convergence_angle,
-                'spot_size': self._microscope.optics.spot_size_index,
-                'beam_stopper': self._microscope.optics.beam_stopper.insertion_state,
-                'beam_blanker': self._microscope.optics.blanker.is_beam_blanked,
-                'is_eftem_on': self._microscope.optics.is_eftem_on,
+                'is_accelerator_on': optics.is_accelerator_on,
+                'acceleration_voltage': optics.acceleration_voltage.value,
+                'optical_mode': optics.optical_mode,
+                'illumination_mode': optics.illumination_mode,
+                'objective_lens_mode': optics.objective_lens_mode,
+                'projector_mode': optics.projector_mode,
+                #'convergence_angle': optics.convergence_angle,
+                'spot_size': optics.spot_size_index,
+                'beam_stopper': optics.beam_stopper.insertion_state,
+                'beam_blanker': optics.blanker.is_beam_blanked,
+                'is_eftem_on': optics.is_eftem_on,
                 }
-        if self._microscope.optics.optical_mode == 'Stem':
-            status['scan_rotation'] = self._microscope.optics.scan_rotation
-            status['scan_field_of_view'] = self._microscope.optics.scan_field_of_view
-        for mechanism_type in self._microscope.optics.aperture_mechanisms.get_available():
-            mechanism = self._microscope.optics.aperture_mechanisms.get_mechanism(mechanism_type)   
+        stem = self._is_stem()
+        if stem:
+            status['scan_rotation'] = optics.scan_rotation
+            status['scan_field_of_view'] = optics.scan_field_of_view
+        for mechanism_type in optics.aperture_mechanisms.get_available():
+            mechanism = optics.aperture_mechanisms.get_mechanism(mechanism_type)
             if not mechanism.is_enabled:
                 status[mechanism_type] = 'Disabled'
             elif mechanism.insertion_state == 'Retracted':
                 status[mechanism_type] = 'Retracted'
             else:
-                status[mechanism_type] = mechanism.aperture.name  
-        for deflector in self._microscope.optics.deflectors.get_available_deflectors():  
-            defl = self._microscope.optics.deflectors.get_deflector_value(deflector) 
-            status[deflector] = [defl.x, defl.y]              
-
+                status[mechanism_type] = mechanism.aperture.name
+        for deflector in optics.deflectors.get_available_deflectors():
+            defl = optics.deflectors.get_deflector_value(deflector)
+            status[deflector] = [defl.x, defl.y]
+        # The keys every microscope backend reports, with the twin's names and units (tests/test_parity.py).
+        status.update({
+            'stem_mode': stem,
+            'defocus_m': self._get_defocus(),
+            'fov_m': float(status['scan_field_of_view']) if stem else None,
+            'stage_position': self._get_stage().tolist(),
+            'beam_blanked': bool(status['beam_blanker']),
+            **self._beam_current(),
+        })
         return json.dumps(status)
-
-    def _get_stage(self):
-        """Get the current stage position as [x, y, z, alpha, beta], with tilts in degrees."""
-        # set proxy attributes with current stage position
-        stage = self._detector_proxies["stage"]
-        return stage.position
 
     def _move_stage(self, position) -> None:
         """Move stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
+        target = [float(v) for v in position]
+        if len(target) != 5:
+            raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
+        if not all(math.isfinite(v) for v in target):
+            raise ValueError(f"Stage position must be finite numbers, got {target}")
         stage_proxy = self._detector_proxies.get("stage")
-        stage_proxy.position = position  # expects [x, y, z, alpha, beta] in meters and degrees
+        if stage_proxy is None:
+            raise ValueError("no STAGE device is configured (stage_device_address): it checks the travel limits, so moves go through it")
+        stage_proxy.position = target  # the STAGE device refuses a move outside its limits
 
     def _auto_focus(self):
-        """Perform autofocus routine C1A1"""
-        if self._microscope.optics.optical_mode == 'Stem':
+        """Run the vendor autofocus: OptiSTEM C1A1 in STEM, the objective auto-stigmator (Flucam) in TEM."""
+        if self._is_stem():
             settings = RunOptiStemSettings(method="C1A1")
             self._microscope.auto_functions.run_opti_stem(settings)
         else:
-            settings = autoscript_tem_microscope_client.structuresRunObjectiveAutoStigmatorSettings(camera_detector="Flucam")
-            self.microscope.auto_functions.run_objective_auto_stigmator(settings)
+            settings = RunObjectiveAutoStigmatorSettings(camera_detector="Flucam")
+            self._microscope.auto_functions.run_objective_auto_stigmator(settings)
 
+    # The shift and tilt setters let AutoScript's errors through: a write the instrument refuses must
+    # reach the caller (and the job that sent it), not be logged while the command reports success.
     def _set_image_shift(self, shift):
-        """Apply image shift in meters."""
+        """Apply image shift in meters (the beam shift in STEM)."""
         x_shift = float(shift[0])
         y_shift = float(shift[1])
-        try:
-            if self._microscope.optics.optical_mode == 'Stem':
-                self._microscope.optics.deflectors.beam_shift = (x_shift, y_shift)
-            else:
-                self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
-        except Exception as e:
-            self.error_stream(f"Failed to set image shift: {e}")
+        if self._is_stem():
+            self._microscope.optics.deflectors.beam_shift = (x_shift, y_shift)
+        else:
+            self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
 
     def _set_diffraction_shift(self, shift):
-        """Apply image shift in meters."""
+        """Apply diffraction shift; only in diffraction (the projector's mode, as the getter reads it)."""
         x_shift = float(shift[0])
         y_shift = float(shift[1])
-        try:
-            if self._microscope.optics.projector_mode == 'Diffraction':
-                self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
-        except Exception as e:
-            self.error_stream(f"Failed to set diffraction shift: {e}")
-    
+        if not self._is_diffraction():
+            raise ValueError("diffraction shift needs the projector in Diffraction mode")
+        self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
+
     def _get_diffraction_shift(self):
-        if self._microscope.optics.optical_mode == 'Diffraction':
+        if self._is_diffraction():
             position = self._microscope.optics.deflectors.image_shift
             return np.array([position.x, position.y])
         else:
             return np.array([0, 0])
-    
-    
+
+
     def _get_image_shift(self):
-        if self._microscope.optics.optical_mode == 'Stem':
+        if self._is_stem():
             position = self._microscope.optics.deflectors.beam_shift
         else:
             position = self._microscope.optics.deflectors.image_shift
         return np.array([position.x, position.y])
-    
+
     def _get_beam_tilt(self):
         tilt = self._microscope.optics.deflectors.beam_tilt
-        return np.array([tilt .x, tilt.y])
+        return np.array([tilt.x, tilt.y])
 
     def _set_beam_tilt(self, tilt):
-        """Apply beam tilt in radians."""
+        """Apply beam tilt (AutoScript: unitless, -1 to +1 for x and y)."""
         x_tilt = float(tilt[0])
         y_tilt = float(tilt[1])
-        try:
-            self._microscope.optics.deflectors.beam_tilt = (x_tilt, y_tilt)
-        except Exception as e:
-            self.error_stream(f"Failed to set beam tilt: {e}")
+        self._microscope.optics.deflectors.beam_tilt = (x_tilt, y_tilt)
 
 
 def _requires_microscope(method):
@@ -664,7 +730,7 @@ for _name in (
     "_set_defocus", "_get_defocus", "_set_screen", "_calibrate_screen_current", "_set_screen_current",
     "_get_screen_current", "_auto_focus", "_set_image_shift", "_get_image_shift",
     "_set_diffraction_shift", "_get_diffraction_shift", "_get_beam_tilt", "_set_beam_tilt",
-    "_get_parameters",
+    "_get_parameters", "_get_stage",
 ):
     setattr(AutoScriptMicroscope, _name, _requires_microscope(getattr(AutoScriptMicroscope, _name)))
 
