@@ -33,6 +33,8 @@ The config is validated here without importing FastMCP, so the launcher can chec
 from __future__ import annotations
 
 import ipaddress
+
+from asyncroscopy.mcp.binding import is_loopback_host
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -157,14 +159,7 @@ def stamp_who(dev_class: str, command_name: str, call_args: tuple, subject: str 
 
 
 def is_loopback(host: str) -> bool:
-    host = host.strip().strip("[]").lower()
-    if host in LOOPBACK_NAMES:
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
+    return is_loopback_host(host)  # one rule for every bind check (asyncroscopy.mcp.binding)
 
 def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | dict | None) -> str | None:
     """Why a server must not start: real hardware (simulated: false, or not known) reachable from other

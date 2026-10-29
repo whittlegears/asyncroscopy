@@ -21,7 +21,8 @@ from fastmcp.exceptions import ToolError
 
 from asyncroscopy.instruments.electron_microscope.mapper import DRY_RUN_SKIPPED, Mapper
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, RecordingProxy
-from asyncroscopy.mcp.mcp_server import MCPServer, bind_host, stack_simulated
+from asyncroscopy.mcp.binding import bind_host
+from asyncroscopy.mcp.mcp_server import MCPServer, stack_simulated
 
 ROOT = Path(__file__).resolve().parents[1]
 # 3 x 3 tiles: a 300 nm box of 120 nm tiles at 15 % overlap.

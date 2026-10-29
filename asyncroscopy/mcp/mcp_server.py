@@ -41,6 +41,7 @@ from asyncroscopy.data.data import REGISTRABLE_SUFFIXES
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
 from asyncroscopy.mcp import endpoint_auth
+from asyncroscopy.mcp.binding import bind_host, is_remote_host
 from fnmatch import fnmatchcase
 
 from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_stem_device, looks_like_stop, operator_only, risk_of
@@ -1391,7 +1392,6 @@ def check_port_free(host: str, port: int) -> str | None:
     return None
 
 
-WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})
 
 
 def stack_simulated(tango_host: str, tango_port: int, approvals_address: str | None) -> bool:
@@ -1410,28 +1410,16 @@ def stack_simulated(tango_host: str, tango_port: int, approvals_address: str | N
         return False
 
 
-def bind_host(requested: str, allow_remote_bind: bool, simulated: bool) -> tuple[str, str | None]:
-    """(host to bind, note): a stack that is not simulated binds every interface only when its MCP config
-    says allow_remote_bind: true; otherwise 127.0.0.1, so only this machine can drive the hardware."""
-    if requested.strip() not in WILDCARD_HOSTS or allow_remote_bind or simulated:
-        return requested, None
-    return "127.0.0.1", (
-        f"[safety] http_host {requested!r} would accept connections from any machine, and this stack is not simulated "
-        "(or its Approvals device could not say). Binding 127.0.0.1 instead; to accept other machines on real hardware, "
-        "set mcp.allow_remote_bind: true in the MCP config."
-    )
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     auth = json.loads(args.auth_json) if args.auth_json else None
     if args.transport == "streamable-http":
-        simulated = args.http_host.strip() in WILDCARD_HOSTS and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address)
+        simulated = is_remote_host(args.http_host) and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address)
         args.http_host, note = bind_host(args.http_host, args.allow_remote_bind, simulated)
         if note:
             print(note, flush=True)
-        if not auth and not endpoint_auth.is_loopback(args.http_host):  # run_mcp checks this too; a direct start must not skip it
+        if not auth and is_remote_host(args.http_host):  # run_mcp checks this too; a direct start must not skip it
             refused = endpoint_auth.remote_without_auth(args.http_host, stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address), auth)
             if refused:
                 print(f"MCP ERROR: {refused}", flush=True)
