@@ -88,6 +88,7 @@ from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.job_device import done_count
 from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
+from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, beam_current
 from asyncroscopy.routines.dose import ELECTRON_CHARGE, eds_dose, frame_dose  # noqa: F401  (their old home; tests and plug-ins import them here)
 from asyncroscopy.routines.drift import drift_at
 from asyncroscopy.routines.grid import EDGE_TOLERANCE_M, compact_grid, grid_axes, inside_box, max_exposures, tile_at, tile_centres  # noqa: F401
@@ -316,6 +317,10 @@ class Mapper(JobDevice):
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     stage_timeout_s = device_property(dtype=float, default_value=600.0, doc="Longest one stage move may report stage_moving before the job fails (beam blanked; resumable).")
     default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for dose estimates when the microscope does not report beam_current_pa; a dose budget on a stack that is not simulated refuses it.")
+    max_beam_current_age_s = device_property(
+        dtype=float, default_value=DEFAULT_MAX_BEAM_CURRENT_AGE_S,
+        doc="Oldest screen-current measurement a dose budget accepts on hardware (asyncroscopy/routines/beam.py says why 15 min).",
+    )
     eds_dose_spread_m = device_property(
         dtype=float,
         default_value=1e-8,
@@ -332,21 +337,21 @@ class Mapper(JobDevice):
     max_drift_m_per_s = device_property(dtype=float, default_value=5e-11, doc="Most the sample drifts relative to the stage (m/s); bounds the stitching search and the fitted drift. 0: no drift model.")
 
     def _beam_current(self) -> dict:
-        """The current dose estimates use: {"pa", "source" ("measured" or "default"), "reason" (when default), "simulated"}."""
+        """The current dose estimates use: {"pa", "source" ("measured" or "default"), "reason" (when default),
+        "refused" (why a dose budget may not rely on it; asyncroscopy.routines.beam), "simulated"}."""
         parameters: dict = {}
-        reason = "the microscope does not report beam_current_pa"
+        failure = None
         try:
             parameters = json.loads(self.proxy(self.microscope_device_address).get_parameters())
         except (tango.DevFailed, ValueError, TypeError) as error:
-            reason = f"get_parameters failed: {str(error).strip()[:200]}"
-        current = {"simulated": self._stack_simulated(parameters)}
-        if parameters.get("beam_current_pa") is not None:
-            source = parameters.get("beam_current_source", "measured")  # a twin reporting no provenance reports its own current
-            current.update(pa=float(parameters["beam_current_pa"]), source="measured" if source == "measured" else "default")
-            if current["source"] == "default":
-                current["reason"] = parameters.get("beam_current_reason") or "the microscope reports an assumed current"
-            return current
-        return {**current, "pa": float(self.default_beam_current_pa), "source": "default", "reason": f"default_beam_current_pa: {reason}"}
+            failure = f"get_parameters failed: {str(error).strip()[:200]}"
+        beam = beam_current(parameters, self._stack_simulated(parameters), float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
+        current = {"simulated": beam.simulated, "pa": beam.pa, "source": beam.source, "refused": beam.refused}
+        if beam.age_s is not None:
+            current["age_s"] = beam.age_s
+        if beam.source == "default":
+            current["reason"] = failure or parameters.get("beam_current_reason") or beam.refused or "the microscope reports an assumed current"
+        return current
 
     def _stack_simulated(self, parameters: dict) -> bool:
         """Whether this stack drives a simulation: the stack's ``simulated`` device property where it has one,
@@ -361,11 +366,12 @@ class Mapper(JobDevice):
 
     def _refuse_assumed_current(self, current: dict, budget) -> None:
         """A dose budget means nothing with an assumed current on a real instrument: refuse it there."""
-        if budget is not None and current["source"] == "default" and not current["simulated"]:
+        if budget is not None and current.get("refused"):
+            what = "is assumed" if current["source"] == "default" else "cannot be used for a dose budget"
             raise ValueError(
-                f"this plan has a dose budget, but the beam current is assumed ({current['pa']:g} pA; {current['reason']}). "
-                "On an instrument the budget needs a measured current: insert the screen and call get_screen_current, "
-                "or leave out dose_budget_e_per_a2"
+                f"this plan has a dose budget, but the beam current {what} ({current['pa']:g} pA; {current['refused']}). "
+                "On an instrument the budget needs a recent measured current: insert the screen, call get_screen_current, "
+                "retract the screen and reserve again, or leave out the dose budget"
             )
 
     @staticmethod
