@@ -42,9 +42,10 @@ class FakeServer:
 
 MAP_CALLS = [
     Call("Mapper_reserve", {"request": "{}"}, json.dumps({"reservation_id": "r1", "estimate": {"max_dose_e_per_a2": 20.0}})),
-    Call("Mapper_start", {"request": "{}"}, json.dumps({"job_id": "j1", "state": "running"})),
+    Call("Mapper_start", {"request": '{"reservation_id": "r1"}'}, json.dumps({"job_id": "j1", "state": "running"})),
     Call("wait_for_job", {"device": "Mapper", "job_id": "j1"}, json.dumps({"job_id": "j1", "state": "done"})),
-    Call("Mapper_results", {"request": "{}"}, json.dumps({"result_keys": {"run": "map_r1.h5"}, "summary": {"spectra": [{"key": "spectrum_eds_1.h5"}]}})),
+    Call("Mapper_results", {"request": '{"job_id": "j1"}'}, json.dumps({"result_keys": {"run": "map_r1.h5"}, "summary": {"spectra": [{"key": "spectrum_eds_1.h5"}]}})),
+    Call("assemble_map", {"run": "map_r1.h5"}, json.dumps({"job_id": "a1"})),
     Call("analysis_job_results", {"job_id": "a1"}, json.dumps({"result_keys": {"map": "map_r1_map"}})),
 ]
 
@@ -142,7 +143,7 @@ def test_the_loop_retries_with_feedback_then_succeeds():
     server = FakeServer(maps={"map_r1_map"})
     state, requests = run_goal_graph(goal, [("I ran the map.", MAP_CALLS[:4]), ("Stitched: map_r1_map", MAP_CALLS[4:])], server)
     assert state["met"] and state["attempt"] == 2
-    assert "no stitched map" in requests[1] and "did not reach the goal" in requests[1]
+    assert "made no stitched map" in requests[1] and "did not reach the goal" in requests[1]
     assert state["report"].startswith("Goal reached.")
 
 
@@ -151,7 +152,7 @@ def test_the_loop_stops_after_its_attempts_and_says_why():
     goal.budget.max_attempts = 2
     state, requests = run_goal_graph(goal, [("nothing", []), ("still nothing", [])], FakeServer())
     assert not state["met"] and len(requests) == 2
-    assert state["report"].startswith("Goal not reached.") and "NOT met: no stitched map" in state["report"]
+    assert state["report"].startswith("Goal not reached.") and "NOT met: this run made no stitched map" in state["report"]
 
 
 def test_a_worker_crash_or_timeout_is_an_attempt_not_a_crash():
@@ -205,7 +206,93 @@ def test_run_job_and_the_unified_wait_are_read_as_facts():
     facts = Facts.from_calls(calls)
     assert facts.jobs == {"j9": {"device": "Mapper", "state": "done"}, "a9": {"device": "analysis", "state": "done"}}
     assert facts.dose_e_per_a2 == 7.5 and facts.map_keys == {"map_r9_map"} and "map_r9.h5" in facts.data_keys
-    assert facts.high_risk == []  # run_job is the requested action, through the approval gate
+    assert facts.high_risk == ["run_job"]  # it starts a job: allowed when the goal asks for one
+    assert asyncio.run(GoalChecker().check(Goal("x", [{"kind": "no_unrequested"}]), facts, "")).met
+
+
+def test_take_an_image_here_is_met_by_the_acquisition_it_needs():
+    calls = [
+        Call("DigitalTwin_set_fov", {"fov": 2e-7}, "ok"),
+        Call("DigitalTwin_unblank_beam", {}, "ok"),
+        Call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, "stem_image_HAADF_20261028T1.h5"),
+    ]
+    goal = Goal.from_text("Take a HAADF image here")
+    verdict = asyncio.run(GoalChecker().check(goal, Facts.from_calls(calls), "Saved as stem_image_HAADF_20261028T1.h5."))
+    assert verdict.met, verdict.results  # acquiring, its settings and unblanking are what the goal asked for
+    moved = calls + [Call("DigitalTwin_move_stage", {"position": [1e-6, 0, 0, 0, 0]}, "ok")]
+    assert "move_stage" in asyncio.run(GoalChecker().check(goal, Facts.from_calls(moved), "")).feedback()  # "here": no move
+
+
+def test_an_old_spectrum_found_by_listing_does_not_meet_take_a_spectrum():
+    calls = [Call("list_data", {"kind": "spectrum"}, json.dumps({"data": [{"key": "spectrum_eds_20251201T000000.h5", "kind": "spectrum"}]}))]
+    goal = Goal.from_text("Take an EDS spectrum here")
+    facts = Facts.from_calls(calls)
+    assert facts.data_keys == set() and "spectrum_eds_20251201T000000.h5" in facts.seen_keys
+    verdict = asyncio.run(GoalChecker().check(goal, facts, "The spectrum is spectrum_eds_20251201T000000.h5."))
+    assert not verdict.met and "spectrum recorded in this run" in verdict.feedback()
+    # A wait on a job this run did not start produces nothing either.
+    other = [Call("wait_for_job", {"job_id": "old1"}, json.dumps({"job_id": "old1", "state": "done", "result_keys": {"map": "map_old1_map"}}))]
+    assert Facts.from_calls(other).map_keys == set() and Facts.from_calls(other).jobs == {}
+
+
+def test_an_invented_key_passed_to_a_tool_is_not_grounded():
+    calls = [Call("view_data", {"key": "spectrum_made_up_1.h5"}, "Error: no key", True)]
+    verdict = asyncio.run(GoalChecker().check(Goal("x", [{"kind": "grounded_answer"}]), Facts.from_calls(calls), "It is spectrum_made_up_1.h5."))
+    assert not verdict.met
+
+
+def test_a_read_only_goal_wants_no_data_and_allows_no_action():
+    goal = Goal.from_text("Show me the latest spectrum")
+    kinds = [c["kind"] for c in goal.criteria]
+    assert kinds == ["no_unrequested", "grounded_answer"] and goal.criteria[0]["allow"] == []
+
+
+def test_risk_comes_from_the_endpoint_table_when_there_is_one():
+    calls = [Call("DigitalTwin_set_fov", {"fov": 2e-7}, "ok"), Call("DigitalTwin_acquire_scanned_image", {}, "img_1.h5")]
+    assert Facts.from_calls(calls).high_risk == ["DigitalTwin_set_fov", "DigitalTwin_acquire_scanned_image"]
+    table = {"DigitalTwin_set_fov": "low", "DigitalTwin_acquire_scanned_image": "high"}  # a STEM: set_fov does not expose the sample
+    assert Facts.from_calls(calls, table).high_risk == ["DigitalTwin_acquire_scanned_image"]
+
+
+def test_the_retry_names_only_this_goals_keys_and_its_running_job():
+    goal = Goal("map here", [{"kind": "map"}])
+    started = [Call("run_job", {"device": "Mapper", "plan": {}}, json.dumps({"reservation_id": "r2", "job_id": "j2", "state": "running"}))]
+    listed = [Call("list_data", {}, json.dumps({"data": [{"key": "map_old7_map"}]}))]
+    state, requests = run_goal_graph(goal, [("still mapping", started + listed), ("done", [])], FakeServer())
+    assert "j2" in requests[1] and "do not start another job" in requests[1]
+    assert "map_old7_map" not in requests[1] and "Use what it already produced" not in requests[1]
+
+
+def test_jobs_left_running_when_a_goal_ends_are_aborted():
+    goal = Goal("map here", [{"kind": "map"}])
+    goal.budget.max_attempts = 1
+    aborted = []
+
+    class Server(FakeServer):
+        async def call(self, name, args):
+            if name.endswith("_abort"):
+                aborted.append((name, json.loads(args["request"])))
+                return reply({"state": "aborted"})
+            return await super().call(name, args)
+
+    started = [Call("run_job", {"device": "Mapper", "plan": {}}, json.dumps({"job_id": "j3", "state": "running"}))]
+    state, _ = run_goal_graph(goal, [("ran out of time", started)], Server())
+    assert aborted == [("Mapper_abort", {"job_id": "j3"})] and "Stopped jobs this goal had left running" in state["report"]
+
+
+def test_a_worker_that_stops_part_way_keeps_its_calls():
+    from asyncroscopy.agents.graphs import run_keeping_partial
+
+    class Graph:
+        async def astream(self, inputs, config=None, stream_mode=None):
+            yield {"messages": inputs["messages"] + [AIMessage("", tool_calls=[{"name": "run_job", "args": {}, "id": "c1"}])]}
+            yield {"messages": inputs["messages"] + [AIMessage("", tool_calls=[{"name": "run_job", "args": {}, "id": "c1"}]),
+                                                     ToolMessage(json.dumps({"job_id": "j4", "state": "running"}), tool_call_id="c1")]}
+            raise RuntimeError("Recursion limit of 9 reached")
+
+    state, failed = asyncio.run(run_keeping_partial(Graph(), {"messages": [HumanMessage("map")]}))
+    assert "Recursion limit" in failed
+    assert Facts.from_calls(trace_from_messages(state["messages"])).jobs == {"j4": {"device": "unknown", "state": "running"}}
 
 
 def test_cli_goal_sets_the_budget_and_exits_by_the_verdict(monkeypatch, capsys):

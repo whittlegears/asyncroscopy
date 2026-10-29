@@ -27,6 +27,7 @@ skill only describes calls; every call still goes through the approval gate.
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -36,17 +37,18 @@ from typing import Any
 
 import yaml
 
-from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, Call, Goal
+from asyncroscopy.agents.goals import DATA_KEY, HEX_ID, MAP_KEY, Call, Goal
 from asyncroscopy.agents.memory import Memory, _slug
-from asyncroscopy.skills.registry import content_words
+from asyncroscopy.skills.registry import content_words, read_front_matter
 
 MAX_LEARNED_CHARS = 4000
 MAX_RUNS_KEPT = 20
-HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")
 UNSAFE = [
-    (re.compile(r"\b(?:bypass|skip|ignore|disable|avoid|circumvent|turn off|get around|work around)\b[^.\n]{0,40}\b(?:approvals?|safety|operators?|polic(?:y|ies)|limits?|gates?|interlocks?|dose budget)\b", re.I), "tells the agent to get around approvals or safety"),
-    (re.compile(r"\bApprovals_(?:approve|deny|set_mode)\b|\bset_mode\b|\bexport_ground_truth\b", re.I), "names an operator-only tool"),
-    (re.compile(r"\b(?:approve|grant)\b[^.\n]{0,20}\b(?:your own|itself|yourself)\b", re.I), "tells the agent to approve its own request"),
+    (re.compile(r"\b(?:bypass|skip|ignore|disable|avoid|circumvent|turn off|switch off|get around|work around|override|defeat|disregard)\b[^.\n]{0,40}\b(?:approvals?|safety|operators?|polic(?:y|ies)|limits?|gates?|interlocks?|dose budgets?|job limits?|warnings?)\b", re.I), "tells the agent to get around approvals or safety"),
+    (re.compile(r"\b(?:without|before|instead of)\s+(?:asking|waiting for|telling)\s+(?:the\s+)?(?:operator|user|approval)", re.I), "tells the agent to act without the operator or user"),
+    (re.compile(r"\bApprovals_\w+\b|\bset_mode\b|\bexport_ground_truth\b|\b(?:Init|Kill|RestartServer)\b", re.I), "names an operator-only tool"),
+    (re.compile(r"\b(?:approve|grant|deny)\b[^.\n]{0,30}\b(?:your own|itself|yourself|the request|its request)\b", re.I), "tells the agent to approve or decide a request"),
+    (re.compile(r"\b(?:ignore|disregard|forget)\b[^.\n]{0,30}\b(?:instructions|rules|system prompt|previous)\b", re.I), "tells the agent to ignore its instructions"),
 ]
 NAME_PROMPT = """Name a procedure for a lab's skill library. Reply with JSON only:
 {"name": "<2-4 words, snake_case>", "description": "<one sentence: when to use it>", "keywords": ["<3-6 short phrases a request would contain>"]}"""
@@ -84,28 +86,52 @@ def _general(value: Any) -> Any:
     return value
 
 
-def lint(text: str, tools: list[str], offered: set[str] | None = None) -> list[str]:
-    """What is wrong with a learned skill's text (empty when it is acceptable)."""
+def _negated(text: str, start: int) -> bool:
+    """The words before ``start`` in the same clause say never/not/do not."""
+    clause = re.split(r"[.;:!?\n]", text[:start])[-1]
+    return bool(re.search(r"\b(?:never|not|no|don't|dont|must not|cannot)\b", clause, re.I))
+
+
+def lint(text: str, tools: list[str], offered: set[str] | None = None, learned: bool = True, max_chars: int = MAX_LEARNED_CHARS) -> list[str]:
+    """What is wrong with a skill's text (empty when it is acceptable).
+
+    ``learned``: an agent wrote it from one run, so a data key or job id in it is that run's, not
+    an example (a hand-written skill may show example keys).
+    """
     problems = []
-    if len(text) > MAX_LEARNED_CHARS:
-        problems.append(f"longer than {MAX_LEARNED_CHARS} characters")
+    if len(text) > max_chars:
+        problems.append(f"longer than {max_chars} characters")
     for pattern, why in UNSAFE:
-        if pattern.search(text):
+        # "Never approve your own request" is the advice we want: a match negated in its own clause is fine.
+        if any(not _negated(text, m.start()) for m in pattern.finditer(text)):
             problems.append(why)
     body = text.split("---", 2)[2] if text.startswith("---") else text
-    if DATA_KEY.search(body) or MAP_KEY.search(body) or HEX_ID.search(body):
+    if learned and (DATA_KEY.search(body) or MAP_KEY.search(body) or HEX_ID.search(body)):
         problems.append("hard-codes a data key or job id")
     if offered is not None:
-        extra = sorted(set(tools) - offered)
+        extra = sorted(t for t in set(tools) if not any(fnmatch.fnmatchcase(o, t) for o in offered))
         if extra:
             problems.append(f"uses tools the endpoint does not offer this agent: {extra}")
     return problems
 
 
-def _front(path: Path) -> tuple[dict, str]:
-    text = path.read_text(encoding="utf-8")
-    _, front, body = text.split("---", 2)
-    return yaml.safe_load(front) or {}, body
+def lint_skill(path: Path, offered: set[str] | None = None) -> list[str]:
+    """What is wrong with any SKILL.md, shipped, a lab's own or learned (empty when it is acceptable)."""
+    from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS
+
+    try:
+        meta, body = read_front_matter(path)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        return [f"cannot be read: {exc}"]
+    problems = [f"front matter is missing '{k}'" for k in ("name", "description") if not meta.get(k)]
+    tools = [str(t) for t in meta.get("tools") or []]
+    text = body + "\n" + str(meta.get("description", "")) + "\n" + " ".join(str(k) for k in meta.get("keywords") or [])
+    learned = "learned" in meta or "status" in meta
+    # A hand-written skill may be as long as fits an agent's prompt; one learned from a run is kept short.
+    problems += lint(text, tools, offered, learned=learned, max_chars=MAX_LEARNED_CHARS if learned else PROMPT_BUDGET_CHARS)
+    if "acts" in meta and not isinstance(meta["acts"], bool):
+        problems.append("'acts' must be true or false")
+    return problems
 
 
 def _write(path: Path, meta: dict, body: str) -> str:
@@ -115,13 +141,16 @@ def _write(path: Path, meta: dict, body: str) -> str:
     return text
 
 
-def learned_skills(memory: Memory) -> dict[str, tuple[Path, dict]]:
+def learned_skills(memory: Memory, problems: list[str] | None = None) -> dict[str, tuple[Path, dict]]:
+    """Learned skills by name; files that cannot be read are reported in ``problems`` (when given), not skipped silently."""
     out = {}
     if memory.skills_dir.is_dir():
         for path in sorted(memory.skills_dir.glob("*/SKILL.md")):
             try:
-                meta, _ = _front(path)
-            except (ValueError, yaml.YAMLError):
+                meta, _ = read_front_matter(path)
+            except (ValueError, yaml.YAMLError) as exc:
+                if problems is not None:
+                    problems.append(f"{path}: cannot be read ({exc})")
                 continue
             out[str(meta.get("name") or path.parent.name)] = (path, meta)
     return out
@@ -164,10 +193,9 @@ async def distill(goal: Goal, calls: list[Call], memory: Memory, offered: set[st
             learned["last"] = today
             meta["learned"] = learned
             if meta.get("status") == "draft" and auto_promote_after() and learned["successes"] >= auto_promote_after():
-                _, body = _front(path)
-                if not lint(body, tools, offered):
+                if not lint_skill(path, offered):  # body, description and keywords, as promote checks them
                     meta["status"] = "promoted"
-            _write(path, meta, _front(path)[1])
+            _write(path, meta, read_front_matter(path)[1])
             return path, f"merged into {name} ({learned['successes']} successes)"
     naming = await _naming(model, goal, sequence)
     name, existing = naming["name"], learned_skills(memory)
@@ -234,10 +262,9 @@ def promote(name: str, memory: Memory, offered: set[str] | None = None) -> str:
     if found is None:
         raise KeyError(f"no learned skill {name!r}; learned: {sorted(learned_skills(memory))}")
     path, meta = found
-    _, body = _front(path)
-    problems = lint(body + str(meta.get("description", "")), list(meta.get("tools") or []), offered)
+    problems = lint_skill(path, offered)
     if problems:
         raise ValueError(f"{name} cannot be promoted: " + "; ".join(problems))
     meta["status"] = "promoted"
-    _write(path, meta, body)
+    _write(path, meta, read_front_matter(path)[1])
     return f"{name} promoted: agents now get it when a request matches"

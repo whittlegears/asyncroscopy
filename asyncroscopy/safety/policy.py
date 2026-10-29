@@ -181,6 +181,26 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
     return "high"
 
 
+# Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
+NATIVE_HIGH = frozenset({"run_job"})
+
+
+def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:
+    """"low" or "high" for an MCP tool name ("<Class>_<command>" or a native tool).
+
+    ``risks`` is the endpoint's own table (the MCP server's ``endpoint_info``), which knows each
+    device's envelope, STEM and override rules; without it, or for a name it lacks, the policy
+    is applied to the name alone: envelope verbs count as an envelope device's, and STEM_LOW
+    settings stay high (unknown is high).
+    """
+    if risks is not None and tool_name in risks:
+        return risks[tool_name]
+    device, _, command = tool_name.partition("_")
+    if not command or not device[:1].isupper():
+        return "high" if tool_name in NATIVE_HIGH else "low"
+    return risk_of(device, command, envelope=command.lower() in ENVELOPE_VERBS)
+
+
 def is_stem_device(command_names) -> bool:
     """True for an electron microscope: it scans images and blanks a beam, so the STEM_LOW
     commands are beam settings. An AFM's acquire_scanned_image alone does not count."""

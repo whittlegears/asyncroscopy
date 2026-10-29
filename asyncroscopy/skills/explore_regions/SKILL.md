@@ -6,6 +6,7 @@ min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [interesting, regions, features, explore, zoom, closer look, higher magnification, revisit, go back]
 requires: [score_map, Mapper*_reserve]
+acts: true
 tools: [score_map, wait_for_job, list_pois, add_poi, map_info, get_region, run_job]
 ---
 

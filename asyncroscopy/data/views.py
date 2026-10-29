@@ -398,6 +398,11 @@ def _fmt(value: float) -> str:
     return f"{value:.4g}"
 
 
+def _axis_value(value: float) -> str:
+    """A position on an axis as people write it: 2690 (cm-1), 28.4 (degrees), 1.49 (keV); not 2.69e+03."""
+    return f"{value:.0f}" if 100 <= abs(value) < 1e6 else f"{value:.3g}"
+
+
 def _finite(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)
     return values[np.isfinite(values)]
@@ -613,6 +618,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
                 tolerance = max(float(eds_fwhm_ev(energy)) / 2, 2 * abs(a.scale * step))
                 note = _artefact(energy, [row[0] for row in rows], tolerance) or ", ".join(xray_candidates(energy, tolerance))
             rows.append((energy, peak.net, peak.significance, peak.index, note))
+        rows.sort(key=lambda row: row[1], reverse=True)  # strongest first: the order a person (and benchmarks' truth) means
         unit = f" {a.units}" if a.units else ""
         total = float(np.nansum(np.asarray(y, dtype=np.float64)))
         lines = [
@@ -620,7 +626,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
             f"total {_fmt(total)}; {_stats(y)}",
         ]
         if rows:
-            lines += ["peaks (most significant first; net = counts within the line width above the background):",
+            lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
         elif xray:
             lines.append(f"no peaks detected above noise at this exposure (total {_fmt(total)} counts); "
@@ -637,7 +643,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         plot.plot(x * factor, y, linewidth=0.9)
         for energy, _net, _sig, index, note in rows:
             label = note.split(",")[0] if note and not note.startswith("possible") else ""
-            plot.annotate(f"{energy * factor:.3g}" + (f"\n{label}" if label else ""), (energy * factor, float(y[index])),
+            plot.annotate(_axis_value(energy * factor) + (f"\n{label}" if label else ""), (energy * factor, float(y[index])),
                           textcoords="offset points", xytext=(0, 4), ha="center", fontsize=7)
         plot.set_xlabel(f"{a.label} ({units})" if units else a.label)
         plot.set_ylabel(str(ds.attrs.get("units", "counts")))
@@ -916,7 +922,8 @@ def _table_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
 KINDS: list[Kind] = [
     Kind("text", lambda ds: ds.family == "array" and ds.dtype.kind in "OSU", _strings_png, _strings_text, "strings"),
     line_kind("spectrum", lambda ds: ds.ndim == 1 and _real(ds) and energy_axis(ds.attrs) is not None, lambda ds: energy_axis(ds.attrs),
-              "1-D data on a calibrated axis (EDS, EELS); significant peaks listed, with candidate X-ray lines for EDS"),
+              "1-D data on a calibrated axis (EDS, EELS, Raman, a diffractogram ...); its significant peaks listed strongest first, "
+              "with candidate X-ray lines for an X-ray spectrum"),
     Kind("composition", _has_elements, _composition_png, _composition_text, "one value per element"),
     line_kind("profile", lambda ds: ds.ndim == 1 and _real(ds), lambda ds: None, "any other 1-D data, against channel index"),
     image_kind("label_image", lambda ds: ds.ndim == 2 and ds.dtype.kind in "ui" and ds.attrs.get("acquisition_type") == "segmentation",

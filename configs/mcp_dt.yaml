@@ -39,8 +39,9 @@ mcp:
     # The devices call each other directly; operators have the GUI and mcp_operator.yaml.
     # DATA.get_config stays: SciAgentGUI reads the Tiled address with it.
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    # The approval gate uses these itself; an agent asks with approval_status.
-    Approvals: [check, request, request_status, list_grants, list_pending]
+    # An agent asks with approval_status. (Approvals.check, request, list_grants, approve, deny and
+    # set_mode are never offered on an agent endpoint: OPERATOR_ONLY in asyncroscopy/safety/policy.py.)
+    Approvals: [request_status, list_pending]
     # The gate shows the operator the plan with it; run_job and the Mapper_* replies carry the plan.
     Mapper: [get_reservation]
   # Optional Tango command allowlist. Leave empty to include all non-blocked
@@ -54,6 +55,12 @@ mcp:
   # agent needs one wait tool for every job. Empty: wait_for_job is for this
   # server's job devices only.
   analysis_url: http://127.0.0.1:8003/mcp
+  # run_job refuses a plan whose estimate is over these (the agent tells the user the
+  # estimate and asks); raise them here for long runs. Empty: no limit beyond the job
+  # device's own. In approve mode the operator also sees every estimate before a start.
+  job_limits:
+    max_duration_s: 14400
+    max_dose_e_per_a2: 5000
   # Agent endpoint: operator-only commands (Approvals.approve/deny/set_mode,
   # export_ground_truth) are never offered here. The GUI uses mcp_operator.yaml.
   endpoint_role: agent

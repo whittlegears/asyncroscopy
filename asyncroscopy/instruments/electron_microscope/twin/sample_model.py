@@ -43,12 +43,20 @@ class SampleParams:
     support_element: str = "C"
     support_thickness_m: float = 0.0
     height_gradient: tuple[float, float] = (0.0, 0.0)
+    # Clusters give a large map structure at every zoom: bright aggregates in the overview,
+    # single particles at full resolution. cluster_fraction of the particles fall within
+    # about cluster_radius_m of one of cluster_count centres; 0 keeps the sample uniform.
+    cluster_count: int = 0
+    cluster_radius_m: float = 0.0
+    cluster_fraction: float = 0.0
 
 
 class SampleModel:
     def __init__(self, params: SampleParams, rng: EventRng):
         if params.size_xy_m <= 0:
             raise ValueError("sample size must be > 0")
+        if params.cluster_count < 0 or not 0.0 <= params.cluster_fraction <= 1.0 or params.cluster_radius_m < 0:
+            raise ValueError("cluster_count must be >= 0, cluster_fraction in [0, 1] and cluster_radius_m >= 0")
         unknown = [e for e in (*params.elements, params.support_element) if e not in ELEMENTS]
         if unknown:
             raise ValueError(f"Unknown sample elements {unknown}; known: {sorted(ELEMENTS)}")
@@ -66,6 +74,9 @@ class SampleModel:
         # stall device start-up (it would otherwise retry 500 x count times).
         misses, max_misses = 0, 2000
         deadline = time.monotonic() + PLACEMENT_TIME_LIMIT_S  # a crowded sample keeps succeeding just often enough to never stop
+        clustered = p.cluster_count > 0 and p.cluster_fraction > 0 and p.cluster_radius_m > 0
+        # Drawn only when clusters are on, so a uniform sample with the same seed is unchanged.
+        centres = rng.uniform(-half, half, size=(p.cluster_count, 2)) if clustered else None
         for attempt in range(500 * target):
             if len(rows) >= target or misses >= max_misses:
                 break
@@ -73,8 +84,15 @@ class SampleModel:
                 break
             radius = float(max(0.3e-9, rng.normal(p.radius_mean_m, p.radius_std_m)))
             margin = min(radius, half * 0.9)
-            cx = float(rng.uniform(-half + margin, half - margin))
-            cy = float(rng.uniform(-half + margin, half - margin))
+            if clustered and rng.random() < p.cluster_fraction:
+                centre = centres[rng.integers(p.cluster_count)]
+                cx, cy = (float(v) for v in rng.normal(centre, p.cluster_radius_m))
+                if not (-half + margin <= cx <= half - margin and -half + margin <= cy <= half - margin):
+                    misses += 1
+                    continue
+            else:
+                cx = float(rng.uniform(-half + margin, half - margin))
+                cy = float(rng.uniform(-half + margin, half - margin))
             gx, gy = int(np.floor(cx / cell)), int(np.floor(cy / cell))
             reach = int(np.ceil((2 * radius + p.min_separation_m) / cell)) + 1
             clash = False

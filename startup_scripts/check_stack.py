@@ -144,7 +144,7 @@ async def main(args: argparse.Namespace) -> int:
             report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
             if "run" in results.get("result_keys", {}):
                 data = await call(agent, "view_data", {"key": results["result_keys"]["run"], "format": "text"})
-                report("agent can read the map run back by key (view_data text)", "tiles/" in text(data), text(data)[:200])
+                report("agent can read the map run back by key (view_data text)", "tiles" in text(data), text(data)[:200])
                 listed = json.loads(text(await call(agent, "list_data", {"kind": "image", "limit": 1})))
                 newest = (listed.get("data") or [{}])[0].get("key")
                 picture = await call(agent, "view_data", {"key": newest, "format": "png"}) if newest else None

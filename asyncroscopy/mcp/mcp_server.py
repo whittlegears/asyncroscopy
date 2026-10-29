@@ -112,6 +112,10 @@ _NEXT_STEP = {
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
 RUN_JOB_WAIT_S = 15.0  # run_job waits this long after starting, so a short job needs no wait_for_job
+RUN_JOB_BUDGET_S = 25.0  # run_job as a whole (reserve, gate, start, wait) stays under the 30 s client timeout
+HELD_SWEEP_S = 5.0  # how often held run_job reservations are checked against their approval requests
+HELD_MAX_S = 2 * 3600.0  # a held reservation nobody came back for is released after this long
+MAX_HELD_RUNS = 32  # held reservations kept at once; the oldest is released beyond this
 
 # From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
@@ -157,6 +161,7 @@ class MCPServer:
         trace_path: str | None = None,
         database=None,
         analysis_url: str | None = None,
+        job_limits: dict[str, float] | None = None,
     ):
         """
         Args:
@@ -181,7 +186,11 @@ class MCPServer:
             database: Stands in for the Tango database (anything with get_device_exported);
                 asyncroscopy.testing uses it to serve the devices of a test context.
             analysis_url: MCP URL of the analysis server (pyTEMlib), so wait_for_job also
-                waits on its stitching and scoring jobs. Off when empty.
+                waits on its stitching and scoring jobs. Off when empty. Agents read it from
+                endpoint_info, so it is configured once, here.
+            job_limits: {"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses a plan
+                whose estimate is over either (the agent must ask the user; an operator raises the
+                limit in the config). Empty: no limit beyond the job device's own.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -204,11 +213,19 @@ class MCPServer:
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
         self.analysis_url = analysis_url or None
-        # (caller, device, plan) -> (reservation, approval request) of a run_job whose start is held, so
-        # repeating the same run_job after approval starts that reservation instead of a new one, and a
-        # denied or expired request frees it (approval_status).
-        self._held_runs: dict[tuple[str, str, str], tuple[str, str]] = {}
+        self.job_limits = {k: float(v) for k, v in (job_limits or {}).items() if v not in (None, "")}
+        unknown_limits = set(self.job_limits) - {"max_duration_s", "max_dose_e_per_a2"}
+        if unknown_limits:
+            raise ValueError(f"unknown job_limits {sorted(unknown_limits)}; allowed: max_duration_s, max_dose_e_per_a2")
+        # (caller, MCP session, device, plan) -> {reservation_id, request_id, device, created, summary} of a
+        # run_job whose start is held, so repeating the same run_job after approval starts that reservation
+        # instead of a new one. A denied or expired request, or one nobody came back for, frees it
+        # (_sweep_held runs on approval_status, run_job and wait_for_job).
+        self._held_runs: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         self._held_runs_lock = threading.Lock()
+        self._run_job_lock = threading.Lock()  # one reserve-and-start at a time: identical retries never file twice
+        self._last_sweep = 0.0
+        self._native_names: set[str] = set()
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
         # Filled by _find_tools; set here so a wrapper built before it sees empty sets, not an AttributeError.
@@ -709,22 +726,48 @@ class MCPServer:
         """Names of the device tools this endpoint offers (skills that need others are not offered)."""
         return {f"{prefix}_{command}".replace("/", "_").replace("-", "_") for prefix, commands in self.tools.items() for command in commands}
 
+    def _all_tool_names(self) -> set[str]:
+        return self._tool_names() | self._native_names
+
+    def _skills(self):
+        """Skills this endpoint offers: a learned skill only when every tool it lists is offered here."""
+        from asyncroscopy.skills.registry import list_skills, usable_by
+
+        names = self._all_tool_names()
+        return [s for s in list_skills(names) if not s.learned or usable_by(s, names)]
+
     @tool()
     def list_skills(self) -> list[dict[str, Any]]:
         """Skills: procedures for kinds of experiment (e.g. mapping). Load one with load_skill before doing that kind of task."""
-        from asyncroscopy.skills import list_skills
-
-        return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in list_skills(self._tool_names())]
+        return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available, **({"problem": s.problem} if s.problem else {})} for s in self._skills()]
 
     @tool()
     def load_skill(self, name: str) -> str:
         """Full instructions of one skill from list_skills. Follow them for that kind of task."""
-        from asyncroscopy.skills import load_skill
+        from asyncroscopy.skills.registry import read_front_matter
 
-        try:
-            return load_skill(name, self._tool_names())
-        except (KeyError, RuntimeError) as exc:
-            raise ToolError(str(exc).strip("'\"")) from exc
+        skill = next((s for s in self._skills() if s.name == name), None)
+        if skill is None:
+            raise ToolError(f"no skill named {name!r}; available: {[s.name for s in self._skills() if s.available]}")
+        if not skill.available:
+            raise ToolError(f"skill {name!r} cannot be used: {skill.problem}")
+        return read_front_matter(skill.path)[1]
+
+    @tool()
+    def endpoint_info(self) -> dict[str, Any]:
+        """For agent programs, not models: each tool's risk as the approval gate sees it, the job devices and the analysis server."""
+        from asyncroscopy.safety.policy import NATIVE_HIGH
+
+        risks = dict(self.tool_risks)
+        risks.update({name: "high" if name in NATIVE_HIGH else "low" for name in self._native_names})
+        return {
+            "role": self.endpoint_role,
+            "analysis_url": self.analysis_url,
+            "job_devices": sorted(self._envelope_prefixes),
+            "stem_devices": sorted(self._stem_prefixes),
+            "job_limits": self.job_limits,
+            "risks": risks,
+        }
 
     @tool()
     def approval_status(self, request_id: str) -> dict[str, Any]:
@@ -734,15 +777,85 @@ class MCPServer:
         status = json.loads(self._approvals().request_status(request_id))
         if status.get("state") in {"denied", "expired"}:
             with self._held_runs_lock:
-                held = next(((k, v) for k, v in self._held_runs.items() if v[1] == request_id), None)
+                held = next(((k, v) for k, v in self._held_runs.items() if v["request_id"] == request_id), None)
                 if held is not None:
                     del self._held_runs[held[0]]
             if held is not None:
                 # A run_job held on this request reserved the device; nothing will start it now.
-                device, reservation_id = held[0][1], held[1][0]
-                self.tools[device]["release"]({"reservation_id": reservation_id})
-                status["note"] = f"{device} reservation {reservation_id} was released"
+                status["note"] = self._release(held[1]["device"], held[1]["reservation_id"])
+        self._sweep_held()
         return status
+
+    # ------------------------------------------------------------------ run_job's reservations
+    @staticmethod
+    def _session() -> str:
+        """The MCP session of the current request ("" outside one): two agents with one caller name stay apart."""
+        try:
+            from fastmcp.server.dependencies import get_http_headers
+
+            return get_http_headers(include_all=True).get("mcp-session-id") or ""
+        except Exception:
+            return ""
+
+    def _release(self, device: str, reservation_id: str) -> str:
+        """Release a reservation run_job made (housekeeping, low risk); returns what happened, for the reply."""
+        proxy = self._devices.get(device)
+        started = time.time()
+        if proxy is None:
+            return f"could not release {device} reservation {reservation_id}: no such job device"
+        try:
+            reply = json.loads(proxy.release(json.dumps({"reservation_id": reservation_id})))
+        except Exception as exc:
+            note = f"could not release {device} reservation {reservation_id} ({describe_error(exc)}); an operator can release it"
+        else:
+            failed = isinstance(reply, dict) and "error" in reply
+            note = (f"{device} reservation {reservation_id} was not released: {reply['error'].get('message', reply['error'])}" if failed
+                    else f"{device} reservation {reservation_id} was released")
+        if self.trace is not None:
+            self.trace.record(f"{device}_release", "was released" in note, started, arguments={"reservation_id": reservation_id}, caller="run_job", result=note)
+        return note
+
+    def _sweep_held(self, force: bool = False) -> list[str]:
+        """Release held run_job reservations whose request was denied or expired, that nobody came back
+        for within HELD_MAX_S, or beyond MAX_HELD_RUNS (oldest first). Returns what was released."""
+        now = time.monotonic()
+        with self._held_runs_lock:
+            if not force and now - self._last_sweep < HELD_SWEEP_S:
+                return []
+            self._last_sweep = now
+            entries = list(self._held_runs.items())
+        stale = []
+        for key, held in entries:
+            state = None
+            if held["request_id"] and self.approvals_device_address:
+                try:
+                    state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
+                except Exception:
+                    state = None
+            if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
+                stale.append(key)
+        with self._held_runs_lock:
+            ordered = sorted(self._held_runs, key=lambda k: self._held_runs[k]["created"])
+            stale += [k for k in ordered[: max(0, len(ordered) - MAX_HELD_RUNS)] if k not in stale]
+            removed = [self._held_runs.pop(k) for k in stale if k in self._held_runs]
+        return [self._release(h["device"], h["reservation_id"]) for h in removed]
+
+    def _over_limits(self, reserved: dict) -> list[dict]:
+        estimate = reserved.get("estimate") if isinstance(reserved.get("estimate"), dict) else {}
+        checks = (("max_duration_s", "duration_s", "s"), ("max_dose_e_per_a2", "max_dose_e_per_a2", "e/A^2"))
+        return [
+            {"what": field, "value": estimate[field], "limit": self.job_limits[limit], "units": units}
+            for limit, field, units in checks
+            if limit in self.job_limits and isinstance(estimate.get(field), (int, float)) and estimate[field] > self.job_limits[limit]
+        ]
+
+    @staticmethod
+    def _held_message(device: str, request_id: str, reservation_id: str, summary: dict) -> str:
+        return (
+            f"APPROVAL REQUIRED: {device}_start is held for an operator (request_id={request_id}). "
+            "Call approval_status with this request_id until it is approved, then repeat this run_job call unchanged. "
+            f"If it is denied, do not retry; report to the user. Reserved as {reservation_id}; estimate: {json.dumps(summary.get('estimate'), default=str)}"
+        )
 
     def _job_device(self, device: str) -> DeviceProxy:
         proxy = self._devices.get(device)
@@ -752,56 +865,96 @@ class MCPServer:
 
     @tool()
     def run_job(self, device: str, plan: dict[str, Any]) -> dict[str, Any]:
-        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done."""
+        """Run a job on a job device in one call: the plan is checked (a refused plan comes back with the reason and an example), the job starts, and the call waits up to 15 s. device: the job device's tool prefix, e.g. "Mapper". Every reply has the estimate. If the reply's state is done it already carries the results (result_keys, summary); otherwise call wait_for_job with its job_id until it is done. A plan over this endpoint's limits is refused: tell the user the estimate and ask."""
+        began = time.monotonic()
         tools = self.tools.get(device) if device in self._envelope_prefixes else None
         if not tools or "reserve" not in tools or "start" not in tools:
             raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}")
-        key = (self._caller() or "", device, json.dumps(plan, sort_keys=True, default=str))
-        with self._held_runs_lock:
-            held = (self._held_runs.get(key) or (None, None))[0]
-        reserved: dict[str, Any] = {"reservation_id": held} if held else {}
-        if not held:
-            reserved = json.loads(tools["reserve"]({"plan": plan}))
-            if "error" in reserved:
-                return reserved
-        try:
-            # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
-            started = json.loads(tools["start"]({"reservation_id": reserved["reservation_id"]}))
-        except ToolError as exc:
-            if "APPROVAL REQUIRED" not in str(exc):
-                raise
-            request_id = re.search(r"request_id=(\w+)", str(exc))
+        self._sweep_held()
+        key = (self._caller() or "", self._session(), device, json.dumps(plan, sort_keys=True, default=str))
+        with self._run_job_lock:
             with self._held_runs_lock:
-                self._held_runs[key] = (reserved["reservation_id"], request_id.group(1) if request_id else "")
-            raise ToolError(str(exc).replace("repeat exactly the same call", "repeat this run_job call unchanged")) from exc
-        with self._held_runs_lock:
-            self._held_runs.pop(key, None)
-        if held and "error" in started:  # the held reservation is gone (released or expired): plan afresh
-            return self.run_job(device, plan)
-        reply = {**{k: v for k, v in reserved.items() if k != "schema_version"}, **started}
-        if "error" not in started and started.get("job_id"):
+                held = self._held_runs.get(key)
+            if held is not None and held["request_id"] and self.approvals_device_address is not None:
+                try:
+                    state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
+                except Exception:
+                    state = None
+                if state == "pending":  # asking again before the operator decided must not file a second request
+                    raise ToolError(self._held_message(device, held["request_id"], held["reservation_id"], held["summary"]))
+                if state in ("denied", "expired"):
+                    with self._held_runs_lock:
+                        self._held_runs.pop(key, None)
+                    note = self._release(device, held["reservation_id"])
+                    raise ToolError(f"the approval request {held['request_id']} for this run was {state}; {note}. Do not retry; tell the user.")
+            if held is None:
+                reserved = json.loads(tools["reserve"]({"plan": plan}))
+                if "error" in reserved:
+                    return reserved
+                summary = {k: reserved[k] for k in ("reservation_id", "plan_id", "resolved_plan", "estimate", "limits") if k in reserved}
+                violations = self._over_limits(reserved)
+                if violations:
+                    note = self._release(device, reserved["reservation_id"])
+                    return {**summary, "error": {"code": "plan_rejected", "violations": violations, "message": (
+                        "the estimate is over this endpoint's job limits (mcp.job_limits): "
+                        + "; ".join(f"{v['what']} {v['value']:.4g} {v['units']} > {v['limit']:.4g}" for v in violations)
+                        + ". Tell the user the estimate and ask before trying a smaller plan; only an operator can raise the limit.")}, "note": note}
+            else:
+                summary = held["summary"]
+            reservation_id = summary["reservation_id"]
+            try:
+                # The start goes through the approval gate like <device>_start; the operator sees the reserved plan.
+                started = json.loads(tools["start"]({"reservation_id": reservation_id}))
+            except Exception as exc:
+                request_id = re.search(r"request_id=(\w+)", str(exc)) if "APPROVAL REQUIRED" in str(exc) else None
+                if request_id is not None:
+                    with self._held_runs_lock:
+                        self._held_runs[key] = {"reservation_id": reservation_id, "request_id": request_id.group(1), "device": device,
+                                                "created": time.monotonic(), "summary": summary}
+                    raise ToolError(self._held_message(device, request_id.group(1), reservation_id, summary)) from exc
+                with self._held_runs_lock:
+                    self._held_runs.pop(key, None)
+                note = self._release(device, reservation_id)
+                raise ToolError(f"{device} did not start ({describe_error(exc)}); {note}. Plan: {json.dumps(summary, default=str)[:1500]}") from exc
+            with self._held_runs_lock:
+                self._held_runs.pop(key, None)
+            if "error" in started:
+                return {**summary, **started, "note": self._release(device, reservation_id)}
+        reply = {**summary, **{k: v for k, v in started.items() if k != "schema_version"}}
+        wait_s = max(0.0, min(RUN_JOB_WAIT_S, RUN_JOB_BUDGET_S - (time.monotonic() - began)))
+        if started.get("job_id"):
             proxy = self._job_device(device)
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
-            reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + RUN_JOB_WAIT_S))
+            reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
         return reply
 
     @tool()
     def wait_for_job(self, job_id: str, device: str | None = None, max_wait_s: float = JOB_WAIT_MAX_S) -> dict[str, Any]:
         """Wait for any background job (a map from run_job, or assemble_map / score_map on the analysis server) to finish, at most max_wait_s (25 s) per call, and return its state. When it is done the reply also has its results (result_keys, summary). device (e.g. "Mapper") is optional. Call again while the state is still active."""
         budget = min(max(float(max_wait_s), 0.0), JOB_WAIT_MAX_S)
+        self._sweep_held()
         if device and device not in self._envelope_prefixes:
             raise ToolError(f"no job device {device!r}; job devices here: {sorted(self._envelope_prefixes)}"
                             + ("; leave device out for analysis jobs" if self.analysis_url else ""))
+        unreachable = []
         for candidate in [device] if device else sorted(self._envelope_prefixes):
             proxy = self._job_device(candidate)
-            status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
+            try:
+                status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
+            except tango.DevFailed as exc:
+                if device:  # the one device asked for is down: say so
+                    raise ToolError(f"{candidate} did not answer ({describe_error(exc)}); try wait_for_job again shortly") from exc
+                unreachable.append(candidate)  # one dead job device must not stop waiting on the others' jobs
+                continue
             if status.get("error", {}).get("code") != "unknown_job":
                 return self._wait_on_device(proxy, job_id, status, time.monotonic() + budget)
         if self.analysis_url:
             return self._wait_on_analysis(job_id, budget)
         raise ToolError(
-            f"no job {job_id!r} on {device or 'any job device here'}. Jobs started by assemble_map or score_map run on "
-            "the analysis server: wait for them with analysis_job_status and wait_s=25."
+            f"no job {job_id!r} on {device or 'any job device here'}"
+            + (f" (not answering: {unreachable})" if unreachable else "")
+            + ". Jobs started by assemble_map or score_map run on the analysis server; this endpoint can wait on them "
+            "only when its MCP config sets mcp.analysis_url."
         )
 
     def _wait_on_device(self, proxy: DeviceProxy, job_id: str, status: dict, deadline: float) -> dict[str, Any]:
@@ -825,13 +978,31 @@ class MCPServer:
         """Wait on a stitching or scoring job of the analysis server; when it is done, add its results."""
         from fastmcp import Client
 
+        def text(reply) -> str:
+            return "".join(getattr(b, "text", "") for b in getattr(reply, "content", []) or [])
+
         async def call() -> dict[str, Any]:
             async with Client(self.analysis_url, timeout=budget + 15) as client:
                 reply = await client.call_tool("analysis_job_status", {"job_id": job_id, "wait_s": budget}, raise_on_error=False)
+                if reply.is_error and "wait_s" in text(reply):  # an analysis server without server-side waits: poll it
+                    deadline = time.monotonic() + budget
+                    while True:
+                        reply = await client.call_tool("analysis_job_status", {"job_id": job_id}, raise_on_error=False)
+                        state = (reply.structured_content or {}).get("state")
+                        if reply.is_error or state not in ("queued", "running") or time.monotonic() >= deadline:
+                            break
+                        await asyncio.sleep(1.0)
+                if reply.is_error:
+                    raise RuntimeError(text(reply)[:500] or "an error with no message")
                 status = dict(reply.structured_content or {})
+                if not status:
+                    raise RuntimeError(f"an empty reply: {text(reply)[:300]!r}")
                 if status.get("state") == "done":
-                    results = (await client.call_tool("analysis_job_results", {"job_id": job_id}, raise_on_error=False)).structured_content or {}
-                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results})
+                    results = await client.call_tool("analysis_job_results", {"job_id": job_id}, raise_on_error=False)
+                    if results.is_error:
+                        status["note"] = f"done, but its results could not be read: {text(results)[:300]}"
+                    else:
+                        status.update({k: v for k, v in (results.structured_content or {}).items() if k in ("result_keys", "summary")})
                 return status
 
         try:
@@ -965,13 +1136,13 @@ class MCPServer:
         for pattern in self.risk_overrides:
             p = pattern.lower()
             hidden = "." in pattern and operator_only(*pattern.split(".", 1))  # not on this endpoint, but real
-            if not hidden and not any(fnmatchcase(tool.lower(), p) or fnmatchcase(key.lower(), p) for tool, key in self._risk_keys.items()):
+            if not hidden and not any(fnmatchcase(name.lower(), p) or fnmatchcase(key.lower(), p) for name, key in self._risk_keys.items()):
                 warnings.append(f"risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {example}")
-        for tool, risk in self.tool_risks.items():
-            if self.endpoint_role == "agent" and risk == "high" and looks_like_stop(self._risk_keys[tool].split(".", 1)[1]):
-                warnings.append(f"{tool} looks like a stop but is high: approve mode holds it. If it only stops, switches off a source or lifts a probe away from the sample (not if it opens, moves or frees anything), add {{\"{tool}\": \"low\"}} to mcp.safety.risk")
-        for tool in sorted(self._lowered if self.endpoint_role == "agent" else ()):
-            warnings.append(f"{tool} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")
+        for name, risk in self.tool_risks.items():
+            if self.endpoint_role == "agent" and risk == "high" and looks_like_stop(self._risk_keys[name].split(".", 1)[1]):
+                warnings.append(f"{name} looks like a stop but is high: approve mode holds it. If it only stops, switches off a source or lifts a probe away from the sample (not if it opens, moves or frees anything), add {{\"{name}\": \"low\"}} to mcp.safety.risk")
+        for name in sorted(self._lowered if self.endpoint_role == "agent" else ()):
+            warnings.append(f"{name} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")
         self.risk_warnings = warnings
         for line in warnings:
             print(f"[safety] {line}")
@@ -1005,11 +1176,12 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill]
+        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info]
         if self._envelope_prefixes:
             native_tools.extend([self.run_job, self.wait_for_job])
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
+        self._native_names = {getattr(t, "__name__", getattr(t, "name", "")) for t in native_tools}
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -1084,6 +1256,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
     parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
+    parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
     return parser.parse_args(argv)
 
 
@@ -1140,6 +1313,7 @@ def main(argv: list[str] | None = None) -> int:
         risk_overrides=json.loads(args.risk_json),
         trace_path=args.trace or None,
         analysis_url=args.analysis_url or None,
+        job_limits=json.loads(args.job_limits_json),
     )
     if args.transport == "streamable-http":
         print(

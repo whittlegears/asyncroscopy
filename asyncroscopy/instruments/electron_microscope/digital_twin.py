@@ -70,6 +70,9 @@ class DigitalTwin(AtomisticDigitalTwin):
     particle_aspect_ratio = _prop(float, 0.4, "Particle thickness / radius.")
     particle_elements = _prop(str, "Au,Pt,Fe", "Comma-separated particle elements.")
     support_thickness = _prop(float, 0.0, "Amorphous carbon support film thickness (m).")
+    sample_cluster_count = _prop(int, 0, "Number of particle clusters (0: particles spread uniformly).")
+    sample_cluster_radius = _prop(float, 0.0, "Typical cluster radius (m).")
+    sample_cluster_fraction = _prop(float, 0.0, "Fraction of particles placed in clusters (0-1).")
     height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
     height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
     # Limits a real column enforces; the twin refuses rather than rendering nonsense (or running out of memory).
@@ -132,6 +135,9 @@ class DigitalTwin(AtomisticDigitalTwin):
             ("eds_channels", int(self.eds_channels) >= 16, "must be >= 16"),
             ("eds_energy_max", float(self.eds_energy_max) > 0, "must be > 0"),
             ("contamination_dose", float(self.contamination_dose) > 0, "must be > 0"),
+            ("sample_cluster_count", int(self.sample_cluster_count) >= 0, "must be >= 0"),
+            ("sample_cluster_radius", float(self.sample_cluster_radius) >= 0, "must be >= 0"),
+            ("sample_cluster_fraction", 0.0 <= float(self.sample_cluster_fraction) <= 1.0, "must be in [0, 1]"),
         ]
         bad = [f"{name} {why} (got {getattr(self, name)!r})" for name, ok, why in rules if not ok]
         if bad:
@@ -154,6 +160,9 @@ class DigitalTwin(AtomisticDigitalTwin):
                 elements=elements,
                 support_thickness_m=float(self.support_thickness),
                 height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
+                cluster_count=int(self.sample_cluster_count),
+                cluster_radius_m=float(self.sample_cluster_radius),
+                cluster_fraction=float(self.sample_cluster_fraction),
             ),
             self._rng,
         )

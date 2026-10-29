@@ -40,6 +40,7 @@ class MCPConfig:
     trace: str = ''
     data_views: list[str] = field(default_factory=list)
     analysis_url: str = ''
+    job_limits: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ def load_config(path: Path) -> Config:
             trace=str(mcp.get('trace') or ''),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
             analysis_url=str(mcp.get('analysis_url') or ''),
+            job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
         ),
     )
 
@@ -138,6 +140,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--data-views-json', json.dumps(config.mcp.data_views)])
     if config.mcp.analysis_url:
         command.extend(['--analysis-url', config.mcp.analysis_url])
+    if config.mcp.job_limits:
+        command.extend(['--job-limits-json', json.dumps(config.mcp.job_limits)])
     return command
 
 

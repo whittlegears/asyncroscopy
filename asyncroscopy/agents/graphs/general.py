@@ -40,6 +40,9 @@ STEM_TOOLS = [
     "*_set_fov", "*_get_fov", "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam", "Mapper*_abort",
 ]
 DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
+# Only when the instrument endpoint has no mcp.analysis_url (so wait_for_job cannot wait on stitching
+# and scoring jobs) does an agent need the analysis server's own wait and results tools.
+ANALYSIS_WAITS = ["analysis_job_status", "analysis_job_results"]
 # An endpoint is a STEM when one device both scans images and blanks a beam (an AFM scans too),
 # or it has a Mapper: move_stage, set_fov and the like are common to many instruments.
 def is_stem_endpoint(names: set[str]) -> bool:
@@ -80,7 +83,8 @@ async def make_graph(config: dict | None = None):
     chosen = configurable.get("tools") or env_tools
     # Whether this is a STEM, and which skills apply, depend on the whole endpoint, not the curated subset.
     offered = {t.name for t in await agent_config.tools(allow=["*"])}
-    tools = await agent_config.tools(allow=chosen or DEFAULT_TOOLS)
+    defaults = DEFAULT_TOOLS if (await agent_config.info()).get("analysis_url") else DEFAULT_TOOLS + ANALYSIS_WAITS
+    tools = await agent_config.tools(allow=chosen or defaults)
     stem = is_stem_endpoint(offered)
     if not chosen and not stem:
         # The analysis server's tools stitch and score STEM maps; another instrument gets its own tools only.

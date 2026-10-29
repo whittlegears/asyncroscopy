@@ -12,6 +12,12 @@ keys exist; the model's own claims never count. The time budget bounds each
 attempt; the tool-call and dose budgets are checked after each attempt (the
 Mapper's own ``dose_budget_e_per_a2`` is what stops a single map mid-run).
 
+An attempt that hits its time budget or the recursion limit keeps the calls it
+made, so a job it started is known: the retry is told to wait for it rather
+than start another, and when the goal ends any job it started that is still
+running is aborted (the report says so). The retry is told only the keys this
+goal's own attempts made, never data found by listing.
+
 At the end the run is remembered (``asyncroscopy.agents.memory``): a page in
 experiments/, and either a learned skill drafted from the calls that worked
 (goal met; ``asyncroscopy.agents.learning``) or a lesson in LESSONS.md (not
@@ -30,8 +36,10 @@ from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, Goal, GoalChecker, trace_from_messages
+from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.agents.learning import distill, lesson
 from asyncroscopy.agents.memory import Memory
+from asyncroscopy.agents.skill_middleware import recursion_limit
 
 
 class GoalState(TypedDict, total=False):
@@ -67,28 +75,41 @@ class GoalGraph:
         self.offered = offered
         self.namer = namer
 
-    def request(self, feedback: str) -> str:
+    def request(self, feedback: str, facts: Facts | None = None) -> str:
         text = f"{self.goal.statement}\n\nThe goal is reached when: {self.goal.describe()}."
         b = self.goal.budget
         if b.max_dose_e_per_a2 is not None:
             text += f" Keep the total electron dose under {b.max_dose_e_per_a2} e/A^2 (put dose_budget_e_per_a2 in map plans)."
         if feedback:
-            text += f"\n\nAn earlier attempt did not reach the goal:\n{feedback}\nUse what it already produced where you can; do not repeat work that succeeded."
+            text += f"\n\nAn earlier attempt did not reach the goal:\n{feedback}"
+            produced = facts.produced() if facts else []
+            if produced:  # only what this goal's own attempts made, never older data
+                text += f"\nAlready made by this goal: {', '.join(produced[:10])}. Use these; do not repeat work that succeeded."
+            running = facts.active_jobs() if facts else {}
+            if running:
+                text += "\nStill running from the earlier attempt: " + ", ".join(f"job {j} on {v['device']}" for j, v in running.items()) + \
+                        ". Wait for it with wait_for_job; do not start another job."
         return text
 
-    async def _default_worker(self, request: str, remaining_s: float) -> tuple[str, list[Call]]:
+    async def _default_worker(self, request: str, remaining_s: float) -> tuple[str, list[Call], list, str]:
+        """(answer, calls, skills applied, what went wrong or ""): a failed or timed-out run keeps the calls it made."""
         if self.worker == "team":
             from asyncroscopy.agents.graphs.team import MAX_STEPS, TeamGraph
 
             team = TeamGraph(self.config, self.memory)
-            state = await asyncio.wait_for(team.build().ainvoke({"request": request}, {"recursion_limit": 4 * MAX_STEPS + 6}), timeout=remaining_s)
-            return state["answer"], [Call(**c) for c in state.get("trace", [])], state.get("skills_applied", [])
+            state, failed = await run_keeping_partial(team.build(), {"request": request}, {"recursion_limit": 4 * MAX_STEPS + 6}, timeout=remaining_s)
+            return state.get("answer", ""), [Call.from_dict(c) for c in state.get("trace", [])], state.get("skills_applied", []), failed
         from asyncroscopy.agents.graphs.general import make_graph
 
         graph = await make_graph({"configurable": {"model": self.config.model, "caller": self.config.caller}})
-        limit = max(10, 2 * self.goal.budget.max_tool_calls)
-        state = await asyncio.wait_for(graph.ainvoke({"messages": [HumanMessage(request)]}, {"recursion_limit": limit}), timeout=remaining_s)
-        return state["messages"][-1].content, trace_from_messages(state["messages"]), state.get("skills_applied", [])
+        state, failed = await run_keeping_partial(graph, {"messages": [HumanMessage(request)]},
+                                                  {"recursion_limit": recursion_limit(self.goal.budget.max_tool_calls)}, timeout=remaining_s)
+        messages = state.get("messages", [])
+        answer = messages[-1].content if messages and isinstance(messages[-1].content, str) else ""
+        return answer, trace_from_messages(messages), state.get("skills_applied", []), failed
+
+    async def _facts(self, trace: list) -> Facts:
+        return await self.checker.facts([Call.from_dict(c) for c in trace])
 
     # ------------------------------------------------------------------ nodes
     async def work(self, state: GoalState) -> GoalState:
@@ -97,19 +118,22 @@ class GoalGraph:
         trace = list(state.get("trace", []))
         attempt = state.get("attempt", 0) + 1
         skills: list = []
+        facts = await self._facts(trace) if trace else None
         try:
-            answer, calls, *rest = await self._run_worker(self.request(state.get("feedback", "")), max(1.0, remaining))
+            answer, calls, *rest = await self._run_worker(self.request(state.get("feedback", ""), facts), max(1.0, remaining))
             skills = rest[0] if rest else []
+            if len(rest) > 1 and rest[1]:
+                answer = (answer + "\n" if answer else "") + f"(the agent stopped: {rest[1]})"
         except asyncio.TimeoutError:
             answer, calls = f"stopped: the time budget of {self.goal.budget.max_seconds:.0f} s ran out", []
         except Exception as exc:
             answer, calls = f"the agent failed: {type(exc).__name__}: {str(exc)[:300]}", []
         applied = list(state.get("skills_applied", [])) + [{"attempt": attempt, **s} for s in skills]
-        return {"answer": answer, "trace": trace + [c.__dict__ for c in calls], "attempt": attempt, "started": started,
+        return {"answer": answer, "trace": trace + [c.to_dict() for c in calls], "attempt": attempt, "started": started,
                 "skills_applied": applied, "run_id": state.get("run_id") or uuid.uuid4().hex[:12]}
 
     async def check(self, state: GoalState) -> GoalState:
-        facts = Facts.from_calls([Call(**c) for c in state.get("trace", [])])
+        facts = await self._facts(state.get("trace", []))
         verdict = await self.checker.check(self.goal, facts, state.get("answer", ""), time.monotonic() - state["started"])
         return {"verdict": {"met": verdict.met, "results": verdict.results, "over_budget": verdict.over_budget}, "feedback": verdict.feedback(), "met": verdict.met}
 
@@ -125,9 +149,12 @@ class GoalGraph:
 
     async def report(self, state: GoalState) -> GoalState:
         verdict = state["verdict"]
-        facts = Facts.from_calls([Call(**c) for c in state.get("trace", [])])
+        facts = await self._facts(state.get("trace", []))
         head = "Goal reached." if verdict["met"] else ("Goal stopped: " + verdict["over_budget"] if verdict["over_budget"] else "Goal not reached.")
         lines = [head, f"Goal: {self.goal.statement}", f"Attempts: {state['attempt']}; {facts.summary()}."]
+        stopped = await self.checker.stop_jobs(facts)  # the goal is over: nothing it started keeps running
+        if stopped:
+            lines.append("Stopped jobs this goal had left running: " + "; ".join(f"{c.name} {c.args.get('request', '')}{' (FAILED: ' + c.result[:120] + ')' if c.error else ''}" for c in stopped))
         lines += [f"{'met' if r['met'] else 'NOT met'}: {r['why']}" for r in verdict["results"]]
         skills = state.get("skills_applied", [])
         if skills:
@@ -141,7 +168,7 @@ class GoalGraph:
     async def remember(self, state: GoalState, facts: Facts) -> str:
         """Write the experiment page, then a learned-skill draft (met) or a lesson (not met). Never fails the run."""
         verdict = state["verdict"]
-        calls = [Call(**c) for c in state.get("trace", [])]
+        calls = [Call.from_dict(c) for c in state.get("trace", [])]
         run_id = state.get("run_id") or uuid.uuid4().hex[:12]
         try:
             outcome = "met" if verdict["met"] else ("stopped: " + verdict["over_budget"] if verdict["over_budget"] else "not met")
@@ -150,8 +177,8 @@ class GoalGraph:
                 sorted(facts.map_keys | facts.data_keys), outcome, [r["why"] for r in verdict["results"] if not r["met"]],
             )
             if not verdict["met"]:
-                self.memory.add_lesson(lesson(self.goal, verdict["results"], calls))
-                return "Lesson recorded in LESSONS.md."
+                outcome = self.memory.add_lesson(lesson(self.goal, verdict["results"], calls))
+                return {"added": "Lesson recorded in LESSONS.md.", "duplicate": "This lesson is already in LESSONS.md."}.get(outcome, f"Lesson not recorded ({outcome}).")
             offered = self.offered
             if offered is None:
                 offered = {t.name for t in await self.config.tools(allow=["*"])}

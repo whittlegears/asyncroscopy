@@ -219,3 +219,26 @@ class TestDose:
         dose = DoseMap(DoseParams(enabled=False), (-1e-7, 1e-7, -1e-7, 1e-7))
         dose.add_frame(np.zeros((2, 2)), np.zeros((2, 2)), 1e6, 1e-9)
         assert dose.summary()["max_dose_e_per_a2"] == 0.0
+
+
+def test_clusters_concentrate_particles_and_leave_uniform_samples_unchanged():
+    base = dict(size_xy_m=4e-6, particle_count=600, radius_mean_m=8e-9, radius_std_m=2e-9, elements=("Au", "Fe"))
+    uniform = SampleModel(SampleParams(**base), EventRng(3))
+    same = SampleModel(SampleParams(**base, cluster_count=0, cluster_radius_m=0.0, cluster_fraction=0.0), EventRng(3))
+    np.testing.assert_array_equal(uniform.centers, same.centers)
+
+    clustered = SampleModel(SampleParams(**base, cluster_count=4, cluster_radius_m=1.5e-7, cluster_fraction=0.8), EventRng(3))
+    assert len(clustered) == 600
+
+    def crowding(sample):
+        # Share of particles in the densest tenth of a 10 x 10 grid of cells.
+        counts, _, _ = np.histogram2d(sample.centers[:, 0], sample.centers[:, 1], bins=10, range=[[-2e-6, 2e-6]] * 2)
+        return np.sort(counts.ravel())[::-1][:10].sum() / len(sample)
+
+    assert crowding(clustered) > 0.6 > crowding(uniform)
+
+
+def test_bad_cluster_settings_are_refused():
+    for bad in ({"cluster_count": -1}, {"cluster_fraction": 1.5}, {"cluster_radius_m": -1e-9}):
+        with pytest.raises(ValueError, match="cluster"):
+            SampleModel(SampleParams(**bad), EventRng(1))

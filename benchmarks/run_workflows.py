@@ -11,6 +11,7 @@ Needs a running stack, both MCP endpoints and the pyTEMlib server (docs/Operatio
     uv run python benchmarks/run_workflows.py --only map_300nm --n 5
     uv run python benchmarks/run_workflows.py --stack large        # with configs/digital_twin_large_map.yaml
     uv run python benchmarks/run_workflows.py --stack xrd          # with configs/yaml_sim_xrd.yaml
+    uv run python benchmarks/run_workflows.py --workflows mine.yaml --stack raman   # a stack declared in mine.yaml or benchmarks/stacks.yaml
     uv run python benchmarks/run_workflows.py --list               # what would run, no stack needed
 
 Runners: ``general`` (the model makes every call), ``mapping`` (the fixed graph; the model
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import inspect
 import json
 import os
 import re
@@ -39,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import yaml
 from _common import (
+    endpoint_risks,
     find_tool,
     is_infra_error,
     read_trace,
@@ -48,13 +51,19 @@ from _common import (
 )
 from workflow_checks import CHECKS, Call, Run, evaluate
 
+from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
+from asyncroscopy.agents.skill_middleware import recursion_limit
+
 HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
 WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "approval", "checks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "map", "map_plain", "large_map"}
-# Which config each stack runs; a stack whose config this checkout lacks is skipped.
-STACKS = {"twin": "configs/digital_twin_mapping.yaml", "large": "configs/digital_twin_large_map.yaml", "xrd": "configs/yaml_sim_xrd.yaml"}
+STACKS_FILE = HERE / "stacks.yaml"
+STACK_KEYS = {"config", "mcp", "operator", "tiled"}
+STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
+# The stack being run (set by main): its run_servers config and the addresses it serves.
+STACK: dict[str, str] = {**STACK_DEFAULTS, "name": "twin"}
 # Setup maps: (side, field of view, per-tile actions, scored). large_map has enough tiles to need zooming.
 SETUP_MAPS = {
     "map": (4.8e-7, 1.6e-7, ["eds_point"], True),
@@ -64,7 +73,7 @@ SETUP_MAPS = {
 TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner + specialists + reporter
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
-OPERATOR_URL = os.environ.get("ASYNCROSCOPY_OPERATOR_URL", "http://127.0.0.1:8001/mcp")
+CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
 
 
 # ------------------------------------------------------------------ workflow files
@@ -74,13 +83,42 @@ class WorkflowError(ValueError):
     pass
 
 
-def load_workflows(paths: list[Path]) -> list[dict]:
-    """Every workflow in the given YAML files (or directories of them), checked for typos."""
+def _workflow_files(paths: list[Path]) -> list[Path]:
     files = []
     for path in paths:
         files += sorted(path.glob("*.yaml")) if path.is_dir() else [path]
+    return [f for f in files if f.resolve() != STACKS_FILE.resolve()]
+
+
+def load_stacks(paths: list[Path]) -> dict[str, dict]:
+    """Stacks from benchmarks/stacks.yaml and any ``stacks:`` in the workflow files, with default addresses."""
+    stacks: dict[str, dict] = {}
+    for file in [STACKS_FILE, *_workflow_files(paths)]:
+        if not file.is_file():
+            continue
+        for name, spec in ((yaml.safe_load(file.read_text(encoding="utf-8")) or {}).get("stacks") or {}).items():
+            if not isinstance(spec, dict) or "config" not in spec or set(spec) - STACK_KEYS:
+                raise WorkflowError(f"{file.name}: stack {name!r} needs config: (a run_servers config) and may set {sorted(STACK_KEYS - {'config'})}")
+            stacks[str(name)] = {**STACK_DEFAULTS, **{k: str(v) for k, v in spec.items()}, "name": str(name)}
+    return stacks
+
+
+def _check_params(where: str, spec: dict) -> None:
+    """A check's parameters must fit its function, so a typo fails at load, not as a failed run."""
+    fn = CHECKS[spec["check"]]
+    params = {k: v for k, v in spec.items() if k not in ("check", "label")}
+    try:
+        inspect.signature(fn).bind(None, **params)
+    except TypeError as exc:
+        wanted = [p for p in inspect.signature(fn).parameters if p != "run"]
+        raise WorkflowError(f"{where}: check {spec['check']} {exc}; its parameters: {wanted or 'none'}") from exc
+
+
+def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> list[dict]:
+    """Every workflow in the given YAML files (or directories of them), checked for typos."""
+    stacks = load_stacks(paths) if stacks is None else stacks
     workflows, seen = [], set()
-    for file in files:
+    for file in _workflow_files(paths):
         document = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
         for i, wf in enumerate(document.get("workflows") or []):
             where = f"{file.name}: workflow {i + 1}"
@@ -100,13 +138,15 @@ def load_workflows(paths: list[Path]) -> list[dict]:
                     raise WorkflowError(f"{where}: each turn is {{say: ..., wait_for: ...}}")
             if set(wf.get("setup") or []) - SETUPS:
                 raise WorkflowError(f"{where}: setup must be among {sorted(SETUPS)}")
-            if wf.get("stack", "twin") not in STACKS:
-                raise WorkflowError(f"{where}: stack must be one of {sorted(STACKS)}")
+            if wf.get("stack", "twin") not in stacks:
+                raise WorkflowError(f"{where}: stack {wf.get('stack')!r} is not declared; known: {sorted(stacks)} "
+                                    "(declare one in benchmarks/stacks.yaml or under stacks: in this file)")
             if wf.get("approval") not in (None, "approve", "deny"):
                 raise WorkflowError(f"{where}: approval is approve or deny")
             for spec in wf.get("checks") or []:
-                if spec.get("check") not in CHECKS:
-                    raise WorkflowError(f"{where}: unknown check {spec.get('check')!r}; known: {sorted(CHECKS)}")
+                if not isinstance(spec, dict) or spec.get("check") not in CHECKS:
+                    raise WorkflowError(f"{where}: unknown check {spec.get('check') if isinstance(spec, dict) else spec!r}; known: {sorted(CHECKS)}")
+                _check_params(where, spec)
             if not wf.get("checks"):
                 raise WorkflowError(f"{where}: no checks")
             wf.setdefault("runners", ["general"])
@@ -143,17 +183,19 @@ class Live:
         self.analysis = config.analysis()
         from asyncroscopy.agents.mcp_tools import McpServer
 
-        self.operator = McpServer(OPERATOR_URL, {"X-Asyncroscopy-Caller": "workflow-operator"})
+        self.operator = McpServer(STACK["operator"], {"X-Asyncroscopy-Caller": "workflow-operator"})
         self.names: set[str] = set()
         self.operator_names: set[str] = set()
+        self.risks: dict[str, str] | None = None  # the endpoint's own tool risks (endpoint_info)
         self.setup_cache: dict[str, dict] = {}
 
     async def discover(self) -> None:
         self.names = {t.name for t in await self.instrument.list_tools()}
+        self.risks = await endpoint_risks(self.config)
         try:
             self.operator_names = {t.name for t in await self.operator.list_tools()}
         except Exception as exc:
-            print(f"[workflows] operator endpoint {OPERATOR_URL} unavailable ({exc}); approval workflows will fail", flush=True)
+            print(f"[workflows] operator endpoint {STACK['operator']} unavailable ({exc}); approval workflows will fail", flush=True)
 
     def tool(self, *suffixes: str, prefix: str = "") -> str | None:
         return find_tool(self.names, *suffixes, prefix=prefix)
@@ -354,7 +396,7 @@ def data_truth(keys: list[str]) -> dict:
     """Peaks and candidate elements of each 1-D dataset among ``keys``, read with the data layer."""
     from asyncroscopy.data import tiled_client, views
 
-    uri = os.environ.get("ASYNCROSCOPY_TILED_URI", tiled_client.DEFAULT_URI)
+    uri = STACK["tiled"]
     spectra, strongest = {}, None
     for key in keys[:6]:
         try:
@@ -368,11 +410,13 @@ def data_truth(keys: list[str]) -> dict:
             spectra[key] = {"error": f"{type(exc).__name__}: {exc}"}
             continue
         positions = axis.values(0, len(values)) if axis else np.arange(len(values), dtype=np.float64)
-        strongest = float(positions[int(np.argmax(values))])
-        entry = {"strongest": strongest, "units": axis.units if axis else ""}
-        if axis and axis.units == "eV":
-            fwhm = views.eds_fwhm_ev(positions)
-            peaks = views.find_peaks(values, fwhm / abs(axis.scale))
+        xray = bool(axis) and axis.units == "eV"
+        fwhm = views.eds_fwhm_ev(positions) if xray else None
+        # The same peak finder and order (strongest net counts first) as view_data, so truth and what the agent read agree.
+        peaks = sorted(views.find_peaks(values, fwhm / abs(axis.scale) if xray else 3.0), key=lambda p: p.net, reverse=True)
+        strongest = float(positions[peaks[0].index]) if peaks else float(positions[int(np.argmax(values))])
+        entry = {"strongest": strongest, "units": axis.units if axis else "", "peaks": [round(float(positions[p.index]), 4) for p in peaks]}
+        if xray:
             entry["peaks_ev"] = [round(float(positions[p.index]), 1) for p in peaks]
             entry["elements"] = sorted({c.split()[0] for p in peaks for c in views.xray_candidates(float(positions[p.index]), float(fwhm[p.index]) / 2)})
         spectra[key] = entry
@@ -397,7 +441,6 @@ def produced_keys(run: Run, pattern: str = "*_acquire_*") -> list[str]:
     return keys
 
 
-MAP_KEY = re.compile(r"map_[\w.]+?_map")
 
 
 def run_keys(job_events: list[dict]) -> list[str]:
@@ -451,7 +494,7 @@ def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:
     """A stitched map's metadata and the shape of its run's tiles, read from Tiled."""
     from asyncroscopy.data import tiled_client
 
-    uri = os.environ.get("ASYNCROSCOPY_TILED_URI", tiled_client.DEFAULT_URI)
+    uri = STACK["tiled"]
     meta = dict(tiled_client.node_for_key(map_key, uri).metadata)
     tiles = tiled_client.node_for_key(meta["run"], uri)["tiles"]
     first = next(iter(tiles))
@@ -484,23 +527,15 @@ def runners_for(wf: dict, available: dict) -> list[str]:
 
 def calls_from_trace(trace: list) -> list[Call]:
     """Calls recorded by the team and goal graphs ({name, args, result, error})."""
-    return [Call(c.get("name", ""), dict(c.get("args") or {}), not c.get("error"), str(c.get("result", ""))[:2000]) for c in trace or []]
+    return [Call.from_dict(c) for c in trace or []]
 
 
-def calls_from_messages(messages) -> list[Call]:
-    replies = {getattr(m, "tool_call_id", None): m for m in messages if getattr(m, "type", "") == "tool"}
-    calls = []
-    for m in messages:
-        for c in getattr(m, "tool_calls", None) or []:
-            reply = replies.get(c.get("id"))
-            content = getattr(reply, "content", "") if reply is not None else ""
-            text = content if isinstance(content, str) else json.dumps(content, default=str)
-            ok = reply is not None and getattr(reply, "status", "success") != "error"
-            calls.append(Call(c["name"], dict(c.get("args") or {}), ok, text[:2000]))
-    return calls
+def skills_of(applied: list | None) -> list[str]:
+    return [a.get("skill") for a in applied or [] if isinstance(a, dict) and a.get("skill")]
 
 
-async def run_chat_graph(factory: str, config, wf: dict, facts: dict, caller: str, started: float) -> tuple[list, str]:
+async def run_chat_graph(factory: str, config, wf: dict, facts: dict, caller: str, started: float) -> tuple[list, str, list[str]]:
+    """(messages, final answer, skills applied) of a chat graph over the workflow's turns."""
     module, _, function = factory.partition(":")
     make_graph = getattr(importlib.import_module(module), function or "make_graph")
     graph = await make_graph({"configurable": {"model": config.model, "caller": caller}})
@@ -508,13 +543,15 @@ async def run_chat_graph(factory: str, config, wf: dict, facts: dict, caller: st
 
     turns = wf.get("turns") or [{"say": wf["request"]}]
     messages: list = []
+    skills: list[str] = []
     for turn in turns:
         await wait_for(turn.get("wait_for"), started, caller)
         messages = messages + [HumanMessage(render(turn["say"], facts))]
-        state = await graph.ainvoke({"messages": messages}, {"recursion_limit": 80})
+        state = await graph.ainvoke({"messages": messages}, {"recursion_limit": recursion_limit(CHAT_TOOL_ROUNDS)})
         messages = state["messages"]
+        skills += [s for s in skills_of(state.get("skills_applied")) if s not in skills]
     final = messages[-1].content if messages else ""
-    return messages, final if isinstance(final, str) else json.dumps(final, default=str)
+    return messages, final if isinstance(final, str) else json.dumps(final, default=str), skills
 
 
 async def wait_for(condition: dict | None, started: float, caller: str) -> None:
@@ -545,7 +582,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         operator = asyncio.create_task(live.operate(caller, wf["approval"], stop))
     facts["before"] = await live.snapshot()
     started = time.time()
-    run = Run(facts=facts, has_calls=runner != "mapping")
+    run = Run(facts=facts, has_calls=runner != "mapping", risks=live.risks)
     error = None
     try:
         request = render(wf.get("request") or "", facts)
@@ -557,6 +594,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
 
             state = await asyncio.wait_for(TeamGraph(config).build().ainvoke({"request": request}, {"recursion_limit": 100}), wf["timeout_s"])
             run.final, run.calls = str(state.get("answer", "")), calls_from_trace(state.get("trace"))
+            run.skills = skills_of(state.get("skills_applied"))
         elif runner == "goal":
             from asyncroscopy.agents.goals import Goal
             from asyncroscopy.agents.graphs.goal import GoalGraph
@@ -564,9 +602,10 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
             goal = Goal.from_text(request, max_seconds=float(wf["timeout_s"]))
             state = await asyncio.wait_for(GoalGraph(goal, "team", config).build().ainvoke({"goal": goal.to_dict()}, {"recursion_limit": 4 * goal.budget.max_attempts + 4}), wf["timeout_s"] * 1.2)
             run.final, run.calls = str(state.get("report") or state.get("answer", "")), calls_from_trace(state.get("trace"))
+            run.skills = skills_of(state.get("skills_applied"))
         else:
-            messages, run.final = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
-            run.calls = calls_from_messages(messages)
+            messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
+            run.calls = trace_from_messages(messages)
     except TimeoutError:
         error = f"timed out after {wf['timeout_s']} s"
     except Exception as exc:  # a crash or the recursion limit counts as a failed run
@@ -624,7 +663,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "checks": checks,
         "tool_calls": len(names),
         "tool_names": names,
-        "sleepwalking": sleepwalking(names),
+        "sleepwalking": sleepwalking(names, None, run.risks),
+        "skills": run.skills,
         "final": (run.final or "")[-600:],
     }
 
@@ -658,9 +698,14 @@ def git_head() -> str:
 async def main(args) -> int:
     from asyncroscopy.agents.config import AgentConfig
 
-    workflows = [wf for wf in load_workflows(args.workflows) if wf["stack"] == args.stack and (not args.only or wf["name"] in args.only)]
-    if not (HERE.parent / STACKS[args.stack]).exists():
-        print(f"stack {args.stack} needs {STACKS[args.stack]}, which this checkout does not have; nothing to run")
+    stacks = load_stacks(args.workflows)
+    if args.stack not in stacks:
+        print(f"no stack {args.stack!r}; declared: {sorted(stacks)} (benchmarks/stacks.yaml, or stacks: in a workflow file)")
+        return 2
+    STACK.update(stacks[args.stack])
+    workflows = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack and (not args.only or wf["name"] in args.only)]
+    if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
+        print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have; nothing to run")
         return 0
     available = runners_available()
     if args.graph:
@@ -672,6 +717,8 @@ async def main(args) -> int:
         print(f"{len(workflows)} workflows on stack {args.stack}; runners here: {sorted(available)}")
         return 0
     config = AgentConfig.from_env(model=args.model, caller="workflows")
+    if not os.environ.get("ASYNCROSCOPY_MCP_URL"):
+        config.mcp_url = STACK["mcp"]
     live = Live(config)
     await live.discover()
     await warm_up(config)
@@ -715,7 +762,7 @@ if __name__ == "__main__":
     parser.add_argument("--workflows", nargs="+", type=Path, default=[WORKFLOW_DIR], help="YAML files or directories of them.")
     parser.add_argument("--only", nargs="*", default=None, help="Workflow names to run.")
     parser.add_argument("--runners", nargs="*", default=None, help="Runners to use (default: each workflow's own list).")
-    parser.add_argument("--stack", default="twin", choices=sorted(STACKS), help="Which stack is running: twin (mapping), large or xrd.")
+    parser.add_argument("--stack", default="twin", help="Which stack is running: a name from benchmarks/stacks.yaml (twin, large, xrd) or a workflow file's stacks:.")
     parser.add_argument("--graph", default=None, help="An extra runner: module:function returning a chat graph, run as 'custom'.")
     parser.add_argument("--n", type=int, default=1, help="Runs per workflow and runner.")
     parser.add_argument("--model", default=os.environ.get("ASYNCROSCOPY_MODEL", "qwen3:8b"))
