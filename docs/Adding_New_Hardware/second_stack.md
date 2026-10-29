@@ -21,6 +21,7 @@ with the Raman example's ready configs as a working reference:
 | Agent MCP endpoint | 8000 | 8100 | `mcp.http_port` in the agent MCP config |
 | Operator MCP endpoint | 8001 | 8101 | `mcp.http_port` in the operator MCP config |
 | Map analysis (pyTEMlib) | 8003 | none | `mcp.analysis_url`: empty, or a second pyTEMlib server on its own port pointed at your Tiled (`--tiled http://localhost:9191 --port 8103`) |
+| A Mapper's own analysis server (a second **twin**, or any stack with a Mapper) | `http://127.0.0.1:8003/mcp` | no Mapper | `devices.mapper.properties.analysis_url` in the stack config, as well as `mcp.analysis_url`: left at 8003, the second stack's maps are stitched by the first stack's pyTEMlib, which reads the first stack's Tiled, with no error |
 | Job state and traces | `outputs/jobs`, `outputs/trace/*.jsonl` | `outputs/stacks/raman/jobs`, `outputs/trace/raman_*.jsonl` | `state_directory` and `trace_path` instrument properties; `mcp.trace` |
 
 Device names (`asyncroscopy/data/default` and so on) may stay the same: each
@@ -53,7 +54,8 @@ as before.
 
 | Client | Setting |
 |---|---|
-| Agents (`python -m asyncroscopy.agents.run`, LangGraph Studio) | `ASYNCROSCOPY_MCP_URL=http://127.0.0.1:8100/mcp` |
+| Agents (`python -m asyncroscopy.agents.run`, LangGraph Studio) | `ASYNCROSCOPY_MCP_URL=http://127.0.0.1:8100/mcp`, and `ASYNCROSCOPY_ANALYSIS_URL` when the stack has its own pyTEMlib server (it defaults to 8003, the twin's) |
+| `startup_scripts/check_stack.py`, `check_gui_contract.py` | `--agent http://127.0.0.1:8100/mcp --operator http://127.0.0.1:8101/mcp` (and `--tiled http://localhost:9191` for the GUI check; `--pytemlib` for map analysis) |
 | Workflow benchmarks | declare the stack (its `config`, and `mcp`, `operator` and `tiled` addresses 8100, 8101, 9191) under `stacks:` in your workflow file; see `benchmarks/README.md` |
 | Scripts that read data from Tiled directly | `ASYNCROSCOPY_TILED_URI=http://localhost:9191` |
 | SciAgentGUI | add the two endpoints (8100 agent, 8101 operator) on its MCP Servers page; it reads the Tiled address from DATA |

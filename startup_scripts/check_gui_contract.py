@@ -7,9 +7,11 @@ against what sciagentgui/src/lib/asyncroscopy.ts and tiledClient.ts parse.
 Run against a live stack (see docs/Operation/quickstart.md):
 
     uv run startup_scripts/check_gui_contract.py
+    uv run startup_scripts/check_gui_contract.py --agent http://127.0.0.1:8200/mcp --operator http://127.0.0.1:8201/mcp --tiled http://localhost:9291   # a second stack
 
 It switches approval mode to approve and back, and denies the requests it causes.
 """
+import argparse
 import asyncio
 import json
 import socket
@@ -22,6 +24,8 @@ import numpy as np
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
+AGENT = "http://127.0.0.1:8000/mcp"
+OPERATOR = "http://127.0.0.1:8001/mcp"
 TILED = "http://localhost:9091"
 HEADERS = {"Authorization": "Apikey secret"}
 CALLER = "gui-contract-agent"
@@ -46,7 +50,7 @@ def text(result):
 
 
 async def mcp_side():
-    async with Client("http://127.0.0.1:8001/mcp") as op:
+    async with Client(OPERATOR) as op:
         names = {t.name for t in await op.list_tools()}
         check("operator role detected (Approvals_approve + Approvals_set_mode)", {"Approvals_approve", "Approvals_set_mode"} <= names)
         mode = text(await op.call_tool("Approvals_get_mode", {}))
@@ -56,7 +60,7 @@ async def mcp_side():
         reply = text(await op.call_tool("Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "gui-probe"})}))
         check("set_mode with a JSON-string request", json.loads(reply)["mode"] == "approve", reply)
         try:
-            async with Client(StreamableHttpTransport("http://127.0.0.1:8000/mcp", headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
+            async with Client(StreamableHttpTransport(AGENT, headers={"X-Asyncroscopy-Caller": CALLER})) as agent:
                 microscope = next((t.name[: -len("_unblank_beam")] for t in await agent.list_tools() if t.name.endswith("_unblank_beam")), None)
                 if not check("agent endpoint offers a microscope (<name>_unblank_beam)", microscope is not None,
                              "" if microscope else "none found: were the MCP servers started before run_servers.py printed ready? Restart them"):
@@ -163,7 +167,13 @@ def unreachable(*urls: str) -> list[str]:
     return down
 
 
-down = unreachable("http://127.0.0.1:8000/mcp", "http://127.0.0.1:8001/mcp", TILED)
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument("--agent", default=AGENT)
+parser.add_argument("--operator", default=OPERATOR)
+parser.add_argument("--tiled", default=TILED)
+args = parser.parse_args()
+AGENT, OPERATOR, TILED = args.agent, args.operator, args.tiled.rstrip("/")
+down = unreachable(AGENT, OPERATOR, TILED)
 if down:
     check("stack reachable", False, f"nothing at {', '.join(down)}: start the stack (quickstart section 3) and wait for 'MCP ready'")
     sys.exit(1)

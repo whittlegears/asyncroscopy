@@ -829,7 +829,7 @@ def test_the_log_tail_reads_only_the_end_of_a_long_log(tmp_path) -> None:
     device = SimpleNamespace(_tiled_log=log)
     tail = DATA._log_tail(device)
     assert tail.endswith("last line")
-    assert len(tail) < data_module.LOG_TAIL_BYTES + 200
+    assert len(tail) < data_module.LOG_TAIL_BYTES + 200 + len(str(log))  # the tail names the log, whose path varies by clone
 
 
 def test_a_tiled_bound_to_every_interface_is_reached_locally_and_advertised_by_its_public_uri(monkeypatch) -> None:

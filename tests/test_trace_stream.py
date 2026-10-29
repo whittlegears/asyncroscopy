@@ -257,8 +257,9 @@ def test_cursor_carries_on_across_rotation_with_none_twice(tmp_path):
 def test_follow_trace_filters_by_caller_device_and_since(tmp_path):
     writer = TraceWriter(tmp_path / "jobs.jsonl", "job", writer="asyncroscopy/mapper/default")
     writer.record("Mapper.step", True, time.time() - 100, caller="alice")
+    time.sleep(0.05)  # Windows' clock ticks in ~15 ms steps: keep alice's write time clearly before the cut
     cut = time.time()
-    time.sleep(0.01)
+    time.sleep(0.05)
     writer.record("Mapper.step", True, time.time(), caller="bob")
     TraceWriter(tmp_path / "mcp.jsonl", "mcp").record("Tuner_start", True, time.time(), caller="bob")
     assert [e["action"] for e in read_trace(tmp_path, caller="bob")] == ["Mapper.step", "Tuner_start"]
