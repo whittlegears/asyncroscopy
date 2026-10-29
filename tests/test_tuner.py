@@ -408,3 +408,12 @@ def test_run_job_tuner_goes_through_the_approval_gate(fresh, tuner_proxy, approv
         call(tuner_proxy, "release", {"reservation_id": reply["reservation_id"]})
     finally:
         approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "test-teardown"}))
+
+
+def test_a_dry_run_tune_is_refused_at_reserve_by_name(tuner_proxy):
+    # Every measurement reads an image or a corrector reply, which a dry run does not produce.
+    refused = call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "dry_run": True}})
+    assert refused["error"]["code"] == "dry_run_unsupported" and "Tuner does not support dry runs" in refused["error"]["message"]
+    reserved = call(tuner_proxy, "reserve", {"plan": FOCUS_PLAN})  # nothing was held: a real tune reserves at once
+    assert "reservation_id" in reserved, reserved
+    call(tuner_proxy, "release", {"reservation_id": reserved["reservation_id"]})

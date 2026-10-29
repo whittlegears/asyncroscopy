@@ -168,10 +168,12 @@ def test_budgeted_plan_with_an_assumed_current_is_refused_on_a_stack_that_is_not
     plan = Mapper.resolve_plan(mapper_stub(microscope), PLAN)  # without a budget the estimate says what it assumed
     assert plan["estimate"]["beam_current_source"] == "default" and plan["estimate"]["beam_current_reason"]
 
-    # A simulated stack may budget with an assumed current: the `simulated` flag, or the environment hook.
+    # A simulated stack may budget with an assumed current. Only the stack's `simulated` flag says so:
+    # neither an environment variable nor the microscope's own report makes a stack simulated.
     Mapper.resolve_plan(mapper_stub(microscope, simulated=True), {**PLAN, "dose_budget_e_per_a2": 1e3})
     monkeypatch.setenv("ASYNCROSCOPY_SIMULATED", "1")
-    Mapper.resolve_plan(mapper_stub(microscope), {**PLAN, "dose_budget_e_per_a2": 1e3})
+    with pytest.raises(ValueError, match="beam current is assumed"):
+        Mapper.resolve_plan(mapper_stub(RecordingMicroscope({"simulated": True})), {**PLAN, "dose_budget_e_per_a2": 1e3})
     with pytest.raises(ValueError, match="beam current is assumed"):
         Mapper.resolve_plan(mapper_stub(microscope, simulated=False), {**PLAN, "dose_budget_e_per_a2": 1e3})
 

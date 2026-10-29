@@ -18,6 +18,8 @@ from urllib.request import Request, urlopen
 
 import httpx
 
+from asyncroscopy.mcp.binding import is_loopback_host
+
 TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=15.0, pool=3.0)
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
@@ -72,7 +74,7 @@ def _nothing_listening(uri: str) -> bool:
     the OS for its listening sockets answers the common "Tiled is down" case at once.
     """
     parts = urlsplit(uri)
-    if (parts.hostname or "").lower() not in {"127.0.0.1", "localhost", "::1"}:
+    if not is_loopback_host(parts.hostname or ""):
         return False
     port = parts.port or (443 if parts.scheme == "https" else 80)
     try:

@@ -38,6 +38,7 @@ from urllib.parse import unquote, urlparse
 
 from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
+from asyncroscopy.mcp.binding import WILDCARD_HOSTS
 
 import h5py
 import psutil
@@ -47,7 +48,6 @@ from tango.server import Device, attribute, command
 from tiled.client.register import identity, register
 
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
-WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean "every interface"
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # Suffixes Tiled 0.2 registers from a file (tiled.mimetypes plus the stdlib's image/tiff); Tiled skips others silently.

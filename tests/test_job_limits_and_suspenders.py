@@ -267,3 +267,73 @@ def test_a_job_paused_when_the_device_restarted_comes_back_resumable(tmp_path):
     assert reloaded["state"] == "failed" and reloaded["last_error"]["code"] == "device_restarted"
     job.call("abort", {"job_id": job_id})
     job.wait_for(job_id, {"aborted"})
+
+
+# ---------------------------------------------------------------- dry runs
+class FakeAfm:
+    """An SPM as a DeviceProxy: get_image scans the tip, despite its read-only name."""
+
+    def __init__(self):
+        self.calls = []
+
+    def set_timeout_millis(self, ms):
+        pass
+
+    def info(self):
+        return SimpleNamespace(dev_class="AFMTwin")
+
+    def get_command_list(self):
+        return ["get_stage", "get_image", "move_xy"]
+
+    def get_attribute_list(self):
+        return []
+
+    def get_stage(self):
+        self.calls.append("get_stage")
+        return [0.0, 0.0]
+
+    def get_image(self):
+        self.calls.append("get_image")
+        return "image_1.h5"
+
+
+class Scan(Steps):
+    """One step that reads the stage and takes an image, each through JobDevice.proxy (a RecordingProxy in a dry run)."""
+
+    SUPPORTS_DRY_RUN = True
+    proxy = vars(JobDevice)["proxy"]
+    check_dry_call = vars(JobDevice)["check_dry_call"]
+    step_timeout_s = 5.0
+
+    def resolve_plan(self, plan):
+        return {"steps": [{}], "estimate": {"steps": 1}}
+
+    def step_targets(self, job):
+        return []
+
+    def run_step(self, job, index):
+        afm = self.proxy("test/afm/1")
+        return {"stage": afm.get_stage(), "image": afm.get_image()}
+
+
+@pytest.mark.parametrize("pattern", ["AFMTwin.get_image", "AFMTwin_get_image", "*.get_image"])
+def test_a_dry_run_records_a_read_named_command_the_deployment_marks_high(tmp_path, monkeypatch, pattern):
+    from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER
+
+    afm = FakeAfm()
+    monkeypatch.setattr("asyncroscopy.jobs.job_device.tango.DeviceProxy", lambda address: afm)
+    job = Scan(tmp_path, {})
+    reserved = job.call("reserve", {"plan": {"dry_run": True}, "risk_overrides": {pattern: "high", "AFMTwin.get_stage": "low"}})
+    job_id = job.call("start", {"reservation_id": reserved["reservation_id"]})["job_id"]
+    job.wait_for(job_id, {"done"})
+    record = job._jobs[reserved["reservation_id"]]["step_results"]["0"]
+    assert afm.calls == ["get_stage"]  # the scan was recorded, not run; the plain read still passed through
+    assert record == {"stage": [0.0, 0.0], "image": DRY_RUN_PLACEHOLDER}
+    assert job._jobs[reserved["reservation_id"]]["dry_run_calls"]["recorded"] == 1
+
+
+def test_a_device_that_cannot_rehearse_refuses_a_dry_run_at_reserve(tmp_path):
+    job = Steps(tmp_path, {"test/stage/1": stage()})
+    reply = job.call("reserve", {"plan": {"xs": [0.0], "dry_run": True}})
+    assert reply["error"]["code"] == "dry_run_unsupported" and "Steps does not support dry runs" in reply["error"]["message"]
+    assert job._jobs == {}

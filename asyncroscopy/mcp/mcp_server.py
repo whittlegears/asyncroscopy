@@ -79,6 +79,12 @@ WAIT_NOTES = {
     "paused_awaiting_approval": "Waiting for an operator to approve the next step: call wait_for_job again. Do not retry or start another job.",
 }
 LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
+# Estimate fields of a job that puts a dose on the sample (a beam job): max_dose_e_per_a2 applies to it.
+DOSE_FIELDS = ("max_dose_e_per_a2", "beam_current_pa", "beam_current_source")
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value  # NaN is not a dose
 
 
 class _Busy(RuntimeError):
@@ -258,6 +264,7 @@ class MCPServer:
         self._run_job_lock = threading.RLock()
         self._via = threading.local()  # set while run_job calls a job device, so the trace says so
         self._last_sweep = 0.0
+        self._simulated: bool | None = None  # the stack's simulated flag once the Approvals device has said it
         self._native_names: set[str] = set()
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
@@ -566,10 +573,19 @@ class MCPServer:
             if envelope and command_name == "start" and call_args:
                 device = self._devices.get(tool_prefix or dev_class)
                 describe = (lambda: "Reserved plan: " + device.get_reservation(str(call_args[0]))) if device is not None else None
+            if envelope and command_name == "start" and self.job_limits and self.endpoint_role == "agent":
+                # Whoever reserved it, a start on this endpoint keeps to its job limits (a resume too).
+                refused = self._limit_start(tool_prefix or dev_class, call_args[0] if call_args else None)
+                if refused is not None:
+                    if self.trace is not None:
+                        self.trace.record(unique_name, False, started, arguments=arguments, error="over_job_limits", result=refused, caller=caller, run=run)
+                    return refused
             gate = self._gate(unique_name, risk, arguments, caller, describe)
             if envelope and command_name in ("start", "reserve") and call_args:
-                # The job's own trace events then name who asked and the agent run (and, at start, the approval).
-                call_args = (self._with_grant(call_args[0], gate if command_name == "start" else None, caller, run), *call_args[1:])
+                # The job's own trace events then name who asked and the agent run (and, at start, the approval);
+                # a reserve also carries the high risk overrides, so a dry run records a get_* command marked high.
+                overrides = self._high_overrides() if command_name == "reserve" else None
+                call_args = (self._with_grant(call_args[0], gate if command_name == "start" else None, caller, run, overrides), *call_args[1:])
             if self.auth is not None:  # an approve, deny or set_mode records the token's subject as who
                 call_args = endpoint_auth.stamp_who(dev_class, command_name, call_args, caller)
             via = {"via": self._via.name} if getattr(self._via, "name", None) else {}  # run_job's own reserve and start
@@ -706,14 +722,19 @@ class MCPServer:
 
         return wrapper
 
+    def _high_overrides(self) -> dict[str, str]:
+        """The mcp.safety.risk patterns that mark commands high: what a job's dry run must record, not pass through."""
+        return {pattern: level for pattern, level in self.risk_overrides.items() if level == "high"}
+
     @staticmethod
-    def _with_grant(request: Any, gate: dict | None, caller: str | None, run: str | None = None) -> Any:
+    def _with_grant(request: Any, gate: dict | None, caller: str | None, run: str | None = None, risk_overrides: dict | None = None) -> Any:
         """Tell a job who asked, from which agent run, and (at start, ``gate``) which approval covers it,
-        so its trace links to the grant and the run.
+        so its trace links to the grant and the run. At reserve, ``risk_overrides`` are this endpoint's
+        high patterns, which the job's dry run applies.
 
         Added after the approval check, so it never changes the call's fingerprint.
         """
-        if gate is None and not caller and not run and '"run"' not in str(request):
+        if gate is None and not caller and not run and not risk_overrides and '"run"' not in str(request):
             return request  # a reserve with nothing to add goes through as it came
         if not isinstance(request, str):
             return request
@@ -733,6 +754,8 @@ class MCPServer:
         body.pop("run", None)
         if run:
             body["run"] = run
+        if risk_overrides:  # the deployment's patterns, added to any the caller gave (they can only mark more high)
+            body["risk_overrides"] = {**(body.get("risk_overrides") if isinstance(body.get("risk_overrides"), dict) else {}), **risk_overrides}
         return json.dumps(body, sort_keys=True, separators=(",", ":"))
 
     # ------------------------------------------------------------------ auth (asyncroscopy.mcp.endpoint_auth)
@@ -772,7 +795,8 @@ class MCPServer:
             mode = approvals.get_mode()
             if mode == "auto":
                 return {"mode": "auto", "approved_by": "auto"}
-            decision = json.loads(approvals.check(json.dumps({"action": tool_name, "arguments": arguments})))
+            # A grant covers only the caller and agent run that asked for it.
+            decision = json.loads(approvals.check(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller, "run": self._run_id() or None})))
             if decision.get("allowed"):
                 return {"mode": mode, "approved_by": decision.get("approved_by"), "grant_id": decision.get("grant_id"), "request_id": decision.get("request_id")}
             reason = None
@@ -968,19 +992,76 @@ class MCPServer:
             return reply
         note = self._release(device, reserved["reservation_id"])
         summary = {k: reserved[k] for k in ("schema_version", "reservation_id", "plan_id", "resolved_plan", "estimate") if k in reserved}
-        return json.dumps({**summary, "note": note, "error": {"code": "plan_rejected", "violations": violations, "message": (
+        return json.dumps({**summary, "note": note, "error": self._limits_error(violations)})
+
+    @staticmethod
+    def _limits_error(violations: list[dict]) -> dict:
+        return {"code": "plan_rejected", "violations": violations, "message": (
             "the estimate is over this endpoint's job limits (mcp.job_limits): "
-            + "; ".join(f"{v['what']} {v['value']:.4g} {v['units']} > {v['limit']:.4g}" for v in violations)
-            + ". Tell the user the estimate and ask before trying a smaller plan; only an operator can raise the limit.")}})
+            + "; ".join(v.get("reason") or f"{v['what']} {v['value']:.4g} {v['units']} > {v['limit']:.4g}" for v in violations)
+            + ". Tell the user the estimate and ask before trying a smaller plan; only an operator can raise the limit.")}
+
+    def _limit_start(self, device: str, request: Any) -> str | None:
+        """An error reply when the reservation a start names is over mcp.job_limits (None when it is within them).
+
+        run_job's resume and a direct <Device>_start never pass through the reserve wrapper, and the
+        reservation may be anyone's, so its estimate is read back and checked here. A reservation that
+        cannot be read is refused: the limits must be shown to hold, not assumed to.
+        """
+        proxy = self._devices.get(device)
+        try:
+            body = json.loads(request) if isinstance(request, str) and request.strip().startswith("{") else {"reservation_id": str(request or "").strip()}
+            reserved = json.loads(proxy.get_reservation(json.dumps({"reservation_id": body.get("reservation_id")})))
+        except Exception as exc:
+            reason = describe_error(exc) if proxy is not None else f"no job device {device!r}"
+            return json.dumps({"error": {"code": "plan_rejected", "message": f"could not read the reservation to check it against this endpoint's job limits ({reason}); not started"}})
+        if not isinstance(reserved, dict) or "error" in reserved:
+            return None  # the start itself reports an unknown reservation
+        violations = self._over_limits(reserved)
+        if not violations:
+            return None
+        summary = {k: reserved[k] for k in ("reservation_id", "plan_id", "resolved_plan", "estimate") if k in reserved}
+        return json.dumps({**summary, "error": self._limits_error(violations)})
+
+    def _stack_simulated(self) -> bool:
+        """Whether the stack drives a simulator, as its Approvals device says; no device, or no answer, is real hardware."""
+        if self._simulated is not None:
+            return self._simulated
+        if not self.approvals_device_address:
+            return False
+        try:
+            self._simulated = bool(self._approvals().get_simulated())
+        except Exception:
+            return False  # not cached: asked again next time
+        return self._simulated
 
     def _over_limits(self, reserved: dict) -> list[dict]:
         estimate = reserved.get("estimate") if isinstance(reserved.get("estimate"), dict) else {}
         checks = (("max_duration_s", "duration_s", "s"), ("max_dose_e_per_a2", "max_dose_e_per_a2", "e/A^2"))
-        return [
+        over = [
             {"what": field, "value": estimate[field], "limit": self.job_limits[limit], "units": units}
             for limit, field, units in checks
-            if limit in self.job_limits and isinstance(estimate.get(field), (int, float)) and estimate[field] > self.job_limits[limit]
+            if limit in self.job_limits and _is_number(estimate.get(field)) and estimate[field] > self.job_limits[limit]
         ]
+        return over + self._dose_unchecked(estimate)
+
+    def _dose_unchecked(self, estimate: dict) -> list[dict]:
+        """On hardware, a beam job whose dose the limit cannot be checked against: no numeric dose, or a dose
+        computed from a current that was not measured (assumed, or too old for the device to rely on).
+        A job that reports no dose concept at all (an AFM or YAML map, an indent grid) is not a beam job."""
+        if "max_dose_e_per_a2" not in self.job_limits or not any(k in estimate for k in DOSE_FIELDS) or self._stack_simulated():
+            return []
+        limit = self.job_limits["max_dose_e_per_a2"]
+        found = []
+        if not _is_number(estimate.get("max_dose_e_per_a2")):
+            found.append({"what": "max_dose_e_per_a2", "value": estimate.get("max_dose_e_per_a2"), "limit": limit, "units": "e/A^2",
+                          "reason": "the estimate gives no dose to check against max_dose_e_per_a2"})
+        source, reason = estimate.get("beam_current_source"), estimate.get("beam_current_reason")
+        if source != "measured" or reason:
+            found.append({"what": "beam_current_source", "value": source, "limit": limit, "units": "e/A^2", "reason": (
+                f"the dose was computed from a beam current that is {source or 'not said to be measured'}"
+                + (f" ({reason})" if reason else "") + ", so max_dose_e_per_a2 cannot be checked: measure the screen current, then reserve again")})
+        return found
 
     @staticmethod
     def _held_message(device: str, request_id: str, reservation_id: str, summary: dict) -> str:
@@ -1208,6 +1289,7 @@ class MCPServer:
                 continue
             if not self._is_blocked_class(dev_class):
                 opened.append((device_name, dev, dev_class))
+                self._warn_if_fault(device_name, dev)
 
         # Tools are named <Class>_<command>. When several devices share a class (two robots,
         # two job devices) each gets its own prefix, <Class>_<member>, so neither hides the
@@ -1285,6 +1367,16 @@ class MCPServer:
                 tools.setdefault(prefix, {})[command_name] = (func, cmd)
                 self._devices[prefix] = dev
         return tools
+
+    def _warn_if_fault(self, device_name: str, dev: DeviceProxy) -> None:
+        """A device in FAULT (an instrument file that does not load) offers only what it could set up, often just the
+        job envelope: say so, rather than serve its few tools as if the instrument were there."""
+        try:
+            state, status = str(dev.state()), str(dev.status())
+        except Exception:
+            return
+        if state == "FAULT":
+            print(f"[safety] {device_name} is in FAULT ({status.strip()[:300]}); its tools are registered but it cannot run them. Fix it and restart this server", flush=True)
 
     def _warn_about_risks(self) -> None:
         """Print what an instrument author most likely got wrong in the risk settings: an override
