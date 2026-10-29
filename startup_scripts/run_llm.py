@@ -20,7 +20,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
 
@@ -152,6 +152,7 @@ def run_interactive(config: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    stop_on_termination()  # `kill <launcher>` must also stop the server it started
     args = parse_args(argv)
     try:
         config = load_config(args.yaml)
