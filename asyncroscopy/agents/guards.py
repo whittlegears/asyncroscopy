@@ -135,9 +135,17 @@ def tool_rounds(messages: list) -> list[tuple[str, str, str]]:
 NEVER_A_LOOP = ("approval_status",)
 
 
+CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message (asyncroscopy.agents.claims)
+
+
+def is_request(message) -> bool:
+    """A message from the user: a human message that is not the claim check's correction turn."""
+    return getattr(message, "type", "") == "human" and getattr(message, "name", None) != CLAIM_CHECK
+
+
 def _this_request(messages: list) -> list:
     """The messages since the user's latest message: earlier turns are other requests."""
-    last = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=0)
+    last = max((i for i, m in enumerate(messages) if is_request(m)), default=0)
     return messages[last:]
 
 

@@ -34,6 +34,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
+from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
 from asyncroscopy.agents.guards import JobWaitMiddleware
@@ -173,7 +174,8 @@ class TeamGraph:
         prompt = ROLE_PROMPTS[role] + known
         skills = SkillMiddleware(prompt, names, self._all_names or names, memory=self.memory.notes_for, num_ctx=self.config.num_ctx)
         waits = JobWaitMiddleware(tools, deadline=self.config.deadline)
-        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits])
+        claims = ClaimCheckMiddleware(names)  # the step's answer becomes the next step's notes: check it first
+        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, claims])
 
     # ------------------------------------------------------------------ nodes
     async def plan(self, state: TeamState) -> TeamState:

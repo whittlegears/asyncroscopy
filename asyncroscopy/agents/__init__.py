@@ -5,7 +5,8 @@ stitch -> score -> report) where the language model only writes the plan
 and the report; ``graphs.general`` is a tool-using agent; ``graphs.team`` is a
 planner with an operator and an analyst agent, each holding only its role's
 tools. ``skill_middleware`` gives every tool-using agent the skills its
-request and its progress call for; ``memory`` keeps Markdown notes it reads
+request and its progress call for; ``claims`` checks a final answer against
+the run's tool calls and gives the model one chance to fix it; ``memory`` keeps Markdown notes it reads
 (INSTRUMENT.md, LESSONS.md, experiment pages); ``learning`` drafts skills from
 runs that met their goal, for an operator to promote (``python -m
 asyncroscopy.agents.skills``). ``goals`` and ``graphs.goal`` check a goal from
@@ -31,6 +32,9 @@ ASYNCROSCOPY_SKILLS_PATH     extra skill folders (os.pathsep list)  none; packag
 ASYNCROSCOPY_POLL_S          mapping graph job-status poll interval 1.0 (seconds)
 ASYNCROSCOPY_APPROVAL_WAIT_S mapping graph wait for an approval     1800 (seconds)
 ASYNCROSCOPY_ANALYSIS_WAIT_S mapping graph wait for stitch/score    3600 (seconds)
+ASYNCROSCOPY_CLAIM_CHECK     check final answers against the run's  1 (on); 0/false/off turns it off. The general graph's
+                             tool calls (``claims``): one           configurable["claim_check"] overrides it
+                             correction turn, then a visible note
 ============================ ====================================== =======================================================
 
 Read by the stack rather than the agents (listed so every ASYNCROSCOPY_* setting

@@ -17,6 +17,7 @@ import os
 
 from langchain.agents import create_agent
 
+from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.guards import JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
@@ -77,6 +78,8 @@ async def make_graph(config: dict | None = None):
     {readers} becomes the tools that look at data (view_data, get_region) and {extra} the STEM rules
     on a STEM endpoint (other braces, such as JSON examples, are left alone). The matching skills
     and memory notes are appended to it for each model call; a {skills} placeholder is ignored.
+    A final answer goes through the claim check (``asyncroscopy.agents.claims``): ``configurable["claim_check"]``
+    (True/False), else ASYNCROSCOPY_CLAIM_CHECK, turns it on or off (on by default).
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     # A caller (the goal graph) may hand over its own AgentConfig, so this agent's calls join its run ledger.
@@ -108,4 +111,6 @@ async def make_graph(config: dict | None = None):
     memory = await asyncio.to_thread(Memory.from_env)
     skills = SkillMiddleware(prompt, names, offered, memory=memory.notes_for, num_ctx=agent_config.num_ctx)
     waits = JobWaitMiddleware(tools, deadline=agent_config.deadline)  # a job of any length is one tool round
-    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits])
+    # Last, so it wraps the model call itself: a final answer is checked against the run's tool calls.
+    claims = ClaimCheckMiddleware(names, enabled=configurable.get("claim_check"))
+    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, claims])

@@ -39,7 +39,7 @@ from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import SystemMessage
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, NEW_MAP
-from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, fit_messages, looping, stop_message, tool_rounds, tools_chars
+from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, is_request, fit_messages, looping, stop_message, tool_rounds, tools_chars
 from asyncroscopy.skills import select_skills, skills_text
 from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS, list_skills, read_only_request, usable_by
 
@@ -67,7 +67,7 @@ def _text(message) -> str:
 
 def _request(messages) -> str:
     """The latest human message: in a conversation each turn is a request of its own."""
-    return next((_text(m) for m in reversed(messages) if getattr(m, "type", "") == "human"), "")
+    return next((_text(m) for m in reversed(messages) if is_request(m)), "")
 
 
 def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
