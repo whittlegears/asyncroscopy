@@ -15,7 +15,10 @@ analysis server. A profile owns what differs:
 * ``acquire_revisit``: one image at a smaller field of view at a found region;
 * ``costs``: the budget model (electron dose in e/A^2, a tip force in nN, ...).
   Every profile also gets ``time_s`` from the Mapper's own duration estimate;
-* ``needs``: the commands the instrument must offer, checked at reserve.
+* ``needs``: the commands the instrument must offer, checked at reserve;
+* ``image_shift_limit_m`` / ``get_image_shift`` / ``set_image_shift``: how live
+  drift tracking moves the image without the stage (None: it cannot, and a plan
+  asking for it is refused at reserve).
 
 A profile is a small class registered by name, like the Tuner's strategies::
 
@@ -39,7 +42,7 @@ from dataclasses import dataclass
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
 GENERIC_PLAN_FIELDS = frozenset({
-    "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "budgets",
+    "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "budgets", "drift",
 })
 GENERIC_PLAN_DEFAULTS = {"overlap": 0.15, "order": "serpentine", "stitch": True, "find_regions": 0}
 TIME_BUDGET = "time_s"  # every profile's: the Mapper's estimate of the whole job's duration
@@ -181,6 +184,21 @@ class InstrumentProfile:
 
     def acquire_revisit(self, job: dict, revisit: dict) -> str:
         """One image at ``revisit["fov_m"]`` at the current position; restore the tile settings; end safe. Returns its data key."""
+        raise NotImplementedError
+
+    # -- live drift tracking (plan "drift": {"track": true}; asyncroscopy/jobs/live_drift.py) ---------
+    # A profile that can move the image without moving the stage (a beam's image or beam shift) says
+    # how far (``image_shift_limit_m``), which commands it needs, and reads and writes the shift. One
+    # that cannot leaves ``image_shift_limit_m`` None, and a plan asking for tracking is refused at reserve.
+    image_shift_limit_m: float | None = None
+    image_shift_commands: tuple = ()
+
+    def get_image_shift(self, job: dict) -> list[float]:
+        """The image shift [x, y] in metres now."""
+        raise NotImplementedError
+
+    def set_image_shift(self, job: dict, xy: list[float]) -> None:
+        """Set the image shift [x, y] in metres (the tracker has already bounded it); raise if the instrument refuses."""
         raise NotImplementedError
 
 

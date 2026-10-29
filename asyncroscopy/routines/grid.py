@@ -56,6 +56,13 @@ def tile_at(grid: dict, order: str, index: int) -> dict:
     return {"index": int(index), "row": row, "col": col, "x": grid["x0"] + col * grid["dx"], "y": grid["y0"] + row * grid["dy"]}
 
 
+def index_at(grid: dict, order: str, row: int, col: int) -> int:
+    """The acquisition index of the tile at (row, col): the inverse of ``tile_at``."""
+    cols = grid["cols"]
+    k = cols - 1 - col if order == "serpentine" and row % 2 == 1 else col
+    return int(row) * cols + int(k)
+
+
 def tile_centres(box: list[float], fov: float, overlap: float, order: str, limit: int | None = None) -> list[dict]:
     """Every tile of a (small) grid as a list; plans use ``compact_grid`` and ``tile_at`` instead."""
     grid = compact_grid(*grid_axes(box, fov, overlap, limit))

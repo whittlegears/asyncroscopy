@@ -98,6 +98,19 @@ DRIFT_TWIN_PROPERTIES = {
     "time_scale": 0.0,
 }
 
+# Live drift tracking (tests/test_live_drift.py): the brief's 5e-11 m/s steady drift, a dense sample so every
+# overlap between 50 nm tiles has particles to register on, a 1 nm stage, and a 10 s move-and-settle per tile.
+LIVE_DRIFT_TWIN_PROPERTIES = {
+    **DRIFT_TWIN_PROPERTIES,
+    "sample_seed": 11,
+    "sample_particle_count": 1200,
+    "particle_radius_mean": 3e-9,
+    "particle_radius_std": 1e-9,
+    "stage_move_noise_std": 1e-9,
+    "stage_move_overhead": 10.0,
+    "drift_rate_per_min": 5e-11 * 60,
+}
+
 
 @pytest.fixture(scope="session")
 def data_save_dir(tmp_path_factory):
@@ -129,6 +142,7 @@ def tango_ctx(data_save_dir, job_dir):
                 },
                 {"name": "asyncroscopy/scan/mapping", "properties": {}},
                 {"name": "asyncroscopy/scan/drift", "properties": {}},
+                {"name": "asyncroscopy/scan/livedrift", "properties": {}},
                 {"name": "asyncroscopy/scan/tuner", "properties": {}},
             ],
         },
@@ -160,6 +174,7 @@ def tango_ctx(data_save_dir, job_dir):
                 {"name": "asyncroscopy/stage/mapping", "properties": {}},
                 {"name": "asyncroscopy/stage/parity", "properties": {}},
                 {"name": "asyncroscopy/stage/drift", "properties": {}},
+                {"name": "asyncroscopy/stage/livedrift", "properties": {}},
             ],
         },
         {
@@ -218,6 +233,16 @@ def tango_ctx(data_save_dir, job_dir):
                         "stage_device_address": "asyncroscopy/stage/drift",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         **DRIFT_TWIN_PROPERTIES,
+                    },
+                },
+                {
+                    # The brief's 5e-11 m/s drift, for live drift tracking (tests/test_live_drift.py).
+                    "name": "asyncroscopy/digitaltwin/livedrift",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/livedrift",
+                        "stage_device_address": "asyncroscopy/stage/livedrift",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        **LIVE_DRIFT_TWIN_PROPERTIES,
                     },
                 },
                 {
@@ -347,6 +372,22 @@ def tango_ctx(data_save_dir, job_dir):
                         "trace_path": prop_path(job_dir / "drift" / "trace.jsonl"),
                         "stage_sigma_m": 3e-9,
                         "max_drift_m_per_s": 2e-8,
+                        "simulated": True,
+                    },
+                },
+                {
+                    # Maps of the 5e-11 m/s twin above, with and without live drift tracking (test_live_drift.py).
+                    "name": "asyncroscopy/mapper/livedrift",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/livedrift",
+                        "scan_device_address": "asyncroscopy/scan/livedrift",
+                        "stage_device_address": "asyncroscopy/stage/livedrift",
+                        "output_directory": prop_path(job_dir / "livedrift" / "maps"),
+                        "state_directory": prop_path(job_dir / "livedrift" / "state"),
+                        "trace_path": prop_path(job_dir / "livedrift" / "trace.jsonl"),
+                        "estimate_move_s": 10.0,
+                        "stage_sigma_m": 2e-9,
+                        "max_drift_m_per_s": 1e-10,
                         "simulated": True,
                     },
                 },

@@ -3,7 +3,7 @@
   "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/map_plan.schema.json",
   "title": "Map plan",
   "description": "What a Mapper job acquires. Lengths in metres, times in seconds. Give the area as box_m in stage coordinates, or as size_m around centre_m (default: the current stage position); tile centres never leave the box. A plan with revisit points or a revisit map and no area only images those (no tiles); its area is the points' (or the map's) extent.",
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "type": "object",
   "required": [],
   "additionalProperties": false,
@@ -142,6 +142,40 @@
       "maximum": 50,
       "default": 0,
       "description": "After stitching, score the map and add the best N regions as points of interest."
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Live drift tracking (off by default): before each tile a bounded image shift cancels the drift measured so far by registering overlapping tiles; the stage still goes only to the planned tile centres. Refused at reserve on an instrument profile that cannot shift the image. Every correction is in the Instrument Trace (Mapper.drift_correction).",
+      "properties": {
+        "track": {
+          "type": "boolean",
+          "default": false,
+          "description": "Turn live drift tracking on."
+        },
+        "max_shift_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Largest change of the image shift, per axis, one correction may make (default a tenth of the tile's fov_m)."
+        },
+        "max_total_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Largest image shift, per axis, from its value before the map (default and maximum: the instrument profile's image shift limit)."
+        },
+        "tracker": {
+          "type": "string",
+          "default": "linear",
+          "description": "The drift tracker (asyncroscopy.routines.drift): linear (a line fitted on the instrument's clock), or one registered by a plug-in."
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000,
+          "default": 12,
+          "description": "Most recent measurements the linear tracker fits."
+        }
+      }
     },
     "revisit": {
       "type": "object",
