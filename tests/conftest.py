@@ -12,6 +12,7 @@ This avoids:
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +42,9 @@ from asyncroscopy.instruments.electron_microscope.tuner import Tuner
 from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
+from asyncroscopy.instruments.yaml_sim.device import device_class as yaml_device_class
+
+AFM_YAML = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"
 
 
 from tests.test_agent import setup_llm_stubs
@@ -344,6 +348,51 @@ def tango_ctx(data_save_dir, job_dir):
                         "stage_sigma_m": 3e-9,
                         "max_drift_m_per_s": 2e-8,
                         "simulated": True,
+                    },
+                },
+                {
+                    # The mapping twin driven as an SEM: the beam commands only, no EDS (test_map_profiles.py).
+                    "name": "asyncroscopy/mapper/sem",
+                    "properties": {
+                        "instrument_profile": "sem",
+                        "microscope_device_address": "asyncroscopy/digitaltwin/mapping",
+                        "scan_device_address": "asyncroscopy/scan/mapping",
+                        "stage_device_address": "asyncroscopy/stage/mapping",
+                        "output_directory": prop_path(job_dir / "sem" / "maps"),
+                        "state_directory": prop_path(job_dir / "sem" / "state"),
+                        "trace_path": prop_path(job_dir / "sem" / "trace.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "simulated": True,
+                    },
+                },
+                {
+                    # The YAML AFM twin below, mapped through its map: section (test_map_profiles.py).
+                    "name": "asyncroscopy/mapper/afm",
+                    "properties": {
+                        "instrument_profile": "yaml",
+                        "microscope_device_address": "asyncroscopy/afm/default",
+                        "stage_device_address": "",
+                        "output_directory": prop_path(job_dir / "afm" / "maps"),
+                        "state_directory": prop_path(job_dir / "afm" / "state"),
+                        "trace_path": prop_path(job_dir / "afm" / "trace.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "stage_sigma_m": 5e-9,
+                        "max_drift_m_per_s": 0.0,
+                        "simulated": True,
+                    },
+                },
+            ],
+        },
+        {
+            # The AFM example as a plain YAML device (no job envelope of its own), with no simulated waits.
+            "class": yaml_device_class("AFMTwin"),
+            "devices": [
+                {
+                    "name": "asyncroscopy/afm/default",
+                    "properties": {
+                        "yaml_path": prop_path(AFM_YAML),
+                        "output_directory": prop_path(job_dir / "afm" / "acquisitions"),
+                        "time_scale": 0.0,
                     },
                 },
             ],
@@ -654,6 +703,25 @@ def mapper_proxy(tango_ctx):
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/default"))
     proxy.set_timeout_millis(60_000)
     return proxy
+
+
+@pytest.fixture(scope="session")
+def sem_mapper_proxy(tango_ctx):
+    proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/sem"))
+    proxy.set_timeout_millis(60_000)
+    return proxy
+
+
+@pytest.fixture(scope="session")
+def afm_mapper_proxy(tango_ctx):
+    proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/afm"))
+    proxy.set_timeout_millis(60_000)
+    return proxy
+
+
+@pytest.fixture(scope="session")
+def afm_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/afm/default"))
 
 
 @pytest.fixture(scope="session")
