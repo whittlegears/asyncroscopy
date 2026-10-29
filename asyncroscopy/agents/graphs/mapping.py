@@ -52,6 +52,7 @@ class MapState(TypedDict, total=False):
     released: bool  # the reservation is already released; error paths must not release (or abort) it again
     run_key: str
     map_key: str
+    eds_points: int
     pois: list
     report: str
     error: str
@@ -230,7 +231,9 @@ class MappingGraph:
             if box is None:
                 raise ValueError("the request asks for the whole sample, but the instrument reports no sample bounds; give box_m or size_m")
             box = list(box)
-        # A box smaller than one tile becomes one tile.
+        # An area that fits in one tile is an image, not a map; a side shorter than a tile becomes one tile (a strip).
+        if box[1] - box[0] <= fov and box[3] - box[2] <= fov:
+            raise ValueError(f"the area fits in one {fov * 1e9:.0f} nm field of view: that is one image, not a map; give a larger area or a smaller fov_m")
         for lo, hi in ((0, 1), (2, 3)):
             if box[hi] - box[lo] < fov:
                 mid = (box[lo] + box[hi]) / 2
@@ -330,8 +333,7 @@ class MappingGraph:
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}", "released": True}
         keys = results.get("result_keys", {})
         summary = results.get("summary", {})
-        if summary.get("stitch_error"):
-            return {"error": summary["stitch_error"], "released": True}
+        # A failed stitch in the job leaves no map key, so the stitch node tries again here.
         return {"run_key": keys.get("run") or keys.get("run_file"), "map_key": keys.get("map") or summary.get("map"), "released": True}
 
     async def stitch(self, state: MapState) -> MapState:
@@ -346,8 +348,12 @@ class MappingGraph:
             if results.get("state") != "done":
                 return {"error": f"stitching {results.get('state')}"}
             map_key = results["result_keys"]["map"]
-        listed = await self.analysis.call_json("list_pois", {"map": map_key})
-        return {"map_key": map_key, "pois": [p for p in listed.get("pois", []) if isinstance(p, dict)]}
+        # The report counts EDS points and lists candidates; a large map has thousands of EDS points.
+        eds = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "eds_point", "limit": 0})
+        candidates = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "candidate"})
+        if "total" not in eds or "pois" not in candidates:
+            return {"map_key": map_key, "error": f"the map {map_key} was stitched, but its points of interest could not be read"}
+        return {"map_key": map_key, "eds_points": int(eds["total"]), "pois": [p for p in candidates["pois"] if isinstance(p, dict)]}
 
     async def score(self, state: MapState) -> MapState:
         job = await self.analysis.call_json("score_map", {"map": state["map_key"], "top_k": 3})
@@ -377,7 +383,7 @@ class MappingGraph:
         candidates = [p for p in state.get("pois", []) if p.get("kind") == "candidate"]
         for p in candidates:
             lines.append(f"Interesting region at ({p['x_m'] * 1e9:.0f} nm, {p['y_m'] * 1e9:.0f} nm), score {p['score']:.2f}: {p['reason']}")
-        eds = sum(1 for p in state.get("pois", []) if p.get("kind") == "eds_point")
+        eds = state.get("eds_points", 0)
         if eds:
             lines.append(f"{eds} EDS spectra are marked on the map.")
         return {"report": "\n".join(lines)}

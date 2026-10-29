@@ -15,7 +15,7 @@ REQUEST = "Map a 600 nm square around the current position and take an EDS spect
 
 def round_(i, name="wait_for_job", args=None, reply=None):
     call_id = f"c{i}"
-    return [AIMessage("", tool_calls=[{"name": name, "args": args or {"job_id": "j1"}, "id": call_id}]),
+    return [AIMessage("", tool_calls=[{"name": name, "args": args if args is not None else {"job_id": "j1"}, "id": call_id}]),
             ToolMessage(reply if reply is not None else json.dumps({"state": "running", "i": i}), tool_call_id=call_id, name=name)]
 
 
@@ -74,6 +74,19 @@ def test_cycling_over_the_same_calls_is_a_loop_but_going_back_once_is_not():
     assert looping(third) == 1
     assert looping(third + round_(6, args=b, reply="image two") + round_(7, args=a, reply="image one")) == 2
     assert looping(back_once + round_(4, args=a, reply="image one, changed")) == 0
+
+
+def test_protocol_steps_approval_waits_and_earlier_requests_are_not_loops():
+    blank = [HumanMessage(REQUEST)]
+    for i in range(6):
+        blank += round_(2 * i, name="DigitalTwin_blank_beam", args={}, reply="null") + round_(2 * i + 1, name="DigitalTwin_acquire_scanned_image", args={"detector_list": ["haadf"]}, reply=f"image_{i}.h5")
+    blank += round_(99, name="DigitalTwin_blank_beam", args={}, reply="null")
+    assert looping(blank) == 0
+    pending = [HumanMessage(REQUEST)] + [m for i in range(5) for m in round_(i, name="approval_status", args={"request_id": "r1"}, reply="pending")]
+    assert looping(pending) == 0
+    a = {"key": "one.h5"}
+    earlier = [HumanMessage(REQUEST), *round_(1, args=a, reply="image one"), *round_(2, args=a, reply="image one"), HumanMessage("look again")]
+    assert looping(earlier + round_(3, args=a, reply="image one")) == 0
 
 
 def test_a_repeated_call_is_pointed_out_then_the_run_stops_honestly():

@@ -131,9 +131,21 @@ def tool_rounds(messages: list) -> list[tuple[str, str, str]]:
     return rounds
 
 
+# Waiting for an operator repeats the same "pending" reply by design; the approval's own expiry ends it.
+NEVER_A_LOOP = ("approval_status",)
+
+
+def _this_request(messages: list) -> list:
+    """The messages since the user's latest message: earlier turns are other requests."""
+    last = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"), default=0)
+    return messages[last:]
+
+
 def repeats(messages: list) -> int:
     """How many times in a row the latest tool round repeated the one before (0: it did not)."""
-    rounds = tool_rounds(messages)
+    rounds = tool_rounds(_this_request(messages))
+    if rounds and rounds[-1][0] in NEVER_A_LOOP:
+        return 0
     count = 0
     for i in range(len(rounds) - 1, 0, -1):
         if rounds[i] != rounds[i - 1]:
@@ -146,8 +158,11 @@ def cycles(messages: list) -> int:
     """How many earlier tool rounds, in a row or not, the latest one repeats exactly: a model cycling
     over the same few calls loops as surely as one repeating a single call. Going back to a place
     once is normal, so callers allow more of these than of repeats in a row."""
-    rounds = tool_rounds(messages)
-    return rounds[:-1].count(rounds[-1]) if rounds else 0
+    rounds = tool_rounds(_this_request(messages))
+    # An action without arguments (blank the beam, laser off) is repeated by normal protocols.
+    if not rounds or rounds[-1][0] in NEVER_A_LOOP or rounds[-1][1] == "{}":
+        return 0
+    return rounds[:-1].count(rounds[-1])
 
 
 def looping(messages: list) -> int:

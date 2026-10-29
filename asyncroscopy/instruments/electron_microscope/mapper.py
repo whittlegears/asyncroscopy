@@ -371,11 +371,11 @@ class Mapper(JobDevice):
             if not fov * REVISIT_FOV_MIN_FRACTION <= revisit["fov_m"] <= fov:
                 raise ValueError(f"revisit fov_m must be between {fov * REVISIT_FOV_MIN_FRACTION:.3g} m (a twentieth of the tile) and the tile's {fov:.3g} m")
             p["revisit"] = revisit
-        if fov >= min(x_max - x_min, y_max - y_min):
-            # One tile is an image, not a map: almost always the area's size put in fov_m.
-            raise ValueError(f"fov_m {fov:.3g} m is as large as the area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
         grid = compact_grid(*grid_axes([x_min, x_max, y_min, y_max], fov, float(p["overlap"]), limit=int(self.max_tiles)))
         tiles = grid["rows"] * grid["cols"]
+        if tiles == 1:
+            # One tile is an image, not a map: almost always the area's size put in fov_m. A strip one tile high is a map.
+            raise ValueError(f"fov_m {fov:.3g} m covers the whole area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
 
         current, current_source = self._beam_current_pa()
         tile_dose = frame_dose(current, dwell, fov, imsize) * max_exposures(grid, fov)
