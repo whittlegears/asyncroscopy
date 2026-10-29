@@ -63,6 +63,11 @@ A dry run (plan ``"dry_run": true``) moves nothing: stage moves and acquisitions
 are recorded in the trace and checked against the plan box (see JobDevice), the
 beam is still blanked, no image or run file is made, and the summary says so.
 
+Live drift tracking (plan ``"drift": {"track": true}``, off by default) corrects each tile with a
+bounded image shift between the stage move and the acquisition, from drift measured by registering
+overlapping tiles on the instrument's clock (asyncroscopy/jobs/live_drift.py). The profile says how to
+shift the image; a profile that cannot is refused at reserve. Every correction is traced.
+
 The grid, dose and drift arithmetic are pure functions in asyncroscopy/routines
 (grid.py, dose.py, drift.py); they are imported here under their old names.
 """
@@ -85,7 +90,7 @@ from tango.server import device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION, load, validate
 from asyncroscopy.data.data_reader import read_acquisition
-from asyncroscopy.jobs import JobDevice
+from asyncroscopy.jobs import JobDevice, live_drift
 from asyncroscopy.jobs.job_device import done_count
 from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, beam_current
@@ -196,8 +201,11 @@ def check_budgets(budgets: dict, costs: dict[str, Cost], duration_s: float, prof
     return {name: {"value": round(costs[name].value, 3), "budget": limit, "units": costs[name].units} for name, limit in budgets.items()}
 
 
-def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, image_key, images, spectrum, spectrum_key) -> None:
+def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, image_key, images, spectrum, spectrum_key, arrays: dict | None = None) -> None:
     """Put one tile into a run file's per-tile arrays (created at the first tile, sized for the whole grid).
+
+    ``arrays``: more per-tile values by dataset name (live drift tracking's drift_correction_m and
+    drift_error_m), each a float or a list of floats; created NaN-filled at the first tile that has them.
 
     The file is closed and synced to disk before returning, so a crash later loses nothing written here.
     """
@@ -233,6 +241,11 @@ def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, i
                 h5.create_dataset("spectrum_keys", shape=(n,), dtype=h5py.string_dtype())
             h5[target][k] = array
             h5["spectrum_keys"][k] = spectrum_key if spectrum_key != "eds_map" else ""
+        for name, value in (arrays or {}).items():
+            value = np.asarray(value, dtype=np.float64)
+            if name not in h5:
+                h5.create_dataset(name, shape=(n, *value.shape), dtype=np.float64, fillvalue=np.nan)
+            h5[name][k] = value
         h5["written"][k] = True
     with open(path, "rb+") as handle:
         os.fsync(handle.fileno())
@@ -391,7 +404,10 @@ class Mapper(JobDevice):
         return float(width) / 2.0, float(height) / 2.0
 
     def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
-        """A dry run's check of each recorded stage move: does the image it is for lie inside the plan box?"""
+        """A dry run's check of each recorded stage move (does the image it is for lie inside the plan box?)
+        and image shift (live drift tracking: within the plan's max_total_m of the shift before the map?)."""
+        if name == "set_image_shift":
+            return live_drift.check_shift(job, arguments)
         target = profile_for(self).move_target(job["resolved_plan"], name, arguments)
         if target is None:
             return None
@@ -430,7 +446,11 @@ class Mapper(JobDevice):
 
     def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
         """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves."""
-        for address, commands in profile.needed_commands(plan).items():
+        needs = profile.needed_commands(plan)
+        shift_commands = live_drift.needed_commands(plan, profile)
+        if shift_commands:
+            needs.setdefault(self.microscope_device_address, []).extend(shift_commands)
+        for address, commands in needs.items():
             try:
                 offered = {str(n).lower() for n in self.proxy(address, timeout_s=3.0).get_command_list()}
             except Exception as exc:  # DevFailed: the device is down; the job's first step would fail the same way
@@ -480,6 +500,7 @@ class Mapper(JobDevice):
             p["tile_m"] = [tile_w, tile_h]
         grid = compact_grid(*grid_axes([x_min, x_max, y_min, y_max], tile_w, float(p["overlap"]), limit=int(self.max_tiles), fov_y=tile_h if tile_h != tile_w else None))
         tiles = grid["rows"] * grid["cols"]
+        live_drift.resolve(p, profile, (tile_w, tile_h), tiles)
         if tiles == 1:
             # One tile is an image, not a map: almost always the area's size put in fov_m. A strip one tile high is a map.
             raise ValueError(f"fov_m {fov:.3g} m covers the whole area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
@@ -525,6 +546,8 @@ class Mapper(JobDevice):
             raise ValueError("give revisit points [[x, y], ...] or an existing map (revisit map, top_k), not both")
         if p.get("find_regions") or p.get("per_tile"):
             raise ValueError("a revisit-only plan takes no tiles: leave out find_regions and per_tile, or give an area to map")
+        if live_drift.tracking(p):
+            raise ValueError("live drift tracking (drift.track) corrects tiles of a map, and a revisit-only plan has none: leave out drift")
         profile.resolve(p)
         revisit.update(profile.resolve_revisit(p, revisit))
         fov = float(revisit["fov_m"])
@@ -700,6 +723,7 @@ class Mapper(JobDevice):
         # The instrument's settings for the plan, ending safe (beam blanked, tip retracted): it stays safe
         # between tiles and is made unsafe only while a tile is acquired (see the profile's acquire_tile).
         profile_for(self).setup(job)
+        live_drift.start(job, profile_for(self))  # tracking on: the image shift before the map, put back at the end
         if job["resolved_plan"].get("revisit_only") or job.get("dry_run"):
             job["run_closed"] = True  # no tiles (or, in a dry run, no images), so no run file
         if job.get("run_closed"):
@@ -734,6 +758,7 @@ class Mapper(JobDevice):
         step = self.step_at(job, index)
         if step["phase"] == "tiles":
             return self._tile(job, step)
+        live_drift.finish(job, profile_for(self))  # the tiles are done: the image shift goes back before any revisit move
         if job.get("dry_run") and not (step["phase"] == "revisit" and job["resolved_plan"].get("regions")):
             # Stitch, score and their revisits need images; a dry run took none. Given revisit points still rehearse their moves.
             return {"phase": step["phase"], "skipped": DRY_RUN_SKIPPED}
@@ -756,6 +781,8 @@ class Mapper(JobDevice):
         if not self._move(job, profile, tile["x"], tile["y"]):
             return None  # aborted during a long move; a resume moves again
         reported = [float(v) for v in profile.stage_reported(job)]
+        # Live drift tracking (plan drift.track): a bounded image shift cancels the drift predicted for this tile.
+        correction = live_drift.correct(self, job, profile, tile)
         # The profile makes the instrument unsafe (unblanks the beam) only for this tile's acquisitions, timed on
         # the instrument's clock, and safe again before returning, even on an error.
         acquired_tile = profile.acquire_tile(job, tile)
@@ -766,14 +793,22 @@ class Mapper(JobDevice):
         job.setdefault("first_tile_s", acquired)
         if job.get("dry_run"):
             # The commands above were recorded, not sent: there is no image to read or store.
-            return {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired, "acquisition": DRY_RUN_SKIPPED}
+            live_drift.measure(self, job, tile, None, acquired)
+            record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired, "acquisition": DRY_RUN_SKIPPED}
+            if correction is not None:
+                record["drift"] = correction
+            return record
         images = read_acquisition(image_key, self._data_proxy())
+        if correction is not None:
+            correction.update(live_drift.measure(self, job, tile, images, acquired) or {})
         if spectrum is None and spectrum_key is not None:
             spectrum = read_acquisition(spectrum_key, self._data_proxy())
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key, "clock_s": acquired}
         if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
-        write_tile(self._file(job), self._tile_count(job), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key)
+        if correction is not None:
+            record["drift"] = correction
+        write_tile(self._file(job), self._tile_count(job), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key, live_drift.tile_arrays(job, correction))
         return record
 
     @staticmethod
@@ -985,6 +1020,10 @@ class Mapper(JobDevice):
             # instrument's clock (the one the tiles were timed with).
             now = profile.clock_s()
             dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
+            # With live tracking the tiles were corrected, so the stitch fitted only what tracking left; the
+            # tracker's own estimate (on the same clock, from the same first tile) is the rest.
+            tx, ty = live_drift.estimate_at(job, now)
+            dx, dy = dx + tx, dy + ty
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
@@ -1018,12 +1057,14 @@ class Mapper(JobDevice):
 
     def on_stop(self, job: dict, reason: str) -> None:
         profile_for(self).make_safe(job)  # blank the beam, retract the tip
+        live_drift.finish(job, profile_for(self))  # tracking on: the image shift goes back to its value before the map
         if not job.get("run_closed"):
             self._write_trace(job)
 
     def on_finish(self, job: dict) -> dict:
         # A finished map must not leave the beam parked (or the tip engaged) on the last tile.
         profile_for(self).make_safe(job)
+        live_drift.finish(job, profile_for(self))
         self._close_run_file(job)
         self._link_pending(job)
         return {}
@@ -1119,6 +1160,9 @@ class Mapper(JobDevice):
             **({} if plan.get("revisit_only") or job.get("dry_run") else {"run_file": str(self._file(job))}),
             **pipeline,
         }
+        tracked = live_drift.summary(job)
+        if tracked:
+            out["drift_tracking"] = tracked
         if job.get("dry_run"):
             out["acquisitions"] = DRY_RUN_SKIPPED  # no image, spectrum or run file is a stand-in for a real one
         if "eds_point" in plan.get("per_tile", []) and not job.get("dry_run"):
