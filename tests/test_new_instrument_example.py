@@ -55,6 +55,21 @@ def test_grid_runs_and_returns_hardness(grid):
     call(proxy, "release", reservation_id=reserved["reservation_id"])
 
 
+def test_a_dry_run_records_every_move_and_indent_and_makes_none(grid, tango_ctx):
+    proxy, out = grid
+    indenter = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/indenter/default"))
+    indenter.move_xy([1e-5, 1e-5])
+    reserved = call(proxy, "reserve", plan={**PLAN, "dry_run": True})
+    job_id = call(proxy, "start", reservation_id=reserved["reservation_id"])["job_id"]
+    status = wait(proxy, job_id)
+    assert status["state"] == "done", status
+    results = call(proxy, "results", job_id=job_id)
+    assert results["dry_run"]["recorded"] == 8 * 2 + 1 and results["dry_run"]["failed_checks"] == 0  # moves, indents, the final retract
+    assert all(i["hardness_gpa"] is None for i in results["summary"]["indents"])  # nothing was measured
+    assert list(indenter.get_position()) == [1e-5, 1e-5]  # nothing moved
+    call(proxy, "release", reservation_id=reserved["reservation_id"])
+
+
 def test_a_bad_plan_is_refused_at_reserve(grid):
     proxy, _ = grid
     error = call(proxy, "reserve", plan={**PLAN, "nx": 0})["error"]
