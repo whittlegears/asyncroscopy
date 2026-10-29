@@ -21,8 +21,9 @@ the Tuner's strategies::
         name = "mine"
         def predict(self, t_s): ...
 
-chosen with the plan's ``"drift": {"tracker": "mine"}``; others install with the
-``asyncroscopy.drift_trackers`` entry point. ``drift_bench`` scores one with no stack.
+chosen with the plan's ``"drift": {"tracker": "mine"}``. The Mapper's process finds it when
+``ASYNCROSCOPY_PLUGINS`` (or the stack YAML's ``plugins:``) names its module or file
+(asyncroscopy/plugins.py); installed packages can use the ``asyncroscopy.drift_trackers`` entry point. ``drift_bench`` scores one with no stack.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ from __future__ import annotations
 import math
 
 import numpy as np
+
+from asyncroscopy.plugins import load_plugins, unknown_hint
 
 DEFAULT_WINDOW = 12  # observations the linear tracker fits (the most recent ones)
 MIN_CONFIDENCE = 0.3  # normalised cross-correlation of the overlap below which a registration is no measurement
@@ -136,8 +139,10 @@ register_tracker(LinearTracker)
 
 
 def trackers() -> dict[str, type[DriftTracker]]:
-    """Every tracker: built in, registered, and installed with the ``asyncroscopy.drift_trackers`` entry point."""
+    """Every tracker: built in, registered, named in ``ASYNCROSCOPY_PLUGINS``, and installed with the
+    ``asyncroscopy.drift_trackers`` entry point."""
     global _entry_points_loaded
+    load_plugins()
     if not _entry_points_loaded:
         _entry_points_loaded = True
         from importlib.metadata import entry_points
@@ -154,7 +159,7 @@ def get_tracker(name: str) -> type[DriftTracker]:
     """The tracker class called ``name``; ValueError listing the known ones otherwise."""
     known = TRACKERS if name in TRACKERS else trackers()
     if name not in known:
-        raise ValueError(f"unknown drift tracker {name!r}; registered: {sorted(known)}")
+        raise ValueError(f"unknown drift tracker {name!r}; registered: {sorted(known)}{unknown_hint()}")
     return known[name]
 
 

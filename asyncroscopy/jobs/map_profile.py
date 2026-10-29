@@ -31,7 +31,9 @@ A profile is a small class registered by name, like the Tuner's strategies::
 
 and chosen with the Mapper's ``instrument_profile`` device property. Built in:
 ``stem`` (the default), ``sem`` and ``yaml`` (any YAML twin with an image
-acquisition); others install with the ``asyncroscopy.map_profiles`` entry point.
+acquisition). A device process finds your own profile when ``ASYNCROSCOPY_PLUGINS`` (or the
+stack YAML's ``plugins:``) names its module or file (asyncroscopy/plugins.py); installed packages
+can use the ``asyncroscopy.map_profiles`` entry point.
 docs/Adding_New_Hardware/new_instrument.md ("Map any instrument") walks through one.
 """
 
@@ -39,6 +41,8 @@ from __future__ import annotations
 
 import importlib
 from dataclasses import dataclass
+
+from asyncroscopy.plugins import load_plugins, unknown_hint
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
 GENERIC_PLAN_FIELDS = frozenset({
@@ -221,10 +225,12 @@ def register_profile(cls: type[InstrumentProfile]) -> type[InstrumentProfile]:
 
 
 def profiles() -> dict[str, type[InstrumentProfile]]:
-    """Every profile: built in, registered, and installed with the ``asyncroscopy.map_profiles`` entry point."""
+    """Every profile: built in, registered, named in ``ASYNCROSCOPY_PLUGINS`` (asyncroscopy/plugins.py),
+    and installed with the ``asyncroscopy.map_profiles`` entry point."""
     global _entry_points_loaded
     for module in set(BUILT_IN.values()):
         importlib.import_module(module)
+    load_plugins()
     if not _entry_points_loaded:
         _entry_points_loaded = True
         from importlib.metadata import entry_points
@@ -244,5 +250,5 @@ def get_profile(name: str) -> type[InstrumentProfile]:
     if name not in PROFILES:
         known = profiles()
         if name not in known:
-            raise ValueError(f"unknown instrument profile {name!r}; registered: {sorted(known)}")
+            raise ValueError(f"unknown instrument profile {name!r}; registered: {sorted(known)}{unknown_hint()}")
     return PROFILES[name]

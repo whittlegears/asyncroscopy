@@ -115,6 +115,43 @@ class Config:
     # tango.bind_host: the interface the Tango database listens on, when it differs from tango.host (the
     # name clients use). In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
     tango_bind_host: str = ""
+    # Top-level `plugins:`: modules or .py files every device imports (asyncroscopy/plugins.py), so a
+    # team's own @register_profile / @register_tracker / @register_strategy classes exist in each process.
+    plugins: tuple[str, ...] = ()
+
+
+def _plugins(raw: dict) -> tuple[str, ...]:
+    """The stack YAML's `plugins:` list: files resolved against the project folder and checked to exist,
+    module names checked to import, so a typo fails at load rather than as "unknown instrument profile"."""
+    from asyncroscopy.plugins import is_file_spec
+
+    entries = raw.get("plugins") or []
+    if isinstance(entries, str):
+        entries = [entries]
+    if not isinstance(entries, list):
+        raise ValueError("Config 'plugins' must be a list of module names or .py files")
+    resolved = []
+    for entry in (str(e).strip() for e in entries):
+        if not entry:
+            continue
+        if is_file_spec(entry):
+            path = _instrument_file(entry)
+            if not path.is_file():
+                raise ValueError(f"plugins entry {entry!r}: no such file {path}")
+            resolved.append(str(path.resolve()))
+        else:
+            _check_importable(entry, "plugins entry")
+            resolved.append(entry)
+    return tuple(resolved)
+
+
+def plugin_environment(plugins: Iterable[str], current: str = "") -> str:
+    """ASYNCROSCOPY_PLUGINS for the device processes: what the shell already set, then the YAML's `plugins:`."""
+    from asyncroscopy.plugins import plugin_specs
+
+    entries = plugin_specs(current)
+    entries += [p for p in plugins if p not in entries]
+    return os.pathsep.join(entries)
 
 
 def _simulated(raw: dict, path: Path) -> bool:
@@ -263,6 +300,7 @@ def load_config(path: Path) -> Config:
             register_on_startup=bool(tiled.get("register_on_startup", False)),
         ),
         device_timeout_seconds=int(raw.get("device_timeout_seconds", 120)),
+        plugins=_plugins(raw),
     )
 
 
@@ -882,6 +920,8 @@ def main(argv: list[str] | None = None) -> int:
 
     total_steps = 5
     environment = make_environment(host, port, tiled_host, tiled_port, acquisition_dir)
+    if config.plugins:
+        environment["ASYNCROSCOPY_PLUGINS"] = plugin_environment(config.plugins, environment.get("ASYNCROSCOPY_PLUGINS", ""))
     ready_times: dict[str, float] = {}
     tiled_config = None
 
