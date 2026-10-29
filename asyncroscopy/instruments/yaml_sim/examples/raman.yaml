@@ -73,6 +73,7 @@ commands:
     sets: {laser_power_mw: power_mw}
     duration_s: 0.5
     returns: {laser_power_mw: laser_power_mw, state: "on"}
+    role: beam.unblank   # the name alone says nothing a role-based controller can use; laser_off is beam.blank by rule
   laser_off:
     doc: Switch the laser off. Always allowed.
     sets: {laser_power_mw: 0}

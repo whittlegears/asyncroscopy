@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/action_space.schema.json",
+  "title": "Action space",
+  "description": "What an MCP endpoint lets a program control and observe: every tool with its canonical role, arguments, risk and effect; the readable state; the job devices' plans. Returned by the native tool action_space() (asyncroscopy.mcp.action_space).",
+  "schema_version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "endpoint", "roles", "instruments", "actions", "state", "jobs", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string"},
+    "endpoint": {
+      "type": "object",
+      "required": ["name", "role"],
+      "properties": {
+        "name": {"type": "string"},
+        "role": {"enum": ["agent", "operator"], "description": "The agent endpoint hides operator-only tools."}
+      }
+    },
+    "roles": {
+      "type": "object",
+      "description": "The canonical role vocabulary: role -> what a tool with that role does.",
+      "additionalProperties": {"type": "string"}
+    },
+    "instruments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["device", "class", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "device": {"type": "string", "description": "Tool prefix: the device's tools are <device>_<command>."},
+          "class": {"type": "string", "description": "Tango class."},
+          "address": {"type": ["string", "null"], "description": "Tango device name."},
+          "kind": {
+            "type": "object",
+            "required": ["stem", "probe", "envelope"],
+            "additionalProperties": false,
+            "properties": {
+              "stem": {"type": "boolean", "description": "Scans images and blanks a beam (an electron microscope)."},
+              "probe": {"type": "boolean", "description": "Brings a probe to the sample (approach, engage, indent)."},
+              "envelope": {"type": "boolean", "description": "Runs jobs through the job envelope (reserve ... release)."}
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tool", "device", "command", "role", "role_source", "purpose", "risk", "effect", "args"],
+        "additionalProperties": false,
+        "properties": {
+          "tool": {"type": "string", "description": "MCP tool name to call."},
+          "device": {"type": ["string", "null"], "description": "Tool prefix of the device; null for a native tool."},
+          "command": {"type": ["string", "null"], "description": "Tango command; null for a native tool."},
+          "role": {"type": "string", "description": "One of the roles above."},
+          "role_source": {"enum": ["annotation", "rule", "default"], "description": "annotation: the device's action_hints (a YAML role:); rule: from the command's words; default: other."},
+          "purpose": {"type": "string", "description": "What the tool does, one line from its doc."},
+          "risk": {"enum": ["low", "high"], "description": "As the approval gate sees it: approve mode holds high-risk calls."},
+          "effect": {"enum": ["act", "observe"], "description": "observe: only reads; act: may change the instrument or the sample."},
+          "args": {"type": "array", "items": {"$ref": "#/$defs/value"}},
+          "returns": {"$ref": "#/$defs/value"},
+          "primary": {"const": true, "description": "The instrument's main observable (a STEM's scanned image, a YAML instrument's map image)."}
+        }
+      }
+    },
+    "state": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "device", "source"],
+        "properties": {
+          "name": {"type": "string"},
+          "device": {"type": "string"},
+          "source": {"enum": ["tool", "attribute"], "description": "tool: read it by calling `tool`; attribute: a Tango attribute (Tango clients; no MCP tool of its own)."},
+          "tool": {"type": "string"},
+          "role": {"type": "string"},
+          "type": {"type": "string"},
+          "items": {"type": "string"},
+          "units": {"type": ["string", "array"]},
+          "axis": {"type": "string"},
+          "elements": {"type": "array", "items": {"type": "string"}},
+          "kind": {"type": "string"},
+          "writable": {"type": "boolean"},
+          "doc": {"type": "string"},
+          "min": {"type": "number"},
+          "max": {"type": "number"}
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["device", "plan_schema", "plan_example", "tools"],
+        "properties": {
+          "device": {"type": "string"},
+          "kind": {"type": ["string", "null"], "description": "What the job does."},
+          "plan_schema": {"type": ["object", "null"], "description": "The plan's JSON Schema; null when the device gives none."},
+          "plan_example": {"description": "A valid plan for reserve or run_job."},
+          "tools": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Envelope verb -> tool name."},
+          "run_with": {"type": ["string", "null"], "description": "The native tool that runs a whole job in one call."}
+        }
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "value": {
+      "type": "object",
+      "description": "An argument (with a name) or a return value.",
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string", "description": "JSON type (number, integer, string, boolean, array, object, or several joined by |), or 'data key'."},
+        "items": {"type": "string", "description": "An array's item type."},
+        "required": {"type": "boolean"},
+        "units": {"type": ["string", "array"], "description": "One unit, or one per element."},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "enum": {"type": "array"},
+        "axis": {"type": "string", "description": "The stage axis (x, y, z) this value is."},
+        "elements": {"type": "array", "items": {"type": "string"}, "description": "What each element of an array is, e.g. [x, y, z, alpha, beta]."},
+        "kind": {"type": "string", "description": "An acquisition's data kind (image, spectrum, value)."},
+        "doc": {"type": "string"}
+      }
+    }
+  }
+}

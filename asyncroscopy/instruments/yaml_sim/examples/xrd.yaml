@@ -54,6 +54,7 @@ commands:
     sets: {tube_power_w: power_w}
     duration_s: 0.5
     returns: {tube_power_w: tube_power_w, state: "on"}
+    role: beam.unblank   # for role-based controllers (asyncroscopy.mcp.roles); xray_off is beam.blank by rule
   xray_off:
     doc: Switch the X-ray tube off. Always allowed.
     sets: {tube_power_w: 0}

@@ -31,6 +31,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         sets: {tube_power_w: power_w}    # settings to change; values are expressions
         returns: "X-rays on"             # a string, a number, or a mapping (sent as JSON)
         duration_s: 0.5                  # optional simulated time (at most 25 s per call)
+        role: beam.unblank               # optional canonical role (asyncroscopy.mcp.roles), for role-based controllers
       move_xy:
         doc: Move the stage.
         inputs:                          # several arguments: the tool takes them by name
@@ -43,6 +44,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         kind: spectrum                   # spectrum (1-D), image (2-D) or value
         units: counts                    # what the values are (default counts)
         inputs: [...]                    # optional arguments, as for commands
+        role: acquire.spectrum           # optional; by default from the kind (acquire.image, acquire.spectrum, acquire.other)
         peaks:
           - {position: 28.44, height: 900, fwhm: 0.14, shape: gaussian}   # gaussian, lorentzian or voigt
         noise: poisson                   # poisson (counts only), gaussian or none
@@ -103,6 +105,8 @@ from typing import Any
 import numpy as np
 import yaml
 
+from asyncroscopy.mcp.roles import check_role
+
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 MAX_DURATION_S = 25.0  # the MCP server stops waiting for a command after 30 s
@@ -122,8 +126,9 @@ OPERATORS = (
 
 SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices", "requires"}
 INPUT_KEYS = {"name", "type", "min", "max", "units", "doc", "choices"}
-COMMAND_KEYS = {"doc", "input", "inputs", "requires", "sets", "returns", "duration_s"}
-ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis", "peaks", "background", "noise", "shape", "pixel_size_m", "spots", "values", "inputs", "units", "noise_sigma"}
+COMMAND_KEYS = {"doc", "input", "inputs", "requires", "sets", "returns", "duration_s", "role"}
+ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis", "peaks", "background", "noise", "shape", "pixel_size_m", "spots", "values", "inputs", "units", "noise_sigma", "role"}
+KIND_ROLES = {"image": "acquire.image", "spectrum": "acquire.spectrum", "value": "acquire.other"}
 AXIS_KEYS = {"start", "stop", "points", "label", "units"}
 PEAK_KEYS = {"position", "height", "fwhm", "width", "shape", "eta"}
 PEAK_SHAPES = {"gaussian", "lorentzian", "voigt"}
@@ -337,6 +342,7 @@ class Command:
     returns: Any = None
     returns_trees: Any = None
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
+    role: str | None = None  # a canonical role (asyncroscopy.mcp.roles); None: the rules decide
 
 
 @dataclass
@@ -350,6 +356,7 @@ class Acquisition:
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
     inputs: list[Quantity] = field(default_factory=list)
     units: str = "counts"
+    role: str | None = None  # None: from the kind (KIND_ROLES)
 
 
 @dataclass
@@ -481,7 +488,18 @@ def _command(name: str, raw: Any, settings: dict[str, Quantity]) -> Command:
         returns=raw.get("returns"),
         returns_trees=_returns_trees(f"{where}.returns", raw.get("returns"), names),
         duration=_duration(where, raw.get("duration_s"), names),
+        role=_role(where, raw.get("role")),
     )
+
+
+def _role(where: str, raw: Any) -> str | None:
+    """An optional ``role:``, checked against the canonical roles."""
+    if raw is None:
+        return None
+    try:
+        return check_role(raw, f"{where}.role")
+    except ValueError as exc:
+        raise SpecError(str(exc)) from None
 
 
 def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisition:
@@ -575,6 +593,7 @@ def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisit
         requires=_requires(where, raw.get("requires"), names),
         duration=_duration(where, raw.get("duration_s"), names, limit=MAX_STEP_DURATION_S),
         inputs=inputs, units=str(raw.get("units", "counts")),
+        role=_role(where, raw.get("role")),
     )
 
 
@@ -744,6 +763,55 @@ def map_section(spec: InstrumentSpec) -> MapSection | None:
     )
 
 
+JSON_TYPES = {float: "number", int: "integer", bool: "boolean", str: "string"}
+
+
+def _argument(quantity: Quantity, axis: str | None = None) -> dict:
+    """One argument (or value) as the action space shows it: type, units, range, choices, stage axis."""
+    found = {"name": quantity.name, "type": JSON_TYPES[quantity.type]}
+    for key, value in (("units", quantity.units), ("min", quantity.min), ("max", quantity.max), ("enum", quantity.choices), ("doc", quantity.doc), ("axis", axis)):
+        if value not in (None, ""):
+            found[key] = value
+    return found
+
+
+def action_hints(spec: InstrumentSpec) -> dict:
+    """What the file says about each command beyond its doc, for the MCP server's action space
+    (asyncroscopy.mcp.action_space): {command: {"role", "args", "returns"}}.
+
+    A role is the file's own ``role:``, an acquisition's kind (KIND_ROLES), or, for the stage settings
+    and the field of view of the map section (given or inferred), stage.move / stage.read / optics.fov;
+    other commands are left to the MCP server's rules. Arguments carry type, units, range and choices,
+    and ``axis`` (x, y, z) when they set a stage setting, so a controller can fill them from a position.
+    The map section's image acquisition is ``primary``: the instrument's main observable.
+    """
+    section = map_section(spec)
+    stage = section.stage if section else [n for n in spec.settings if re.match(r"stage_[xyz](_|$)", n)]
+    axes = {}
+    for i, name in enumerate(stage):
+        letter = re.match(r"stage_([xyz])(_|$)", name)
+        axes[name] = letter.group(1) if letter else "xyz"[i]
+    fov = section.field_of_view if section else None
+    hints: dict[str, dict] = {}
+    for name, quantity in spec.settings.items():
+        returns = {k: v for k, v in _argument(quantity, axes.get(name)).items() if k not in ("name", "doc")}
+        hints[f"get_{name}"] = {"returns": returns, **({"role": "stage.read"} if name in axes else {})}
+        if quantity.settable:
+            role = "stage.move" if name in axes else "optics.fov" if name == fov else None
+            hints[f"set_{name}"] = {"args": [_argument(quantity, axes.get(name))], **({"role": role} if role else {})}
+    for name, cmd in spec.commands.items():
+        sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # input -> the setting it sets
+        hints[name] = {"args": [_argument(q, axes.get(sets.get(q.name, ""))) for q in cmd.inputs], **({"role": cmd.role} if cmd.role else {})}
+    for name, acquisition in spec.acquisitions.items():
+        hints[name] = {
+            **({"primary": True} if section and name == section.image else {}),  # what a map tiles with: the main observable
+            "role": acquisition.role or KIND_ROLES[acquisition.kind],
+            "args": [_argument(q) for q in acquisition.inputs],
+            "returns": {"type": "object" if acquisition.kind == "value" else "data key", "kind": acquisition.kind, "units": acquisition.units},
+        }
+    return hints
+
+
 def map_description(spec: InstrumentSpec, sim: "SimInstrument", overrides: dict | None = None) -> dict:
     """What the Mapper needs to tile this instrument, evaluated at the current settings with ``overrides``.
 
@@ -846,6 +914,8 @@ def load_spec(path: str | Path) -> InstrumentSpec:
         raise SpecError(f"{path}: {duplicates} defined twice (settings make get_<name> and set_<name> commands)")
     if not names:
         raise SpecError(f"{path}: no settings, commands or acquisitions; nothing for an agent to call")
+    if "action_hints" in spec.settings:
+        raise SpecError(f"{path}: settings.action_hints: the device's own attribute has that name (its commands' roles); rename the setting")
     taken = sorted(set(names) & JOB_DEVICE_NAMES) if spec.jobs else []
     if taken:
         raise SpecError(f"{path}: {taken} are the job device's own commands (an instrument with jobs has them); rename yours")
