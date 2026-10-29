@@ -62,7 +62,8 @@ from asyncroscopy.skills.registry import read_only_request
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
 DATA_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b")
 # A stitched map key ends in _map and carries its run id (so tool names such as assemble_map do not match).
-MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*_map\b")
+# A stitched map: <run>_map, or <run>_map_<YYYYmmddTHHMMSS>_<hex4> once the run was stitched again (pyTEMlib keeps the old map).
+MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
 # What kinds of instrument action a goal may take, read from tool names (any instrument, not only a STEM).
 CATEGORIES = ("job", "acquire", "move", "settings", "beam")

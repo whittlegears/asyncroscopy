@@ -93,7 +93,7 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
             status = json.loads(text(await call(agent, "wait_for_job", {"job_id": again["job_id"]})))
             if status.get("state") in {"done", "failed", "aborted"}:
                 break
-        report("wait_for_job waits on an analysis job and returns its map key", status.get("result_keys", {}).get("map", "").endswith("_map"), json.dumps(status)[:200])
+        report("wait_for_job waits on an analysis job and returns its map key", "_map" in status.get("result_keys", {}).get("map", ""), json.dumps(status)[:200])
 
 
 def unreachable(*urls: str) -> list[str]:
