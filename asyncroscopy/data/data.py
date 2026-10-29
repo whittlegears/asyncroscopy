@@ -47,6 +47,7 @@ from tango.server import Device, attribute, command
 from tiled.client.register import identity, register
 
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
+WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean "every interface"
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # Suffixes Tiled 0.2 registers from a file (tiled.mimetypes plus the stdlib's image/tiff); Tiled skips others silently.
@@ -157,7 +158,7 @@ class DATA(Device):
         config = {
             "host": self._host,
             "port": self._port,
-            "uri": self._uri(),
+            "uri": self._public_uri(),
             "save_path": self._save_path,
             "tiled_server": self._tiled_server,
             "tiled_server_status": self._tiled_server_status,
@@ -480,7 +481,14 @@ class DATA(Device):
         return json.dumps(result)
 
     def _uri(self) -> str:
-        return f"http://{self._host}:{self._port}"
+        """Where this device reaches its own Tiled: a wildcard bind (0.0.0.0, ::) is reached on loopback."""
+        host = "127.0.0.1" if self._host.strip() in WILDCARD_HOSTS else self._host
+        return f"http://{host}:{self._port}"
+
+    def _public_uri(self) -> str:
+        """The Tiled address get_config gives clients (MCP servers, SciAgentGUI): ASYNCROSCOPY_TILED_PUBLIC_URI
+        when set, for a Tiled that binds 0.0.0.0 in a container and is reached by a service name; else _uri()."""
+        return os.environ.get("ASYNCROSCOPY_TILED_PUBLIC_URI", "").strip().rstrip("/") or self._uri()
 
     def _tiled_alive(self) -> bool:
         """True when a Tiled server (not just any HTTP server) answers at the configured address."""

@@ -832,6 +832,18 @@ def test_the_log_tail_reads_only_the_end_of_a_long_log(tmp_path) -> None:
     assert len(tail) < data_module.LOG_TAIL_BYTES + 200
 
 
+def test_a_tiled_bound_to_every_interface_is_reached_locally_and_advertised_by_its_public_uri(monkeypatch) -> None:
+    """In a container Tiled binds 0.0.0.0: DATA talks to it on loopback and tells clients the service address."""
+    device = SimpleNamespace(_host="0.0.0.0", _port=9091)
+    device._uri = lambda: DATA._uri(device)
+    monkeypatch.delenv("ASYNCROSCOPY_TILED_PUBLIC_URI", raising=False)
+    assert DATA._uri(device) == "http://127.0.0.1:9091"
+    assert DATA._public_uri(device) == "http://127.0.0.1:9091"
+    monkeypatch.setenv("ASYNCROSCOPY_TILED_PUBLIC_URI", "http://twin-tiled:9091/")
+    assert DATA._public_uri(device) == "http://twin-tiled:9091"
+    assert DATA._uri(SimpleNamespace(_host="localhost", _port=9191)) == "http://localhost:9191"
+
+
 def test_registered_file_reads_a_windows_file_uri() -> None:
     node = SimpleNamespace(data_sources=lambda: [SimpleNamespace(assets=[SimpleNamespace(data_uri="file://localhost/C:/data/frame%20a.h5")])])
     assert _registered_file(node) == "C:/data/frame a.h5"

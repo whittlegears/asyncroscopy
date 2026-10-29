@@ -112,6 +112,9 @@ class Config:
     device_timeout_seconds: int
     # Top-level `simulated:`. Every device gets it as its `simulated` property; False (real hardware) when absent.
     simulated: bool = False
+    # tango.bind_host: the interface the Tango database listens on, when it differs from tango.host (the
+    # name clients use). In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
+    tango_bind_host: str = ""
 
 
 def _simulated(raw: dict, path: Path) -> bool:
@@ -234,6 +237,7 @@ def load_config(path: Path) -> Config:
         tango_host=_require(tango_section, "host", "tango"),
         tango_port=int(_require(tango_section, "port", "tango")),
         reset_database_file=bool(tango_section.get("reset_database_file", False)),
+        tango_bind_host=str(tango_section.get("bind_host") or ""),
         tiled=TiledConfig(
             host=_require(tiled, "host", "tiled"),
             port=int(_require(tiled, "port", "tiled")),
@@ -298,6 +302,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="DIR",
         help="Run a separate stack with its database and process state in DIR "
         "(e.g. outputs/stacks/raman), leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
+    )
+    parser.add_argument(
+        "--log-to-stdout",
+        action="store_true",
+        help="Copy every server's output to this launcher's stdout, each line prefixed with [device]. "
+        "For containers and supervisors that collect stdout; without it the output is kept for error reports only.",
     )
     parser.add_argument(
         "--replace",
@@ -874,12 +884,12 @@ def main(argv: list[str] | None = None) -> int:
     print_inventory(devices)
 
     isolated_dir = args.isolated.resolve() if args.isolated else None
-    manager_kwargs = {}
+    manager_kwargs = {"echo_output": args.log_to_stdout}
     if isolated_dir is not None:
         isolated_dir.mkdir(parents=True, exist_ok=True)
         clear_first = False
         environment["PYTANGO_DATABASE_NAME"] = str(isolated_dir / "tango_database.db")
-        manager_kwargs = {"name": f"run_servers_{port}", "state_dir": isolated_dir / ".processes"}
+        manager_kwargs.update(name=f"run_servers_{port}", state_dir=isolated_dir / ".processes")
 
     snapshot = process_snapshot()
     my_pids = {os.getpid(), *ancestors(os.getpid(), snapshot)}
@@ -924,7 +934,7 @@ def main(argv: list[str] | None = None) -> int:
                 database = manager.start_process(
                     key="database",
                     label="Tango database",
-                    command=python_command("-m", "tango.databaseds.database", "2"),
+                    command=python_command("-m", "tango.databaseds.database", *(["--host", config.tango_bind_host] if config.tango_bind_host else []), "2"),
                     env=environment,
                 )
                 print("  WAIT  database readiness", end="", flush=True)
@@ -1014,6 +1024,11 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 while True:
                     time.sleep(0.1)
+                    # A server that dies after startup stops the stack with an error, so a supervisor
+                    # (systemd, Kubernetes) sees the failure instead of a launcher that looks healthy.
+                    stopped = next((p for p in manager.active_processes if not p.running), None)
+                    if stopped is not None:
+                        raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
             except KeyboardInterrupt:
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!
                 print()

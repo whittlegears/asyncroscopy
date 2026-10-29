@@ -47,6 +47,7 @@ project:
         - file: Operation/approval_mode.md
         - file: Operation/dry_run.md
         - file: Operation/run-servers.md
+        - file: Operation/deployment_notes.md
         - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md

@@ -308,3 +308,34 @@ def test_process_command_lines_windows_fallback_does_not_use_wmic(monkeypatch):
 
     assert "Get-CimInstance Win32_Process" in " ".join(calls[0])
     assert table == {42: ["C:/tools/venv/python.exe", "-u", "-m", "pkg.stage", "stage_instance"]}
+
+
+def _drained(stream, *prefix):
+    import time
+    from collections import deque
+
+    class Closing:  # the drain thread closes the stream when it ends: a visible "done" flag
+        closed = False
+
+        def readline(self):
+            return stream.readline()
+
+        def close(self):
+            self.closed = True
+
+    lines, wrapped = deque(), Closing()
+    ProcessManager._drain(wrapped, lines, *prefix)
+    deadline = time.time() + 5
+    while not wrapped.closed and time.time() < deadline:
+        time.sleep(0.01)
+    return list(lines)
+
+
+def test_drain_echoes_child_output_behind_a_prefix_only_when_asked(capsys):
+    """run_servers --log-to-stdout: each server's lines reach the launcher's stdout, so a container log has them."""
+    import io
+
+    assert _drained(io.BytesIO(b"device ready\n"), "[data] ") == ["device ready"]
+    assert "[data] device ready" in capsys.readouterr().out
+    assert _drained(io.BytesIO(b"kept only\n")) == ["kept only"]
+    assert "kept only" not in capsys.readouterr().out

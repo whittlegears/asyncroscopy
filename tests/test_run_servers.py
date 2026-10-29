@@ -375,3 +375,45 @@ def test_a_launcher_stops_its_servers_on_sigterm_once():
         assert handler(signal.SIGTERM, None) is None  # a second copy during cleanup is ignored
     finally:
         signal.signal(signal.SIGTERM, before)
+
+
+def test_the_tango_database_can_bind_an_interface_other_than_its_client_host(tmp_path):
+    """In a pod, tango.host is a service name every client resolves; the database binds 0.0.0.0."""
+    twin = run_servers.PROJECT_DIR / "configs" / "digital_twin_mapping.yaml"
+    assert run_servers.load_config(twin).tango_bind_host == ""
+    path = tmp_path / "pod.yaml"
+    source = twin.read_text(encoding="utf-8")
+    assert "  host: localhost\n  port: 9094\n" in source
+    path.write_text(source.replace("  host: localhost\n  port: 9094\n", "  host: twin-tango\n  bind_host: 0.0.0.0\n  port: 9094\n"), encoding="utf-8")
+    config = run_servers.load_config(path)
+    assert (config.tango_host, config.tango_bind_host) == ("twin-tango", "0.0.0.0")
+
+
+def test_run_mcp_fails_when_its_server_stops_on_its_own(monkeypatch):
+    """A server that exits by itself (port taken, Tango unreachable) makes the launcher exit non-zero."""
+
+    class Exited:
+        returncode = 3
+
+        def poll(self):
+            return 3
+
+        def wait(self, timeout=None):
+            return 3
+
+    class FakeManager:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def start_process(self, **kwargs):
+            return process_manager.ManagedProcess(key="k", label="l", process=Exited())
+
+    monkeypatch.setattr(run_mcp, "ProcessManager", FakeManager)
+    monkeypatch.setattr(run_mcp, "stop_on_termination", lambda: None)
+    assert run_mcp.main(["--yaml", str(run_mcp.PROJECT_DIR / "configs" / "mcp_dt.yaml")]) == 3
