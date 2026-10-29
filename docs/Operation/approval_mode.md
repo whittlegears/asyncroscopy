@@ -48,6 +48,8 @@ print(approvals.list_pending())
 approvals.approve(json.dumps({"request_id": "...", "who": "your name"}))
 ```
 
+Each pending request names the tool (`action`), its `arguments`, the `caller`, the agent `run` that made it (the agent's run id, or null for a call from outside an agent run) and a `reason` (for a job start, the reserved plan). An operator interface can use `run` to offer "approve for the rest of this run": it approves each later request with the same `run` as it arrives, and every approval is still single use and traced.
+
 Unanswered requests expire after `request_timeout_s` (default 30 minutes); an approval must be used within `grant_ttl_s` (default 15 minutes).
 
 The mode is saved to the Approvals device's `mode_file` (default `outputs/approvals/mode.json`) and restored when the device restarts, so a crash or `Init` does not drop `approve` back to `auto`. If that file exists but cannot be read, the device starts in `approve`.

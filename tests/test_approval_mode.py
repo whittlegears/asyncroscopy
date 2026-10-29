@@ -168,6 +168,13 @@ class TestApprovalsDevice:
         assert first["allowed"] and first["approved_by"] == "operator"
         assert not json.loads(approvals_proxy.check(json.dumps(call)))["allowed"]
 
+    def test_a_pending_request_names_its_agent_run(self, approvals_proxy):
+        call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [7, 1, 0, 0, 0]}}
+        request_id = json.loads(approvals_proxy.request(json.dumps({**call, "caller": "agent-1", "run": "run-42"})))["request_id"]
+        pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["request_id"] == request_id]
+        assert pending[0]["run"] == "run-42" and pending[0]["caller"] == "agent-1"
+        approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "operator"}))
+
     def test_approval_covers_only_the_same_arguments(self, approvals_proxy):
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [9, 9, 0, 0, 0]}}
         request_id = json.loads(approvals_proxy.request(json.dumps(call)))["request_id"]
