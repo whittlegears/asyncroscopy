@@ -404,12 +404,62 @@ class TestWaitForJob:
                 Job.polls += 1
                 return json.dumps({"job_id": "j1", "state": "done" if Job.polls >= 2 else "running"})
 
+            def results(self, request):
+                return json.dumps({"schema_version": "1.1.0", "job_id": "j1", "state": "done", "result_keys": {"run": "map_r1.h5"}, "summary": {"grid": {"rows": 3}}})
+
         server._devices = {"Mapper": Job()}
         server._envelope_prefixes = {"Mapper"}
-        assert server.wait_for_job("Mapper", "j1", max_wait_s=10)["state"] == "done"
-        assert Job.polls == 2
+        done = server.wait_for_job("j1", device="Mapper", max_wait_s=10)
+        assert done["state"] == "done" and Job.polls == 2
+        # A finished job's reply carries its results, so <device>_results is not a separate call.
+        assert done["result_keys"] == {"run": "map_r1.h5"} and done["summary"]["grid"]["rows"] == 3
         with pytest.raises(ToolError, match="Mapper"):
-            server.wait_for_job("Camera", "j1")
+            server.wait_for_job("j1", device="Camera")
+
+    def test_the_device_can_be_left_out(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+
+        class Other:
+            def job_status(self, request):
+                return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
+
+        class Mapper:
+            def job_status(self, request):
+                return json.dumps({"job_id": "j1", "state": "failed", "last_error": "stage refused"})
+
+        server._devices = {"IndentGrid": Other(), "Mapper": Mapper()}
+        server._envelope_prefixes = {"IndentGrid", "Mapper"}
+        assert server.wait_for_job("j1")["last_error"] == "stage refused"
+
+    def test_analysis_jobs_are_waited_on_through_the_analysis_server(self, monkeypatch):
+        from fastmcp import FastMCP
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        analysis = FastMCP("analysis")
+        asked = []
+
+        @analysis.tool
+        def analysis_job_status(job_id: str, wait_s: float = 0.0) -> dict:
+            asked.append(wait_s)
+            return {"job_id": job_id, "state": "done"} if job_id == "assemble-1" else {"error": {"code": "unknown_job", "message": "no job"}}
+
+        @analysis.tool
+        def analysis_job_results(job_id: str) -> dict:
+            return {"job_id": job_id, "state": "done", "result_keys": {"map": "map_r1_map"}, "summary": {"tiles": 9}}
+
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, analysis_url=analysis)
+
+        class Mapper:
+            def job_status(self, request):
+                return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
+
+        server._devices = {"Mapper": Mapper()}
+        server._envelope_prefixes = {"Mapper"}
+        done = server.wait_for_job("assemble-1", max_wait_s=5)
+        assert done["result_keys"] == {"map": "map_r1_map"} and done["summary"]["tiles"] == 9 and asked == [5.0]
+        with pytest.raises(ToolError, match="analysis server"):
+            server.wait_for_job("nowhere")
 
     def test_a_job_still_running_at_the_deadline_says_to_wait_again(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -421,7 +471,7 @@ class TestWaitForJob:
 
         server._devices = {"Mapper": Job()}
         server._envelope_prefixes = {"Mapper"}
-        status = server.wait_for_job("Mapper", "j1", max_wait_s=0)
+        status = server.wait_for_job("j1", device="Mapper", max_wait_s=0)
         assert status["state"] == "running" and status["progress"] == 0.4
         assert "wait_for_job again" in status["note"]
 
@@ -439,7 +489,7 @@ class TestWaitForJob:
 
         server._devices = {"Mapper": Job()}
         server._envelope_prefixes = {"Mapper"}
-        status = server.wait_for_job("Mapper", "j1", max_wait_s=0)
+        status = server.wait_for_job("j1", device="Mapper", max_wait_s=0)
         assert "beam_current 2 < 10" in status["note"] and "resumes by itself" in status["note"]
 
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
@@ -453,4 +503,99 @@ class TestWaitForJob:
         server._devices = {"Mapper": Job()}
         server._envelope_prefixes = {"Mapper"}
         with pytest.raises(ToolError, match="analysis_job_status"):
-            server.wait_for_job("Mapper", "assemble-job-1")
+            server.wait_for_job("assemble-job-1", device="Mapper")
+
+
+JSON_REQUEST = type("CommandInfo", (), {
+    "in_type": tango.CmdArgType.DevString, "out_type": tango.CmdArgType.DevString,
+    "in_type_desc": ':param request: JSON {"plan": {...}, "reservation_id": "..."}.', "out_type_desc": "",
+})()
+
+
+class TestRunJob:
+    @staticmethod
+    def mapper_server(server_factory):
+        server = server_factory()
+        calls = []
+
+        def reserve(request):
+            body = json.loads(request)
+            calls.append(("reserve", body))
+            if body["plan"].get("fov_m", 1) <= 0:
+                return json.dumps({"schema_version": "1.1.0", "error": {"code": "plan_rejected", "message": "fov_m must be > 0"}})
+            return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": {"steps": 9}})
+
+        def start(request):
+            body = json.loads(request)
+            calls.append(("start", body["reservation_id"]))
+            return json.dumps({"schema_version": "1.1.0", "job_id": "j-" + body["reservation_id"], "state": "queued"})
+
+        class Device:
+            finished = False  # True: the job is done by the time run_job looks
+
+            def get_reservation(self, request):
+                return '{"plan": {"fov_m": 2e-07}}'
+
+            def job_status(self, request):
+                job_id = json.loads(request)["job_id"]
+                return json.dumps({"job_id": job_id, "state": "done" if self.finished else "running"})
+
+            def results(self, request):
+                return json.dumps({"job_id": json.loads(request)["job_id"], "result_keys": {"map": "map_r1_map"}, "summary": {"tiles": 9}})
+
+        server._envelope_prefixes = {"Mapper"}
+        server._devices = {"Mapper": Device()}
+        server.tools = {"Mapper": {
+            "reserve": server._create_wrapper(reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper"),
+            "start": server._create_wrapper(start, JSON_REQUEST, "start", "Mapper", tool_prefix="Mapper"),
+        }}
+        return server, calls
+
+    def test_one_call_reserves_and_starts(self, server_factory, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        server, calls = self.mapper_server(server_factory)
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9} and reply["reservation_id"] == "r1"
+        assert reply["state"] == "running" and "wait_for_job again" in reply["note"]
+        assert [c[0] for c in calls] == ["reserve", "start"]
+
+    def test_a_short_job_comes_back_finished_with_its_results(self, server_factory):
+        server, calls = self.mapper_server(server_factory)
+        server._devices["Mapper"].finished = True
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9}
+
+    def test_a_refused_plan_comes_back_without_a_start(self, server_factory):
+        server, calls = self.mapper_server(server_factory)
+        assert server.run_job("Mapper", {"fov_m": 0})["error"]["code"] == "plan_rejected"
+        assert [c[0] for c in calls] == ["reserve"]
+        with pytest.raises(ToolError, match="no job device"):
+            server.run_job("Camera", {"fov_m": 2e-7})
+
+    def test_a_held_start_is_approved_once_and_the_same_call_starts_that_reservation(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError, match="repeat this run_job call unchanged") as held:
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        request_id = str(held.value).split("request_id=")[1].split(")")[0]
+        pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["request_id"] == request_id]
+        assert pending and pending[0]["action"] == "Mapper_start" and "fov_m" in pending[0]["reason"]  # the operator sees the plan
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
+        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        assert reply["job_id"] == "j-r1"
+        assert calls == [("reserve", {"plan": {"fov_m": 2e-7}}), ("start", "r1")]  # one reservation, started once
+        with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
+            server.run_job("Mapper", {"fov_m": 2e-7})  # the grant was single use: a second map needs its own approval
+
+    def test_a_denied_run_frees_the_instrument(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        released = []
+        server.tools["Mapper"]["release"] = lambda request: released.append(request) or "{}"
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            server.run_job("Mapper", {"fov_m": 2e-7})
+        request_id = str(held.value).split("request_id=")[1].split(")")[0]
+        approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "alice"}))
+        status = server.approval_status(request_id)
+        assert status["state"] == "denied" and "released" in status["note"]
+        assert released == [{"reservation_id": "r1"}] and not server._held_runs

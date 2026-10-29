@@ -1,0 +1,99 @@
+# Maps on the mapping twin (configs/digital_twin_mapping.yaml): several sizes,
+# EDS, stitching, exploring and zooming, abort and resume. The `mapping` runner is
+# the fixed graph (the model writes only the plan); `general` makes every call.
+
+workflows:
+  - name: map_300nm
+    request: Map a 300 nm square around the current stage position.
+    runners: [general, mapping]
+    timeout_s: 600
+    checks:
+      - {check: map_plan, size_m: 3.0e-7}
+      - {check: job_finished}
+      - {check: no_sleepwalking}
+
+  - name: map_600nm_with_eds
+    request: Map a 600 nm square around the current position and take an EDS spectrum with each image.
+    runners: [general, mapping]
+    timeout_s: 900
+    checks:
+      - {check: map_plan, size_m: 6.0e-7, eds: true}
+      - {check: job_finished}
+      - {check: tiles_at_least, n: 9}
+      - {check: no_sleepwalking}
+
+  # CUJ 2 of docs/designs/agentic_sample_mapping.md: each spectrum is on the map as a point of
+  # interest at its stage position, linked to its key (checked on the map's POI layer).
+  - name: cuj2_map_with_eds_points
+    request: Map a 500 nm square around the centre and take an EDS spectrum with each image.
+    runners: [general, mapping]
+    timeout_s: 1200
+    checks:
+      - {check: map_plan, size_m: 5.0e-7, eds: true}
+      - {check: job_finished}
+      - {check: eds_pois_linked}
+      - {check: no_sleepwalking}
+
+  # CUJ 3: on a finished map, the scorer adds the three best regions (score, reason, version);
+  # the stage visits each inside the map's region; the new images are linked to those points.
+  - name: cuj3_three_regions_high_mag
+    setup: [map_plain]
+    request: On the map {map_key}, find the three most interesting regions and image them at high magnification.
+    runners: [general]
+    timeout_s: 1500
+    checks:
+      - {check: scored_regions, n: 3}
+      - {check: visited_regions, n: 3}
+      - {check: images_linked_to_regions, n: 3}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: map_1um_overview
+    request: Make an overview map of a 1 micrometre square around here, without EDS.
+    runners: [general, mapping]
+    timeout_s: 1200
+    checks:
+      - {check: map_plan, size_m: 1.0e-6, eds: false}
+      - {check: job_finished}
+      - {check: tiles_at_least, n: 25}
+      - {check: no_sleepwalking}
+
+  - name: map_and_stitch
+    request: Map a 600 nm square around the current position, stitch it, and give me the stitched map's key.
+    runners: [general, mapping]
+    timeout_s: 900
+    checks:
+      - {check: job_finished}
+      - {check: called, tool: assemble_map}
+      - {check: no_sleepwalking}
+
+  - name: explore_then_zoom
+    request: Map a 600 nm square around the current position, find the most interesting region on it, then go there and take a higher-magnification image of that region.
+    runners: [general]
+    timeout_s: 1200
+    checks:
+      - {check: job_finished}
+      - {check: called, tool: score_map}
+      - {check: zoomed_on_region}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: abort_then_resume
+    runners: [general]
+    timeout_s: 1500
+    turns:
+      - say: Start mapping a 1 micrometre square around the current position. Do not wait for it to finish; tell me the job id as soon as it is running.
+      - wait_for: {job_steps_at_least: 3, timeout_s: 300}
+        say: Stop that map now.
+      - say: Resume the map you stopped and let it finish. Then tell me how many tiles it has.
+    checks:
+      - {check: resumed_after_abort}
+      - {check: no_sleepwalking}
+
+  - name: revisit_point_of_interest
+    setup: [map]
+    request: The map {map_key} has a point of interest at x = {poi_x_nm} nm, y = {poi_y_nm} nm. Go back to it and take a HAADF image there.
+    runners: [general]
+    timeout_s: 480
+    checks:
+      - {check: stage_near, x: "{poi_x}", y: "{poi_y}"}
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}

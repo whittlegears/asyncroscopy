@@ -1,5 +1,5 @@
-"""Agent skills: short procedures an agent loads on demand. See README.md."""
+"""Agent skills: short procedures matched to a request and put in an agent's prompt. See README.md."""
 
-from .registry import Skill, list_skills, load_skill
+from .registry import Skill, list_skills, load_skill, select_skills, skills_text
 
-__all__ = ["Skill", "list_skills", "load_skill"]
+__all__ = ["Skill", "list_skills", "load_skill", "select_skills", "skills_text"]

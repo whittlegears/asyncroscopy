@@ -1,0 +1,132 @@
+"""Skills an agent needs, found for it before every model call: from the request, then as the task develops.
+
+Small models rarely look skills up themselves, so the graphs do it. Before
+each model call this middleware reads the conversation so far and decides,
+by fixed rules (no model call, so the same run always gets the same skills):
+
+* from the request: the best one or two skills by keywords, name and description
+  (``asyncroscopy.skills.select_skills``);
+* from what has happened since, once each:
+
+  ====================== ============================================================
+  skill                  added when
+  ====================== ============================================================
+  recover_from_errors    a tool call failed
+  approval_etiquette     a call was held (APPROVAL REQUIRED), or approval_status said
+                         denied or expired
+  inspect_data           a data key came back, or the request asks about data
+  explore_regions        a stitched map came back and the request asks for regions
+  ====================== ============================================================
+
+The chosen skills are written into the system prompt within a size budget
+(``asyncroscopy.skills.skills_text``); ``load_skill`` is offered to the model
+only while a chosen skill did not fit. Which skills were applied, and why, is
+kept in the agent's state as ``skills_applied`` (a list of
+``{"skill", "reason"}``), so traces and benchmarks can report it.
+
+Optional ``memory``: a function from the request to Markdown notes (see
+``asyncroscopy.agents.memory``) appended after the skills.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import Any, Callable, NotRequired
+
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain_core.messages import SystemMessage
+
+from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
+from asyncroscopy.skills import select_skills, skills_text
+from asyncroscopy.skills.registry import list_skills, usable_by
+
+ASKS_ABOUT_DATA = re.compile(r"\b(?:what is in|look at|inspect|show me|analy[sz]e|peaks?|elements?|composition|latest (?:image|spectrum|data))\b", re.I)
+ASKS_FOR_REGIONS = re.compile(r"interesting|notable|unusual|regions?|features?|where to look", re.I)
+MAX_APPLIED = 4  # skills one run may carry (the text budget applies on top)
+
+
+class SkillState(AgentState):
+    skills_applied: NotRequired[list[dict]]
+
+
+def _text(message) -> str:
+    content = getattr(message, "content", "")
+    return content if isinstance(content, str) else str(content)
+
+
+def _request(messages) -> str:
+    return next((_text(m) for m in messages if getattr(m, "type", "") == "human"), "")
+
+
+def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
+    """The skills that apply to a conversation so far, in the order they first applied, each with why."""
+    usable = {s.name for s in list_skills(endpoint_tools or agent_tools) if usable_by(s, agent_tools)}
+    applied: list[dict] = []
+
+    def add(name: str, reason: str) -> None:
+        if name in usable and len(applied) < MAX_APPLIED and all(a["skill"] != name for a in applied):
+            applied.append({"skill": name, "reason": reason})
+
+    request = _request(messages)
+    for skill in select_skills(request, agent_tools, endpoint_tools):
+        add(skill.name, "matches the request")
+    if ASKS_ABOUT_DATA.search(request):
+        add("inspect_data", "the request asks about data")
+    for message in messages:
+        if getattr(message, "type", "") != "tool":
+            continue
+        text, name = _text(message), getattr(message, "name", "") or "a tool"
+        if "APPROVAL REQUIRED" in text or re.search(r'"state":\s*"(?:denied|expired)"', text):
+            add("approval_etiquette", f"{name} was held for an operator or not approved")
+        elif getattr(message, "status", "") == "error" or text.startswith(("Error", "error:")):
+            add("recover_from_errors", f"{name} failed")
+        if MAP_KEY.search(text) and ASKS_FOR_REGIONS.search(request):
+            add("explore_regions", f"a stitched map came back from {name} and the request asks for regions")
+        if DATA_KEY.search(text):
+            add("inspect_data", f"a data key came back from {name}")
+    return applied
+
+
+class SkillMiddleware(AgentMiddleware):
+    """Puts the skills that apply (and optional memory notes) into the system prompt before every model call."""
+
+    state_schema = SkillState
+
+    def __init__(self, base_prompt: str, agent_tools: set[str], endpoint_tools: set[str] | None = None, memory: Callable[[str], str] | None = None):
+        super().__init__()
+        self.base_prompt = base_prompt
+        self.agent_tools = set(agent_tools)
+        self.endpoint_tools = set(endpoint_tools or agent_tools)
+        self.memory = memory
+
+    def _update(self, state) -> dict[str, Any] | None:
+        applied = skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
+        return None if applied == state.get("skills_applied") else {"skills_applied": applied}
+
+    def before_model(self, state, runtime):
+        return self._update(state)
+
+    async def abefore_model(self, state, runtime):
+        # Skill and memory files are read from disk: keep that off the event loop (LangGraph Studio checks).
+        return await asyncio.to_thread(self._update, state)
+
+    def _prompted(self, request):
+        state = request.state
+        applied = state.get("skills_applied") or skills_for(state["messages"], self.agent_tools, self.endpoint_tools)
+        text, cut = skills_text([a["skill"] for a in applied], self.endpoint_tools)
+        prompt = self.base_prompt
+        if text:
+            prompt += "\n\nSkills for this task (follow them):\n" + text
+        if self.memory is not None:
+            notes = self.memory(_request(state["messages"]))
+            if notes:
+                prompt += "\n\nNotes from earlier work on this instrument:\n" + notes
+        tools = request.tools if cut else [t for t in request.tools if getattr(t, "name", None) != "load_skill"]
+        return request.override(system_message=SystemMessage(prompt), tools=tools)
+
+    def wrap_model_call(self, request, handler):
+        return handler(self._prompted(request))
+
+    async def awrap_model_call(self, request, handler):
+        return await handler(await asyncio.to_thread(self._prompted, request))

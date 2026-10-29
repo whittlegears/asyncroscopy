@@ -197,18 +197,18 @@ It prints the tools it chose at start-up.
 Small models do better with fewer tools, so list yours. In bash:
 
 ```bash
-export ASYNCROSCOPY_AGENT_TOOLS="SimIndenter_*,IndentGrid_*,approval_status,wait_for_job,list_skills,load_skill"
+export ASYNCROSCOPY_AGENT_TOOLS="SimIndenter_*,IndentGrid_abort,run_job,wait_for_job,approval_status"
 ```
 
 In PowerShell:
 
 ```powershell
-$env:ASYNCROSCOPY_AGENT_TOOLS = "SimIndenter_*,IndentGrid_*,approval_status,wait_for_job,list_skills,load_skill"
+$env:ASYNCROSCOPY_AGENT_TOOLS = "SimIndenter_*,IndentGrid_abort,run_job,wait_for_job,approval_status"
 ```
 
 On an endpoint with several microscopes or Mappers, `ASYNCROSCOPY_MICROSCOPE` (for example `DigitalTwin`) and `ASYNCROSCOPY_MAPPER` (for example `Mapper_lab2`) choose the ones the `mapping` graph uses.
 
-`ASYNCROSCOPY_AGENT_PROMPT` replaces the system prompt; the text `{skills}` in it is replaced by the skill list, and other braces (a JSON plan example) are left as they are.
+`ASYNCROSCOPY_AGENT_PROMPT` replaces the system prompt. Skills are not part of it: before every model call the agent adds the skills that match the request and what has happened so far (see `docs/Operation/agents.md`). Braces in the prompt (a JSON plan example) are left as they are.
 
 `wait_for_job` waits up to 25 s per call, and one agent run allows about 20 tool calls, so the agent can follow a job of a few minutes. For an hours-long job, tell it in the prompt or skill to report the job id and stop; check on it later with `job_status`.
 

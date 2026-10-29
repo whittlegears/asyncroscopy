@@ -41,6 +41,35 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 7. Registers native helper tools such as `list_devices`, `list_data` and
    `view_data`.
 
+## Jobs, waits and skills: one tool per step
+
+Agent traces showed calls that always came together (see
+`benchmarks/results/tool_usage_analysis.md`), so the agent endpoint offers one
+tool for each step of a job:
+
+- `run_job(device, plan)`: reserve and start in one call. Every successful
+  `<device>_reserve` in the trials was followed by its start. The start still
+  goes through the approval gate once, and the held request shows the operator
+  the reserved plan. Repeating the same `run_job` after approval starts that
+  reservation; `approval_status` frees it if the request is denied or expires.
+- `wait_for_job(job_id, device=None)`: waits on any job, an instrument job
+  (`run_job`, `<device>_start`) or a stitching or scoring job on the analysis
+  server named by `mcp.analysis_url`. When the job is done, the reply also
+  has its results (`result_keys`, `summary`), so no `*_results` call follows.
+- Skills: since nearly every run began with `load_skill`, the agent no longer
+  asks for skills. Before each model call it adds the skills that match the
+  request and what has happened so far (an error, a held call, a data key;
+  `asyncroscopy.agents.skill_middleware`); `load_skill` is offered only when a
+  matching skill did not fit. See `docs/Operation/agents.md`.
+
+`<device>_reserve`, `_start`, `_job_status`, `_results`, `_release`,
+`list_skills` and `load_skill` stay on the endpoint for the `mapping` graph,
+SciAgentGUI and other clients. `configs/mcp_dt.yaml` hides from the agent
+endpoint the commands no agent needs (Tango `State`/`Status`, DATA's Tiled
+administration, the Approvals calls the gate makes itself, and
+`Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
+(`configs/mcp_operator.yaml`) keeps them.
+
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
 

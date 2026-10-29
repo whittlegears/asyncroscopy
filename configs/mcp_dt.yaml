@@ -32,12 +32,28 @@ mcp:
       - Init
       - Kill
       - RestartServer
+      # Tango's per-device State/Status: never called by an agent or the GUI.
+      - State
+      - Status
+    # Not for agents (none ever called them; see benchmarks/results/tool_usage_analysis.md).
+    # The devices call each other directly; operators have the GUI and mcp_operator.yaml.
+    # DATA.get_config stays: SciAgentGUI reads the Tiled address with it.
+    DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+    # The approval gate uses these itself; an agent asks with approval_status.
+    Approvals: [check, request, request_status, list_grants, list_pending]
+    # The gate shows the operator the plan with it; run_job and the Mapper_* replies carry the plan.
+    Mapper: [get_reservation]
   # Optional Tango command allowlist. Leave empty to include all non-blocked
   # commands. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
+  # The analysis server (pyTEMlib: stitching, scoring). With it, wait_for_job also
+  # waits on assemble_map and score_map jobs and returns their results, so an
+  # agent needs one wait tool for every job. Empty: wait_for_job is for this
+  # server's job devices only.
+  analysis_url: http://127.0.0.1:8003/mcp
   # Agent endpoint: operator-only commands (Approvals.approve/deny/set_mode,
   # export_ground_truth) are never offered here. The GUI uses mcp_operator.yaml.
   endpoint_role: agent

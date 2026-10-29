@@ -2,8 +2,15 @@
 
 ``graphs.mapping`` is a fixed workflow (plan -> reserve -> approval -> run ->
 stitch -> score -> report) where the language model only writes the plan
-and the report; ``graphs.general`` is a tool-using agent that loads skills on
-demand. Both are listed in langgraph.json so LangGraph Studio can run them.
+and the report; ``graphs.general`` is a tool-using agent; ``graphs.team`` is a
+planner with an operator and an analyst agent, each holding only its role's
+tools. ``skill_middleware`` gives every tool-using agent the skills its
+request and its progress call for; ``memory`` keeps Markdown notes it reads
+(INSTRUMENT.md, LESSONS.md, experiment pages); ``learning`` drafts skills from
+runs that met their goal, for an operator to promote (``python -m
+asyncroscopy.agents.skills``). ``goals`` and ``graphs.goal`` check a goal from
+the servers' replies and retry with feedback within a budget. The graphs are
+listed in langgraph.json; docs/Operation/agents.md describes all of this.
 
 Configuration comes from environment variables so Studio, scripts and the
 agent MCP server share it:

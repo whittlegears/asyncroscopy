@@ -1,0 +1,82 @@
+# Single actions a STEM user asks for every day. Checks come from the Instrument
+# Trace and from readings the runner takes before and after (see
+# benchmarks/workflow_checks.py for every check and its parameters).
+
+workflows:
+  - name: image_and_read_back
+    request: Take a HAADF image at the current position, then look at it and tell me its key and its intensity range.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: viewed_own_data}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: image_at_field_of_view
+    request: Set the field of view to 300 nm and take a HAADF image.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: param_near, name: fov, value: 3.0e-7, rel: 0.02}
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: no_sleepwalking, allow: ["*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: set_defocus
+    request: Set the defocus to 20 nm.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: param_near, name: defocus, value: 2.0e-8, rel: 0.0, abs_tol: 1.0e-9}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_set_defocus"]}
+
+  - name: move_and_image
+    request: Move the stage to x = 300 nm, y = -200 nm, keeping z and the tilts as they are, and take an image there.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: stage_near, x: 3.0e-7, y: -2.0e-7}
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: read_status_only
+    request: What are the current field of view, defocus and stage position? Do not change anything.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: no_actuation}
+      - {check: stage_unchanged}
+      - {check: param_unchanged, name: fov}
+      - {check: param_unchanged, name: defocus}
+      - {check: max_calls, n: 8}
+
+  - name: blank_the_beam
+    request: Blank the beam.
+    runners: [general]
+    timeout_s: 120
+    checks:
+      - {check: called, tool: "*_blank_beam"}
+      - {check: no_sleepwalking, allow: ["*_blank_beam"]}
+      - {check: max_calls, n: 4}
+
+  - name: eds_spectrum_elements
+    request: Take an EDS spectrum at the centre of the current field of view and tell me which elements it shows.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: called, tool: "*_acquire_spectrum"}
+      - {check: answer_eds_consistent}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_acquire_spectrum", "*_place_beam", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: compare_two_regions
+    request: Take a HAADF image with a 200 nm field of view at x = -300 nm, y = 0 and another at x = +300 nm, y = 0 (keep z and tilts), look at both, and tell me which one shows more particles.
+    runners: [general]
+    timeout_s: 480
+    checks:
+      - {check: called, tool: "*_acquire_scanned_image", min: 2}
+      - {check: called, tool: "*_move_stage", min: 2}
+      - {check: viewed_own_data}
+      - {check: answer_matches, pattern: "first|second|-300|\\+?300|left|right|both|same|equal"}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}

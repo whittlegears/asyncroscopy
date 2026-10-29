@@ -39,6 +39,7 @@ class MCPConfig:
     risk: dict[str, str] = field(default_factory=dict)
     trace: str = ''
     data_views: list[str] = field(default_factory=list)
+    analysis_url: str = ''
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,7 @@ def load_config(path: Path) -> Config:
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             trace=str(mcp.get('trace') or ''),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
+            analysis_url=str(mcp.get('analysis_url') or ''),
         ),
     )
 
@@ -134,6 +136,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--trace', config.mcp.trace])
     if config.mcp.data_views:
         command.extend(['--data-views-json', json.dumps(config.mcp.data_views)])
+    if config.mcp.analysis_url:
+        command.extend(['--analysis-url', config.mcp.analysis_url])
     return command
 
 

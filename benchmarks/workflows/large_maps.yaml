@@ -1,0 +1,71 @@
+# Very large maps on the large-map twin (configs/digital_twin_large_map.yaml: an 8 um
+# clustered sample with no simulated waiting). Run with --stack large after starting
+# that config instead of the mapping one. Zooming out is the stitched map's coarse
+# levels; zooming in is get_region at level 0, or a new image at higher magnification.
+# Maps of millions of tiles are stitched afterwards (post hoc) and are out of reach of a
+# live benchmark; these go to a few thousand tiles.
+
+workflows:
+  # Stitching accuracy against the twin's ground truth at a stage error of about 5 % of the
+  # field of view (150 nm stage noise, 3 um field of view): median placement error < 1 px.
+  - name: stitch_accuracy_5pct_stage_noise
+    stack: large
+    request: Map a 6 micrometre square around the current position with a 3 micrometre field of view, then stitch it and give me the stitched map's key.
+    runners: [general, mapping]
+    timeout_s: 1800
+    checks:
+      - {check: map_plan, size_m: 6.0e-6}
+      - {check: job_finished}
+      - {check: called, tool: assemble_map}
+      - {check: stitch_accuracy, max_median_px: 1.0}
+      - {check: no_sleepwalking}
+
+  - name: map_4um_and_stitch
+    stack: large
+    request: Map a 4 micrometre square around the current position at a 400 nm field of view, stitch it, and tell me the stitched map's key and its size in pixels.
+    runners: [general, mapping]
+    timeout_s: 2400
+    checks:
+      - {check: map_plan, size_m: 4.0e-6}
+      - {check: job_finished}
+      - {check: tiles_at_least, n: 100}
+      - {check: called, tool: assemble_map}
+      - {check: stitch_accuracy, max_median_px: 1.0}
+      - {check: no_sleepwalking}
+
+  # Thousands of tiles: the whole 8 um sample at 160 nm (about 3000 tiles).
+  - name: map_thousands_of_tiles
+    stack: large
+    request: Map the whole 8 micrometre sample, centred on the current position, at a 160 nm field of view, and stitch it.
+    runners: [mapping, general]
+    timeout_s: 14400
+    checks:
+      - {check: map_plan, size_m: 8.0e-6}
+      - {check: job_finished}
+      - {check: tiles_at_least, n: 2000}
+      - {check: called, tool: assemble_map}
+      - {check: stitch_accuracy, max_median_px: 1.0}
+      - {check: no_sleepwalking}
+
+  # Navigate a large map by zoom: an overview at a coarse level, then level 0 around a point of
+  # interest, without walking the tiles.
+  - name: zoom_out_then_in
+    stack: large
+    setup: [large_map]
+    request: The stitched map {map_key} covers a large area. Show me an overview of the whole map, then zoom into its highest-scoring point of interest and show that area at full resolution.
+    runners: [general]
+    timeout_s: 600
+    checks:
+      - {check: zoom_navigation}
+      - {check: no_actuation}
+
+  - name: zoom_into_cluster_on_instrument
+    stack: large
+    setup: [large_map]
+    request: On the stitched map {map_key}, go to its highest-scoring point of interest and image it at a 100 nm field of view.
+    runners: [general]
+    timeout_s: 900
+    checks:
+      - {check: zoomed_on_region, tol: 4.0e-7}
+      - {check: param_near, name: fov, value: 1.0e-7, rel: 0.05}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
