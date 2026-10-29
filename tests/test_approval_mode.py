@@ -771,7 +771,8 @@ class TestRunJob:
             server.run_job("Mapper", {"fov_m": 2e-7})
         approvals_proxy.approve(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
         assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
-        assert calls == [("reserve", {"plan": {"fov_m": 2e-7}}), ("start", "r1")]
+        # The reserve carries the caller and agent run from the headers, so the job's trace events name them.
+        assert calls == [("reserve", {"plan": {"fov_m": 2e-7}, "caller": "general-agent", "run": "run-1"}), ("start", "r1")]
         headers["x-asyncroscopy-run"] = "run-2"  # another agent run with the same caller name: its own reservation
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
             server.run_job("Mapper", {"fov_m": 2e-7})

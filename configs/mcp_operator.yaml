@@ -47,3 +47,7 @@ mcp:
     risk: {}
   # Instrument Trace: one JSON line per tool call. Empty disables it.
   trace: outputs/trace/mcp_operator.jsonl
+  # The instrument whose clock_s (simulated time on the twin) stamps each trace event. Empty: this computer's time.
+  clock_device: asyncroscopy/instrument/default
+  # What trace_since (operator only: the GUI follows the trace with it) reads. Empty: every *.jsonl next to trace.
+  trace_follow: [outputs/trace]
