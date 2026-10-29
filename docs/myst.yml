@@ -30,6 +30,7 @@ project:
       children:
         - file: Adding_New_Hardware/new_instrument.md
         - file: Adding_New_Hardware/add_detector.md
+        - file: Adding_New_Hardware/second_stack.md
     - title: MCP Server
       children:
         - file: MCP/mcp_server.md
@@ -40,6 +41,8 @@ project:
       children:
         - file: Operation/quickstart.md
         - file: Operation/agentic_mapping.md
+        - file: Operation/agents.md
+        - file: Operation/large_maps.md
         - file: Operation/approval_mode.md
         - file: Operation/run-servers.md
         - file: Operation/run-server-gui.md
@@ -51,6 +54,15 @@ project:
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md
+    - title: ATHENA
+      children:
+        - file: athena/wg2_traceability.md
+        - file: athena/related_work.md
+    - title: Designs
+      children:
+        - file: designs/concepts_brief.md
+        - file: designs/agentic_sample_mapping.md
+        - file: designs/sample_mapping_building_blocks.md
     - file: upcoming_changes.md
 
 site:

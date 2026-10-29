@@ -66,6 +66,7 @@ On its latest run, every workflow passes except `survey_rank_and_analyse` and `f
 ## Not claimed
 
 - No run on the physical instrument.
+- No claim of optimal results: everything here proves the logic on the twin ("logic proven"). Accuracy and optimality on the Spectra 300 ("performance proven") need the first-light session in `docs/designs/concepts_brief.md` section 5.
 - No learned reward, no human-preference data.
 - No authenticated identity, authorisation tokens or Kubernetes deployment (WG1).
 - No nanoindentation or SPM schemas.
