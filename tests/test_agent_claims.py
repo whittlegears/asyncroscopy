@@ -221,3 +221,12 @@ def test_the_correction_is_not_taken_for_the_users_request():
     # Loop detection still sees the rounds before the correction as this request's.
     looped = Calls("Read it.").call("view_data", {"key": "a.h5"}, "same").call("view_data", {"key": "a.h5"}, "same").messages
     assert repeats([*looped, HumanMessage("check", name=CLAIM_CHECK)]) == 1
+
+
+
+def test_describing_existing_data_as_acquired_is_not_a_claim_of_acquiring():
+    from asyncroscopy.agents.claims import ACQUIRED
+    assert not ACQUIRED.search("The most recently acquired image shows bright particles on a dark support.")
+    assert not ACQUIRED.search("The latest acquired spectrum has peaks at 2.98 and 3.69 keV.")
+    assert ACQUIRED.search("I acquired a HAADF image at the best region.")
+    assert ACQUIRED.search("I then took three images at different defocus values.")
