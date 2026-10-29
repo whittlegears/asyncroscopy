@@ -62,7 +62,7 @@ import tango
 from tango.server import device_property
 
 from asyncroscopy.data.data_reader import read_acquisition
-from asyncroscopy.instruments.electron_microscope.mapper import frame_dose
+from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.routines import focus
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, usable_beam_current
