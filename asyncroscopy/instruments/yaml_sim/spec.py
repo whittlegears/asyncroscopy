@@ -684,6 +684,9 @@ class SimInstrument:
             scope = {**self.values, **parse_arguments(name, command.inputs, argument)}
             self._check(name, command.requires, scope)
             updates = {target: self.spec.settings[target].coerce(evaluate(tree, scope) if tree is not None else value) for target, (value, tree) in command.sets.items()}
+            after = {**self.values, **updates}
+            for target in updates:  # a command that changes a guarded setting answers to its requires too
+                self._check(name, self.spec.setting_requires.get(target, []), {**scope, **after})
         self._wait(name, command.duration, scope)
         with self.lock:
             self.values.update(updates)

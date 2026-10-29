@@ -118,7 +118,7 @@ def action_category(tool_name: str) -> str:
         return "acquire"
     if command.startswith(("move", "goto", "go_to", "drive", "jog")) or (command.startswith("set") and "stage" in command):
         return "move"
-    if re.search(r"(?:^|_)(?:approach|engage|disengage|land|retract|withdraw|lift)(?:_|$)", command):
+    if re.search(r"(?:^|_)(?:approach|engage|disengage|land|retract|withdraw|lift)(?:_|$)", command) and re.search(r"tip|probe|cantilever|needle|(?:^|_)z(?:_|$)", command):
         return "probe"  # a scanning probe (AFM, STM) going onto or off the surface
     if re.search(r"(?:^|_)(?:un)?blank|beam|laser|xray|x_ray|lamp|shutter|emission|source|(?:^|_)hv(?:_|$)|_on$|_off$|^on$|^off$", command):
         return "beam"
