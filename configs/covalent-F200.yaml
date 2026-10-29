@@ -17,6 +17,13 @@ instrument:
   timeout_seconds: 120
 
 devices:
+  # The approval gate for agents on real hardware: starts in approve mode, so a person answers every
+  # high-risk call until they switch it to auto (SciAgentGUI's "Ask first" switch).
+  approvals:
+    class_name: Approvals
+    module_name: asyncroscopy.safety.approvals
+    properties:
+      default_mode: approve
   camera: { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
   data:   { module_name: asyncroscopy.data.data }
   eds:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
