@@ -207,10 +207,15 @@ def main(argv: list[str] | None = None) -> int:
                     managed.process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     pass
+            # The server stopped on its own (port taken, Tango unreachable, a crash): fail, so a
+            # supervisor (systemd, Kubernetes) sees it. Its own output went straight to this stdout/stderr.
+            code = managed.process.returncode
+            print(f'MCP server {config.mcp.name} exited with code {code}', file=sys.stderr)
+            return code or 1
 
     except KeyboardInterrupt:
         print("\nShutting down MCP server...")
-        
+
     return 0
 
 

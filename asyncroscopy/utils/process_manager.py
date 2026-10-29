@@ -233,6 +233,7 @@ class ProcessManager:
         state_dir: str | Path = ".processes",
         timeout: float = 5.0,
         max_output_lines: int = 200,
+        echo_output: bool = False,
     ):
         if name is None:
             name = Path(sys.argv[0]).stem
@@ -244,6 +245,8 @@ class ProcessManager:
         self.state_file = self.state_dir / f"{self.name}.json"
         self.timeout = timeout
         self.max_output_lines = max_output_lines
+        # Also print each child's output lines, prefixed with [key] (for containers that collect stdout).
+        self.echo_output = echo_output
 
         self.active_processes: list[ManagedProcess] = []
         self.history: deque[ManagedProcess] = deque(maxlen=1000)
@@ -288,8 +291,9 @@ class ProcessManager:
         )
         self.active_processes.append(managed)
         self.history.append(managed)
-        self._drain(proc.stdout, managed.stdout_lines)
-        self._drain(proc.stderr, managed.stderr_lines)
+        prefix = f"[{key}] " if self.echo_output else None
+        self._drain(proc.stdout, managed.stdout_lines, prefix)
+        self._drain(proc.stderr, managed.stderr_lines, prefix)
         # Persisted immediately, not just on stop: if this process dies
         # ungracefully (crash, force-kill), the next launch's
         # _cleanup_stale_state() needs its PID on disk to find and reap it.
@@ -297,13 +301,17 @@ class ProcessManager:
         return managed
 
     @staticmethod
-    def _drain(stream, buf: deque) -> None:
-        """Continuously reads lines and saves them into a queue, preventing the pipe from getting blocked"""
+    def _drain(stream, buf: deque, echo_prefix: str | None = None) -> None:
+        """Continuously reads lines and saves them into a queue, preventing the pipe from getting blocked.
+        With echo_prefix, each line is also printed to stdout behind that prefix."""
         if stream is None:
             return
         def _read() -> None:
             for line in iter(stream.readline, b""):
-                buf.append(line.decode(errors="replace").rstrip())
+                text = line.decode(errors="replace").rstrip()
+                buf.append(text)
+                if echo_prefix is not None:
+                    print(f"{echo_prefix}{text}", flush=True)
             stream.close()
         threading.Thread(target=_read, daemon=True).start()
 
