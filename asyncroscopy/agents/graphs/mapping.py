@@ -58,19 +58,26 @@ class MapState(TypedDict, total=False):
     error: str
 
 
-PLAN_PROMPT = """You turn a microscopist's request into a JSON map plan for a STEM. Reply with JSON only.
+PLAN_PROMPT = """You turn a microscopist's request into a JSON map plan for {instrument}. Reply with JSON only.
 
 Fields (lengths in metres):
 - "box_m": [x_min, x_max, y_min, y_max], the stage region to cover.
 - "fov_m": field of view of each tile.
-- "per_tile": [] for images only, ["eds_point"] for one EDS spectrum at each tile, ["eds_map"] only if a full spectrum image of every tile is explicitly asked for.
-- "score": true if the request asks to find interesting regions / features / where to look next.
+{per_tile}- "score": true if the request asks to find interesting regions / features / where to look next.
 Optional: "overlap" (0-0.5, default 0.15), "imsize" (pixels, default 512), "dwell_s" (default 1e-6).
 
 Instrument now: {context}
 Use the sample bounds above only if the request asks for the whole sample (or is just "map the sample"); otherwise give the area the request states.
 If it gives a size like "a 500 nm square around the centre", centre it on the current stage position.
-Convert units: 1 um = 1e-6 m, 1 nm = 1e-9 m."""
+Convert units: 1 mm = 1e-3 m, 1 um = 1e-6 m, 1 nm = 1e-9 m."""
+EDS_LINE = '- "per_tile": [] for images only, ["eds_point"] for one EDS spectrum at each tile, ["eds_map"] only if a full spectrum image of every tile is explicitly asked for.\n'
+
+
+def plan_prompt(context: dict) -> str:
+    """The planner's system prompt, naming what this endpoint's instrument offers: EDS only when it can take spectra."""
+    microscope = context.get("microscope")
+    instrument = f"the {microscope}, a scanning electron microscope" if microscope else "a scanning electron microscope"
+    return PLAN_PROMPT.format(instrument=instrument, per_tile=EDS_LINE if context.get("eds", True) else "", context=json.dumps(context))
 
 
 def _parse_json(text: str) -> dict:
@@ -85,13 +92,41 @@ def _to_metres(value: float, metres_below: float) -> float:
     """Repair a length a model wrote in the wrong unit.
 
     Above 1 it can only be nanometres; between ``metres_below`` and 1 it is
-    micrometres (0.2 meant 0.2 um, not 20 cm); below that it is already metres.
+    micrometres (0.2 meant 0.2 um, not 20 cm); up to ``metres_below`` it is
+    already metres and is never rescaled. ``metres_below`` is the largest value
+    plausible in metres for this instrument (``_plausible_limits``).
     """
     if abs(value) > 1.0:
         return value * 1e-9
     if abs(value) > metres_below:
         return value * 1e-6
     return value
+
+
+def _plausible_limits(context: dict) -> tuple[float, float]:
+    """(largest field of view, largest stage coordinate) plausible in metres on this instrument.
+
+    Taken from what the endpoint reports, so an SEM's 2 mm field of view or a stage at x = 25 mm is
+    kept as metres, while a STEM's (fov ~ 200 nm, stage near 0) keeps the old cut-offs: 1 mm for a
+    field of view, 1 cm for a coordinate. Neither the stage limits nor the Mapper profile's are
+    reachable from here, so the scale is the current field of view (a tile up to 1000 times it) and
+    stage position (ten times it).
+    """
+    fov = context.get("fov_m")
+    stage = [abs(float(v)) for v in (context.get("stage_position_m") or [])[:2] if isinstance(v, (int, float))]
+    bounds = [abs(float(v)) for v in (context.get("sample_bounds_m") or []) if isinstance(v, (int, float))]
+    reach = max(stage + bounds + [0.0])
+    fov_max = max(1e-3, 1e3 * float(fov) if fov else 0.0, 0.1 * reach)
+    coord_max = max(1e-2, 1e3 * float(fov) if fov else 0.0, 10 * reach)
+    return min(fov_max, 1.0), min(coord_max, 1.0)
+
+
+def _length(metres: float) -> str:
+    """A length for a report: nm, um or mm, whichever reads best."""
+    for unit, scale in (("mm", 1e-3), ("um", 1e-6)):
+        if abs(metres) >= scale:
+            return f"{metres / scale:.3g} {unit}"
+    return f"{metres * 1e9:.0f} nm"
 
 # Only an explicit whole-area request: "a patch near the edge of the sample" is not one.
 WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full)\s+(?:sample|specimen|grid)\b|\ball of the sample\b|^\s*map\s+the\s+sample\s*[.!]?\s*$", re.I)
@@ -158,7 +193,9 @@ class MappingGraph:
         fov = params.get("fov_m")
         if fov is None and f"{microscope}_get_fov" in (self._tool_names or set()):
             fov = float(await self.instrument.call_text(f"{microscope}_get_fov"))
-        context = {"stage_position_m": stage, "fov_m": fov, "microscope": microscope}
+        # EDS per tile needs the microscope to take spectra; the prompt offers it only then.
+        eds = all(f"{microscope}_{c}" in (self._tool_names or set()) for c in ("acquire_spectrum", "place_beam"))
+        context = {"stage_position_m": stage, "fov_m": fov, "microscope": microscope, "eds": eds}
         bounds = params.get("world_bounds_angstrom")
         if bounds:
             context["sample_bounds_m"] = [bounds["x_min"] * 1e-10, bounds["x_max"] * 1e-10, bounds["y_min"] * 1e-10, bounds["y_max"] * 1e-10]
@@ -171,7 +208,7 @@ class MappingGraph:
             plan = dict(state["plan"])
         else:
             model = self.config.chat_model()
-            reply = await model.ainvoke([SystemMessage(PLAN_PROMPT.format(context=json.dumps(context))), HumanMessage(state.get("request", "map the sample"))])
+            reply = await model.ainvoke([SystemMessage(plan_prompt(context)), HumanMessage(state.get("request", "map the sample"))])
             try:
                 plan = _parse_json(reply.content if isinstance(reply.content, str) else str(reply.content))
             except (ValueError, json.JSONDecodeError):
@@ -198,18 +235,19 @@ class MappingGraph:
         """
         allowed = {"box_m", "size_m", "centre_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
+        fov_max, coord_max = _plausible_limits(context)  # what is plausible in metres on this instrument
         fov = float(plan.get("fov_m") or context.get("fov_m") or DEFAULT_FOV_M)
-        fov = _to_metres(fov, metres_below=1e-3)  # a STEM field of view is far below a millimetre
+        fov = _to_metres(fov, metres_below=fov_max)
         plan["fov_m"] = fov
         size_m, centre_m = plan.pop("size_m", None), plan.pop("centre_m", None)
         stage_xy = (context.get("stage_position_m") or [0.0, 0.0])[:2]
         box = plan.get("box_m")
         if isinstance(size_m, list) and len(size_m) == 2 and not isinstance(box, list):
-            width, height = (_to_metres(float(v), metres_below=1e-2) for v in size_m)
-            x, y = (_to_metres(float(v), metres_below=1e-2) for v in (centre_m or stage_xy)[:2])
+            width, height = (_to_metres(float(v), metres_below=coord_max) for v in size_m)
+            x, y = (_to_metres(float(v), metres_below=coord_max) for v in (centre_m or stage_xy)[:2])
             box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
-            box = [_to_metres(float(v), metres_below=1e-2) for v in box]  # STEM stage travel is a few mm
+            box = [_to_metres(float(v), metres_below=coord_max) for v in box]
             x0, x1, y0, y1 = box
             box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         else:
@@ -233,7 +271,7 @@ class MappingGraph:
             box = list(box)
         # An area that fits in one tile is an image, not a map; a side shorter than a tile becomes one tile (a strip).
         if box[1] - box[0] <= fov and box[3] - box[2] <= fov:
-            raise ValueError(f"the area fits in one {fov * 1e9:.0f} nm field of view: that is one image, not a map; give a larger area or a smaller fov_m")
+            raise ValueError(f"the area fits in one {_length(fov)} field of view: that is one image, not a map; give a larger area or a smaller fov_m")
         for lo, hi in ((0, 1), (2, 3)):
             if box[hi] - box[lo] < fov:
                 mid = (box[lo] + box[hi]) / 2
@@ -241,16 +279,25 @@ class MappingGraph:
         plan["box_m"] = box
         per_tile = [p for p in plan.get("per_tile") or [] if p in ("eds_point", "eds_map")]
         if not from_model:
-            plan["per_tile"] = per_tile[:1]
-            return plan
+            return MappingGraph._set_per_tile(plan, per_tile)
         asks_for_eds = re.search(r"\beds\b|\bedx\b|spectr|composition|element", request, re.I)
-        if not per_tile and asks_for_eds:
+        if not per_tile and asks_for_eds and context.get("eds", True):
             per_tile = ["eds_point"]
-        if not asks_for_eds:
-            per_tile = []  # EDS adds dose and time: only when the request asks for it
+        if not asks_for_eds or not context.get("eds", True):
+            per_tile = []  # EDS adds dose and time: only when the request asks for it and the instrument has it
         if "eds_map" in per_tile and not re.search(r"spectrum image|eds map|spectral map|eds_map", request, re.I):
             per_tile = ["eds_point"]  # a full spectrum image must be asked for by name
-        plan["per_tile"] = per_tile[:1]
+        return MappingGraph._set_per_tile(plan, per_tile)
+
+    @staticmethod
+    def _set_per_tile(plan: dict, per_tile: list) -> dict:
+        """EDS per tile when asked for; otherwise no per_tile field (or EDS settings) at all, since an
+        instrument profile without EDS (sem, yaml) refuses the field even when it is empty."""
+        if per_tile:
+            plan["per_tile"] = per_tile[:1]
+        else:
+            for key in ("per_tile", "eds_exposure_s", "eds_map_points"):
+                plan.pop(key, None)
         return plan
 
     @staticmethod
@@ -372,8 +419,8 @@ class MappingGraph:
         plan = state["plan"]
         box = plan["box_m"]
         lines = [
-            f"Mapped {(box[1] - box[0]) * 1e6:.2f} x {(box[3] - box[2]) * 1e6:.2f} um with {state.get('estimate', {}).get('steps', '?')} tiles "
-            f"of {plan['fov_m'] * 1e9:.0f} nm" + (" and an EDS spectrum at each tile" if "eds_point" in plan["per_tile"] else "") + ".",
+            f"Mapped {_length(box[1] - box[0])} x {_length(box[3] - box[2])} with {state.get('estimate', {}).get('steps', '?')} tiles "
+            f"of {_length(plan['fov_m'])}" + (" and an EDS spectrum at each tile" if "eds_point" in plan.get("per_tile", []) else "") + ".",
             f"Run data: {state.get('run_key')}.",
         ]
         if state.get("approval_request_id"):
