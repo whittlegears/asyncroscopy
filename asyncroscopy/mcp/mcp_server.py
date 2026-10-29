@@ -1356,6 +1356,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
     parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
+    parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated (its Approvals device says so); otherwise such a stack binds 127.0.0.1.")
     return parser.parse_args(argv)
 
 
@@ -1376,10 +1377,45 @@ def check_port_free(host: str, port: int) -> str | None:
     return None
 
 
+WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})
+
+
+def stack_simulated(tango_host: str, tango_port: int, approvals_address: str | None) -> bool:
+    """Whether the stack drives a simulator, as its Approvals device says (get_simulated).
+
+    The Approvals device carries run_servers' top-level ``simulated:``. No approvals device, or one
+    that cannot be read, counts as real hardware: the safe answer when it is not known.
+    """
+    if not approvals_address:
+        return False
+    try:
+        proxy = DeviceProxy(f"tango://{tango_host}:{tango_port}/{approvals_address}")
+        proxy.set_timeout_millis(3000)
+        return bool(proxy.get_simulated())
+    except Exception:
+        return False
+
+
+def bind_host(requested: str, allow_remote_bind: bool, simulated: bool) -> tuple[str, str | None]:
+    """(host to bind, note): a stack that is not simulated binds every interface only when its MCP config
+    says allow_remote_bind: true; otherwise 127.0.0.1, so only this machine can drive the hardware."""
+    if requested.strip() not in WILDCARD_HOSTS or allow_remote_bind or simulated:
+        return requested, None
+    return "127.0.0.1", (
+        f"[safety] http_host {requested!r} would accept connections from any machine, and this stack is not simulated "
+        "(or its Approvals device could not say). Binding 127.0.0.1 instead; to accept other machines on real hardware, "
+        "set mcp.allow_remote_bind: true in the MCP config."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.transport == "streamable-http":
+        simulated = args.http_host.strip() in WILDCARD_HOSTS and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address)
+        args.http_host, note = bind_host(args.http_host, args.allow_remote_bind, simulated)
+        if note:
+            print(note, flush=True)
         bind_error = check_port_free(args.http_host, args.http_port)
         if bind_error:
             # "MCP ERROR:" is parsed by startup GUIs; keep the prefix stable.

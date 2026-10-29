@@ -1,4 +1,8 @@
 # Everything on the Jupiter control PC: Tango DB, device servers and notebook.
+# Real hardware: approval auto mode is refused, and the MCP endpoint binds 127.0.0.1 unless
+# its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
+simulated: false
+
 instrument:
   class_name: JupiterMicroscope
   file: asyncroscopy/instruments/scanning_probe_microscope/jupiter_api.py

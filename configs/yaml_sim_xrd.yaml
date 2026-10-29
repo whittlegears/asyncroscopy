@@ -13,6 +13,9 @@
 # and check the file first:
 #   uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml
 
+# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: XRDTwin
   module_name: asyncroscopy.instruments.yaml_sim.device

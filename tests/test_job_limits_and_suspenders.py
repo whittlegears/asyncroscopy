@@ -196,7 +196,9 @@ def test_a_bad_condition_pauses_the_job_which_resumes_once_it_has_been_good_long
     job.step_delay = 0.05
     reservation = job.call("reserve", {"plan": {"xs": [0.0] * 6}})["reservation_id"]
     job_id = job.call("start", {"reservation_id": reservation})["job_id"]
-    while len(job.ran) < 2:
+    deadline = time.time() + 10.0
+    while len(job.ran) < 2:  # a worker that fails before its steps must fail this test, not hang it
+        assert time.time() < deadline, job.call("status", {"job_id": job_id})
         time.sleep(0.005)
     beam.values["current"] = 2.0  # beam lost
     paused = job.wait_for(job_id, {"paused_suspended"})

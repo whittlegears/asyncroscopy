@@ -41,6 +41,8 @@ class MCPConfig:
     data_views: list[str] = field(default_factory=list)
     analysis_url: str = ''
     job_limits: dict[str, float] = field(default_factory=dict)
+    # http_host 0.0.0.0 on a stack that is not simulated (its Approvals device says) binds 127.0.0.1 unless this is true.
+    allow_remote_bind: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,7 @@ def load_config(path: Path) -> Config:
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
             analysis_url=str(mcp.get('analysis_url') or ''),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
+            allow_remote_bind=mcp.get('allow_remote_bind') is True,
         ),
     )
 
@@ -156,6 +159,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--analysis-url', config.mcp.analysis_url])
     if config.mcp.job_limits:
         command.extend(['--job-limits-json', json.dumps(config.mcp.job_limits)])
+    if config.mcp.allow_remote_bind:
+        command.append('--allow-remote-bind')
     return command
 
 

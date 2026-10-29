@@ -8,6 +8,10 @@
 # twin, use configs/DigitalTwin.yaml (real and simulated scopes are separate
 # configs now). See configs/example.md for the full YAML shape.
 
+# Real hardware: approval auto mode is refused, and the MCP endpoint binds 127.0.0.1 unless
+# its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
+simulated: false
+
 instrument:
   class_name: JeolMicroscope
   file: asyncroscopy/instruments/electron_microscope/jeol.py

@@ -110,6 +110,19 @@ class Config:
     reset_database_file: bool
     tiled: TiledConfig
     device_timeout_seconds: int
+    # Top-level `simulated:`. Every device gets it as its `simulated` property; False (real hardware) when absent.
+    simulated: bool = False
+
+
+def _simulated(raw: dict, path: Path) -> bool:
+    """The stack's top-level ``simulated: true|false``; a config without it is treated as real hardware."""
+    if "simulated" not in raw:
+        print(f"Note: {path.name} has no top-level 'simulated:'; treating the stack as real hardware (simulated: false).", file=sys.stderr)
+        return False
+    value = raw["simulated"]
+    if not isinstance(value, bool):
+        raise ValueError(f"{path}: simulated must be true or false, got {value!r}")
+    return value
 
 
 def _require(mapping, key: str, where: str):
@@ -207,10 +220,16 @@ def load_config(path: Path) -> Config:
         _check_importable(device.module_name, f"devices.{device.key}.module_name")
     tango_section = raw.get("tango", {})
     tiled = _require(raw, "tiled", "(top level)")
+    simulated = _simulated(raw, path)
+    instrument = _instrument_config(_require(raw, "instrument", "(top level)"))
+    # The stack flag reaches every device as its `simulated` property (a device's own setting wins).
+    for properties in [instrument.properties, *(device.properties for device in support_devices)]:
+        properties.setdefault("simulated", [str(simulated).lower()])
 
     return Config(
         path=path,
-        instrument=_instrument_config(_require(raw, "instrument", "(top level)")),
+        simulated=simulated,
+        instrument=instrument,
         support_devices=support_devices,
         tango_host=_require(tango_section, "host", "tango"),
         tango_port=int(_require(tango_section, "port", "tango")),
@@ -849,6 +868,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {color('PROJECT', Style.bold):<18} {PROJECT_DIR}")
     print(f"  {color('CONFIG', Style.bold):<18} {config_path}")
     print(f"  {color('INSTRUMENT', Style.bold):<18} {instrument.class_name}")
+    print(f"  {color('SIMULATED', Style.bold):<18} {str(config.simulated).lower()}" + ("" if config.simulated else "  (real hardware: approval auto mode refused)"))
     if log_dir is not None:
         print(f"  {color('DEBUG LOGS', Style.bold):<18} {log_dir}")
     print_inventory(devices)

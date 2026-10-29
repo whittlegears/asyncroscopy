@@ -46,7 +46,12 @@ cols] with per-tile arrays ``written``, ``stage_reported_m``,
 and ``spectrum_keys`` [n] hold EDS point spectra. The file is closed and
 synced after each tile, so a crash loses at most the tile being written.
 Nothing in it depends on the vendor or on whether the microscope was the
-digital twin.
+digital twin. ``acquired_s`` is the microscope's ``clock_s`` (simulated time on
+a twin), the clock the drift fit and revisits use.
+
+A dry run (plan ``"dry_run": true``) moves nothing: stage moves and acquisitions
+are recorded in the trace and checked against the plan box (see JobDevice), the
+beam is still blanked, no image or run file is made, and the summary says so.
 """
 
 from __future__ import annotations
@@ -96,6 +101,8 @@ SCORE_DEADLINE_S = 900.0
 TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
 REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
 REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
+# What a dry run (plan "dry_run": true, see JobDevice) reports in place of every image and spectrum.
+DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
 
 def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = None) -> tuple[np.ndarray, np.ndarray]:
@@ -390,6 +397,28 @@ class Mapper(JobDevice):
                 "On an instrument the budget needs a measured current: insert the screen and call get_screen_current, "
                 "or leave out dose_budget_e_per_a2"
             )
+
+    @staticmethod
+    def _clock_s(microscope) -> float:
+        """The microscope's clock_s (simulated time on a twin); this computer's time if it reports none."""
+        try:
+            return float(microscope.read_attribute("clock_s").value)
+        except (tango.DevFailed, AttributeError, TypeError, ValueError):
+            return time.time()
+
+    def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
+        """A dry run's check of each recorded stage move: does the image it is for lie inside the plan box?"""
+        if name != "move_stage":
+            return None
+        plan = job["resolved_plan"]
+        x_min, x_max, y_min, y_max = plan["box_m"]
+        x, y = (float(v) for v in list(arguments[0])[:2])
+        step = self.current_step()
+        phase = self.step_at(job, step)["phase"] if step is not None else "tiles"
+        half = float(plan["revisit"]["fov_m"] if phase == "revisit" else plan["fov_m"]) / 2.0
+        tol = EDGE_TOLERANCE_M
+        inside = x_min + half - tol <= x <= x_max - half + tol and y_min + half - tol <= y <= y_max - half + tol
+        return {"ok": inside, "inside_box": inside, "box_m": [x_min, x_max, y_min, y_max], "xy_m": [x, y], "image_half_width_m": half}
 
     # ------------------------------------------------------------------
     # Plan
@@ -690,8 +719,8 @@ class Mapper(JobDevice):
             eds.exposure_time = float(plan["eds_exposure_s"])
         # The beam stays blanked between tiles: unblanked only while acquiring (see run_step).
         microscope.blank_beam()
-        if job["resolved_plan"].get("revisit_only"):
-            job["run_closed"] = True  # no tiles, so no run file
+        if job["resolved_plan"].get("revisit_only") or job.get("dry_run"):
+            job["run_closed"] = True  # no tiles (or, in a dry run, no images), so no run file
         if job.get("run_closed"):
             return  # resuming after the tiles: only pipeline steps are left
         final = self._run_path(job)
@@ -723,6 +752,9 @@ class Mapper(JobDevice):
         step = self.step_at(job, index)
         if step["phase"] == "tiles":
             return self._tile(job, step)
+        if job.get("dry_run") and not (step["phase"] == "revisit" and job["resolved_plan"].get("regions")):
+            # Stitch, score and their revisits need images; a dry run took none. Given revisit points still rehearse their moves.
+            return {"phase": step["phase"], "skipped": DRY_RUN_SKIPPED}
         self._close_run_file(job)  # the tiles are done: stitching reads the finished, registered run
         if step["phase"] == "select":
             return self._select(job)
@@ -747,26 +779,32 @@ class Mapper(JobDevice):
         reported = [float(v) for v in microscope.get_stage()]
         # Unblank only for this tile's acquisitions: a beam left on during the stage move, file
         # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
+        # The tile is timed on the instrument's clock, not this computer's (on a twin with time_scale 0 the two
+        # differ by any factor): the stitch fits drift, and revisits extrapolate it, against these times.
+        frame_start = self._clock_s(microscope)
         microscope.unblank_beam()
         try:
             image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
+            acquired = (frame_start + self._clock_s(microscope)) / 2.0  # the middle of the frame
             spectrum, spectrum_key = None, None
             if "eds_point" in plan["per_tile"]:
                 microscope.place_beam([0.5, 0.5])
                 spectrum_key = microscope.acquire_spectrum("eds")
-            elif "eds_map" in plan["per_tile"]:
+            elif "eds_map" in plan["per_tile"] and not job.get("dry_run"):
                 spectrum = self._spectrum_map(job, microscope, int(plan["eds_map_points"]))
                 spectrum_key = "eds_map"
         finally:
             microscope.blank_beam()
         if spectrum_key == "eds_map" and spectrum is None:
             return None  # aborted part way through the spectrum image; a resume redoes this tile
-        acquired = time.time()
         job.setdefault("first_tile_s", acquired)
+        if job.get("dry_run"):
+            # The commands above were recorded, not sent: there is no image to read or store.
+            return {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired, "acquisition": DRY_RUN_SKIPPED}
         images = read_acquisition(image_key, self._data_proxy())
         if "eds_point" in plan["per_tile"]:
             spectrum = read_acquisition(spectrum_key, self._data_proxy())
-        record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key}
+        record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "key": image_key, "clock_s": acquired}
         if spectrum_key is not None:
             record["spectrum_key"] = spectrum_key
         write_tile(self._file(job), self._tile_count(job), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key)
@@ -984,9 +1022,12 @@ class Mapper(JobDevice):
         revisit = plan["revisit"]
         fov = float(revisit["fov_m"])
         if visit is None:
+            microscope = self.proxy(self.microscope_device_address)
             # The map places content at stage reading + drift(t) (pyTEMlib's fit), so to put the region under
-            # the beam now the stage goes to its map position minus the drift, extrapolated to now.
-            dx, dy = drift_at(pipeline.get("drift_fit"), time.time() - float(job.get("first_tile_s", time.time())))
+            # the beam now the stage goes to its map position minus the drift, extrapolated to now on the
+            # instrument's clock (the one the tiles were timed with).
+            now = self._clock_s(microscope)
+            dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
@@ -999,7 +1040,6 @@ class Mapper(JobDevice):
                 visits.append({"region": region["id"], "skipped": note})
                 return {"phase": "revisit", "skipped": note}
             x, y = cx, cy
-            microscope = self.proxy(self.microscope_device_address)
             pose = job["pose"]
             microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
             if not self._wait_for_stage(job, microscope):
@@ -1016,7 +1056,10 @@ class Mapper(JobDevice):
                 microscope.set_fov(float(plan["fov_m"]))
                 scan.imsize = int(plan["imsize"])
                 scan.dwell_time = float(plan["dwell_s"])
-            visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y]}
+            # clock_s: the instrument time the drift correction (drift_xy_m) was extrapolated to.
+            visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
+            if job.get("dry_run"):
+                visit = {"region": region["id"], "acquisition": DRY_RUN_SKIPPED, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
             with self._lock:  # saved before the point is added, so a resume links this image instead of taking another
                 visits.append(visit)
                 self._save(job)
@@ -1129,10 +1172,12 @@ class Mapper(JobDevice):
             "grid": {"rows": grid.get("rows"), "cols": grid.get("cols")},
             "box_m": plan.get("box_m"),
             "fov_m": plan.get("fov_m"),
-            **({} if plan.get("revisit_only") else {"run_file": str(self._file(job))}),
+            **({} if plan.get("revisit_only") or job.get("dry_run") else {"run_file": str(self._file(job))}),
             **pipeline,
         }
-        if "eds_point" in plan.get("per_tile", []):
+        if job.get("dry_run"):
+            out["acquisitions"] = DRY_RUN_SKIPPED  # no image, spectrum or run file is a stand-in for a real one
+        if "eds_point" in plan.get("per_tile", []) and not job.get("dry_run"):
             out["spectra"] = {
                 "taken": min(done_count(job), self._tile_count(job)),
                 "first_keys": [r["spectrum_key"] for r in spectra[:shown]],

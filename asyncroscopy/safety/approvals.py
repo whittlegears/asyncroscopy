@@ -6,6 +6,10 @@ server files a request here and refuses the call; once an operator approves,
 the same call (same tool, same arguments) succeeds once. Notebooks and
 scripts talk to Tango directly and are never held.
 
+On a stack that is not simulated (``simulated`` property, from run_servers'
+top-level ``simulated:``; false by default) ``auto`` is refused: the device
+starts in ``approve`` and ``set_mode(auto)`` fails with the reason.
+
 Every mode change, request and decision is written to the Instrument Trace.
 The mode is also saved to ``mode_file`` and restored on restart, so a crashed
 or re-initialised device does not silently fall back to ``auto``.
@@ -27,6 +31,10 @@ from asyncroscopy.mcp.tool_log import TraceWriter
 
 MODES = ("auto", "approve")
 PRUNE_AFTER_S = 86400.0
+AUTO_ON_HARDWARE = (
+    "auto mode is refused: this stack is not simulated (run_servers config simulated: false), so every high-risk "
+    "agent call must wait for a person. Rehearse unattended runs on a twin, or as a dry run (plan dry_run: true)."
+)
 
 
 def fingerprint(action: str, arguments) -> str:
@@ -46,6 +54,11 @@ class Approvals(Device):
     grant_ttl_s = device_property(dtype=float, default_value=900.0, doc="An approval must be used within this long.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/approvals.jsonl", doc="Instrument Trace JSONL file.")
     mode_file = device_property(dtype=str, default_value="outputs/approvals/mode.json", doc="Where the mode is kept, so a restart does not fall back to default_mode.")
+    simulated = device_property(
+        dtype=bool, default_value=False,
+        doc="True when the stack drives a simulator (run_servers' top-level simulated:). On a stack that is not "
+            "simulated (the default) auto mode is refused: every high-risk agent call waits for a person.",
+    )
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -62,8 +75,12 @@ class Approvals(Device):
             return
         saved = self._restore_mode(mode)
         self._mode = starting_mode(mode, saved)
+        hardware = ""
+        if not self.simulated and self._mode == "auto":
+            self._mode = "approve"  # real hardware never starts in auto, whatever default_mode or the mode file say
+            hardware = "; auto refused: the stack is not simulated"
         self.set_state(DevState.ON)
-        self.set_status(f"mode {self._mode} (default_mode {mode}, saved {saved if Path(self.mode_file).exists() else 'none'})")
+        self.set_status(f"mode {self._mode} (default_mode {mode}, saved {saved if Path(self.mode_file).exists() else 'none'}{hardware})")
 
     def _restore_mode(self, default: str) -> str:
         """The last mode an operator set, or ``default`` if none was ever saved.
@@ -118,13 +135,21 @@ class Approvals(Device):
         """Current approval mode: 'auto' or 'approve'."""
         return self._mode
 
+    @command(dtype_out=bool)
+    def get_simulated(self) -> bool:
+        """True when this stack drives a simulator; False on real hardware (auto mode refused there)."""
+        return bool(self.simulated)
+
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"mode": "auto" or "approve", "who": "operator name"}.')
     def set_mode(self, request: str) -> str:
-        """Switch between auto and approve. Operator only; recorded in the trace."""
+        """Switch between auto and approve. Operator only; recorded in the trace. Auto is refused on a stack that is not simulated."""
         body = self._load(request)
         mode = str(body.get("mode", "")).strip().lower()
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")
+        if mode == "auto" and not self.simulated:
+            self._trace.record("Approvals.set_mode", False, time.time(), caller=body.get("who"), arguments={"from": self._mode, "to": mode}, mode=self._mode, error=AUTO_ON_HARDWARE)
+            raise ValueError(AUTO_ON_HARDWARE)
         with self._lock:
             previous, persisted = self._mode, True
             try:

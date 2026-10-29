@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Optional
 
 
@@ -23,10 +24,17 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     )
 
     testing_mode_bool = tango.server.device_property(
-        dtype=bool, 
+        dtype=bool,
         default_value=False,
         doc="When True - used for running tests, passed in conftest.py")
-    
+
+    simulated = tango.server.device_property(
+        dtype=bool,
+        default_value=False,
+        doc="True when this stack drives a simulator, set from run_servers' top-level simulated:. "
+            "False, the default, means real hardware (safety checks key off it).",
+    )
+
     # ------------------------------------------------------------------
     # Instrument Attributes
     # ------------------------------------------------------------------
@@ -36,6 +44,15 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         dtype=str,
         access=tango.AttrWriteType.READ,
         doc="Instrument modality, for example 'STEM', 'SPM', 'TEM', or 'OPTIC'.",
+    )
+
+    clock_s = tango.server.attribute(
+        label="Instrument clock",
+        dtype=float,
+        unit="s",
+        access=tango.AttrWriteType.READ,
+        doc="The instrument's own time: simulated seconds on a digital twin, Unix time on hardware. "
+            "Jobs time drift fits and revisits with it, so they hold whatever the twin's time_scale.",
     )
 
     # ------------------------------------------------------------------
@@ -54,6 +71,13 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     @abstractmethod
     def read_instrument_type(self) -> str:
         pass
+
+    def read_clock_s(self) -> float:
+        return float(self.instrument_clock_s())
+
+    def instrument_clock_s(self) -> float:
+        """The time clock_s reports; a simulator overrides this with its simulated clock."""
+        return time.time()
 
     @abstractmethod
     def _init_device_attributes(self) -> None:

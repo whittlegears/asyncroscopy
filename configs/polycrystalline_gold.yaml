@@ -1,3 +1,6 @@
+# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: PolycrystallineGoldDigitalTwin
   file: asyncroscopy/instruments/electron_microscope/polycrystalline_gold_digital_twin.py

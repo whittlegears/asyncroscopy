@@ -5,7 +5,9 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 #
 # If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+# machine/IP. The Spectra 300 stack is not simulated (simulated: false), so
+# http_host 0.0.0.0 alone still binds 127.0.0.1: when other machines must
+# connect, set http_host: 0.0.0.0 and allow_remote_bind: true together.
 
 tango:
   host: 10.46.217.241
@@ -14,7 +16,8 @@ tango:
 mcp:
   name: Spectra300_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
+  # allow_remote_bind: true   # only with http_host 0.0.0.0, and only with the approval gate on
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
@@ -32,7 +35,7 @@ mcp:
   analysis_url: http://127.0.0.1:8003/mcp
   # The approval gate. The hardware run_servers configs start an Approvals device in approve mode,
   # so every high-risk agent call waits for a person (SciAgentGUI's chat, or the operator endpoint).
-  # This endpoint listens on 0.0.0.0: keep the gate on whenever other machines can reach it.
+  # If this endpoint is opened to other machines (allow_remote_bind), keep the gate on.
   safety:
     approvals_device_address: asyncroscopy/approvals/default
     risk: {}
