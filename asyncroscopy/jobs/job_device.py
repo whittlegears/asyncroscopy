@@ -54,7 +54,7 @@ import tango
 from tango import DevState
 from tango.server import Device, attribute, command, device_property
 
-from asyncroscopy.contracts import ENVELOPE_VERSION
+from asyncroscopy.contracts import ENVELOPE_VERSION, load as load_schema
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from asyncroscopy.mcp.tool_log import TraceWriter
 from asyncroscopy.safety.policy import check_overrides
@@ -237,6 +237,8 @@ class JobDevice(Device):
     JOB_KIND = "background job"
     # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
     PLAN_EXAMPLE: dict | None = None
+    # The plan's JSON Schema, by name in asyncroscopy/contracts ("map_plan"); None: the device gives none.
+    PLAN_SCHEMA: str | None = None
     # True when run_step copes with a dry run: every recorded command returns DRY_RUN_PLACEHOLDER (no
     # image, no reply to parse). False (the default): reserve refuses a dry_run plan, naming the device.
     SUPPORTS_DRY_RUN = False
@@ -246,6 +248,7 @@ class JobDevice(Device):
 
     job_kind = attribute(dtype=str, doc="What this device's background job does.")
     plan_example = attribute(dtype=str, doc="A valid plan for reserve, as JSON ('' if the device gives none).")
+    plan_schema = attribute(dtype=str, doc="The plan's JSON Schema, as JSON ('' if the device gives none).")
     state_directory = device_property(dtype=str, default_value="outputs/jobs", doc="Where job state files are kept.")
     trace_path = device_property(dtype=str, default_value="outputs/trace/jobs.jsonl", doc="Instrument Trace JSONL file.")
     step_timeout_s = device_property(dtype=float, default_value=120.0, doc="Timeout of proxies made with proxy(): the longest one instrument command may take.")
@@ -294,6 +297,9 @@ class JobDevice(Device):
 
     def read_plan_example(self) -> str:
         return json.dumps(self.PLAN_EXAMPLE) if self.PLAN_EXAMPLE is not None else ""
+
+    def read_plan_schema(self) -> str:
+        return json.dumps(load_schema(self.PLAN_SCHEMA)) if self.PLAN_SCHEMA else ""
 
     def on_finish(self, job: dict) -> dict:
         """Called after the last step; return result keys to merge into ``results``."""
