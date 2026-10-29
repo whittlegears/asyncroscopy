@@ -112,6 +112,21 @@ LIVE_DRIFT_TWIN_PROPERTIES = {
 }
 
 
+# Every sample feature the procedural specimen has (clusters, height gradient, support) and every
+# instrument effect that reads the sample (dose damage, contamination), for the golden regression.
+SPECIMEN_GOLDEN_PROPERTIES = {
+    **MAPPING_TWIN_PROPERTIES,
+    "sample_seed": 4242,
+    "sample_particle_count": 60,
+    "sample_cluster_count": 3,
+    "sample_cluster_radius": 5e-8,
+    "sample_cluster_fraction": 0.5,
+    "height_gradient_x": 0.01,
+    "height_gradient_y": -0.005,
+    "damage_critical_dose": 0.5,  # e/A^2: the second survey frame below passes it
+}
+
+
 @pytest.fixture(scope="session")
 def data_save_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("data-acquisitions")
@@ -281,6 +296,12 @@ def tango_ctx(data_save_dir, job_dir):
                         "dose_tracking": True,
                         "time_scale": 0.0,
                     },
+                },
+                {
+                    # tests/test_specimens.py: the procedural specimen's output must stay bit-identical to the
+                    # golden file; only that test touches this twin, so its event indices are reproducible.
+                    "name": "asyncroscopy/digitaltwin/specimen_golden",
+                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), **SPECIMEN_GOLDEN_PROPERTIES},
                 },
                 {
                     # tests/test_tuner.py: a dense particle sample on a thin film, with a height gradient
