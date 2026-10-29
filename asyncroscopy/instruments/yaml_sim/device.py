@@ -49,6 +49,7 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     Refused,
     SimInstrument,
     SpecError,
+    action_hints,
     job_estimate,
     job_targets,
     load_spec,
@@ -58,6 +59,7 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     resolve_job_plan,
 )
 from asyncroscopy.jobs.job_device import RUNNING_STATES, JobDevice
+from asyncroscopy.mcp.roles import ACTION_HINTS
 from asyncroscopy.utils.commands import command
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
@@ -133,6 +135,7 @@ class _YamlInstrument:
             self._build_acquisition(name, acquisition)
         if map_section(spec) is not None:
             self._build_map_profile()
+        self._build_action_hints(action_hints(spec))
         self.set_state(DevState.ON)
         self.set_status(spec.description or f"Simulated instrument from {spec.path.name}")
         return True
@@ -219,6 +222,16 @@ class _YamlInstrument:
         doc = ("How a Mapper maps this instrument: its image acquisition, stage and field-of-view settings and limits, the commands run "
                "around moves and between tiles, the time per tile and the map budgets, at the current settings with the given ones.")
         self.add_command(command(f=_named(describe, MAP_COMMAND, doc), dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"settings": {name: value}} (may be {})'), device_level=True)
+
+    def _build_action_hints(self, hints: dict) -> None:
+        """The ``action_hints`` attribute: each command's role, arguments (units, ranges, stage axis) and returns,
+        as JSON. The MCP server's action space reads it (asyncroscopy.mcp.action_space)."""
+        text = json.dumps(hints)
+        attr = tango.Attr(ACTION_HINTS, CmdArgType.DevString, AttrWriteType.READ)
+        props = tango.UserDefaultAttrProp()
+        props.set_description("Each command's canonical role, arguments and returns, as JSON (for the MCP action space).")
+        attr.set_default_properties(props)
+        self.add_attribute(attr, r_meth=lambda _device, a: a.set_value(text))
 
     def _build_command(self, name, cmd) -> None:
         self._add_call(name, cmd.doc, cmd.inputs, lambda argument: _refusing(self.sim.run_command, name, argument))

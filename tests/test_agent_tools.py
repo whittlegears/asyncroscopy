@@ -11,7 +11,7 @@ from asyncroscopy.agents.graphs import general
 from asyncroscopy.mcp.agent_tools import for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
 
-NATIVE = ["list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "run_job", "wait_for_job", "approval_status"]
+NATIVE = ["list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "run_job", "wait_for_job", "approval_status"]
 TWIN = {
     "DigitalTwin": ["get_stage", "move_stage", "get_parameters", "acquire_scanned_image", "acquire_spectrum", "set_fov", "get_fov",
                     "set_defocus", "place_beam", "blank_beam", "unblank_beam", "set_beam_current", "get_detectors", "State", "Status"],

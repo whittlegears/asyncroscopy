@@ -6,6 +6,7 @@ Shared shapes that let different instruments, analysis servers and agents work t
 | :-- | :-- | :-- |
 | `envelope.schema.json` | `asyncroscopy.jobs.JobDevice` (e.g. `Mapper`), the pyTEMlib MCP server's jobs | The six verbs of a long-running job: `reserve`, `start`, `status`, `abort`, `results`, `release`. Each takes and returns one JSON object. |
 | `map_plan.schema.json` | `Mapper.reserve` (STEM only) | What a STEM map run acquires: stage box, field of view, overlap, detectors (HAADF by default), per-tile EDS, electron dose budget. Another instrument writes its own plan schema; only the envelope and trace are shared. |
+| `action_space.schema.json` | the MCP server's `action_space()` tool (`asyncroscopy.mcp.action_space`) | What an endpoint lets a program control and observe: every tool with its canonical role, arguments (units, ranges, stage axes), risk and effect; the readable state; each job device's plan schema and example. See [docs/Operation/action_space.md](../../docs/Operation/action_space.md). |
 | `trace_event.schema.json` | the MCP server, jobs, the approvals device | One line per instrument action, with who asked, whether a person approved it, and where the result went. This is the Instrument Trace that reward learning reads. |
 
 ## Tango naming
