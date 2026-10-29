@@ -1,0 +1,275 @@
+{
+  "model": "qwen3:8b",
+  "n": 3,
+  "started": 1793223556.99066,
+  "tasks": {
+    "map_square/graph": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 85.8,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              5.758368369042692e-06,
+              6.358368369042691e-06,
+              6.007421423224351e-06,
+              6.60742142322435e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_4478dce8ed48.h5.\nStitched map: map_4478dce8ed48_map.",
+          "infra_error": false
+        },
+        {
+          "seconds": 84.3,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              5.954885235366147e-06,
+              6.5548852353661465e-06,
+              6.242916488053952e-06,
+              6.842916488053952e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_42ab00105a44.h5.\nStitched map: map_42ab00105a44_map.",
+          "infra_error": false
+        },
+        {
+          "seconds": 83.4,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              6.172091078682265e-06,
+              6.772091078682265e-06,
+              6.459691789795224e-06,
+              7.0596917897952234e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_4f53548c5e84.h5.\nStitched map: map_4f53548c5e84_map.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_with_eds/graph": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 119.7,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              6.366083724057559e-06,
+              6.966083724057558e-06,
+              6.686846915353362e-06,
+              7.286846915353361e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm and an EDS spectrum at each tile.\nRun data: map_42865618f1bb.h5.\nStitched map: map_42865618f1bb_map.\n25 EDS spectra are marked on the map.",
+          "infra_error": false
+        },
+        {
+          "seconds": 119.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              6.588026215003915e-06,
+              7.1880262150039145e-06,
+              6.898559096159481e-06,
+              7.4985590961594806e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [
+              "eds_point"
+            ],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm and an EDS spectrum at each tile.\nRun data: map_a6035f6f8bb0.h5.\nStitched map: map_a6035f6f8bb0_map.\n25 EDS spectra are marked on the map.",
+          "infra_error": false
+        },
+        {
+          "seconds": 123.1,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "box_m": [
+              6.788735256009763e-06,
+              7.388735256009762e-06,
+              7.131590274236222e-06,
+              7.731590274236222e-06
+            ],
+            "per_tile": [
+              "eds_point"
+            ]
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm and an EDS spectrum at each tile.\nRun data: map_657abc19f87c.h5.\nStitched map: map_657abc19f87c_map.\n25 EDS spectra are marked on the map.",
+          "infra_error": false
+        }
+      ]
+    },
+    "map_and_explore/graph": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "pass_bar_met": true,
+      "rows": [
+        {
+          "seconds": 86.6,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              7.0178040635119645e-06,
+              7.617804063511964e-06,
+              7.333120984264292e-06,
+              7.933120984264292e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_b61c45bac720.h5.\nStitched map: map_b61c45bac720_map.\nInteresting region at (7574 nm, 7372 nm), score 0.10: contrast 0.15 (features 0.246 above background, noise 0.246); edges cover 5.5%\nInteresting region at (7267 nm, 7372 nm), score 0.07: contrast 0.13 (features 0.216 above background, noise 0.257); edges cover 3.9%\nInteresting region at (7574 nm, 7628 nm), score 0.07: contrast 0.13 (features 0.199 above background, noise 0.239); edges cover 3.6%",
+          "infra_error": false
+        },
+        {
+          "seconds": 88.2,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "fov_m": 1.6e-07,
+            "box_m": [
+              7.249015416536818e-06,
+              7.849015416536817e-06,
+              7.560384349072545e-06,
+              8.160384349072546e-06
+            ],
+            "per_tile": []
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_16caa325b346.h5.\nStitched map: map_16caa325b346_map.\nInteresting region at (7281 nm, 7611 nm), score 0.13: contrast 0.19 (features 0.29 above background, noise 0.226); edges cover 5.4%\nInteresting region at (7281 nm, 7811 nm), score 0.07: contrast 0.14 (features 0.213 above background, noise 0.232); edges cover 3.6%\nInteresting region at (7531 nm, 7611 nm), score 0.06: contrast 0.12 (features 0.18 above background, noise 0.241); edges cover 3.7%",
+          "infra_error": false
+        },
+        {
+          "seconds": 84.8,
+          "model_calls": 1,
+          "checks": {
+            "completed": true,
+            "box_matches_request": true,
+            "eds_as_asked": true,
+            "explored_as_asked": true
+          },
+          "ok": true,
+          "error": null,
+          "plan": {
+            "box_m": [
+              7.4823241478801205e-06,
+              8.08232414788012e-06,
+              7.778575379066806e-06,
+              8.378575379066807e-06
+            ],
+            "fov_m": 1.6e-07,
+            "per_tile": [],
+            "overlap": 0.15,
+            "imsize": 512,
+            "dwell_s": 1e-06
+          },
+          "report": "Mapped 0.60 x 0.60 um with 25 tiles of 160 nm.\nRun data: map_ae5d1b898352.h5.\nStitched map: map_ae5d1b898352_map.\nInteresting region at (8031 nm, 7825 nm), score 0.09: contrast 0.12 (features 0.211 above background, noise 0.266); edges cover 6.4%\nInteresting region at (7531 nm, 7925 nm), score 0.07: contrast 0.13 (features 0.21 above background, noise 0.246); edges cover 3.8%\nInteresting region at (7831 nm, 7825 nm), score 0.07: contrast 0.13 (features 0.196 above background, noise 0.227); edges cover 3.5%",
+          "infra_error": false
+        }
+      ]
+    }
+  },
+  "out_of_box_moves": 0
+}
