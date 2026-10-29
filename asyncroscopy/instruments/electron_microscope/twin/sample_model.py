@@ -1,18 +1,24 @@
-"""A seeded sample stored as a table of particles, not atoms.
+"""A seeded sample stored as a table of particles, not atoms: the ``procedural`` specimen.
 
 A 2 um sample with hundreds of nanoparticles would be ~10^7 atoms; as a
-particle table it is a few kilobytes. Atoms are only built (in ``render``) for
-the handful of particles inside an atomic-resolution field of view.
+particle table it is a few kilobytes. Atoms are only built (in
+``projected_weight``) for the handful of particles inside an
+atomic-resolution field of view.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 
 import numpy as np
+from ase.build import bulk
+from scipy import ndimage
 
 from .rng import EventRng
+from .specimen import Specimen, SpecimenContext, check_options, register_specimen
+
+ANGSTROM = 1e-10
 
 # Z, atoms per cubic angstrom, ASE bulk structure and lattice constant (angstrom).
 ELEMENTS: dict[str, tuple[int, float, str, float]] = {
@@ -51,7 +57,88 @@ class SampleParams:
     cluster_fraction: float = 0.0
 
 
-class SampleModel:
+def _euler_matrix(e1_deg: float, e2_deg: float, e3_deg: float) -> np.ndarray:
+    """Rotation about x by e3, then y by e2, then z by e1 (the order the original twin used)."""
+    def rot(axis: int, deg: float) -> np.ndarray:
+        t = np.deg2rad(deg)
+        c, s = np.cos(t), np.sin(t)
+        m = np.eye(3)
+        i, j = [(1, 2), (0, 2), (0, 1)][axis]
+        m[i, i], m[i, j], m[j, i], m[j, j] = c, -s, s, c
+        if axis == 1:
+            m[i, j], m[j, i] = s, -s
+        return m
+    return rot(2, e1_deg) @ rot(1, e2_deg) @ rot(0, e3_deg)
+
+
+def thermal_smear(weight: np.ndarray, pixel_m: float) -> np.ndarray:
+    """Thermal smearing of atomic columns (~0.08 A rms), for any source that places atoms."""
+    return ndimage.gaussian_filter(weight, sigma=max(0.3, 0.08e-10 / pixel_m))
+
+
+class ParticleTable:
+    """Ellipsoidal particles as arrays: ``ids``, ``centers`` (N, 2), ``semi_axes`` (N, 3), ``theta``, ``elements``.
+
+    Shared by the procedural specimen and a recorded specimen's labels.
+    """
+
+    ids: np.ndarray
+    centers: np.ndarray
+    semi_axes: np.ndarray
+    theta: np.ndarray
+    elements: list
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def in_box(self, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
+        """Indices of particles whose extent overlaps the box."""
+        if len(self) == 0:
+            return np.zeros(0, dtype=np.int64)
+        reach = self.semi_axes[:, :2].max(axis=1)
+        mask = (
+            (self.centers[:, 0] + reach >= x_min)
+            & (self.centers[:, 0] - reach <= x_max)
+            & (self.centers[:, 1] + reach >= y_min)
+            & (self.centers[:, 1] - reach <= y_max)
+        )
+        return np.nonzero(mask)[0]
+
+    def thickness_at(self, index: int, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Projected thickness (m) of one ellipsoidal particle at sample points."""
+        a, b, c = self.semi_axes[index]
+        dx = np.asarray(x) - self.centers[index, 0]
+        dy = np.asarray(y) - self.centers[index, 1]
+        cos_t, sin_t = np.cos(self.theta[index]), np.sin(self.theta[index])
+        u = (dx * cos_t + dy * sin_t) / a
+        v = (-dx * sin_t + dy * cos_t) / b
+        inside = 1.0 - u * u - v * v
+        return 2.0 * c * np.sqrt(np.clip(inside, 0.0, None))
+
+    @property
+    def feature_centers(self) -> np.ndarray:
+        return self.centers
+
+    def particle_table(self) -> list[dict]:
+        """The particles in export_ground_truth's format (also the format of a recorded specimen's labels file)."""
+        return [
+            {
+                "id": int(self.ids[i]),
+                "center_m": [float(v) for v in self.centers[i]],
+                "semi_axes_m": [float(v) for v in self.semi_axes[i]],
+                "theta_rad": float(self.theta[i]),
+                "element": self.elements[i],
+            }
+            for i in range(len(self))
+        ]
+
+
+@register_specimen
+class SampleModel(ParticleTable, Specimen):
+    """Seeded ellipsoidal particles on a support film; options are ``SampleParams`` fields."""
+
+    source = "procedural"
+
     def __init__(self, params: SampleParams, rng: EventRng):
         if params.size_xy_m <= 0:
             raise ValueError("sample size must be > 0")
@@ -61,7 +148,113 @@ class SampleModel:
         if unknown:
             raise ValueError(f"Unknown sample elements {unknown}; known: {sorted(ELEMENTS)}")
         self.params = params
+        self._atoms: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._generate(rng.for_event("sample"))
+
+    @classmethod
+    def from_options(cls, options: dict, context: SpecimenContext) -> "SampleModel":
+        """The twin's flat sample properties, with any ``SampleParams`` field (and ``seed``) overridden."""
+        names = {f.name for f in fields(SampleParams)}
+        check_options(cls.source, options, names | {"seed"})
+        overrides = {k: (tuple(v) if isinstance(v, list) else v) for k, v in options.items() if k in names}
+        return cls(replace(context.sample or SampleParams(), **overrides), context.rng_for(options))
+
+    # Specimen interface ------------------------------------------------
+    @property
+    def support_element(self) -> str:
+        return self.params.support_element
+
+    @property
+    def support_thickness_m(self) -> float:
+        return self.params.support_thickness_m
+
+    @property
+    def element_symbols(self) -> tuple[str, ...]:
+        return tuple(self.params.elements)
+
+    def warnings(self) -> list[str]:
+        if len(self) >= self.requested_count:
+            return []
+        return [
+            f"Placed {len(self)} of {self.requested_count} particles: the rest do not fit in "
+            f"{self.params.size_xy_m:.2e} m. Increase sample_size_xy or reduce the count or radius."
+        ]
+
+    def describe(self) -> dict:
+        p = self.params
+        return {
+            **super().describe(),
+            "particles": len(self),
+            "elements": list(p.elements),
+            "radius_mean_m": p.radius_mean_m,
+            "clusters": p.cluster_count,
+        }
+
+    def projected_weight(self, x_min, y_min, n, pixel_m, level, z_exponent, damage) -> np.ndarray:
+        if level == "survey":
+            return self._weight_survey(x_min, y_min, n, pixel_m, z_exponent, damage)
+        return self._weight_atomic(x_min, y_min, n, pixel_m, z_exponent, damage)
+
+    def areal_density(self, x: float, y: float) -> dict[str, float]:
+        density: dict[str, float] = {}
+        for i in self.in_box(x, x, y, y):
+            t = float(self.thickness_at(int(i), np.array(x), np.array(y)))
+            if t > 0:
+                element = self.elements[int(i)]
+                density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * t / ANGSTROM
+        return density
+
+    # Rendering -----------------------------------------------------------
+    def _weight_survey(self, x_min, y_min, n, pixel_m, z_exponent, damage) -> np.ndarray:
+        """Each particle's analytic projected thickness times Z^n."""
+        coords = x_min + (np.arange(n) + 0.5) * pixel_m
+        ycoords = y_min + (np.arange(n) + 0.5) * pixel_m
+        weight = np.zeros((n, n), dtype=np.float64)
+        x_max, y_max = x_min + n * pixel_m, y_min + n * pixel_m
+        zn = self.z ** z_exponent
+        for i in self.in_box(x_min, x_max, y_min, y_max):
+            reach = self.semi_axes[i, :2].max()
+            c0 = max(0, int((self.centers[i, 0] - reach - x_min) / pixel_m))
+            c1 = min(n, int((self.centers[i, 0] + reach - x_min) / pixel_m) + 2)
+            r0 = max(0, int((self.centers[i, 1] - reach - y_min) / pixel_m))
+            r1 = min(n, int((self.centers[i, 1] + reach - y_min) / pixel_m) + 2)
+            if c0 >= c1 or r0 >= r1:
+                continue
+            gx, gy = np.meshgrid(coords[c0:c1], ycoords[r0:r1])
+            t_angstrom = self.thickness_at(i, gx, gy) / ANGSTROM
+            weight[r0:r1, c0:c1] += zn[i] * self.density[i] * t_angstrom * damage.get(int(i), 1.0)
+        return weight
+
+    def _particle_atoms(self, i: int) -> tuple[np.ndarray, np.ndarray]:
+        """Projected (x, y) atom positions of one particle, relative to its centre; built once, cached."""
+        if i not in self._atoms:
+            element = self.elements[i]
+            z, _rho, structure, lattice = ELEMENTS[element]
+            a, b, c = self.semi_axes[i] / ANGSTROM
+            basis = bulk(element, structure, a=lattice, cubic=True).get_scaled_positions()
+            reach = int(np.ceil(max(a, b, c) / lattice)) + 1
+            steps = np.arange(-reach, reach, dtype=np.float32)
+            cells = np.stack(np.meshgrid(steps, steps, steps, indexing="ij"), axis=-1).reshape(-1, 1, 3)
+            pos = ((cells + basis[None, :, :].astype(np.float32)) * np.float32(lattice)).reshape(-1, 3)
+            pos = pos @ _euler_matrix(*self.euler[i]).T.astype(np.float32)
+            cos_t, sin_t = np.cos(self.theta[i]), np.sin(self.theta[i])
+            u = (pos[:, 0] * cos_t + pos[:, 1] * sin_t) / a
+            v = (-pos[:, 0] * sin_t + pos[:, 1] * cos_t) / b
+            keep = u * u + v * v + (pos[:, 2] / c) ** 2 <= 1.0
+            self._atoms[i] = (pos[keep, :2].astype(np.float64) * ANGSTROM, np.full(int(keep.sum()), float(z)))
+        return self._atoms[i]
+
+    def _weight_atomic(self, x_min, y_min, n, pixel_m, z_exponent, damage) -> np.ndarray:
+        """Atoms built with ASE for the particles in view only."""
+        weight = np.zeros((n, n), dtype=np.float64)
+        pixel_area_a2 = (pixel_m / ANGSTROM) ** 2
+        for i in self.in_box(x_min, x_min + n * pixel_m, y_min, y_min + n * pixel_m):
+            positions, zs = self._particle_atoms(int(i))
+            cols = np.floor((positions[:, 0] + self.centers[i, 0] - x_min) / pixel_m).astype(np.int64)
+            rows = np.floor((positions[:, 1] + self.centers[i, 1] - y_min) / pixel_m).astype(np.int64)
+            ok = (cols >= 0) & (cols < n) & (rows >= 0) & (rows < n)
+            np.add.at(weight, (rows[ok], cols[ok]), zs[ok] ** z_exponent / pixel_area_a2 * damage.get(int(i), 1.0))
+        return thermal_smear(weight, pixel_m)
 
     def _generate(self, rng: np.random.Generator) -> None:
         p = self.params
@@ -130,45 +323,9 @@ class SampleModel:
         self.bounds = (-half, half, -half, half)
         self.requested_count = target  # may exceed len(self) when the particles do not fit
 
-    def __len__(self) -> int:
-        return len(self.ids)
-
-    def in_box(self, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
-        """Indices of particles whose extent overlaps the box."""
-        if len(self) == 0:
-            return np.zeros(0, dtype=np.int64)
-        reach = self.semi_axes[:, :2].max(axis=1)
-        mask = (
-            (self.centers[:, 0] + reach >= x_min)
-            & (self.centers[:, 0] - reach <= x_max)
-            & (self.centers[:, 1] + reach >= y_min)
-            & (self.centers[:, 1] - reach <= y_max)
-        )
-        return np.nonzero(mask)[0]
-
     def height_at(self, x, y):
         gx, gy = self.params.height_gradient
         return gx * np.asarray(x) + gy * np.asarray(y)
 
-    def thickness_at(self, index: int, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Projected thickness (m) of one ellipsoidal particle at sample points."""
-        a, b, c = self.semi_axes[index]
-        dx = np.asarray(x) - self.centers[index, 0]
-        dy = np.asarray(y) - self.centers[index, 1]
-        cos_t, sin_t = np.cos(self.theta[index]), np.sin(self.theta[index])
-        u = (dx * cos_t + dy * sin_t) / a
-        v = (-dx * sin_t + dy * cos_t) / b
-        inside = 1.0 - u * u - v * v
-        return 2.0 * c * np.sqrt(np.clip(inside, 0.0, None))
-
-    def ground_truth(self) -> list[dict]:
-        return [
-            {
-                "id": int(self.ids[i]),
-                "center_m": [float(v) for v in self.centers[i]],
-                "semi_axes_m": [float(v) for v in self.semi_axes[i]],
-                "theta_rad": float(self.theta[i]),
-                "element": self.elements[i],
-            }
-            for i in range(len(self))
-        ]
+    def ground_truth(self) -> dict:
+        return {"known": True, "particles": self.particle_table()}
