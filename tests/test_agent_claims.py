@@ -230,3 +230,21 @@ def test_describing_existing_data_as_acquired_is_not_a_claim_of_acquiring():
     assert not ACQUIRED.search("The latest acquired spectrum has peaks at 2.98 and 3.69 keV.")
     assert ACQUIRED.search("I acquired a HAADF image at the best region.")
     assert ACQUIRED.search("I then took three images at different defocus values.")
+
+
+def test_an_answer_that_announces_its_next_step_instead_of_taking_it_is_flagged():
+    # Live run find_particle_then_eds (qwen3:8b): it viewed the image, then ended its turn announcing the spectrum.
+    run = Calls("Find the brightest particle in a HAADF image and take an EDS spectrum on it.")
+    run.call("DigitalTwin_acquire_scanned_image", {"detector": "HAADF"}, {"key": IMAGES[0]})
+    run.call("view_data", {"key": IMAGES[0]}, "image")
+    answer = ("The HAADF image shows a sparse distribution of bright particles. The brightest particle is likely the target. "
+              "Let's locate it and take an EDS spectrum.\n\nI'll now find the brightest particle in the image and prepare to take an EDS spectrum on it.")
+    claims = check_answer(run.messages, answer, TOOLS)
+    assert [c.kind for c in claims] == ["unfinished"]
+
+    # Not flagged: a question to the user, an offer, an earlier sentence describing the plan, or a finished report.
+    for fine in ("I took the spectrum and it shows Au. Would you like me to map the area next?",
+                 "Let me know if you want another image.",
+                 "I'll now take an image. " + "It shows three particles. The brightest is at the centre.",
+                 "The map is done; its key is in the reply above."):
+        assert [c for c in check_answer(run.messages, fine, TOOLS) if c.kind == "unfinished"] == [], fine
