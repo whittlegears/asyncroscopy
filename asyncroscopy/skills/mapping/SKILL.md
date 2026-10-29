@@ -1,7 +1,7 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.4.0
+version: 1.5.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [map, mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
@@ -49,7 +49,7 @@ If the request is unclear about the area, ask the user before starting.
 
 When `done`, the reply's `summary` has:
 - `map`: the stitched map's key. `stitching`: its quality (`median_residual_px`, `fallback_tiles`, fitted `drift`).
-- `regions` (with `find_regions`): each with `x_m`, `y_m`, `score` and `reason`. `revisits` (with `revisit`): the high-magnification image of each region, already linked to its point of interest.
+- `regions` (with `find_regions`): each with `x_m`, `y_m`, `score` and `reason`. `revisits` (with `revisit`): the high-magnification image of each region, already linked to its point of interest, and how many were `skipped` (too near the edge of the area). Report only the image keys it lists.
 - `stitch_error`, if stitching failed: the tiles are safe in `result_keys.run`; say so and give the `assemble_map` call it names. Do not run the map again.
 
 Before saying what the sample contains, look at the data: `view_data` with `{"key": <a spectrum key from summary.spectra>, "format": "text"}` lists its peaks with candidate elements. If no peaks were detected at this exposure, say so; do not conclude an element is absent. To look at the map, zoom from the whole map to a detail: `map_info` gives the map's stage box; `get_region` with a large box returns a coarse preview, a small box around a region gives full resolution. Never walk the tiles one by one. `list_pois` lists the points of interest; `list_data` finds data when you have lost a key.
