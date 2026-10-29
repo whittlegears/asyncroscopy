@@ -78,7 +78,12 @@ tool for each step of a job:
   as the approval gate sees it (with this deployment's `safety.risk`
   overrides), the job devices, `job_limits` and the analysis server. The agents
   read the analysis server's address from it (so it is configured once, here),
-  and the goal checker and benchmarks read the risks.
+  and the goal checker and benchmarks read the risks. `agent_tools` lists the
+  tool-name globs to give a model (for this endpoint and its analysis server),
+  computed by the same rules the general agent uses
+  (`asyncroscopy/mcp/agent_tools.py`): the curated STEM set on a STEM, else
+  every tool but State/Status; never `endpoint_info` or `list_skills`. Other
+  harnesses (SciAgentGUI) give the model only these.
 - Skills: since nearly every run began with `load_skill`, the agent no longer
   asks for skills. Before each model call it adds the skills that match the
   request and what has happened so far (an error, a held call, a data key;
