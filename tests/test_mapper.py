@@ -178,6 +178,9 @@ class TestRun:
         refused = call(mapper_proxy, "reserve", {"plan": {"size_m": [1e-6, 1e-6], "fov_m": 1e-6}})
         assert refused["error"]["code"] == "plan_rejected"
         assert "one tile" in refused["error"]["message"] and "revisit" in refused["error"]["message"]
+        strip = call(mapper_proxy, "reserve", {"plan": {"box_m": [0, 6e-7, 0, 1.6e-7], "fov_m": 1.6e-7, "imsize": 64}})
+        assert strip["estimate"]["steps"] > 1, strip  # a strip one tile high is a map
+        release_all(mapper_proxy, strip["reservation_id"])
 
     def test_releasing_an_aborted_run_keeps_its_tiles_under_the_final_name(self, mapper_proxy, mapping_twin_proxy):
         reserve = call(mapper_proxy, "reserve", {"plan": {**PLAN, "imsize": 256, "dwell_s": 2e-6}})

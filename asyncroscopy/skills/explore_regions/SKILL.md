@@ -18,7 +18,7 @@ Do as many regions as the user asks for (default three).
 
 `run_job` with `{"device": "Mapper", "plan": {... the area ..., "find_regions": N, "revisit": {"fov_m": <a few times smaller than the map's fov_m>}}}`, then `wait_for_job` until `done`. The job stitches the map, scores it, images each region and links each image to its point of interest. Its `summary.regions` lists each region (`x_m`, `y_m`, `score`, `reason`) and `summary.revisits` each image.
 
-## An existing map (a key ending in `_map`)
+## An existing map (a key with `_map` in it)
 
 1. `score_map` with `{"map": <key>, "top_k": N}`, then `wait_for_job` with its `job_id`; the reply's `summary.added_pois` lists the regions with `x_m`, `y_m`, `score`, `reason`.
 2. Image them: `run_job` with `{"device": "Mapper", "plan": {"revisit": {"fov_m": <a few times smaller than the map's tile fov_m>, "map": <key>, "top_k": N}}}`, then `wait_for_job`. The job images the map's N best scored regions and links each image to its point of interest. Its `summary.revisits` lists each image. Do not image a region as a one-tile map, and do not move the stage yourself.

@@ -73,7 +73,8 @@ class FakeAnalysis:
                 return {"result_keys": {"map": "map_r1_map"}}
             return {"summary": {"added_pois": [{"kind": "candidate", "x_m": 2e-7, "y_m": -1e-7, "score": 0.8, "reason": "particles"}]}}
         if name == "list_pois":
-            return {"total": 1, "pois": [{"id": "poi1", "kind": "eds_point", "x_m": 1e-7, "y_m": 1e-7, "links": ["spectrum_0.h5"]}]}
+            pois = [p for p in [{"id": "poi1", "kind": "eds_point", "x_m": 1e-7, "y_m": 1e-7, "links": ["spectrum_0.h5"]}] if p["kind"] == arguments.get("kind", p["kind"])]
+            return {"total": len(pois), "pois": pois[: arguments.get("limit", 200)]}
         raise AssertionError(name)
 
 
@@ -103,8 +104,7 @@ def test_full_run_with_approval_hold():
     assert g.instrument.calls.count("Mapper_start") == 2  # held, then repeated once approved
     assert "approval_status" in g.instrument.calls and "Mapper_release" in g.instrument.calls
     assert "assemble_map" not in g.analysis.calls and "score_map" in g.analysis.calls  # the Mapper job stitched its own run
-    kinds = [p["kind"] for p in state["pois"]]
-    assert kinds.count("eds_point") == 1 and kinds.count("candidate") == 1
+    assert state["eds_points"] == 1 and [p["kind"] for p in state["pois"]] == ["candidate"]
     assert "after operator approval" in state["report"] and "Interesting region" in state["report"]
     # State carries keys and coordinates, never arrays.
     assert len(json.dumps(state, default=str)) < 20_000
@@ -115,7 +115,7 @@ def test_a_run_the_job_did_not_stitch_is_stitched_here():
     state = run(g, {"request": "map the whole sample with EDS", "plan": dict(PLAN)})
     assert not state.get("error"), state
     assert g.analysis.calls[:2] == ["assemble_map", "analysis_job_status"] and state["map_key"] == "map_r1_map"
-    assert [p["kind"] for p in state["pois"]] == ["eds_point"]
+    assert state["eds_points"] == 1 and state["pois"] == []
 
 
 def test_denied_approval_ends_with_reason_and_releases():
@@ -162,7 +162,7 @@ def test_a_failure_while_the_map_runs_aborts_it_before_releasing():
         ({"per_tile": ["eds_point"]}, "map a 600 nm square", {"per_tile": []}),  # EDS nobody asked for
         ({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, "map the sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),  # micrometres
         ({}, "map the entire sample and tell me the composition", {"per_tile": ["eds_point"]}),
-        ({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, "map a tiny spot", {"box_m": [pytest.approx(-9.5e-8), pytest.approx(1.05e-7), pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
+        ({"box_m": [0, 1e-6, 0, 1e-8], "fov_m": 2e-7}, "map a thin strip", {"box_m": [0, 1e-6, pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
     ],
 )
 def test_plan_completion_repairs_small_model_slips(model_plan, request_text, expect):
@@ -171,6 +171,12 @@ def test_plan_completion_repairs_small_model_slips(model_plan, request_text, exp
     for key, value in expect.items():
         numeric = isinstance(value, (int, float)) or (isinstance(value, list) and all(isinstance(v, (int, float)) for v in value))
         assert plan[key] == (pytest.approx(value) if numeric else value)
+
+
+def test_an_area_inside_one_tile_is_refused_as_an_image_not_a_map():
+    context = {"sample_bounds_m": [-5e-7, 5e-7, -5e-7, 5e-7], "stage_position_m": [0, 0, 0, 0, 0], "fov_m": 2e-7}
+    with pytest.raises(ValueError, match="one image, not a map"):
+        MappingGraph._complete_plan({"box_m": [0, 1e-8, 0, 1e-8], "fov_m": 2e-7}, context, "map a tiny spot")
 
 
 @pytest.mark.parametrize(
