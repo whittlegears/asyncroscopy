@@ -1,6 +1,7 @@
 """The workflow benchmark's checks, on recorded-style traces (no stack, no model)."""
 
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
@@ -443,3 +444,10 @@ def test_the_truth_peak_is_the_one_view_data_lists_first():
     y = 5 + 400 * np.exp(-0.5 * ((x - 300) / 3) ** 2) + 900 * np.exp(-0.5 * ((x - 1500) / 3) ** 2)
     peaks = sorted(views.find_peaks(np.random.default_rng(1).poisson(y).astype(float), 3.0), key=lambda p: p.net, reverse=True)
     assert abs(peaks[0].index - 1500) <= 2  # the strongest by net counts, as the text view lists it first
+
+
+def test_a_length_in_nm_answered_in_metres_is_near():
+    from benchmarks.workflow_checks import answer_number_near
+    run = SimpleNamespace(final="The point is at (2.0540e-07 m, -4.1e-08 m).", facts={"truth": {"poi_x_nm": 205.4}})
+    assert answer_number_near(run, fact="poi_x_nm", tol=2.0)[0]
+    assert not answer_number_near(SimpleNamespace(final="at 2.0540e-07", facts={"truth": {"tiles": 205.4}}), fact="tiles", tol=2.0)[0]

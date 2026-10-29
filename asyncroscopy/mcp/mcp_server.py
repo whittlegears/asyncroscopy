@@ -370,6 +370,18 @@ class MCPServer:
             content.append(MCPImage(data=png, format="png"))
         return ToolResult(content=content, structured_content=numpy_to_python(summary))
 
+    @staticmethod
+    def _resume_note(device: str, reply: Any) -> Any:
+        """An aborted job's reply says how to go on with it: models asked to resume start a new job instead."""
+        try:
+            status = json.loads(reply)
+        except (TypeError, ValueError):
+            return reply
+        if not isinstance(status, dict) or status.get("state") not in ("aborting", "aborted") or not status.get("reservation_id"):
+            return reply
+        status["to_resume"] = f'run_job with {{"device": "{device}", "resume": "{status["reservation_id"]}"}} and no plan: it goes on from the next step'
+        return json.dumps(status)
+
     def _augment_with_preview(self, command_name: str, result: Any) -> Any:
         """Attach a PNG of what an acquire command saved; never fails the acquisition.
 
@@ -526,6 +538,8 @@ class MCPServer:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
                 if envelope and command_name == "reserve" and self.job_limits:
                     normalized = self._limit_reservation(tool_prefix or dev_class, normalized)
+                if envelope and command_name == "abort":
+                    normalized = self._resume_note(tool_prefix or dev_class, normalized)
                 result = self._augment_with_preview(command_name, normalized)
             except Exception as exc:
                 if self.tool_log is not None:
