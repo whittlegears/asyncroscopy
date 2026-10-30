@@ -678,6 +678,9 @@ class DigitalTwin(AtomisticDigitalTwin):
                 "live_time_s": float(live_time),
                 "beam_position": [float(self._beam_pos_x), float(self._beam_pos_y)],
                 "stage_reported_m": self._stage.reported.tolist(),
+                "fov_m": float(self._fov),
+                "beam_current_pa": self._beam_current_pa(),
+                "axes": "rows=+y, columns=+x",
                 "acquisition_index": index,
             },
         )

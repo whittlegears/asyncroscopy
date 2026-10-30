@@ -275,6 +275,11 @@ class JobDevice(Device):
         doc="A running job is aborted (and the instrument put in its safe state) when nobody has checked on it (job_status, "
             "wait_for_job, renew_lease) for this long, so a crashed agent or GUI cannot leave it running unwatched. 0: off.",
     )
+    pause_limit_s = device_property(
+        dtype=float, default_value=0.0,
+        doc="A job a person paused is aborted (its instrument already safe) when it has stayed paused this long, so a "
+            "forgotten pause does not hold the device for good. 0: no limit.",
+    )
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -796,7 +801,20 @@ class JobDevice(Device):
             job["paused_since"] = time.time()
             self._save(job)
         self._trace.record(f"{cls}.paused", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+        limit = float(getattr(self, "pause_limit_s", 0.0) or 0.0)
         while not abort.wait(PAUSE_POLL_S):
+            with self._lock:
+                if limit > 0 and job["state"] == "paused" and job.get("pause_requested") and time.time() - job["paused_since"] > limit:
+                    job["last_error"] = {"code": "pause_lapsed", "message": f"paused for longer than pause_limit_s ({limit:g} s), so it was aborted; start it again to resume"}
+                    job["state"] = "aborting"
+                    job["pause_requested"] = False
+                    abort.set()
+                    lapsed = True
+                else:
+                    lapsed = False
+            if lapsed:
+                self._trace.record(f"{cls}.pause_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+                return "aborted"
             with self._lock:
                 if not job.get("pause_requested"):
                     if job["state"] != "paused":
