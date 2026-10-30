@@ -500,3 +500,19 @@ class TestAutoScriptConnectionErrors:
         AutoScriptMicroscope._connect_hardware(device)
 
         assert "not installed" in device._connect_error
+
+
+def test_a_hardware_frame_records_what_the_dose_ledger_needs():
+    from asyncroscopy.data.dose_ledger import exposure_of
+
+    microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+    microscope._get_stage = lambda: [1e-6, -2e-6, 0.0, 0.0, 0.0]
+    microscope._get_fov = lambda: 2e-7
+    microscope._beam_current = lambda: {"beam_current_pa": 30.0, "beam_current_source": "default", "beam_current_reason": "not measured"}
+    attrs = microscope._frame_attrs(256, 4e-6, [0.0, 0.0, 1.0, 1.0])
+    assert attrs["pixel_size_m"] == 2e-7 / 256 and attrs["beam_current_source"] == "default"
+    entry = exposure_of(attrs)
+    assert entry["kind"] == "frame" and entry["current_source"] == "default" and entry["box_m"][0] == pytest.approx(1e-6 - 1e-7)
+    microscope._get_fov = lambda: (_ for _ in ()).throw(RuntimeError("optics not answering"))
+    failed = microscope._frame_attrs(256, 4e-6, [0.0, 0.0, 1.0, 1.0])
+    assert "optics not answering" in failed["frame_attrs_error"] and exposure_of(failed) is None

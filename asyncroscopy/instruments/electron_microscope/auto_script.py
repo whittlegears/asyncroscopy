@@ -303,12 +303,28 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         scan_region = list(check_scan(imsize, dwell_time, scan_region))  # refused here, before the instrument
         detector_list = [d.upper() for d in detector_list]
+        attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # before the frame: where and how it is taken
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
         if not isinstance(adorned, list):
             adorned = [adorned]
         data_server = self._detector_proxies.get("data")
-        return save_acquisition(self, data_server, "stem_image", detector_list, adorned, output_format=output_format)
+        return save_acquisition(self, data_server, "stem_image", detector_list, adorned, dataset_attrs=attrs, output_format=output_format)
+
+    def _frame_attrs(self, imsize: int, dwell_time: float, scan_region: list[float]) -> dict:
+        """What a saved frame records about where and how it was taken (the dose ledger reads it). A stage or field of
+        view that cannot be read is said in "frame_attrs_error", and the frame is then not in the ledger."""
+        try:
+            stage = [float(v) for v in self._get_stage()]
+            fov = float(self._get_fov())
+            current = self._beam_current()
+        except Exception as exc:
+            return {"frame_attrs_error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
+        return {
+            "stage_reported_m": stage, "fov_m": fov, "pixel_size_m": fov / int(imsize), "dwell_time_s": float(dwell_time),
+            "scan_region": list(scan_region),
+            **{k: v for k, v in current.items() if k in ("beam_current_pa", "beam_current_source")},
+        }
 
 
     def _acquire_camera_image(

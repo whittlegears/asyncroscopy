@@ -387,3 +387,20 @@ def test_a_start_approved_for_one_plan_does_not_start_a_revised_one(mapper_proxy
     started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"], "plan_id": revised["plan_id"]})
     assert wait(mapper_proxy, started["job_id"])["state"] == "done"
     release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(tango_ctx, mapping_twin_proxy):
+    leased = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/lease"))
+    leased.set_timeout_millis(60_000)
+    plan = {**PLAN, "box_m": [-4e-7, 4e-7, -4e-7, 4e-7], "imsize": 256, "dwell_s": 2e-6}
+    reserve = call(leased, "reserve", {"plan": plan})
+    started = call(leased, "start", {"reservation_id": reserve["reservation_id"]})
+    call(leased, "pause", {"job_id": started["job_id"]})
+    paused = wait(leased, started["job_id"], states=("paused",))
+    time.sleep(2.0)  # longer than lease_s with nobody checking: a paused job's lease does not lapse
+    assert json.loads(leased.get_jobs())["jobs"][0]["state"] == "paused"
+    status = wait(leased, started["job_id"], timeout=30)
+    assert status["state"] == "aborted" and status["last_error"]["code"] == "pause_lapsed"
+    assert status["progress"]["done"] == paused["progress"]["done"]
+    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+    release_all(leased, reserve["reservation_id"])

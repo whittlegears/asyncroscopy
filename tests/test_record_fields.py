@@ -89,7 +89,7 @@ def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_
     loaded = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "dose test"})))
     mapping_twin_proxy.set_timeout_millis(60_000)
     before = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": 0.0, "y_m": 0.0})))
-    assert before["sample_load_id"] == loaded["sample_load_id"] and before["frames"] == 0 and before["dose_e_per_a2"] == 0.0
+    assert before["sample_load_id"] == loaded["sample_load_id"] and before["exposures"] == 0 and before["dose_e_per_a2"] == 0.0
     mapping_twin_proxy.unblank_beam()
     try:
         keys = [mapping_twin_proxy.acquire_scanned_image(["haadf"]) for _ in range(2)]
@@ -102,24 +102,63 @@ def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_
     expected = sum(exposure_of(a)["dose_e_per_a2"] for a in attrs)
     centre = json.loads(attrs[0]["stage_reported_m"]) if isinstance(attrs[0]["stage_reported_m"], str) else list(attrs[0]["stage_reported_m"])
     here = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": centre[0], "y_m": centre[1]})))
-    assert here["frames"] == 2 and here["frames_here"] == 2 and here["dose_e_per_a2"] == pytest.approx(expected) and expected > 0
+    assert here["exposures"] == 2 and here["exposures_here"] == 2 and here["dose_e_per_a2"] == pytest.approx(expected) and expected > 0
     away = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": centre[0] + 1e-3, "y_m": centre[1]})))
-    assert away["frames_here"] == 0 and "spectra" in away["not_counted"]
+    assert away["exposures_here"] == 0 and "camera frames" in away["not_counted"]
     mapping_stage_proxy.load_sample(json.dumps({"sample_id": "dose test"}))  # a new load starts from nothing
-    assert json.loads(mapping_twin_proxy.get_dose("{}"))["frames"] == 0
+    assert json.loads(mapping_twin_proxy.get_dose("{}"))["exposures"] == 0
     with pytest.raises(tango.DevFailed, match="both x_m and y_m"):
         mapping_twin_proxy.get_dose(json.dumps({"x_m": 0.0}))
     a = attrs[0]
     assert exposure_of(a)["dose_e_per_a2"] == pytest.approx(frame_dose(float(a["beam_current_pa"]), float(a["dwell_time_s"]), float(a["fov_m"]), round(float(a["fov_m"]) / float(a["pixel_size_m"]))))
     assert exposure_of({k: v for k, v in a.items() if k != "beam_current_pa"}) is None
-    assert dose_at("no such load")["frames"] == 0
+    assert dose_at("no such load")["exposures"] == 0
 
 
 def test_a_partial_scan_region_is_read_as_left_top_width_height():
     from asyncroscopy.data.dose_ledger import exposure_of
 
-    attrs = {"stage_reported_m": [0.0, 0.0, 0, 0, 0], "fov_m": 1e-6, "pixel_size_m": 1e-8, "dwell_time_s": 1e-6, "beam_current_pa": 10.0}
+    attrs = {"stage_reported_m": [0.0, 0.0, 0, 0, 0], "fov_m": 1e-6, "pixel_size_m": 1e-8, "dwell_time_s": 1e-6, "beam_current_pa": 10.0, "axes": "rows=+y, columns=+x"}
     assert exposure_of(attrs)["box_m"] == pytest.approx([-5e-7, 5e-7, -5e-7, 5e-7])
     assert exposure_of({**attrs, "scan_region": [0.6, 0.0, 0.4, 1.0]})["box_m"] == pytest.approx([1e-7, 5e-7, -5e-7, 5e-7])
     assert exposure_of({**attrs, "scan_region": [0.25, 0.25, 0.5, 0.5]})["box_m"] == pytest.approx([-2.5e-7, 2.5e-7, -2.5e-7, 2.5e-7])
     assert exposure_of({**attrs, "scan_region": [0.0, 0.0, 0.0, 1.0]}) is None
+    unplaced = {k: v for k, v in attrs.items() if k != "axes"}  # which way the rows run is unknown: the whole field
+    assert exposure_of({**unplaced, "scan_region": [0.6, 0.0, 0.4, 1.0]})["box_m"] == pytest.approx([-5e-7, 5e-7, -5e-7, 5e-7])
+    spot = {"stage_reported_m": [0.0, 0.0], "fov_m": 1e-6, "beam_position": [0.75, 0.5], "real_time_s": 1.0, "beam_current_pa": 10.0}
+    assert exposure_of(spot) is None and exposure_of({**spot, "axes": "rows=+y, columns=+x"})["box_m"][0] == pytest.approx(2.5e-7 - 5e-9)
+
+
+def test_a_spectrum_counts_its_parked_beam_over_the_spread_square(mapping_stage_proxy, mapping_twin_proxy):
+    from asyncroscopy.data.dose_ledger import SPOT_SPREAD_M, exposure_of
+    from asyncroscopy.routines.dose import ELECTRON_CHARGE
+
+    json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "spot test"})))
+    mapping_twin_proxy.set_timeout_millis(60_000)
+    mapping_twin_proxy.place_beam([0.75, 0.5])
+    mapping_twin_proxy.unblank_beam()
+    try:
+        key = mapping_twin_proxy.acquire_spectrum("eds")
+    finally:
+        mapping_twin_proxy.blank_beam()
+    with h5py.File(Path(key), "r") as h5:
+        attrs = dict(h5["spectrum"].attrs) if "spectrum" in h5 else dict(h5[next(iter(h5))].attrs)
+    stage = json.loads(attrs["stage_reported_m"]) if isinstance(attrs["stage_reported_m"], str) else list(attrs["stage_reported_m"])
+    spot_x = stage[0] + 0.25 * float(attrs["fov_m"])
+    expected = float(attrs["beam_current_pa"]) * 1e-12 * float(attrs["real_time_s"]) / ELECTRON_CHARGE / (SPOT_SPREAD_M / 1e-10) ** 2
+    assert exposure_of(attrs)["kind"] == "spot" and expected > 0
+    here = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": spot_x, "y_m": stage[1]})))
+    assert here["exposures_here"] == 1 and here["dose_e_per_a2"] == pytest.approx(expected)
+    beside = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": spot_x + SPOT_SPREAD_M, "y_m": stage[1]})))
+    assert beside["exposures_here"] == 0
+
+
+def test_an_unmeasured_current_is_said_to_be_an_estimate(tmp_path, monkeypatch):
+    from asyncroscopy.data import dose_ledger
+
+    monkeypatch.setenv("ASYNCROSCOPY_DOSE_LEDGER", str(tmp_path / "ledger.jsonl"))
+    frame = {"stage_reported_m": [0.0, 0.0], "fov_m": 1e-6, "pixel_size_m": 1e-8, "dwell_time_s": 1e-6, "beam_current_pa": 50.0}
+    dose_ledger.record_frame({**frame, "beam_current_source": "default"}, "L", "k1", "i")
+    dose_ledger.record_frame({**frame, "beam_current_source": "measured"}, "L", "k2", "i")
+    reply = dose_ledger.dose_at("L", 0.0, 0.0)
+    assert reply["exposures_here"] == 2 and reply["from_unmeasured_current"].startswith("1 of these")

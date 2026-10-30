@@ -41,6 +41,11 @@ Rules:
 - Do every step the user asked for, in order, before answering; never say a step was done unless a tool call did it.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone.{extra}"""
 
+# Measured on qwen3:8b (2026-10-30, benchmarks/results/find_tools_qwen3_8b.md): it did not search with or without
+# this rule, and naming every other tool here left it no room to answer; the curated list is what it can use.
+SEARCH_RULE = """
+- Your tools are a selection. If none fits the request, call find_tools with one or two words (e.g. "holder", "dose", "jobs") and then call_tool with the name it gives; never say the instrument cannot do something before searching."""
+
 STEM_RULES = """
 - STEM: a stage position is [x, y, z, alpha, beta] (metres, degrees). Never move the stage or acquire in a loop for a map: use the Mapper job (see the mapping skill)."""
 
@@ -80,7 +85,8 @@ async def make_graph(config: dict | None = None):
     template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
     names = {t.name for t in tools}
     readers = " or ".join(r for r in ("view_data", "get_region") if r in names) or "the instrument's own read tools"
-    prompt = template.replace("{skills}", "").replace("{extra}", STEM_RULES if stem else "").replace("{readers}", readers)
+    extra = (SEARCH_RULE if {"find_tools", "call_tool"} <= names else "") + (STEM_RULES if stem else "")
+    prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
     skills = SkillMiddleware(prompt, names, offered, memory=memory.notes_for, num_ctx=agent_config.num_ctx)
     waits = JobWaitMiddleware(tools, deadline=agent_config.deadline)  # a job of any length is one tool round

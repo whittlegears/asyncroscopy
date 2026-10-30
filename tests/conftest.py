@@ -421,6 +421,7 @@ def tango_ctx(data_save_dir, job_dir):
                         "estimate_move_s": 1.0,
                         "simulated": True,
                         "lease_s": 1.5,
+                        "pause_limit_s": 3.0,
                     },
                 },
                 {
