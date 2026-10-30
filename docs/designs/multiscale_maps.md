@@ -201,6 +201,10 @@ Every G3 check passes. What made it pass, and what was tried:
 
 Built for agents: the analysis server's `place_image` (places a finer image on a stitched map or a coarser image, from the stage position it records or the point it was aimed at by image shift, within `window_m`) and `list_placements`, which keep every result, placed or unplaced with the reason, in an append-only JSON-lines log (`--placements`, pyTEMlib 958a6c6). `place_image` is in the agent tool set, and the `multiscale_region` skill walks an agent through the tiers: aim by image shift, place, use the placed position (never the aimed one) for the next step, stop at an unplaced image or the dose cap.
 
+### P4 so far (2026-10-30)
+
+The first step is built in SciAgentGUI (`MapView.tsx`, `tiledClient.ts`, commit a50d98a on claude_dev): the Maps page fetches the stored chunks a view touches through Tiled's block endpoint, nearest the centre first and six at a time, keeps 160 of them by map, level and chunk, draws every cached coarser chunk under the finer ones, and paints every chunk with the map's one display range (from its coarsest level), so chunks meet without brightness steps and a zoom never shows a stretched stale picture. Checked in the running app on a 2,000-pixel, 4-level twin map. Not built: the timing harness the "done when" numbers need, the deep-zoom view layering tiers, and drawing placed finer images on their parent.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
