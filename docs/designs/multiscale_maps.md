@@ -113,13 +113,13 @@ asyncroscopy owns acquisition and the twin. pyTEMlib owns stitching, placement a
 
 ### Twin changes (P1)
 
-*   **Support texture**: a seeded, band-limited thickness field on the support film (amplitude about 1 % of the film's contrast), defined at every point by a deterministic function of position, so survey and atomic drawings see the same texture.
-*   **Gain and offset drift**: the detector multiplies by a gain and adds an offset that follow a slow seeded random walk in the twin's clock (default ±10 % over a map's duration). The values for every frame go into ground truth.
+*   **Support texture**: a seeded thickness field on the support film, a sum of plane waves with lengths from 2 µm down to 0.5 nm, defined at every point by a deterministic function of position. A frame draws only the waves at least two of its pixels long (finer ones would alias into a pattern that depends on where the frame's grid starts), so overlapping frames of one pixel size see the same film and a coarse frame sees a smoothed version of a fine one, as on the instrument. Its standard deviation is 30 % of the film thickness: at 1 % (the brief's first guess) a 10 nm carbon film's variation is about 10^-4 counts per pixel, far below shot noise, and nothing could register on it.
+*   **Gain and offset drift**: the scanning detectors' gain and offset follow a seeded sum of slow sine waves in the twin's clock (periods 10 min to 2 h; the mapping configs allow ±10 % gain and ±2 counts offset). The values for every frame go into ground truth. EDS counts do not drift.
 *   **Sub-pixel atoms**: atoms are drawn by evaluating their Gaussian at true sub-pixel positions, not placed on the nearest pixel.
 *   **Consistency at the switch**: a test draws the same box with the survey branch and the atomic branch at 0.2 nm, blurs both to the probe size, and requires the mean projected weight to agree within 2 % and the correlation to exceed 0.9.
-*   **Ground truth**: `export_ground_truth` adds each acquisition's scan distortion parameters, its line-jitter draw (seed and per-line offsets), its gain and offset, and each particle's lattice orientation. It stays operator-only.
-*   **Sparse dose map**: cells are created only where dose lands, sized to the frame that put them there (a quadtree keyed by cell size and index), so a 50 nm frame on a 20 µm sample keeps its dose in cells of 50 nm or smaller.
-*   **Stage uncertainty**: the Mapper's `stage_sigma_m` default in the twin configurations becomes the twin's real stage error, read from the stage model's noise and backlash settings; a test fails if a twin configuration states a smaller uncertainty than its stage model produces.
+*   **Ground truth**: `export_ground_truth` adds each acquisition's scan distortion parameters, its line-jitter draw (line count and spread; `scan_distortion.line_jitter_m` regenerates every line's offset from the seed and acquisition index, so a 10,000-tile map's truth stays small), its gain and offset, and each particle's lattice orientation. It stays operator-only.
+*   **Sparse dose map**: cells are created only where dose lands, sized to the frame that put them there (about an eighth of its field, in power-of-two steps from the largest cell down to 0.5 nm), so a 50 nm frame on a 20 µm sample keeps its dose in cells of about 6 nm. A parked beam's dose is counted over the Mapper's 10 nm spot spread.
+*   **Stage uncertainty**: the twin reports the commanded position plus 10 nm of readback noise, while the stage really lands with 150 nm of noise plus bias and backlash, so the Mapper's `stage_sigma_m` in every twin configuration becomes 150 nm (it was 30 nm); a test fails if a twin configuration states less than its `stage_move_noise_std`.
 
 ### Stitching changes (P2)
 

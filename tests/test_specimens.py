@@ -94,6 +94,15 @@ def _golden_run(dev, saved: list) -> dict[str, np.ndarray]:
     }
 
 
+def _contains(new, old) -> bool:
+    """Whether ``new`` holds everything ``old`` does, unchanged (dicts may have gained keys)."""
+    if isinstance(old, dict):
+        return isinstance(new, dict) and all(k in new and _contains(new[k], v) for k, v in old.items())
+    if isinstance(old, list):
+        return isinstance(new, list) and len(new) == len(old) and all(_contains(a, b) for a, b in zip(new, old))
+    return new == old
+
+
 def test_procedural_specimen_is_bit_identical_to_the_golden_run(tango_ctx, monkeypatch):
     dev = _device(tango_ctx, "asyncroscopy/digitaltwin/specimen_golden")
     run = _golden_run(dev, _capture_saves(monkeypatch))
@@ -102,7 +111,16 @@ def test_procedural_specimen_is_bit_identical_to_the_golden_run(tango_ctx, monke
         np.savez_compressed(GOLDEN, platform=np.array(sys.platform), numpy=np.array(np.__version__), **run)
         pytest.skip(f"wrote {GOLDEN}")
     golden = np.load(GOLDEN)
-    assert json.loads(str(run["truth"])) == json.loads(str(golden["truth"]))  # particles, moves, drift, dose, focus
+    truth, recorded = json.loads(str(run["truth"])), json.loads(str(golden["truth"]))
+    # Ground truth may gain fields (lattice orientations, each frame's scan distortion and detector gain); everything
+    # the golden run recorded must still be there unchanged: particles, moves, drift, focus.
+    dose, recorded_dose = truth.pop("dose"), recorded.pop("dose")
+    assert _contains(truth, recorded)
+    # The dose map keeps each frame's dose in cells sized to it and counts every electron (the old map dropped
+    # a few at cells its grid lined up badly with), so its cell count differs and its peak by 1 part in 10^5.
+    assert dose["max_dose_e_per_a2"] == pytest.approx(recorded_dose["max_dose_e_per_a2"], rel=1e-3)
+    images = [a for a in truth["acquisitions"] if a["kind"] == "image"]
+    assert images and all({"rotation_deg", "shear", "fov_scale_error"} <= set(a["scan"]) and set(a["detector"]) == {"gain", "offset"} for a in images)
     # Survey damage is visible: the second frame of the same area is dimmer where particles are.
     assert run["survey2_haadf"].sum() != run["survey_haadf"].sum()
     same_build = str(golden["platform"]) == sys.platform and str(golden["numpy"]) == np.__version__

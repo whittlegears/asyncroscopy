@@ -76,9 +76,10 @@ devices:
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
       # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
-      # the twin reports stage positions to ~10 nm, plus scan distortion and drift.
+      # stage_sigma_m: how far a tile really lands from the reported position (the twin's 150 nm stage noise and
+      # up to 250 nm backlash together, about 290 nm, not its 10 nm readback noise); tests/test_twin_configs.py checks it.
       analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 3.0e-8
+      stage_sigma_m: 2.9e-7
       max_drift_m_per_s: 5.0e-11
   # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
   # The twin's hidden focus error is set with its focus_offset_m / astigmatism_offset_*_m properties.

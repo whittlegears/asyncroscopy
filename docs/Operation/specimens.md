@@ -71,7 +71,7 @@ This source is the seeded particle table that the twin has always used (`twin/sa
 - **survey:** analytic projected thickness;
 - **atomic resolution:** the particles in view are built atom by atom with ASE.
 
-Options are any `SampleParams` field (`particle_count`, `elements`, `cluster_count`, ...) and `seed`. With no options it is bit-identical to the twin before specimens became plug-ins. `tests/data/specimen_procedural_golden.npz` holds the check: two survey frames with dose damage, one atomic-resolution frame, one EDS spectrum and the ground truth.
+Options are any `SampleParams` field (`particle_count`, `elements`, `cluster_count`, ...) and `seed`. `support_texture` (a fraction, default 0) and `support_texture_scale_m` make the film's thickness vary at every length from that scale down to 0.5 nm, from its own seeded stream so no particle moves; `subpixel_atoms` (default false) draws each atom at its sub-pixel position. With no options it is bit-identical to the twin before specimens became plug-ins. `tests/data/specimen_procedural_golden.npz` holds the check: two survey frames with dose damage, one atomic-resolution frame, one EDS spectrum and the ground truth.
 
 ### `recorded`
 
@@ -129,7 +129,7 @@ There is no multislice: contrast is the same mass-thickness model as the particl
 
 | Source | `export_ground_truth()["particles"]` | `export_ground_truth()["specimen"]` |
 | :-- | :-- | :-- |
-| `procedural` | every particle: id, centre, semi-axes, orientation, element | `known: true`, count, elements, mean radius, clusters |
+| `procedural` | every particle: id, centre, semi-axes, orientation, element, lattice orientation (`euler_deg`) | `known: true`, count, elements, mean radius, clusters |
 | `recorded` without labels | `[]` | `known: false`, path, shape, pixel size |
 | `recorded` with labels | the labels | `known: true`, `labelled: true` |
 | `crystal` | `[]`: it has no particles | `known: true`, `grains` (seed point, rotation, tilt, thickness) and `lattice` (element, structure, lattice constant, zone axis) |
@@ -139,6 +139,7 @@ The instrument's own truth does not depend on the specimen. Every source gives i
 
 - every stage move (`moves`: commanded, true and reported);
 - the true centre and drift of every acquisition (`acquisitions[*].center_true_m`, `drift_*`);
+- each frame's scan distortion, every line's jitter, and the detectors' gain and offset (`acquisitions[*].scan`, `acquisitions[*].detector`);
 - the dose (`dose`);
 - the focus (`focus`).
 
@@ -149,6 +150,7 @@ A scorer that checks *where the instrument went*, such as stitching accuracy aga
 A source subclasses `Specimen` and is registered by name. It implements `from_options`, `projected_weight` and `areal_density`. The other methods have defaults:
 
 - `height_at`: flat, or `height_gradient`;
+- `support_texture`: a uniform support film (`procedural` varies its film with its `support_texture` option);
 - `in_box` and `feature_centers`: no damageable features;
 - `ground_truth`: `known: false`.
 

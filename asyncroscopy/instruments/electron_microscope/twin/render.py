@@ -94,7 +94,11 @@ class Renderer:
         x_min, y_min, n = self._grid(xs, ys, pixel_m, pad)
         weight = self.sample.projected_weight(x_min, y_min, n, pixel_m, level, self.params.z_exponent, damage)
         support_z, support_rho = ELEMENTS[self.sample.support_element][:2]
-        weight += support_z ** self.params.z_exponent * support_rho * support_angstrom
+        support_weight = support_z ** self.params.z_exponent * support_rho
+        weight += support_weight * support_angstrom
+        texture = self.sample.support_texture(x_min, y_min, n, pixel_m)
+        if texture is not None:  # the film's own thickness varies; contamination (in support_angstrom) does not
+            weight += support_weight * (float(self.sample.support_thickness_m) / ANGSTROM) * texture
         obj = object_signal(weight, detector, self.params)
         if level == "survey":
             obj = ndimage.gaussian_filter(obj, sigma=sigma_m / pixel_m, mode="nearest")
