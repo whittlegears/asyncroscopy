@@ -2,7 +2,7 @@
 
 The twin is split in two. The *instrument* (stage, drift, clock, scan
 distortion, optics, detector noise, dose bookkeeping, EDS detector) never
-looks inside the sample; it asks a ``Specimen`` four questions, all in sample
+looks inside the sample; it asks a ``Specimen`` these questions, all in sample
 coordinates (metres, rows along +y, columns along +x):
 
 * ``projected_weight``: the Z^n-weighted mass thickness on a regular grid,
@@ -10,6 +10,7 @@ coordinates (metres, rows along +y, columns along +x):
 * ``areal_density``: atoms per square angstrom of each element under the
   beam, which the EDS model turns into a spectrum;
 * ``height_at``: the specimen height, which adds to the defocus;
+* ``support_texture``: how the support film's thickness varies (None: a uniform film);
 * ``in_box`` / ``feature_centers``: the features the dose map may damage.
 
 ``ground_truth`` is for evaluators only (export_ground_truth, scorers); the
@@ -77,6 +78,11 @@ class Specimen:
         (from ``in_box``) to the fraction of it left. The support film is added by the renderer.
         """
         return np.zeros((n, n), dtype=np.float64)
+
+    def support_texture(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray | None:
+        """The support film's relative thickness change on the same grid as ``projected_weight`` (0: the nominal
+        ``support_thickness_m``, never below -1), or None for a uniform film."""
+        return None
 
     def areal_density(self, x: float, y: float) -> dict[str, float]:
         """Atoms per square angstrom of each element along the beam at (x, y), support film excluded."""

@@ -40,6 +40,7 @@ from asyncroscopy.instruments.electron_microscope.twin import (
     point_spectrum,
 )
 from asyncroscopy.instruments.electron_microscope.twin.detector import (
+    DetectorDrift,
     DetectorParams,
     count,
     electrons_per_pixel,
@@ -119,6 +120,8 @@ class DigitalTwin(AtomisticDigitalTwin):
     detector_gain = _prop(float, 1.0, "Counts per detected electron.")
     detector_offset = _prop(float, 0.0, "Detector dark offset (counts).")
     detector_read_noise = _prop(float, 0.0, "Gaussian read noise (counts).")
+    detector_gain_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' gain, as a fraction (0: steady).")
+    detector_offset_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' offset (counts; 0: steady).")
     # Scan
     scan_flyback_time = _prop(float, 0.0, "Line flyback time (s).")
     scan_line_jitter_px = _prop(float, 0.0, "Per-line x jitter standard deviation (pixels).")
@@ -152,6 +155,7 @@ class DigitalTwin(AtomisticDigitalTwin):
     contamination_max = _prop(float, 0.0, "Carbon contamination thickness at saturation (m).")
     contamination_dose = _prop(float, 1e4, "Dose (e/A^2) for contamination to reach 63% of saturation.")
     damage_critical_dose = _prop(float, 0.0, "Dose (e/A^2) beyond which particles start to fade (0 = off).")
+    dose_spot_spread = _prop(float, 1e-8, "A parked beam's dose (EDS) is counted over a square this wide (m); keep it equal to the Mapper's eds_dose_spread_m.")
 
     # ------------------------------------------------------------------
     # Model construction
@@ -256,6 +260,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             offset=float(self.detector_offset),
             read_noise=float(self.detector_read_noise),
         )
+        self._detector_drift = DetectorDrift(float(self.detector_gain_drift), float(self.detector_offset_drift), self._rng.for_event("detector_drift"))
         self._eds_params = EdsParams(
             energy_max_ev=float(self.eds_energy_max),
             channels=int(self.eds_channels),
@@ -272,6 +277,7 @@ class DigitalTwin(AtomisticDigitalTwin):
                 contamination_angstrom_max=float(self.contamination_max) / ANGSTROM,
                 contamination_dose_e_per_a2=float(self.contamination_dose),
                 damage_critical_dose_e_per_a2=float(self.damage_critical_dose),
+                spot_spread_m=float(self.dose_spot_spread),
             ),
             self._specimen.bounds,
             margin_m=(x_max - x_min) * 0.25,
@@ -497,6 +503,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         region = check_scan(imsize, dwell_time, scan_region)
         left, top, width, height = region
         t0 = self._clock.now()
+        scan_truth: dict = {}
         xs, ys = pixel_sample_coordinates(
             int(imsize),
             float(self._fov),
@@ -506,6 +513,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             self._beam_xy_at,
             t0,
             self._rng.for_event("scan", index),
+            truth=scan_truth,
         )
         rows, cols = xs.shape
         duration = frame_time(rows, cols, float(dwell_time), self._scan_params)
@@ -527,6 +535,10 @@ class DigitalTwin(AtomisticDigitalTwin):
             "scan_region": list(region),
             "dwell_s": float(dwell_time),
             "center_true_m": [float(xs.mean()), float(ys.mean())],
+            # What bent and brightened this frame, for scoring stitching: the scan distortion, each line's jitter
+            # and the scanning detectors' gain and offset when the frame started.
+            "scan": {**vars(self._scan_params), **scan_truth},
+            "detector": {k: v for k, v in vars(self._detector_drift.at(self._detector_params, t0)).items() if k in ("gain", "offset")},
         }
         self._acquisitions.append(record)
         return {"xs": xs, "ys": ys, "index": index, "pixel_m": pixel, "dwell_s": float(dwell_time), "record": record}
@@ -553,7 +565,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             damage=self._dose.damage_factors(self._specimen.feature_centers, visible),
         )
         rng = self._rng.for_event(f"detector_{detector}", frame["index"])
-        params = replace(self._detector_params, beam_current_pa=self._beam_current_pa())
+        params = self._detector_drift.at(replace(self._detector_params, beam_current_pa=self._beam_current_pa()), frame["record"]["t_start_s"])
         return count(fraction, frame["dwell_s"], params, rng)
 
     def _acquire_scanned_image(

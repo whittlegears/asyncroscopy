@@ -36,6 +36,8 @@ ELEMENTS: dict[str, tuple[int, float, str, float]] = {
 
 
 PLACEMENT_TIME_LIMIT_S = 15.0  # longest the twin spends placing particles at start-up
+TEXTURE_FINEST_M = 0.5e-9  # the finest structure of the support film's texture
+TEXTURE_WAVES = 96  # plane waves summed for the texture, spread evenly over the octaves of length it spans
 
 @dataclass
 class SampleParams:
@@ -55,6 +57,14 @@ class SampleParams:
     cluster_count: int = 0
     cluster_radius_m: float = 0.0
     cluster_fraction: float = 0.0
+    # The support film's thickness varies by about this fraction (standard deviation; 0: a uniform film), with
+    # structure at every length from support_texture_scale_m down to TEXTURE_FINEST_M, so overlapping tiles can be
+    # registered on the film itself at any pixel size. Drawn from its own seeded stream: the particles do not change.
+    support_texture: float = 0.0
+    support_texture_scale_m: float = 2e-6
+    # Atoms are drawn at their sub-pixel positions (each spread over the four nearest pixels) rather than at the
+    # pixel they fall in, so one column lands at the same place in two overlapping atomic frames.
+    subpixel_atoms: bool = False
 
 
 def _euler_matrix(e1_deg: float, e2_deg: float, e3_deg: float) -> np.ndarray:
@@ -144,12 +154,15 @@ class SampleModel(ParticleTable, Specimen):
             raise ValueError("sample size must be > 0")
         if params.cluster_count < 0 or not 0.0 <= params.cluster_fraction <= 1.0 or params.cluster_radius_m < 0:
             raise ValueError("cluster_count must be >= 0, cluster_fraction in [0, 1] and cluster_radius_m >= 0")
+        if params.support_texture < 0 or params.support_texture_scale_m <= TEXTURE_FINEST_M:
+            raise ValueError(f"support_texture must be >= 0 and support_texture_scale_m above {TEXTURE_FINEST_M} m")
         unknown = [e for e in (*params.elements, params.support_element) if e not in ELEMENTS]
         if unknown:
             raise ValueError(f"Unknown sample elements {unknown}; known: {sorted(ELEMENTS)}")
         self.params = params
         self._atoms: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         self._generate(rng.for_event("sample"))
+        self._texture_waves = self._draw_texture(rng.for_event("support_texture")) if params.support_texture > 0 else None
 
     @classmethod
     def from_options(cls, options: dict, context: SpecimenContext) -> "SampleModel":
@@ -188,7 +201,35 @@ class SampleModel(ParticleTable, Specimen):
             "elements": list(p.elements),
             "radius_mean_m": p.radius_mean_m,
             "clusters": p.cluster_count,
+            "support_texture": p.support_texture,
+            "subpixel_atoms": p.subpixel_atoms,
         }
+
+    def _draw_texture(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Wave vectors (kx, ky), phases and amplitudes of the support texture: lengths spread evenly in log from
+        support_texture_scale_m to TEXTURE_FINEST_M, random directions, equal amplitude per wave, scaled so the
+        sum has standard deviation ``support_texture``."""
+        lengths = np.geomspace(self.params.support_texture_scale_m, TEXTURE_FINEST_M, TEXTURE_WAVES)
+        angles = rng.uniform(0.0, np.pi, TEXTURE_WAVES)
+        phases = rng.uniform(0.0, 2.0 * np.pi, TEXTURE_WAVES)
+        k = 2.0 * np.pi / lengths
+        amplitude = np.full(TEXTURE_WAVES, self.params.support_texture * np.sqrt(2.0 / TEXTURE_WAVES))
+        return k * np.cos(angles), k * np.sin(angles), phases, amplitude
+
+    def support_texture(self, x_min, y_min, n, pixel_m) -> np.ndarray | None:
+        if self._texture_waves is None:
+            return None
+        kx, ky, phases, amplitude = self._texture_waves
+        # Waves shorter than two pixels are left out: on a grid of this pixel they would alias into a pattern that
+        # depends on where the grid happens to start, so two overlapping frames would not see the same film.
+        seen = 2.0 * np.pi / np.hypot(kx, ky) >= 2.0 * pixel_m
+        kx, ky, phases, amplitude = kx[seen], ky[seen], phases[seen], amplitude[seen]
+        xs = x_min + (np.arange(n) + 0.5) * pixel_m
+        ys = y_min + (np.arange(n) + 0.5) * pixel_m
+        ax = np.outer(xs, kx) + phases
+        ay = np.outer(ys, ky)
+        texture = (np.cos(ay) * amplitude) @ np.cos(ax).T - (np.sin(ay) * amplitude) @ np.sin(ax).T
+        return np.maximum(texture, -1.0)
 
     def projected_weight(self, x_min, y_min, n, pixel_m, level, z_exponent, damage) -> np.ndarray:
         if level == "survey":
@@ -250,10 +291,22 @@ class SampleModel(ParticleTable, Specimen):
         pixel_area_a2 = (pixel_m / ANGSTROM) ** 2
         for i in self.in_box(x_min, x_min + n * pixel_m, y_min, y_min + n * pixel_m):
             positions, zs = self._particle_atoms(int(i))
-            cols = np.floor((positions[:, 0] + self.centers[i, 0] - x_min) / pixel_m).astype(np.int64)
-            rows = np.floor((positions[:, 1] + self.centers[i, 1] - y_min) / pixel_m).astype(np.int64)
-            ok = (cols >= 0) & (cols < n) & (rows >= 0) & (rows < n)
-            np.add.at(weight, (rows[ok], cols[ok]), zs[ok] ** z_exponent / pixel_area_a2 * damage.get(int(i), 1.0))
+            value = zs ** z_exponent / pixel_area_a2 * damage.get(int(i), 1.0)
+            fx = (positions[:, 0] + self.centers[i, 0] - x_min) / pixel_m
+            fy = (positions[:, 1] + self.centers[i, 1] - y_min) / pixel_m
+            if not self.params.subpixel_atoms:
+                cols, rows = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
+                ok = (cols >= 0) & (cols < n) & (rows >= 0) & (rows < n)
+                np.add.at(weight, (rows[ok], cols[ok]), value[ok])
+                continue
+            # Pixel (r, c) is centred at (c + 0.5, r + 0.5) in these units: share each atom with the four nearest centres.
+            fx, fy = fx - 0.5, fy - 0.5
+            c0, r0 = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
+            wx, wy = fx - c0, fy - r0
+            for dr, dc, share in ((0, 0, (1 - wy) * (1 - wx)), (0, 1, (1 - wy) * wx), (1, 0, wy * (1 - wx)), (1, 1, wy * wx)):
+                rows, cols = r0 + dr, c0 + dc
+                ok = (cols >= 0) & (cols < n) & (rows >= 0) & (rows < n)
+                np.add.at(weight, (rows[ok], cols[ok]), value[ok] * share[ok])
         return thermal_smear(weight, pixel_m)
 
     def _generate(self, rng: np.random.Generator) -> None:
@@ -328,4 +381,7 @@ class SampleModel(ParticleTable, Specimen):
         return gx * np.asarray(x) + gy * np.asarray(y)
 
     def ground_truth(self) -> dict:
-        return {"known": True, "particles": self.particle_table()}
+        particles = self.particle_table()
+        for record, euler in zip(particles, self.euler):  # each particle's lattice orientation (ZXZ Euler angles)
+            record["euler_deg"] = [float(v) for v in euler]
+        return {"known": True, "particles": particles}

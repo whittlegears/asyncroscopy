@@ -25,6 +25,12 @@ class ScanParams:
     fov_scale_error: float = 0.0
 
 
+def line_jitter_m(rng: np.random.Generator, rows: int, std_m: float) -> np.ndarray:
+    """Each line's x offset (m) as ``pixel_sample_coordinates`` drew it, given a fresh generator for the same
+    event (the twin's ``EventRng(seed).for_event("scan", acquisition_index)``) and the frame's ``line_jitter``."""
+    return rng.normal(0.0, std_m, size=(rows, 1))[:, 0]
+
+
 def frame_time(rows: int, cols: int, dwell_s: float, params: ScanParams) -> float:
     return rows * (cols * dwell_s + params.flyback_s)
 
@@ -38,12 +44,16 @@ def pixel_sample_coordinates(
     origin_at: Callable[[float], np.ndarray],
     t0: float,
     rng: np.random.Generator,
+    truth: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return sample-frame (x, y) in metres for every pixel, shape (rows, cols).
 
     ``origin_at(t)`` gives the sample point under the scan centre at time t
     (true stage position plus drift). ``region`` is [x0, y0, x1, y1] as
-    fractions of the full field of view.
+    fractions of the full field of view. ``truth``, when given, receives
+    ``line_jitter``: what ``line_jitter_m`` needs to give each line's random x
+    offset again (ground truth stays small however many lines a map has).
+    ``rng`` must be fresh: the jitter is its first draw.
     """
     x0, y0, x1, y1 = (float(v) for v in region)
     if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
@@ -64,6 +74,8 @@ def pixel_sample_coordinates(
     xx, yy = np.meshgrid(x_lin * scale, y_lin * scale)
     if params.line_jitter_px > 0:
         xx = xx + rng.normal(0.0, params.line_jitter_px * pixel, size=(rows, 1))
+        if truth is not None:
+            truth["line_jitter"] = {"rows": rows, "std_m": params.line_jitter_px * pixel}
     if params.shear:
         xx = xx + params.shear * yy
     if params.rotation_deg:

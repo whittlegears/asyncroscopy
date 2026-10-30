@@ -18,6 +18,14 @@ instrument:
   description: "Large-map digital twin: 8 um clustered sample, all effects, no simulated waiting"
   timeout_seconds: 120
   properties:
+    specimen:
+      source: procedural
+      # The film varies in thickness at every length from 2 um down to 0.5 nm (30 % standard deviation, so it is
+      # visible above shot noise), and atoms land at their sub-pixel positions: overlapping tiles can be registered
+      # on the film anywhere, and one atomic column sits at one place in every frame that shows it.
+      support_texture: 0.3
+      support_texture_scale_m: 2.0e-6
+      subpixel_atoms: true
     sample_seed: 12345
     sample_size_xy: 8.0e-6
     sample_particle_count: 6400
@@ -33,6 +41,11 @@ instrument:
     convergence_angle_mrad: 30
     beam_current_pa: 50
     detector_read_noise: 0.5
+    # The scanning detectors' gain swings by up to 10 % and their offset by up to 2 counts over tens of minutes,
+    # so tiles taken far apart differ in brightness the way they do on the instrument.
+    detector_gain_drift: 0.1
+    detector_offset_drift: 2.0
+    detector_offset: 5.0  # above the offset's swing, so dark pixels never clip at zero
     # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
     # readback error and settling are unverified placeholders.
     stage_move_noise_std: 1.5e-7
@@ -51,6 +64,7 @@ instrument:
     scan_flyback_time: 5.0e-4
     scan_line_jitter_px: 0.3
     scan_shear: 0.005
+    scan_rotation_deg: 0.3
     scan_flyback_compression: 0.05
     fov_scale_error: 0.01
     eds_fwhm_mn_ka: 130
@@ -81,10 +95,13 @@ devices:
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
-      # the twin reports stage positions to ~10 nm, plus scan distortion and drift.
+      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart).
+      # stage_sigma_m is how far a tile really lands from the position the stage reports: the twin's
+      # stage_move_noise_std (150 nm) and its backlash on a reversal (up to 250 nm) together,
+      # sqrt(150^2 + 250^2) = 290 nm, not its 10 nm readback noise. A smaller value makes the stitcher
+      # search too small a window and reject true matches (tests/test_twin_configs.py checks it).
       analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 3.0e-8
+      stage_sigma_m: 2.9e-7
       max_drift_m_per_s: 5.0e-11
   # Approval mode (auto by default); switched from SciAgentGUI.
   approvals:
