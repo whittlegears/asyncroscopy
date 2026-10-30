@@ -47,9 +47,14 @@ from asyncroscopy.trace import stream as trace_stream
 from pathlib import Path
 from fnmatch import fnmatchcase
 
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_probe_device, is_stem_device, looks_like_stop, operator_only, risk_of
+from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, looks_like_stop, operator_only, risk_of
 
-ENDPOINT_ROLES = ("agent", "operator")
+ENDPOINT_ROLES = ("agent", "operator", "monitor")
+# The no-argument commands stop_all switches a source off with, compared without case and underscores.
+# Never high tension, a gun or a filament: blanking stops the beam, and those take hours to recover.
+ENERGY_STOPS = frozenset({"blankbeam", "closeshutter", "laseroff", "lampoff", "lightoff", "ledoff", "illuminationoff", "xrayoff", "shutterclose"})
+# How long each stop_all phase waits for every device to answer before it reports the ones that did not.
+STOP_ALL_WAIT_S = 20.0
 CALLER_HEADER = "x-asyncroscopy-caller"
 RUN_HEADER = "x-asyncroscopy-run"  # one agent run (agents send it with every call; see run_job)
 
@@ -158,11 +163,13 @@ def _placeholder_doc(text: str) -> bool:
     return t in ("", "uninitialised", "uninitialized", "none", "(not documented)") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
 
 class ApprovalHeld(ToolError):
-    """A high-risk call held for an operator; ``request_id`` is the approval request to wait on."""
+    """A high-risk call held for an operator; ``request_id`` is the approval request to wait on, ``why`` why
+    auto mode held it (None in approve mode)."""
 
-    def __init__(self, message: str, request_id: str):
+    def __init__(self, message: str, request_id: str, why: str | None = None):
         super().__init__(message)
         self.request_id = request_id
+        self.why = why
 
 
 class MCPServer:
@@ -202,7 +209,9 @@ class MCPServer:
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
             endpoint_role: "agent" (default) hides operator-only commands such as
-                Approvals.approve and export_ground_truth; "operator" is for the GUI.
+                Approvals.approve and export_ground_truth; "operator" is for the GUI;
+                "monitor" offers only pure reads (get_*, list_*, State, Status) and the trace,
+                for a status panel or a question-answering agent that must not act.
             approvals_device_address: Approvals device holding the approval mode.
                 When unset, every call runs (there is no mode to consult).
             risk_overrides: {"Class.command" or tool-name ("Class_command") glob: "low"|"high"},
@@ -269,6 +278,7 @@ class MCPServer:
         self._registered: dict[str, Tool] = {}  # tool name -> the MCP tool (description, input schema), for action_space
         self.tools: dict[str, dict[str, Callable]] = {}
         self._devices: dict[str, DeviceProxy] = {}  # tool prefix -> its device
+        self._in_types: dict[str, dict[str, Any]] = {}  # tool prefix -> command -> its Tango input type, read once at discovery
         # Filled by _find_tools; set here so a wrapper built before it sees empty sets, not an AttributeError.
         self._prefix_class: dict[str, str] = {}
         self._envelope_prefixes: set[str] = set()
@@ -277,6 +287,8 @@ class MCPServer:
         self._job_kinds: dict[str, str] = {}
         self._plan_examples: dict[str, str] = {}
         self.tool_risks: dict[str, str] = {}  # tool name -> "low" | "high", as the approval gate sees it
+        # Whether the current caller's token may call a tool (endpoint_auth.attach replaces it); find_tools and call_tool ask it.
+        self.may_call: Callable[[str], bool] = lambda name: True
         self._risk_keys: dict[str, str] = {}  # tool name -> "Class.command", the other name overrides match
         self._lowered: set[str] = set()  # tools an override made low that the policy would hold
         self.risk_warnings: list[str] = []  # what setup() printed as [safety] lines
@@ -572,10 +584,11 @@ class MCPServer:
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
             caller, run = self._caller(), self._run_id() or None
-            describe = None
+            describe = drives = None
             if envelope and command_name == "start" and call_args:
                 device = self._devices.get(tool_prefix or dev_class)
                 describe = (lambda: "Reserved plan: " + device.get_reservation(str(call_args[0]))) if device is not None else None
+                drives = (lambda: (json.loads(device.get_reservation(str(call_args[0]))).get("resolved_plan") or {}).get("drives")) if device is not None else (lambda: None)
             if envelope and command_name == "start" and self.job_limits and self.endpoint_role == "agent":
                 # Whoever reserved it, a start on this endpoint keeps to its job limits (a resume too).
                 refused = self._limit_start(tool_prefix or dev_class, call_args[0] if call_args else None)
@@ -583,7 +596,7 @@ class MCPServer:
                     if self.trace is not None:
                         self.trace.record(unique_name, False, started, arguments=arguments, error="over_job_limits", result=refused, caller=caller, run=run)
                     return refused
-            gate = self._gate(unique_name, risk, arguments, caller, describe)
+            gate = self._gate(unique_name, risk, arguments, caller, describe, drives)
             if envelope and command_name in ("start", "reserve") and call_args:
                 # The job's own trace events then name who asked and the agent run (and, at start, the approval);
                 # a reserve also carries the high risk overrides, so a dry run records a get_* command marked high.
@@ -725,6 +738,15 @@ class MCPServer:
 
         return wrapper
 
+    def _marked_high(self, tool_name: str) -> bool:
+        """True when the deployment's mcp.safety.risk marks this tool high by name: then it is never routine in auto mode."""
+        key = self._risk_keys.get(tool_name, "").lower()
+        return any(fnmatchcase(tool_name.lower(), p.lower()) or (key and fnmatchcase(key, p.lower())) for p in self._high_overrides())
+
+    def _routine_devices(self, tool_name: str) -> list[str]:
+        """The STEM tool prefixes whose AUTO_DEFAULT commands auto mode may run, as seen for this tool."""
+        return [] if self._marked_high(tool_name) else sorted(self._stem_prefixes)
+
     def _high_overrides(self) -> dict[str, str]:
         """The mcp.safety.risk patterns that mark commands high: what a job's dry run must record, not pass through."""
         return {pattern: level for pattern, level in self.risk_overrides.items() if level == "high"}
@@ -780,13 +802,17 @@ class MCPServer:
         proxy.set_timeout_millis(5_000)
         return proxy
 
-    def _gate(self, tool_name: str, risk: str, arguments: dict, caller: str | None, describe: Callable[[], str] | None = None) -> dict:
+    def _gate(self, tool_name: str, risk: str, arguments: dict, caller: str | None, describe: Callable[[], str] | None = None,
+              drives: Callable[[], dict] | None = None) -> dict:
         """Apply the approval mode to one call. Returns trace fields, or raises ToolError to hold the call.
 
         Low-risk calls and servers without an Approvals device always pass. In
-        approve mode a high-risk call passes only if an operator approved this
-        exact call; otherwise a request is filed and the call is refused with
-        the request id, so the agent can wait and retry the same call.
+        auto mode a routine or switched-on high-risk call passes, and a job
+        start whose plan drives only such commands (``drives``: the reserved
+        plan's {device address: commands}). Any other high-risk call passes
+        only if an operator approved this exact call; otherwise a request is
+        filed and the call is refused with the request id, so the agent can
+        wait and retry the same call.
         """
         if self.endpoint_role == "operator":
             # The operator endpoint is the person at the GUI; nothing they do is held.
@@ -796,12 +822,16 @@ class MCPServer:
         try:
             approvals = self._approvals()
             mode = approvals.get_mode()
-            if mode == "auto":
-                return {"mode": "auto", "approved_by": "auto"}
-            # A grant covers only the caller and agent run that asked for it.
-            decision = json.loads(approvals.check(json.dumps({"action": tool_name, "arguments": arguments, "caller": caller, "run": self._run_id() or None})))
+            body = {"action": tool_name, "arguments": arguments, "caller": caller, "run": self._run_id() or None,
+                    "stem_devices": self._routine_devices(tool_name)}
+            if drives is not None:  # a job start: auto mode runs it when it runs every command the plan drives
+                body.update(job_start=True, drives=self._driven_tools(drives))
+            # Auto mode runs routine and switched-on commands; anything else needs a grant, which covers
+            # only the caller and agent run that asked for it.
+            decision = json.loads(approvals.check(json.dumps(body)))
             if decision.get("allowed"):
                 return {"mode": mode, "approved_by": decision.get("approved_by"), "grant_id": decision.get("grant_id"), "request_id": decision.get("request_id")}
+            held_in_auto = decision.get("held_in_auto")
             reason = None
             if describe is not None:
                 try:  # what the operator is approving; outside the fingerprint, so the retry still matches
@@ -815,11 +845,38 @@ class MCPServer:
         if self.trace is not None:
             self.trace.record(tool_name, False, time.time(), arguments=arguments, error="approval_required", caller=caller, run=self._run_id() or None, mode=mode, request_id=filed["request_id"])
         raise ApprovalHeld(
-            f"APPROVAL REQUIRED: {tool_name} is held for an operator (request_id={filed['request_id']}). "
+            f"APPROVAL REQUIRED: {tool_name} is held for an operator (request_id={filed['request_id']}"
+            + (f"; {held_in_auto}" if held_in_auto else "") + "). "
             "Call approval_status with this request_id until it is approved, then repeat exactly the same call. "
             "If it is denied, do not retry; report to the user.",
             filed["request_id"],
+            held_in_auto,
         )
+
+    def _driven_tools(self, drives: Callable[[], dict]) -> list[str] | None:
+        """The high-risk tools a reserved plan drives ({device address: commands} from ``drives``), as tool
+        names here; a command on a device this endpoint does not offer keeps its address, so auto mode never
+        counts it as routine. None when the job does not say, or the reservation cannot be read."""
+        try:
+            driven = drives()
+        except Exception:
+            return None
+        if not isinstance(driven, dict):
+            return None
+        prefixes = {}
+        for prefix, proxy in self._devices.items():
+            try:
+                prefixes.setdefault(str(proxy.dev_name()).lower(), prefix)
+            except Exception:
+                continue
+        names = []
+        for address, commands in driven.items():
+            prefix = prefixes.get(str(address).lower())
+            for command in dict.fromkeys(commands or []):
+                name = f"{prefix}_{command}" if prefix else f"{address}:{command}"
+                if self.tool_risks.get(name) != "low":
+                    names.append(name)
+        return names
 
     def _tool_names(self) -> set[str]:
         """Names of the device tools this endpoint offers (skills that need others are not offered)."""
@@ -861,9 +918,11 @@ class MCPServer:
     @tool()
     def endpoint_info(self) -> dict[str, Any]:
         """For agent programs, not models: each tool's risk as the approval gate sees it, the job devices, the
-        analysis server, and agent_tools: globs of the tools (here and on the analysis server) to give a model."""
+        analysis server, agent_tools: globs of the tools (here and on the analysis server) to give a model, and
+        auto: for each high-risk tool an agent may call, how auto mode treats it before any is switched on
+        ("routine" runs, "held" waits for a person, "job" runs when every command the job drives runs)."""
         from asyncroscopy.mcp.agent_tools import agent_tool_patterns
-        from asyncroscopy.safety.policy import NATIVE_HIGH
+        from asyncroscopy.safety.policy import NATIVE_HIGH, auto_allows
 
         risks = dict(self.tool_risks)
         risks.update({name: "high" if name in NATIVE_HIGH else "low" for name in self._native_names})
@@ -876,6 +935,12 @@ class MCPServer:
             "risks": risks,
             # The general agent's own selection (asyncroscopy.mcp.agent_tools), so other harnesses match it.
             "agent_tools": agent_tool_patterns(self._all_tool_names(), bool(self.analysis_url)),
+            "auto": {
+                name: "job" if name in NATIVE_HIGH or (name.endswith("_start") and name[: -len("_start")] in self._envelope_prefixes)
+                else "routine" if auto_allows(name, (), self._routine_devices(name)) else "held"
+                for name, level in sorted(risks.items())
+                if level == "high" and not (name in self._risk_keys and operator_only(*self._risk_keys[name].split(".", 1)))
+            },
         }
 
     @tool()
@@ -894,7 +959,7 @@ class MCPServer:
         if self.approvals_device_address is None:
             return {"request_id": request_id, "state": "approved", "note": "this server has no approval mode"}
         status = json.loads(self._approvals().request_status(request_id))
-        if status.get("state") in {"denied", "expired"}:
+        if status.get("state") in {"denied", "expired", "revoked"}:
             with self._held_runs_lock:
                 held = next(((k, v) for k, v in self._held_runs.items() if v["request_id"] == request_id), None)
                 if held is not None:
@@ -904,6 +969,162 @@ class MCPServer:
                 status["note"] = self._release(held[1]["device"], held[1]["reservation_id"])
         self._sweep_held()
         return status
+
+    def _auto_switches(self) -> tuple[str | None, list[str]]:
+        """The approval mode and the commands switched on for auto mode; (None, []) without an Approvals device,
+        ("unknown", []) when it does not answer (the gate then refuses high-risk calls)."""
+        if self.approvals_device_address is None:
+            return None, []
+        try:
+            approvals = self._approvals()
+            mode, switched = approvals.get_mode(), json.loads(approvals.get_auto_allowed()).get("switched_on", [])
+        except Exception:
+            return "unknown", []
+        return mode, [p for p in switched if isinstance(p, str)] if isinstance(switched, list) else []
+
+    @tool()
+    def find_tools(self, query: str = "", limit: int = 40) -> dict[str, Any]:
+        """Every tool this instrument offers, including ones not in your tool list. query: words to look for in a
+        tool's name or description (empty lists them all). Each match has its description, its arguments, and
+        "when": "runs" (no approval needed now) or "held" (it waits for a person to approve). Run one with call_tool.
+        mode "unknown" means the approval service is not answering: high-risk tools are refused until it does."""
+        from asyncroscopy.safety.policy import auto_allows
+
+        mode, switched_on = self._auto_switches()
+        words = [w for w in re.split(r"\W+", query.lower()) if w]
+        matches = []
+        for name in sorted(self._registered):
+            if name in ("find_tools", "call_tool") or not self.may_call(name):
+                continue
+            registered = self._registered[name]
+            description = (registered.description or "").strip()
+            text = f"{name.lower()} {description.lower()}"
+            if words and not all(w in text for w in words):
+                continue
+            risk = self.tool_risks.get(name, "high" if name == "run_job" else "low")
+            job_start = name == "run_job" or (name.endswith("_start") and name[: -len("_start")] in self._envelope_prefixes)
+            if mode is None or risk == "low" or self.endpoint_role == "operator"                     or (mode == "auto" and auto_allows(name, switched_on, self._routine_devices(name))):
+                when = "runs"
+            elif mode == "auto" and job_start:
+                when = "runs when every command the job drives runs"
+            elif mode == "unknown":
+                when = "refused: the approval service is not answering"
+            else:
+                when = "held"
+            matches.append({"name": name, "description": description.splitlines()[0][:300] if description else "",
+                            "arguments": sorted((registered.parameters or {}).get("properties", {})), "when": when})
+        return {"mode": mode, "count": len(matches), "tools": matches[:max(1, int(limit))],
+                **({"note": f"{len(matches) - int(limit)} more: narrow the query"} if len(matches) > int(limit) else {})}
+
+    @tool()
+    def stop_all(self) -> dict[str, Any]:
+        """Emergency stop. First puts the approval mode in approve and voids every unused approval, so nothing starts
+        again without a person; then, on every device at once: blanks beams, closes shutters, switches lasers, lamps
+        and X-rays off, aborts running jobs and lifts probes; then blanks and closes once more. Never waits for
+        approval, and never switches off high tension, a gun or a filament (blanking is enough to stop, and those take
+        hours to recover). A device that cannot be stopped is reported, not skipped. Returns what each step did."""
+        from concurrent.futures import ThreadPoolExecutor, wait as wait_all
+        from asyncroscopy.safety.policy import _word_list, is_safe_stop
+
+        steps: list[dict[str, Any]] = []
+        guard = threading.Lock()
+
+        def record(step: dict[str, Any]) -> None:
+            with guard:
+                steps.append(step)
+
+        def failed(exc: Exception) -> str:
+            return describe_error(exc) if isinstance(exc, tango.DevFailed) else str(exc)[:500]
+
+        if self.approvals_device_address is not None:
+            who = f"stop_all ({self._caller() or 'unknown caller'})"
+            for command, body in (("set_mode", {"mode": "approve", "who": who}), ("revoke_grants", {"who": who, "reason": "e-stop"})):
+                try:
+                    getattr(self._approvals(), command)(json.dumps(body))
+                    record({"tool": f"Approvals_{command}", "ok": True})
+                except Exception as exc:
+                    record({"tool": f"Approvals_{command}", "ok": False, "error": failed(exc)})
+
+        def void(prefix: str, command: str) -> bool:
+            return self._in_types.get(prefix, {}).get(command) == CmdArgType.DevVoid
+
+        def stop_set(prefix: str) -> tuple[list[str], list[str]]:
+            """(energy stops, other stops) to call on a device: an explicit list, plus the stops the deployment marked low."""
+            offered = [c for c in sorted(self.tools.get(prefix, {})) if void(prefix, c)]
+            energy, other = [], []
+            for command in offered:
+                if command.lower().replace("_", "") in ENERGY_STOPS:
+                    energy.append(command)
+                elif command == "abort_all" and prefix in self._envelope_prefixes:
+                    other.append(command)
+                elif prefix in self._probe_prefixes and {"retract", "withdraw"} & set(_word_list(command)) and is_safe_stop(command, probe=True):
+                    other.append(command)
+            return energy, other
+
+        plans = {prefix: stop_set(prefix) for prefix in sorted(self._devices)}
+        for prefix in sorted(self._stem_prefixes):
+            if not plans.get(prefix, ([], []))[0]:
+                record({"tool": f"{prefix}_blank_beam", "ok": False, "error": f"{prefix} offers no beam blank here (blocked or missing); blank it by hand"})
+        for prefix in sorted(self._envelope_prefixes):
+            if "abort_all" not in plans.get(prefix, ([], []))[1]:
+                record({"tool": f"{prefix}_abort_all", "ok": False, "error": f"{prefix} offers no abort_all here, so its jobs were not stopped; abort them by job_id"})
+        for prefix in sorted(self._probe_prefixes):
+            if not any({"retract", "withdraw"} & set(_word_list(c)) for c in plans.get(prefix, ([], []))[1]):
+                record({"tool": f"{prefix}_retract", "ok": False, "error": f"{prefix} offers no retract here; lift the probe by hand"})
+
+        def run_device(prefix: str, commands: list[str]) -> None:
+            proxy = self._devices[prefix]
+            for command in commands:
+                try:
+                    reply = proxy.command_inout(command)
+                    step: dict[str, Any] = {"tool": f"{prefix}_{command}", "ok": True}
+                    if reply is True and {"retract", "withdraw"} & set(_word_list(command)):  # an SPM retract answers "still approached"
+                        step.update(ok=False, error="the device says the probe is still engaged")
+                    if command == "abort_all":
+                        states = [job.get("state") for job in json.loads(str(reply)).get("aborted", [])]
+                        if any(state not in ("aborted", "done", "failed") for state in states):
+                            step.update(ok=False, error=f"jobs not stopped yet (states {states}); poll job_status, then stop again")
+                    record(step)
+                except Exception as exc:
+                    record({"tool": f"{prefix}_{command}", "ok": False, "error": failed(exc)})
+
+        work = {prefix: plan for prefix, plan in plans.items() if plan[0] or plan[1]}
+        if work:
+            # Every device at once: sources off, then its jobs and probes; then, once all of that has returned,
+            # sources off again, in case a job step that ended late switched one back on.
+            pool = ThreadPoolExecutor(max_workers=len(work), thread_name_prefix="stop_all")
+            phases = ({p: [*e, *o] for p, (e, o) in work.items()}, {p: e for p, (e, _o) in work.items() if e})
+            hung: set[str] = set()
+            for phase in phases:
+                futures = {pool.submit(run_device, prefix, commands): prefix for prefix, commands in phase.items() if prefix not in hung}
+                _done, pending = wait_all(futures, timeout=STOP_ALL_WAIT_S)
+                for future in pending:
+                    hung.add(futures[future])
+                    record({"tool": f"{futures[future]}", "ok": False, "error": f"still not answering after {STOP_ALL_WAIT_S:g} s; its stop calls keep running in the background"})
+            pool.shutdown(wait=False)
+        with guard:
+            report = list(steps)
+        if self.trace is not None:
+            try:
+                self.trace.record("stop_all", all(s["ok"] for s in report), time.time(), caller=self._caller(), run=self._run_id() or None,
+                                  arguments={"steps": [s["tool"] for s in report]})
+            except Exception:
+                pass
+        return {"stopped": bool(report) and all(s["ok"] for s in report), "steps": report,
+                **({} if work else {"note": "this endpoint reaches no beam, job or probe to stop"})}
+
+    @tool()
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> ToolResult:
+        """Run any tool this instrument offers by name (find one with find_tools), with its arguments as an object.
+        It goes through the same approval rules as calling the tool directly."""
+        if name in ("find_tools", "call_tool"):
+            raise ToolError(f"{name} cannot be run through call_tool; call it directly")
+        registered = self._registered.get(name)
+        if registered is None:
+            raise ToolError(f"no tool {name!r} here; find_tools lists what this instrument offers")
+        if not self.may_call(name):
+            raise ToolError(f"{name} refused: your token does not grant the role it needs")
+        return await registered.run(dict(arguments or {}))
 
     @tool()
     def trace_since(
@@ -978,7 +1199,7 @@ class MCPServer:
                     state = json.loads(self._approvals().request_status(held["request_id"])).get("state")
                 except Exception:
                     budget_end = 0.0  # the service is not answering; the rest wait for the next sweep
-            if state in ("denied", "expired") or now - held["created"] > HELD_MAX_S:
+            if state in ("denied", "expired", "revoked") or now - held["created"] > HELD_MAX_S:
                 stale.append((key, held))
         with self._run_job_lock:  # never while a run_job is reserving or starting
             with self._held_runs_lock:
@@ -1077,9 +1298,10 @@ class MCPServer:
         return found
 
     @staticmethod
-    def _held_message(device: str, request_id: str, reservation_id: str, summary: dict) -> str:
+    def _held_message(device: str, request_id: str, reservation_id: str, summary: dict, why: str | None = None) -> str:
         return (
-            f"APPROVAL REQUIRED: {device}_start is held for an operator (request_id={request_id}). "
+            f"APPROVAL REQUIRED: {device}_start is held for an operator (request_id={request_id}"
+            + (f"; {why}" if why else "") + "). "
             "Call approval_status with this request_id until it is approved, then repeat this run_job call unchanged. "
             f"If it is denied, do not retry; report to the user. Reserved as {reservation_id}; estimate: {json.dumps(summary.get('estimate'), default=str)}"
         )
@@ -1131,8 +1353,8 @@ class MCPServer:
             except Exception:
                 state = None
             if state == "pending":  # asking again before the operator decided must not file a second request
-                raise ToolError(self._held_message(device, held["request_id"], held["reservation_id"], held["summary"]))
-            if state in ("denied", "expired"):
+                raise ToolError(self._held_message(device, held["request_id"], held["reservation_id"], held["summary"], held.get("why")))
+            if state in ("denied", "expired", "revoked"):
                 with self._held_runs_lock:
                     self._held_runs.pop(key, None)
                 note = self._release(device, held["reservation_id"])
@@ -1162,8 +1384,8 @@ class MCPServer:
             if isinstance(exc, ApprovalHeld):
                 with self._held_runs_lock:
                     self._held_runs[key] = {"reservation_id": reservation_id, "request_id": exc.request_id, "device": device,
-                                            "created": time.monotonic(), "summary": summary}
-                raise ToolError(self._held_message(device, exc.request_id, reservation_id, summary)) from exc
+                                            "created": time.monotonic(), "summary": summary, "why": exc.why}
+                raise ToolError(self._held_message(device, exc.request_id, reservation_id, summary, exc.why)) from exc
             with self._held_runs_lock:
                 self._held_runs.pop(key, None)
             note = self._release_unless_resumed(device, summary)
@@ -1314,7 +1536,7 @@ class MCPServer:
             per_class[dev_class] = per_class.get(dev_class, 0) + 1
             members.setdefault(dev_class, []).append(name.split("/")[-1])
             families.setdefault(dev_class, []).append(name.split("/")[1] if name.count("/") == 2 else name)
-        for table in (self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._probe_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys, self._lowered):
+        for table in (self._in_types, self._prefix_class, self._envelope_prefixes, self._stem_prefixes, self._probe_prefixes, self._job_kinds, self._plan_examples, self.tool_risks, self._risk_keys, self._lowered):
             table.clear()
         for device_name, dev, dev_class in opened:
             prefix = dev_class
@@ -1356,8 +1578,13 @@ class MCPServer:
 
             for cmd in commands:
                 command_name = cmd.cmd_name
-                if self.endpoint_role == "agent" and operator_only(dev_class, command_name):
+                if self.endpoint_role != "operator" and operator_only(dev_class, command_name):
                     continue
+                if self.endpoint_role == "monitor":
+                    tool_name = f"{prefix}_{command_name}".replace("/", "_").replace("-", "_").lower()
+                    marked_high = any(level == "high" and fnmatchcase(tool_name, pattern.lower()) for pattern, level in self.risk_overrides.items())
+                    if marked_high or not (is_read_only(dev_class, command_name, self.risk_overrides) or command_name in ("job_status", "results")):
+                        continue
                 global_blocks = self.blocked_functions.get("*", [])
                 if command_name in global_blocks or f"{dev_class}.{command_name}" in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
                     continue
@@ -1380,6 +1607,7 @@ class MCPServer:
                         )
                     continue
                 tools.setdefault(prefix, {})[command_name] = (func, cmd)
+                self._in_types.setdefault(prefix, {})[command_name] = getattr(cmd, "in_type", None)
                 self._devices[prefix] = dev
         return tools
 
@@ -1441,9 +1669,12 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info, self.action_space]
+        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info, self.action_space,
+                        self.find_tools, self.call_tool]
+        if self.endpoint_role != "monitor":
+            native_tools.append(self.stop_all)
         if self._envelope_prefixes:
-            native_tools.extend([self.run_job, self.wait_for_job])
+            native_tools.extend([self.wait_for_job] if self.endpoint_role == "monitor" else [self.run_job, self.wait_for_job])
         if self.approvals_device_address is not None:
             native_tools.append(self.approval_status)
         if self.endpoint_role == "operator" and self.trace_follow:

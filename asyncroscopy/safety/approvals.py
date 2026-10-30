@@ -1,7 +1,12 @@
 """Approvals: the instrument's approval mode, pending requests and grants.
 
-``auto`` (the default) lets every agent call through and the trace records
-that no person approved it. ``approve`` holds high-risk agent calls: the MCP
+``auto`` (the default) lets low-risk calls and routine high-risk ones through
+(policy.AUTO_DEFAULT: imaging, spectra, stage moves, placing the beam) and the
+trace records that no person approved them. Any other high-risk call is held
+in auto as in ``approve`` until an operator switches it on with
+``set_auto_allowed`` (tool-name globs, saved beside the mode); a job's start
+runs in auto when every command its plan drives would. ``approve`` holds every
+high-risk agent call: the MCP
 server files a request here and refuses the call; once an operator approves,
 the same call (same tool, same arguments) succeeds once, for the caller and
 agent run that asked: a request and its grant carry both (the token's subject
@@ -31,6 +36,7 @@ from tango import DevState
 from tango.server import Device, command, device_property
 
 from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.safety.policy import AUTO_DEFAULT, auto_allows, auto_allows_start
 
 MODES = ("auto", "approve")
 PRUNE_AFTER_S = 86400.0
@@ -76,6 +82,7 @@ class Approvals(Device):
         self._grants: dict[str, dict] = {}
         self._trace = TraceWriter(self.trace_path, source="approvals", writer=self.get_name(), defaults={"simulated": bool(self.simulated)})
         self._mode = "approve"
+        self._auto_allowed: list[str] = self._restore_switches()
         mode = str(self.default_mode).strip().lower()
         if mode not in MODES:
             self.set_state(DevState.FAULT)
@@ -107,10 +114,19 @@ class Approvals(Device):
             return "approve"
         return mode if mode in MODES else "approve"
 
-    def _save_mode(self, mode: str, who) -> None:
+    def _restore_switches(self) -> list[str]:
+        """The commands an operator switched on for auto mode; none if the file is missing or unreadable."""
+        try:
+            saved = json.loads(Path(self.mode_file).read_text(encoding="utf-8")).get("auto_allowed", [])
+        except (OSError, ValueError, AttributeError):
+            return []
+        return [p for p in saved if isinstance(p, str) and p.strip()] if isinstance(saved, list) else []
+
+    def _save_mode(self, mode: str, who, auto_allowed: list[str] | None = None) -> None:
         path = Path(self.mode_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"mode": mode, "who": who, "at": time.time()}), encoding="utf-8")
+        switches = self._auto_allowed if auto_allowed is None else auto_allowed
+        path.write_text(json.dumps({"mode": mode, "who": who, "at": time.time(), "auto_allowed": switches}), encoding="utf-8")
 
     def _expire(self) -> None:
         now = time.time()
@@ -170,6 +186,31 @@ class Approvals(Device):
             self._mode = mode
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode, "persisted": persisted}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous, "persisted": persisted})
+
+    @command(dtype_out=str)
+    def get_auto_allowed(self) -> str:
+        """The high-risk commands auto mode runs without asking: JSON {"defaults": routine commands, "switched_on": tool-name globs an operator added}."""
+        with self._lock:
+            return json.dumps({"defaults": sorted(AUTO_DEFAULT), "switched_on": list(self._auto_allowed)})
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"patterns": ["Prefix_command" or a glob, ...], "who": "operator name"}; the whole list, [] for the defaults.')
+    def set_auto_allowed(self, request: str) -> str:
+        """Replace the commands switched on for auto mode. Operator only; recorded in the trace and saved beside the mode."""
+        body = self._load(request)
+        patterns = body.get("patterns")
+        if not isinstance(patterns, list) or not all(isinstance(p, str) and p.strip() for p in patterns):
+            raise ValueError("'patterns' must be a list of tool names or globs (an empty list switches everything back to the defaults)")
+        patterns = list(dict.fromkeys(p.strip() for p in patterns))
+        with self._lock:
+            previous = list(self._auto_allowed)
+            try:  # the saved mode stays as saved: changing switches must not rewrite it
+                self._save_mode(self._restore_mode(self._mode), body.get("who"), patterns)
+            except OSError as exc:
+                self._trace.record("Approvals.set_auto_allowed", False, time.time(), caller=body.get("who"), arguments={"from": previous, "to": patterns}, mode=self._mode, error=str(exc))
+                raise
+            self._auto_allowed = patterns
+        self._trace.record("Approvals.set_auto_allowed", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": patterns}, mode=self._mode)
+        return json.dumps({"switched_on": patterns, "previous": previous})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "reason": "..."}.')
     def request(self, request: str) -> str:
@@ -249,19 +290,55 @@ class Approvals(Device):
         self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "job_start": bool, "drives": [tool names] or null, "stem_devices": [tool prefixes of electron microscopes]}.')
     def check(self, request: str) -> str:
-        """Use an unused grant for exactly this call from the caller and run it was asked for, if one exists. Called by the MCP server."""
+        """May this high-risk call run without a new approval? In auto, yes for a routine or switched-on command
+        (a job start: when every command it drives is); otherwise only by using an unused grant for exactly this
+        call from the caller and run it was asked for. Called by the MCP server."""
         body = self._load(request)
-        key = fingerprint(str(body.get("action", "")), body.get("arguments"))
+        action = str(body.get("action", ""))
+        key = fingerprint(action, body.get("arguments"))
         with self._lock:
             self._expire()
+            reason = None
+            if self._mode == "auto":
+                drives = body.get("drives") if isinstance(body.get("drives"), list) else None
+                stem = [str(p) for p in body.get("stem_devices") or [] if isinstance(p, str) and p]
+                if body.get("job_start"):
+                    if auto_allows_start(action, drives, self._auto_allowed, stem):
+                        return json.dumps({"allowed": True, "approved_by": "auto"})
+                    held = [d for d in drives if not auto_allows(d, self._auto_allowed, stem)] if drives is not None else []
+                    reason = (f"this job drives {', '.join(held)}, held in auto mode until an operator switches it on" if held
+                              else "this job does not say which commands it drives, so auto mode holds its start")
+                elif auto_allows(action, self._auto_allowed, stem):
+                    return json.dumps({"allowed": True, "approved_by": "auto"})
+                else:
+                    reason = f"{action} is held in auto mode until an operator switches it on"
             for grant in self._grants.values():
                 if grant["fingerprint"] == key and not grant["used"] and _who(grant) == _who(body):
                     grant["used"] = True
                     grant["used_at"] = time.time()
                     return json.dumps({"allowed": True, "grant_id": grant["grant_id"], "approved_by": grant["who"], "request_id": grant["request_id"]})
-        return json.dumps({"allowed": False})
+        return json.dumps({"allowed": False, **({"held_in_auto": reason} if reason else {})})
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"who": "...", "reason": "..."}.')
+    def revoke_grants(self, request: str) -> str:
+        """Void every unused approval and deny every pending request (the e-stop): nothing approved before it can run after it. Operator only."""
+        body = self._load(request)
+        reason = str(body.get("reason") or "revoked")
+        with self._lock:
+            grants = [g["grant_id"] for g in self._grants.values() if not g["used"]]
+            for grant in self._grants.values():
+                if not grant["used"]:
+                    grant.update(used=True, revoked=True)
+                    request = self._requests.get(grant.get("request_id"))
+                    if request is not None and request["state"] == "approved":
+                        request.update(state="revoked", reason=reason)
+            pending = [r["request_id"] for r in self._requests.values() if r["state"] == "pending"]
+            for request_id in pending:
+                self._requests[request_id].update(state="denied", decided_by=body.get("who"), reason=reason)
+        self._trace.record("Approvals.revoke_grants", True, time.time(), caller=body.get("who"), arguments={"grants": grants, "requests": pending, "reason": reason}, mode=self._mode)
+        return json.dumps({"revoked_grants": grants, "denied_requests": pending})
 
     @command(dtype_out=str)
     def list_grants(self) -> str:

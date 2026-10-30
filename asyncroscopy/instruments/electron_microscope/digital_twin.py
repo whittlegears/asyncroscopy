@@ -383,9 +383,10 @@ class DigitalTwin(AtomisticDigitalTwin):
             if stage is not None:
                 try:
                     config = stage.get_attribute_config(axis)
-                    low, high = _limit(config.min_value), _limit(config.max_value)
-                except (tango.DevFailed, AttributeError):
-                    pass
+                except (tango.DevFailed, AttributeError) as exc:
+                    # The STAGE device holds the holder's limits; a move it cannot be checked against is refused.
+                    raise ValueError(f"the stage did not move: its {axis} limits could not be read from the STAGE device ({str(exc).strip().splitlines()[0][:160] if str(exc).strip() else type(exc).__name__})") from exc
+                low, high = _limit(config.min_value), _limit(config.max_value)
             if axis in travel:  # the twin's own travel, where the STAGE device sets none
                 low = -travel[axis] if low is None else low
                 high = travel[axis] if high is None else high

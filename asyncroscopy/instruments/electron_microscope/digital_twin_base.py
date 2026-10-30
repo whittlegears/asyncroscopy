@@ -667,11 +667,9 @@ class AtomisticDigitalTwin(ElectronMicroscope):
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
-            stage.x = float(target[0])
-            stage.y = float(target[1])
-            stage.z = float(target[2])
-            stage.alpha = float(target[3])
-            stage.beta = float(target[4])
+            # One write of all five axes: the STAGE device checks them together and refuses the whole move
+            # (axis by axis, a refused z would leave x and y already moved).
+            stage.position = [float(v) for v in target]
 
         self._stage_position = target
         self._update_view_cache(force=False)

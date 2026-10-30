@@ -11,6 +11,7 @@ This avoids:
 - Flaky multi-context issues from spinning up multiple separate servers
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -203,6 +204,10 @@ def tango_ctx(data_save_dir, job_dir):
                     "properties": {},
                 },
                 {"name": "asyncroscopy/stage/mapping", "properties": {}},
+                {"name": "asyncroscopy/stage/holders", "properties": {
+                    "holders": json.dumps({"low_tilt": {"alpha_deg": [-15.0, 15.0], "beta_deg": [-5.0, 5.0], "z_m": [-1e-4, 1e-4]}, "single_tilt": {"beta_deg": [0.0, 1e-9]}}),
+                    "holder": "low_tilt",
+                }},
                 {"name": "asyncroscopy/stage/parity", "properties": {}},
                 {"name": "asyncroscopy/stage/drift", "properties": {}},
                 {"name": "asyncroscopy/stage/livedrift", "properties": {}},
@@ -398,6 +403,21 @@ def tango_ctx(data_save_dir, job_dir):
                         "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
                         "estimate_move_s": 1.0,
                         "simulated": True,
+                    },
+                },
+                {
+                    "name": "asyncroscopy/mapper/lease",
+                    "properties": {
+                        "microscope_device_address": "asyncroscopy/digitaltwin/mapping",
+                        "scan_device_address": "asyncroscopy/scan/mapping",
+                        "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/mapping",
+                        "output_directory": prop_path(job_dir / "lease" / "maps"),
+                        "state_directory": prop_path(job_dir / "lease" / "state"),
+                        "trace_path": prop_path(job_dir / "lease" / "trace.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "simulated": True,
+                        "lease_s": 1.5,
                     },
                 },
                 {

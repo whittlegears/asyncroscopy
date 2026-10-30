@@ -25,7 +25,8 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    scanned images, a few STEM commands that neither move hardware nor expose
    the sample (STEM_LOW);
 5. everything else is high: a new or renamed command is held in approval
-   mode rather than waved through.
+   mode rather than waved through, and in auto mode too unless it is
+   routine (AUTO_DEFAULT) or an operator switched it on.
 
 The convention in (4) is a promise instrument authors keep: a command named
 ``get_...`` or ``list_...`` must not move or change anything (an SPM
@@ -65,7 +66,7 @@ STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), fro
 MODIFIERS = frozenset({"emergency"})
 
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
-ENVELOPE_LOW = ("reserve", "job_status", "results", "release")
+ENVELOPE_LOW = ("reserve", "job_status", "results", "release", "renew_lease")
 
 DEFAULT_RISK: list[tuple[str, str]] = [
     # Read-only by naming convention.
@@ -88,6 +89,8 @@ OPERATOR_ONLY: list[str] = [
     "approvals.approve",
     "approvals.deny",
     "approvals.set_mode",
+    "approvals.set_auto_allowed",
+    "approvals.revoke_grants",
     # The MCP server reaches these through Tango itself; offering them to agents would let
     # an agent consume a grant (check) or file requests under any caller name (request).
     "approvals.check",
@@ -98,6 +101,8 @@ OPERATOR_ONLY: list[str] = [
     "*.init",
     "*.kill",
     "*.restartserver",
+    # Which holder is fitted sets the stage's Z and tilt limits: an agent must not be able to widen them.
+    "*.set_holder",
     # Running the data service is the operator's job; the launcher calls these over Tango.
     "data.configure",
     "data.start_tiled_server",
@@ -209,6 +214,38 @@ def is_read_only(dev_class: str, command: str, overrides: dict[str, str] | None 
 
 # Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
 NATIVE_HIGH = frozenset({"run_job"})
+
+# High-risk commands that auto mode runs without asking: routine imaging, spectra, stage moves (the
+# device refuses one outside its limits) and placing the beam. Every other high-risk command (column
+# valves, screen, apertures, corrector, spectrometer set-up, calibration, a camera exposure, or any
+# unknown or renamed command) is held in auto too, until an operator switches it on
+# (Approvals.set_auto_allowed). A job's start runs in auto when every command it drives would.
+AUTO_DEFAULT = frozenset({
+    "move_stage", "acquire_scanned_image", "acquire_scanned_data_advanced", "acquire_spectrum", "acquire_eels_spectrum",
+    "place_beam", "place_beam_list", "unblank_beam", "auto_focus", "set_stigmator", "set_beam_tilt", "set_image_shift",
+})
+
+
+def auto_allows(tool_name: str, switched_on=(), stem_devices=()) -> bool:
+    """True when auto mode may run the high-risk tool ``tool_name`` ("<Prefix>_<command>") without a
+    person: an operator switched it on (``switched_on``: tool-name globs, case ignored), or it is a
+    routine command (AUTO_DEFAULT) of an electron microscope (``stem_devices``: the tool prefixes of
+    devices that scan images and blank a beam, see ``is_stem_device``). On any other instrument
+    (an AFM's move_stage drags an engaged tip) nothing is routine until an operator switches it on."""
+    if any(fnmatchcase(tool_name.lower(), str(pattern).lower()) for pattern in switched_on):
+        return True
+    for prefix in sorted(stem_devices, key=len, reverse=True):  # "EELS_Cam" before "EELS"
+        if tool_name.startswith(f"{prefix}_"):
+            return tool_name[len(prefix) + 1:].lower() in AUTO_DEFAULT
+    return False
+
+
+def auto_allows_start(tool_name: str, drives, switched_on=(), stem_devices=()) -> bool:
+    """True when auto mode may start a job without a person: its start was switched on, or ``drives``
+    (the high-risk tools the reserved plan drives) is known and auto mode allows every one."""
+    if any(fnmatchcase(tool_name.lower(), str(pattern).lower()) for pattern in switched_on):
+        return True
+    return drives is not None and all(auto_allows(name, switched_on, stem_devices) for name in drives)
 
 
 def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:

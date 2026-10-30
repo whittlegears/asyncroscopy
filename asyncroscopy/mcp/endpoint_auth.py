@@ -48,7 +48,7 @@ DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "approve": ["instrument:approve"],
 }
 # Approvals commands whose "who" names the person deciding; with auth it is the token's subject.
-DECIDING_COMMANDS = frozenset({"approve", "deny", "set_mode"})
+DECIDING_COMMANDS = frozenset({"approve", "deny", "set_mode", "set_auto_allowed"})
 
 
 @dataclass(frozen=True)
@@ -143,7 +143,7 @@ def required_role(tool_name: str, tool_risks: dict[str, str], risk_keys: dict[st
 
 
 def stamp_who(dev_class: str, command_name: str, call_args: tuple, subject: str | None) -> tuple:
-    """An approve, deny or set_mode of an Approvals device records the token's subject as ``who``."""
+    """An approve, deny, set_mode or set_auto_allowed of an Approvals device records the token's subject as ``who``."""
     if dev_class.lower() != "approvals" or command_name not in DECIDING_COMMANDS or not call_args or not subject:
         return call_args
     try:
@@ -231,10 +231,14 @@ def attach(server, raw: AuthSettings | dict | None) -> AuthSettings | None:
             name = context.message.name
             if token is None:
                 raise ToolError(f"{name} refused: this endpoint needs a valid bearer token (mcp.auth)")
-            need = self._needs(name)
-            if need not in roles:
-                scopes = ", ".join(settings.roles[need]) or "(none configured)"
-                raise ToolError(f"{name} refused: it needs the {need} role (scope {scopes}); the token of {token_subject()!r} grants {sorted(roles) or 'no role'}")
+            names = [name]
+            if name == "call_tool":  # call_tool runs another tool: the token needs that tool's role too
+                names.append(str((context.message.arguments or {}).get("name", "")))
+            for checked in names:
+                need = self._needs(checked)
+                if need not in roles:
+                    scopes = ", ".join(settings.roles[need]) or "(none configured)"
+                    raise ToolError(f"{checked} refused: it needs the {need} role (scope {scopes}); the token of {token_subject()!r} grants {sorted(roles) or 'no role'}")
             return await call_next(context)
 
         async def on_list_tools(self, context, call_next):
@@ -242,6 +246,11 @@ def attach(server, raw: AuthSettings | dict | None) -> AuthSettings | None:
             _token, roles = self._roles()
             return [t for t in tools if self._needs(t.name) in roles]
 
+    def may_call(name: str) -> bool:
+        token = current_token()
+        return token is not None and required_role(name, server.tool_risks, server._risk_keys) in settings.roles_of(token.claims)
+
     server.mcp.auth = _verifier(settings)
     server.mcp.add_middleware(RoleGate())
+    server.may_call = may_call
     return settings

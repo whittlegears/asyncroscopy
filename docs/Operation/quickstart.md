@@ -134,6 +134,14 @@ uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
 
 It runs a small map, stitches it, scores it, marks a point, and exercises the approval mode. Every line should say PASS. A FAIL line says what failed and why.
 
+To see what an agent will be able to do on this stack (every tool, its risk, whether auto mode runs it or holds it for you, and which tools a small model is given up front):
+
+```bash
+uv run startup_scripts/show_agent_view.py
+```
+
+A command your own device adds shows up as high risk and held: auto mode waits for a person until you switch it on (SciAgentGUI: Settings, Agent permissions) or mark a read-only command low with `mcp.safety.risk`. See [approval_mode.md](approval_mode.md).
+
 If you use SciAgentGUI, this checks that the stack answers the way the GUI expects (approvals, maps and spectra from Tiled):
 
 ```bash

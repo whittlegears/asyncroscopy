@@ -587,7 +587,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
 
 
 class TestMCPCommandTimeout:

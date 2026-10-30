@@ -624,7 +624,19 @@ class Tuner(JobDevice):
             "capabilities": sorted(capabilities),
             "simulated": simulated,
             "vendor_dose_calibrated": calibrated,
+            "drives": self._drives(strategy),
         }
+
+    def _drives(self, strategy: Strategy) -> dict[str, list[str]]:
+        """{device address: commands} a tuning job with ``strategy`` may send, restoring included, so auto mode
+        can tell whether it runs them all (a corrector write is held there until an operator switches it on)."""
+        microscope = ["blank_beam", "unblank_beam", "set_fov", "set_defocus", "set_stigmator", "acquire_scanned_image"]
+        if "autofocus" in strategy.needs:
+            microscope.append("auto_focus")
+        drives = {self.microscope_device_address: microscope}
+        if "corrector" in strategy.needs:
+            drives.setdefault(self.corrector_device_address, []).extend(["measure_c1a1", "correct_aberration"])
+        return drives
 
     # ------------------------------------------------------------------
     # Snapshot, run, restore
