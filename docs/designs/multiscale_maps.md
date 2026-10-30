@@ -199,7 +199,7 @@ Every G3 check passes. What made it pass, and what was tried:
 *   Children were aimed by image shift, not the stage: the stage's error (hundreds of nanometres) is larger than a tier-2 field. Re-centring through tiers by image (design 4.3) is how the real instrument would do it; the twin's image shift is exact, the instrument's will need its own calibration.
 *   Version 1 measures translation only; scale and rotation between tiers are given by the pixel sizes and scan rotation. Fitting them is a follow-up when a calibration says they differ.
 
-Still to build for P3: the analysis server tools (`place_image`, `list_placements`) that store placement records in a per-run log, and the `multiscale_region` skill that drives the procedure through the agent endpoint.
+Built for agents: the analysis server's `place_image` (places a finer image on a stitched map or a coarser image, from the stage position it records or the point it was aimed at by image shift, within `window_m`) and `list_placements`, which keep every result, placed or unplaced with the reason, in an append-only JSON-lines log (`--placements`, pyTEMlib 958a6c6). `place_image` is in the agent tool set, and the `multiscale_region` skill walks an agent through the tiers: aim by image shift, place, use the placed position (never the aimed one) for the next step, stop at an unplaced image or the dose cap.
 
 ### What P4 to P7 require of this
 
