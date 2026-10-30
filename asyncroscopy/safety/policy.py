@@ -103,6 +103,8 @@ OPERATOR_ONLY: list[str] = [
     "*.restartserver",
     # Which holder is fitted sets the stage's Z and tilt limits: an agent must not be able to widen them.
     "*.set_holder",
+    "*.revise",
+    "*.load_sample",
     # Running the data service is the operator's job; the launcher calls these over Tango.
     "data.configure",
     "data.start_tiled_server",

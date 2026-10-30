@@ -121,6 +121,7 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
 
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
+        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self._data_proxy = (
             tango.DeviceProxy(self.data_device_address)
             if self.data_device_address else None

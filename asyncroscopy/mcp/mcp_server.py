@@ -82,6 +82,7 @@ WAIT_NOTES = {
     "aborting": "Abort in progress: call wait_for_job again to see the job stop.",
     "paused_suspended": "Paused by a safety condition ({reason}); it resumes by itself when the condition clears. Call wait_for_job again, or abort if the user asked to stop.",
     "paused_awaiting_approval": "Waiting for an operator to approve the next step: call wait_for_job again. Do not retry or start another job.",
+    "paused": "Paused by a person, with the instrument waiting safely; it goes on when they continue it. Call wait_for_job again; do not start it yourself or start another job.",
 }
 LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
 # Estimate fields of a job that puts a dose on the sample (a beam job): max_dose_e_per_a2 applies to it.
@@ -596,12 +597,27 @@ class MCPServer:
                     if self.trace is not None:
                         self.trace.record(unique_name, False, started, arguments=arguments, error="over_job_limits", result=refused, caller=caller, run=run)
                     return refused
-            gate = self._gate(unique_name, risk, arguments, caller, describe, drives)
+            gated, plan_id = arguments, None
+            if envelope and command_name == "start" and call_args and self.endpoint_role != "operator" and '"continue"' in str(call_args[0]):
+                # Continuing a paused job is the person's decision, made on the operator endpoint.
+                raise ToolError("a person paused this job; only they continue it (from the operator endpoint or the GUI). Call wait_for_job, or abort if the user asked to stop.")
+            if envelope and command_name == "start" and call_args and self.endpoint_role != "operator" and self.approvals_device_address is not None:
+                # The approval is for the plan as shown: a plan revised after the request was filed (or a grant
+                # given) has a new plan_id, so the old approval does not start it.
+                device = self._devices.get(tool_prefix or dev_class)
+                try:
+                    plan_id = json.loads(device.get_reservation(str(call_args[0]))).get("plan_id") if device is not None else None
+                except Exception:
+                    plan_id = None
+                gated = {**arguments, "plan_id": plan_id}
+            gate = self._gate(unique_name, risk, gated, caller, describe, drives)
             if envelope and command_name in ("start", "reserve") and call_args:
                 # The job's own trace events then name who asked and the agent run (and, at start, the approval);
                 # a reserve also carries the high risk overrides, so a dry run records a get_* command marked high.
                 overrides = self._high_overrides() if command_name == "reserve" else None
                 call_args = (self._with_grant(call_args[0], gate if command_name == "start" else None, caller, run, overrides), *call_args[1:])
+                if plan_id is not None:  # the device refuses the start if the plan was revised after this check
+                    call_args = (self._with_plan_id(call_args[0], plan_id), *call_args[1:])
             if self.auth is not None:  # an approve, deny or set_mode records the token's subject as who
                 call_args = endpoint_auth.stamp_who(dev_class, command_name, call_args, caller)
             via = {"via": self._via.name} if getattr(self._via, "name", None) else {}  # run_job's own reserve and start
@@ -750,6 +766,15 @@ class MCPServer:
     def _high_overrides(self) -> dict[str, str]:
         """The mcp.safety.risk patterns that mark commands high: what a job's dry run must record, not pass through."""
         return {pattern: level for pattern, level in self.risk_overrides.items() if level == "high"}
+
+    @staticmethod
+    def _with_plan_id(request: Any, plan_id: str) -> Any:
+        """The start request with the plan_id its approval was checked against."""
+        try:
+            body = json.loads(request) if isinstance(request, str) else None
+        except json.JSONDecodeError:
+            body = None
+        return json.dumps({**body, "plan_id": plan_id}) if isinstance(body, dict) else request
 
     @staticmethod
     def _with_grant(request: Any, gate: dict | None, caller: str | None, run: str | None = None, risk_overrides: dict | None = None) -> Any:

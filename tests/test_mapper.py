@@ -304,3 +304,86 @@ def test_a_job_nobody_checks_on_is_aborted_when_its_lease_lapses(tango_ctx, mapp
     assert status["progress"]["done"] < status["progress"]["total"]
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
     release_all(leased, reserve["reservation_id"])
+
+
+def test_a_paused_map_holds_the_device_with_the_beam_blanked_and_start_continues_it(mapper_proxy, mapping_twin_proxy):
+    plan = {**PLAN, "imsize": 256, "dwell_s": 2e-6}
+    reserve = call(mapper_proxy, "reserve", {"plan": plan})
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    while call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["progress"]["done"] < 1:
+        time.sleep(0.01)
+    assert call(mapper_proxy, "pause", {"job_id": started["job_id"]})["pause_requested"] is True
+    paused = wait(mapper_proxy, started["job_id"], states=("paused",))
+    done = paused["progress"]["done"]
+    time.sleep(1.0)
+    assert call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["progress"]["done"] == done < N_TILES
+    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+    jobs = json.loads(mapper_proxy.get_jobs())["jobs"]
+    assert [(j["job_id"], j["state"]) for j in jobs] == [(started["job_id"], "paused")]
+    assert call(mapper_proxy, "reserve", {"plan": PLAN})["error"]["code"] == "busy"
+
+    assert call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})["error"]["code"] == "paused"  # an agent's start or resume
+    continued = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"], "continue": True})
+    assert continued == {**continued, "job_id": started["job_id"], "state": "running", "continued": True}
+    status = wait(mapper_proxy, started["job_id"])
+    assert status["state"] == "done" and status["progress"]["done"] == N_TILES
+    assert json.loads(mapper_proxy.get_jobs())["jobs"] == [] or json.loads(mapper_proxy.get_jobs())["jobs"][0]["state"] != "paused"
+    release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_paused_map_can_be_aborted_and_the_e_stop_reaches_it(mapper_proxy, mapping_twin_proxy):
+    plan = {**PLAN, "imsize": 256, "dwell_s": 2e-6}
+    reserve = call(mapper_proxy, "reserve", {"plan": plan})
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    call(mapper_proxy, "pause", {"job_id": started["job_id"]})
+    wait(mapper_proxy, started["job_id"], states=("paused",))
+    stopped = json.loads(mapper_proxy.abort_all())["aborted"]
+    assert [s["job_id"] for s in stopped] == [started["job_id"]]
+    assert wait(mapper_proxy, started["job_id"])["state"] == "aborted"
+    assert call(mapper_proxy, "pause", {"job_id": started["job_id"]})["error"]["code"] == "bad_state"
+    resumed = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    assert wait(mapper_proxy, resumed["job_id"])["state"] == "done"
+    release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_plan_is_revised_before_it_starts_and_checked_like_a_reserve(mapper_proxy):
+    reserve = call(mapper_proxy, "reserve", {"plan": PLAN})
+    smaller = {**PLAN, "box_m": [-1.2e-7, 4e-8, -8e-8, 8e-8]}
+    revised = call(mapper_proxy, "revise", {"reservation_id": reserve["reservation_id"], "plan": smaller})
+    assert "error" not in revised, revised
+    assert revised["plan_id"] != reserve["plan_id"] and revised["replaces_plan_id"] == reserve["plan_id"]
+    shown = call(mapper_proxy, "get_reservation", {"reservation_id": reserve["reservation_id"]})
+    assert shown["plan"]["box_m"] == smaller["box_m"] and shown["plan_id"] == revised["plan_id"]
+    refused = call(mapper_proxy, "revise", {"reservation_id": reserve["reservation_id"], "plan": {**PLAN, "fov_m": -1}})
+    assert "error" in refused
+    assert call(mapper_proxy, "get_reservation", {"reservation_id": reserve["reservation_id"]})["plan_id"] == revised["plan_id"]
+    assert call(mapper_proxy, "revise", {"reservation_id": reserve["reservation_id"], "plan": {**PLAN, "drives": []}})["error"]["code"] == "bad_request"
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    status = wait(mapper_proxy, started["job_id"])
+    assert status["state"] == "done" and status["progress"]["total"] == len(tile_centres(smaller["box_m"], 8e-8, 0.2, "serpentine"))
+    assert call(mapper_proxy, "revise", {"reservation_id": reserve["reservation_id"], "plan": PLAN})["error"]["code"] == "bad_state"
+    release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_stale_continue_never_resumes_a_job_aborted_meanwhile(mapper_proxy):
+    plan = {**PLAN, "imsize": 256, "dwell_s": 2e-6}
+    reserve = call(mapper_proxy, "reserve", {"plan": plan})
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    call(mapper_proxy, "pause", {"job_id": started["job_id"]})
+    wait(mapper_proxy, started["job_id"], states=("paused",))
+    json.loads(mapper_proxy.abort_all())
+    assert wait(mapper_proxy, started["job_id"])["state"] == "aborted"
+    stale = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"], "continue": True})
+    assert stale["error"]["code"] == "bad_state" and "not paused" in stale["error"]["message"]
+    assert call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["state"] == "aborted"
+    release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_start_approved_for_one_plan_does_not_start_a_revised_one(mapper_proxy):
+    reserve = call(mapper_proxy, "reserve", {"plan": PLAN})
+    revised = call(mapper_proxy, "revise", {"reservation_id": reserve["reservation_id"], "plan": {**PLAN, "box_m": [-1.2e-7, 4e-8, -8e-8, 8e-8]}})
+    stale = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"], "plan_id": reserve["plan_id"]})
+    assert stale["error"]["code"] == "plan_changed"
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"], "plan_id": revised["plan_id"]})
+    assert wait(mapper_proxy, started["job_id"])["state"] == "done"
+    release_all(mapper_proxy, reserve["reservation_id"])

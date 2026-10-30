@@ -11,6 +11,9 @@ import h5py
 import numpy as np
 import tifffile
 
+from asyncroscopy.data.dose_ledger import record_frame
+from asyncroscopy.data.record import current_sample, record_fields, stage_of
+
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
 
@@ -75,6 +78,9 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
+    # Read from init_device, not device.get_name(): a device object made without Tango's own initialisation crashes on that call.
+    instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
+    sample = current_sample(stage_of(device))
 
     if output_format == ".tiff":
         save_dir = data_server.save_path if data_server is not None else DEFAULT_ACQUISITION_DIR
@@ -84,8 +90,9 @@ def save_acquisition(
         keys = []
         for index, (source, detector) in enumerate(zip(data_list, detector_list)):
             path = directory / f"{stem}_{detector}.tiff"
-            _write_tiff(source, path, attrs_list[index])
+            _write_tiff(source, path, {**(attrs_list[index] or {}), **record_fields(instrument_id, acquisition_type, sample)})
             keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
+        _ledger(device, attrs_list[0] or {}, sample, keys[0], instrument_id)
         return keys[0] if len(keys) == 1 else json.dumps(keys)
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
@@ -106,8 +113,25 @@ def save_acquisition(
         attrs.update(attrs_list[index] or {})
         datasets.append({"name": name, "source": source, "attrs": attrs})
 
-    save_acquisition_hdf5(path, datasets, file_attrs=file_attrs)
-    return data_server.register_path(str(path)) if data_server is not None else str(path)
+    save_acquisition_hdf5(path, datasets, file_attrs={**(file_attrs or {}), **record_fields(instrument_id, acquisition_type, sample)})
+    key = data_server.register_path(str(path)) if data_server is not None else str(path)
+    _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
+    return key
+
+
+def _ledger(device, attrs: dict, sample: dict, key: str, instrument_id: str) -> None:
+    """Add the frame to the dose ledger (the detectors saw one frame). The data is already saved, so a ledger that
+    cannot be written is reported on the device's error stream, not raised: a caller that lost the key would take
+    the frame again and double the real dose."""
+    try:
+        record_frame(attrs, sample.get("sample_load_id"), key, instrument_id)
+    except Exception as exc:
+        report = getattr(device, "error_stream", None)
+        message = f"the dose ledger did not record {key}: {type(exc).__name__}: {exc}"
+        if callable(report):
+            report(message)
+        else:
+            print(message)
 
 
 def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: dict | None = None) -> None:

@@ -13,6 +13,7 @@ This avoids:
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,8 @@ import tango
 # The DATA device must never reach a developer's running Tiled (its default is
 # 127.0.0.1:9091): point it at a closed local port for the whole session.
 os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
+# Likewise the dose ledger: the session's frames go to a fresh file, not a developer's outputs/dose.
+os.environ["ASYNCROSCOPY_DOSE_LEDGER"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-dose-"), "ledger.jsonl")
 from tango.test_context import MultiDeviceTestContext
 
 from asyncroscopy.testing import prop_path

@@ -99,6 +99,7 @@ class AtomisticDigitalTwin(ElectronMicroscope):
     def init_device(self) -> None:
         """Initialize the Tango device and simulation state variables."""
         Device.init_device(self)
+        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self.set_state(DevState.INIT)
 
         self._stem_mode = True

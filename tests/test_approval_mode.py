@@ -407,6 +407,33 @@ class TestGate:
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
             wrapper("target-1")  # the grant was single use
 
+    def test_an_approved_start_does_not_cover_a_plan_revised_since(self, server_factory, approvals_proxy):
+        server = server_factory()
+        plan = {"plan_id": "p1"}
+
+        class Device:
+            def get_reservation(self, request):
+                return json.dumps({"plan_id": plan["plan_id"], "resolved_plan": {"drives": {}}})
+
+        server._envelope_prefixes.add("Mapper")
+        server._devices["Mapper"] = Device()
+        start = server._create_wrapper(lambda arg: "started", cmd_info(), "start", "Mapper")
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
+            start(json.dumps({"reservation_id": "r1"}))
+        request_id = str(held.value).split("request_id=")[1].split(")")[0]
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
+        plan["plan_id"] = "p2"  # an operator revised the plan after the approval
+        with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
+            start(json.dumps({"reservation_id": "r1"}))
+        plan["plan_id"] = "p1"
+        sent = []
+        start = server._create_wrapper(lambda arg: sent.append(json.loads(arg)) or "started", cmd_info(), "start", "Mapper")
+        assert start(json.dumps({"reservation_id": "r1"})) == "started"
+        assert sent[0]["plan_id"] == "p1"  # the device refuses it if the plan changed after this check
+        with pytest.raises(ToolError, match="only they continue it"):
+            start(json.dumps({"reservation_id": "r1", "continue": True}))
+
     def test_low_risk_never_held(self, server_factory, approvals_proxy):
         server = server_factory()
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))

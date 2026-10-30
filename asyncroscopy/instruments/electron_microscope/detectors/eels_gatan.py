@@ -39,6 +39,7 @@ class EELS(EELSBase):
 
     def init_device(self) -> None:
         super().init_device()
+        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self._eels_uri = (
             f"PYRO:eels_server@{self.hardware_host}:{self.hardware_port}"
         )
