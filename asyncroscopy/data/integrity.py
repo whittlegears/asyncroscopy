@@ -10,8 +10,9 @@ fields and the HMAC of the line before it (``chain_append``), so:
 
 ``verify`` checks the manifest's chain, every sealed file, and any other chained logs it is given.
 
-Nothing calls ``seal`` yet: ``save_acquisition``, the dose ledger and the map writer are wired to it in phase P7
-of ``docs/designs/multiscale_maps.md``. Until then this module protects nothing on its own.
+``save_acquisition`` seals every file it writes (``data/data_writer.py``); the dose ledger and the analysis server's
+stitched maps are not sealed yet (``docs/designs/multiscale_maps.md``, P7). ``startup_scripts/verify_integrity.py``
+runs ``verify`` and prints what changed, went missing or broke the chain.
 
 The key comes from ``ASYNCROSCOPY_INTEGRITY_KEY`` (hex), or the file ``ASYNCROSCOPY_INTEGRITY_KEY_FILE``
 (default ``outputs/integrity/key``, made from 32 random bytes the first time it is needed). Whoever can read
@@ -152,10 +153,18 @@ def verify_chain(log: Path) -> dict:
 
 
 def seal(path: str | Path, key: str = "", writer: str = "") -> dict:
-    """Record ``path``'s SHA-256 and size in the manifest (a later seal of the same path supersedes it)."""
+    """Record ``path``'s SHA-256 and size in the manifest. Sealing an unchanged file again returns its entry;
+    a file sealed before whose bytes have changed is refused (IntegrityError): a sealed result is never re-sealed
+    as something else."""
     resolved = Path(path).resolve()
+    digest, size = sha256_of(resolved), resolved.stat().st_size
+    earlier = _index().get(str(resolved))
+    if earlier is not None:
+        if earlier.get("sha256") == digest and earlier.get("size") == size:
+            return earlier
+        raise IntegrityError(f"{path} was sealed when written and has changed since; it is not sealed again")
     return chain_append(manifest_path(), {
-        "path": str(resolved), "key": key or str(path), "sha256": sha256_of(resolved), "size": resolved.stat().st_size,
+        "path": str(resolved), "key": key or str(path), "sha256": digest, "size": size,
         "writer": writer[:120], "at": time.time(),
     })
 

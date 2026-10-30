@@ -122,3 +122,48 @@ def test_the_key_file_is_made_once(tmp_path, monkeypatch):
     monkeypatch.setenv(integrity.KEY_FILE_ENV, str(key_file))
     first = integrity._key()
     assert len(first) == 32 and integrity._key() == first
+
+
+def test_a_sealed_file_is_not_sealed_again_as_something_else(tmp_path, manifest):
+    path = _data(tmp_path, "a.h5", b"first")
+    first = integrity.seal(path, key="a")
+    assert integrity.seal(path, key="a") == first  # unchanged: the same entry, nothing appended
+    path.write_bytes(b"second")
+    with pytest.raises(integrity.IntegrityError, match="not sealed again"):
+        integrity.seal(path, key="a")
+    assert len(_lines(manifest)) == 1
+
+
+def test_save_acquisition_seals_what_it_writes(tmp_path, manifest):
+    import numpy as np
+
+    from asyncroscopy.data.data_writer import save_acquisition
+
+    class Device:
+        instrument_id = "test/instrument"
+        acquisition_save_directory = str(tmp_path)
+
+    key = save_acquisition(Device(), None, "stem_image", ["haadf"], [np.arange(16, dtype=np.uint16).reshape(4, 4)])
+    entry = integrity.check_file(key)
+    assert entry is not None and entry["writer"] == "test/instrument"
+    with open(key, "r+b") as handle:  # an edit after the fact
+        handle.seek(-4, 2)
+        handle.write(b"\x00\x01\x02\x03")
+    integrity._index_cache.clear()
+    with pytest.raises(integrity.IntegrityError):
+        integrity.check_file(key)
+
+
+def test_the_verify_command_says_what_is_wrong(tmp_path, manifest, capsys):
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("verify_integrity", Path(__file__).resolve().parents[1] / "startup_scripts" / "verify_integrity.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    path = _data(tmp_path, "a.h5")
+    integrity.seal(path, key="a")
+    assert module.main([]) == 0
+    path.write_bytes(b"edited")
+    integrity._index_cache.clear()
+    assert module.main([]) == 1 and '"a"' in capsys.readouterr().out
