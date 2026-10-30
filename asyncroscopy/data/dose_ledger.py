@@ -24,25 +24,23 @@ is not recorded with a frame, so its dose lands that far off. A frame taken with
 is kept under ``sample_load_id`` null and never counted for a sample.
 
 The ledger is one append-only JSON-lines file shared by every device server on the computer
-(``ASYNCROSCOPY_DOSE_LEDGER``, default ``outputs/dose/ledger.jsonl``); writes take a file lock.
+(``ASYNCROSCOPY_DOSE_LEDGER``, default ``outputs/dose/ledger.jsonl``); writes take a file lock. Each line is
+chained and keyed like the integrity manifest (``integrity.chain_append``), so a line edited, removed, inserted
+or moved shows in ``startup_scripts/verify_integrity.py``. Lines written before the chain have no seal and are
+reported as such; ``dose_at`` still counts them.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import os
-import threading
 import time
 from pathlib import Path
 
+from asyncroscopy.data.integrity import LOCK_WAIT_S, chain_append
+from asyncroscopy.mcp.tool_log import file_lock
 from asyncroscopy.routines.dose import ELECTRON_CHARGE, frame_dose
-
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
 
 LEDGER_ENV = "ASYNCROSCOPY_DOSE_LEDGER"
 DEFAULT_LEDGER = "outputs/dose/ledger.jsonl"
@@ -51,40 +49,10 @@ NOT_COUNTED = ("exposures saved without their position, current and time (camera
                "shift and scan rotation (each exposure is placed where the instrument believes the beam was)")
 AXES = "rows=+y, columns=+x"
 SPOT_SPREAD_M = 1e-8
-LOCK_WAIT_S = 5.0  # well inside a Tango client's timeout, so a stuck lock never makes a caller take a frame again
-_lock = threading.Lock()
 
 
 def ledger_path() -> Path:
     return Path(os.environ.get(LEDGER_ENV) or DEFAULT_LEDGER)
-
-
-@contextlib.contextmanager
-def _locked(path: Path):
-    with _lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path.with_name(path.name + ".lock"), "a+b") as lock:
-            lock.seek(0)
-            deadline = time.monotonic() + LOCK_WAIT_S
-            while True:
-                try:
-                    if os.name == "nt":
-                        msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-                    else:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except OSError:
-                    if time.monotonic() > deadline:
-                        raise
-                    time.sleep(0.05)
-            try:
-                yield
-            finally:
-                lock.seek(0)
-                if os.name == "nt":
-                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _number(value) -> float | None:
@@ -145,11 +113,16 @@ def record_frame(attrs: dict, sample_load_id: str | None, key: str, instrument_i
     exposure = exposure_of(attrs)
     if exposure is None:
         return False
-    line = json.dumps({"at": time.time(), "sample_load_id": sample_load_id, "instrument_id": instrument_id, "key": key, **exposure})
-    path = ledger_path()
-    with _locked(path):
-        with open(path, "a", encoding="utf-8") as handle:
-            handle.write(line + "\n")
+    record = {"at": time.time(), "sample_load_id": sample_load_id, "instrument_id": instrument_id, "key": key, **exposure}
+    try:
+        chain_append(ledger_path(), record)
+    except (OSError, ValueError) as exc:  # an unreadable integrity key must not lose the dose: the line is kept unsealed, which verify reports
+        print(f"[dose ledger] {key} written without a seal: {exc}")
+        path = ledger_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path.with_name(path.name + ".lock"), "a+b") as lock, file_lock(lock, time.monotonic() + LOCK_WAIT_S):
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\n")
     return True
 
 
