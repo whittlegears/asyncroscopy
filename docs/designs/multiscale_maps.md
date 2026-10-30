@@ -153,7 +153,7 @@ Findings that changed the plan:
 
 Built in pyTEMlib (`mosaic.py`, commit 828f787): sub-pixel drawing by cubic spline (not Lanczos: same accuracy here, simpler); gain and offset modelled as smooth in acquisition time with priors and caps (per-tile values ran away across large maps in review); the scan's shared linear map measured with the stage regressed on tile centres and the solve repeated with the stage prior in the tiles' scale; a calibration input; robust solving that drops worst-first and takes back correct matches, including links that rejoin groups of tiles whose wrong links outnumbered their right ones; overlap-only correlation (2.8x faster). Multi-band blending and per-tile rectification were not needed: seams already pass, and switching the twin's flyback distortion off changed nothing.
 
-**G2 is met at the overlap the Mapper's warning recommends** (`benchmarks/results/mosaic_twin_overlap57.md`, the same 20 x 20 map at 0.57 overlap): placement 0.07 / 0.17 / 0.30 px, no wrong or unplaced tile, seams 1.01, brightness 0.34 %. Stitching then took 950 s (more overlap, larger correlations): a cost to bring down before P5.
+**G2 is met at the overlap the Mapper's warning recommends** (`benchmarks/results/mosaic_twin_overlap57.md`, the same 20 x 20 map at 0.57 overlap): placement 0.07 / 0.17 / 0.30 px, no wrong or unplaced tile, seams 1.01, brightness 0.34 %. Stitching then took 950 s (more overlap, larger correlations); with wide searches made coarse to fine (half resolution, then the full-resolution correlation at each whole pixel within 3 px; pyTEMlib 612a94e) it takes 422 s with the same placement.
 
 At the 30 % overlap (the result above):
 
@@ -273,7 +273,7 @@ The first step is built in SciAgentGUI (`MapView.tsx`, `tiledClient.ts`, commit 
 *   **2 mm grid with lazy generation (P5)**: grid bars and holes, film, clusters, particles, lattice, each generated from (seed, cell).
 *   **Deep-zoom viewer (P4)**: tiles and cache on today's Maps page, then tiers layered in one view.
 *   **Transfer (P6)**: hardware records matching the twin's; the point-measurement skill unchanged on the Spectra; a real survey as stitching test data.
-*   **Sealing (P7)**: `data/integrity.py` wired into saves and map versions.
+*   **Sealing (P7)**: started. `save_acquisition` seals every file it writes; a sealed file whose bytes changed is refused a new seal; `startup_scripts/verify_integrity.py` reports changed or missing files and breaks in the manifest's chain. Still to do: seal stitched map versions and placement logs on the analysis server, chain the dose ledger, and check seals where data is read.
 
 --------------------------------------------------------------------------------
 
