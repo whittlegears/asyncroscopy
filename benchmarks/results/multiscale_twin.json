@@ -1,0 +1,1201 @@
+{
+  "config": "C:\\Users\\leafe\\Documents\\Github\\asyncroscopy\\configs\\digital_twin_large_map.yaml",
+  "imsize": 512,
+  "fovs_m": [
+    2.4e-06,
+    1.5e-07,
+    1.875e-08
+  ],
+  "pixels_m": [
+    4.6875e-09,
+    2.9296875e-10,
+    3.662109375e-11
+  ],
+  "steps": [
+    16.0,
+    8.0
+  ],
+  "window_px": 8.0,
+  "seconds": 31.9,
+  "tier2": {
+    "children": 50,
+    "placed": 48,
+    "placed_share": 0.96,
+    "median_px": 0.23216220380675445,
+    "p95_px": 0.4917783606296435,
+    "wrong": 0,
+    "unplaced_reasons": [
+      "another place matches almost as well (0.91 of the best)",
+      "the best match scores 0.49, below 0.5"
+    ]
+  },
+  "tier3": {
+    "children": 50,
+    "placed": 45,
+    "placed_share": 0.9,
+    "median_px": 0.1443266138813671,
+    "p95_px": 0.27323506337561926,
+    "wrong": 0,
+    "unplaced_reasons": [
+      "another place matches almost as well (0.81 of the best)",
+      "another place matches almost as well (0.93 of the best)",
+      "another place matches almost as well (0.98 of the best)",
+      "another place matches almost as well (0.99 of the best)"
+    ]
+  },
+  "chained_survey_px": {
+    "median": 0.2343229967170586,
+    "p95": 0.5020225638185846,
+    "n": 43
+  },
+  "entries": {
+    "tier2": [
+      {
+        "true": [
+          149.64568831585893,
+          88.4454035358762
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9945,
+        "ambiguity": 0.1283,
+        "error_px": 0.25115477423437516
+      },
+      {
+        "true": [
+          229.24081390474856,
+          91.90740906041798
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9872,
+        "ambiguity": 0.1628,
+        "error_px": 0.11334474890730309
+      },
+      {
+        "true": [
+          98.32842239052998,
+          351.7792566740491
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.8005,
+        "ambiguity": 0.7103,
+        "error_px": 0.3050705592716493
+      },
+      {
+        "true": [
+          290.84436140521507,
+          228.4813777611672
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.971,
+        "ambiguity": 0.1478,
+        "error_px": 0.18938606685523646
+      },
+      {
+        "true": [
+          316.19587992158,
+          169.06054066774163
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5889,
+        "ambiguity": 0.5052,
+        "error_px": 0.274379090851684
+      },
+      {
+        "true": [
+          448.5603209879194,
+          54.36484419075046
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6972,
+        "ambiguity": 0.6559,
+        "error_px": 0.25004214285621823
+      },
+      {
+        "true": [
+          289.1992495549261,
+          415.59440041214106
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9845,
+        "ambiguity": 0.1222,
+        "error_px": 0.0702524002799924
+      },
+      {
+        "true": [
+          340.42294692109937,
+          66.03959501673391
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9475,
+        "ambiguity": 0.001,
+        "error_px": 0.1416017282390954
+      },
+      {
+        "true": [
+          430.12703928534233,
+          321.7991398139124
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.909,
+        "ambiguity": 0.0917,
+        "error_px": 0.11035593657630599
+      },
+      {
+        "true": [
+          353.96179814630005,
+          174.72754512502013
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6975,
+        "ambiguity": 0.643,
+        "error_px": 0.329353866323529
+      },
+      {
+        "true": [
+          318.72414494113536,
+          390.5025939678146
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9911,
+        "ambiguity": 0.0105,
+        "error_px": 0.04152192542916142
+      },
+      {
+        "true": [
+          360.55646355148167,
+          227.64830281210524
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9784,
+        "ambiguity": 0.0943,
+        "error_px": 0.19943566052966263
+      },
+      {
+        "true": [
+          211.72929343952612,
+          398.53395306287734
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9852,
+        "ambiguity": 0.5287,
+        "error_px": 0.33214442523342225
+      },
+      {
+        "true": [
+          170.70553013681044,
+          337.0996493306349
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5587,
+        "ambiguity": 0.6468,
+        "error_px": 0.6664158622117458
+      },
+      {
+        "true": [
+          214.66222210904198,
+          281.66863003877603
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9908,
+        "ambiguity": 0.0224,
+        "error_px": 0.17806090922501502
+      },
+      {
+        "true": [
+          356.27639752688424,
+          126.87335160238007
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7772,
+        "ambiguity": 0.7056,
+        "error_px": 0.3045784327866552
+      },
+      {
+        "true": [
+          135.27107803112554,
+          427.44325671100984
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.993,
+        "ambiguity": 0.3209,
+        "error_px": 0.18466094283216475
+      },
+      {
+        "true": [
+          304.66033822697204,
+          445.05237486760933
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9172,
+        "ambiguity": 0.1605,
+        "error_px": 0.26453670153119957
+      },
+      {
+        "true": [
+          372.4466416900155,
+          373.10584031957353
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.938,
+        "ambiguity": 0.0764,
+        "error_px": 0.1330496853146208
+      },
+      {
+        "true": [
+          132.0770921491334,
+          88.08467068522383
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.971,
+        "ambiguity": 0.2162,
+        "error_px": 0.23292492685099145
+      },
+      {
+        "true": [
+          173.8511999929124,
+          105.08448461630933
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9394,
+        "ambiguity": 0.1632,
+        "error_px": 0.0653583228585929
+      },
+      {
+        "true": [
+          338.90347442211237,
+          445.40618485416553
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9205,
+        "ambiguity": 0.2632,
+        "error_px": 0.09609798367957742
+      },
+      {
+        "true": [
+          73.31294240363366,
+          340.105985444493
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9108,
+        "ambiguity": 0.4938,
+        "error_px": 0.05345857419568338
+      },
+      {
+        "true": [
+          324.040587865751,
+          292.99649513480364
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9583,
+        "ambiguity": 0.1572,
+        "error_px": 0.30853174645733844
+      },
+      {
+        "true": [
+          132.94933169694548,
+          278.7483672498324
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9285,
+        "ambiguity": 0.1736,
+        "error_px": 0.14361975458531978
+      },
+      {
+        "true": [
+          270.2164497621035,
+          248.7567589826048
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6214,
+        "ambiguity": 0.553,
+        "error_px": 0.3739710383103178
+      },
+      {
+        "true": [
+          267.7496943578519,
+          61.607267223308355
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9848,
+        "ambiguity": 0.0118,
+        "error_px": 0.23139948076251743
+      },
+      {
+        "true": [
+          207.23851250606882,
+          211.37837994348772
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7301,
+        "ambiguity": 0.5411,
+        "error_px": 0.24605601420588866
+      },
+      {
+        "true": [
+          194.16107005223162,
+          195.20166960965258
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.676,
+        "ambiguity": 0.733,
+        "error_px": 0.4076645437460083
+      },
+      {
+        "true": [
+          426.2793453110383,
+          275.57737945637075
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9796,
+        "ambiguity": 0.0616,
+        "error_px": 0.12370497269052083
+      },
+      {
+        "true": [
+          393.26406625900046,
+          438.05813981134395
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9735,
+        "ambiguity": 0.2718,
+        "error_px": 0.027685396719746288
+      },
+      {
+        "true": [
+          154.92962190215755,
+          386.4452774633879
+        ],
+        "status": "unplaced",
+        "reason": "the best match scores 0.49, below 0.5: the parent shows too little of what the child shows",
+        "score": 0.4859,
+        "ambiguity": 0.9819
+      },
+      {
+        "true": [
+          284.9933845817254,
+          159.86254087949985
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5897,
+        "ambiguity": 0.6363,
+        "error_px": 0.2672310789837678
+      },
+      {
+        "true": [
+          94.8627632215135,
+          289.94618065738365
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.824,
+        "ambiguity": 0.1541,
+        "error_px": 0.159228385888632
+      },
+      {
+        "true": [
+          88.0014934792279,
+          340.3589636734139
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9526,
+        "ambiguity": 0.0699,
+        "error_px": 0.30938902591682066
+      },
+      {
+        "true": [
+          322.7249086743299,
+          217.84327080025892
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.983,
+        "ambiguity": 0.0767,
+        "error_px": 0.28450444300856104
+      },
+      {
+        "true": [
+          150.68978673397376,
+          431.7649126793328
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9966,
+        "ambiguity": 0.2886,
+        "error_px": 0.19105599207983492
+      },
+      {
+        "true": [
+          144.3299665191697,
+          191.4586963309783
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.993,
+        "ambiguity": 0.1325,
+        "error_px": 0.16856264243828603
+      },
+      {
+        "true": [
+          221.7845594345954,
+          104.75095428976
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9634,
+        "ambiguity": 0.1233,
+        "error_px": 0.013444247227853577
+      },
+      {
+        "true": [
+          109.81308624490859,
+          459.32217170004344
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9628,
+        "ambiguity": 0.0012,
+        "error_px": 0.21232876385053048
+      },
+      {
+        "true": [
+          292.14816596503164,
+          75.14701062224496
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.8001,
+        "ambiguity": 0.7365,
+        "error_px": 0.3764021170914444
+      },
+      {
+        "true": [
+          269.9898976643525,
+          434.1352395944003
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9448,
+        "ambiguity": 0.3041,
+        "error_px": 0.23757937010014396
+      },
+      {
+        "true": [
+          396.41532193886155,
+          222.3543976995361
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9948,
+        "ambiguity": 0.0153,
+        "error_px": 0.2081452845782442
+      },
+      {
+        "true": [
+          160.35224310318182,
+          218.06504526969167
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.91 of the best): a guess between places, not a placement",
+        "score": 0.9484,
+        "ambiguity": 0.9138
+      },
+      {
+        "true": [
+          363.254897861166,
+          204.55692824029353
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7047,
+        "ambiguity": 0.793,
+        "error_px": 0.31921023219434336
+      },
+      {
+        "true": [
+          117.45868245944253,
+          263.09171824313466
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6592,
+        "ambiguity": 0.5371,
+        "error_px": 0.5005115285206168
+      },
+      {
+        "true": [
+          443.7504087463317,
+          282.9146378441029
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9572,
+        "ambiguity": 0.4888,
+        "error_px": 0.47555962026069326
+      },
+      {
+        "true": [
+          330.3065840852151,
+          365.72069796325496
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6539,
+        "ambiguity": 0.6164,
+        "error_px": 0.5939523738833683
+      },
+      {
+        "true": [
+          329.0234537740416,
+          409.2964054978078
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.9613,
+        "ambiguity": 0.0086,
+        "error_px": 0.11541133964362242
+      },
+      {
+        "true": [
+          183.62070903116683,
+          324.0054183499762
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6504,
+        "ambiguity": 0.6536,
+        "error_px": 0.4513508263246291
+      }
+    ],
+    "tier3": [
+      {
+        "true": [
+          280.00321079284123,
+          348.24243453468324
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.99 of the best): a guess between places, not a placement",
+        "score": 0.9993,
+        "ambiguity": 0.9917
+      },
+      {
+        "true": [
+          152.0327677897853,
+          250.13400334215638
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7282,
+        "ambiguity": 0.7126,
+        "error_px": 0.16583202653967027,
+        "chained_error_survey_px": 0.10402374301552544
+      },
+      {
+        "true": [
+          260.7576272513599,
+          223.429981997459
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5793,
+        "ambiguity": 0.5018,
+        "error_px": 0.11470203865414197,
+        "chained_error_survey_px": 0.29949437139413215
+      },
+      {
+        "true": [
+          393.89154593279153,
+          328.9892074350957
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7771,
+        "ambiguity": 0.5718,
+        "error_px": 0.09628760698507463,
+        "chained_error_survey_px": 0.1886314411925096
+      },
+      {
+        "true": [
+          192.13447856372431,
+          316.2592734408617
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6909,
+        "ambiguity": 0.6542,
+        "error_px": 0.15778319347289133,
+        "chained_error_survey_px": 0.273539589177536
+      },
+      {
+        "true": [
+          199.2360412995425,
+          195.18052879289797
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6855,
+        "ambiguity": 0.7287,
+        "error_px": 0.131439699964754,
+        "chained_error_survey_px": 0.24528507020739107
+      },
+      {
+        "true": [
+          338.6579640958639,
+          247.82009060784833
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.93 of the best): a guess between places, not a placement",
+        "score": 0.9983,
+        "ambiguity": 0.9276
+      },
+      {
+        "true": [
+          131.2473544482712,
+          218.25359956586306
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6047,
+        "ambiguity": 0.6179,
+        "error_px": 0.1443266138813671,
+        "chained_error_survey_px": 0.1401184202510913
+      },
+      {
+        "true": [
+          295.52710053163065,
+          167.4113612298144
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7071,
+        "ambiguity": 0.6435,
+        "error_px": 0.14925993393999526,
+        "chained_error_survey_px": 0.1010457084002743
+      },
+      {
+        "true": [
+          169.58379952278224,
+          324.1203205294444
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6822,
+        "ambiguity": 0.571,
+        "error_px": 0.15431700761489525,
+        "chained_error_survey_px": 0.3216944777158685
+      },
+      {
+        "true": [
+          352.5553872857189,
+          312.2060749478225
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.98 of the best): a guess between places, not a placement",
+        "score": 0.9983,
+        "ambiguity": 0.9792
+      },
+      {
+        "true": [
+          133.93216482529692,
+          371.71254451564016
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.772,
+        "ambiguity": 0.5823,
+        "error_px": 0.09593756173295274,
+        "chained_error_survey_px": 0.20360186402333172
+      },
+      {
+        "true": [
+          147.95471396501844,
+          250.33780056551834
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5964,
+        "ambiguity": 0.4743,
+        "error_px": 0.2268194100270288,
+        "chained_error_survey_px": 0.3185452983165894
+      },
+      {
+        "true": [
+          186.57985090929554,
+          369.5025926381007
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6835,
+        "ambiguity": 0.7081,
+        "error_px": 0.20141832245927868,
+        "chained_error_survey_px": 0.6597222386333396
+      },
+      {
+        "true": [
+          163.0431372013685,
+          290.8765735846058
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7827,
+        "ambiguity": 0.7049,
+        "error_px": 0.1008131999860941,
+        "chained_error_survey_px": 0.1751556626827254
+      },
+      {
+        "true": [
+          275.4629359382626,
+          333.3288028191002
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5644,
+        "ambiguity": 0.4973,
+        "error_px": 0.14310960409143245,
+        "chained_error_survey_px": 0.2987817772415183
+      },
+      {
+        "true": [
+          154.25354437789656,
+          363.28794404312714
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.99 of the best): a guess between places, not a placement",
+        "score": 0.9991,
+        "ambiguity": 0.9922
+      },
+      {
+        "true": [
+          398.4469859861753,
+          289.11983008204817
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7272,
+        "ambiguity": 0.7934,
+        "error_px": 0.04265998201003375,
+        "chained_error_survey_px": 0.2616955428726912
+      },
+      {
+        "true": [
+          216.44518289978683,
+          120.81111228276113
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6001,
+        "ambiguity": 0.4679,
+        "error_px": 0.1126019123002501,
+        "chained_error_survey_px": 0.12822152222574765
+      },
+      {
+        "true": [
+          365.0324358684194,
+          169.46126047606876
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.8087,
+        "ambiguity": 0.7147,
+        "error_px": 0.28351509028584215,
+        "chained_error_survey_px": 0.2448464127727856
+      },
+      {
+        "true": [
+          361.79549824847624,
+          254.3542092404382
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7162,
+        "ambiguity": 0.6391,
+        "error_px": 0.22318423314012187,
+        "chained_error_survey_px": 0.057821939973949764
+      },
+      {
+        "true": [
+          269.6305742963702,
+          169.41346227117825
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6883,
+        "ambiguity": 0.6752,
+        "error_px": 0.23226222260187165,
+        "chained_error_survey_px": 0.08884239137845179
+      },
+      {
+        "true": [
+          215.14303998491422,
+          311.2797795014933
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6463,
+        "ambiguity": 0.5789,
+        "error_px": 0.2873834735740322,
+        "chained_error_survey_px": 0.035283921293204415
+      },
+      {
+        "true": [
+          262.23416569239373,
+          308.0063069592292
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6017,
+        "ambiguity": 0.5897,
+        "error_px": 0.0891980643983179,
+        "chained_error_survey_px": 0.30300817352119036
+      },
+      {
+        "true": [
+          141.56547584418877,
+          255.03450589102465
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7084,
+        "ambiguity": 0.73,
+        "error_px": 0.15260820020787355,
+        "chained_error_survey_px": 0.1356778205158224
+      },
+      {
+        "true": [
+          222.71342964409854,
+          339.98113471854697
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7244,
+        "ambiguity": 0.691,
+        "error_px": 0.1860688724689449,
+        "chained_error_survey_px": 0.36266362994254536
+      },
+      {
+        "true": [
+          329.3427135510096,
+          166.86352449029678
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.801,
+        "ambiguity": 0.661,
+        "error_px": 0.1276064565174228,
+        "chained_error_survey_px": 0.22547460974254943
+      },
+      {
+        "true": [
+          222.28668142220738,
+          381.15763834238936
+        ],
+        "status": "unplaced",
+        "reason": "another place matches almost as well (0.81 of the best): a guess between places, not a placement",
+        "score": 0.7455,
+        "ambiguity": 0.8097
+      },
+      {
+        "true": [
+          131.81967247944036,
+          250.62474663691404
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6722,
+        "ambiguity": 0.4967,
+        "error_px": 0.1463886400876423,
+        "chained_error_survey_px": 0.40686661124820084
+      },
+      {
+        "true": [
+          329.5798990831056,
+          275.72495866877506
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.653,
+        "ambiguity": 0.6772,
+        "error_px": 0.094859372847256,
+        "chained_error_survey_px": 0.1271042369754117
+      },
+      {
+        "true": [
+          350.35556189084684,
+          330.83639627194947
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7006,
+        "ambiguity": 0.5913,
+        "error_px": 0.05314877819201969,
+        "chained_error_survey_px": 0.02554575685590059
+      },
+      {
+        "true": [
+          207.68240677541425,
+          251.01090348713038
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6485,
+        "ambiguity": 0.6451,
+        "error_px": 0.2620861575332121
+      },
+      {
+        "true": [
+          291.8731659093142,
+          201.11754606576002
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6958,
+        "ambiguity": 0.6256,
+        "error_px": 0.07997393669502607,
+        "chained_error_survey_px": 0.26608858133698005
+      },
+      {
+        "true": [
+          222.08285017072845,
+          239.0050868705251
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6732,
+        "ambiguity": 0.5169,
+        "error_px": 0.27602228983622107,
+        "chained_error_survey_px": 0.15878856683260217
+      },
+      {
+        "true": [
+          259.8515653644259,
+          155.80269049928927
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7225,
+        "ambiguity": 0.6626,
+        "error_px": 0.23874434926198412,
+        "chained_error_survey_px": 0.3077070617817262
+      },
+      {
+        "true": [
+          163.6654136986953,
+          205.6355193567342
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7315,
+        "ambiguity": 0.5302,
+        "error_px": 0.11702375287518074,
+        "chained_error_survey_px": 0.2824908417164902
+      },
+      {
+        "true": [
+          189.10773070363928,
+          149.0812827999631
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6614,
+        "ambiguity": 0.4903,
+        "error_px": 0.25590115497081534,
+        "chained_error_survey_px": 0.17877513749900786
+      },
+      {
+        "true": [
+          388.2153307333726,
+          267.63192797407623
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7176,
+        "ambiguity": 0.5984,
+        "error_px": 0.051819085159468634,
+        "chained_error_survey_px": 0.1657973511282278
+      },
+      {
+        "true": [
+          372.23928126839456,
+          307.78863384414325
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6006,
+        "ambiguity": 0.4163,
+        "error_px": 0.06451255440741926,
+        "chained_error_survey_px": 0.009530064327627532
+      },
+      {
+        "true": [
+          371.37873528523835,
+          267.95340033962407
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7369,
+        "ambiguity": 0.6758,
+        "error_px": 0.2199987922582212,
+        "chained_error_survey_px": 0.2257138892586638
+      },
+      {
+        "true": [
+          337.4749213133377,
+          157.30339558043886
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7129,
+        "ambiguity": 0.4584,
+        "error_px": 0.22008987653783982,
+        "chained_error_survey_px": 0.37168913182178237
+      },
+      {
+        "true": [
+          123.7377443663164,
+          107.03763677683004
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5988,
+        "ambiguity": 0.4416,
+        "error_px": 0.061393688259773316,
+        "chained_error_survey_px": 0.2343229967170586
+      },
+      {
+        "true": [
+          307.3565917050175,
+          176.44814834469122
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6436,
+        "ambiguity": 0.4782,
+        "error_px": 0.26193327337125516,
+        "chained_error_survey_px": 0.22441773214634375
+      },
+      {
+        "true": [
+          196.84766799928389,
+          318.57408654978803
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6232,
+        "ambiguity": 0.5474,
+        "error_px": 0.04856901075247388
+      },
+      {
+        "true": [
+          341.85663583475963,
+          255.10511536698627
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6982,
+        "ambiguity": 0.7453,
+        "error_px": 0.17226943826315966,
+        "chained_error_survey_px": 0.3083993944214872
+      },
+      {
+        "true": [
+          368.96208182059956,
+          239.43168278261055
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6622,
+        "ambiguity": 0.6031,
+        "error_px": 0.0948084927039398,
+        "chained_error_survey_px": 0.5056850051928496
+      },
+      {
+        "true": [
+          207.73328579183172,
+          104.69770982223122
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7427,
+        "ambiguity": 0.6796,
+        "error_px": 0.10554042722666658,
+        "chained_error_survey_px": 0.4690605914501999
+      },
+      {
+        "true": [
+          305.1994604983971,
+          275.1407376065624
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.5477,
+        "ambiguity": 0.4441,
+        "error_px": 0.17144828393161615,
+        "chained_error_survey_px": 0.5891543113094974
+      },
+      {
+        "true": [
+          274.4178335245428,
+          270.9336148710523
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.7051,
+        "ambiguity": 0.5393,
+        "error_px": 0.10680636703634509,
+        "chained_error_survey_px": 0.12091444390718284
+      },
+      {
+        "true": [
+          290.2036547191107,
+          308.12402933563084
+        ],
+        "status": "placed",
+        "reason": "",
+        "score": 0.6169,
+        "ambiguity": 0.5001,
+        "error_px": 0.13872310906035207,
+        "chained_error_survey_px": 0.45237384480647913
+      }
+    ]
+  },
+  "passed": {
+    "tier2_p95_parent_px": true,
+    "tier3_p95_parent_px": true,
+    "tier2_placed_share": true,
+    "tier3_placed_share": true,
+    "wrong_placements": true,
+    "atomic_image_in_survey_after_two_placements": true
+  }
+}
