@@ -974,8 +974,9 @@ def _map_text(node: Any) -> str:
     meta = _attrs(node)
     return (
         f"stitched map of {meta.get('run')}: canvas {meta.get('canvas_shape')} pixels at {_fmt(float(meta.get('pixel_size_m') or 0))} m, "
-        f"origin {meta.get('origin_xy_m')} m, {meta.get('levels')} levels, {len(meta.get('pois') or [])} points of interest. "
-        "For stage coordinates, crops and points use map_info, get_region and list_pois."
+        f"origin {meta.get('origin_xy_m')} m, {meta.get('levels')} levels. "
+        "Its points of interest belong to the run (every version of the map shares them). "
+        "For stage coordinates, crops, points and other versions use map_info, get_region, list_pois and list_maps."
     )
 
 
@@ -1019,7 +1020,7 @@ def summarize(node: Any, key: str) -> dict:
     """What list_data shows for one key: its kind, shape and detector, from structure only (one short walk)."""
     if is_map(node):
         meta = _attrs(node)
-        return {"key": key, "kind": "map", "shape": meta.get("canvas_shape"), "pois": len(meta.get("pois") or [])}
+        return {"key": key, "kind": "map", "shape": meta.get("canvas_shape"), "run": meta.get("run")}
     ds = pick(node, key)
     entry = {"key": key, "kind": detect(ds).name, "dataset": ds.path, "shape": list(ds.shape), "dtype": str(ds.dtype)}
     for attr in ("acquisition_type", "detector"):

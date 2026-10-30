@@ -47,7 +47,7 @@ def seq_path(path: str | Path) -> Path:
 
 
 @contextmanager
-def _file_lock(handle, deadline: float) -> Iterator[None]:
+def file_lock(handle, deadline: float) -> Iterator[None]:
     """An exclusive lock between processes on ``handle`` (the .seq file, opened "a+b"), waited for until ``deadline``."""
     if os.name == "nt":
         import msvcrt
@@ -120,7 +120,7 @@ class SequencedAppender:
         """Number ``row``, append it as one line and return it. Raises OSError if the file cannot be written."""
         with self._lock:
             try:
-                with seq_path(self.path).open("a+b") as counter, _file_lock(counter, time.monotonic() + LOCK_TIMEOUT_S):
+                with seq_path(self.path).open("a+b") as counter, file_lock(counter, time.monotonic() + LOCK_TIMEOUT_S):
                     counter.seek(0)
                     stored = counter.read(100).decode("ascii", errors="replace").split()
                     try:

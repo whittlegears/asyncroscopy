@@ -29,6 +29,17 @@ mcp:
       - Init
       - Kill
       - RestartServer
+      # Tango's per-device State/Status: never called by an agent or the GUI.
+      - State
+      - Status
+    # The same agent-hidden commands as the twin's endpoint (configs/mcp_dt.yaml); tests/test_agent_configs.py
+    # checks that every agent configuration blocks at least these.
+    DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+    Approvals: [request_status, list_pending]
+    Mapper: [get_reservation]
+    Tuner: [get_reservation]
+  include_only_functions: []
+  tool_log: ""
   # The analysis server (pyTEMlib: stitching, scoring) on the MCP host, so
   # wait_for_job also waits on assemble_map and score_map jobs; agents read this
   # address from the endpoint (endpoint_info). Empty: no analysis server.
@@ -49,3 +60,7 @@ mcp:
   job_limits:
     max_duration_s: 14400
     max_dose_e_per_a2: 5000
+  # Agent endpoint: operator-only commands are never offered here. The GUI uses an operator configuration.
+  endpoint_role: agent
+  # Instrument Trace: one JSON line per tool call. The clock is this computer's on hardware.
+  trace: outputs/trace/mcp_agent.jsonl

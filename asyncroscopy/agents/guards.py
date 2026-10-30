@@ -34,13 +34,15 @@ from typing import Any, Callable
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
+from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
+
 CHARS_PER_TOKEN = 3.5
 OUTPUT_RESERVE_TOKENS = 1500  # left for the model's answer and tool call
 LATEST_REPLY_CHARS = 6000
 DIGEST_CHARS = 160
 OLD_TEXT_CHARS = 600
 ACTIVE = {"reserved", "queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}
-KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b|\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*_map\b")
+KEY = re.compile(f"{DATA_KEY.pattern}|{MAP_KEY.pattern}")
 
 
 def context_chars(num_ctx: int) -> int:

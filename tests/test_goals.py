@@ -484,4 +484,6 @@ def test_a_restitched_map_key_is_still_a_map_key():
 
     assert MAP_KEY.search("now map_f22dde7faf84_map_20261029T023056_33d6.").group(0) == "map_f22dde7faf84_map_20261029T023056_33d6"
     assert MAP_KEY.search("map_f22dde7faf84_map").group(0) == "map_f22dde7faf84_map"
+    version = "map_f22dde7faf84_map_20261030T174128543Z_b1be"
+    assert MAP_KEY.search(f"the new version {version}, beside the old one").group(0) == version
     assert MAP_KEY.search("call assemble_map then score_map") is None
