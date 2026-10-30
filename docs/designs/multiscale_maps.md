@@ -273,7 +273,7 @@ The first step is built in SciAgentGUI (`MapView.tsx`, `tiledClient.ts`, commit 
 *   **2 mm grid with lazy generation (P5)**: grid bars and holes, film, clusters, particles, lattice, each generated from (seed, cell).
 *   **Deep-zoom viewer (P4)**: tiles and cache on today's Maps page, then tiers layered in one view.
 *   **Transfer (P6)**: hardware records matching the twin's; the point-measurement skill unchanged on the Spectra; a real survey as stitching test data.
-*   **Sealing (P7)**: started. `save_acquisition` seals every file it writes; a sealed file whose bytes changed is refused a new seal; `startup_scripts/verify_integrity.py` reports changed or missing files and breaks in the manifest's chain. Still to do: seal stitched map versions and placement logs on the analysis server, chain the dose ledger, and check seals where data is read.
+*   **Sealing (P7)**: started. `save_acquisition` seals every file it writes; a sealed file whose bytes changed is refused a new seal; `startup_scripts/verify_integrity.py` reports changed or missing files and breaks in the manifest's chain. The dose ledger is now a keyed chain like the manifest, and `verify_integrity.py` checks it; ledger lines written before the chain are counted as `unsealed_before_chain`, not failed. Still to do: seal stitched map versions and placement logs on the analysis server, which runs in its own environment without the integrity key (where that key lives is an open decision), and check seals where data is read.
 
 --------------------------------------------------------------------------------
 

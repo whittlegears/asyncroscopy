@@ -1,4 +1,4 @@
-"""Tamper evidence for files and chained logs (written; not yet called by any writer).
+"""Tamper evidence for files and chained logs.
 
 ``seal(path)`` records a file's SHA-256 and size in an append-only manifest (``ASYNCROSCOPY_INTEGRITY_LOG``,
 default ``outputs/integrity/manifest.jsonl``). Each manifest line carries an HMAC (a keyed SHA-256) over its own
@@ -10,8 +10,8 @@ fields and the HMAC of the line before it (``chain_append``), so:
 
 ``verify`` checks the manifest's chain, every sealed file, and any other chained logs it is given.
 
-``save_acquisition`` seals every file it writes (``data/data_writer.py``); the dose ledger and the analysis server's
-stitched maps are not sealed yet (``docs/designs/multiscale_maps.md``, P7). ``startup_scripts/verify_integrity.py``
+``save_acquisition`` seals every file it writes (``data/data_writer.py``), and the dose ledger is a chained log
+(``data/dose_ledger.py``); the analysis server's stitched maps are not sealed yet (``docs/designs/multiscale_maps.md``, P7). ``startup_scripts/verify_integrity.py``
 runs ``verify`` and prints what changed, went missing or broke the chain.
 
 The key comes from ``ASYNCROSCOPY_INTEGRITY_KEY`` (hex), or the file ``ASYNCROSCOPY_INTEGRITY_KEY_FILE``
@@ -106,8 +106,28 @@ def _line_count(path: Path) -> int:
         return sum(1 for _ in handle)
 
 
+def _legacy_lines(log: Path) -> tuple[int, str]:
+    """The number of lines before the first sealed one and the SHA-256 of their bytes (written before chaining)."""
+    digest, count = hashlib.sha256(), 0
+    with open(log, "rb") as handle:
+        for raw in handle:
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict) and "mac" in parsed:
+                break
+            digest.update(raw.rstrip(b"\r\n") + b"\n")
+            count += 1
+    return count, digest.hexdigest()
+
+
 def chain_append(log: Path, record: dict) -> dict:
-    """Append ``record`` to the chained log ``log`` with its seq, the previous entry's mac and its own mac."""
+    """Append ``record`` to the chained log ``log`` with its seq, the previous entry's mac and its own mac.
+
+    The first sealed line of a log that already holds unsealed lines (written before it was chained) records
+    how many there are and the SHA-256 of their bytes, so those lines cannot later be edited, added to or
+    stripped of their seals unnoticed."""
     key = _key()
     log.parent.mkdir(parents=True, exist_ok=True)
     with _guard, open(log.with_name(log.name + ".lock"), "a+b") as lock, file_lock(lock, time.monotonic() + LOCK_WAIT_S):
@@ -116,8 +136,14 @@ def chain_append(log: Path, record: dict) -> dict:
             last = json.loads(_last_line(log) or "{}")
         except ValueError:  # a last line cut short by a crash: the chain reports it, the next entry follows it
             last, cut = {}, True
+        if not isinstance(last, dict):
+            last, cut = {}, True
         seq = int(last.get("seq", 0)) + 1 if not cut else _line_count(log) + 1
         entry = {**record, "seq": seq, "prev": last.get("mac", "")}
+        if (cut or "mac" not in last) and log.exists() and log.stat().st_size:
+            count, digest = _legacy_lines(log)
+            if count and count == _line_count(log):
+                entry.update(legacy_lines=count, legacy_sha256=digest)
         entry["mac"] = _mac(key, entry)
         with open(log, "a", encoding="utf-8") as handle:
             handle.write(("\n" if not _ends_with_newline(log) else "") + json.dumps(entry) + "\n")
@@ -125,31 +151,46 @@ def chain_append(log: Path, record: dict) -> dict:
 
 
 def verify_chain(log: Path) -> dict:
-    """{"entries", "problems": [...], "head"}: every line's mac and its link to the line before."""
+    """{"entries", "problems": [...], "head"}: every line's mac and its link to the line before.
+
+    Lines at the start of a log written before it was chained are counted as "unsealed_before_chain". They are
+    accepted only when the first sealed line recorded that many lines with the same SHA-256, or when no line
+    is sealed yet; an unsealed line after the first sealed one is a problem."""
     problems: list[str] = []
     entries, previous = 0, ""
+    legacy, legacy_digest = 0, hashlib.sha256()
     if not log.exists():
         return {"entries": 0, "problems": [], "head": ""}
     key = _key()
-    with open(log, encoding="utf-8") as handle:
-        for number, line in enumerate(handle, 1):
+    with open(log, "rb") as handle:
+        for number, raw in enumerate(handle, 1):
             try:
-                entry = json.loads(line)
+                entry = json.loads(raw)
             except ValueError:
-                problems.append(f"{log.name} line {number} is not a record (cut short or edited)")
-                previous = ""
-                continue
+                entry = None
             mac = entry.pop("mac", None) if isinstance(entry, dict) else None
-            if not isinstance(entry, dict) or mac is None:
-                problems.append(f"{log.name} line {number} has no seal")
+            if mac is None:
+                if entries == 0:
+                    legacy += 1
+                    legacy_digest.update(raw.rstrip(b"\r\n") + b"\n")
+                elif entry is None:
+                    problems.append(f"{log.name} line {number} is not a record (cut short or edited)")
+                    previous = ""
+                else:
+                    problems.append(f"{log.name} line {number} has no seal")
                 continue
+            if entries == 0 and legacy and (entry.get("legacy_lines") != legacy or entry.get("legacy_sha256") != legacy_digest.hexdigest()):
+                problems.append(f"{log.name}: the {legacy} line(s) before line {number} are not the unsealed lines its first seal recorded (lines were edited, added or stripped of their seals)")
             entries += 1
             if not hmac.compare_digest(mac, _mac(key, entry)):
                 problems.append(f"{log.name} line {number} was changed after it was written (its seal does not match)")
             elif entry.get("prev", "") != previous:
                 problems.append(f"{log.name} line {number} does not follow the line before it (a line was removed, inserted or moved)")
             previous = mac
-    return {"entries": entries, "problems": problems, "head": previous}
+    report = {"entries": entries, "problems": problems, "head": previous}
+    if legacy:
+        report["unsealed_before_chain"] = legacy
+    return report
 
 
 def seal(path: str | Path, key: str = "", writer: str = "") -> dict:
@@ -213,8 +254,13 @@ def verify(paths: list[str] | None = None, logs: tuple[Path, ...] = ()) -> dict:
     last mac: copy it elsewhere to notice a manifest whose end was cut off later."""
     chain = verify_chain(manifest_path())
     problems = list(chain["problems"])
+    before_chain, heads = {}, {}
     for log in logs:
-        problems += verify_chain(log)["problems"]
+        checked = verify_chain(log)
+        problems += checked["problems"]
+        heads[str(log)] = checked["head"]
+        if checked.get("unsealed_before_chain"):
+            before_chain[str(log)] = checked["unsealed_before_chain"]
     index = _index()
     wanted = index if paths is None else {str(Path(p).resolve()): index.get(str(Path(p).resolve())) for p in paths}
     changed, missing, unsealed = [], [], []
@@ -232,4 +278,8 @@ def verify(paths: list[str] | None = None, logs: tuple[Path, ...] = ()) -> dict:
     }
     if unsealed:
         report["unsealed"] = unsealed
+    if heads:
+        report["log_heads"] = heads
+    if before_chain:
+        report["unsealed_before_chain"] = before_chain
     return report
