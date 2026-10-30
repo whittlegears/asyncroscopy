@@ -153,7 +153,9 @@ Findings that changed the plan:
 
 Built in pyTEMlib (`mosaic.py`, commit 828f787): sub-pixel drawing by cubic spline (not Lanczos: same accuracy here, simpler); gain and offset modelled as smooth in acquisition time with priors and caps (per-tile values ran away across large maps in review); the scan's shared linear map measured with the stage regressed on tile centres and the solve repeated with the stage prior in the tiles' scale; a calibration input; robust solving that drops worst-first and takes back correct matches, including links that rejoin groups of tiles whose wrong links outnumbered their right ones; overlap-only correlation (2.8x faster). Multi-band blending and per-tile rectification were not needed: seams already pass, and switching the twin's flyback distortion off changed nothing.
 
-Still failing, with what is known about why:
+**G2 is met at the overlap the Mapper's warning recommends** (`benchmarks/results/mosaic_twin_overlap57.md`, the same 20 x 20 map at 0.57 overlap): placement 0.07 / 0.17 / 0.30 px, no wrong or unplaced tile, seams 1.01, brightness 0.34 %. Stitching then took 950 s (more overlap, larger correlations): a cost to bring down before P5.
+
+At the 30 % overlap (the result above):
 
 *   **Three of 400 tiles are unplaced.** At the turn from the first row to the second the stage landed 600 nm from where it reported, outside the search window a 30 % overlap allows (0.6 of the overlap, 432 nm). They are listed and drawn only where no placed tile is, never guessed. The Mapper's estimate now warns when a plan's overlap is smaller than the stage can put neighbours apart (`Mapper._overlap_warning`) and says what overlap would do; re-imaging such a tile is the other remedy (follow-up).
 

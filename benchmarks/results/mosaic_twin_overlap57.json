@@ -1,0 +1,96 @@
+{
+  "config": "configs\\digital_twin_large_map.yaml",
+  "sample_size_m": 3.6e-05,
+  "particles": 20000,
+  "grid": 20,
+  "imsize": 512,
+  "fov_m": 2.4e-06,
+  "overlap": 0.57,
+  "dwell_s": 1e-06,
+  "stage_sigma_m": 2.9e-07,
+  "tiles": 400,
+  "pixel_m": 4.6875e-09,
+  "overrides": [],
+  "calibration": null,
+  "acquire_s": 29.0,
+  "stitch_s": 950.5,
+  "stage_only": {
+    "median_px": 39.53061726431399,
+    "p95_px": 78.45412531551293,
+    "max_px": 127.66223809179431,
+    "after_affine_median_px": 39.48438671834287,
+    "after_affine_p95_px": 78.08415738623522,
+    "after_affine_max_px": 122.13160860571256,
+    "misplaced": []
+  },
+  "stitched": {
+    "median_px": 3.3668785528537546,
+    "p95_px": 8.214901326900934,
+    "max_px": 9.877965066032251,
+    "after_affine_median_px": 0.07193007386430306,
+    "after_affine_p95_px": 0.1665390979338115,
+    "after_affine_max_px": 0.30339910278891047,
+    "misplaced": []
+  },
+  "seams": {
+    "ratio": 1.0115070215122395,
+    "edge_pixels": 6662092
+  },
+  "brightness": {
+    "mean_pct": 0.33553312173828836,
+    "p95_pct": 1.193582875088339,
+    "pairs": 3832
+  },
+  "scan_linear": {
+    "applied": [
+      [
+        0.9907828825390923,
+        -0.00582484119135543
+      ],
+      [
+        -0.0013846358194101467,
+        0.9938124817757984
+      ]
+    ],
+    "estimate": [
+      [
+        0.9907828825390923,
+        -0.00582484119135543
+      ],
+      [
+        -0.0013846358194101467,
+        0.9938124817757984
+      ]
+    ],
+    "stderr": [
+      [
+        0.001249343781789751,
+        0.0012454347031284705
+      ],
+      [
+        0.0013438679723189214,
+        0.0013396631363956622
+      ]
+    ]
+  },
+  "gain_range": [
+    0.9809353047356452,
+    1.01978824266129
+  ],
+  "unplaced_tiles": 0,
+  "misplaced_tiles": [],
+  "detector_gain_range": [
+    1.0000207822019005,
+    1.0474225843029834
+  ],
+  "matches_used": 2431,
+  "passed": {
+    "placement_median_px": true,
+    "placement_p95_px": true,
+    "placement_max_px": true,
+    "misplaced_tiles": true,
+    "seam_ratio": true,
+    "neighbour_brightness_pct": true,
+    "unplaced_tiles": true
+  }
+}
