@@ -134,7 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f'  command: {" ".join(command)}')
 
     try:
-        # One state file per name and port so bridges on other ports survive.
+        # One state file per server name and port: the stale-PID cleanup on start reaps an
+        # old bridge on this port but never a still-running bridge on another port.
         with ProcessManager(name=f"run_mcp_{config.mcp.name}_{config.mcp.http_port}") as manager:
             managed: ManagedProcess = manager.start_process(
                 key=config.mcp.name,

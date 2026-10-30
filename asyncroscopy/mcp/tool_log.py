@@ -1,4 +1,4 @@
-"""Append-only JSONL log of MCP tool calls."""
+"""Append-only JSONL log of MCP tool calls, one line per call, shared by every harness."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class ToolCallLog:
         result: Any = None,
         error: BaseException | None = None,
     ) -> None:
-        # Never let a logging failure fail the device call.
+        # A logging failure must never turn an executed device call into a reported failure.
         try:
             row = {
                 "ts": started,
