@@ -59,6 +59,31 @@ spectrum keys. Everything else is on the map: every spectrum is an
 `eds_point` point of interest (`list_pois`), and the run file has all keys
 (`view_data`).
 
+### Map versions and points of interest
+
+Every `assemble_map` makes a new map version under its own key
+(`<run>_map_<UTC time>Z_<hex>`, or that name with `.h5` beside a local run).
+No tool deletes or overwrites a version, so a map that something was placed on
+or cited from stays as it was. `list_maps(run)` lists a run's versions, newest
+first; `map_info` says how many there are and whether the one asked about is the
+newest. Each version records a hash of what it was stitched from
+(`inputs_sha256`: the run, the tiles used, the settings and the pyTEMlib
+version): two versions with the same hash were stitched the same way from the
+same tiles.
+
+Points of interest belong to the run, not to one version: they are in stage
+metres, so one point store per run (`<run>_points`) serves every version, and
+`list_pois` on any version of a run's map lists the same points. A re-stitch
+adds only the run's EDS points the store does not hold yet; each keeps the
+position of the stitch that first added it, so every version shows it at one
+place (a version's own tile positions are in its `tile_positions_px`). Scoring
+again with the same `tag` replaces the regions that tag added, whichever version
+they were scored on. Replacing points (scoring again with the same `tag`)
+switches to a new layer and keeps the old one, listed in the store's `layers`.
+Maps stitched before versions existed keep their key `<run>_map` and their
+points; the first new stitch or added point copies those points into the run's
+store once (`migrated_from`).
+
 ## Stage safety
 
 * The STAGE device refuses positions outside its `x_limits_m`, `y_limits_m`

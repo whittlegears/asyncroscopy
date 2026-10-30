@@ -38,6 +38,7 @@ from _common import is_infra_error, out_of_box_moves, sleepwalking, warm_up
 from langchain_core.messages import HumanMessage
 
 from asyncroscopy.agents.config import AgentConfig
+from asyncroscopy.agents.goals import MAP_KEY
 from asyncroscopy.agents.graphs.mapping import MappingGraph
 from asyncroscopy.agents.skill_middleware import recursion_limit
 
@@ -106,7 +107,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     if plan is not None and not isinstance(plan, dict):
         plan = None
     final = messages[-1].content if messages else ""
-    map_key = re.search(r"map_\w+_map", final)
+    map_key = MAP_KEY.search(final)
     state_like = {"map_key": map_key.group(0) if map_key else None, "pois": [{"kind": "candidate"}] if any(c["name"] == "score_map" for c in calls) else []}
     checks = check(task, plan, state_like, centre)
     checks["used_mapper_not_a_loop"] = sum(1 for c in calls if c["name"].endswith("_move_stage")) <= 2

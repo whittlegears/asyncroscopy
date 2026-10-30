@@ -28,6 +28,9 @@ mcp:
       - State
       - Status
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+    Approvals: [request_status, list_pending]
+    Mapper: [get_reservation]
+    Tuner: [get_reservation]
   include_only_functions: []
   tool_log: ""
   # No map analysis for a Raman microscope: wait_for_job waits on this stack's job devices only.

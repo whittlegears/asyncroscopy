@@ -14,6 +14,7 @@ It switches approval mode to approve and back, and denies the requests it causes
 import argparse
 import asyncio
 import json
+import re
 import socket
 import sys
 import urllib.error
@@ -84,9 +85,21 @@ async def mcp_side():
 
 
 def eds_points(key: str, meta: dict, cells: int = 3) -> list[dict]:
-    """EDS points the way the GUI reads them: metadata (older maps), then the POI layer's spatial cells."""
+    """EDS points the way the GUI reads them: the run's point store (<run>_points) when it is ready, else the map
+    itself (maps stitched before point stores): its metadata, then its POI layer's spatial cells."""
     points = [p for p in meta.get("pois", []) if p.get("kind") == "eds_point"]
     layer = meta.get("poi_layer", "poi")
+    run = str(meta.get("run") or "")
+    if run:
+        stem = re.sub(r"\.(h5|hdf5)$", "", run.replace("\\", "/").rstrip("/").split("/")[-1], flags=re.I)
+        try:
+            store = get(f"/api/v1/metadata/{urllib.parse.quote(stem + '_points')}")["data"]["attributes"]["metadata"]
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                raise
+            store = {}
+        if store.get("kind") == "poi_store" and store.get("ready") is not False and store.get("run") == run:
+            key, layer, points = f"{stem}_points", store.get("poi_layer", "poi"), []
     try:
         listing = get(f"/api/v1/search/{urllib.parse.quote(key)}/{layer}?fields=metadata&page[limit]=300")
     except urllib.error.HTTPError as exc:

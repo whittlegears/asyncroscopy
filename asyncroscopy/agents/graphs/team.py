@@ -79,7 +79,7 @@ ROLE_PROMPTS = {
 - Data are keys; look with view_data (format text for numbers and peaks) and list_data; never ask for raw arrays.
 - Stitching (assemble_map) and scoring (score_map) are jobs: call wait_for_job with their job_id until done (its reply has the results).
 - Fix a refused call from its message and call again; never repeat a failing call unchanged.
-- Finish with one short paragraph: what you found and the keys (the map key ends in _map).""",
+- Finish with one short paragraph: what you found and the keys (a map key contains _map).""",
 }
 PLAN_PROMPT = """Split the user's request into steps for these agents. Reply with JSON only:
 {{"steps": [{{"agent": "<name>", "task": "<what to do, with every number and unit from the request>"}}]}}

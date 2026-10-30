@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -871,13 +872,22 @@ def _live_owner(process) -> str | None:
         return f"a process that cannot be inspected ({type(exc).__name__})"
 
 
+# Directories Tiled writes for the analysis server's nodes: map versions (<run>_map, <run>_map_<time>_<hex>) and a
+# run's point store (<run>_points). Their files are Tiled's own storage, never acquisitions to register.
+TILED_WRITTEN = re.compile(r".+_(?:map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?|points)")
+
+
+def _tiled_written(directory: str) -> bool:
+    return TILED_WRITTEN.fullmatch(directory) is not None
+
+
 def _reconcilable(path: str, save_path: str) -> bool:
     """Whether reconcile would find ``path``: under the save path, outside dot-directories and Tiled's storage."""
     if not _is_under(path, save_path):
         return False
     relative = Path(os.path.relpath(os.path.abspath(path), os.path.abspath(save_path)))
     *directories, name = relative.parts
-    return not name.startswith(".") and not any(d.startswith(".") or d.endswith("_map") for d in directories)
+    return not name.startswith(".") and not any(d.startswith(".") or _tiled_written(d) for d in directories)
 
 
 def _read_directory(command_line: list[str], cwd: str) -> str | None:
@@ -893,7 +903,7 @@ def _acquisition_files(save_path: Path):
     if not save_path.is_dir():
         return
     for directory, subdirectories, files in os.walk(save_path):
-        subdirectories[:] = sorted(d for d in subdirectories if not d.startswith(".") and not d.endswith("_map"))
+        subdirectories[:] = sorted(d for d in subdirectories if not d.startswith(".") and not _tiled_written(d))
         for name in sorted(files):
             if not name.startswith(".") and Path(name).suffix.lower() in REGISTRABLE_SUFFIXES:
                 yield Path(directory) / name

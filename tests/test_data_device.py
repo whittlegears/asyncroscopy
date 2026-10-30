@@ -881,6 +881,10 @@ def test_deferral_uses_the_same_rule_as_reconcile(tmp_path) -> None:
     assert _reconcilable(str(tmp_path / "maps" / "map_1.h5"), save)
     assert not _reconcilable(str(tmp_path / ".cache" / "a.h5"), save)
     assert not _reconcilable(str(tmp_path / "map_x_map" / "a.h5"), save)
+    assert not _reconcilable(str(tmp_path / "map_x_map_20261029T023056_33d6" / "a.h5"), save)
+    assert not _reconcilable(str(tmp_path / "map_x_map_20261030T174128543Z_b1be" / "a.h5"), save)
+    assert not _reconcilable(str(tmp_path / "map_x_points" / "a.h5"), save)
+    assert _reconcilable(str(tmp_path / "map_x_mapping" / "a.h5"), save)
     assert not _reconcilable(str(tmp_path / ".a.h5"), save)
     assert not _reconcilable(str(tmp_path.parent / "elsewhere.h5"), save)
 

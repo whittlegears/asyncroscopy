@@ -145,7 +145,9 @@ def test_load_mcp_config():
     assert config.mcp.allow_remote_bind is False
     assert config.mcp.http_port == 8000
     assert config.mcp.blocked_classes == ["DataBase", "DServer"]
-    assert config.mcp.blocked_functions == {"*": ["Init", "Kill", "RestartServer"]}
+    assert config.mcp.blocked_functions["*"] == ["Init", "Kill", "RestartServer", "State", "Status"]
+    assert "start_tiled_server" in config.mcp.blocked_functions["DATA"]  # what the twin's agent endpoint hides
+    assert config.mcp.endpoint_role == "agent" and config.mcp.trace == "outputs/trace/mcp_agent.jsonl"
 
 
 def test_run_mcp_builds_server_command(fake_uv):
