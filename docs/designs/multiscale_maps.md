@@ -31,7 +31,7 @@ The first deliverable is phases P0 to P3. Each goal has a measured check; a phas
 *   **G0. Nothing a map depends on is deleted.** Re-stitching a run keeps every previous map. No agent tool deletes a map or a point-of-interest layer. Every agent endpoint configuration blocks at least what the twin's does and writes a trace.
 *   **G1. A twin that is hard enough to be worth passing,** at the 8 to 20 µm scale: faint support texture visible at every pixel size, slow gain and offset drift, atoms drawn at sub-pixel positions, coarse and fine drawings that agree at the 0.2 nm switch, ground truth that includes each frame's distortion, a dose map that keeps a 50 nm frame's dose local, and a Mapper whose stage uncertainty matches the twin's.
 *   **G2. Stitching measured against truth on the twin, then fixed until** (20 × 20 tiles of 512 pixels, 30 % overlap, distortion on, ±10 % gain drift): median placement error ≤ 0.3 px, 95th percentile ≤ 0.7 px, worst ≤ 2 px; no tile drawn from the stage's guess where its overlap holds enough features; brightness step across tile edges ≤ 1.2 × the step inside tiles; mean brightness difference between neighbours ≤ 1 %.
-*   **G3. Three tiers on the twin** (about 16× per step, adaptive): each child image placed on its parent with a recorded placement, 95th-percentile error ≤ 0.5 parent pixel, at least 90 % placed, zero wrong placements (more than 2 parent pixels off) among those marked placed, and atomic columns within 1 pixel of truth after two placements.
+*   **G3. Three tiers on the twin** (about 16× per step, adaptive): each child image placed on its parent with a recorded placement, 95th-percentile error ≤ 0.5 parent pixel, at least 90 % placed, zero wrong placements (more than 2 parent pixels off) among those marked placed, and an atomic image placed in the survey through two placements within the two steps' allowances added up. (The first draft asked for atomic columns within 1 atomic pixel after two placements; that cannot be met by any registration from a survey: an image's absolute position is only as good as the coarsest placement in its chain, and 0.2 survey pixels of 4.7 nm are about 26 atomic pixels.)
 
 ## Non-Goals
 
@@ -180,6 +180,26 @@ placement = {
 The method: simulate what the parent would have seen of the child (downsample the child with the parent's pixel size and a probe-size blur, not a plain average), then search a window of the parent tile set by the parent's own placement uncertainty plus the stage error, by normalised cross-correlation with a sub-pixel peak. A placement is accepted only if the score passes a threshold and the second-best peak is well below the best (ambiguity ≤ 0.8); otherwise it is `unplaced`. Atomic tiers are always guided by their parent, never by stage position, which removes the wrong-lattice-repeat failure. Placements go into an append-only log per run (`<run stem>_placements`), and `stale` is written when a newer map version's tile differs from the one a placement was made against.
 
 Navigation: the skill moves the stage to the parent-predicted position, acquires, places, and if the target is more than a quarter field off centre, shifts the beam or stage by the measured offset and acquires again.
+
+#### What the benchmark found, and what was built (2026-10-30)
+
+`benchmarks/multiscale_twin.py` (results in `benchmarks/results/multiscale_twin.md`): one 2.4 µm survey tile (4.7 nm pixels), 50 children at 16x (0.29 nm pixels) aimed by image shift, and in each a grandchild at 8x more (0.037 nm pixels, atoms drawn); each placed by `pyTEMlib.image_tools.register.register_child` from the commanded shift alone and scored against where the twin's frames really landed.
+
+| Step | Placed | Error, parent pixels (median / 95th) | Wrong |
+| :-- | :-- | :-- | :-- |
+| survey -> tier 2 | 48 of 50 (96 %) | 0.23 / 0.49 | 0 |
+| tier 2 -> tier 3 (atomic) | 45 of 50 (90 %) | 0.14 / 0.27 | 0 |
+| tier 3 in the survey through both | 43 | 0.23 / 0.50 survey pixels (allowance 0.53) | — |
+
+Every G3 check passes. What made it pass, and what was tried:
+
+*   Survey images are faint (a few counts a pixel): matching raw images left most children with correlations of 0.2 to 0.4 and unplaced. Both images are smoothed by about a parent pixel to decide whether there is a clear match, and the sub-pixel position is taken from lightly smoothed ones near that peak (smoothing enough to judge a match blunts the peak, 95th percentile 1.3 px at 1.5 px smoothing).
+*   A "significance" test (peak against the spread of the window's scores) was tried and dropped: inside a small, smooth window it rejects right matches.
+*   The unplaced children are ones another place matches almost as well (film with too little in it at that scale), refused rather than guessed.
+*   Children were aimed by image shift, not the stage: the stage's error (hundreds of nanometres) is larger than a tier-2 field. Re-centring through tiers by image (design 4.3) is how the real instrument would do it; the twin's image shift is exact, the instrument's will need its own calibration.
+*   Version 1 measures translation only; scale and rotation between tiers are given by the pixel sizes and scan rotation. Fitting them is a follow-up when a calibration says they differ.
+
+Still to build for P3: the analysis server tools (`place_image`, `list_placements`) that store placement records in a per-run log, and the `multiscale_region` skill that drives the procedure through the agent endpoint.
 
 ### What P4 to P7 require of this
 
