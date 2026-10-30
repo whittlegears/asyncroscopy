@@ -128,6 +128,9 @@ class ElectronBeamProfile(InstrumentProfile):
         extra = {"max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3), "beam_current_pa": current, **self.current_fields(beam)}
         return {"dose_e_per_a2": Cost(dose, "e/A^2", message=message)}, extra
 
+    def sample_stage(self):
+        return self.mapper.stage_device_address or None
+
     def stage_targets(self, plan, xs, ys):
         stage = self.mapper.stage_device_address
         if not stage:

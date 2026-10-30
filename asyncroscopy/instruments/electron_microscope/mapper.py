@@ -90,6 +90,7 @@ from tango.server import device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION, load, validate
 from asyncroscopy.data.data_reader import read_acquisition
+from asyncroscopy.data.record import current_sample, record_fields
 from asyncroscopy.jobs import JobDevice, live_drift
 from asyncroscopy.jobs.job_device import done_count
 from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
@@ -734,6 +735,8 @@ class Mapper(JobDevice):
     def on_start(self, job: dict) -> None:
         plan = job["resolved_plan"]
         self._check_current_at_start(job)  # before anything is set: a refusal leaves the job resumable, nothing changed
+        sample = self._sample_now()
+        self._refuse_another_load(job, sample)  # also before anything is set
         # The instrument's settings for the plan, ending safe (beam blanked, tip retracted): it stays safe
         # between tiles and is made unsafe only while a tile is acquired (see the profile's acquire_tile).
         profile_for(self).setup(job)
@@ -762,8 +765,37 @@ class Mapper(JobDevice):
             h5.attrs["axes"] = "images: rows=+y, columns=+x; positions in stage metres"
             h5.attrs["microscope"] = self.microscope_device_address
             h5.attrs["instrument_profile"] = profile_for(self).name
-            h5.attrs["created"] = time.time()
+            if "id" not in h5.attrs:  # a resumed run keeps the id, sample and time it was first written with
+                h5.attrs.update(record_fields(self._name, "map_run", sample))
+            if job.get("run"):
+                h5.attrs["run"] = str(job["run"])
+            h5.attrs["trace_offset"] = int(job.get("trace_offset") or 0)
         job["result_keys"]["run_file"] = str(path)
+
+    def _sample_now(self) -> dict:
+        """Which sample is loaded (record.current_sample), from the profile's STAGE device; nulls and why when it cannot say."""
+        address = profile_for(self).sample_stage()
+        try:
+            stage = self.proxy(address, timeout_s=3.0) if address else None
+        except Exception as exc:
+            return {"sample_id": None, "sample_load_id": None, "sample_error": f"no proxy to {address}: {str(exc).splitlines()[0][:200]}"}
+        return current_sample(stage)
+
+    def _refuse_another_load(self, job: dict, sample: dict) -> None:
+        """A resume onto another sample load would put the new load's features at the old load's positions."""
+        path = next((p for p in (self._file(job), self._run_path(job)) if p.exists()), None)
+        if path is None:
+            return
+        with h5py.File(path, "r") as h5:
+            recorded = h5.attrs.get("sample_load_id")
+        if not recorded:
+            return
+        if sample.get("sample_load_id") is None:
+            raise RuntimeError(f"could not tell which sample is loaded ({sample.get('sample_error')}), so this map (load {recorded}) "
+                               "was not resumed; resume it when the STAGE device answers")
+        if sample["sample_load_id"] != recorded:
+            raise RuntimeError(f"the sample was reloaded since this map started (load {recorded}, now {sample['sample_load_id']}); "
+                               "its tiles would not line up: reserve a new map instead of resuming")
 
     # ------------------------------------------------------------------
     # Steps
@@ -1068,6 +1100,9 @@ class Mapper(JobDevice):
     # ------------------------------------------------------------------
     def _data_proxy(self):
         return self.proxy(self.data_device_address) if self.data_device_address else None
+
+    def on_suspend(self, job: dict, reason: str) -> None:
+        profile_for(self).make_safe(job)  # already safe between tiles; said again so a pause never depends on it
 
     def on_stop(self, job: dict, reason: str) -> None:
         profile_for(self).make_safe(job)  # blank the beam, retract the tip

@@ -25,6 +25,13 @@ for Tango:
   itself once every condition has been good for ``resume_after_s``. Abort works
   while paused.
 
+A person supervising a job can ``pause`` it: after the current step the device
+calls ``on_suspend`` (the instrument waits safely, e.g. beam blanked) and the job
+waits in state ``paused`` holding the device. ``start`` on a paused job continues
+it, through the same approval as any start; ``abort`` stops it. Before a reserved
+plan starts, an operator can ``revise`` it: the plan is checked again as at
+reserve and gets a new plan_id. ``get_jobs`` lists the jobs a supervisor can act on.
+
 Dry run (decision D3 of docs/designs/concepts_brief.md): a plan with ``"dry_run": true``
 is reserved, approved and started like any other, but inside its worker ``proxy()``
 returns a ``RecordingProxy``: reads pass through, ``blank_beam`` really runs, and every
@@ -60,8 +67,10 @@ from asyncroscopy.mcp.tool_log import TraceWriter
 from asyncroscopy.safety.policy import check_overrides
 from asyncroscopy.trace.clock import InstrumentClock
 
-ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting"}
-RUNNING_STATES = {"queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}  # a worker owns the job
+ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "paused", "aborting"}
+RUNNING_STATES = {"queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended", "paused"}  # a worker owns the job
+STOPPABLE_STATES = {"running", "paused_suspended", "paused"}  # abort sets the worker's abort event
+PAUSE_POLL_S = 0.2
 
 
 def lease_seconds(device) -> float:
@@ -371,6 +380,7 @@ class JobDevice(Device):
                 job = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 continue
+            job.pop("pause_requested", None)
             if job.get("state") in RUNNING_STATES:
                 job["state"] = "failed"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
@@ -496,7 +506,7 @@ class JobDevice(Device):
                 return json.dumps({"schema_version": ENVELOPE_VERSION, "error": {"code": exc.code, "message": str(exc), **exc.details}}, default=_json_default)
             return self._error(exc.code, str(exc))
         except (ValueError, TypeError, KeyError, jsonschema.ValidationError) as exc:
-            if isinstance(exc, (TypeError, KeyError)) and fn != self._reserve:
+            if isinstance(exc, (TypeError, KeyError)) and fn not in (self._reserve, self._revise):
                 raise  # outside a plan check these are bugs, not a caller's mistake
             if isinstance(exc, (TypeError, KeyError)) and not self._plan_caused(exc, args[0] if args else ""):
                 example = f" Example plan: {json.dumps(self.PLAN_EXAMPLE)}" if self.PLAN_EXAMPLE is not None else ""
@@ -517,38 +527,13 @@ class JobDevice(Device):
 
     def _reserve(self, request: str) -> str:
         body = self._parse(request, "plan")
-        if not isinstance(body["plan"], dict):
-            raise JobError("bad_request", "'plan' must be an object")
-        body["plan"] = dict(body["plan"])
-        dry_run = body["plan"].pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
-        if not isinstance(dry_run, bool):
-            raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
-        if "drives" in body["plan"]:  # auto mode trusts this list to decide the start; only the device writes it
-            raise JobError("bad_request", "drives is not a plan field: the job device works out which commands it drives")
-        if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
-            raise JobError(
-                "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
-                "does not produce (SUPPORTS_DRY_RUN is false). Nothing was reserved; rehearse this job on a simulated stack",
-            )
         try:  # the deployment's risk patterns (mcp.safety.risk), so a dry run records a get_* command marked high
             risk_overrides = check_overrides(body.get("risk_overrides"))
         except (ValueError, AttributeError) as exc:
             raise JobError("bad_request", f"risk_overrides: {exc}") from exc
         self._refuse_if_busy()  # a quick answer for a busy device, before reading the instrument
-        # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
-        # outside the lock keeps abort, release and a running job's progress from waiting behind it.
-        try:
-            resolved = self.resolve_plan(body["plan"])
-        except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
-            raise  # sorted out by _guard: the caller's plan, or the device's bug
-        except Exception as exc:
-            raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
-        lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
-        if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
-            # The device's own bug, not the caller's plan: say so, outside plan_rejected.
-            raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
-        shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
-        limits = self._check_limits({"plan": body["plan"], "resolved_plan": resolved, **shape})
+        plan, dry_run, resolved, shape, limits = self._checked_plan(body["plan"])
+        body["plan"] = plan
         with self._lock:
             self._refuse_if_busy()  # another reserve may have won while this one read the instrument
             reservation_id = uuid.uuid4().hex[:12]
@@ -589,6 +574,72 @@ class JobDevice(Device):
                 **({"limits": limits} if limits["targets"] else {}),
             }
         )
+
+    def _checked_plan(self, plan) -> tuple[dict, bool, dict, dict, dict]:
+        """(plan without dry_run, dry_run, resolved plan, steps or step_count, limits): what reserve and revise check."""
+        if not isinstance(plan, dict):
+            raise JobError("bad_request", "'plan' must be an object")
+        plan = dict(plan)
+        dry_run = plan.pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
+        if not isinstance(dry_run, bool):
+            raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
+        if "drives" in plan:  # auto mode trusts this list to decide the start; only the device writes it
+            raise JobError("bad_request", "drives is not a plan field: the job device works out which commands it drives")
+        if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
+            raise JobError(
+                "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
+                "does not produce (SUPPORTS_DRY_RUN is false). Nothing was reserved; rehearse this job on a simulated stack",
+            )
+        # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
+        # outside the lock keeps abort, release and a running job's progress from waiting behind it.
+        try:
+            resolved = self.resolve_plan(plan)
+        except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
+            raise  # sorted out by _guard: the caller's plan, or the device's bug
+        except Exception as exc:
+            raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
+        lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
+        if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
+            # The device's own bug, not the caller's plan: say so, outside plan_rejected.
+            raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
+        shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
+        limits = self._check_limits({"plan": plan, "resolved_plan": resolved, **shape})
+        return plan, dry_run, resolved, shape, limits
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "...", "plan": {...}}: the whole new plan.', doc_out="Replaces the plan of a reservation that has not started, checked as at reserve; returns the new resolved plan and estimate.")
+    def revise(self, request: str) -> str:
+        """Edit a plan before it starts (operator only): the new plan is checked like a reserve and gets a new plan_id."""
+        return self._guard(self._revise, request)
+
+    def _revise(self, request: str) -> str:
+        body = self._parse(request, "reservation_id")
+        if "plan" not in body:
+            raise JobError("bad_request", "missing 'plan'")
+        reservation_id = body["reservation_id"]
+        with self._lock:
+            job = self._jobs.get(reservation_id)
+            if job is None:
+                raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
+            if job["state"] != "reserved":
+                raise JobError("bad_state", f"reservation is {job['state']}; only a plan that has not started can be revised")
+        plan, dry_run, resolved, shape, limits = self._checked_plan(body["plan"])
+        with self._lock:
+            if job["state"] != "reserved":  # started or released while the new plan was checked
+                raise JobError("bad_state", f"reservation is {job['state']}; only a plan that has not started can be revised")
+            previous = job["plan_id"]
+            job.pop("steps", None)
+            job.pop("step_count", None)
+            job.update(
+                plan=plan, plan_id=uuid.uuid4().hex[:12], resolved_plan={k: v for k, v in resolved.items() if k not in {"steps", "step_count"}},
+                **shape, estimate=resolved.get("estimate", {"steps": step_count(shape)}), limits=limits, dry_run=dry_run,
+            )
+            self._save(job)
+        self._trace.record(f"{type(self).__name__}.revise", True, time.time(), caller=body.get("caller"), plan_id=job["plan_id"], run_id=reservation_id,
+                           arguments={"plan": plan, "replaces_plan_id": previous}, **self._dry(job))
+        return self._reply({
+            "reservation_id": reservation_id, "plan_id": job["plan_id"], "replaces_plan_id": previous, "resolved_plan": job["resolved_plan"],
+            "estimate": job["estimate"], **({"dry_run": True} if dry_run else {}), **({"limits": limits} if limits["targets"] else {}),
+        })
 
     def _refuse_if_busy(self) -> None:
         with self._lock:
@@ -668,11 +719,20 @@ class JobDevice(Device):
             job = self._jobs.get(body["reservation_id"])
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {body['reservation_id']!r}")
-            if job["state"] not in RESUMABLE_STATES:
-                raise JobError("bad_state", f"reservation is {job['state']}")
             if "dry_run" in body and bool(body["dry_run"]) != bool(job.get("dry_run")):
                 # A start never turns a rehearsal into a real run (or back): the approved plan decides.
                 raise JobError("bad_request", f"this reservation is {'a dry run' if job.get('dry_run') else 'a real run'}; dry_run is set in the plan at reserve, not at start")
+            pausing = job.get("pause_requested") and job["state"] in ("running", "paused", "paused_suspended")
+            if pausing and not body.get("continue"):  # an agent's start or resume must not undo a person's pause
+                raise JobError("paused", "a person paused this job; it goes on only when they continue it (start with continue: true)")
+            if pausing:
+                return self._continue(job, body)
+            if body.get("plan_id") and body["plan_id"] != job.get("plan_id"):
+                raise JobError("plan_changed", f"the plan was revised (now {job.get('plan_id')}) after the start was approved for {body['plan_id']}; ask again")
+            if body.get("continue"):  # a person pressed Continue on a paused job: never resume one stopped since
+                raise JobError("bad_state", f"job is {job['state']}, not paused; it was not continued")
+            if job["state"] not in RESUMABLE_STATES:
+                raise JobError("bad_state", f"reservation is {job['state']}")
             active = self._active()
             if active is not None and active is not job:
                 raise JobError("busy", f"reservation {active['reservation_id']} is {active['state']}")
@@ -683,6 +743,7 @@ class JobDevice(Device):
             started = {
                 **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id, "grant_id": body.get("grant_id"),
                 "caller": body.get("caller") or job.get("caller"), "run": body.get("run") or job.get("run"), "state": "running", "last_error": None, "suspended": None,
+                "pause_requested": False,
             }
             previous = dict(job)
             self._save(started)  # if this fails, the reservation stays as it was and can be started again
@@ -707,6 +768,77 @@ class JobDevice(Device):
                 self._save(job)
                 raise
         return self._reply({"job_id": job_id, "reservation_id": job["reservation_id"], "state": "running"})
+
+    def _continue(self, job: dict, body: dict) -> str:
+        """Let a paused job go on (called by start, under the lock): the worker leaves its pause at the next poll."""
+        job.update(pause_requested=False, grant_id=body.get("grant_id"), caller=body.get("caller") or job.get("caller"))
+        job["lease_until"] = time.time() + lease_seconds(self) if lease_seconds(self) > 0 else None
+        self._save(job)
+        self._trace.record(f"{type(self).__name__}.continue", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"],
+                           caller=job.get("caller"), grant_id=job.get("grant_id"), **self._dry(job))
+        return self._reply({"job_id": job.get("job_id"), "reservation_id": job["reservation_id"], "state": "running", "continued": True})
+
+    def _hold_while_paused(self, job: dict, job_id: str, abort: threading.Event) -> str:
+        """Wait while a person has paused the job, with the instrument made safe: "running" (it was not paused),
+        "continued" (it was, and they continued it) or "aborted"."""
+        with self._lock:
+            if not job.get("pause_requested"):
+                return "running"
+        cls = type(self).__name__
+        try:  # make the instrument safe before reporting the pause
+            self.on_suspend(job, "paused by a person")
+        except Exception as exc:
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=f"{type(exc).__name__}: {exc}", **self._dry(job))
+        with self._lock:
+            if job["state"] not in ("running", "paused"):  # aborting already
+                return "aborted"
+            job["state"] = "paused"
+            job["paused_since"] = time.time()
+            self._save(job)
+        self._trace.record(f"{cls}.paused", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+        while not abort.wait(PAUSE_POLL_S):
+            with self._lock:
+                if not job.get("pause_requested"):
+                    if job["state"] != "paused":
+                        return "aborted"
+                    job["state"] = "running"
+                    job.pop("paused_since", None)
+                    self._save(job)
+                    return "continued"
+        return "aborted"
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Pauses this device's background job after the current step with the instrument waiting safely; start continues it. Always allowed.")
+    def pause(self, request: str) -> str:
+        """Pause a running job after the current step; the device stays held. start continues it, abort stops it."""
+        return self._guard(self._pause, request)
+
+    def _pause(self, request: str) -> str:
+        body = self._parse(request, "job_id")
+        job = self._by_job_id(body["job_id"])
+        with self._lock:
+            if job["state"] not in ("running", "paused_suspended", "paused"):
+                raise JobError("bad_state", f"job is {job['state']}; only a running job can be paused")
+            first = not job.get("pause_requested")
+            job["pause_requested"] = True
+            self._save(job)
+        if first:
+            self._trace.record(f"{type(self).__name__}.pause", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"], caller=body.get("caller"), **self._dry(job))
+        return self._status(json.dumps({"job_id": job.get("job_id") or job["reservation_id"]}))
+
+    @command(dtype_out=str, doc_out='JSON {"jobs": [...]}: every job that holds this device or is running, paused or aborting, with its progress.')
+    def get_jobs(self) -> str:
+        """The jobs a supervisor can act on now: reserved, running, paused or aborting. Reading this renews no lease."""
+        with self._lock:
+            jobs = [
+                {
+                    "job_id": job.get("job_id"), "reservation_id": job["reservation_id"], "plan_id": job.get("plan_id"), "state": job["state"],
+                    "pause_requested": bool(job.get("pause_requested")), "progress": {"done": done_count(job), "total": step_count(job)},
+                    "caller": job.get("caller"), "dry_run": bool(job.get("dry_run")), "last_error": job.get("last_error"),
+                    "suspended": job.get("suspended"), "lease_until": job.get("lease_until"),
+                }
+                for job in self._jobs.values() if job["state"] in ACTIVE_STATES
+            ]
+        return self._reply({"jobs": jobs, "lease_s": lease_seconds(self)})
 
     def _watch_lease(self, job: dict, job_id: str, worker: threading.Thread) -> None:
         """Abort ``job_id`` once its lease lapses: nobody has asked about it for lease_s."""
@@ -758,6 +890,11 @@ class JobDevice(Device):
                     break
                 if self._suspenders and not self._hold_while_suspended(job, job_id, abort):
                     break  # aborted while paused
+                held = self._hold_while_paused(job, job_id, abort)
+                if held == "aborted":
+                    break
+                if held == "continued" and self._suspenders and not self._hold_while_suspended(job, job_id, abort):
+                    break  # a condition that went bad during the pause holds the job before its next step
                 started = time.time()
                 WORKER.step = index
                 record = self.run_step(job, index)
@@ -888,6 +1025,7 @@ class JobDevice(Device):
                 "last_error": job["last_error"],
                 "pending_request_id": None,
                 "suspended": job.get("suspended"),
+                **({"pause_requested": True} if job.get("pause_requested") else {}),
                 **({"phase": phase} if (phase := getattr(self, "phase", lambda _job: None)(job)) else {}),
             }
         )
@@ -901,7 +1039,8 @@ class JobDevice(Device):
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
         job_id = job.get("job_id")
         with self._lock:
-            if job["state"] in {"running", "paused_suspended"} and job_id in self._abort:
+            job["pause_requested"] = False
+            if job["state"] in STOPPABLE_STATES and job_id in self._abort:
                 job["state"] = "aborting"
                 self._abort[job_id].set()
             elif job["state"] == "reserved":
@@ -923,7 +1062,7 @@ class JobDevice(Device):
     def abort_all(self) -> str:
         """Stop every job of this device that is running, without naming it: the e-stop. Always allowed."""
         with self._lock:
-            running = [job["job_id"] for job in self._jobs.values() if job.get("job_id") and job["state"] in {"running", "paused_suspended", "aborting"}]
+            running = [job["job_id"] for job in self._jobs.values() if job.get("job_id") and job["state"] in STOPPABLE_STATES | {"aborting"}]
         stopped = []
         for job_id in running:
             try:

@@ -142,6 +142,10 @@ class InstrumentProfile:
         """The same for a plan that only takes ``count`` revisit images."""
         return {}, {}
 
+    def sample_stage(self) -> str | None:
+        """The STAGE device that records which sample is loaded (load_sample/get_sample); None when the instrument has none."""
+        return None
+
     def stage_targets(self, plan: dict, xs: list[tuple[str, float]], ys: list[tuple[str, float]]) -> list[dict]:
         """Limit-check targets (JobDevice.step_targets) for the plan's extreme stage x and y values."""
         return []

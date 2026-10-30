@@ -80,15 +80,32 @@ An agent endpoint must name its Approvals device (`mcp.safety.approvals_device_a
 `stop_all` (on the agent and operator endpoints; SciAgentGUI's **Stop everything** button calls it on the operator endpoint) stops the instrument without waiting for anyone:
 
 1. It puts the approval mode in `approve` and voids every unused approval and pending request (`Approvals.revoke_grants`), so nothing starts again without a person.
-2. On every device at once it calls, straight to the device and never through the approval gate: `blank_beam`, `close_shutter`, `laser_off`, `lamp_off`, `xray_off` and the like; `abort_all` on job devices (it aborts whatever is running without naming it); the retract of a probe instrument; and any stop your deployment marked low in `mcp.safety.risk` (for example an `EStop` command the policy does not recognise).
+2. On every device at once it calls, straight to the device and never through the approval gate: `blank_beam`, `close_shutter`, `laser_off`, `lamp_off`, `xray_off` and the like; `abort_all` on job devices (it aborts whatever is running without naming it); and the retract of a probe instrument. Only these named stops are called: a stop your deployment marks low in `mcp.safety.risk` still runs without approval when called, but `stop_all` does not call it.
 3. When all of that has returned, it switches the sources off once more, in case a job step that ended late switched one back on.
 
 It never switches off high tension, a gun or a filament: blanking stops the beam, and those take hours to recover. A device that cannot be stopped (no blank offered, no `abort_all`, not answering within 20 s) is reported as a failed step, not skipped.
 
 ## Job leases
 
-A job device with `lease_s` set aborts a running job (and puts the instrument in its safe state) when nobody has checked on it for that long: `job_status`, `wait_for_job` and `renew_lease` all renew it. Set it on hardware so a crashed agent or GUI cannot leave a job running unwatched. It is off (0) by default.
+A job device with `lease_s` set aborts a running job (and puts the instrument in its safe state) when nobody has checked on it for that long: `job_status`, `wait_for_job` and `renew_lease` all renew it, and `get_jobs` does not. Set it on hardware so a crashed agent or GUI cannot leave a job running unwatched. It is off (0) by default. In SciAgentGUI's jobs panel a person can choose to keep one job's lease: the panel then renews it while its window is visible, and says so under the job. A paused job's lease does not lapse.
+
+## Supervising a job
+
+* `<Device>_pause` (low, always allowed) stops a running job after its current step. The device makes the instrument safe (the Mapper blanks the beam and lifts a probe) and keeps holding the reservation, so nothing else can start. `job_status` and `get_jobs` show `paused`.
+* `<Device>_start` with the paused job's `reservation_id` and `"continue": true` continues it from the next step, after checking the device's suspender conditions again. Only a person continues a paused job: the agent endpoint refuses `continue`, and a plain start or `run_job` resume of a paused job is refused. A continue is refused unless the job is still paused, so a stale Continue never resumes a job someone aborted meanwhile. A paused job holds the device until it is continued or aborted; it has no time limit.
+* `<Device>_abort` stops a paused job like a running one, and `stop_all` reaches it too.
+* `<Device>_revise` (operator only) replaces the plan of a reservation that has not started. The new plan is checked exactly as at reserve and gets a new `plan_id`. An approval covers the plan it was asked for: after a revise, the agent's start is held again with the new plan, and a start checked against the old plan is refused by the device (`plan_changed`).
+* `<Device>_get_jobs` lists every job holding the device or running, with its progress.
+
+SciAgentGUI shows these under the Stop button: Pause, Continue, Abort, and Edit plan for a reservation that has not started.
 
 ## The monitor endpoint
 
-`configs/mcp_monitor.yaml` (port 8002) runs an endpoint with `endpoint_role: monitor`. It offers only pure reads (`get_*`, `list_*`, `State`, `Status`, `job_status`, `results`), the data tools and `trace_since`: nothing that acts, not even `stop_all`. Point a status panel or a question-answering agent at it so it can watch the instrument while the worker agent runs.
+`configs/mcp_monitor.yaml` (port 8002) runs an endpoint with `endpoint_role: monitor`. It offers only pure reads (`get_*`, `list_*`, `State`, `Status`, `job_status`, `results`) and the data tools: nothing that acts, not even `stop_all`, and no command your deployment marks high. `trace_since` stays on the operator endpoint. Point a status panel or a question-answering agent at it so it can watch the instrument while the worker agent runs.
+
+## Sample loads, record fields and the dose ledger
+
+* **Loading a sample.** Call `<Stage>_load_sample` (operator only) with `{"sample_id": "...", "who": "..."}` each time a sample goes into the holder, even the same one again. It issues a new `sample_load_id`; `<Stage>_get_sample` reads it back, and it survives a restart.
+* **Record fields.** Every file `save_acquisition` writes, and every map run file, records `id` (permanent), `instrument_id`, `kind`, `sample_id`, `sample_load_id`, `code_version` and `created` (see `asyncroscopy/data/record.py`). A resumed map keeps its first id and sample, and a map whose sample was reloaded since it started refuses to resume. An AutoScript image saved as TIFF keeps its own metadata and gets no record fields yet. A stitched map from the pyTEMlib analysis server records its run as `parents` and copies the run's sample fields; notes made with `annotate` keep the sample fields of their dataset.
+* **Stale positions.** `to_stage` returns the dataset's `sample_load_id`. Before moving to that position, compare it with `<Stage>_get_sample`: a different id means the sample was reloaded since, so the position is stale. The `find_feature_then_measure` skill does this.
+* **The dose ledger.** Every scanned frame saved with its stage position, field of view, pixel size, dwell time and beam current adds a line to the dose ledger (`ASYNCROSCOPY_DOSE_LEDGER`, default `outputs/dose/ledger.jsonl`). `<Microscope>_get_dose` with `{"x_m": ..., "y_m": ...}` gives the dose the current sample load has had at that point. It does not yet count spectra, parked-beam exposures, time the beam spent unblanked between frames, or image shift, and the AutoScript microscope does not record the settings a frame needs, so on that hardware the ledger stays empty; every reply says so under `not_counted`. With no sample load recorded `get_dose` gives no dose and says why.

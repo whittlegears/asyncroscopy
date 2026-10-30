@@ -102,4 +102,5 @@ def test_save_acquisition_tiff_writes_one_registered_file_per_detector(tmp_path)
         assert path.exists()
         assert np.array_equal(tifffile.imread(path), images[index])
         with tifffile.TiffFile(path) as tif:
-            assert json.loads(tif.pages[0].description) == attrs[index]
+            described = json.loads(tif.pages[0].description)
+            assert {k: described[k] for k in attrs[index]} == attrs[index] and described["kind"] == "stem_image" and len(described["id"]) == 32

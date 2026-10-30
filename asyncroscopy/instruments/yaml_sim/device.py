@@ -268,6 +268,7 @@ class YamlSimDevice(_YamlInstrument, Device):
 
     def init_device(self) -> None:
         Device.init_device(self)
+        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self._load()
 
 
