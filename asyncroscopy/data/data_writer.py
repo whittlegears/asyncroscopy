@@ -12,6 +12,7 @@ import numpy as np
 import tifffile
 
 from asyncroscopy.data.dose_ledger import record_frame
+from asyncroscopy.data.integrity import seal
 from asyncroscopy.data.record import current_sample, record_fields, stage_of
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
@@ -91,6 +92,7 @@ def save_acquisition(
         for index, (source, detector) in enumerate(zip(data_list, detector_list)):
             path = directory / f"{stem}_{detector}.tiff"
             _write_tiff(source, path, {**(attrs_list[index] or {}), **record_fields(instrument_id, acquisition_type, sample)})
+            _seal(device, path, instrument_id)
             keys.append(data_server.register_path(str(path)) if data_server is not None else str(path))
         _ledger(device, attrs_list[0] or {}, sample, keys[0], instrument_id)
         return keys[0] if len(keys) == 1 else json.dumps(keys)
@@ -114,9 +116,27 @@ def save_acquisition(
         datasets.append({"name": name, "source": source, "attrs": attrs})
 
     save_acquisition_hdf5(path, datasets, file_attrs={**(file_attrs or {}), **record_fields(instrument_id, acquisition_type, sample)})
+    _seal(device, path, instrument_id)
     key = data_server.register_path(str(path)) if data_server is not None else str(path)
     _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
     return key
+
+
+def _report(device, message: str) -> None:
+    report = getattr(device, "error_stream", None)
+    if callable(report):
+        report(message)
+    else:
+        print(message)
+
+
+def _seal(device, path: Path, instrument_id: str) -> None:
+    """Seal the file just written (its SHA-256 in the integrity manifest), so a later change to it is detected. The
+    data is already saved, so a seal that cannot be written is reported on the device's error stream, not raised."""
+    try:
+        seal(path, key=Path(path).name, writer=instrument_id)
+    except Exception as exc:
+        _report(device, f"the integrity manifest did not seal {path}: {type(exc).__name__}: {exc}")
 
 
 def _ledger(device, attrs: dict, sample: dict, key: str, instrument_id: str) -> None:
@@ -126,12 +146,7 @@ def _ledger(device, attrs: dict, sample: dict, key: str, instrument_id: str) -> 
     try:
         record_frame(attrs, sample.get("sample_load_id"), key, instrument_id)
     except Exception as exc:
-        report = getattr(device, "error_stream", None)
-        message = f"the dose ledger did not record {key}: {type(exc).__name__}: {exc}"
-        if callable(report):
-            report(message)
-        else:
-            print(message)
+        _report(device, f"the dose ledger did not record {key}: {type(exc).__name__}: {exc}")
 
 
 def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: dict | None = None) -> None:

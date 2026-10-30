@@ -26,6 +26,10 @@ import tango
 os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
 # Likewise the dose ledger: the session's frames go to a fresh file, not a developer's outputs/dose.
 os.environ["ASYNCROSCOPY_DOSE_LEDGER"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-dose-"), "ledger.jsonl")
+# Seals of test data go to a throwaway manifest and key, never outputs/integrity.
+_integrity_dir = tempfile.mkdtemp(prefix="asyncroscopy-integrity-")
+os.environ["ASYNCROSCOPY_INTEGRITY_LOG"] = os.path.join(_integrity_dir, "manifest.jsonl")
+os.environ["ASYNCROSCOPY_INTEGRITY_KEY_FILE"] = os.path.join(_integrity_dir, "key")
 from tango.test_context import MultiDeviceTestContext
 
 from asyncroscopy.testing import prop_path
