@@ -54,12 +54,13 @@ _process_open = 0  # ...and none while a process=True context is open
 
 
 @contextmanager
-def instrument_context(devices_info: list[dict], process: bool = False) -> Iterator[MultiDeviceTestContext]:
+def instrument_context(devices_info: list[dict], process: bool = False, startup_timeout_s: float | None = None) -> Iterator[MultiDeviceTestContext]:
     """Start the given devices in one Tango test context (no database, no ports to configure).
 
     ``devices_info`` is MultiDeviceTestContext's list of {"class": ..., "devices": [{"name": ..., "properties": {...}}]}.
     ``process=True`` runs them in a child process, so command timeouts behave as on a real
-    server (an in-process context does not enforce the 3 s client timeout).
+    server (an in-process context does not enforce the 3 s client timeout). ``startup_timeout_s``:
+    how long the devices may take to start (PyTango's default is 5 s; a large twin sample takes longer).
     """
     global _in_process_started, _process_open
     if _in_process_started or (_process_open and not process):
@@ -68,7 +69,7 @@ def instrument_context(devices_info: list[dict], process: bool = False) -> Itera
             "(process=True included) after it; start it once in a session-scoped pytest fixture and share it, "
             "and open any process=True contexts before it"
         )
-    with MultiDeviceTestContext(devices_info, process=process) as ctx:
+    with MultiDeviceTestContext(devices_info, process=process, timeout=startup_timeout_s) as ctx:
         if process:
             _process_open += 1
         else:

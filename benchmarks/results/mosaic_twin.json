@@ -1,0 +1,92 @@
+{
+  "config": "configs\\digital_twin_large_map.yaml",
+  "sample_size_m": 3.6e-05,
+  "particles": 20000,
+  "grid": 20,
+  "imsize": 512,
+  "fov_m": 2.4e-06,
+  "overlap": 0.3,
+  "dwell_s": 1e-06,
+  "stage_sigma_m": 2.9e-07,
+  "tiles": 400,
+  "pixel_m": 4.6875e-09,
+  "overrides": [],
+  "calibration": null,
+  "acquire_s": 31.6,
+  "stitch_s": 304.1,
+  "stage_only": {
+    "median_px": 39.48025667022524,
+    "p95_px": 78.37961492340207,
+    "max_px": 127.64391756679895,
+    "after_affine_median_px": 39.657697943990634,
+    "after_affine_p95_px": 77.95775207230452,
+    "after_affine_max_px": 122.74057913236003
+  },
+  "stitched": {
+    "median_px": 3.533769714148774,
+    "p95_px": 8.934989737801969,
+    "max_px": 131.90866232783242,
+    "after_affine_median_px": 0.7459472172584588,
+    "after_affine_p95_px": 1.937051894080097,
+    "after_affine_max_px": 133.80875725013422
+  },
+  "seams": {
+    "ratio": 0.9647561842193985,
+    "edge_pixels": 10617182
+  },
+  "brightness": {
+    "mean_pct": 0.27670451743955105,
+    "p95_pct": 0.9103580463070031,
+    "pairs": 1478
+  },
+  "scan_linear": {
+    "applied": [
+      [
+        0.9900996588193678,
+        -0.00539800577685154
+      ],
+      [
+        -0.0010257501495202284,
+        0.9925582756144286
+      ]
+    ],
+    "estimate": [
+      [
+        0.9900996588193678,
+        -0.00539800577685154
+      ],
+      [
+        -0.0010257501495202284,
+        0.9925582756144286
+      ]
+    ],
+    "stderr": [
+      [
+        0.0007541765919281964,
+        0.0007522652347391145
+      ],
+      [
+        0.0008346851042115222,
+        0.0008325697092342326
+      ]
+    ]
+  },
+  "gain_range": [
+    0.982824691660336,
+    1.0168495418164176
+  ],
+  "unplaced_tiles": 1,
+  "detector_gain_range": [
+    1.0001079499085654,
+    1.0490517690261871
+  ],
+  "matches_used": 1271,
+  "passed": {
+    "placement_median_px": false,
+    "placement_p95_px": false,
+    "placement_max_px": false,
+    "seam_ratio": true,
+    "neighbour_brightness_pct": true,
+    "unplaced_tiles": false
+  }
+}

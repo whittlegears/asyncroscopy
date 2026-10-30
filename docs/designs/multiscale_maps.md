@@ -131,6 +131,33 @@ The benchmark is written first and decides which of these are needed; each is ad
 *   **Rectification**: a global distortion (rotation, shear, scale per scan setting) is estimated from the overlap residuals and removed from each tile before solving; per-tile drift-shear only at fine tiers.
 *   **Unplaced tiles**: a tile with no accepted match is not drawn. Its position, match count and residual are stored, and `map_info` lists it as unplaced.
 
+#### What the benchmark found, and what was built (2026-10-30)
+
+`benchmarks/mosaic_twin.py` (results in `benchmarks/results/mosaic_twin.md`), 20 x 20 tiles of 512 pixels, 30 % overlap, on the large-map twin with every effect on:
+
+| Check | Before P2 | After P2 | Threshold |
+| :-- | :-- | :-- | :-- |
+| Tiles against each other (after removing the best affine map): median / 95th / worst | not measured | 0.75 / 1.94 / 134 px | 0.3 / 0.7 / 2 px |
+| Against truth after only the common offset | not measured | 3.5 / 8.9 / 132 px | (same) |
+| Seam step across edges / inside tiles | not measured | 0.97 | 1.2 |
+| Brightness difference between neighbours | 1.2 to 35 % (gain drift, misplacement) | 0.28 % | 1 % |
+| Unplaced tiles | 3 of 16 at 560 nm fields | 1 of 400 | 0 |
+| Stitching time, 400 tiles | 956 s | 302 s | — |
+
+Findings that changed the plan:
+
+*   **The stage error must be smaller than the overlap.** At 560 nm fields the twin's stage (150 nm noise, up to 250 nm backlash) moves tiles further than a 30 % overlap, so neighbours often do not overlap at all. A map needs fields of about 2.4 µm or more with this stage, or a larger overlap. The Mapper should refuse or warn on a plan whose overlap is under about 3 stage sigmas plus backlash (follow-up).
+*   **The Mapper's stage_sigma_m must include backlash.** At 150 nm the stitcher rejected true matches of tiles the stage put 470 nm off; the twin configurations now state 290 nm, and a test checks them.
+*   **Scale needs a calibration on small maps.** The only metric reference is the stage, and its error hides a 1 % field-of-view error until a map has hundreds of tiles. Large maps measure it (0.990 against the twin's 0.990); small maps take it as a calibration (`scan_linear`), measured once per scan setting.
+
+Built in pyTEMlib (`mosaic.py`, commit 828f787): sub-pixel drawing by cubic spline (not Lanczos: same accuracy here, simpler); gain and offset modelled as smooth in acquisition time with priors and caps (per-tile values ran away across large maps in review); the scan's shared linear map measured with the stage regressed on tile centres and the solve repeated with the stage prior in the tiles' scale; a calibration input; robust solving that drops worst-first and takes back correct matches, including links that rejoin groups of tiles whose wrong links outnumbered their right ones; overlap-only correlation (2.8x faster). Multi-band blending and per-tile rectification were not needed: seams already pass, and switching the twin's flyback distortion off changed nothing.
+
+Still failing, with what is known about why:
+
+*   **One tile in 400 is unmatchable and two are misplaced.** The unmatchable one landed 600 nm (122 px) from where the stage reported, outside the search bound a 30 % overlap allows (0.6 of the overlap). Its remaining correlations are wrong peaks, one of which was used. A per-tile vote on links was tried and removed (it broke two accuracy tests and gained little). Next: refuse a match whose overlap NCC is weak relative to the tile's other evidence, and re-acquire or flag tiles the stage put beyond the bound.
+*   **Tiles disagree by 0.75 px median after the affine fit**, against 0.10 px on an 8 x 8 grid with the same code. Individual matches are off by about 0.17 px with a bias that depends on the sub-pixel fraction (up to about 0.4 px); sub-pixel refinement by upsampled cross-correlation did not reduce it and was removed, and changing the twin's resampling from linear to cubic made no difference either. Next: find the source of the fraction-dependent bias (the masked correlation's normalisation over a partial overlap is the main suspect), then re-measure.
+*   **The slow-axis scale is measured as 0.9926 where the matches say 0.9905**; the misplaced tiles sit at the top edge and have the most leverage on that fit. Next: fit the scale only from tiles whose links agree.
+
 ### Cross-scale placement (P3)
 
 `register_child(child, parent_tiles, predicted, ...)` in pyTEMlib returns a placement record or `unplaced`:
