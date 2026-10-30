@@ -137,12 +137,13 @@ The benchmark is written first and decides which of these are needed; each is ad
 
 | Check | Before P2 | After P2 | Threshold |
 | :-- | :-- | :-- | :-- |
-| Tiles against each other (after removing the best affine map): median / 95th / worst | not measured | 0.75 / 1.94 / 134 px | 0.3 / 0.7 / 2 px |
-| Against truth after only the common offset | not measured | 3.5 / 8.9 / 132 px | (same) |
+| Tiles against each other (after removing the shared affine map, fitted to the tiles within 2 px of it): median / 95th / worst | not measured | 0.10 / 0.24 / 0.50 px | 0.3 / 0.7 / 2 px |
+| Tiles placed by a match but more than 2 px from where they belong | not measured | 0 | 0 |
+| Against truth after only the common offset (the shared distortion is a calibration) | not measured | 3.5 / 8.9 px | — |
 | Seam step across edges / inside tiles | not measured | 0.97 | 1.2 |
-| Brightness difference between neighbours | 1.2 to 35 % (gain drift, misplacement) | 0.28 % | 1 % |
-| Unplaced tiles | 3 of 16 at 560 nm fields | 1 of 400 | 0 |
-| Stitching time, 400 tiles | 956 s | 302 s | — |
+| Brightness difference between neighbours | 1.2 to 35 % (gain drift, misplacement) | 0.27 % | 1 % |
+| Unplaced tiles (listed, drawn only where nothing else is) | 3 of 16 at 560 nm fields | 3 of 400 | 0 |
+| Stitching time, 400 tiles | 956 s | about 300 s | — |
 
 Findings that changed the plan:
 
@@ -154,9 +155,9 @@ Built in pyTEMlib (`mosaic.py`, commit 828f787): sub-pixel drawing by cubic spli
 
 Still failing, with what is known about why:
 
-*   **One tile in 400 is unmatchable and two are misplaced.** The unmatchable one landed 600 nm (122 px) from where the stage reported, outside the search bound a 30 % overlap allows (0.6 of the overlap). Its remaining correlations are wrong peaks, one of which was used. A per-tile vote on links was tried and removed (it broke two accuracy tests and gained little). Next: refuse a match whose overlap NCC is weak relative to the tile's other evidence, and re-acquire or flag tiles the stage put beyond the bound.
-*   **Tiles disagree by 0.75 px median after the affine fit**, against 0.10 px on an 8 x 8 grid with the same code. Individual matches are off by about 0.17 px with a bias that depends on the sub-pixel fraction (up to about 0.4 px); sub-pixel refinement by upsampled cross-correlation did not reduce it and was removed, and changing the twin's resampling from linear to cubic made no difference either. Next: find the source of the fraction-dependent bias (the masked correlation's normalisation over a partial overlap is the main suspect), then re-measure.
-*   **The slow-axis scale is measured as 0.9926 where the matches say 0.9905**; the misplaced tiles sit at the top edge and have the most leverage on that fit. Next: fit the scale only from tiles whose links agree.
+*   **Three of 400 tiles are unplaced.** At the turn from the first row to the second the stage landed 600 nm from where it reported, outside the search window a 30 % overlap allows (0.6 of the overlap, 432 nm). They are listed and drawn only where no placed tile is, never guessed. The Mapper's estimate now warns when a plan's overlap is smaller than the stage can put neighbours apart (`Mapper._overlap_warning`) and says what overlap would do; re-imaging such a tile is the other remedy (follow-up).
+
+How the placement result was reached (for whoever changes the stitcher next): an earlier 0.75 px "median" was the measurement, not the stitcher: three misplaced tiles tilted the affine fit and every other tile's error with it. The misplaced tiles came from wrong links outvoting right ones (`_tile_vote`, `_consensus_links`). Sub-pixel refinement by upsampled correlation, a peak-ambiguity test, and cubic instead of linear resampling in the twin were each measured and dropped: none improved placement, two broke accuracy tests. The twin's flyback compression is the main source of single-match error (95th percentile 0.48 px with it, 0.27 without) but does not move the placement result.
 
 ### Cross-scale placement (P3)
 

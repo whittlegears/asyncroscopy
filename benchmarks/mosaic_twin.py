@@ -36,6 +36,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = "asyncroscopy/digitaltwin/benchmark"
 # The thresholds of docs/designs/multiscale_maps.md, goal G2.
+MISPLACED_PX = 2.0  # a tile further than this from the shared affine fit is misplaced (design G3's "wrong placement")
 THRESHOLDS = {
     "placement_median_px": 0.3,
     "placement_p95_px": 0.7,
@@ -43,6 +44,7 @@ THRESHOLDS = {
     "seam_ratio": 1.2,
     "neighbour_brightness_pct": 1.0,
     "unplaced_tiles": 0,
+    "misplaced_tiles": 0,
 }
 
 
@@ -117,10 +119,22 @@ def acquire(device, digital_twin_module, plan: list, fov_m: float, imsize: int, 
 
 
 def _affine_residual(estimate: np.ndarray, true: np.ndarray) -> np.ndarray:
-    """|estimate - best affine map of true| per tile: what is left once a shared stretch, shear and turn are removed."""
+    """|estimate - best affine map of true| per tile: what is left once a shared stretch, shear and turn are removed.
+
+    The map is fitted to the tiles within MISPLACED_PX of it, refitted until that set stops changing, so a few
+    misplaced tiles do not tilt the fit and inflate every other tile's error (they are counted separately)."""
     design = np.hstack([true, np.ones((len(true), 1))])
-    coeffs, *_ = np.linalg.lstsq(design, estimate, rcond=None)
-    return np.hypot(*(estimate - design @ coeffs).T)
+    keep = np.ones(len(true), bool)
+    for _ in range(10):
+        if keep.sum() < 3:  # too few tiles near any fit to refine it: keep the plain least-squares fit
+            coeffs, *_ = np.linalg.lstsq(design, estimate, rcond=None)
+            return np.hypot(*(estimate - design @ coeffs).T)
+        coeffs, *_ = np.linalg.lstsq(design[keep], estimate[keep], rcond=None)
+        residual = np.hypot(*(estimate - design @ coeffs).T)
+        if np.array_equal(residual <= MISPLACED_PX, keep):
+            break
+        keep = residual <= MISPLACED_PX
+    return residual
 
 
 def placement_errors(positions_px: np.ndarray, records: list[dict], pixel_m: float, imsize: int) -> dict:
@@ -131,9 +145,13 @@ def placement_errors(positions_px: np.ndarray, records: list[dict], pixel_m: flo
     diff -= np.median(diff, axis=0)
     offset_only = np.hypot(*diff.T)
     local = _affine_residual(drawn, true)
+    placed = local <= MISPLACED_PX
+    if not placed.any():  # stage positions alone: nothing is within 2 px of any fit, so report every tile
+        placed = np.ones(len(local), bool)
     return {
         "median_px": float(np.median(offset_only)), "p95_px": float(np.percentile(offset_only, 95)), "max_px": float(offset_only.max()),
-        "after_affine_median_px": float(np.median(local)), "after_affine_p95_px": float(np.percentile(local, 95)), "after_affine_max_px": float(local.max()),
+        "after_affine_median_px": float(np.median(local[placed])), "after_affine_p95_px": float(np.percentile(local[placed], 95)),
+        "after_affine_max_px": float(local[placed].max()), "misplaced": [int(k) for k in np.nonzero(~placed)[0]],
     }
 
 
@@ -240,6 +258,7 @@ def run(args) -> dict:
                         "stderr": None if placement.linear_stderr is None else placement.linear_stderr.tolist()},
         "gain_range": None if placement.gains is None else [float(placement.gains.min()), float(placement.gains.max())],
         "unplaced_tiles": int(fallback.sum()),
+        "misplaced_tiles": [k for k in placement_errors(placement.positions_px, records, pixel, args.imsize)["misplaced"] if not fallback[k]],
         "detector_gain_range": [min(g for g in detector if g is not None), max(g for g in detector if g is not None)] if any(g is not None for g in detector) else None,
         "matches_used": int(sum(1 for m in placement.matches if m.used)),
     }
@@ -248,9 +267,10 @@ def run(args) -> dict:
 def verdict(result: dict) -> dict[str, bool]:
     drawn = result["stitched"]
     return {
-        "placement_median_px": drawn["median_px"] <= THRESHOLDS["placement_median_px"],
-        "placement_p95_px": drawn["p95_px"] <= THRESHOLDS["placement_p95_px"],
-        "placement_max_px": drawn["max_px"] <= THRESHOLDS["placement_max_px"],
+        "placement_median_px": drawn["after_affine_median_px"] <= THRESHOLDS["placement_median_px"],
+        "placement_p95_px": drawn["after_affine_p95_px"] <= THRESHOLDS["placement_p95_px"],
+        "placement_max_px": drawn["after_affine_max_px"] <= THRESHOLDS["placement_max_px"],
+        "misplaced_tiles": len(result["misplaced_tiles"]) <= THRESHOLDS["misplaced_tiles"],
         "seam_ratio": result["seams"]["ratio"] <= THRESHOLDS["seam_ratio"],
         "neighbour_brightness_pct": result["brightness"]["mean_pct"] <= THRESHOLDS["neighbour_brightness_pct"],
         "unplaced_tiles": result["unplaced_tiles"] <= THRESHOLDS["unplaced_tiles"],
@@ -279,7 +299,7 @@ from: {result['calibration'] or 'this map'}; stitched with stage_sigma_m {result
 
 ## Placement against the twin's truth (pixels: median / 95th percentile / worst)
 
-| Positions | After removing the common offset | After removing the best affine map |
+| Positions | After removing the common offset (all tiles) | After removing the best affine map (tiles within 2 px of it) |
 | :-- | :-- | :-- |
 {chr(10).join(rows)}
 
@@ -287,7 +307,9 @@ from: {result['calibration'] or 'this map'}; stitched with stage_sigma_m {result
 scan distortion the stitcher removed: {result['scan_linear']['applied']}
 (measured {result['scan_linear']['estimate']}); tile gains it applied range over {result['gain_range']}.
 The difference between the two columns is the shared scan distortion (rotation, shear, field-of-view scale)
-bending the whole map; what is left after the affine fit is tiles disagreeing with each other.
+bending the whole map; what is left after the affine fit is tiles disagreeing with each other. Placement is judged
+on the second column (the shared distortion is a calibration, measured on a large map or given): tiles further than
+2 px from the affine fit are misplaced, and counted, not averaged in. Misplaced or unplaced: {result['stitched']['misplaced']}.
 
 ## Seams and brightness
 
@@ -295,6 +317,7 @@ bending the whole map; what is left after the affine fit is tiles disagreeing wi
 * Brightness difference between neighbouring tiles over their shared area: mean {result['brightness']['mean_pct']:.2f} %,
   95th percentile {result['brightness']['p95_pct']:.2f} % ({result['brightness']['pairs']} pairs).
 * Tiles with no usable match (drawn from the stage's guess): {result['unplaced_tiles']}.
+* Tiles placed by a match but more than 2 px from where they belong (wrong placements): {result['misplaced_tiles']}.
 
 ## Against the thresholds (design goal G2)
 

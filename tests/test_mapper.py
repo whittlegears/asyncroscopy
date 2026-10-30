@@ -404,3 +404,15 @@ def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(t
     assert status["progress"]["done"] == paused["progress"]["done"]
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
     release_all(leased, reserve["reservation_id"])
+
+
+def test_a_plan_whose_overlap_is_smaller_than_the_stage_error_is_warned_about():
+    from types import SimpleNamespace
+
+    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+
+    twin_stage = SimpleNamespace(stage_sigma_m=2.9e-7)
+    warning = Mapper._overlap_warning(twin_stage, 0.3, 5.6e-7)  # 560 nm tiles: neighbours often do not even overlap
+    assert warning and "left unplaced" in warning and "560 nm" in warning
+    assert Mapper._overlap_warning(twin_stage, 0.5, 1.2e-5) is None  # 12 um tiles at half overlap: every pair is found
+    assert Mapper._overlap_warning(SimpleNamespace(stage_sigma_m=1e-9), 0.15, 2e-7) is None  # an accurate stage
