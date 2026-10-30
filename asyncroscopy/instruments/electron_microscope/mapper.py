@@ -115,6 +115,9 @@ PLAN_DEFAULTS = {
 LEGACY_BUDGETS = {"dose_budget_e_per_a2": "dose_e_per_a2"}  # plan fields that are one budget under another name
 RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
 RUN_LAYOUT = 2
+# pyTEMlib's stitcher searches each overlap only up to this share of its width; neighbours the stage puts further
+# apart than that cannot be matched and are left unplaced (docs/designs/multiscale_maps.md, P2 findings).
+STITCH_SEARCH_SHARE = 0.6
 STAGE_POLL_S = 0.2  # how often a long stage move is checked for arrival (and the job for an abort)
 ANALYSIS_CALL_S = 60.0  # longest one call to the analysis server may take
 ANALYSIS_WAIT_S = 5.0  # longest one wait on an analysis job; abort is checked between waits
@@ -536,6 +539,10 @@ class Mapper(JobDevice):
         }
         if budgeted:
             estimate["budgets"] = budgeted
+        if stitch:
+            warning = self._overlap_warning(float(p["overlap"]), min(tile_w, tile_h))
+            if warning:
+                estimate["warnings"] = [warning]
         if not stitch:
             estimate["stitch"] = "off" if not p["stitch"] else "this Mapper has no analysis_url; stitch the run with assemble_map"
         resolved = {
@@ -550,6 +557,24 @@ class Mapper(JobDevice):
         if isinstance(self, JobDevice):  # a device (not a test's stand-in): the instrument must offer what the profile drives
             self._check_needs(profile, resolved)
         return resolved
+
+    def _overlap_warning(self, overlap: float, tile_m: float) -> str | None:
+        """Why a plan's overlap may be too small for this stage to stitch, or None.
+
+        Two neighbours land up to about 2 x sqrt(2) stage sigmas further apart than planned; the stitcher looks for
+        them only within STITCH_SEARCH_SHARE of the overlap, so a pair further off is not matched."""
+        sigma = float(self.stage_sigma_m)
+        reach = 2.0 * np.sqrt(2.0) * sigma
+        window = STITCH_SEARCH_SHARE * overlap * tile_m
+        if window >= reach or sigma <= 0:
+            return None
+        needed = min(0.9, reach / (STITCH_SEARCH_SHARE * tile_m))
+        return (
+            f"overlap {overlap:.2f} of {tile_m * 1e9:.0f} nm tiles lets the stitcher search {window * 1e9:.0f} nm, but this stage "
+            f"(stage_sigma_m {sigma * 1e9:.0f} nm) can put neighbours {reach * 1e9:.0f} nm from where they were planned: tiles it "
+            f"moves that far are left unplaced. An overlap of {needed:.2f}, or tiles about {reach / (STITCH_SEARCH_SHARE * overlap) * 1e6:.1f} um "
+            "across at this overlap, would let every pair be found."
+        )
 
     def _resolve_revisit_only(self, plan: dict) -> dict:
         """A plan that only images given points, or an existing map's best regions: no tiles, no stitch."""

@@ -12,79 +12,87 @@
   "pixel_m": 4.6875e-09,
   "overrides": [],
   "calibration": null,
-  "acquire_s": 31.6,
-  "stitch_s": 304.1,
+  "acquire_s": 29.4,
+  "stitch_s": 307.7,
   "stage_only": {
     "median_px": 39.48025667022524,
     "p95_px": 78.37961492340207,
     "max_px": 127.64391756679895,
-    "after_affine_median_px": 39.657697943990634,
-    "after_affine_p95_px": 77.95775207230452,
-    "after_affine_max_px": 122.74057913236003
+    "after_affine_median_px": 39.65769794398928,
+    "after_affine_p95_px": 77.95775207230442,
+    "after_affine_max_px": 122.74057913235873,
+    "misplaced": []
   },
   "stitched": {
-    "median_px": 3.533769714148774,
-    "p95_px": 8.934989737801969,
-    "max_px": 131.90866232783242,
-    "after_affine_median_px": 0.7459472172584588,
-    "after_affine_p95_px": 1.937051894080097,
-    "after_affine_max_px": 133.80875725013422
+    "median_px": 2.8834646392393823,
+    "p95_px": 7.121046512006071,
+    "max_px": 127.29397860024196,
+    "after_affine_median_px": 0.10407938931946777,
+    "after_affine_p95_px": 0.23665893146098851,
+    "after_affine_max_px": 0.4979155295605847,
+    "misplaced": [
+      18,
+      19,
+      20
+    ]
   },
   "seams": {
-    "ratio": 0.9647561842193985,
-    "edge_pixels": 10617182
+    "ratio": 0.96619105943569,
+    "edge_pixels": 10469492
   },
   "brightness": {
-    "mean_pct": 0.27670451743955105,
-    "p95_pct": 0.9103580463070031,
-    "pairs": 1478
+    "mean_pct": 0.2723645108392399,
+    "p95_pct": 0.8712530231211542,
+    "pairs": 1479
   },
   "scan_linear": {
     "applied": [
       [
-        0.9900996588193678,
-        -0.00539800577685154
+        0.9901129264662888,
+        -0.005320435097594984
       ],
       [
-        -0.0010257501495202284,
-        0.9925582756144286
+        -0.0006661075842741465,
+        0.9922716305315875
       ]
     ],
     "estimate": [
       [
-        0.9900996588193678,
-        -0.00539800577685154
+        0.9901129264662888,
+        -0.005320435097594984
       ],
       [
-        -0.0010257501495202284,
-        0.9925582756144286
+        -0.0006661075842741465,
+        0.9922716305315875
       ]
     ],
     "stderr": [
       [
-        0.0007541765919281964,
-        0.0007522652347391145
+        0.0007625715374075735,
+        0.0007608418200693431
       ],
       [
-        0.0008346851042115222,
-        0.0008325697092342326
+        0.0008327060245631587,
+        0.0008308172233455937
       ]
     ]
   },
   "gain_range": [
-    0.982824691660336,
-    1.0168495418164176
+    0.9834889183845227,
+    1.0165474777921308
   ],
-  "unplaced_tiles": 1,
+  "unplaced_tiles": 3,
+  "misplaced_tiles": [],
   "detector_gain_range": [
     1.0001079499085654,
     1.0490517690261871
   ],
-  "matches_used": 1271,
+  "matches_used": 1269,
   "passed": {
-    "placement_median_px": false,
-    "placement_p95_px": false,
-    "placement_max_px": false,
+    "placement_median_px": true,
+    "placement_p95_px": true,
+    "placement_max_px": true,
+    "misplaced_tiles": true,
     "seam_ratio": true,
     "neighbour_brightness_pct": true,
     "unplaced_tiles": false
