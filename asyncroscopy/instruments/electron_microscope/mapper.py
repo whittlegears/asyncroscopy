@@ -454,7 +454,10 @@ class Mapper(JobDevice):
         return example
 
     def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
-        """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves."""
+        """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves.
+
+        The commands are kept in the plan as ``drives`` ({device address: commands}), so auto mode can tell
+        whether it runs every one of them before it starts the job."""
         needs = profile.needed_commands(plan)
         shift_commands = live_drift.needed_commands(plan, profile)
         if shift_commands:
@@ -470,6 +473,7 @@ class Mapper(JobDevice):
                     f"the {profile.name!r} instrument profile needs {', '.join(missing)} on {address}, which does not offer them; "
                     "set this Mapper's instrument_profile to one the instrument supports"
                 )
+        plan["drives"] = {address: list(dict.fromkeys(commands)) for address, commands in needs.items()}
 
     def resolve_plan(self, plan: dict) -> dict:
         profile = profile_for(self)

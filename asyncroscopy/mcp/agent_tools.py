@@ -15,9 +15,11 @@ from collections.abc import Iterable
 # traces (benchmarks/results/tool_usage_analysis.md): calls that always come as a pair or are always
 # made first. run_job is reserve+start, wait_for_job also waits on analysis jobs and returns results,
 # and the skills are put in the prompt (load_skill is shown to the model only while one does not fit).
+# find_tools and call_tool reach every other tool of the endpoint, so a curated list never hides one.
 GENERIC_TOOLS = [
-    "approval_status", "run_job", "wait_for_job", "list_devices", "list_data", "view_data",
+    "find_tools", "call_tool", "approval_status", "run_job", "wait_for_job", "list_devices", "list_data", "view_data",
     "assemble_map", "score_map", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
+    "annotate", "list_annotations", "edit_annotation", "to_stage", "to_pixel",
 ]
 # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
 STEM_TOOLS = [

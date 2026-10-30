@@ -104,3 +104,67 @@ def test_a_stage_that_never_arrives_fails_the_step_instead_of_waiting_forever():
     with pytest.raises(RuntimeError, match="stage_timeout_s"):
         Mapper._wait_for_stage(mapper, {}, stuck)
     assert time.monotonic() - t0 < 2.0
+
+
+@pytest.fixture
+def holder_stage(tango_ctx):
+    stage = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/holders"))
+    stage.position = [0.0, 0.0, 0.0, 0.0, 0.0]
+    stage.set_holder("low_tilt")
+    yield stage
+    stage.position = [0.0, 0.0, 0.0, 0.0, 0.0]
+    stage.set_holder("low_tilt")
+
+
+def test_the_installed_holder_narrows_z_and_tilt(holder_stage):
+    import json
+
+    info = json.loads(holder_stage.get_holder())
+    assert info["holder"] == "low_tilt" and info["holders"] == ["low_tilt", "single_tilt"]
+    assert info["limits"]["alpha"] == [-15.0, 15.0] and info["limits"]["z"] == [-1e-4, 1e-4]
+    assert info["limits"]["x"] == [-1e-3, 1e-3]  # what the holder leaves alone keeps the stage travel
+    holder_stage.position = [0.0, 0.0, 5e-5, 14.0, 4.0]
+    for bad in ([0.0, 0.0, 0.0, 20.0, 0.0], [0.0, 0.0, 2e-4, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 6.0]):
+        with pytest.raises(tango.DevFailed, match="low_tilt"):
+            holder_stage.position = bad
+    assert list(holder_stage.position) == pytest.approx([0.0, 0.0, 5e-5, 14.0, 4.0])
+    assert float(holder_stage.get_attribute_config("alpha").max_value) == 15.0  # what the twin's own check reads
+
+
+def test_changing_holder_is_checked_against_where_the_stage_is(holder_stage):
+    import json
+
+    holder_stage.position = [0.0, 0.0, 0.0, 10.0, 3.0]
+    with pytest.raises(tango.DevFailed, match="move it inside first"):
+        holder_stage.set_holder("single_tilt")
+    with pytest.raises(tango.DevFailed, match="unknown holder"):
+        holder_stage.set_holder("cryo")
+    holder_stage.position = [0.0, 0.0, 0.0, 10.0, 0.0]
+    assert json.loads(holder_stage.set_holder("single_tilt"))["limits"]["alpha"] == [-35.0, 35.0]
+    holder_stage.position = [0.0, 0.0, 0.0, 30.0, 0.0]  # single tilt: alpha keeps the stage's own range
+    assert json.loads(holder_stage.set_holder(""))["holder"] is None
+
+
+def test_the_fitted_holder_survives_a_restart_and_a_bad_record_raises_an_alarm(holder_stage):
+    import json
+
+    holder_stage.position = [0.0, 0.0, 0.0, 0.0, 0.0]
+    holder_stage.set_holder("single_tilt")
+    holder_stage.Init()  # what a crash and restart does
+    assert json.loads(holder_stage.get_holder())["holder"] == "single_tilt"
+    record = json.loads(holder_stage.get_holder())
+    path = __import__("pathlib").Path("outputs/stage/asyncroscopy_stage_holders_holder.json")
+    assert json.loads(path.read_text())["holder"] == "single_tilt"
+    path.write_text("{not json")
+    holder_stage.Init()
+    assert str(holder_stage.State()) == "ALARM" and "could not be read" in holder_stage.Status()
+    limits = json.loads(holder_stage.get_holder())["limits"]
+    assert limits["alpha"] == [-15.0, 15.0] and limits["beta"][1] <= 1e-9  # what every configured holder allows
+    holder_stage.set_holder("low_tilt")
+    assert str(holder_stage.State()) == "ON" and record["holders"] == ["low_tilt", "single_tilt"]
+
+
+def test_set_holder_is_operator_only():
+    from asyncroscopy.safety.policy import operator_only
+
+    assert operator_only("TestStage", "set_holder") and not operator_only("TestStage", "get_holder")

@@ -34,6 +34,7 @@ def server_factory(monkeypatch, approvals_proxy, tmp_path):
             trace_path=str(tmp_path / f"trace_{role}.jsonl"),
         )
         server._approvals = lambda: approvals_proxy
+        server._stem_prefixes = {"DigitalTwin"}  # an electron microscope: its routine commands run in auto
         return server
 
     return make
@@ -167,6 +168,41 @@ class TestPolicy:
         assert operator_only("Approvals", "request")
         assert operator_only("Approvals", "check")
         assert not operator_only("Approvals", "get_mode")
+        assert operator_only("Approvals", "set_auto_allowed")
+        assert not operator_only("Approvals", "get_auto_allowed")
+
+    @pytest.mark.parametrize("tool, switched_on, allowed", [
+        ("DigitalTwin_move_stage", [], True),
+        ("AFMTwin_move_stage", [], False),
+        ("DigitalTwinCorrector_set_stigmator", [], False),
+        ("EELS_Cam_acquire_spectrum", [], True),
+        ("DigitalTwin_acquire_scanned_image", [], True),
+        ("DigitalTwin_set_column_valves", [], False),
+        ("DigitalTwin_acquire_camera_image", [], False),
+        ("DigitalTwinCorrector_correct_aberration", [], False),
+        ("DigitalTwin_brand_new_command", [], False),
+        ("Mapper_start", [], False),
+        ("run_job", [], False),
+        ("DigitalTwin_set_column_valves", ["DigitalTwin_set_column_valves"], True),
+        ("DigitalTwin_set_column_valves", ["*_SET_COLUMN_VALVES"], True),
+        ("DigitalTwin_set_screen", ["DigitalTwin_set_column_valves"], False),
+    ])
+    def test_auto_mode_runs_routine_and_switched_on_commands_only(self, tool, switched_on, allowed):
+        from asyncroscopy.safety.policy import auto_allows
+        assert auto_allows(tool, switched_on, ["DigitalTwin", "EELS_Cam", "EELS"]) is allowed
+        assert auto_allows(tool, switched_on) is bool(switched_on and allowed)
+
+    def test_a_job_start_runs_in_auto_only_when_everything_it_drives_would(self):
+        from asyncroscopy.safety.policy import auto_allows_start
+        stem = ["DigitalTwin"]
+        assert auto_allows_start("Mapper_start", ["DigitalTwin_move_stage", "DigitalTwin_acquire_spectrum"], (), stem)
+        assert not auto_allows_start("Mapper_start", ["DigitalTwin_move_stage"])
+        assert auto_allows_start("Mapper_start", [])
+        assert not auto_allows_start("Mapper_start", ["DigitalTwin_move_stage", "DigitalTwin_set_column_valves"], (), stem)
+        assert not auto_allows_start("Mapper_start", ["asyncroscopy/other/1:move_stage"], (), stem)
+        assert not auto_allows_start("Tuner_start", None)
+        assert auto_allows_start("Tuner_start", None, ["Tuner_start"])
+        assert auto_allows_start("Mapper_start", ["DigitalTwin_set_column_valves"], ["*_set_column_valves"])
 
 
 def test_a_configured_approve_beats_a_saved_auto():
@@ -192,6 +228,7 @@ class TestApprovalsDevice:
         assert approvals_proxy.get_mode() == "auto"
 
     def test_request_approve_check_is_single_use(self, approvals_proxy):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [1, 2, 3, 0, 0]}}
         mine = {**call, "caller": "agent-1"}
         request_id = json.loads(approvals_proxy.request(json.dumps(mine)))["request_id"]
@@ -203,6 +240,7 @@ class TestApprovalsDevice:
         assert not json.loads(approvals_proxy.check(json.dumps(mine)))["allowed"]
 
     def test_a_grant_covers_only_the_caller_and_run_that_asked(self, approvals_proxy):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [4, 4, 0, 0, 0]}}
         alice = {**call, "caller": "alice", "run": "run-1"}
         request_id = json.loads(approvals_proxy.request(json.dumps(alice)))["request_id"]
@@ -224,6 +262,7 @@ class TestApprovalsDevice:
         approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "operator"}))
 
     def test_approval_covers_only_the_same_arguments(self, approvals_proxy):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [9, 9, 0, 0, 0]}}
         request_id = json.loads(approvals_proxy.request(json.dumps(call)))["request_id"]
         approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
@@ -235,6 +274,41 @@ class TestApprovalsDevice:
         approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "operator", "reason": "not now"}))
         status = json.loads(approvals_proxy.request_status(request_id))
         assert status["state"] == "denied" and status["reason"] == "not now"
+
+    def test_auto_mode_holds_a_command_until_it_is_switched_on(self, approvals_proxy, job_dir):
+        valves = {"action": "DigitalTwin_set_column_valves", "arguments": {"open": True}, "caller": "agent-1", "stem_devices": ["DigitalTwin"]}
+        held = json.loads(approvals_proxy.check(json.dumps(valves)))
+        assert not held["allowed"] and "switches it on" in held["held_in_auto"]
+        assert json.loads(approvals_proxy.check(json.dumps({**valves, "action": "DigitalTwin_move_stage"})))["allowed"]
+        try:
+            approvals_proxy.set_auto_allowed(json.dumps({"patterns": ["DigitalTwin_set_column_valves"], "who": "operator"}))
+            first = json.loads(approvals_proxy.check(json.dumps(valves)))
+            assert first["allowed"] and first["approved_by"] == "auto"
+            assert json.loads(approvals_proxy.check(json.dumps(valves)))["allowed"]
+            assert json.loads(approvals_proxy.get_auto_allowed())["switched_on"] == ["DigitalTwin_set_column_valves"]
+            saved = json.loads((job_dir / "approvals_mode.json").read_text())
+            assert saved["auto_allowed"] == ["DigitalTwin_set_column_valves"] and saved["mode"] == "auto"
+            approvals_proxy.Init()
+            assert json.loads(approvals_proxy.check(json.dumps(valves)))["allowed"]
+            approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+            assert not json.loads(approvals_proxy.check(json.dumps(valves)))["allowed"]
+        finally:
+            approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "operator"}))
+            approvals_proxy.set_auto_allowed(json.dumps({"patterns": [], "who": "operator"}))
+        assert not json.loads(approvals_proxy.check(json.dumps(valves)))["allowed"]
+
+    def test_a_job_start_in_auto_follows_what_it_drives(self, approvals_proxy):
+        start = {"action": "Mapper_start", "arguments": {"reservation_id": "r1"}, "job_start": True, "stem_devices": ["DigitalTwin"]}
+        assert json.loads(approvals_proxy.check(json.dumps({**start, "drives": ["DigitalTwin_move_stage"]})))["allowed"]
+        held = json.loads(approvals_proxy.check(json.dumps({**start, "drives": ["DigitalTwin_set_screen"]})))
+        assert not held["allowed"] and "DigitalTwin_set_screen" in held["held_in_auto"]
+        unknown = json.loads(approvals_proxy.check(json.dumps({**start, "drives": None})))
+        assert not unknown["allowed"] and "does not say" in unknown["held_in_auto"]
+
+    @pytest.mark.parametrize("patterns", [None, "DigitalTwin_set_screen", [""], [3]])
+    def test_bad_switch_lists_rejected(self, approvals_proxy, patterns):
+        with pytest.raises(tango.DevFailed):
+            approvals_proxy.set_auto_allowed(json.dumps({"patterns": patterns, "who": "operator"}))
 
     def test_bad_mode_rejected(self, approvals_proxy):
         with pytest.raises(tango.DevFailed):
@@ -249,6 +323,71 @@ class TestGate:
         event = json.loads((tmp_path / "trace_agent.jsonl").read_text().splitlines()[-1])
         validate(event, "trace_event")
         assert event["approved_by"] == "auto" and event["mode"] == "auto"
+
+    def test_auto_mode_holds_a_switched_off_command_until_approved(self, server_factory, approvals_proxy):
+        server = server_factory()
+        calls = []
+        wrapper = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "set_column_valves", "DigitalTwin")
+        with pytest.raises(ToolError, match="held in auto mode") as held:
+            wrapper("open")
+        assert calls == []
+        request_id = str(held.value).split("request_id=")[1].split(";")[0]
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
+        assert wrapper("open") == "ok" and calls == ["open"]
+
+    def test_every_tool_is_found_and_run_through_the_same_gate(self, server_factory, approvals_proxy):
+        import asyncio
+        from fastmcp.tools import Tool
+
+        server = server_factory()
+        calls = []
+        for command in ("set_column_valves", "move_stage", "get_stage"):
+            wrapper = server._create_wrapper(lambda arg, c=command: calls.append((c, arg)) or "ok", cmd_info(), command, "DigitalTwin")
+            server._registered[f"DigitalTwin_{command}"] = Tool.from_function(wrapper)
+        found = {t["name"]: t for t in server.find_tools()["tools"]}
+        assert found["DigitalTwin_set_column_valves"]["when"] == "held"
+        assert found["DigitalTwin_move_stage"]["when"] == "runs" and found["DigitalTwin_get_stage"]["when"] == "runs"
+        assert [t["name"] for t in server.find_tools("column valves")["tools"]] == ["DigitalTwin_set_column_valves"]
+        assert server.endpoint_info()["auto"] == {"DigitalTwin_move_stage": "routine", "DigitalTwin_set_column_valves": "held"}
+        arg = next(iter(found["DigitalTwin_move_stage"]["arguments"]))
+        asyncio.run(server.call_tool("DigitalTwin_move_stage", {arg: "here"}))
+        assert calls == [("move_stage", "here")]
+        with pytest.raises(ToolError, match="held in auto mode"):
+            asyncio.run(server.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
+        assert calls == [("move_stage", "here")]
+        try:
+            approvals_proxy.set_auto_allowed(json.dumps({"patterns": ["DigitalTwin_set_column_valves"], "who": "operator"}))
+            assert {t["name"]: t for t in server.find_tools()["tools"]}["DigitalTwin_set_column_valves"]["when"] == "runs"
+            asyncio.run(server.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
+        finally:
+            approvals_proxy.set_auto_allowed(json.dumps({"patterns": [], "who": "operator"}))
+        assert calls[-1] == ("set_column_valves", "open")
+        with pytest.raises(ToolError, match="no tool"):
+            asyncio.run(server.call_tool("DigitalTwin_nothing", {}))
+
+    def test_a_job_start_names_what_it_drives_to_the_gate(self, server_factory):
+        server = server_factory()
+
+        class Device:
+            def __init__(self, drives):
+                self.drives = drives
+
+            def get_reservation(self, request):
+                return json.dumps({"resolved_plan": {"drives": self.drives}})
+
+            def dev_name(self):
+                return "asyncroscopy/twin/default" if self.drives is None else "asyncroscopy/mapper/default"
+
+        server._envelope_prefixes.add("Mapper")
+        server._devices["DigitalTwin"] = Device(None)
+        server.tool_risks["DigitalTwin_get_stage"] = "low"
+        server._devices["Mapper"] = Device({"asyncroscopy/twin/default": ["move_stage", "get_stage", "acquire_scanned_image"]})
+        start = server._create_wrapper(lambda arg: "started", cmd_info(), "start", "Mapper")
+        assert start(json.dumps({"reservation_id": "r1"})) == "started"
+        server._devices["Mapper"] = Device({"asyncroscopy/twin/default": ["move_stage", "set_screen"]})
+        with pytest.raises(ToolError, match="DigitalTwin_set_screen"):
+            start(json.dumps({"reservation_id": "r2"}))
+        assert server._driven_tools(lambda: {"asyncroscopy/elsewhere/1": ["move_stage"]}) == ["asyncroscopy/elsewhere/1:move_stage"]
 
     def test_approve_mode_holds_until_operator_approves(self, server_factory, approvals_proxy, tmp_path):
         server = server_factory()
@@ -318,7 +457,7 @@ class TestEndpointRoles:
             return type("Info", (), {"dev_class": "Approvals" if "approvals" in self.name else "DigitalTwin"})()
 
         def command_list_query(self):
-            names = ["approve", "deny", "set_mode", "request", "get_mode"] if "approvals" in self.name else ["move_stage", "export_ground_truth"]
+            names = ["approve", "deny", "set_mode", "set_auto_allowed", "get_auto_allowed", "request", "get_mode"] if "approvals" in self.name else ["move_stage", "export_ground_truth"]
             return [type("Cmd", (), {"cmd_name": n})() for n in names]
 
         def __getattr__(self, item):
@@ -334,9 +473,19 @@ class TestEndpointRoles:
         twin = set(tools["DigitalTwin"])
         assert ("approve" not in approvals) is hidden
         assert ("set_mode" not in approvals) is hidden
+        assert ("set_auto_allowed" not in approvals) is hidden
+        assert "get_auto_allowed" in approvals
         assert ("export_ground_truth" not in twin) is hidden
         assert ("request" not in approvals) is hidden
         assert "get_mode" in approvals and "move_stage" in twin
+
+    def test_the_monitor_role_offers_only_reads(self, monkeypatch):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: self.FakeDb())
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", self.FakeProxy)
+        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, endpoint_role="monitor")
+        tools = server._find_tools()
+        assert set(tools["Approvals"]) == {"get_mode", "get_auto_allowed"}
+        assert "DigitalTwin" not in tools or not set(tools["DigitalTwin"]) & {"move_stage", "export_ground_truth"}
 
     def test_unknown_role_rejected(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -653,7 +802,7 @@ class TestRunJob:
                 return json.dumps({"state": "released"})
 
             def get_reservation(self, request):
-                return '{"plan": {"fov_m": 2e-07}}'
+                return '{"plan": {"fov_m": 2e-07}, "resolved_plan": {"drives": {}}}'
 
             def job_status(self, request):
                 job_id = json.loads(request)["job_id"]
@@ -919,7 +1068,7 @@ class TestEndpointGuards:
             return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": dict(estimate)})
 
         server.tools["Mapper"]["reserve"] = server._create_wrapper(reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper")
-        server._devices["Mapper"].get_reservation = lambda request: json.dumps({"reservation_id": json.loads(request)["reservation_id"], "estimate": dict(estimate)})
+        server._devices["Mapper"].get_reservation = lambda request: json.dumps({"reservation_id": json.loads(request)["reservation_id"], "estimate": dict(estimate), "resolved_plan": {"drives": {}}})
         return server, calls
 
     @pytest.mark.parametrize("estimate, why", [
@@ -1003,3 +1152,112 @@ class TestEndpointGuards:
         MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)._find_tools()
         lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[safety]")]
         assert len(lines) == 1 and "asyncroscopy/instrument/default is in FAULT" in lines[0] and "stage_x_m.max" in lines[0]
+
+
+def test_find_tools_says_when_the_approval_service_is_not_answering(server_factory):
+    from fastmcp.tools import Tool
+
+    server = server_factory()
+    server._registered["DigitalTwin_move_stage"] = Tool.from_function(server._create_wrapper(lambda arg: "ok", cmd_info(), "move_stage", "DigitalTwin"))
+
+    def broken():
+        raise tango.DevFailed()
+
+    server._approvals = broken
+    found = server.find_tools()
+    assert found["mode"] == "unknown" and found["tools"][0]["when"].startswith("refused")
+    operator = server_factory(role="operator")
+    operator._registered["DigitalTwin_set_column_valves"] = Tool.from_function(operator._create_wrapper(lambda arg: "ok", cmd_info(), "set_column_valves", "DigitalTwin"))
+    assert operator.find_tools()["tools"][0]["when"] == "runs"  # the operator endpoint is never held
+
+
+def test_a_plan_cannot_say_what_its_job_drives(mapper_proxy):
+    reply = json.loads(mapper_proxy.reserve(json.dumps({"plan": {"size_m": [2e-7, 2e-7], "fov_m": 1e-7, "drives": {}}})))
+    assert reply["error"]["code"] == "bad_request" and "drives" in reply["error"]["message"]
+
+
+def test_an_spm_stage_move_is_refused_while_the_tip_is_engaged():
+    from asyncroscopy.instruments.scanning_probe_microscope.scanning_probe_microscope import refuse_if_engaged
+
+    class Approach:
+        def __init__(self, engaged):
+            self.engaged = engaged
+
+        @property
+        def approached(self):
+            if isinstance(self.engaged, Exception):
+                raise self.engaged
+            return self.engaged
+
+    refuse_if_engaged(Approach(False))
+    with pytest.raises(RuntimeError, match="retract it first"):
+        refuse_if_engaged(Approach(True))
+    with pytest.raises(RuntimeError, match="could not be read"):
+        refuse_if_engaged(Approach(tango.DevFailed()))
+
+
+def test_a_deployment_that_marks_a_routine_command_high_holds_it_in_auto(server_factory):
+    server = server_factory()
+    server.risk_overrides = {"DigitalTwin.unblank_beam": "high"}
+    calls = []
+    unblank = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "unblank_beam", "DigitalTwin")
+    move = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "move_stage", "DigitalTwin")
+    with pytest.raises(ToolError, match="held in auto mode"):
+        unblank("x")
+    assert move("here") == "ok" and calls == ["here"]
+    assert server.endpoint_info()["auto"]["DigitalTwin_unblank_beam"] == "held"
+
+
+def test_stop_all_latches_first_stops_every_device_and_reports_what_it_could_not(server_factory, approvals_proxy, monkeypatch):
+    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.STOP_ALL_WAIT_S", 1.0)
+    server = server_factory()
+    approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+    held = {"action": "DigitalTwin_unblank_beam", "arguments": {}, "caller": "agent-1"}
+    request_id = json.loads(approvals_proxy.request(json.dumps(held)))["request_id"]
+    approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
+    approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "operator"}))
+    server.risk_overrides = {"*": "high"}  # a deployment that marks everything high must not hold the e-stop
+    done = []
+
+    class Device:
+        def __init__(self, prefix, commands, broken=(), hang=False):
+            self.prefix, self.commands, self.broken, self.hang = prefix, commands, set(broken), hang
+
+        def command_inout(self, name):
+            if self.hang:
+                time.sleep(3)
+            if name in self.broken:
+                raise RuntimeError(f"{self.prefix} not answering")
+            done.append(f"{self.prefix}_{name}")
+            return json.dumps({"aborted": [{"job_id": "j1", "state": "aborted"}]}) if name == "abort_all" else None
+
+    void, text = tango.CmdArgType.DevVoid, tango.CmdArgType.DevString
+    devices = {
+        "Mapper": (Device("Mapper", ["abort_all"], broken=["abort_all"]), {"abort_all": void, "abort": text, "start": text}),
+        "Tuner": (Device("Tuner", ["abort_all"]), {"abort_all": void}),
+        "OldJob": (Device("OldJob", []), {"abort": text, "start": text}),
+        "DigitalTwin": (Device("DigitalTwin", []), {"blank_beam": void, "move_stage": text, "unblank_beam": void}),
+        "Raman": (Device("Raman", []), {"laser_off": void, "laser_on": void, "close_shutter": void}),
+        "GunCtl": (Device("GunCtl", []), {"hv_off": void, "filament_off": void, "stop": void, "estop": void}),
+        "AFMTwin": (Device("AFMTwin", []), {"approach_tip": void, "retract_tip": void}),
+        "SlowCam": (Device("SlowCam", [], hang=True), {"close_shutter": void}),
+        "BlindStem": (Device("BlindStem", []), {"acquire_scanned_image": text}),
+    }
+    server._devices = {prefix: d for prefix, (d, _) in devices.items()}
+    server._in_types = {prefix: types for prefix, (_, types) in devices.items()}
+    server._envelope_prefixes = {"Mapper", "Tuner", "OldJob"}
+    server._stem_prefixes = {"DigitalTwin", "BlindStem"}
+    server._probe_prefixes = {"AFMTwin"}
+    server.tools = {prefix: {c: (lambda: done.append("through the gate")) for c in types} for prefix, (_, types) in devices.items()}
+    started = time.monotonic()
+    reply = server.stop_all()
+    assert time.monotonic() - started < 3.0  # a hung device does not hold up the report (two phases of 1 s)
+    assert "through the gate" not in done
+    assert not set(done) & {"GunCtl_hv_off", "GunCtl_filament_off", "GunCtl_stop", "GunCtl_estop", "DigitalTwin_unblank_beam", "Raman_laser_on", "AFMTwin_approach_tip"}
+    assert done.count("DigitalTwin_blank_beam") == 2 and done.count("Raman_laser_off") == 2 and done.count("Raman_close_shutter") == 2
+    assert {"Tuner_abort_all", "AFMTwin_retract_tip"} <= set(done)
+    assert [s["tool"] for s in reply["steps"][:2]] == ["Approvals_set_mode", "Approvals_revoke_grants"]  # the latch comes first
+    failed = {s["tool"] for s in reply["steps"] if not s["ok"]}
+    assert failed == {"Mapper_abort_all", "OldJob_abort_all", "BlindStem_blank_beam", "SlowCam"} and not reply["stopped"]
+    assert approvals_proxy.get_mode() == "approve"
+    assert not json.loads(approvals_proxy.check(json.dumps(held)))["allowed"]  # the approval given before the stop is void

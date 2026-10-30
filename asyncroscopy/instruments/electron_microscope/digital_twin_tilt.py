@@ -761,11 +761,7 @@ class DigitalTwinTilt(AtomisticDigitalTwin):
             raise ValueError("Stage position must be [x, y, z, alpha, beta]")
         stage = self._detector_proxies.get("stage")
         if stage is not None:
-            try:
-                stage.position = target.tolist()
-            except (AttributeError, tango.DevFailed):
-                stage.x, stage.y, stage.z = target[:3]
-                stage.alpha, stage.beta = target[3:]
+            stage.position = target.tolist()  # a refused move raises before anything moves
         self._apply_stage_target(target)
 
     def _get_stage(self):

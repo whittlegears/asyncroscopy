@@ -62,6 +62,11 @@ from asyncroscopy.trace.clock import InstrumentClock
 
 ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting"}
 RUNNING_STATES = {"queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}  # a worker owns the job
+
+
+def lease_seconds(device) -> float:
+    """A job device's lease_s (0: no lease), also for a stand-in that does not declare the property."""
+    return float(getattr(device, "lease_s", 0.0) or 0.0)
 SUSPENDER_KEYS = {"attr", "min", "max", "equals", "resume_after_s", "label"}
 VIOLATIONS_SHOWN = 20  # violations listed in a refusal; the total is always given
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
@@ -256,6 +261,11 @@ class JobDevice(Device):
     suspender_poll_s = device_property(dtype=float, default_value=1.0, doc="How often a paused job re-reads its suspender conditions.")
     require_limits = device_property(dtype=bool, default_value=True, doc="Refuse a plan when an attribute it sets has limits that cannot be read (False: reserve it and list them under limits.unchecked).")
     simulated = device_property(dtype=bool, default_value=False, doc="True when the stack drives a simulator (run_servers' top-level simulated:); False, the default, means real hardware.")
+    lease_s = device_property(
+        dtype=float, default_value=0.0,
+        doc="A running job is aborted (and the instrument put in its safe state) when nobody has checked on it (job_status, "
+            "wait_for_job, renew_lease) for this long, so a crashed agent or GUI cannot leave it running unwatched. 0: off.",
+    )
 
     # ------------------------------------------------------------------
     # Subclass hooks
@@ -513,6 +523,8 @@ class JobDevice(Device):
         dry_run = body["plan"].pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
         if not isinstance(dry_run, bool):
             raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
+        if "drives" in body["plan"]:  # auto mode trusts this list to decide the start; only the device writes it
+            raise JobError("bad_request", "drives is not a plan field: the job device works out which commands it drives")
         if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
             raise JobError(
                 "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
@@ -680,10 +692,13 @@ class JobDevice(Device):
                 self._threads.pop(finished, None)
                 self._abort.pop(finished, None)
             self._abort[job_id] = threading.Event()
+            job["lease_until"] = time.time() + lease_seconds(self) if lease_seconds(self) > 0 else None
             thread = threading.Thread(target=self._omni_worker, args=(job, job_id), name=f"job-{job_id}", daemon=True)
             self._threads[job_id] = thread
             try:
                 thread.start()
+                if job["lease_until"] is not None:
+                    threading.Thread(target=self._watch_lease, args=(job, job_id, thread), name=f"lease-{job_id}", daemon=True).start()
             except Exception:  # no thread to run it (RuntimeError, MemoryError): put the reservation back as it was
                 for table in (self._job_index, self._abort, self._threads):
                     table.pop(job_id, None)
@@ -692,6 +707,26 @@ class JobDevice(Device):
                 self._save(job)
                 raise
         return self._reply({"job_id": job_id, "reservation_id": job["reservation_id"], "state": "running"})
+
+    def _watch_lease(self, job: dict, job_id: str, worker: threading.Thread) -> None:
+        """Abort ``job_id`` once its lease lapses: nobody has asked about it for lease_s."""
+        lease = lease_seconds(self)
+        abort = self._abort.get(job_id)
+        while worker.is_alive() and abort is not None and not abort.is_set():
+            time.sleep(min(1.0, lease / 4))
+            with self._lock:
+                lapsed = job.get("job_id") == job_id and job["state"] == "running" and time.time() > (job.get("lease_until") or float("inf"))
+                if lapsed:
+                    job["last_error"] = {"code": "lease_lapsed", "message": f"lease lapsed: nobody checked on this job for {lease:g} s, so it was aborted and the instrument put in its safe state"}
+                    job["state"] = "aborting"
+                    abort.set()
+            if lapsed:
+                self._trace.record(f"{type(self).__name__}.lease_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], caller=job.get("caller"), **self._dry(job))
+                return
+
+    def _renew(self, job: dict) -> None:
+        if lease_seconds(self) > 0 and job["state"] in RUNNING_STATES:  # a paused job someone is watching keeps its lease
+            job["lease_until"] = time.time() + lease_seconds(self)
 
     def _omni_worker(self, job: dict, job_id: str) -> None:
         # PyTango requires threads it did not create to be registered with omniORB before
@@ -843,6 +878,7 @@ class JobDevice(Device):
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
         with self._lock:  # the worker changes done_ranges under this lock
             done = done_count(job)
+            self._renew(job)
         return self._reply(
             {
                 "job_id": job.get("job_id", job["reservation_id"]),
@@ -877,6 +913,25 @@ class JobDevice(Device):
         if thread is not None:
             thread.join(timeout=2.0)
         return self._status(json.dumps({"job_id": job_id or job["reservation_id"]}))
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."}.', doc_out="The job's status; its lease runs lease_s from now.")
+    def renew_lease(self, request: str) -> str:
+        """Keep a running job's lease (lease_s) from lapsing without reading anything else. job_status renews it too."""
+        return self._guard(self._status, request)
+
+    @command(dtype_out=str, doc_out='JSON {"aborted": [status of each job that was running]}.')
+    def abort_all(self) -> str:
+        """Stop every job of this device that is running, without naming it: the e-stop. Always allowed."""
+        with self._lock:
+            running = [job["job_id"] for job in self._jobs.values() if job.get("job_id") and job["state"] in {"running", "paused_suspended", "aborting"}]
+        stopped = []
+        for job_id in running:
+            try:
+                stopped.append(json.loads(self._abort_job(json.dumps({"job_id": job_id}))))
+            except Exception as exc:  # one job that cannot be stopped must not keep the others running
+                stopped.append({"job_id": job_id, "error": f"{type(exc).__name__}: {exc}"})
+        self._trace.record(f"{type(self).__name__}.abort_all", True, time.time(), arguments={"job_ids": running})
+        return self._reply({"aborted": stopped})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what this device's background job produced, and a summary.")
     def results(self, request: str) -> str:

@@ -282,6 +282,33 @@ def test_an_operate_token_moves_the_stage_through_the_approval_gate(stack, keys,
     assert ran[-1]["caller"] == "alice@ornl.gov" and ran[-1]["approved_by"] == "operator-bob"
 
 
+def test_call_tool_needs_the_role_of_the_tool_it_runs(stack, keys, approvals_proxy):
+    reader = token(keys, "reader", "instrument:read")
+    error, text = call(stack["agent"], reader, "call_tool", {"name": "DigitalTwin_move_stage", "arguments": {"position": [7, 0, 0, 0, 0]}})
+    assert error and "operate role" in text, text
+    assert stack["twin"].position[0] != 7
+    before = approvals_proxy.get_mode()
+    for scopes in (["instrument:read"], ["instrument:operate"]):
+        for target, args in (("Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "eve"})}),
+                             ("Approvals_set_auto_allowed", {"request": json.dumps({"patterns": ["*"], "who": "eve"})})):
+            error, text = call(stack["operator"], token(keys, "eve", *scopes), "call_tool", {"name": target, "arguments": args})
+            assert error and "approve role" in text, text
+    assert approvals_proxy.get_mode() == before
+    assert json.loads(approvals_proxy.get_auto_allowed())["switched_on"] == []
+    error, text = call(stack["operator"], reader, "find_tools", {"query": "approvals"})
+    assert not error and "Approvals_set_mode" not in text and "Approvals_get_mode" in text, text
+
+
+def test_set_auto_allowed_records_the_token_subject(stack, keys, approvals_proxy, job_dir):
+    bob = token(keys, "operator-bob", "instrument:approve")
+    try:
+        error, text = call(stack["operator"], bob, "Approvals_set_auto_allowed", {"request": json.dumps({"patterns": ["DigitalTwin_set_screen"], "who": "someone-else"})})
+        assert not error, text
+        assert json.loads((job_dir / "approvals_mode.json").read_text())["who"] == "operator-bob"
+    finally:
+        approvals_proxy.set_auto_allowed(json.dumps({"patterns": [], "who": "test"}))
+
+
 def test_set_mode_needs_the_approve_role(stack, keys, approvals_proxy):
     error, text = call(stack["operator"], token(keys, "alice", "instrument:operate"), "Approvals_set_mode", {"mode": "approve", "who": "alice"})
     assert error and "approve role" in text

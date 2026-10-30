@@ -1,0 +1,46 @@
+# Monitor MCP endpoint: read-only. It offers only pure reads (get_*, list_*, State,
+# Status, job_status, results), the data tools and the trace, and never a command that
+# acts, so a status panel or a question-answering agent can watch the instrument while
+# the worker agent runs.
+#
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_monitor.yaml
+
+tango:
+  host: localhost
+  port: 9094
+
+mcp:
+  name: Monitor_MCP
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8002
+  data_device_address: asyncroscopy/data/default
+  quiet: true
+  blocked_classes:
+    - DataBase
+    - DServer
+  blocked_functions:
+    "*":
+      - Init
+      - Kill
+      - RestartServer
+  # Optional Tango command allowlist. Leave empty to include all non-blocked
+  # commands. Entries may be "command" or "Class.command".
+  # list_devices, list_data and view_data are always included.
+  include_only_functions: []
+  # Optional JSONL log of tool calls. Empty disables it.
+  tool_log: ""
+  endpoint_role: monitor
+  # Approval mode lives in the Approvals device; switch it from the GUI.
+  # auto (default) runs every call; approve holds high-risk agent calls.
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in
+    # asyncroscopy/safety/policy.py. Unknown commands are high risk.
+    risk: {}
+  # Instrument Trace: one JSON line per tool call. Empty disables it.
+  trace: outputs/trace/mcp_monitor.jsonl
+  # The instrument whose clock_s (simulated time on the twin) stamps each trace event. Empty: this computer's time.
+  clock_device: asyncroscopy/instrument/default
+  # What trace_since reads. Empty: every *.jsonl next to trace.
+  trace_follow: [outputs/trace]

@@ -35,6 +35,16 @@ class SPMMode(enum.IntEnum):
     TERS = 11
     SNOM = 12
 
+def refuse_if_engaged(approach) -> None:
+    """Raise unless the approach device says the tip is off the surface; an unreadable state counts as engaged."""
+    try:
+        engaged = bool(approach.approached)
+    except Exception as exc:
+        raise RuntimeError(f"the stage did not move: whether the tip is engaged could not be read ({exc})") from exc
+    if engaged:
+        raise RuntimeError("the stage did not move: the tip is engaged on the surface; retract it first")
+
+
 class SPMMicroscope(Instrument):
     """
     Top-level scanning probe microscope device.
@@ -234,7 +244,10 @@ class SPMMicroscope(Instrument):
 
         :param position: [stage_x_m, stage_y_m] — absolute target in meters.
         Returns the final position [stage_x_m, stage_y_m] in meters.
+        Refused while the tip is engaged: a coarse move would drag it across the sample.
         """
+        if self.approach_device_address:
+            refuse_if_engaged(self._get_proxy('approach'))
         proxy = self._get_proxy('stage')
         proxy.move_stage(position)
         return [proxy.stage_x_m, proxy.stage_y_m]

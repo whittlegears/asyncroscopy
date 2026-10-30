@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
+import os
 import sys
 import time
+import uuid
 
 from langchain_core.messages import HumanMessage
 
@@ -24,12 +27,42 @@ from .config import AgentConfig
 from .skill_middleware import recursion_limit
 
 GRAPHS = ("mapping", "general", "team")
+# Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark
+# can put the time a task took beside the instrument, model and approval time inside it.
+TASK_TRACE_ENV = "ASYNCROSCOPY_TASK_TRACE"
+DEFAULT_TASK_TRACE = "outputs/trace/agent_tasks.jsonl"
 GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is three graph steps with the skill middleware)
+
+
+@contextlib.asynccontextmanager
+async def task_events(graph: str, request: str):
+    """Write task_start now and task_end (with duration_s and whether it succeeded) when the block ends.
+    The block sets ``outcome["ok"]`` (and ``outcome["error"]``); an exception counts as a failure."""
+    from asyncroscopy.mcp.tool_log import TraceWriter
+
+    path = os.environ.get(TASK_TRACE_ENV, DEFAULT_TASK_TRACE)
+    writer = TraceWriter(path, source="agent", writer=f"agent@{os.getpid()}") if path else None
+    task_id, started = uuid.uuid4().hex[:12], time.time()
+    outcome: dict = {"ok": False, "error": None}
+    if writer is not None:
+        writer.record("task_start", True, started, task_id=task_id, arguments={"graph": graph, "request": request[:2000]})
+    try:
+        yield outcome
+    except BaseException as exc:
+        outcome.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:500])
+        raise
+    finally:
+        if writer is not None:
+            writer.record("task_end", bool(outcome["ok"]), time.time(), task_id=task_id, duration_s=round(time.time() - started, 3),
+                          arguments={"graph": graph}, error=outcome.get("error"))
 
 
 async def run_named_graph(name: str, prompt: str, model: str | None = None) -> str:
     """Run ``mapping``, ``general`` or ``team`` on one request and return its final text."""
-    return (await _run(name, prompt, model))[0]
+    async with task_events(name, prompt) as outcome:
+        text, failed = await _run(name, prompt, model)
+        outcome.update(ok=not failed, error="the graph reported a failure" if failed else None)
+        return text
 
 
 async def run_goal_text(goal, worker: str = "team", model: str | None = None) -> tuple[str, bool]:
@@ -41,7 +74,10 @@ async def run_goal_text(goal, worker: str = "team", model: str | None = None) ->
         goal = Goal.from_text(goal)
     elif isinstance(goal, dict):
         goal = Goal.from_dict(goal)
-    return await run_goal(goal, worker, AgentConfig.from_env(model=model, caller=f"goal-{worker}"))
+    async with task_events(f"goal-{worker}", goal.statement) as outcome:
+        text, met = await run_goal(goal, worker, AgentConfig.from_env(model=model, caller=f"goal-{worker}"))
+        outcome.update(ok=met, error=None if met else "goal not met")
+        return text, met
 
 
 async def _final_state(graph, inputs: dict, config: dict | None, progress: bool, name: str) -> dict:
@@ -125,7 +161,13 @@ def main() -> None:
         sys.exit(0 if met else 1)
     if not args.prompt:
         parser.error("give a prompt, --goal or --goal-file")
-    text, failed = asyncio.run(_run(args.graph, args.prompt, args.model, progress=True))
+    async def traced() -> tuple[str, bool]:
+        async with task_events(args.graph, args.prompt) as outcome:
+            result = await _run(args.graph, args.prompt, args.model, progress=True)
+            outcome.update(ok=not result[1], error="the graph reported a failure" if result[1] else None)
+            return result
+
+    text, failed = asyncio.run(traced())
     print(text)
     if failed:  # scripts and CI see a map that did not complete
         sys.exit(1)

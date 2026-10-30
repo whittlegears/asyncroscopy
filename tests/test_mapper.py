@@ -7,6 +7,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
+import tango
 
 from types import SimpleNamespace
 
@@ -272,3 +273,34 @@ def test_a_dose_budgeted_map_checks_the_current_again_at_start_and_on_resume(map
     resumed = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
     assert wait(mapper_proxy, resumed["job_id"])["state"] == "done"
     release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_the_e_stop_aborts_whatever_is_running_without_naming_it(mapper_proxy, mapping_twin_proxy):
+    assert json.loads(mapper_proxy.abort_all())["aborted"] == []
+    plan = {**PLAN, "imsize": 256, "dwell_s": 2e-6}
+    reserve = call(mapper_proxy, "reserve", {"plan": plan})
+    started = call(mapper_proxy, "start", {"reservation_id": reserve["reservation_id"]})
+    while call(mapper_proxy, "job_status", {"job_id": started["job_id"]})["progress"]["done"] < 1:
+        time.sleep(0.01)
+    stopped = json.loads(mapper_proxy.abort_all())["aborted"]
+    assert [s["job_id"] for s in stopped] == [started["job_id"]]
+    assert wait(mapper_proxy, started["job_id"])["state"] == "aborted"
+    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+    release_all(mapper_proxy, reserve["reservation_id"])
+
+
+def test_a_job_nobody_checks_on_is_aborted_when_its_lease_lapses(tango_ctx, mapping_twin_proxy):
+    leased = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/lease"))
+    leased.set_timeout_millis(60_000)
+    plan = {**PLAN, "box_m": [-4e-7, 4e-7, -4e-7, 4e-7], "imsize": 512, "dwell_s": 4e-6}
+    reserve = call(leased, "reserve", {"plan": plan})
+    started = call(leased, "start", {"reservation_id": reserve["reservation_id"]})
+    for _ in range(6):  # watched: each status call renews the lease
+        time.sleep(0.5)
+        assert call(leased, "job_status", {"job_id": started["job_id"]})["state"] == "running"
+    time.sleep(3.0)  # unwatched for twice the lease
+    status = wait(leased, started["job_id"])
+    assert status["state"] == "aborted" and status["last_error"]["code"] == "lease_lapsed"
+    assert status["progress"]["done"] < status["progress"]["total"]
+    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+    release_all(leased, reserve["reservation_id"])
