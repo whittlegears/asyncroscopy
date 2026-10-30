@@ -157,7 +157,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._connect_hardware()
         self._connect_detector_proxies()
         self.screen_current_calibration = None
-        # Without a client, report FAULT instead of looking connected.
+        # A missing client used to leave the device ON, so Connect looked like it
+        # worked and every hardware command then died on a NoneType attribute.
         if self._connect_error:
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {self._connect_error}")
@@ -170,7 +171,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if self.testing_mode_bool:
             return
         if not _AUTOSCRIPT_AVAILABLE:
-            self._connect_error = "autoscript_tem_microscope_client is not installed in this environment"
+            self._connect_error = (
+                "the autoscript_tem_microscope_client package is not installed in this "
+                "device server's Python environment, so it cannot reach the microscope"
+            )
             self.warn_stream(f"AutoScript not available: {self._connect_error}")
             return
         try:
@@ -637,20 +641,20 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
 
 def _requires_microscope(method):
-    """Raise NotConnected instead of an AttributeError when there is no client."""
+    """Raise one readable NotConnected error instead of an AttributeError on a missing client."""
 
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
-        # Testing mode has no client by design.
+        # Testing mode has no client by design; keep its old behaviour for dry-run scripts.
         if self._microscope is None and not getattr(self, "testing_mode_bool", False):
             reason = getattr(self, "_connect_error", None) or "the device has not connected"
             if not _AUTOSCRIPT_AVAILABLE:
-                advice = "Reconnecting will not help; report it to the operator."
+                advice = "Calling Connect again will not help until that is fixed; report it to the operator."
             else:
                 advice = "Call Connect once; if it fails again, report it to the operator."
             tango.Except.throw_exception(
                 "NotConnected",
-                f"Not connected to AutoScript: {reason}. {advice}",
+                f"Not connected to the microscope through AutoScript: {reason}. {advice}",
                 f"{method.__name__}()",
             )
         return method(self, *args, **kwargs)
