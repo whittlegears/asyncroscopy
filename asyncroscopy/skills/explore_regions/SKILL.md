@@ -4,7 +4,7 @@ description: Find the most interesting regions of a map and image them at higher
 version: 1.4.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
-keywords: [interesting, regions, features, explore, zoom, closer look, higher magnification, revisit, go back]
+keywords: [interesting, regions, features, explore, zoom, closer look, higher magnification]
 requires: [score_map, Mapper*_reserve]
 acts: true
 tools: [run_job, wait_for_job, score_map, list_pois, add_poi, map_info, get_region]

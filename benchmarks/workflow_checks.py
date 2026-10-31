@@ -125,6 +125,14 @@ def called(run: Run, tool: str, min: int = 1) -> tuple[bool, str]:
 
 
 @check
+def image_taken(run: Run) -> tuple[bool, str]:
+    """A scanned image was taken: by the agent (an acquire_scanned_image call) or by a Mapper revisit it ran."""
+    own = _successes(run, "*_acquire_scanned_image")
+    by_job = sum(1 for step in _step_results(run) if step.get("phase") == "revisit" and step.get("image"))
+    return own + by_job > 0, f"{own} by the agent, {by_job} by a revisit job"
+
+
+@check
 def not_called(run: Run, tool: str) -> tuple[bool, str]:
     """``tool`` never succeeded."""
     n = _successes(run, tool)
