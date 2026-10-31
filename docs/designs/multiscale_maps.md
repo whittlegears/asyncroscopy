@@ -239,6 +239,23 @@ and what was built for it:
     a tool it was given is missing): 0 of 2 agent runs pass end to end. The claim check does not catch "placed" when
     `place_image` said "unplaced".
 
+### CUJ 3 as a Mapper job (2026-10-31)
+
+qwen3:8b could do each zoom step but not hold the loop: it re-took images after placing them, passed the wrong
+tier's feature sizes, set a 1.2 nm fov from the table's window column and ran into the recursion limit. The loop now
+runs in code as a Mapper plan, `{"zoom": {"parent": <image key>}}`: per tier it asks `find_features` for candidates,
+takes the first whose finer image lies inside the parent, aims there by image shift (the stage does not move), takes
+the image and places it with `place_image` (window: a sixteenth of the parent's field of view), and stops at the
+first tier that is not placed. Without `fovs_m` the tiers step down 8x from the parent's own field of view (read from
+the analysis server at reserve) to 5e-9 m. The dose of every tier is summed (all land on the finest image's spot)
+and budgeted at reserve; the image shift is put back when the job ends, done or not. The skill is one `run_job`.
+
+On the live twin (d45f156) `zoom_to_atomic_columns` passes 2 of 2 and `explore_then_zoom` 2 of 2; both zoom
+answers report the 75 nm tier placed and the atomic tier unplaced with its reason, which on the twin's crystalline
+particles is the expected result (see above). Other fixes from the same runs: the claim check reads placements from
+job results and flags "higher magnification" when nothing narrowed the field of view; a still-running `run_job`
+reply names the `wait_for_job` call; failed benchmark runs keep their transcript in `outputs/live/transcripts/`.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
