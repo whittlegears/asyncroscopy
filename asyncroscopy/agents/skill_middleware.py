@@ -43,6 +43,10 @@ from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, is_request, f
 from asyncroscopy.skills import select_skills, skills_text
 from asyncroscopy.skills.registry import PROMPT_BUDGET_CHARS, list_skills, read_only_request, usable_by
 
+# Tools that write notes or points onto data others see. A small model asked only to list or describe called
+# annotate and answered about its note instead of the request, so they are offered only when the request asks to write.
+NOTE_WRITERS = ("annotate", "edit_annotation", "add_poi", "delete_annotation")
+ASKS_TO_WRITE_NOTE = re.compile(r"\b(?:annotat\w*|mark\w*|label\w*|pin\w*|flag\w*|tag\w*|highlight\w*|add\w*|edit\w*|delete\w*|remove\w*|notes?)\b", re.I)
 ASKS_ABOUT_DATA = re.compile(r"\b(?:what is in|look at|inspect|show me|analy[sz]e|peaks?|elements?|composition|latest (?:image|spectrum|data))\b", re.I)
 ASKS_FOR_REGIONS = re.compile(r"\b(?:\d+|three|two|five|the) (?:most )?(?:interesting|notable|unusual) (?:regions?|areas?|features?|spots?)\b|\bregions? of interest\b|\bwhere to look\b", re.I)
 MAX_APPLIED = 4  # skills one run may carry (the text budget applies on top)
@@ -164,8 +168,11 @@ class SkillMiddleware(AgentMiddleware):
             prompt += "\n\nNotes from earlier work on this instrument (keys in them are from earlier runs, not this one):\n" + notes
         # load_skill stays offered unless nothing was cut and the request only reads data: an acting
         # request may need a skill the rules did not pick.
-        hide = not cut and read_only_request(_request(state["messages"]))
-        tools = [t for t in request.tools if getattr(t, "name", None) != "load_skill"] if hide else request.tools
+        asked = _request(state["messages"])
+        hidden = {"load_skill"} if not cut and read_only_request(asked) else set()
+        if not ASKS_TO_WRITE_NOTE.search(asked):
+            hidden |= set(NOTE_WRITERS)
+        tools = [t for t in request.tools if getattr(t, "name", None) not in hidden]
         messages = request.messages
         if looping(messages) == 1:
             name = tool_rounds(messages)[-1][0]

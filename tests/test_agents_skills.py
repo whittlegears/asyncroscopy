@@ -117,6 +117,19 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
     assert [t.name for t in out.tools] == ["run_job"]  # a read-only request with every skill fitted: no load_skill
 
 
+def test_tools_that_write_notes_are_offered_only_when_the_request_asks_to_write_one():
+    middleware = SkillMiddleware("BASE", STEM, STEM)
+    tools = [SimpleNamespace(name=n) for n in ("list_pois", "annotate", "add_poi", "edit_annotation", "view_data")]
+    for request, offered in (
+        ("List the points of interest on the stitched map abc_map with their stage coordinates.", ["list_pois", "view_data"]),
+        ("Mark the brightest particle on abc_map with a note.", ["list_pois", "annotate", "add_poi", "edit_annotation", "view_data"]),
+        ("Add a point of interest at x = 10 nm on abc_map.", ["list_pois", "annotate", "add_poi", "edit_annotation", "view_data"]),
+    ):
+        messages = [HumanMessage(request)]
+        out = middleware._prompted(FakeRequest(messages, tools, middleware.before_model({"messages": messages}, None)["skills_applied"]))
+        assert [t.name for t in out.tools] == offered, request
+
+
 def test_every_packaged_skill_loads_and_points_at_run_job_and_wait_for_job():
     skills = {s.name: s for s in list_skills(STEM)}
     for name in ("inspect_data", "explore_regions", "approval_etiquette", "recover_from_errors", "eds_survey", "mapping"):
