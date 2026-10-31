@@ -65,6 +65,7 @@ SURVEY_FOV_M = 6.0e-7  # survey_image: room for two zoom steps (16x then 8x) dow
 # stage's landing error between the survey and the run, which no real zoom has), and never reused from a cache.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
+STAGE_SETTLE_S = 600.0  # the longest a re-homing stage move may take (the mapping twin moves 5 um/s in real time)
 TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # a failed run's messages and calls, one file per run
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
@@ -245,6 +246,25 @@ class Live:
                 await self.instrument.call_text(self.tool(suffix), args)
             except Exception as exc:
                 raise InfraError(f"re-homing failed: {self.tool(suffix)}: {str(exc)[:200]}") from exc
+        await self.wait_for_stage()
+
+    async def wait_for_stage(self, timeout_s: float = STAGE_SETTLE_S) -> None:
+        """Wait until a long stage move (stage_moving in get_parameters) has ended: the next run's setup map, or the
+        agent's first move, would otherwise be refused while the re-homing move is still under way."""
+        if not self.tool("_get_parameters"):
+            return
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                parameters = await self.instrument.call_json(self.tool("_get_parameters"), {})
+                if isinstance(parameters, str):
+                    parameters = json.loads(parameters)
+            except Exception:
+                return  # parameters that do not answer or parse: nothing to wait on
+            if not (isinstance(parameters, dict) and parameters.get("stage_moving")):
+                return
+            await asyncio.sleep(1.0)
+        raise InfraError(f"the stage was still moving {timeout_s:.0f} s after re-homing")
 
     # ---------------------------------------------------------- jobs, used by setups
 
