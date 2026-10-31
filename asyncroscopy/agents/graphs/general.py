@@ -47,7 +47,8 @@ SEARCH_RULE = """
 - Your tools are a selection. If none fits the request, call find_tools with one or two words (e.g. "holder", "dose", "jobs") and then call_tool with the name it gives; never say the instrument cannot do something before searching."""
 
 STEM_RULES = """
-- STEM: a stage position is [x, y, z, alpha, beta] (metres, degrees). Never move the stage or acquire in a loop for a map: use the Mapper job (see the mapping skill)."""
+- STEM: a stage position is [x, y, z, alpha, beta] (metres, degrees). Never move the stage or acquire in a loop for a map: use the Mapper job (see the mapping skill).
+- STEM: the beam is blanked when idle. Before you acquire an image or spectrum yourself, call <Microscope>_unblank_beam; after the last one, <Microscope>_blank_beam. Jobs do this themselves."""
 
 
 async def make_graph(config: dict | None = None):
