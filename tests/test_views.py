@@ -380,3 +380,14 @@ def test_register_kind_refuses_an_unknown_before():
     with pytest.raises(ValueError, match="no such kind"):
         register_kind(line_kind("x", lambda ds: False, lambda ds: None), before="profil")
     assert "x" not in [k.name for k in views.KINDS]
+
+
+def test_data_taken_with_the_beam_blanked_says_so_instead_of_asking_for_a_longer_exposure():
+    attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
+    summary, _ = views.view(Recorded((2048,), attrs, values=np.zeros(2048)), "dark.h5", "text")
+    assert "0 counts" in summary["text"] and "unblank_beam" in summary["text"] and "longer exposure is needed" not in summary["text"]
+    image = Recorded((64, 64), {"pixel_size_m": 1e-9, "beam_current_pa": 0.0}, values=np.random.default_rng(0).poisson(5, (64, 64)).astype(np.uint16))
+    summary, _ = views.view(image, "dark_image.h5", "text")
+    assert "beam blanked" in summary["text"]
+    lit = Recorded((64, 64), {"pixel_size_m": 1e-9, "beam_current_pa": 50.0}, values=np.random.default_rng(0).poisson(5, (64, 64)).astype(np.uint16))
+    assert "beam blanked" not in views.view(lit, "lit.h5", "text")[0]["text"]
