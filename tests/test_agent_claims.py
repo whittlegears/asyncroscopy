@@ -303,3 +303,10 @@ def test_a_plain_map_job_does_not_excuse_a_higher_magnification_claim_but_a_revi
 def test_a_wrong_final_setting_is_corrected_with_the_exact_call_that_makes_it_true():
     claims = check_answer(focus_series(), FOCUS_ANSWER, TOOLS)
     assert kinds(claims) == ["setting"] and 'call DigitalTwin_set_defocus with {"defocus": 0.0} now' in claims[0].why
+
+
+
+def test_an_answer_that_ends_promising_a_call_is_unfinished():
+    run = Calls("Go back to the point and image it.")
+    answer = "The tool does not take those arguments. Let's first retrieve the FOV. I will call `DigitalTwin_get_fov` to get the field of view."
+    assert kinds(check_answer(run.messages, answer)) == ["unfinished"]
