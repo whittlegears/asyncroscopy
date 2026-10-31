@@ -987,6 +987,14 @@ class MCPServer:
         if self.approvals_device_address is None:
             return {"request_id": request_id, "state": "approved", "note": "this server has no approval mode"}
         status = json.loads(self._approvals().request_status(request_id))
+        with self._held_runs_lock:
+            waiting = next((v for v in self._held_runs.values() if v["request_id"] == request_id), None)
+        if waiting is not None and status.get("state") == "approved":
+            # A small model copied the resolved plan out of the reason into a "new" run_job, which then found the device
+            # reserved, aborted the approved reservation and was stuck: say exactly which call starts it.
+            status["reason"] = f"the reserved {waiting['device']} plan (reservation {waiting['reservation_id']})"
+            status["next"] = (f"Approved: call run_job with exactly {json.dumps(waiting['call'], default=str)} now, the same arguments as "
+                              "before. A changed plan would be a new job needing its own approval.")
         if status.get("state") in {"denied", "expired", "revoked"}:
             with self._held_runs_lock:
                 held = next(((k, v) for k, v in self._held_runs.items() if v["request_id"] == request_id), None)
@@ -1353,6 +1361,14 @@ class MCPServer:
         # A held run is found again by caller and agent run, never by MCP session (agents open one per call).
         target = {"resume": resume} if resume else plan
         key = (self._caller() or "", self._run_id(), device, json.dumps(target, sort_keys=True, default=str))
+        with self._held_runs_lock:
+            other = next((v for k, v in self._held_runs.items() if k[:3] == key[:3] and k != key), None)
+        if other is not None:
+            raise ToolError(
+                f"{device} has a run of yours waiting for its approved start (approval request {other['request_id']}, reservation "
+                f"{other['reservation_id']}): call run_job with exactly {json.dumps(other['call'], default=str)} to start it. Do not "
+                f"abort it unless the user asked to stop."
+            )
         with self._run_job_lock:
             self._via.name = "run_job"
             try:
@@ -1416,7 +1432,8 @@ class MCPServer:
             if isinstance(exc, ApprovalHeld):
                 with self._held_runs_lock:
                     self._held_runs[key] = {"reservation_id": reservation_id, "request_id": exc.request_id, "device": device,
-                                            "created": time.monotonic(), "summary": summary, "why": exc.why}
+                                            "created": time.monotonic(), "summary": summary, "why": exc.why,
+                                            "call": {"device": device, **({"resume": resume} if resume else {"plan": plan})}}
                 raise ToolError(self._held_message(device, exc.request_id, reservation_id, summary, exc.why)) from exc
             with self._held_runs_lock:
                 self._held_runs.pop(key, None)

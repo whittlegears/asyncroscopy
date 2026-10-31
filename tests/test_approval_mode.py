@@ -890,6 +890,21 @@ class TestRunJob:
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
             server.run_job("Mapper", {"fov_m": 2e-7})  # the grant was single use: a second map needs its own approval
 
+    def test_an_approved_hold_names_the_exact_call_and_a_changed_plan_is_pointed_back_to_it(self, server_factory, approvals_proxy):
+        server, calls = self.mapper_server(server_factory)
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        with pytest.raises(ToolError) as held:
+            server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
+        request_id = str(held.value).split("request_id=")[1].split(")")[0]
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
+        status = server.approval_status(request_id)
+        assert status["state"] == "approved" and '"plan": {"fov_m": 2e-07, "size_m": [3e-07, 3e-07]}' in status["next"] and "fov_m" not in status["reason"]
+        with pytest.raises(ToolError, match="waiting for its approved start") as changed:
+            server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7], "overlap": 0.15})  # the resolved plan, copied
+        assert "Do not abort it" in str(changed.value) and server._devices["Mapper"].released == []
+        reply = server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
+        assert reply["job_id"] == "j-r1" and [c[0] for c in calls] == ["reserve", "start"]
+
     def test_a_denied_run_frees_the_instrument(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
