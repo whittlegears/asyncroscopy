@@ -766,11 +766,14 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
 
 
 def transcript_entry(message) -> dict:
-    """A message as a failed run's transcript keeps it: type, tool name, text, and the calls it made with their arguments."""
+    """A message as a failed run's transcript keeps it: type, tool name, text, the calls it made with their arguments,
+    and why the model stopped (an empty reply right after the model server reloaded says "load", not "stop")."""
     content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
+    metadata = getattr(message, "response_metadata", None) or {}
     return {
         "type": getattr(message, "type", ""), "name": getattr(message, "name", None), "text": content[:TRANSCRIPT_TEXT_CHARS],
         "tool_calls": [{"name": c.get("name"), "args": c.get("args")} for c in getattr(message, "tool_calls", None) or []],
+        "stop": metadata.get("done_reason") or metadata.get("finish_reason"),
     }
 
 
