@@ -9,7 +9,7 @@ workflows:
       - {check: called, tool: "*_acquire_scanned_image"}
       - {check: called, tool: "*_acquire_spectrum"}
       - {check: answer_eds_consistent}
-      - {check: no_sleepwalking, allow: ["Mapper*", "*_acquire_*", "*_place_beam", "*_set_fov", "*_move_stage", "*_aim_image_shift", "*_set_image_shift", "*_unblank_beam", "*_blank_beam"]}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_acquire_*", "*_place_beam*", "*_set_fov", "*_move_stage", "*_aim_image_shift", "*_set_image_shift", "*_unblank_beam", "*_blank_beam"]}
 
   - name: survey_rank_and_analyse
     # answer_eds_consistent checks the elements named, so the request asks for them (it once only said "take a spectrum").
@@ -21,7 +21,7 @@ workflows:
       - {check: regions_scored}
       - {check: called, tool: "*_acquire_spectrum"}
       - {check: answer_eds_consistent}
-      - {check: no_sleepwalking, allow: ["Mapper*", "*_acquire_*", "*_place_beam", "*_set_fov", "*_move_stage", "*_aim_image_shift", "*_set_image_shift", "*_unblank_beam", "*_blank_beam"]}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_acquire_*", "*_place_beam*", "*_set_fov", "*_move_stage", "*_aim_image_shift", "*_set_image_shift", "*_unblank_beam", "*_blank_beam"]}
 
   - name: focus_series
     request: Take HAADF images at defocus -20 nm, 0 nm and +20 nm, then set the defocus back to 0.
