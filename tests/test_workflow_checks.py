@@ -480,3 +480,10 @@ def test_placed_chain_counts_the_placements_a_zoom_job_made():
     passed, detail = CHECKS["placed_chain"](run, tiers=1)
     assert passed and "1 placed and 1 unplaced" in detail
     assert not CHECKS["placed_chain"](run, tiers=2)[0]
+
+
+
+def test_an_image_taken_by_the_agent_or_by_a_revisit_job_counts():
+    revisit = job("Mapper.step", result=json.dumps({"phase": "revisit", "region": "point:0", "image": "img.h5", "stage_xy_m": [1e-7, 2e-7]}))
+    assert CHECKS["image_taken"](Run(events=[revisit]))[0]
+    assert not CHECKS["image_taken"](Run(events=[job("Mapper.step", result=json.dumps({"phase": "revisit", "skipped": "near the edge"}))]))[0]
