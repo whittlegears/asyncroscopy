@@ -248,3 +248,15 @@ def test_an_answer_that_announces_its_next_step_instead_of_taking_it_is_flagged(
                  "I'll now take an image. " + "It shows three particles. The brightest is at the centre.",
                  "The map is done; its key is in the reply above."):
         assert [c for c in check_answer(run.messages, fine, TOOLS) if c.kind == "unfinished"] == [], fine
+
+
+def test_a_placement_claimed_when_place_image_refused_it_is_flagged():
+    run = Calls("Zoom into a particle down to atomic columns, placing each image.")
+    run.call("place_image", {"image": IMAGES[1], "parent": IMAGES[0]}, {"child": IMAGES[1], "status": "placed", "score": 0.99})
+    run.call("place_image", {"image": IMAGES[2], "parent": IMAGES[1]}, {"child": IMAGES[2], "status": "unplaced", "reason": "another place matches almost as well"})
+    claims = check_answer(run.messages, f"`{IMAGES[1]}` was placed on the survey and `{IMAGES[2]}` was successfully placed on it.")
+    assert kinds(claims) == ["placement"] and IMAGES[2] in claims[0].why
+    assert check_answer(run.messages, f"`{IMAGES[1]}` was placed; `{IMAGES[2]}` could not be placed: another place matches almost as well.") == []
+    refused = Calls("Place the image.").call("place_image", {"image": IMAGES[2]}, {"child": IMAGES[2], "status": "unplaced", "reason": "x"})
+    assert kinds(check_answer(refused.messages, "The image was placed on its parent.")) == ["placement"]
+    assert check_answer(refused.messages, "The image is unplaced: x.") == []

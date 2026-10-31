@@ -19,6 +19,8 @@ setting value        "<setting> set back to / reset to / is now <value>": the la
                      metres in tool calls; a unitless value is checked only when 0
 action               "I took / acquired / captured ...", "moved to ...": no successful
                      call of that kind (an acquisition, a stage move, or a job) at all
+placement            "<key> was placed", "placed it on ...": place_image said "unplaced" for
+                     that key (its latest call), or never said "placed" for any image
 deferred read        the request asks what the data contain, the answer leaves viewing
                      them to the user, and no tool read any data (view_data, get_region)
 ==================== =================================================================
@@ -86,6 +88,8 @@ DEFERS = re.compile(
     r"|\bcan\s+be\s+(?:viewed|analy[sz]ed|inspected|examined)\b|\bfor\s+further\s+analysis\b",
     re.I,
 )
+
+PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
 ANNOUNCES = re.compile(
@@ -288,6 +292,34 @@ def _action_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
+def _placements(calls) -> dict[str, str]:
+    """The latest place_image status for each image key this run placed or tried to."""
+    out: dict[str, str] = {}
+    for call in calls:
+        if call.error or not call.name.endswith("place_image"):
+            continue
+        reply = _json(call.result)
+        if isinstance(reply, dict) and reply.get("status") in ("placed", "unplaced"):
+            out[str(reply.get("child") or call.args.get("image"))] = reply["status"]
+    return out
+
+
+def _placement_claims(answer: str, calls) -> list[Claim]:
+    placements = _placements(calls)
+    claims = []
+    for sentence in _sentences(answer):
+        m = PLACED.search(sentence)
+        if not m or _negated(sentence, m):
+            continue
+        keys = [k for k in DATA_KEY.findall(sentence) if k in placements]
+        refused = [k for k in keys if placements[k] == "unplaced"]
+        if refused:
+            claims.append(Claim("placement", sentence[:160], f"place_image said unplaced for {', '.join(refused)}; report its reason instead"))
+        elif not keys and "placed" not in placements.values():
+            claims.append(Claim("placement", m.group(0).strip(), "no place_image call in this run said placed"))
+    return claims
+
+
 def _unfinished_claims(answer: str) -> list[Claim]:
     """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
     tail = _sentences(answer)[-2:]
@@ -318,6 +350,7 @@ def check_answer(messages: list, answer: str, tool_names=(), context: str = "") 
             claims.append(Claim("key", key, "no tool returned this key in this run"))
     claims += _setting_claims(answer, _Settings(calls, tool_names))
     claims += _action_claims(answer, calls)
+    claims += _placement_claims(answer, calls)
     claims += _unfinished_claims(answer)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
         m = DEFERS.search(answer)

@@ -815,7 +815,12 @@ async def main(args) -> int:
     for field, variable in (("operator", "ASYNCROSCOPY_OPERATOR_URL"), ("tiled", "ASYNCROSCOPY_TILED_URI")):
         if os.environ.get(variable):
             STACK[field] = os.environ[variable]
-    workflows = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack and (not args.only or wf["name"] in args.only)]
+    on_stack = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack]
+    unknown = sorted(set(args.only or ()) - {wf["name"] for wf in on_stack})
+    if unknown:
+        print(f"no workflow {unknown} on stack {args.stack!r} (names are separated by spaces, not commas); --list shows them")
+        return 2
+    workflows = [wf for wf in on_stack if not args.only or wf["name"] in args.only]
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
         print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have: fix config: in its stacks: entry")
         return 2
