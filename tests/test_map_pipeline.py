@@ -155,3 +155,54 @@ def test_an_analysis_server_that_is_down_leaves_the_tiles_safe_and_says_how_to_r
 def test_revisit_without_regions_is_refused(mapper_proxy, analysis):
     reply = call(mapper_proxy, "reserve", {"plan": {**PLAN, "revisit": {"fov_m": 3e-8}}})
     assert reply["error"]["code"] == "plan_rejected" and "find_regions" in reply["error"]["message"]
+
+
+def test_a_zoom_job_aims_images_and_places_them_tier_by_tier_until_one_is_not_placed(mapper_proxy, mapping_twin_proxy, analysis):
+    stage = [float(v) for v in list(mapping_twin_proxy.get_stage())[:2]]
+    mapping_twin_proxy.set_image_shift([1e-9, -2e-9])
+    parent = mapping_twin_proxy.acquire_scanned_image(["haadf"])
+    offsets = [(4e-8, -3e-8), (5e-9, 2e-9), (1e-9, 1e-9)]
+    calls = []
+
+    def server(mapper, tool, arguments):
+        calls.append((tool, arguments))
+        tier = sum(1 for t, _ in calls if t == "find_features") - 1
+        if tool == "find_features":
+            dx, dy = offsets[tier]
+            return {"features": [{"x_m": stage[0] + dx, "y_m": stage[1] + dy, "diameter_m": arguments["min_size_m"] * 2}], "pixel_size_m": 6e-7 / 512 / 8 ** tier, "shape": [512, 512]}
+        if tool == "place_image":
+            if tier == 0:
+                return {"status": "placed", "score": 0.99, "ambiguity": 0.4, "centre_xy_m": arguments["centre_xy_m"]}
+            return {"status": "unplaced", "reason": "another place matches almost as well (0.97 of the best): a guess between places, not a placement"}
+        raise AssertionError(f"unexpected analysis call {tool}")
+
+    analysis["server"] = server
+    plan = {"zoom": {"parent": parent, "fovs_m": [7.5e-8, 9.4e-9, 6e-9]}, "imsize": 64, "dwell_s": 2e-6}
+    reserved = call(mapper_proxy, "reserve", {"plan": plan})
+    assert reserved["estimate"]["phases"] == ["zoom"] and reserved["estimate"]["zoom_tiers"] == 3
+    call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
+    results, _phases = run_job(mapper_proxy, plan)
+    assert results["state"] == "done", results
+    zoom = results["summary"]["zoom"]
+    assert [t["tier"] for t in zoom] == [0, 1, 2]
+    assert zoom[0]["parent"] == parent and zoom[0]["placement"]["status"] == "placed" and zoom[0]["image_shift_m"] == pytest.approx(list(offsets[0]))
+    assert zoom[1]["parent"] == zoom[0]["image"] and zoom[1]["placement"]["status"] == "unplaced"
+    assert zoom[2]["stopped"] == "tier 1 ended the zoom" and "image" not in zoom[2]
+    assert results["result_keys"]["zoom_placed"] == [zoom[0]["image"]] and len(results["result_keys"]["zoom_images"]) == 2
+    places = [a for t, a in calls if t == "place_image"]
+    assert places[0]["window_m"] == pytest.approx(6e-7 / 16) and places[0]["centre_xy_m"] == pytest.approx([stage[0] + 4e-8, stage[1] - 3e-8])
+    assert list(mapping_twin_proxy.get_image_shift())[:2] == pytest.approx([1e-9, -2e-9])  # put back as it was
+    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+    assert [float(v) for v in list(mapping_twin_proxy.get_stage())[:2]] == pytest.approx(stage)  # the stage never moved
+    mapping_twin_proxy.set_image_shift([0.0, 0.0])
+
+
+@pytest.mark.parametrize("zoom, words", [
+    ({"parent": "x.h5", "fovs_m": [7.5e-8, 9.4e-8]}, "smaller at every tier"),
+    ({"parent": "x.h5", "fovs_m": [7.5e-8, 1e-9]}, "narrower than"),
+])
+def test_a_zoom_plan_that_widens_or_goes_too_fine_is_refused(mapper_proxy, analysis, zoom, words):
+    reply = call(mapper_proxy, "reserve", {"plan": {"zoom": zoom}})
+    assert reply["error"]["code"] == "plan_rejected" and words in reply["error"]["message"]
+    reply = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "x.h5", "fovs_m": [7.5e-8]}, "fov_m": 1e-7}})
+    assert "takes no area" in reply["error"]["message"]

@@ -340,7 +340,8 @@ def map_plan(run: Run, size_m: float, eds: bool | None = None, tol: float = 0.25
 def zoomed_on_region(run: Run, tol: float = 2.0e-7) -> tuple[bool, str]:
     """After its first map, the run imaged at a smaller field of view near a point of interest
     (facts.pois, read from the analysis server after the run): either an acquisition after a
-    stage move there, or a second map centred there with a smaller FOV."""
+    stage move there or with the image aimed there by image shift, or a second map centred there
+    with a smaller FOV."""
     pois = run.facts.get("pois") or []
     if not pois:
         return False, "no points of interest on the run's map"
@@ -358,19 +359,22 @@ def zoomed_on_region(run: Run, tol: float = 2.0e-7) -> tuple[bool, str]:
         fov = _number(plan.get("fov_m"))
         if centre and near(centre) and (first_fov is None or (fov is not None and fov < first_fov)):
             return True, f"second map at {centre} with fov {fov}"
-    last_xy, last_fov = None, None
+    last_xy, aimed_xy, last_fov = None, None, None
     for e in _device_events(run, "*", ok=True):
         action = str(e.get("action"))
         args = e.get("arguments") or {}
-        if action.endswith("_move_stage"):
+        if action.endswith("_move_stage") or action.endswith("_aim_image_shift"):
             pos = args.get("position") or next(iter(args.values()), None)
             if isinstance(pos, (list, tuple)) and len(pos) >= 2:
-                last_xy = pos[:2]
+                if action.endswith("_move_stage"):
+                    last_xy, aimed_xy = pos[:2], None
+                else:
+                    aimed_xy = pos[:2]  # the next image is centred here, wherever the stage is
         elif action.endswith("_set_fov"):
             last_fov = _number(args.get("fov", next(iter(args.values()), None)))
-        elif action.endswith("_acquire_scanned_image") and last_xy is not None and near(last_xy):
+        elif action.endswith("_acquire_scanned_image") and (aimed_xy or last_xy) is not None and near(aimed_xy or last_xy):
             if first_fov is None or (last_fov is not None and last_fov < first_fov):
-                return True, f"image at {last_xy} with fov {last_fov}"
+                return True, f"image at {aimed_xy or last_xy} with fov {last_fov}"
     for step in _step_results(run):  # the map job's own revisit of the regions it found
         if step.get("phase") == "revisit" and step.get("image") and step.get("stage_xy_m") and near(step["stage_xy_m"]):
             if first_fov is None or (_number(step.get("fov_m")) is not None and _number(step.get("fov_m")) < first_fov):
@@ -701,7 +705,8 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
 
 
 def _placements(run: Run) -> list[dict]:
-    """The records of the agent's place_image calls, as the analysis server returned them."""
+    """The records of the agent's place_image calls, as the analysis server returned them, and of the placements a
+    Mapper zoom job made (one per tier that took an image), in the same shape."""
     out = []
     for c in run.calls:
         if c.ok and c.name == "place_image":
@@ -711,6 +716,9 @@ def _placements(run: Run) -> list[dict]:
                 continue
             if isinstance(record, dict) and record.get("child"):
                 out.append(record)
+    for step in _step_results(run):
+        if step.get("phase") == "zoom" and step.get("image") and isinstance(step.get("placement"), dict):
+            out.append({**step["placement"], "child": step["image"], "parent": step.get("parent"), "child_pixel_m": step.get("pixel_m")})
     return out
 
 

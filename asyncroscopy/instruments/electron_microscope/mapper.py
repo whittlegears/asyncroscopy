@@ -37,6 +37,14 @@ approval and progress cover all of them:
    plan box, and takes a higher-magnification image, added as a point of
    interest linked to the image and to its region.
 
+A zoom plan (``zoom``: {"parent": <image key>, "fovs_m": [...]}) takes no tiles: one step per tier, each
+finding the parent image's most distinct feature (pyTEMlib ``find_features``), aiming the image at it by
+image shift (the stage does not move), taking the next field of view and placing that image on its parent
+(``place_image``). The placed image is the next tier's parent. A tier that finds no feature, would need more
+image shift than the instrument has, or is not placed (a crystal's interior matches its parent one lattice
+spacing away as well as at the right place) ends the zoom there, with the reason. The image shift goes back
+to what it was when the job ends.
+
 Analysis calls go through one session to the analysis server. Each phase
 waits for its analysis job with backoff and an overall deadline that grows
 with the map, checking for an abort between waits. The analysis job's id is
@@ -127,6 +135,9 @@ SCORE_DEADLINE_S = 900.0
 TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
 REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
 REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
+ZOOM_MIN_FOV_M = 5e-9  # no zoom tier narrower than this: atomic columns show well before it, and the dose climbs as 1/fov^2
+ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
+ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
 # What a dry run (plan "dry_run": true, see JobDevice) reports in place of every image and spectrum.
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
@@ -464,6 +475,8 @@ class Mapper(JobDevice):
         whether it runs every one of them before it starts the job."""
         needs = profile.needed_commands(plan)
         shift_commands = live_drift.needed_commands(plan, profile)
+        if plan.get("zoom_only"):
+            shift_commands = [*shift_commands, *profile.image_shift_commands, "get_stage"]
         if shift_commands:
             needs.setdefault(self.microscope_device_address, []).extend(shift_commands)
         for address, commands in needs.items():
@@ -484,6 +497,8 @@ class Mapper(JobDevice):
         check_plan_fields(plan)
         validate(plan, "map_plan")
         check_profile_fields(plan, profile)
+        if "zoom" in plan:
+            return self._resolve_zoom_only(plan)
         revisit_only = isinstance(plan.get("revisit"), dict) and ("points" in plan["revisit"] or "map" in plan["revisit"])
         if revisit_only:
             return self._resolve_revisit_only(plan)
@@ -630,10 +645,53 @@ class Mapper(JobDevice):
             self._check_needs(profile, resolved)
         return resolved
 
+    def _resolve_zoom_only(self, plan: dict) -> dict:
+        """A plan that zooms in from an existing image by image shift: no tiles, no stage moves."""
+        profile = profile_for(self)
+        others = sorted(k for k in plan if k not in ("zoom", "dry_run", "label", "budgets", "dose_budget_e_per_a2", "imsize", "dwell_s", "detectors"))
+        if others:
+            raise ValueError(f"a zoom plan takes no area, tiles or revisit: leave out {', '.join(others)}")
+        if not self.analysis_url:
+            raise ValueError("zooming finds and places images on the analysis server: it needs a Mapper with an analysis_url")
+        if not profile.image_shift_limit_m:
+            raise ValueError(f"zooming aims each image by image shift, which the {profile.name!r} instrument profile cannot set")
+        zoom = dict(plan["zoom"])
+        fovs = [float(f) for f in zoom["fovs_m"]]
+        if any(b >= a for a, b in zip(fovs, fovs[1:])):
+            raise ValueError(f"zoom fovs_m must get smaller at every tier, coarsest first; got {fovs}")
+        if fovs[-1] < ZOOM_MIN_FOV_M:
+            raise ValueError(f"zoom fovs_m {fovs[-1]:.3g} m is narrower than {ZOOM_MIN_FOV_M:g} m: atomic columns show at about 1e-8 m, and the dose rises as 1/fov^2")
+        p = {**GENERIC_PLAN_DEFAULTS, **profile.plan_defaults, **plan, "fov_m": fovs[0], "stitch": False, "find_regions": 0}
+        profile.resolve(p)
+        tiers = [profile.resolve_revisit(p, {"fov_m": f, **{k: zoom[k] for k in ("imsize", "dwell_s") if k in zoom}}) for f in fovs]
+        budgets = plan_budgets(p)
+        # The finest image lies inside every coarser one, so its spot gets every tier's frame: the sum is the most any spot gets.
+        tier_costs = [profile.revisit_only_costs(p, tier, 1, budgets) for tier in tiers]
+        total = sum(c["dose_e_per_a2"].value for c, _ in tier_costs)
+        costs = {"dose_e_per_a2": Cost(total, "e/A^2", why=f"{len(tiers)} zoom images, all on the finest image's spot", advice="zoom less far (a larger last fovs_m) or lower dwell_s")}
+        duration = sum(profile.revisit_seconds(t) for t in tiers)
+        budgeted = check_budgets(budgets, costs, duration, profile)
+        x, y = profile.current_xy()
+        reach = float(profile.image_shift_limit_m)
+        estimate = {"steps": len(tiers), "tiles": 0, "zoom_tiers": len(tiers), "duration_s": round(duration, 1),
+                    **{**tier_costs[-1][1], "max_dose_e_per_a2": round(total, 3)}, "phases": ["zoom"]}
+        if budgeted:
+            estimate["budgets"] = budgeted
+        resolved = {
+            **p, "zoom": {**zoom, "fovs_m": fovs, "tiers": tiers}, "box_m": [x - reach, x + reach, y - reach, y + reach],
+            "step_count": len(tiers), "estimate": estimate, "grid": {"rows": 0, "cols": 0, "x0": 0.0, "dx": 0.0, "y0": 0.0, "dy": 0.0},
+            "zoom_only": True,
+        }
+        if isinstance(self, JobDevice):
+            self._check_needs(profile, resolved)
+        return resolved
+
     def step_at(self, job: dict, index: int) -> dict:
         if "steps" in job:  # a job saved before plans were computed lazily: tiles only
             return {"phase": "tiles", **job["steps"][index]}
         plan = job["resolved_plan"]
+        if plan.get("zoom_only"):
+            return {"phase": "zoom", "tier": index}
         if plan.get("revisit_only"):
             if "map" in plan["revisit"]:
                 return {"phase": "select"} if index == 0 else {"phase": "revisit", "region": index - 1}
@@ -766,7 +824,9 @@ class Mapper(JobDevice):
         # between tiles and is made unsafe only while a tile is acquired (see the profile's acquire_tile).
         profile_for(self).setup(job)
         live_drift.start(job, profile_for(self))  # tracking on: the image shift before the map, put back at the end
-        if job["resolved_plan"].get("revisit_only") or job.get("dry_run"):
+        if job["resolved_plan"].get("zoom_only") and "zoom_shift_before" not in job:
+            job["zoom_shift_before"] = profile_for(self).get_image_shift(job)  # put back when the job ends
+        if job["resolved_plan"].get("revisit_only") or job["resolved_plan"].get("zoom_only") or job.get("dry_run"):
             job["run_closed"] = True  # no tiles (or, in a dry run, no images), so no run file
         if job.get("run_closed"):
             return  # resuming after the tiles: only pipeline steps are left
@@ -840,6 +900,8 @@ class Mapper(JobDevice):
             return self._stitch(job)
         if step["phase"] == "score":
             return self._score(job)
+        if step["phase"] == "zoom":
+            return self._zoom(job, step["tier"])
         return self._revisit(job, step["region"])
 
     def _tile(self, job: dict, tile: dict) -> dict:
@@ -1120,6 +1182,65 @@ class Mapper(JobDevice):
         self._link_pending(job)
         return {"phase": "revisit", **visit}
 
+    def _zoom(self, job: dict, k: int) -> dict:
+        """One zoom tier: find a feature on the parent, aim at it, image it at this tier's fov, place it on the parent."""
+        pipeline = self._pipeline(job)
+        tiers = pipeline.setdefault("zoom", [])
+        done = next((t for t in tiers if t.get("tier") == k), None)
+        if done is not None:
+            return {"phase": "zoom", **done}  # a resumed job never images a tier twice
+        zoom = job["resolved_plan"]["zoom"]
+        tier = zoom["tiers"][k]
+        before = tiers[-1] if tiers else None
+        if before is not None and (before.get("stopped") or before.get("placement", {}).get("status") != "placed"):
+            record = {"tier": k, "fov_m": float(tier["fov_m"]), "stopped": f"tier {before['tier']} ended the zoom"}
+        else:
+            record = self._zoom_tier(job, k, before["image"] if before else zoom["parent"], tier)
+            if record is None:
+                return None  # aborted before imaging; a resume does this tier again
+        with self._lock:
+            tiers.append(record)
+            self._save(job)
+        return {"phase": "zoom", **record}
+
+    def _zoom_tier(self, job: dict, k: int, parent: str, tier: dict) -> dict | None:
+        fov = float(tier["fov_m"])
+        record: dict = {"tier": k, "parent": parent, "fov_m": fov, "pixel_m": fov / int(tier["imsize"]) if tier.get("imsize") else None}
+        low, high = ZOOM_FEATURE_SIZE
+        found = self._analysis("find_features", {"image": parent, "n": 1, "min_size_m": low * fov, "max_size_m": high * fov})
+        if "error" in found:
+            return {**record, "stopped": f"find_features refused {parent}: {found['error'].get('message', found['error'])}"}
+        if not found.get("features"):
+            return {**record, "stopped": f"{parent} shows no distinct feature {low * fov:.2g} to {high * fov:.2g} m across to zoom in on"}
+        feature = found["features"][0]
+        target = [float(feature["x_m"]), float(feature["y_m"])]
+        parent_fov = float(found["pixel_size_m"]) * float(max(found["shape"]))
+        record.update({"feature": feature, "aimed_xy_m": target})
+        profile = profile_for(self)
+        x, y = profile.current_xy()
+        shift = [target[0] - x, target[1] - y]
+        limit = float(profile.image_shift_limit_m)
+        if max(abs(v) for v in shift) > limit:
+            return {**record, "stopped": f"the feature is {max(abs(v) for v in shift):.3g} m from the stage, beyond the {limit:.3g} m the image shift reaches"}
+        if self.aborting(job):
+            return None
+        profile.set_image_shift(job, shift)
+        record["image_shift_m"] = shift
+        if job.get("dry_run"):
+            return {**record, "acquisition": DRY_RUN_SKIPPED}
+        record["image"] = profile.acquire_revisit(job, tier)
+        window = ZOOM_WINDOW_SHARE * parent_fov
+        placed = self._analysis("place_image", {"image": record["image"], "parent": parent, "centre_xy_m": target, "window_m": window})
+        if "error" in placed:
+            placed = {"status": "unplaced", "reason": placed["error"].get("message", str(placed["error"]))}
+        record["placement"] = {key: placed[key] for key in ("status", "reason", "score", "ambiguity", "centre_xy_m", "shift_from_prediction_m", "id") if key in placed}
+        record["placement"]["window_m"] = window
+        return record
+
+    def _restore_zoom_shift(self, job: dict) -> None:
+        if job.get("zoom_shift_before") is not None:
+            profile_for(self).set_image_shift(job, job["zoom_shift_before"])
+
     # ------------------------------------------------------------------
     # Ending
     # ------------------------------------------------------------------
@@ -1131,6 +1252,7 @@ class Mapper(JobDevice):
 
     def on_stop(self, job: dict, reason: str) -> None:
         profile_for(self).make_safe(job)  # blank the beam, retract the tip
+        self._restore_zoom_shift(job)
         live_drift.finish(job, profile_for(self))  # tracking on: the image shift goes back to its value before the map
         if not job.get("run_closed"):
             self._write_trace(job)
@@ -1139,8 +1261,13 @@ class Mapper(JobDevice):
         # A finished map must not leave the beam parked (or the tip engaged) on the last tile.
         profile_for(self).make_safe(job)
         live_drift.finish(job, profile_for(self))
+        self._restore_zoom_shift(job)
         self._close_run_file(job)
         self._link_pending(job)
+        zoom = self._pipeline(job).get("zoom")
+        if zoom:
+            return {"zoom_images": [t["image"] for t in zoom if t.get("image")],
+                    "zoom_placed": [t["image"] for t in zoom if t.get("placement", {}).get("status") == "placed"]}
         return {}
 
     def _release(self, request: str) -> str:
@@ -1231,7 +1358,7 @@ class Mapper(JobDevice):
             "grid": {"rows": grid.get("rows"), "cols": grid.get("cols")},
             "box_m": plan.get("box_m"),
             "fov_m": plan.get("fov_m"),
-            **({} if plan.get("revisit_only") or job.get("dry_run") else {"run_file": str(self._file(job))}),
+            **({} if plan.get("revisit_only") or plan.get("zoom_only") or job.get("dry_run") else {"run_file": str(self._file(job))}),
             **pipeline,
         }
         tracked = live_drift.summary(job)

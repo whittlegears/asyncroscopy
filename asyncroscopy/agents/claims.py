@@ -18,7 +18,8 @@ setting value        "<setting> set back to / reset to / is now <value>": the la
                      <value>": no successful set call used that value. Lengths are
                      metres in tool calls; a unitless value is checked only when 0
 action               "I took / acquired / captured ...", "moved to ...": no successful
-                     call of that kind (an acquisition, a stage move, or a job) at all
+                     call of that kind (an acquisition, a stage move, or a job) at all;
+                     "a higher-magnification image", "zoomed in": no set_fov call succeeded
 placement            "<key> was placed", "placed it on ...": place_image said "unplaced" for
                      that key (its latest call), or never said "placed" for any image
 deferred read        the request asks what the data contain, the answer leaves viewing
@@ -77,6 +78,7 @@ MOVED = re.compile(
     r"|\b(?:moved|went|navigated)\s+(?:the\s+stage\s+)?(?:back\s+)?to\s+(?:the\s+)?(?:best|region|position|point|area|feature|particle|centre|center|origin|coordinates?)\b",
     re.I,
 )
+MAGNIFIED = re.compile(r"\b(?:higher|high|increased|greater|more)[- ]magnification\b|\bzoom(?:ed)?\s+in(?:to)?\b|\b(?:smaller|narrower)\s+field\s+of\s+view\b", re.I)
 CONTENT_QUESTION = re.compile(
     r"\bwhat\b[^.?!]{0,40}\b(?:contains?|made\s+of|composed\s+of|composition|is\s+in\s+(?:it|the\s+(?:sample|spectrum|image|data)))\b"
     r"|\b(?:which|what)\s+elements?\b|\bcomposition\b|\belements?\s+(?:are|is)\s+(?:present|there)\b",
@@ -279,11 +281,13 @@ def _action_claims(answer: str, calls) -> list[Claim]:
     ok = [c for c in calls if c.ok]
     jobs = any(action_category(c.name) == "job" for c in ok)
     acquired = jobs or any(action_category(c.name) == "acquire" for c in ok)
-    moved = jobs or any(action_category(c.name) == "move" for c in ok)
+    moved = jobs or any(action_category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
+    magnified = jobs or any(c.name.endswith("_set_fov") for c in ok)
     claims = []
     for sentence in _sentences(answer):
         for pattern, done, why in ((ACQUIRED, acquired, "no acquisition or job call succeeded in this run"),
-                                   (MOVED, moved, "no stage move or job call succeeded in this run")):
+                                   (MOVED, moved, "no stage move or job call succeeded in this run"),
+                                   (MAGNIFIED, magnified, "no set_fov call succeeded in this run, so every image has the field of view it started with")):
             if done:
                 continue
             m = pattern.search(sentence)
@@ -293,14 +297,21 @@ def _action_claims(answer: str, calls) -> list[Claim]:
 
 
 def _placements(calls) -> dict[str, str]:
-    """The latest place_image status for each image key this run placed or tried to."""
+    """The latest placement status for each image key: from place_image, or from a job that placed images (a Mapper
+    zoom reports each tier's {"image", "placement": {"status"}})."""
     out: dict[str, str] = {}
     for call in calls:
-        if call.error or not call.name.endswith("place_image"):
+        if call.error:
             continue
         reply = _json(call.result)
-        if isinstance(reply, dict) and reply.get("status") in ("placed", "unplaced"):
-            out[str(reply.get("child") or call.args.get("image"))] = reply["status"]
+        if call.name.endswith("place_image"):
+            if isinstance(reply, dict) and reply.get("status") in ("placed", "unplaced"):
+                out[str(reply.get("child") or call.args.get("image"))] = reply["status"]
+            continue
+        for node in _walk(reply):
+            placement = node.get("placement")
+            if node.get("image") and isinstance(placement, dict) and placement.get("status") in ("placed", "unplaced"):
+                out[str(node["image"])] = placement["status"]
     return out
 
 
