@@ -851,7 +851,7 @@ class TestRunJob:
         server, calls = self.mapper_server(server_factory)
         reply = server.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9} and reply["reservation_id"] == "r1"
-        assert reply["state"] == "running" and "wait_for_job again" in reply["note"]
+        assert reply["state"] == "running" and 'call wait_for_job with {"job_id": "j-r1"} now' in reply["note"] and "every phase" in reply["note"]
         assert [c[0] for c in calls] == ["reserve", "start"]
 
     def test_wait_false_returns_at_once_with_the_job_id(self, server_factory, monkeypatch):

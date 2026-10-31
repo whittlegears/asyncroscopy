@@ -1366,6 +1366,10 @@ class MCPServer:
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
             if not wait and reply.get("state") in ("queued", "running"):
                 reply["note"] = f"The job runs in the background: give the user its job_id. {device}_abort stops it; wait_for_job waits for it."
+            elif reply.get("state") in ("queued", "running"):
+                phases = (reply.get("estimate") or {}).get("phases")
+                reply["note"] = (f"Still running, which is normal: call wait_for_job with {{\"job_id\": \"{started['job_id']}\"}} now. The job does every phase "
+                                 f"of its plan itself{' (' + ', '.join(phases) + ')' if phases else ''}; other calls for it meanwhile repeat or spoil its work.")
         return reply
 
     def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, key: tuple, resume: str | None = None) -> tuple[dict, dict]:
