@@ -208,7 +208,7 @@ class ElectronMicroscope(Instrument):
             # Agents pass stage coordinates (metres) here; say what the command takes and how to reach a stage point.
             raise ValueError(
                 f"place_beam takes [x, y] as fractions of the current image (0 to 1, [0.5, 0.5] is the centre), got [{x:g}, {y:g}]. "
-                "To put the beam on a stage point given in metres, call move_stage to that point first, then place_beam [0.5, 0.5]."
+                "To put the beam on a stage point given in metres (a find_features x_m, y_m), call place_beam_at with it."
             )
         self._place_beam(position)
 
@@ -279,6 +279,20 @@ class ElectronMicroscope(Instrument):
         self._set_image_shift(shift)
         return shift
     
+    @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
+             doc_in=':param position: [x, y] stage position in metres to park the beam on (inside the current field of view).')
+    def place_beam_at(self, position):
+        """Park the beam on stage position [x, y] (metres) for a spectrum, without moving the stage: works out place_beam's
+        fractions from the stage, the image shift and the field of view, and returns them. Refused outside the current
+        field of view (take an image there first). A small agent asked for fractions put the beam at the centre."""
+        stage, shift, fov = self._get_stage(), self._get_image_shift(), float(self._get_fov())
+        fraction = [0.5 + (float(position[i]) - float(stage[i]) - float(shift[i])) / fov for i in (0, 1)]
+        if not all(0.0 <= f <= 1.0 for f in fraction):
+            raise ValueError(f"[{float(position[0]):.4g}, {float(position[1]):.4g}] m is outside the current {fov:.3g} m field of view; "
+                             "image an area that contains it first")
+        self._place_beam(fraction)
+        return fraction
+
     @command(dtype_out=DevVarFloatArray)
     def get_beam_tilt(self):
         """Get the current beam tilt as [alpha, beta] in radian."""

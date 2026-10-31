@@ -299,6 +299,17 @@ def test_aim_image_shift_centres_the_image_on_a_stage_position_without_moving_th
     backend.call("set_image_shift", [0.0, 0.0])
 
 
+def test_place_beam_at_parks_the_beam_on_a_stage_position_inside_the_field_of_view(backend):
+    stage = [float(v) for v in backend.call("get_stage")]
+    backend.call("set_fov", 1e-7)
+    backend.call("set_image_shift", [1e-8, 0.0])
+    fraction = backend.call("place_beam_at", [stage[0] + 1e-8 + 2.5e-8, stage[1] - 2.5e-8])
+    assert [float(v) for v in fraction] == pytest.approx([0.75, 0.25], abs=1e-9)
+    with pytest.raises(REFUSED):
+        backend.call("place_beam_at", [stage[0] + 1e-6, stage[1]])
+    backend.call("set_image_shift", [0.0, 0.0])
+
+
 def test_auto_focus_runs_the_vendor_routine_or_its_stand_in(backend):
     backend.call("set_defocus", 4e-8)
     backend.call("auto_focus")
