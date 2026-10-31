@@ -4,7 +4,7 @@ description: Map a sample or an area as a grid of images (optionally with an EDS
 version: 1.6.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
-keywords: [map, mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
+keywords: [mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
 requires: [Mapper*_reserve]
 acts: true
 tools: [run_job, wait_for_job, Mapper_abort, approval_status, assemble_map, score_map, map_info, get_region, list_pois, add_poi, view_data, list_data]

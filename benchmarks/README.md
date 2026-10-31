@@ -8,7 +8,7 @@ fact was reported (a refusal, a peak position, the elements in a spectrum).
 
 | Script | What it measures |
 |---|---|
-| `run_workflows.py` | ~39 realistic workflows (images, EDS, focus, maps of several sizes up to thousands of tiles, the mapping design's CUJ 2 and CUJ 3, stitching accuracy against the twin's ground truth, navigating a large map by zoom, abort and resume, approval mode, refusals, recovery, data questions, multi-step goals, and a YAML-described diffractometer), each with fact-based checks |
+| `run_workflows.py` | ~40 realistic workflows (images, EDS, focus, maps of several sizes up to thousands of tiles, the mapping design's CUJ 2 and CUJ 3, stitching accuracy against the twin's ground truth, navigating a large map by zoom, abort and resume, approval mode, refusals, recovery, data questions, multi-step goals, and a YAML-described diffractometer), each with fact-based checks |
 | `run_mapping_trials.py` | Repeated mapping requests (map, map with EDS, map and explore) for pass rates and out-of-box moves |
 | `run_tool_json.py` | Whether a model writes valid JSON tool arguments |
 | `tune_vs_acquire.py` | How long to tune before acquiring: the Tuner with budgets from none to large, then a map until a fixed instrument time is used up, scored by `asyncroscopy.evaluate` (no LLM, no stack; see `docs/Operation/evaluators.md`) |
@@ -100,7 +100,7 @@ uv run python benchmarks/run_workflows.py --workflows my_file.yaml --stack raman
 
 Other keys: `turns` instead of `request` for a conversation
 (`- say: ...`, optionally `wait_for: {job_steps_at_least: 3, timeout_s: 300}` before it),
-`setup: [image | map | map_plain | large_map]` to have data ready: an image; a small scored map with EDS; a
+`setup: [image | survey_image | map | map_plain | large_map]` to have data ready: an image (at the current field of view, or at 600 nm for survey_image); a small scored map with EDS; a
 small unscored map; a 6 um scored map on the large twin (its keys fill `{image_key}`, `{map_key}`,
 `{run_key}`, `{spectrum_key}`, `{poi_x}`, `{poi_x_nm}` ... in the request and check parameters), and
 `approval: approve | deny`. A typo (an unknown key, check, check parameter, setup or stack) stops the

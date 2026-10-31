@@ -59,7 +59,8 @@ HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
 WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "approval", "checks"}
 TURN_KEYS = {"say", "wait_for"}
-SETUPS = {"image", "map", "map_plain", "large_map"}
+SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
+SURVEY_FOV_M = 6.0e-7  # survey_image: room for two zoom steps (16x then 8x) down to atomic columns
 STACKS_FILE = HERE / "stacks.yaml"
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
 STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
@@ -345,9 +346,13 @@ class Live:
     async def setup(self, name: str) -> dict:
         if name in self.setup_cache:
             return self.setup_cache[name]
-        if name == "image":
+        if name in ("image", "survey_image"):  # image: at the field of view the instrument has; survey_image: at SURVEY_FOV_M
+            if name == "survey_image":
+                await self.text(self.tool("_set_fov"), {"fov": SURVEY_FOV_M})
             key = await self.text(self.tool("_acquire_scanned_image"), {"detector_list": ["haadf"]})
             facts = {"image_key": key, "keys": [key] if key else []}
+            if name == "survey_image":  # the run starts at the survey's field of view, not the suite's
+                facts["start_fov_m"] = SURVEY_FOV_M
         else:
             size, fov, per_tile, scored = SETUP_MAPS[name]
             plan = {"size_m": [size, size], "fov_m": fov, "per_tile": per_tile, "eds_exposure_s": 0.2}
@@ -631,6 +636,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
     except Exception as exc:
         raise InfraError(f"setup failed: {type(exc).__name__}: {exc}") from exc
     await live.restore(baseline)
+    if facts.get("start_fov_m"):
+        await live.restore({"fov": facts["start_fov_m"]})
     caller = unique_caller(f"wf-{wf['name']}-{runner}")
     config = live.config.for_run(caller=caller)
     stop, operator, mode_before = asyncio.Event(), None, None

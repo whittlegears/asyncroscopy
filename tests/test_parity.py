@@ -288,6 +288,17 @@ def test_image_shift_round_trips_and_refuses_out_of_range(backend):
     backend.call("set_image_shift", [0.0, 0.0])
 
 
+def test_aim_image_shift_centres_the_image_on_a_stage_position_without_moving_the_stage(backend):
+    stage = [float(v) for v in backend.call("get_stage")]
+    shift = backend.call("aim_image_shift", [stage[0] + 2e-9, stage[1] - 3e-9])
+    assert [float(v) for v in shift] == pytest.approx([2e-9, -3e-9], abs=1e-15)
+    assert [float(v) for v in backend.call("get_image_shift")] == pytest.approx([2e-9, -3e-9], abs=1e-15)
+    assert [float(v) for v in backend.call("get_stage")][:2] == pytest.approx(stage[:2], abs=1e-15)
+    with pytest.raises(REFUSED):
+        backend.call("aim_image_shift", [stage[0] + 1.0, stage[1]])
+    backend.call("set_image_shift", [0.0, 0.0])
+
+
 def test_auto_focus_runs_the_vendor_routine_or_its_stand_in(backend):
     backend.call("set_defocus", 4e-8)
     backend.call("auto_focus")
