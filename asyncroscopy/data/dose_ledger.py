@@ -2,7 +2,7 @@
 
 ``save_acquisition`` appends one line per exposure whose attributes say where it was and how it was taken:
 
-* a scanned frame (``stage_reported_m`` or ``stage_commanded_m``, ``fov_m``, ``pixel_size_m``,
+* a scanned frame (``stage_reported_m`` or ``stage_commanded_m``, plus ``image_shift_m`` when recorded, ``fov_m``, ``pixel_size_m``,
   ``dwell_time_s``, ``beam_current_pa``): the rectangle it covered and its dose
   (``asyncroscopy.routines.dose.frame_dose``);
 * a parked-beam spectrum (the stage position, ``fov_m``, ``beam_position`` as fractions of the field,
@@ -81,6 +81,9 @@ def exposure_of(attrs: dict) -> dict | None:
     fov, current = _number(attrs.get("fov_m")), _number(attrs.get("beam_current_pa"))
     if stage is None or fov is None or current is None or not (fov > 0 and current >= 0):
         return None
+    shift = _vector(attrs.get("image_shift_m"))
+    if shift is not None:  # the field's centre is the stage plus the image shift it was taken with
+        stage = [stage[0] + shift[0], stage[1] + shift[1], *stage[2:]]
     source = {"current_source": str(attrs["beam_current_source"])} if attrs.get("beam_current_source") else {}
     placed = attrs.get("axes") == AXES
     spot, seconds = _vector(attrs.get("beam_position")), _number(attrs.get("real_time_s"))

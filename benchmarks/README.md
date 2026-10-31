@@ -100,7 +100,7 @@ uv run python benchmarks/run_workflows.py --workflows my_file.yaml --stack raman
 
 Other keys: `turns` instead of `request` for a conversation
 (`- say: ...`, optionally `wait_for: {job_steps_at_least: 3, timeout_s: 300}` before it),
-`setup: [image | survey_image | map | map_plain | large_map]` to have data ready: an image (at the current field of view, or at 600 nm for survey_image); a small scored map with EDS; a
+`setup: [image | survey_image | map | map_plain | large_map]` to have data ready: an image (at the current field of view; survey_image: at 600 nm, taken after re-homing so the run starts where it was taken); a small scored map with EDS; a
 small unscored map; a 6 um scored map on the large twin (its keys fill `{image_key}`, `{map_key}`,
 `{run_key}`, `{spectrum_key}`, `{poi_x}`, `{poi_x_nm}` ... in the request and check parameters), and
 `approval: approve | deny`. A typo (an unknown key, check, check parameter, setup or stack) stops the

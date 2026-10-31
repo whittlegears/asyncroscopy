@@ -111,4 +111,4 @@ workflows:
     checks:
       - {check: called, tool: place_image, min: 2}
       - {check: placed_chain, tiers: 2, max_pixel_m: 1.0e-10}
-      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_set_image_shift", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_aim_image_shift", "*_set_image_shift", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
