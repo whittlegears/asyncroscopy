@@ -138,6 +138,8 @@ REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-wi
 ZOOM_MIN_FOV_M = 5e-9  # no zoom tier narrower than this: atomic columns show well before it, and the dose climbs as 1/fov^2
 ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
+ZOOM_STEP = 8  # without fovs_m, each tier's field of view is the one before's over this, down to ZOOM_MIN_FOV_M
+ZOOM_EXAMPLE = {"zoom": {"parent": "<the image key to start from>.h5"}}
 # What a dry run (plan "dry_run": true, see JobDevice) reports in place of every image and spectrum.
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
@@ -463,6 +465,8 @@ class Mapper(JobDevice):
         profile = profile_for(self)
         if profile.plan_example is not None:
             return dict(profile.plan_example)
+        if '"zoom"' in request:
+            return dict(ZOOM_EXAMPLE)
         example = dict(self.PLAN_EXAMPLE)
         if "dose" in request.lower():  # a caller who mentioned dose sees where a dose limit goes
             example["dose_budget_e_per_a2"] = 50.0
@@ -656,7 +660,20 @@ class Mapper(JobDevice):
         if not profile.image_shift_limit_m:
             raise ValueError(f"zooming aims each image by image shift, which the {profile.name!r} instrument profile cannot set")
         zoom = dict(plan["zoom"])
-        fovs = [float(f) for f in zoom["fovs_m"]]
+        frame = self._analysis("find_features", {"image": zoom["parent"], "n": 0})
+        if "error" in frame:
+            raise ValueError(f"cannot zoom from {zoom['parent']!r}: {frame['error'].get('message', frame['error'])}")
+        parent_fov = float(frame["pixel_size_m"]) * float(max(frame["shape"]))
+        if "fovs_m" in zoom:
+            fovs = [float(f) for f in zoom["fovs_m"]]
+        else:
+            fovs = []
+            while parent_fov / ZOOM_STEP ** (len(fovs) + 1) >= ZOOM_MIN_FOV_M and len(fovs) < 4:
+                fovs.append(parent_fov / ZOOM_STEP ** (len(fovs) + 1))
+            if not fovs:
+                raise ValueError(f"{zoom['parent']} is {parent_fov:.3g} m across: a tier {ZOOM_STEP}x finer would be under {ZOOM_MIN_FOV_M:g} m, so there is nothing finer to zoom to")
+        if fovs[0] >= parent_fov:
+            raise ValueError(f"zoom fovs_m must start below the parent's {parent_fov:.3g} m field of view; got {fovs}")
         if any(b >= a for a, b in zip(fovs, fovs[1:])):
             raise ValueError(f"zoom fovs_m must get smaller at every tier, coarsest first; got {fovs}")
         if fovs[-1] < ZOOM_MIN_FOV_M:
@@ -678,7 +695,7 @@ class Mapper(JobDevice):
         if budgeted:
             estimate["budgets"] = budgeted
         resolved = {
-            **p, "zoom": {**zoom, "fovs_m": fovs, "tiers": tiers}, "box_m": [x - reach, x + reach, y - reach, y + reach],
+            **p, "zoom": {**zoom, "fovs_m": fovs, "parent_fov_m": parent_fov, "tiers": tiers}, "box_m": [x - reach, x + reach, y - reach, y + reach],
             "step_count": len(tiers), "estimate": estimate, "grid": {"rows": 0, "cols": 0, "x0": 0.0, "dx": 0.0, "y0": 0.0, "dy": 0.0},
             "zoom_only": True,
         }
@@ -1188,7 +1205,7 @@ class Mapper(JobDevice):
         tiers = pipeline.setdefault("zoom", [])
         done = next((t for t in tiers if t.get("tier") == k), None)
         if done is not None:
-            return {"phase": "zoom", **done}  # a resumed job never images a tier twice
+            return self._zoom_step_result(done)  # a resumed job never images a tier twice
         zoom = job["resolved_plan"]["zoom"]
         tier = zoom["tiers"][k]
         before = tiers[-1] if tiers else None
@@ -1201,7 +1218,19 @@ class Mapper(JobDevice):
         with self._lock:
             tiers.append(record)
             self._save(job)
-        return {"phase": "zoom", **record}
+        return self._zoom_step_result(record)
+
+    @staticmethod
+    def _zoom_step_result(record: dict) -> dict:
+        """A tier as its step result: short enough for the trace's result field (the whole record is in the summary)."""
+        placement = record.get("placement") or {}
+        short = {key: placement[key] for key in ("status", "score", "ambiguity") if key in placement}
+        out = {"phase": "zoom", "tier": record["tier"], "image": record.get("image"), "parent": record.get("parent"), "pixel_m": record.get("pixel_m")}
+        if short:
+            out["placement"] = short
+        if record.get("stopped"):
+            out["stopped"] = record["stopped"][:160]
+        return out
 
     def _zoom_tier(self, job: dict, k: int, parent: str, tier: dict) -> dict | None:
         fov = float(tier["fov_m"])

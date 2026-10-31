@@ -281,3 +281,19 @@ def test_placements_a_zoom_job_reports_are_checked_like_place_image_calls():
     assert check_answer(run.messages, f"`{IMAGES[1]}` was placed with score 0.99; `{IMAGES[2]}` is unplaced: another place matches almost as well.") == []
     claims = check_answer(run.messages, f"`{IMAGES[2]}` was placed on `{IMAGES[1]}`.")
     assert kinds(claims) == ["placement"] and IMAGES[2] in claims[0].why
+
+
+def test_an_answer_that_promises_to_adjust_and_retry_is_unfinished():
+    run = Calls("Zoom in.").call("run_job", {"device": "Mapper"}, {"job_id": "a1b2c3d4e5f6", "state": "done"})
+    answer = "The Mapper refuses fields of view under 5e-9 m. I will adjust the zoom to a suitable field of view and proceed."
+    assert kinds(check_answer(run.messages, answer)) == ["unfinished"]
+
+
+
+def test_a_plain_map_job_does_not_excuse_a_higher_magnification_claim_but_a_revisit_does():
+    plain = Calls("Map and zoom.").call("run_job", {"device": "Mapper", "plan": {"size_m": [6e-7, 6e-7], "fov_m": 2e-7}}, {"job_id": "a1b2c3d4e5f6", "state": "done"})
+    answer = f"I mapped the area and took a higher-magnification image: `{IMAGES[0]}`."
+    plain.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[0])
+    assert "action" in kinds(check_answer(plain.messages, answer))
+    revisit = Calls("Map and zoom.").call("run_job", {"device": "Mapper", "plan": {"size_m": [6e-7, 6e-7], "fov_m": 2e-7, "revisit": {"fov_m": 5e-8}}}, {"job_id": "a1b2c3d4e5f6", "state": "done", "summary": {"revisits": {"first": [{"image": IMAGES[0]}]}}})
+    assert check_answer(revisit.messages, answer) == []

@@ -231,8 +231,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "parent",
-        "fovs_m"
+        "parent"
       ],
       "description": "Zoom in from an image already taken, tier by tier, without moving the stage: at each tier the most distinct feature of the parent image (pyTEMlib find_features) is aimed at by image shift, imaged at the next fov_m and placed on the parent by matching (place_image). A tier that finds nothing, or whose image cannot be placed, ends the zoom there. Needs a Mapper with an analysis_url on an instrument that can shift the image. A plan with zoom takes no area, tiles or revisit.",
       "properties": {
@@ -249,7 +248,7 @@
             "type": "number",
             "exclusiveMinimum": 0
           },
-          "description": "Field of view of each finer image, coarsest first, each smaller than the one before (e.g. [7.5e-8, 9.4e-9] from a 600 nm image)."
+          "description": "Field of view of each finer image, coarsest first, each smaller than the one before (default: each 8 times finer than the one before, from the parent image's own field of view, down to 5e-9 m: [7.5e-8, 9.4e-9] from a 600 nm image)."
         },
         "imsize": {
           "type": "integer",

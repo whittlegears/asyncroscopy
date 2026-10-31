@@ -96,7 +96,8 @@ PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
 ANNOUNCES = re.compile(
     r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+us|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
-    r"(?:take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare)\b",
+    r"(?:take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare"
+    r"|adjust|retry|try|continue|change|use|repeat|reduce|increase|set)\b",
     re.I,
 )
 
@@ -282,7 +283,8 @@ def _action_claims(answer: str, calls) -> list[Claim]:
     jobs = any(action_category(c.name) == "job" for c in ok)
     acquired = jobs or any(action_category(c.name) == "acquire" for c in ok)
     moved = jobs or any(action_category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
-    magnified = jobs or any(c.name.endswith("_set_fov") for c in ok)
+    # A job zoomed only if its plan imaged finer than its tiles (a revisit or a zoom); a plain map changed nothing.
+    magnified = any(c.name.endswith("_set_fov") or (action_category(c.name) == "job" and re.search(r"revisit|zoom|images", json.dumps(c.args, default=str) + str(c.result))) for c in ok)
     claims = []
     for sentence in _sentences(answer):
         for pattern, done, why in ((ACQUIRED, acquired, "no acquisition or job call succeeded in this run"),
