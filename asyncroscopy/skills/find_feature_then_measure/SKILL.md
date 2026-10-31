@@ -17,7 +17,7 @@ tools: [view_data, find_features, to_stage, "*_get_fov", "*_unblank_beam", "*_bl
 2. Look at it: `view_data` with `{"key": <key>, "format": "text"}` gives the field of view and pixel size; with `"format": "png"` you see it. Pick the feature the request means (for example the brightest particle) and note its position in pixels (row, column).
 3. Turn pixels into a position with `to_stage` (`{"dataset": <key>, "row": ..., "col": ...}`): it uses the stage position recorded with that image, so do not compute it yourself. When its reply has a `sample_load_id`, check `<Stage>_get_sample` gives the same one before moving: a different one means the sample was reloaded since that image, so the position is stale; take a new image instead. If `to_stage` is not offered: the image's centre is where the stage was when it was taken; x = centre_x + (column - (width - 1)/2) x pixel_size, y = centre_y + (row - (height - 1)/2) x pixel_size (metres).
 4. Measure there:
-   - a spectrum, in this order: `<Microscope>_unblank_beam`; `<Microscope>_place_beam` with the feature's `beam_xy` from
+   - a spectrum, in this order: `<Microscope>_unblank_beam`; `<Microscope>_place_beam` with the feature's `place_beam` arguments from
      `find_features` copied as it is (not [0.5, 0.5], which is the image centre); `<Microscope>_acquire_spectrum`;
      `<Microscope>_blank_beam`. Without the beam unblanked first the spectrum has 0 counts;
    - a closer image: `<Microscope>_move_stage` to the position, a smaller field of view with `<Microscope>_set_fov`, then `<Microscope>_acquire_scanned_image`.
