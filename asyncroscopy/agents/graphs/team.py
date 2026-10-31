@@ -37,7 +37,7 @@ from langgraph.graph import END, START, StateGraph
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
-from asyncroscopy.agents.guards import JobWaitMiddleware
+from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
@@ -175,7 +175,7 @@ class TeamGraph:
         skills = SkillMiddleware(prompt, names, self._all_names or names, memory=self.memory.notes_for, num_ctx=self.config.num_ctx)
         waits = JobWaitMiddleware(tools, deadline=self.config.deadline)
         claims = ClaimCheckMiddleware(names)  # the step's answer becomes the next step's notes: check it first
-        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, claims])
+        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, EmptyReplyMiddleware(), claims])
 
     # ------------------------------------------------------------------ nodes
     async def plan(self, state: TeamState) -> TeamState:

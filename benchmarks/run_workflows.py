@@ -663,6 +663,8 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         else:
             messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
             run.calls = trace_from_messages(messages)
+            if not (run.final or "").strip():  # what the model sent last, to see why it gave no answer
+                facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
     except TimeoutError:
         error = f"timed out after {wf['timeout_s']} s"
     except InfraError:
@@ -734,6 +736,17 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "skills": run.skills,
         "final": (run.final or "")[-600:],
         "scores": scores,
+        **({"last_messages": facts["last_messages"]} if facts.get("last_messages") else {}),
+    }
+
+
+def message_summary(message) -> dict:
+    """A message's type, the end of its text and the tools it called: enough to tell an empty answer's cause."""
+    content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
+    return {
+        "type": getattr(message, "type", ""), "text": content[-300:],
+        "tool_calls": [c.get("name") for c in getattr(message, "tool_calls", None) or []],
+        "stop": (getattr(message, "response_metadata", None) or {}).get("done_reason") or (getattr(message, "response_metadata", None) or {}).get("finish_reason"),
     }
 
 

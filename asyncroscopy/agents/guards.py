@@ -18,6 +18,10 @@ user's request among them), and the model repeated one call 36 times.
 * ``repeats``: how many times the last tool round repeated the one before it
   exactly (same tool, arguments and reply). The skill middleware tells the
   model after one repeat and stops the run honestly after two.
+* ``EmptyReplyMiddleware``: a reply with neither text nor a tool call (qwen3
+  with reasoning off sometimes sends one after a tool reply, which ended runs
+  with no answer) is asked for again once; a second empty reply ends the run
+  with an answer that says so and gives the last tool reply.
 
 Token counts are estimated as characters / ``CHARS_PER_TOKEN``.
 """
@@ -32,7 +36,8 @@ import time
 from typing import Any, Callable
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain.agents.middleware.types import ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
 
@@ -138,11 +143,13 @@ NEVER_A_LOOP = ("approval_status",)
 
 
 CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message (asyncroscopy.agents.claims)
+EMPTY_REPLY = "empty_reply"  # the name of EmptyReplyMiddleware's request for a reply
 
 
 def is_request(message) -> bool:
-    """A message from the user: a human message that is not the claim check's correction turn."""
-    return getattr(message, "type", "") == "human" and getattr(message, "name", None) != CLAIM_CHECK
+    """A message from the user: a human message that is not a guard's own turn (the claim check's correction,
+    the request for a reply after an empty one)."""
+    return getattr(message, "type", "") == "human" and getattr(message, "name", None) not in (CLAIM_CHECK, EMPTY_REPLY)
 
 
 def _this_request(messages: list) -> list:
@@ -301,3 +308,49 @@ REPEAT_NOTE = ("\n\nYou already called {name} with these arguments and got this 
 def stop_message(messages: list) -> AIMessage:
     name, _args, reply = tool_rounds(messages)[-1]
     return AIMessage(STOP_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))
+
+
+ASK_AGAIN = ("Your last reply was empty. The latest tool reply ({name}) is above: make the next tool call the "
+             "request needs, or give your final answer from what the tools returned.")
+EMPTY_TEXT = "I stopped: the model gave no reply twice after {name}. The last tool reply was: {reply}"
+
+
+def _empty(response) -> AIMessage | None:
+    """The reply's last AI message when it has neither text nor a tool call."""
+    result = response.result if isinstance(response, ModelResponse) else [response]
+    ai = next((m for m in reversed(result) if isinstance(m, AIMessage)), None)
+    return ai if ai is not None and not ai.tool_calls and not _text(ai).strip() else None
+
+
+class EmptyReplyMiddleware(AgentMiddleware):
+    """Asks once more when the model replies with nothing; a second empty reply becomes an honest answer.
+
+    Put it before the claim check in the middleware list, so the reply it asks for is checked too."""
+
+    def _again(self, request):
+        rounds = tool_rounds(request.messages)
+        name = rounds[-1][0] if rounds else "the request"
+        ask = HumanMessage(ASK_AGAIN.format(name=name), name=EMPTY_REPLY)
+        return ask, request.override(messages=[*request.messages, ask])
+
+    def _settle(self, request, ask, retry):
+        result = retry.result if isinstance(retry, ModelResponse) else [retry]
+        if _empty(retry) is not None:
+            rounds = tool_rounds(request.messages)
+            name, _args, reply = rounds[-1] if rounds else ("the request", "", "")
+            result = [m for m in result if not isinstance(m, AIMessage)] + [AIMessage(EMPTY_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))]
+        return ModelResponse(result=[ask, *result], structured_response=getattr(retry, "structured_response", None))
+
+    def wrap_model_call(self, request, handler):
+        response = handler(request)
+        if _empty(response) is None:
+            return response
+        ask, again = self._again(request)
+        return self._settle(request, ask, handler(again))
+
+    async def awrap_model_call(self, request, handler):
+        response = await handler(request)
+        if _empty(response) is None:
+            return response
+        ask, again = self._again(request)
+        return self._settle(request, ask, await handler(again))

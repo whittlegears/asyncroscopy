@@ -18,7 +18,7 @@ from langchain.agents import create_agent
 
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
-from asyncroscopy.agents.guards import JobWaitMiddleware
+from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
 # Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
@@ -92,4 +92,4 @@ async def make_graph(config: dict | None = None):
     waits = JobWaitMiddleware(tools, deadline=agent_config.deadline)  # a job of any length is one tool round
     # Last, so it wraps the model call itself: a final answer is checked against the run's tool calls.
     claims = ClaimCheckMiddleware(names, enabled=configurable.get("claim_check"))
-    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, claims])
+    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, EmptyReplyMiddleware(), claims])

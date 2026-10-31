@@ -186,3 +186,52 @@ def test_a_wait_that_fails_says_the_job_may_still_run():
 
     final = asyncio.run(JobWaitMiddleware([SimpleNamespace(name="wait_for_job")], on_progress=None).awrap_tool_call(FakeToolRequest("wait_for_job", {"job_id": "j1"}), handler))
     assert "may still be running" in json.loads(final.content)["note"]
+
+
+class _Request:
+    def __init__(self, messages):
+        self.messages = messages
+
+    def override(self, **changes):
+        new = _Request(self.messages)
+        new.__dict__.update(changes)
+        return new
+
+
+def test_an_empty_reply_is_asked_for_again_once_then_answered_honestly():
+    from langchain.agents.middleware.types import ModelResponse
+
+    from asyncroscopy.agents.guards import EMPTY_REPLY, EmptyReplyMiddleware, is_request
+
+    history = [HumanMessage(REQUEST), *round_(1, name="to_pixel", reply='{"row": 12, "col": 30}')]
+    seen = []
+
+    def model(*replies):
+        replies = list(replies)
+
+        def handler(request):
+            seen.append(request.messages)
+            return ModelResponse(result=[replies.pop(0)])
+        return handler
+
+    guard = EmptyReplyMiddleware()
+    fine = guard.wrap_model_call(_Request(history), model(AIMessage("The point is at row 12.")))
+    assert [m.content for m in fine.result] == ["The point is at row 12."] and len(seen) == 1
+
+    seen.clear()
+    answered = guard.wrap_model_call(_Request(history), model(AIMessage(""), AIMessage("Done: row 12, col 30.")))
+    ask, final = answered.result
+    assert ask.name == EMPTY_REPLY and "to_pixel" in ask.content and not is_request(ask)
+    assert final.content == "Done: row 12, col 30." and seen[1][-1] is ask
+
+    stopped = asyncio.run(guard.awrap_model_call(_Request(history), _async(model(AIMessage(""), AIMessage("")))))
+    assert "no reply twice after to_pixel" in stopped.result[-1].content and '"row": 12' in stopped.result[-1].content
+
+    calls = guard.wrap_model_call(_Request(history), model(AIMessage("", tool_calls=[{"name": "view_data", "args": {}, "id": "v"}])))
+    assert calls.result[0].tool_calls  # a tool call with no text is not an empty reply
+
+
+def _async(handler):
+    async def run(request):
+        return handler(request)
+    return run
