@@ -220,9 +220,19 @@ and what was built for it:
 *   Scripted on the live twin with these: survey -> 75 nm (or 2.4 um -> 150 nm) places every time (score about 0.99,
     about 2 nm off). The atomic step aimed at a particle's interior is refused as ambiguous: the child is mostly lattice
     and matches equally well one spacing away (0.90 to 0.99 of the best), even in an 8-parent-pixel window, and
-    `multiscale_twin.py`, aiming at random points, places 75 % (12 children; all misses the same). With the image
-    shift recorded the prediction is exact to the drift, so choosing the lattice peak nearest the prediction would
-    place these; that relaxes "never a guess" and is an open decision.
+    `multiscale_twin.py`, aiming at random points, places 90 % (45 of 50; every miss the same, none wrong).
+*   Tried and measured (2026-10-31, `outputs/exp/overlap_atomic.py`, 16 sites): stitching a 3 x 3 grid of
+    overlapping atomic frames first and placing the stitched patch does not break the ambiguity. Inside a crystal the
+    overlaps themselves repeat, so neighbour matches land on the wrong repeat (corrections of 20 to 92 tile pixels),
+    and the patch is as ambiguous as one frame (0.99 against 0.99); it placed 12 of 16 against 14 of 16 for single
+    frames. Overlap measures drift where the sample is not periodic (it is what `register_tiles` already does for
+    maps), not inside a lattice. Blurring the lattice away before matching seemed to place all of them, but only
+    because the rival search then sat wholly inside the zone excluded around the best peak: `register_child` now
+    searches rivals as far beyond the window as they must be from the best (pyTEMlib 23fbd5f; benchmark unchanged),
+    and with that, blurring does not help either. Nor would "the lattice peak nearest the prediction": the commanded
+    shift between frames was about 1 parent pixel (0.3 nm) off, about one lattice spacing. What would place these is
+    an image with something non-periodic in it (aim at a particle edge, a defect or a grain boundary, which
+    `find_features` finds) or a parent fine enough to hold the same atoms.
 *   The 8 B model still loses the procedure (acquires before unblanking, reports a placement that was refused, decides
     a tool it was given is missing): 0 of 2 agent runs pass end to end. The claim check does not catch "placed" when
     `place_image` said "unplaced".
