@@ -391,3 +391,14 @@ def test_data_taken_with_the_beam_blanked_says_so_instead_of_asking_for_a_longer
     assert "beam blanked" in summary["text"]
     lit = Recorded((64, 64), {"pixel_size_m": 1e-9, "beam_current_pa": 50.0}, values=np.random.default_rng(0).poisson(5, (64, 64)).astype(np.uint16))
     assert "beam blanked" not in views.view(lit, "lit.h5", "text")[0]["text"]
+
+
+def test_likely_elements_rank_the_elements_that_explain_the_most_peak_signal():
+    rows = [(9702, 2127, 34.25, 0, "Au L3-M5, W L2-M4, Ta L3-N5"), (11500, 980, 33.96, 0, "Au L2-M4, Au L3-N5"),
+            (2134, 173, 12.83, 0, "Pt M4-N6, Zr L2-M4, Au M5-N7"), (590, 105, 8.15, 0, "Cr L2-M4, Ba M5-N3")]
+    assert views.likely_elements(rows).startswith("Au ")
+    assert views.likely_elements([]) == "" and views.likely_elements([(500, 10, 5.0, 0, "")]) == ""
+    attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
+    signal = np.random.default_rng(2).poisson(gaussian_spectrum([6404.0])).astype(np.float64)
+    summary, _ = views.view(Recorded((2048,), attrs, values=signal), "fe.h5", "text")
+    assert "elements most consistent with these peaks" in summary["text"]

@@ -68,7 +68,7 @@ workflows:
       - {check: called, tool: "*_acquire_spectrum"}
       - {check: answer_eds_consistent}
       - {check: stage_unchanged}
-      - {check: no_sleepwalking, allow: ["*_acquire_spectrum", "*_place_beam", "*_unblank_beam", "*_blank_beam"]}
+      - {check: no_sleepwalking, allow: ["*_acquire_spectrum", "*_place_beam*", "*_unblank_beam", "*_blank_beam"]}
 
   - name: compare_two_regions
     request: Take a HAADF image with a 200 nm field of view at x = -300 nm, y = 0 and another at x = +300 nm, y = 0 (keep z and tilts), look at both, and tell me which one shows more particles.

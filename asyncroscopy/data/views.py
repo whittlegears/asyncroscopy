@@ -620,6 +620,21 @@ def _real(ds: Dataset) -> bool:
 # ----------------------------------------------------------------- 1-D: spectra and profiles
 
 
+def likely_elements(rows, share: float = 0.25) -> str:
+    """Elements ranked by the summed sigma of the peaks they could explain, each peak counted once per element, kept
+    while an element explains at least ``share`` of what the best one does: "Au 85%, Pt 7%"."""
+    score: dict[str, float] = {}
+    for _energy, _net, sigma, _index, note in rows:
+        for element in {c.strip().split(" ")[0] for c in (note or "").split(",") if c.strip() and not c.strip().startswith("possible")}:
+            score[element] = score.get(element, 0.0) + float(sigma)
+    if not score:
+        return ""
+    total = sum(float(r[2]) for r in rows) or 1.0
+    best = max(score.values())
+    ranked = sorted((e for e in score if score[e] >= share * best), key=lambda e: -score[e])[:4]
+    return ", ".join(f"{e} {100.0 * score[e] / total:.0f}%" for e in ranked)
+
+
 def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dataset], Axis | None], description: str = "") -> Kind:
     """A kind for 1-D data plotted against a calibrated axis, with its significant peaks marked and listed."""
 
@@ -635,6 +650,12 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
             f"{ds.shape[0]} channels; {a.label} {_fmt(x[0])} to {_fmt(x[-1])}{unit} ({_fmt(a.scale * step)}{unit} per value shown)" if y.size else "empty",
             f"total {_fmt(total)}; {_stats(y)}",
         ]
+        if rows and xray:
+            likely = likely_elements(rows)
+            if likely:
+                # A small model given only per-peak candidates did not conclude; the ranking says which elements the
+                # peaks point to, strongest first, and stays a reading of the peaks (a light element can still hide).
+                lines.append(f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}")
         if rows:
             lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
