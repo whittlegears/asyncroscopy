@@ -866,7 +866,7 @@ class TestRunJob:
         server, calls = self.mapper_server(server_factory)
         server._devices["Mapper"].finished = True
         reply = server.run_job("Mapper", {"fov_m": 2e-7})
-        assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9}
+        assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9} and "nothing needs running" in reply["note"]
 
     def test_a_refused_plan_comes_back_without_a_start(self, server_factory):
         server, calls = self.mapper_server(server_factory)

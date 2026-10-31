@@ -84,6 +84,9 @@ WAIT_NOTES = {
     "paused_awaiting_approval": "Waiting for an operator to approve the next step: call wait_for_job again. Do not retry or start another job.",
     "paused": "Paused by a person, with the instrument waiting safely; it goes on when they continue it. Call wait_for_job again; do not start it yourself or start another job.",
 }
+# A finished job's reply: a small model handed a finished map stitched it again and then ran the whole map again.
+DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
+             "reply and its result_keys; nothing needs running or stitching again.")
 LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
 # Estimate fields of a job that puts a dose on the sample (a beam job): max_dose_e_per_a2 applies to it.
 DOSE_FIELDS = ("max_dose_e_per_a2", "beam_current_pa", "beam_current_source")
@@ -1468,7 +1471,7 @@ class MCPServer:
             if state not in WAIT_NOTES:
                 if state == "done":
                     results = json.loads(proxy.results(json.dumps({"job_id": job_id})))
-                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results})
+                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results}, note=DONE_NOTE)
                 return status
             if time.monotonic() >= deadline:
                 reason = (status.get("suspended") or {}).get("reason", "")

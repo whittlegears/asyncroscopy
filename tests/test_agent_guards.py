@@ -235,3 +235,28 @@ def _async(handler):
     async def run(request):
         return handler(request)
     return run
+
+
+def test_a_plan_that_already_finished_in_this_request_is_not_run_again():
+    plan = {"size_m": [6e-7, 6e-7], "fov_m": 2e-7, "per_tile": ["eds_point"]}
+    done = {"job_id": "j1", "state": "done", "result_keys": {"map": "map_r1_map"}, "summary": {"tiles": 16}}
+    history = [HumanMessage("Map a 600 nm square with EDS."),
+               AIMessage("", tool_calls=[{"name": "run_job", "args": {"device": "Mapper", "plan": plan}, "id": "c0"}]),
+               ToolMessage(json.dumps(done), tool_call_id="c0", name="run_job")]
+    calls = []
+
+    async def handler(request):
+        calls.append(request.tool_call["args"])
+        return ToolMessage(json.dumps({"job_id": "j2", "state": "done"}), tool_call_id="call-1", name="run_job")
+
+    middleware = JobWaitMiddleware([SimpleNamespace(name="wait_for_job")], on_progress=None)
+    again = FakeToolRequest("run_job", {"plan": dict(reversed(list(plan.items()))), "device": "Mapper"})
+    again.state = {"messages": history}
+    reply = asyncio.run(middleware.awrap_tool_call(again, handler))
+    assert calls == [] and reply.status == "error" and "already ran" in reply.content and "map_r1_map" in reply.content
+    other = FakeToolRequest("run_job", {"device": "Mapper", "plan": {**plan, "size_m": [1e-6, 1e-6]}})
+    other.state = {"messages": history}
+    assert json.loads(asyncio.run(middleware.awrap_tool_call(other, handler)).content)["job_id"] == "j2"
+    later = FakeToolRequest("run_job", {"device": "Mapper", "plan": plan})
+    later.state = {"messages": [*history, HumanMessage("Do the same map again.")]}  # a new request may ask for a second map
+    assert json.loads(asyncio.run(middleware.awrap_tool_call(later, handler)).content)["job_id"] == "j2"
