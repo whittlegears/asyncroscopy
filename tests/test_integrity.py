@@ -155,13 +155,18 @@ def test_save_acquisition_seals_what_it_writes(tmp_path, manifest):
         integrity.check_file(key)
 
 
-def test_the_verify_command_says_what_is_wrong(tmp_path, manifest, capsys):
+def _verify_script():
     import importlib.util
     from pathlib import Path
 
     spec = importlib.util.spec_from_file_location("verify_integrity", Path(__file__).resolve().parents[1] / "startup_scripts" / "verify_integrity.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_the_verify_command_says_what_is_wrong(tmp_path, manifest, capsys):
+    module = _verify_script()
     path = _data(tmp_path, "a.h5")
     integrity.seal(path, key="a")
     assert module.main([]) == 0
@@ -244,3 +249,32 @@ def test_an_unreadable_key_keeps_the_dose_unsealed_and_verify_says_so(tmp_path, 
     assert dose_ledger.dose_at("L", 0.0, 0.0)["exposures_here"] == 2
     monkeypatch.setenv(integrity.KEY_ENV, "11" * 32)
     assert any("line 2 has no seal" in p for p in integrity.verify(logs=(ledger,))["log_problems"])
+
+
+def test_a_sealed_log_may_grow_but_its_sealed_lines_may_not_change(tmp_path, manifest):
+    log = _data(tmp_path, "placements.jsonl", b'{"child": "a"}\n{"child": "b"}\n{"child": "c', )
+    entry = integrity.seal_log(log)
+    assert entry["lines"] == 2
+    with open(log, "ab") as handle:
+        handle.write(b'"}\n{"child": "d"}\n')
+    assert integrity.check_file(log)["lines"] == 2
+    assert integrity.seal_log(log)["lines"] == 4
+    assert integrity.verify()["ok"]
+    log.write_bytes(log.read_bytes().replace(b'"b"', b'"x"'))
+    with pytest.raises(integrity.IntegrityError, match="first 4 line"):
+        integrity.check_file(log)
+    with pytest.raises(integrity.IntegrityError):
+        integrity.seal_log(log)
+    assert integrity.verify()["changed"] == [str(log)]
+
+
+def test_the_verify_command_seals_what_the_analysis_server_wrote(tmp_path, manifest, capsys):
+    verify_integrity = _verify_script()
+    log = _data(tmp_path, "placements.jsonl", b'{"child": "a"}\n')
+    stitched = _data(tmp_path, "map_v1.h5", b"map bytes")
+    assert verify_integrity.main(["--seal", str(log), str(stitched)]) == 0
+    out = capsys.readouterr().out
+    assert "(1 line(s))" in out and "OK: 2 sealed file(s)" in out
+    stitched.write_bytes(b"other bytes")
+    assert verify_integrity.main(["--seal", str(stitched)]) == 1
+    assert "NOT SEALED" in capsys.readouterr().out

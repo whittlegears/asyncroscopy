@@ -11,7 +11,8 @@ fields and the HMAC of the line before it (``chain_append``), so:
 ``verify`` checks the manifest's chain, every sealed file, and any other chained logs it is given.
 
 ``save_acquisition`` seals every file it writes (``data/data_writer.py``), and the dose ledger is a chained log
-(``data/dose_ledger.py``); the analysis server's stitched maps are not sealed yet (``docs/designs/multiscale_maps.md``, P7). ``startup_scripts/verify_integrity.py``
+(``data/dose_ledger.py``). The analysis server runs without the key: ``verify_integrity.py --seal`` seals its map
+files (``seal``) and the lines its placement log holds so far (``seal_log``). Maps it writes to Tiled are not sealed. ``startup_scripts/verify_integrity.py``
 runs ``verify`` and prints what changed, went missing or broke the chain.
 
 The key comes from ``ASYNCROSCOPY_INTEGRITY_KEY`` (hex), or the file ``ASYNCROSCOPY_INTEGRITY_KEY_FILE``
@@ -27,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import threading
@@ -73,11 +75,17 @@ def _mac(key: bytes, fields: dict) -> str:
     return hmac.new(key, json.dumps(fields, sort_keys=True, separators=(",", ":")).encode(), hashlib.sha256).hexdigest()
 
 
-def sha256_of(path: Path) -> str:
+def sha256_of(path: Path, limit: int | None = None) -> str:
+    """The SHA-256 of ``path``'s bytes, or of its first ``limit`` bytes."""
     digest = hashlib.sha256()
+    left = math.inf if limit is None else limit
     with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(CHUNK), b""):
+        while left > 0:
+            block = handle.read(int(min(CHUNK, left)))
+            if not block:
+                break
             digest.update(block)
+            left -= len(block)
     return digest.hexdigest()
 
 
@@ -210,6 +218,25 @@ def seal(path: str | Path, key: str = "", writer: str = "") -> dict:
     })
 
 
+def seal_log(path: str | Path, key: str = "", writer: str = "") -> dict:
+    """Seal the complete lines an append-only log written by another program holds now (the analysis server's
+    placement log): their count, byte length and SHA-256. The log may keep growing; ``check_file`` then checks
+    only that the sealed lines are unchanged. A log whose sealed lines have changed is refused (IntegrityError)."""
+    resolved = Path(path).resolve()
+    earlier = _index().get(str(resolved))
+    if earlier is not None:
+        check_file(resolved)
+    with open(resolved, "rb") as handle:
+        data = handle.read()
+    size = data.rfind(b"\n") + 1
+    if earlier is not None and earlier["size"] == size:
+        return earlier
+    return chain_append(manifest_path(), {
+        "path": str(resolved), "key": key or str(path), "sha256": hashlib.sha256(data[:size]).hexdigest(), "size": size,
+        "lines": data[:size].count(b"\n"),"writer": writer[:120], "at": time.time(),
+    })
+
+
 def _index() -> dict[str, dict]:
     """The latest manifest entry per resolved path, re-read only when the manifest has changed."""
     log = manifest_path()
@@ -242,6 +269,10 @@ def check_file(path: str | Path) -> dict | None:
         return None
     if not resolved.exists():
         raise IntegrityError(f"{path} was sealed when written and is now missing")
+    if "lines" in entry:
+        if resolved.stat().st_size < entry["size"] or sha256_of(resolved, entry["size"]) != entry["sha256"]:
+            raise IntegrityError(f"{path}: its first {entry['lines']} line(s) have changed since they were sealed")
+        return entry
     if resolved.stat().st_size != entry["size"] or sha256_of(resolved) != entry["sha256"]:
         raise IntegrityError(f"{path} has changed since it was written (its SHA-256 no longer matches the sealed one)")
     return entry
