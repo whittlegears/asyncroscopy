@@ -98,3 +98,17 @@ workflows:
       - {check: stage_near, x: "{poi_x}", y: "{poi_y}"}
       - {check: called, tool: "*_acquire_scanned_image"}
       - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: zoom_to_atomic_columns
+    description: The mapping design's CUJ 3 by an agent. From a survey image, zoom into one particle tier by tier until
+      atomic columns show, aiming each finer image by image shift and placing it on the coarser one by matching
+      (the multiscale_region skill), never by the stage alone.
+    setup: [image]
+    request: Starting from the image {image_key}, zoom into one particle step by step until you can see its atomic
+      columns, and tell me where each image you took sits on the one before it.
+    runners: [general]
+    timeout_s: 1800
+    checks:
+      - {check: called, tool: place_image, min: 2}
+      - {check: placed_chain, tiers: 2, max_pixel_m: 1.0e-10}
+      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_set_image_shift", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}

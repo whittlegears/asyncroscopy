@@ -451,3 +451,20 @@ def test_a_length_in_nm_answered_in_metres_is_near():
     run = SimpleNamespace(final="The point is at (2.0540e-07 m, -4.1e-08 m).", facts={"truth": {"poi_x_nm": 205.4}})
     assert answer_number_near(run, fact="poi_x_nm", tol=2.0)[0]
     assert not answer_number_near(SimpleNamespace(final="at 2.0540e-07", facts={"truth": {"tiles": 205.4}}), fact="tiles", tol=2.0)[0]
+
+
+def _placement(child, parent, status="placed", pixel_m=1e-9):
+    record = {"child": child, "parent": parent, "status": status, "child_pixel_m": pixel_m, "reason": "" if status == "placed" else "ambiguous"}
+    return Call("place_image", {"image": child, "parent": parent}, result=json.dumps(record))
+
+
+def test_placed_chain_counts_only_images_placed_on_placed_images():
+    chain = Run(calls=[_placement("t2.h5", "survey.h5", pixel_m=3e-10), _placement("t3.h5", "t2.h5", pixel_m=4e-11)])
+    passed, detail = CHECKS["placed_chain"](chain, tiers=2, max_pixel_m=1e-10)
+    assert passed and "longest placed chain 2" in detail and "40 pm" in detail
+    broken = Run(calls=[_placement("t2.h5", "survey.h5", status="unplaced"), _placement("t3.h5", "t2.h5", pixel_m=4e-11)])
+    assert not CHECKS["placed_chain"](broken, tiers=2)[0]
+    too_coarse = Run(calls=[_placement("t2.h5", "survey.h5", pixel_m=6e-10), _placement("t3.h5", "t2.h5", pixel_m=3e-10)])
+    assert not CHECKS["placed_chain"](too_coarse, tiers=2, max_pixel_m=1e-10)[0]
+    passed, detail = CHECKS["placed_chain"](Run(calls=[_placement("a.h5", "b.h5", status="unplaced")]), tiers=1)
+    assert not passed and "none placed" in detail

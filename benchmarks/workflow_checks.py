@@ -695,3 +695,47 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
             ok, detail = False, f"{type(exc).__name__}: {exc}"
         results[label] = {"ok": bool(ok), "detail": detail}
     return results
+
+
+# ------------------------------------------------------------------ zooming tier by tier (multiscale_region)
+
+
+def _placements(run: Run) -> list[dict]:
+    """The records of the agent's place_image calls, as the analysis server returned them."""
+    out = []
+    for c in run.calls:
+        if c.ok and c.name == "place_image":
+            try:
+                record = json.loads(c.result)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict) and record.get("child"):
+                out.append(record)
+    return out
+
+
+@check
+def placed_chain(run: Run, tiers: int = 2, max_pixel_m: float | None = None) -> tuple[bool, str]:
+    """The run placed at least ``tiers`` finer images by matching, each on the image placed before it (a chain from
+    the coarsest to the finest), and the finest one's pixels are no larger than ``max_pixel_m``. A placement of an
+    image on one that was itself unplaced does not extend the chain."""
+    records = _placements(run)
+    placed = {r["child"]: r for r in records if r.get("status") == "placed"}
+    if not placed:
+        unplaced = [r.get("reason", "")[:80] for r in records]
+        return False, f"{len(records)} place_image call(s), none placed" + (f": {unplaced[:2]}" if unplaced else "")
+    depth: dict[str, int] = {}
+
+    def chain_depth(child: str, seen: frozenset = frozenset()) -> int:
+        if child not in depth:
+            parent = placed[child]["parent"]
+            depth[child] = 1 + (chain_depth(parent, seen | {child}) if parent in placed and parent not in seen else 0)
+        return depth[child]
+
+    finest = max(placed, key=lambda k: (chain_depth(k), -float(placed[k].get("child_pixel_m") or math.inf)))
+    longest, pixel = chain_depth(finest), float(placed[finest].get("child_pixel_m") or math.inf)
+    fine_enough = max_pixel_m is None or pixel <= max_pixel_m
+    return longest >= tiers and fine_enough, (
+        f"longest placed chain {longest} image(s), finest pixel {pixel * 1e12:.0f} pm; "
+        f"{len(placed)} placed and {len(records) - len(placed)} unplaced of {len(records)} place_image call(s)"
+    )
