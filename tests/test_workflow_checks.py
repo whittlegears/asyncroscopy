@@ -167,6 +167,10 @@ def test_zoom_counts_a_smaller_image_near_a_point_of_interest():
     assert not results(Run(events=events, facts=far), {"check": "zoomed_on_region"})["zoomed_on_region"]["ok"]
     same_fov = [*events[:3], mcp("DigitalTwin_acquire_scanned_image", ts=5)]
     assert not results(Run(events=same_fov, facts=facts), {"check": "zoomed_on_region"})["zoomed_on_region"]["ok"]
+    aimed = [*events[:2], mcp("DigitalTwin_aim_image_shift", ts=3, arguments={"position": [2.0e-7, 1.0e-7]}), *events[3:]]
+    assert results(Run(events=aimed, facts=facts), {"check": "zoomed_on_region"})["zoomed_on_region"]["ok"]
+    aimed_same_fov = [*aimed[:3], mcp("DigitalTwin_acquire_scanned_image", ts=5)]
+    assert not results(Run(events=aimed_same_fov, facts=facts), {"check": "zoomed_on_region"})["zoomed_on_region"]["ok"]
 
 
 def test_approval_checks_follow_the_request_through_the_decision():
@@ -468,3 +472,11 @@ def test_placed_chain_counts_only_images_placed_on_placed_images():
     assert not CHECKS["placed_chain"](too_coarse, tiers=2, max_pixel_m=1e-10)[0]
     passed, detail = CHECKS["placed_chain"](Run(calls=[_placement("a.h5", "b.h5", status="unplaced")]), tiers=1)
     assert not passed and "none placed" in detail
+
+
+def test_placed_chain_counts_the_placements_a_zoom_job_made():
+    tier = lambda image, parent, status, pixel: job("Mapper.step", result=json.dumps({"phase": "zoom", "image": image, "parent": parent, "pixel_m": pixel, "placement": {"status": status}}))
+    run = Run(events=[tier("t2.h5", "survey.h5", "placed", 1.5e-10), tier("t3.h5", "t2.h5", "unplaced", 1.8e-11)])
+    passed, detail = CHECKS["placed_chain"](run, tiers=1)
+    assert passed and "1 placed and 1 unplaced" in detail
+    assert not CHECKS["placed_chain"](run, tiers=2)[0]

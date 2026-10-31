@@ -74,7 +74,7 @@ workflows:
       - {check: job_finished}
       - {check: regions_scored}           # score_map, or the map job's find_regions
       - {check: zoomed_on_region}         # a stage move and image, or the map job's revisit
-      - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_aim_image_shift", "*_set_image_shift", "*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
 
   - name: abort_then_resume
     runners: [general]
@@ -108,7 +108,10 @@ workflows:
       columns, and tell me where each image you took sits on the one before it.
     runners: [general]
     timeout_s: 1800
+    # On the twin a frame filled by a crystalline particle matches its parent one lattice spacing away as well as at
+    # the right place, so the atomic tier is usually (and rightly) left unplaced: one placed tier is the bar, plus a
+    # job that went on to the atomic tier and an answer that does not claim the refused placement (the claim check).
     checks:
-      - {check: called, tool: place_image, min: 2}
-      - {check: placed_chain, tiers: 2, max_pixel_m: 1.0e-10}
-      - {check: no_sleepwalking, allow: ["*_move_stage", "*_set_fov", "*_aim_image_shift", "*_set_image_shift", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+      - {check: job_finished}
+      - {check: placed_chain, tiers: 1}
+      - {check: no_sleepwalking, allow: ["Mapper*", "*_move_stage", "*_set_fov", "*_aim_image_shift", "*_set_image_shift", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}

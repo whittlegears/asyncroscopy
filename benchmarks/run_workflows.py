@@ -65,6 +65,8 @@ SURVEY_FOV_M = 6.0e-7  # survey_image: room for two zoom steps (16x then 8x) dow
 # stage's landing error between the survey and the run, which no real zoom has), and never reused from a cache.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
+TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # a failed run's messages and calls, one file per run
+TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
 STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
 # The stack being run (set by main): its run_servers config and the addresses it serves.
@@ -655,7 +657,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
     facts["before"] = await live.snapshot()
     started = time.time()
     run = Run(facts=facts, has_calls=runner != "mapping", risks=live.risks)
-    error = None
+    error, transcript = None, []
     try:
         request = render(wf.get("request") or "", facts)
         if runner == "mapping":
@@ -678,6 +680,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         else:
             messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
             run.calls = trace_from_messages(messages)
+            transcript = [transcript_entry(m) for m in messages]
             if not (run.final or "").strip():  # what the model sent last, to see why it gave no answer
                 facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
     except TimeoutError:
@@ -738,8 +741,15 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         scores = evaluator_scores(RunData(caller, run.events, tiled_uri=STACK.get("tiled")), EVALUATORS)
     except Exception as exc:
         scores = {"error": f"{type(exc).__name__}: {exc}"}
+    ok = error is None and all(c["ok"] for c in checks.values())
+    if not ok:
+        TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
+        (TRANSCRIPTS / f"{caller}.json").write_text(json.dumps({
+            "workflow": wf["name"], "runner": runner, "error": error, "checks": checks, "final": run.final,
+            "messages": transcript, "calls": [c.to_dict() for c in run.calls],
+        }, indent=1, default=str), encoding="utf-8")
     return {
-        "ok": error is None and all(c["ok"] for c in checks.values()),
+        "ok": ok,
         "error": error,
         "infra_error": is_infra_error(error),
         "seconds": seconds,
@@ -752,6 +762,15 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "final": (run.final or "")[-600:],
         "scores": scores,
         **({"last_messages": facts["last_messages"]} if facts.get("last_messages") else {}),
+    }
+
+
+def transcript_entry(message) -> dict:
+    """A message as a failed run's transcript keeps it: type, tool name, text, and the calls it made with their arguments."""
+    content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
+    return {
+        "type": getattr(message, "type", ""), "name": getattr(message, "name", None), "text": content[:TRANSCRIPT_TEXT_CHARS],
+        "tool_calls": [{"name": c.get("name"), "args": c.get("args")} for c in getattr(message, "tool_calls", None) or []],
     }
 
 

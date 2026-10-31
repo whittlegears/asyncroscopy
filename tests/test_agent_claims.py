@@ -260,3 +260,24 @@ def test_a_placement_claimed_when_place_image_refused_it_is_flagged():
     refused = Calls("Place the image.").call("place_image", {"image": IMAGES[2]}, {"child": IMAGES[2], "status": "unplaced", "reason": "x"})
     assert kinds(check_answer(refused.messages, "The image was placed on its parent.")) == ["placement"]
     assert check_answer(refused.messages, "The image is unplaced: x.") == []
+
+
+def test_a_higher_magnification_claimed_without_changing_the_field_of_view_is_flagged():
+    run = Calls("Go to the region and take a higher-magnification image of it.")
+    run.call("DigitalTwin_aim_image_shift", {"position": [1e-7, 2e-7]}, [1e-7, 2e-7])
+    run.call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, IMAGES[0])
+    answer = f"I went to the region and took a higher-magnification image of it: `{IMAGES[0]}`."
+    assert kinds(check_answer(run.messages, answer)) == ["action"]
+    zoomed = Calls("Zoom in.").call("DigitalTwin_set_fov", {"fov": 5e-8}).call("DigitalTwin_acquire_scanned_image", {}, IMAGES[0])
+    assert check_answer(zoomed.messages, f"I zoomed in to a 50 nm field of view and took `{IMAGES[0]}`.") == []
+
+
+def test_placements_a_zoom_job_reports_are_checked_like_place_image_calls():
+    summary = {"state": "done", "summary": {"zoom": [
+        {"tier": 0, "image": IMAGES[1], "placement": {"status": "placed", "score": 0.99}},
+        {"tier": 1, "image": IMAGES[2], "placement": {"status": "unplaced", "reason": "another place matches almost as well"}},
+    ]}}
+    run = Calls("Zoom in to atomic columns.").call("run_job", {"device": "Mapper"}, {"job_id": "a1b2c3d4e5f6"}).call("wait_for_job", {"job_id": "a1b2c3d4e5f6"}, summary)
+    assert check_answer(run.messages, f"`{IMAGES[1]}` was placed with score 0.99; `{IMAGES[2]}` is unplaced: another place matches almost as well.") == []
+    claims = check_answer(run.messages, f"`{IMAGES[2]}` was placed on `{IMAGES[1]}`.")
+    assert kinds(claims) == ["placement"] and IMAGES[2] in claims[0].why

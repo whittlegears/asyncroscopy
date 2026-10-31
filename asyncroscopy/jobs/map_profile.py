@@ -46,7 +46,7 @@ from asyncroscopy.plugins import load_plugins, unknown_hint
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
 GENERIC_PLAN_FIELDS = frozenset({
-    "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "budgets", "drift",
+    "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "zoom", "budgets", "drift",
 })
 GENERIC_PLAN_DEFAULTS = {"overlap": 0.15, "order": "serpentine", "stitch": True, "find_regions": 0}
 TIME_BUDGET = "time_s"  # every profile's: the Mapper's estimate of the whole job's duration
