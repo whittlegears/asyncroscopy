@@ -205,6 +205,28 @@ Built for agents: the analysis server's `place_image` (places a finer image on a
 
 The first step is built in SciAgentGUI (`MapView.tsx`, `tiledClient.ts`, commit a50d98a on claude_dev): the Maps page fetches the stored chunks a view touches through Tiled's block endpoint, nearest the centre first and six at a time, keeps 160 of them by map, level and chunk, draws every cached coarser chunk under the finer ones, and paints every chunk with the map's one display range (from its coarsest level), so chunks meet without brightness steps and a zoom never shows a stretched stale picture. Checked in the running app on a 2,000-pixel, 4-level twin map. The Maps page also draws the finer images placed on a map (`list_placements`): outlined once 6 px on screen, read and drawn at their placed position once 48 px (SciAgentGUI 230813d; checked in the running app with an image `place_image` placed on a twin map; of 15 older images whose stage readings fell inside a map, 14 were refused as ambiguous or too faint and none was guessed). Not built: the timing harness the "done when" numbers need, a finer image's own placed children (one tier deep only), and OpenSeadragon.
 
+### CUJ 3 by an agent (2026-10-31)
+
+`benchmarks/workflows/mapping.yaml` `zoom_to_atomic_columns` asks the general agent (qwen3:8b) to zoom from a 600 nm
+survey to atomic columns; `placed_chain` passes only for two placements chained by matching. What the live runs found,
+and what was built for it:
+
+*   The agent could not do the arithmetic aiming needs (target minus stage; nm to m): `aim_image_shift [x, y]` on the
+    microscope sets the shift itself; `revisit_point` copies positions from `list_pois`.
+*   It cannot see images: `find_features` (analysis server) lists an image's distinct bright blobs with stage positions.
+*   Images did not record their image shift, so placing on a shifted parent searched the wrong part of it: frames now
+    record `image_shift_m`, and `frame_of`, the dose ledger and `to_stage` include it.
+*   A blanked beam images noise: the skill unblanks first; the benchmark's setup does.
+*   Scripted on the live twin with these: survey -> 75 nm (or 2.4 um -> 150 nm) places every time (score about 0.99,
+    about 2 nm off). The atomic step aimed at a particle's interior is refused as ambiguous: the child is mostly lattice
+    and matches equally well one spacing away (0.90 to 0.99 of the best), even in an 8-parent-pixel window, and
+    `multiscale_twin.py`, aiming at random points, places 75 % (12 children; all misses the same). With the image
+    shift recorded the prediction is exact to the drift, so choosing the lattice peak nearest the prediction would
+    place these; that relaxes "never a guess" and is an open decision.
+*   The 8 B model still loses the procedure (acquires before unblanking, reports a placement that was refused, decides
+    a tool it was given is missing): 0 of 2 agent runs pass end to end. The claim check does not catch "placed" when
+    `place_image` said "unplaced".
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
