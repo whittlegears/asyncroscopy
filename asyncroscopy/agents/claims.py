@@ -267,7 +267,12 @@ def _setting_claims(answer: str, settings: _Settings) -> list[Claim]:
                             continue
                         actual, source = settings.last[name]
                         if _matches(stated, scale, actual) is False:
-                            claims.append(Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source})"))
+                            # Name the exact call that would make the claim true: a small model told only that a claim is
+                            # unsupported repeated its answer unchanged.
+                            setter = f"{source.split('_')[0]}_set_{name}"
+                            target = json.dumps({name: stated * scale if scale else stated})
+                            claims.append(Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source}); "
+                                                                 f"to make it true, call {setter} with {target} now"))
                     else:
                         values = settings.set.get(name, [])
                         if not values:

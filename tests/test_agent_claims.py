@@ -297,3 +297,9 @@ def test_a_plain_map_job_does_not_excuse_a_higher_magnification_claim_but_a_revi
     assert "action" in kinds(check_answer(plain.messages, answer))
     revisit = Calls("Map and zoom.").call("run_job", {"device": "Mapper", "plan": {"size_m": [6e-7, 6e-7], "fov_m": 2e-7, "revisit": {"fov_m": 5e-8}}}, {"job_id": "a1b2c3d4e5f6", "state": "done", "summary": {"revisits": {"first": [{"image": IMAGES[0]}]}}})
     assert check_answer(revisit.messages, answer) == []
+
+
+
+def test_a_wrong_final_setting_is_corrected_with_the_exact_call_that_makes_it_true():
+    claims = check_answer(focus_series(), FOCUS_ANSWER, TOOLS)
+    assert kinds(claims) == ["setting"] and 'call DigitalTwin_set_defocus with {"defocus": 0.0} now' in claims[0].why
