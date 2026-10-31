@@ -138,6 +138,7 @@ REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-wi
 ZOOM_MIN_FOV_M = 5e-9  # no zoom tier narrower than this: atomic columns show well before it, and the dose climbs as 1/fov^2
 ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
+ZOOM_CANDIDATES = 8  # features asked for at each tier; the first whose finer image fits inside the parent is aimed at
 ZOOM_STEP = 8  # without fovs_m, each tier's field of view is the one before's over this, down to ZOOM_MIN_FOV_M
 ZOOM_EXAMPLE = {"zoom": {"parent": "<the image key to start from>.h5"}}
 # What a dry run (plan "dry_run": true, see JobDevice) reports in place of every image and spectrum.
@@ -1236,12 +1237,18 @@ class Mapper(JobDevice):
         fov = float(tier["fov_m"])
         record: dict = {"tier": k, "parent": parent, "fov_m": fov, "pixel_m": fov / int(tier["imsize"]) if tier.get("imsize") else None}
         low, high = ZOOM_FEATURE_SIZE
-        found = self._analysis("find_features", {"image": parent, "n": 1, "min_size_m": low * fov, "max_size_m": high * fov})
+        found = self._analysis("find_features", {"image": parent, "n": ZOOM_CANDIDATES, "min_size_m": low * fov, "max_size_m": high * fov})
         if "error" in found:
             return {**record, "stopped": f"find_features refused {parent}: {found['error'].get('message', found['error'])}"}
         if not found.get("features"):
             return {**record, "stopped": f"{parent} shows no distinct feature {low * fov:.2g} to {high * fov:.2g} m across to zoom in on"}
-        feature = found["features"][0]
+        # The finer image must lie inside its parent to be placed on it: a feature near the parent's edge is passed over.
+        half = fov / 2.0 / float(found["pixel_size_m"])
+        rows, cols = (int(v) for v in found["shape"][:2])
+        inside = [f for f in found["features"] if half <= f["row"] <= rows - 1 - half and half <= f["col"] <= cols - 1 - half]
+        if not inside:
+            return {**record, "stopped": f"every distinct feature on {parent} is too near its edge for a {fov:.2g} m image to lie inside it"}
+        feature = inside[0]
         target = [float(feature["x_m"]), float(feature["y_m"])]
         parent_fov = float(found["pixel_size_m"]) * float(max(found["shape"]))
         record.update({"feature": feature, "aimed_xy_m": target})

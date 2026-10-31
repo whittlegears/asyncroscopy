@@ -171,7 +171,9 @@ def test_a_zoom_job_aims_images_and_places_them_tier_by_tier_until_one_is_not_pl
         tier = sum(1 for t, _ in calls if t == "find_features") - 1
         if tool == "find_features":
             dx, dy = offsets[tier]
-            return {"features": [{"x_m": stage[0] + dx, "y_m": stage[1] + dy, "diameter_m": arguments["min_size_m"] * 2}], "pixel_size_m": 6e-7 / 512 / 8 ** tier, "shape": [512, 512]}
+            edge = {"row": 500.0, "col": 256.0, "x_m": stage[0] - 2e-7, "y_m": stage[1] + 2e-7, "diameter_m": arguments["min_size_m"] * 2}  # its finer image would leave the parent
+            good = {"row": 256.0, "col": 256.0, "x_m": stage[0] + dx, "y_m": stage[1] + dy, "diameter_m": arguments["min_size_m"] * 2}
+            return {"features": [edge, good], "pixel_size_m": 6e-7 / 512 / 8 ** tier, "shape": [512, 512]}
         if tool == "place_image":
             if tier == 0:
                 return {"status": "placed", "score": 0.99, "ambiguity": 0.4, "centre_xy_m": arguments["centre_xy_m"]}
