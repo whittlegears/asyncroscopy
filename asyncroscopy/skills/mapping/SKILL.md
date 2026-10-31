@@ -1,7 +1,7 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.6.0
+version: 1.6.1
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
@@ -30,7 +30,7 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 | "spectrum image", "EDS map" of every tile | `"per_tile": ["eds_map"]`. Only when asked by name: it multiplies time and dose. |
 | nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` (a sparse sample stitches better with `"overlap": 0.25`) |
 | "find the N most interesting regions" | `"find_regions": N` |
-| "... and image them closer / at high magnification" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
+| "... and image them closer / at high magnification", "go there and take a higher-magnification image" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
 | "at most N e/Å²", "a dose limit of N", "N electrons per square angstrom" | `"dose_budget_e_per_a2": N` |
 
 Another instrument (an AFM)? Follow the Mapper's example plan; settings go in `settings`, limits (`time_s`, ...) in `budgets`.

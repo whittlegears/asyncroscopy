@@ -165,6 +165,8 @@ def test_a_zoom_job_aims_images_and_places_them_tier_by_tier_until_one_is_not_pl
     calls = []
 
     def server(mapper, tool, arguments):
+        if tool == "find_features" and arguments["n"] == 0:  # the parent's frame, read at reserve
+            return {"features": [], "pixel_size_m": 6e-7 / 512, "shape": [512, 512]}
         calls.append((tool, arguments))
         tier = sum(1 for t, _ in calls if t == "find_features") - 1
         if tool == "find_features":
@@ -202,7 +204,24 @@ def test_a_zoom_job_aims_images_and_places_them_tier_by_tier_until_one_is_not_pl
     ({"parent": "x.h5", "fovs_m": [7.5e-8, 1e-9]}, "narrower than"),
 ])
 def test_a_zoom_plan_that_widens_or_goes_too_fine_is_refused(mapper_proxy, analysis, zoom, words):
+    analysis["server"] = lambda mapper, tool, arguments: {"features": [], "pixel_size_m": 6e-7 / 512, "shape": [512, 512]}
     reply = call(mapper_proxy, "reserve", {"plan": {"zoom": zoom}})
     assert reply["error"]["code"] == "plan_rejected" and words in reply["error"]["message"]
     reply = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "x.h5", "fovs_m": [7.5e-8]}, "fov_m": 1e-7}})
     assert "takes no area" in reply["error"]["message"]
+
+
+
+def test_a_zoom_plan_without_fovs_steps_down_8x_from_the_parent_and_says_what_is_wrong_with_a_bad_plan(mapper_proxy, analysis):
+    frames = {"survey.h5": {"features": [], "pixel_size_m": 6e-7 / 512, "shape": [512, 512]},
+              "atomic.h5": {"features": [], "pixel_size_m": 1e-8 / 512, "shape": [512, 512]}}
+    analysis["server"] = lambda mapper, tool, arguments: frames.get(arguments["image"]) or {"error": {"code": "not_found", "message": f"no image {arguments['image']}"}}
+    reserved = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "survey.h5"}}})
+    assert reserved["resolved_plan"]["zoom"]["fovs_m"] == pytest.approx([7.5e-8, 9.375e-9])
+    call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
+    reply = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "atomic.h5"}}})
+    assert "nothing finer to zoom to" in reply["error"]["message"] and "size_m" not in reply["error"]["message"]
+    reply = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "missing.h5"}}})
+    assert "no image missing.h5" in reply["error"]["message"]
+    reply = call(mapper_proxy, "reserve", {"plan": {"zoom": {"parent": "survey.h5", "fovs_m": [7e-7]}}})
+    assert "start below the parent" in reply["error"]["message"]

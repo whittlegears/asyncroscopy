@@ -2,6 +2,8 @@
 sleepwalking, empty answers, partial transcripts, a wedged device, and the checks fixed after the 31-workflow run."""
 
 import asyncio
+import tempfile
+from pathlib import Path
 import json
 
 import pytest
@@ -83,6 +85,7 @@ class FakeLive:
 
 
 def run_with(monkeypatch, chat, wf):
+    monkeypatch.setattr(run_workflows, "TRANSCRIPTS", Path(tempfile.mkdtemp(prefix="transcripts-")))
     monkeypatch.setattr(run_workflows, "run_chat_graph", chat)
     monkeypatch.setattr(run_workflows, "read_trace", lambda since, callers=None: [])
     real_sleep = asyncio.sleep
