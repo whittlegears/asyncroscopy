@@ -256,6 +256,26 @@ particles is the expected result (see above). Other fixes from the same runs: th
 job results and flags "higher magnification" when nothing narrowed the field of view; a still-running `run_job`
 reply names the `wait_for_job` call; failed benchmark runs keep their transcript in `outputs/live/transcripts/`.
 
+### qwen3:8b on every twin workflow (2026-10-31)
+
+All 32 twin workflows with the general agent: 24 of 32 passed. Each failure was read from its saved transcript
+(`outputs/live/transcripts/`) and fixed where it started, mostly in what tools and jobs say back rather than in prompts:
+
+| Failure | Fix | After |
+| :-- | :-- | :-- |
+| six EDS spectra with the beam blanked, each "needs a longer exposure" | 0-count spectra and `beam_current_pa` 0 images say the beam was blanked; STEM prompt rule | passes |
+| asked to list points, it annotated the map | note-writing tools offered only when the request asks to write | passes |
+| same 600 nm map run three times | a plan that finished in this request is answered from its results; done replies say nothing needs rerunning | passes, 221 s |
+| "defocus set back to 0" never done | the correction names the exact call | passes |
+| approved map re-sent with a changed plan, then aborted | `approval_status` gives the exact repeat call; a changed plan is pointed back | passes |
+| check graded elements the request never asked for | request asks for them | passes |
+| revisit by hand: nm as pixels, wrong moves | one Mapper revisit job; box rounding fixed in the Mapper | 2 of 3 then fixed |
+| setup map refused while re-homing still moved the stage | jobs wait for a move under way; benchmark waits after re-homing | no recurrence |
+| particle search at a 20 nm field, beam at the centre, no conclusion | `find_features` hints (field too narrow, beam blanked); `place_beam_at` in metres; spectra lead with likely elements | measures right; still drops steps |
+
+`find_particle_then_eds` remains unreliable: every measuring step now works when taken, but qwen3:8b skips one of
+the eight steps in most runs. It is the next candidate for a Mapper-style job (find, aim, spectrum, read as one call).
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
