@@ -716,8 +716,10 @@ def _placements(run: Run) -> list[dict]:
                 continue
             if isinstance(record, dict) and record.get("child"):
                 out.append(record)
-    for step in _step_results(run):
-        if step.get("phase") == "zoom" and step.get("image") and isinstance(step.get("placement"), dict):
+    seen = set()
+    for step in _step_results(run):  # a step may be traced more than once (by the job and by its writer): one record per image
+        if step.get("phase") == "zoom" and step.get("image") and isinstance(step.get("placement"), dict) and step["image"] not in seen:
+            seen.add(step["image"])
             out.append({**step["placement"], "child": step["image"], "parent": step.get("parent"), "child_pixel_m": step.get("pixel_m")})
     return out
 

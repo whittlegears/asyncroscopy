@@ -476,7 +476,7 @@ def test_placed_chain_counts_only_images_placed_on_placed_images():
 
 def test_placed_chain_counts_the_placements_a_zoom_job_made():
     tier = lambda image, parent, status, pixel: job("Mapper.step", result=json.dumps({"phase": "zoom", "image": image, "parent": parent, "pixel_m": pixel, "placement": {"status": status}}))
-    run = Run(events=[tier("t2.h5", "survey.h5", "placed", 1.5e-10), tier("t3.h5", "t2.h5", "unplaced", 1.8e-11)])
+    run = Run(events=[tier("t2.h5", "survey.h5", "placed", 1.5e-10), tier("t3.h5", "t2.h5", "unplaced", 1.8e-11), tier("t3.h5", "t2.h5", "unplaced", 1.8e-11)])
     passed, detail = CHECKS["placed_chain"](run, tiers=1)
     assert passed and "1 placed and 1 unplaced" in detail
     assert not CHECKS["placed_chain"](run, tiers=2)[0]
