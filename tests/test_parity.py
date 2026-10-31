@@ -307,6 +307,8 @@ def test_place_beam_at_parks_the_beam_on_a_stage_position_inside_the_field_of_vi
     assert [float(v) for v in fraction] == pytest.approx([0.75, 0.25], abs=1e-9)
     with pytest.raises(REFUSED):
         backend.call("place_beam_at", [stage[0] + 1e-6, stage[1]])
+    with pytest.raises(REFUSED, match="call place_beam with them"):
+        backend.call("place_beam_at", [0.5, 0.5])
     backend.call("set_image_shift", [0.0, 0.0])
 
 

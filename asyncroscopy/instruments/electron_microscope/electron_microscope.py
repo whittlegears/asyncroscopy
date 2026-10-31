@@ -282,12 +282,17 @@ class ElectronMicroscope(Instrument):
     @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
              doc_in=':param position: [x, y] stage position in metres to park the beam on (inside the current field of view).')
     def place_beam_at(self, position):
-        """Park the beam on stage position [x, y] (metres) for a spectrum, without moving the stage: works out place_beam's
+        """Park the beam on stage position [x, y] (metres; a find_features x_m, y_m) for a spectrum, without moving the stage.
+        For the centre of the image, or any other fraction of it, use place_beam (centre: [0.5, 0.5]). Works out place_beam's
         fractions from the stage, the image shift and the field of view, and returns them. Refused outside the current
         field of view (take an image there first). A small agent asked for fractions put the beam at the centre."""
         stage, shift, fov = self._get_stage(), self._get_image_shift(), float(self._get_fov())
         fraction = [0.5 + (float(position[i]) - float(stage[i]) - float(shift[i])) / fov for i in (0, 1)]
         if not all(0.0 <= f <= 1.0 for f in fraction):
+            if all(0.0 <= float(v) <= 1.0 for v in list(position)[:2]):
+                # The reverse of place_beam's mistake: fractions sent here, where stage metres go.
+                raise ValueError(f"place_beam_at takes a stage position in metres; [{float(position[0]):g}, {float(position[1]):g}] look like "
+                                 "fractions of the image: for those (the centre is [0.5, 0.5]) call place_beam with them")
             raise ValueError(f"[{float(position[0]):.4g}, {float(position[1]):.4g}] m is outside the current {fov:.3g} m field of view; "
                              "image an area that contains it first")
         self._place_beam(fraction)
