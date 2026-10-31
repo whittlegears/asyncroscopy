@@ -231,8 +231,10 @@ and what was built for it:
     searches rivals as far beyond the window as they must be from the best (pyTEMlib 23fbd5f; benchmark unchanged),
     and with that, blurring does not help either. Nor would "the lattice peak nearest the prediction": the commanded
     shift between frames was about 1 parent pixel (0.3 nm) off, about one lattice spacing. What would place these is
-    an image with something non-periodic in it (aim at a particle edge, a defect or a grain boundary, which
-    `find_features` finds) or a parent fine enough to hold the same atoms.
+    an image with something non-periodic in it, or a parent fine enough to hold the same atoms. Aiming at a particle's
+    edge instead of its centre does not supply it on the twin (`outputs/exp/edge_aim.py`: 0 of 8 placed either way,
+    ambiguity 0.81 to 0.98), while random points, mostly on the support between particles, place 90 %: on the twin
+    the support's texture is what an atomic frame is placed by, and a frame filled by a particle is not placeable.
 *   The 8 B model still loses the procedure (acquires before unblanking, reports a placement that was refused, decides
     a tool it was given is missing): 0 of 2 agent runs pass end to end. The claim check does not catch "placed" when
     `place_image` said "unplaced".
