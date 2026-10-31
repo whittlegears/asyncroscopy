@@ -624,7 +624,8 @@ class DigitalTwin(AtomisticDigitalTwin):
         if self._scan_params.rotation_deg:
             a = np.deg2rad(self._scan_params.rotation_deg)
             x, y = np.cos(a) * x - np.sin(a) * y, np.sin(a) * x + np.cos(a) * y
-        return self._stage.true_xy_at(t) + np.array([x, y])
+        # The beam is placed in the scan's frame, which the image shift moves with it (as on the instrument).
+        return self._stage.true_xy_at(t) + self._image_shift + np.array([x, y])
 
     def _support_angstrom(self, x: float, y: float) -> float:
         """Support film (the specimen's) plus contamination (the beam's doing) at a sample point, in angstrom."""

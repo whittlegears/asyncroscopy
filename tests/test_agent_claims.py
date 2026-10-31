@@ -310,3 +310,9 @@ def test_an_answer_that_ends_promising_a_call_is_unfinished():
     run = Calls("Go back to the point and image it.")
     answer = "The tool does not take those arguments. Let's first retrieve the FOV. I will call `DigitalTwin_get_fov` to get the field of view."
     assert kinds(check_answer(run.messages, answer)) == ["unfinished"]
+
+
+def test_an_answer_ending_let_me_do_that_is_unfinished():
+    run = Calls("Find a particle and take a spectrum on it.")
+    answer = "The image shows only noise, as it was taken with the beam blanked. To find a particle, we need to unblank the beam first. Let me do that."
+    assert kinds(check_answer(run.messages, answer)) == ["unfinished"]

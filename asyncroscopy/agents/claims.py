@@ -95,8 +95,8 @@ PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\
 
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
 ANNOUNCES = re.compile(
-    r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+us|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
-    r"(?:take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare"
+    r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+(?:us|me)|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
+    r"(?:do|take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare"
     r"|adjust|retry|try|continue|change|use|repeat|reduce|increase|set|call|retrieve|get|read)\b",
     re.I,
 )

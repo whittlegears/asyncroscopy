@@ -225,7 +225,7 @@ NATIVE_HIGH = frozenset({"run_job"})
 AUTO_DEFAULT = frozenset({
     "move_stage", "acquire_scanned_image", "acquire_scanned_data_advanced", "acquire_spectrum", "acquire_eels_spectrum",
     "place_beam", "place_beam_list", "unblank_beam", "auto_focus", "set_stigmator", "set_beam_tilt", "set_image_shift",
-    "aim_image_shift",
+    "aim_image_shift", "place_beam_at",
 })
 
 

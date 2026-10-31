@@ -91,7 +91,7 @@ class TestDigitalTwin:
         assert np.array_equal(image_a, image_a_again)
 
     def test_a_stage_position_given_to_place_beam_says_how_to_get_there(self, twin_proxy: tango.DeviceProxy):
-        with pytest.raises(tango.DevFailed, match="call move_stage to that point first"):
+        with pytest.raises(tango.DevFailed, match="call place_beam_at with it"):
             twin_proxy.place_beam([2.5e-7, -1.0e-7])
         twin_proxy.place_beam([0.5, 0.5])
 

@@ -1180,8 +1180,9 @@ class Mapper(JobDevice):
             half = fov / 2.0
             # The image must stay inside the approved box. A region near its edge is still imaged, off centre,
             # with the image moved inward, as long as the region keeps a margin inside that image.
-            cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov else None
-            cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov else None
+            # A points-only plan's box is the point +/- half the image, so its width equals fov but for rounding.
+            cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov - EDGE_TOLERANCE_M else None
+            cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov - EDGE_TOLERANCE_M else None
             if cx is None or cy is None or abs(cx - x) > REVISIT_EDGE_SHIFT * half or abs(cy - y) > REVISIT_EDGE_SHIFT * half:
                 note = f"region {region['id']} at ({x:.3e}, {y:.3e}) m (drift-corrected) is too close to the edge of the plan box for a {fov:.2e} m image; not visited"
                 visits.append({"region": region["id"], "skipped": note})

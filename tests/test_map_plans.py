@@ -73,6 +73,12 @@ def test_given_points_are_imaged_without_mapping(mapper_proxy, mapping_twin_prox
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
 
 
+def test_one_given_point_is_imaged_even_when_rounding_makes_its_box_a_hair_narrower_than_the_image(mapper_proxy, mapping_twin_proxy, analysis):
+    point = [-2.021e-07, 3.52e-08]  # the box is point +/- 1e-8, and 3.52e-8 +/- 1e-8 is 1.9999999999999997e-8 wide
+    _reserved, results = run(mapper_proxy, {"revisit": {"fov_m": 2e-8, "points": [point]}})
+    assert results["summary"]["revisits"]["imaged"] == 1, results["summary"]
+
+
 def test_given_points_stay_inside_the_box_and_the_dose_budget(mapper_proxy):
     message = refusal(mapper_proxy, {"box_m": [-1e-7, 1e-7, -1e-7, 1e-7], "revisit": {"fov_m": 3e-8, "points": [[9e-8, 0.0]]}})
     assert "outside the approved area" in message
