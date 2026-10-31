@@ -188,6 +188,35 @@ def looping(messages: list) -> int:
     return 2 if in_row >= 2 or anywhere >= 3 else 1 if in_row == 1 or anywhere == 2 else 0
 
 
+def _job_key(args: dict) -> str:
+    """A run_job call's device and plan, written the same way whatever order the model put the fields in."""
+    plan = args.get("plan")
+    if isinstance(plan, str):
+        plan = _json(plan) if _json(plan) is not None else plan
+    return json.dumps({"device": args.get("device"), "plan": plan}, sort_keys=True, default=str)
+
+
+def finished_job(messages: list, args: dict) -> dict | None:
+    """The reply of a run_job with this same device and plan that already finished since the user's latest
+    request, or None. A small model whose context was trimmed ran the same 600 nm map three times; on an
+    instrument that is three times the dose for nothing."""
+    if not args.get("plan"):
+        return None  # a resume names its job, and is the user's call
+    key = _job_key(args)
+    messages = _this_request(messages)
+    replies = {getattr(m, "tool_call_id", None): _json(_text(m)) for m in messages if getattr(m, "type", "") == "tool"}
+    for m in messages:
+        for call in getattr(m, "tool_calls", None) or []:
+            reply = replies.get(call.get("id"))
+            if call.get("name") == "run_job" and isinstance(reply, dict) and reply.get("state") == "done" and _job_key(call.get("args") or {}) == key:
+                return reply
+    return None
+
+
+ALREADY_DONE = ("This exact plan already ran in this request and finished (job {job_id}); its results are below. Answer from "
+                "them. Run it again only if the user asks for a second, separate one. Results: {results}")
+
+
 # ---------------------------------------------------------------------- waiting inside one tool call
 def _json(text: str) -> Any:
     try:
@@ -247,14 +276,29 @@ class JobWaitMiddleware(AgentMiddleware):
         if status.get("state") in ACTIVE:
             merged["note"] = reason or (f"still {status.get('state')} after waiting {waited:.0f} s; the job goes on. "
                                         "Tell the user it is running (with its job_id), or call wait_for_job again later.")
-        else:
+        elif status.get("state") != "done":
             merged.pop("note", None)
         return ToolMessage(json.dumps(merged, default=str), tool_call_id=request.tool_call.get("id"), name=request.tool_call.get("name"))
 
     def _stopped(self) -> bool:
         return bool(self.stop and self.stop())
 
+    def _already_done(self, request) -> ToolMessage | None:
+        """A run_job repeating a plan that already finished in this request: its earlier results, without running it."""
+        call = request.tool_call
+        if call.get("name") != "run_job":
+            return None
+        reply = finished_job(list((getattr(request, "state", None) or {}).get("messages", [])), call.get("args") or {})
+        if reply is None:
+            return None
+        results = {k: reply[k] for k in ("result_keys", "summary") if k in reply}
+        text = ALREADY_DONE.format(job_id=reply.get("job_id"), results=json.dumps(results, default=str)[:3000])
+        return ToolMessage(json.dumps({"error": {"code": "already_done", "message": text}}), tool_call_id=call.get("id"), name="run_job", status="error")
+
     async def awrap_tool_call(self, request, handler):
+        done = self._already_done(request)
+        if done is not None:
+            return done
         result = await handler(request)
         followed = self._follow(request, result)
         if followed is None:
@@ -277,6 +321,9 @@ class JobWaitMiddleware(AgentMiddleware):
         return self._final(request, first, status, time.monotonic() - began, checks)
 
     def wrap_tool_call(self, request, handler):
+        done = self._already_done(request)
+        if done is not None:
+            return done
         result = handler(request)
         followed = self._follow(request, result)
         if followed is None:
