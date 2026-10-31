@@ -222,3 +222,26 @@ def test_spots_fixed_on_the_sample_agree_where_two_images_overlap():
     left = sample_spots(7, 64, 64, pixel, 0.0, 0.0, 30.0, 2e-8, 1.0)
     right = sample_spots(7, 64, 64, pixel, 32 * pixel, 0.0, 30.0, 2e-8, 1.0)  # 32 pixels to the right
     assert np.allclose(left[:, 32:], right[:, :32]) and left.max() > 0.5
+
+
+def test_a_beam_profile_waits_for_a_move_already_under_way_before_its_own():
+    events = []
+
+    class Microscope:
+        def move_stage(self, position):
+            events.append(("move", list(position)))
+
+    class FakeMapper:
+        microscope_device_address = "m"
+
+        def proxy(self, address, timeout_s=None):
+            return Microscope()
+
+        def _wait_for_stage(self, job, microscope):
+            events.append("wait")
+            return True
+
+    profile = get_profile("stem")(FakeMapper())
+    job = {"pose": {"z": 0.0, "alpha": 0.0, "beta": 0.0}}
+    assert profile.move(job, 1e-7, 2e-7)
+    assert events == ["wait", ("move", [1e-7, 2e-7, 0.0, 0.0, 0.0]), "wait"]

@@ -172,6 +172,9 @@ class ElectronBeamProfile(InstrumentProfile):
     def move(self, job: dict, x: float, y: float) -> bool:
         microscope = self.instrument()
         pose = job["pose"]
+        # A move already under way (someone else's, just before the job started) would make this one refused.
+        if not self.mapper._wait_for_stage(job, microscope):
+            return False
         microscope.move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
         return self.mapper._wait_for_stage(job, microscope)
 

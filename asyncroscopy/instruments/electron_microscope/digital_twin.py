@@ -725,6 +725,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["beam_current_source"] = "measured"
         parameters["beam_current_age_s"] = 0.0  # always current: nothing on the twin drifts it between readings
         parameters["beam_blanked"] = self._blanked
+        parameters["stage_moving"] = self.read_stage_moving()
         parameters["simulated"] = True  # for clients; job devices take the stack's `simulated` property, never this
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
