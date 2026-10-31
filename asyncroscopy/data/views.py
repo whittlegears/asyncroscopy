@@ -638,6 +638,9 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         if rows:
             lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
+        elif xray and total == 0:
+            lines.append("0 counts: no electrons reached the detector, so a longer exposure will not help. The beam was probably "
+                         "blanked (unblank_beam, then acquire again) or the detector retracted")
         elif xray:
             lines.append(f"no peaks detected above noise at this exposure (total {_fmt(total)} counts); "
                          "a longer exposure is needed to rule elements out")
@@ -731,6 +734,9 @@ def image_kind(name: str, matches: Callable[[Dataset], bool], description: str =
         pixel = ds.attrs.get("pixel_size_m")
         if isinstance(pixel, (int, float)):
             lines.append(f"pixel {_fmt(pixel)} m; field of view {_fmt(pixel * ds.shape[1])} x {_fmt(pixel * ds.shape[0])} m")
+        if ds.attrs.get("beam_current_pa") == 0:
+            lines.append("taken with the beam blanked (beam_current_pa 0): it shows only detector noise, not the sample; "
+                         "unblank_beam and take it again")
         if colormap:
             labels = np.unique(np.asarray(values, dtype=np.int64))
             lines.append(f"{int((labels != 0).sum())} labelled areas")
