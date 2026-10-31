@@ -24,7 +24,7 @@ GENERIC_TOOLS = [
 # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
 STEM_TOOLS = [
     "*_get_stage", "*_get_sample", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
-    "*_set_fov", "*_get_fov", "*_set_image_shift", "*_get_image_shift", "*_set_defocus", "*_place_beam", "*_blank_beam",
+    "*_set_fov", "*_get_fov", "*_aim_image_shift", "*_set_image_shift", "*_get_image_shift", "*_set_defocus", "*_place_beam", "*_blank_beam",
     "*_unblank_beam", "Mapper*_abort",
 ]
 DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS

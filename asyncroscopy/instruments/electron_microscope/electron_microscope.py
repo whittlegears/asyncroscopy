@@ -267,6 +267,17 @@ class ElectronMicroscope(Instrument):
     def get_image_shift(self):
         """Get the image shiftas [x, y] in m."""
         return self._get_image_shift()
+
+    @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
+             doc_in=':param position: [x, y] stage position in metres for the centre of the next image.')
+    def aim_image_shift(self, position):
+        """Centre the next image on stage position [x, y] (metres) with the image shift alone; the stage does not move.
+        Sets the shift to the position minus the stage's and returns it, [x, y] in metres; set_image_shift [0, 0] goes
+        back to the stage's centre. The instrument refuses a shift beyond its limit (about 1 um)."""
+        stage = self._get_stage()
+        shift = [float(position[0]) - float(stage[0]), float(position[1]) - float(stage[1])]
+        self._set_image_shift(shift)
+        return shift
     
     @command(dtype_out=DevVarFloatArray)
     def get_beam_tilt(self):

@@ -103,7 +103,7 @@ workflows:
     description: The mapping design's CUJ 3 by an agent. From a survey image, zoom into one particle tier by tier until
       atomic columns show, aiming each finer image by image shift and placing it on the coarser one by matching
       (the multiscale_region skill), never by the stage alone.
-    setup: [image]
+    setup: [survey_image]
     request: Starting from the image {image_key}, zoom into one particle step by step until you can see its atomic
       columns, and tell me where each image you took sits on the one before it.
     runners: [general]
