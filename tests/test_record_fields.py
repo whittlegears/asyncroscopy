@@ -115,6 +115,22 @@ def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_
     assert dose_at("no such load")["exposures"] == 0
 
 
+def test_a_frame_records_its_image_shift_and_its_dose_lands_there(mapping_stage_proxy, mapping_twin_proxy):
+    from asyncroscopy.data.dose_ledger import exposure_of
+
+    mapping_twin_proxy.set_timeout_millis(60_000)
+    mapping_twin_proxy.set_image_shift([4e-8, -3e-8])
+    try:
+        key = mapping_twin_proxy.acquire_scanned_image(["haadf"])
+    finally:
+        mapping_twin_proxy.set_image_shift([0.0, 0.0])
+    with h5py.File(Path(key), "r") as h5:
+        recorded = h5["image"][next(iter(h5["image"]))].attrs["image_shift_m"]
+    assert json.loads(recorded) == pytest.approx([4e-8, -3e-8])
+    still = {"stage_reported_m": [0.0, 0.0, 0, 0, 0], "fov_m": 1e-6, "pixel_size_m": 1e-8, "dwell_time_s": 1e-6, "beam_current_pa": 10.0, "axes": "rows=+y, columns=+x"}
+    assert exposure_of({**still, "image_shift_m": [1e-7, -2e-7]})["box_m"] == pytest.approx([-4e-7, 6e-7, -7e-7, 3e-7])
+
+
 def test_a_partial_scan_region_is_read_as_left_top_width_height():
     from asyncroscopy.data.dose_ledger import exposure_of
 

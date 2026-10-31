@@ -593,6 +593,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             "acquisition_index": record["index"],
             "stage_commanded_m": record["commanded_m"],
             "stage_reported_m": record["reported_m"],
+            "image_shift_m": self._image_shift.tolist(),
             "fov_m": record["fov_m"],
             "pixel_size_m": frame["pixel_m"],
             "dwell_time_s": record["dwell_s"],

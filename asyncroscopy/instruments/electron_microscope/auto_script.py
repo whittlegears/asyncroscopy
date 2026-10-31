@@ -320,9 +320,13 @@ class AutoScriptMicroscope(ElectronMicroscope):
             current = self._beam_current()
         except Exception as exc:
             return {"frame_attrs_error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
+        try:  # the field's centre is the stage plus this; a frame without it is placed as if it were zero
+            shift = {"image_shift_m": [float(v) for v in self._get_image_shift()][:2]}
+        except Exception:
+            shift = {}
         return {
             "stage_reported_m": stage, "fov_m": fov, "pixel_size_m": fov / int(imsize), "dwell_time_s": float(dwell_time),
-            "scan_region": list(scan_region),
+            "scan_region": list(scan_region), **shift,
             **{k: v for k, v in current.items() if k in ("beam_current_pa", "beam_current_source")},
         }
 

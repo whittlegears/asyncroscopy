@@ -20,7 +20,7 @@ TWIN = {
 }
 RAMAN = {"Raman": ["acquire", "set_laser_power", "get_laser_power", "move_stage", "State", "Status"]}
 ANALYSIS = ["assemble_map", "score_map", "map_info", "get_region", "list_pois", "add_poi", "list_scorers",
-            "analysis_job_status", "analysis_job_results", "find_features"]
+            "analysis_job_status", "analysis_job_results", "calculate_probe_size"]
 
 
 class EndpointConfig(AgentConfig):
@@ -83,7 +83,7 @@ def test_a_stem_gets_the_curated_set_and_the_analysis_waits_only_without_an_anal
     with_analysis, _ = general_agent_tools(endpoint(TWIN, "http://127.0.0.1:8003/mcp"), monkeypatch, tmp_path)
     assert "DigitalTwin_get_stage" in with_analysis and "assemble_map" in with_analysis
     assert "DigitalTwin_set_beam_current" not in with_analysis and "Mapper_reserve" not in with_analysis
-    assert "analysis_job_status" not in with_analysis and "find_features" not in with_analysis
+    assert "analysis_job_status" not in with_analysis and "calculate_probe_size" not in with_analysis
     without, _ = general_agent_tools(endpoint(TWIN, ""), monkeypatch, tmp_path)
     assert set(without) - set(with_analysis) == {"analysis_job_status", "analysis_job_results"}
 
