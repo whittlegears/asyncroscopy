@@ -293,8 +293,11 @@ class ElectronMicroscope(Instrument):
                 # The reverse of place_beam's mistake: fractions sent here, where stage metres go.
                 raise ValueError(f"place_beam_at takes a stage position in metres; [{float(position[0]):g}, {float(position[1]):g}] look like "
                                  "fractions of the image: for those (the centre is [0.5, 0.5]) call place_beam with them")
-            raise ValueError(f"[{float(position[0]):.4g}, {float(position[1]):.4g}] m is outside the current {fov:.3g} m field of view; "
-                             "image an area that contains it first")
+            # The exact move, with the stage's own z and tilts: a small agent told only to "image the area first" gave up.
+            there = [float(f"{float(v):.6g}") for v in (*list(position)[:2], *list(stage)[2:5])]  # float32 noise off, to copy as is
+            raise ValueError(f"[{float(position[0]):.4g}, {float(position[1]):.4g}] m is outside the current {fov:.3g} m field of view. "
+                             f"To measure there, call move_stage with {{\"position\": {json.dumps(there)}}} (the stage keeps its z and tilts), "
+                             "then place_beam_at with the same position")
         self._place_beam(fraction)
         return fraction
 

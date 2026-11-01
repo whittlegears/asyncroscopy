@@ -62,6 +62,9 @@ class ElectronBeamProfile(InstrumentProfile):
         x, y = list(self.instrument().get_stage())[:2]
         return float(x), float(y)
 
+    def current_fov_m(self) -> float | None:
+        return float(self.instrument().get_fov())
+
     def resolve_revisit(self, p: dict, revisit: dict) -> dict:
         return {"fov_m": float(revisit["fov_m"]), "imsize": int(revisit.get("imsize", int(p["imsize"]))), "dwell_s": float(revisit.get("dwell_s", float(p["dwell_s"])))}
 

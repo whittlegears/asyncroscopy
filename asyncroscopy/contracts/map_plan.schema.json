@@ -180,14 +180,11 @@
     "revisit": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "fov_m"
-      ],
       "properties": {
         "fov_m": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Field of view of the higher-magnification image taken at each region: from a twentieth of the tile's fov_m up to fov_m."
+          "description": "Field of view of the higher-magnification image taken at each region: from a twentieth of the tile's fov_m up to fov_m. Required with a map; a revisit of given points or of an existing map's regions uses the instrument's current field of view when it is left out."
         },
         "imsize": {
           "type": "integer",

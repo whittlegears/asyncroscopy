@@ -118,6 +118,10 @@ class InstrumentProfile:
         """The stage x and y now (the centre of a ``size_m`` plan without ``centre_m``)."""
         raise NotImplementedError
 
+    def current_fov_m(self) -> float | None:
+        """The instrument's field of view now (a revisit-only plan's default fov_m); None when it has none to read."""
+        return None
+
     def tile_size_m(self, p: dict) -> tuple[float, float]:
         """A tile's width and height in metres; square tiles of ``fov_m`` by default."""
         return float(p["fov_m"]), float(p["fov_m"])

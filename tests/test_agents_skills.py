@@ -110,7 +110,7 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
     tools = [SimpleNamespace(name="run_job"), SimpleNamespace(name="load_skill")]
     out = middleware._prompted(FakeRequest(messages, tools, update["skills_applied"]))
     prompt = out.system_message.content
-    assert prompt.startswith("BASE") and "=== skill: mapping ===" in prompt and "INSTRUMENT: twin" in prompt
+    assert prompt.startswith("BASE") and "=== instructions (not a tool) ===\n# Mapping" in prompt and "INSTRUMENT: twin" in prompt
     assert [t.name for t in out.tools] == ["run_job", "load_skill"]  # an acting request may need a skill the rules did not pick
     reading = [HumanMessage("Show me the latest spectrum")]
     out = middleware._prompted(FakeRequest(reading, tools, middleware.before_model({"messages": reading}, None)["skills_applied"]))

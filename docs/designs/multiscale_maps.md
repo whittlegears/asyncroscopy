@@ -273,8 +273,78 @@ All 32 twin workflows with the general agent: 24 of 32 passed. Each failure was 
 | setup map refused while re-homing still moved the stage | jobs wait for a move under way; benchmark waits after re-homing | no recurrence |
 | particle search at a 20 nm field, beam at the centre, no conclusion | `find_features` hints (field too narrow, beam blanked); `place_beam_at` in metres; spectra lead with likely elements | measures right; still drops steps |
 
-`find_particle_then_eds` remains unreliable: every measuring step now works when taken, but qwen3:8b skips one of
-the eight steps in most runs. It is the next candidate for a Mapper-style job (find, aim, spectrum, read as one call).
+`find_particle_then_eds` was still unreliable after these fixes. Every measuring step worked when qwen3:8b called
+it, but it skipped one of the eight steps in most runs.
+
+### Skill runs: a fixed procedure sent by the agent, not a new instrument command (2026-10-31)
+
+Fixed procedures stay out of instrument commands. A skill instead lists its tool calls in its front matter (`run`).
+`run_skill` sends them one after another in the background and answers at once with a run id. `wait_for_skill`
+returns each named step's reply (`outputs`) and every call made (`calls`). The steps use the same tools, endpoint,
+safety policy, approvals and trace that the model would use itself
+(`asyncroscopy/agents/skill_runs.py`).
+*   A step can pass on a value from an earlier reply: `{feature.features.0.x_m}`.
+*   A failed or held step, or a missing value, stops the run and says why. Steps marked `always` (blank the beam)
+    run anyway.
+*   `cut_at` drops what a small model should not read, such as a spectrum's channel table. `answer` tells the model
+    where its answer is.
+*   `run_skill` is offered only when a skill with a run was picked for the request and every tool in its run is
+    available.
+*   A run's calls count as the agent's own in traces, the claim check and benchmarks.
+
+`find_feature_then_measure` 2.1 runs the whole procedure: survey image, `find_features`, `place_beam_at`, the spectrum,
+blanking the beam, and reading the peaks.
+
+`find_particle_then_eds` results:
+
+| Version | Passed | Time per run | Failure |
+| :-- | :-- | :-- | :-- |
+| Steps written in the skill | 0 of 3 | up to 728 s | — |
+| First run list | 0 of 3 | 166 to 728 s | answers missed the elements: the spectrum's 1900-character channel table was in the reply |
+| `cut_at` and `answer` added | 3 of 3 | 36 to 103 s | — |
+
+In the 3 passing runs the answers named the likely elements from the spectrum, with their shares, and the feature's
+position.
+
+`spectrum_at_point` is a second run list: move to a known stage position, park the beam, take the spectrum, blank
+the beam and read the peaks. It has `matched: false`, so request words never select it. Only explore_regions and
+revisit_point send the agent to it.
+
+### Why qwen3:8b went silent (2026-11-01)
+
+Many failed runs ended with "the model gave no reply twice". The replies had text and tool calls, but they were
+lost before reaching the agent. They were found by replaying the exact Ollama requests
+(`outputs/exp/dump_payload.py`, `replay*.py`, `raw_gen.py`).
+
+| Cause | What happened | Fix |
+| :-- | :-- | :-- |
+| Prompt over the context window | On the 39-tool STEM endpoint, the system prompt and tool schemas took about 26,000 of the roughly 30,000 characters an 8192-token context holds. When a conversation pushed a prompt past 8192 tokens, Ollama silently kept only the last 4098 tokens ("truncating input prompt": 74 times in the log), dropping the system prompt, tools and skills. | The skill middleware drops tools that no chosen skill uses and that have not been called, largest first, until 6,000 characters are left for the conversation. No truncations in the runs after the fix. |
+| Skill name called as a tool | The prompt headed each skill `=== skill: revisit_point ===`. qwen called `revisit_point(...)`. Ollama drops a call to a tool that does not exist, so the reply arrived empty. | Skills are headed `=== instructions (not a tool) ===`. The empty-reply prompt to the model says calls to names that are not tools are dropped. |
+| A tool name inside JSON | The revisit skill showed `"fov_m": <Microscope>_get_fov`. | A revisit of given points uses the current field of view when `fov_m` is left out. |
+
+Other fixes from the same runs:
+*   `place_beam_at`: a position outside the field of view is refused with the exact `move_stage` call to send.
+*   Revisit points: a point is no longer refused as outside a box built around itself (a rounding error).
+*   `to_stage` refuses pixels that lie outside the image (qwen passed nanometres as pixels).
+*   `list_pois`: a box shrunk to one point returns the nearest points, closest first.
+*   Beam-parking tools are offered only when the request is about a spectrum.
+*   Pixel conversions are not offered when the request already gives a stage position.
+*   eds_survey is matched only for a spectrum at every tile.
+
+After these fixes:
+
+| Workflow | Passed |
+| :-- | :-- |
+| `find_particle_then_eds` | 4 of 4 |
+| `revisit_point_of_interest` | 2 of 2 |
+| `explore_then_zoom` | 2 of 2 |
+| `eds_spectrum_elements` | 2 of 2 |
+| `survey_rank_and_analyse` | 1 of 6 |
+
+`survey_rank_and_analyse` asks for five things in one request: map, stitch, rank, go to the best region, take a
+spectrum. qwen3:8b usually leaves `find_regions` out of the map plan and then takes the spectrum at a map tile rather
+than at the best region. On a real microscope with approvals on, a held step stops the run. The model then has to get the call
+approved and start the run again. This is the same as a held `run_job`.
 
 ### What P4 to P7 require of this
 
