@@ -37,6 +37,7 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
+from asyncroscopy.agents import goals  # goals reads skill runs back, so its names are looked up at call time
 from asyncroscopy.skills.registry import list_skills
 
 RUN_TOOLS = ("run_skill", "wait_for_skill")
@@ -51,10 +52,12 @@ class StepFailed(Exception):
 
 
 def _reply(text: str) -> Any:
+    """A JSON reply parsed; an acquisition's reply (its key, then a summary of the data) is its key."""
     try:
         return json.loads(text)
     except (TypeError, ValueError):
-        return text
+        first, _, rest = text.partition("\n")
+        return first.strip() if rest and goals.DATA_KEY.fullmatch(first.strip()) else text
 
 
 def _failed(text: str) -> bool:

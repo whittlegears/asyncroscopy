@@ -487,3 +487,12 @@ def test_an_image_taken_by_the_agent_or_by_a_revisit_job_counts():
     revisit = job("Mapper.step", result=json.dumps({"phase": "revisit", "region": "point:0", "image": "img.h5", "stage_xy_m": [1e-7, 2e-7]}))
     assert CHECKS["image_taken"](Run(events=[revisit]))[0]
     assert not CHECKS["image_taken"](Run(events=[job("Mapper.step", result=json.dumps({"phase": "revisit", "skipped": "near the edge"}))]))[0]
+
+
+def test_an_acquisition_reply_that_carries_a_reading_of_its_data_counts_as_viewing_it():
+    key = "stem_image_HAADF_20261101T115014206132.h5"
+    summary = f"{key}\n64 x 64 pixels, uint16\nstatistics of the pixels read: min 3, max 62"
+    read = Run(calls=[Call("DigitalTwin_acquire_scanned_image", {}, summary)], events=[mcp("DigitalTwin_acquire_scanned_image", result=key)])
+    assert results(read, {"check": "viewed_own_data"})["viewed_own_data"]["ok"]
+    bare = Run(calls=[Call("DigitalTwin_acquire_scanned_image", {}, key)], events=[mcp("DigitalTwin_acquire_scanned_image", result=key)])
+    assert not results(bare, {"check": "viewed_own_data"})["viewed_own_data"]["ok"]

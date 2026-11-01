@@ -210,12 +210,14 @@ def recovered(run: Run, tool: str) -> tuple[bool, str]:
 
 @check
 def viewed_own_data(run: Run, tool: str = "view_data", produced_by: str = "*_acquire_*") -> tuple[bool, str]:
-    """``tool`` succeeded on a key this run produced with ``produced_by`` (or a setup key in facts.keys)."""
+    """``tool`` succeeded on a key this run produced with ``produced_by`` (or a setup key in facts.keys), or the
+    acquisition's own reply brought the agent a reading of its data (the key, then the same summary view_data gives)."""
     if not run.has_calls:
         return True, NOT_APPLICABLE
     produced = {str(e.get("result_key") or e.get("result")) for e in _device_events(run, produced_by, ok=True)}
     produced |= set(run.facts.get("keys", []))
     viewed = [c.args.get("key") for c in run.calls if c.ok and _glob(c.name, tool)]
+    viewed += [c.result.partition("\n")[0].strip() for c in run.calls if c.ok and _glob(c.name, produced_by) and "\n" in (c.result or "")]
     hit = [k for k in viewed if k in produced]
     return bool(hit), f"viewed {viewed}; produced {sorted(produced)[:5]}"
 

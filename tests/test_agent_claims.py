@@ -188,7 +188,9 @@ def test_the_retry_cap_holds_across_tool_rounds():
 
 
 def test_supported_answers_tool_calls_and_a_disabled_check_pass_through(monkeypatch):
-    good = focus_series(last_defocus=0.0)
+    restore = Calls('')
+    restore.n = 9  # call ids after focus_series' six
+    good = focus_series() + restore.call('DigitalTwin_set_defocus', {'defocus': 0.0}).messages[1:]
     model = Model(FOCUS_ANSWER)
     response = ClaimCheckMiddleware(TOOLS, enabled=True).wrap_model_call(Request(good), model)
     assert [m.content for m in response.result] == [FOCUS_ANSWER] and len(model.seen) == 1
@@ -316,3 +318,63 @@ def test_an_answer_ending_let_me_do_that_is_unfinished():
     run = Calls("Find a particle and take a spectrum on it.")
     answer = "The image shows only noise, as it was taken with the beam blanked. To find a particle, we need to unblank the beam first. Let me do that."
     assert kinds(check_answer(run.messages, answer)) == ["unfinished"]
+
+
+def test_images_claimed_at_a_defocus_no_acquisition_ran_at_are_flagged_with_the_call_that_makes_it_true():
+    run = Calls("Take HAADF images at defocus -20 nm, 0 nm and +20 nm, then set the defocus back to 0.")
+    run.call("DigitalTwin_set_defocus", {"defocus": -2e-8})
+    run.call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, IMAGES[0])
+    run.call("DigitalTwin_set_defocus", {"defocus": 0})
+    run.call("DigitalTwin_set_defocus", {"defocus": 2e-8})
+    run.call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, IMAGES[1])
+    run.call("DigitalTwin_set_defocus", {"defocus": 0})
+    answer = "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm, and set the defocus back to 0 nm."
+    claims = check_answer(run.messages, answer, TOOLS)
+    assert kinds(claims) == ["acquired_at"]
+    assert "was 0 nm" in claims[0].why and 'DigitalTwin_set_defocus with {"defocus": 0.0}' in claims[0].why
+    assert check_answer(focus_series(last_defocus=2e-8), FOCUS_ANSWER.replace(" The defocus was successfully set back to 0 nm.", ""), TOOLS) == []
+
+
+def test_a_series_with_one_shared_unit_or_an_unknown_starting_setting_is_checked_only_where_exact():
+    run = Calls("Take images at defocus -20, 0 and +20 nm.")
+    run.call("DigitalTwin_set_defocus", {"defocus": -2e-8})
+    run.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[0])
+    run.call("DigitalTwin_set_defocus", {"defocus": 2e-8})
+    run.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[1])
+    claims = check_answer(run.messages, "I acquired images at defocus -20, 0 and +20 nm.", TOOLS)
+    assert [c.why.split(";")[0] for c in claims] == ["no acquisition in this run ran while the defocus was 0 nm"]
+    unknown = Calls("Take images at defocus 0 and +20 nm.")
+    unknown.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[0])
+    unknown.call("DigitalTwin_set_defocus", {"defocus": 2e-8})
+    unknown.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[1])
+    assert check_answer(unknown.messages, "I acquired images at defocus 0 nm and +20 nm.", TOOLS) == []
+
+
+BLANKED = ("Error calling tool 'DigitalTwin_acquire_scanned_image': ToolError: Not acquired: the beam is blanked. Next call "
+           "DigitalTwin_unblank_beam, then DigitalTwin_acquire_scanned_image again with the same arguments, and use the key that "
+           "call returns. (The noise-only file {key} was saved; do not view or report it.)")
+
+
+def test_a_key_only_a_failed_acquisition_named_is_not_a_result():
+    run = Calls("Take a HAADF image at the current position, then look at it and tell me its key and its intensity range.")
+    run.call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, BLANKED.format(key=IMAGES[0]), error=True)
+    run.call("DigitalTwin_unblank_beam")
+    run.call("view_data", {"key": IMAGES[0]}, f"{IMAGES[0]} contains: noise")
+    claims = check_answer(run.messages, f"The HAADF image key is `{IMAGES[0]}`. The intensity range is from 3 to 6.", TOOLS)
+    assert kinds(claims) == ["failed_acquisition"] and claims[0].why.startswith("that acquisition failed (Not acquired: the beam is blanked), so this file is not a result: leave this key out")
+    assert check_answer(run.messages, f"The first acquisition failed because the beam was blanked ({IMAGES[0]}).", TOOLS) == []
+    run.call("DigitalTwin_acquire_scanned_image", {"detector_list": ["haadf"]}, IMAGES[1])
+    assert check_answer(run.messages, f"The HAADF image key is `{IMAGES[1]}`.", TOOLS) == []
+
+
+def test_a_series_value_missing_because_its_acquisition_failed_is_named_in_its_own_unit():
+    run = Calls("Take HAADF images at defocus -20 nm, 0 nm and +20 nm, then set the defocus back to 0.")
+    run.call("DigitalTwin_set_defocus", {"defocus": -2e-8})
+    run.call("DigitalTwin_acquire_scanned_image", {}, BLANKED.format(key=IMAGES[0]), error=True)
+    run.call("DigitalTwin_unblank_beam")
+    for value, key in ((0.0, IMAGES[1]), (2e-8, IMAGES[2])):
+        run.call("DigitalTwin_set_defocus", {"defocus": value})
+        run.call("DigitalTwin_acquire_scanned_image", {}, key)
+    run.call("DigitalTwin_set_defocus", {"defocus": 0.0})
+    claims = check_answer(run.messages, "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm.", TOOLS)
+    assert [c.why.split(";")[0] for c in claims] == ["no acquisition in this run ran while the defocus was -20 nm"]

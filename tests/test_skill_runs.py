@@ -232,3 +232,26 @@ def test_a_skill_that_runs_another_is_runnable_only_when_that_one_is():
     with_mapper = TWIN | {"Mapper_reserve", "list_pois"}
     assert "best_region_spectrum" in SkillRuns([SimpleNamespace(name=n) for n in with_mapper]).skills
     assert "best_region_spectrum" not in SkillRuns([SimpleNamespace(name=n) for n in with_mapper - {"find_features"}]).skills
+
+
+def test_an_acquisitions_summary_reaches_the_agent_and_its_key_alone_goes_into_the_next_step():
+    from mcp.types import TextContent
+
+    from asyncroscopy.agents.mcp_tools import result_text
+
+    summary = "taken with the beam blanked (beam_current_pa 0): it shows only detector noise, not the sample; unblank_beam and take it again"
+    reply = SimpleNamespace(structured_content={"result": "survey.h5"},
+                            content=[TextContent(type="text", text="survey.h5"), TextContent(type="text", text=summary)])
+    assert result_text(reply) == f"survey.h5\n{summary}"
+    assert result_text(SimpleNamespace(structured_content={"result": "survey.h5"}, content=[TextContent(type="text", text="survey.h5")])) == "survey.h5"
+
+    async def go():
+        tools, sent = instrument([{"x_m": 1e-8, "y_m": 0.0}], {"DigitalTwin_acquire_scanned_image": lambda a: f"survey.h5\n{summary}",
+                                                               "DigitalTwin_acquire_spectrum": lambda a: "eds.h5\npeaks: Au"})
+        runs = SkillRuns(tools)
+        started = json.loads(await runs.start("find_feature_then_measure"))
+        return json.loads(await runs.wait(started["run_id"])), sent
+
+    done, sent = asyncio.run(go())
+    assert done["state"] == "done"
+    assert dict(sent)["find_features"] == {"image": "survey.h5", "n": 1} and dict(sent)["view_data"]["key"] == "eds.h5"

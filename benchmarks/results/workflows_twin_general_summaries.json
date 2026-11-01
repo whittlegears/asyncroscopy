@@ -1,0 +1,1087 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "93e43c1",
+  "n": 2,
+  "started": 1793549951.1198838,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "image_and_read_back/general": {
+      "passed": 0,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": false,
+          "error": null,
+          "infra_error": false,
+          "seconds": 59.8,
+          "caller": "wf-image_and_read_back-general-111912-534",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": false,
+              "detail": "viewed []; produced ['stem_image_HAADF_20261101T111948755576.h5']"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The HAADF image has been acquired and stored with the key `stem_image_HAADF_20261101T111948755576.h5`. It is a 512 x 512 pixel image with a field of view of 200 nm x 200 nm. The intensity range of the image is from a minimum of 3 to a maximum of 7, with most pixels falling between 4 and 6. The image shows only detector noise, as the beam was blanked during acquisition. To view the sample, the beam needs to be unblanked first.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.1111795902252197,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 1.1033692359924316,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.007810354232788086,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.007028885610835456,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "error": null,
+          "infra_error": false,
+          "seconds": 30.2,
+          "caller": "wf-image_and_read_back-general-112024-050",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": false,
+              "detail": "viewed []; produced ['stem_image_HAADF_20261101T112029091042.h5']"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The HAADF image has been acquired and stored with the key `stem_image_HAADF_20261101T112029091042.h5`. It is a 512 x 512 pixel image with a field of view of 200 nm x 200 nm. The intensity range of the image is from a minimum of 3 to a maximum of 7, with a mean of 4.747 and a standard deviation of 0.5764. The image shows only detector noise, as the beam was blanked during acquisition. To view the sample, the beam needs to be unblanked first.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.97426438331604,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.9692683219909668,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.004996061325073242,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.005128034454126789,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "image_at_field_of_view/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 57.3,
+          "caller": "wf-image_at_field_of_view-general-112101-027",
+          "checks": {
+            "param_near": {
+              "ok": true,
+              "detail": "fov = 3e-07 (wanted 3e-07)"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The HAADF image was taken with a field of view of 300 nm. The image has a shape of 512 x 512 pixels, and it shows detector noise since the beam was blanked. To view the image, you can use the key `stem_image_HAADF_20261101T112136859104.h5` with the format `png` or `text`. The image is currently blank, so you need to unblank the beam before taking a new image.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.036649227142334,
+                "units": "s",
+                "reason": "first event start to last event end, 2 event(s)"
+              },
+              "clock_s": {
+                "value": 0.5181440000001203,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.0293982028961182,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.00725102424621582,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.006994674819952613,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 32.1,
+          "caller": "wf-image_at_field_of_view-general-112205-241",
+          "checks": {
+            "param_near": {
+              "ok": true,
+              "detail": "fov = 3e-07 (wanted 3e-07)"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The HAADF image was taken with a field of view of 300 nm. The image shows detector noise, as the beam was blanked during acquisition. To view the image, use the key `stem_image_HAADF_20261101T112213071031.h5` with the format `png` for a visual representation. The image has a shape of [512, 512] pixels, and the statistics indicate a mean value of 4.746 with a standard deviation of 0.5782. The image is currently blank, so you should unblank the beam and take it again to capture the sample.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.0085375308990479,
+                "units": "s",
+                "reason": "first event start to last event end, 2 event(s)"
+              },
+              "clock_s": {
+                "value": 0.5181440000001203,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 0.9902536869049072,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.018283843994140625,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.01812906652848281,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "eds_spectrum_elements/general": {
+      "passed": 1,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 58.7,
+          "caller": "wf-eds_spectrum_elements-general-112244-256",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no peaks in the data; the answer says so"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum at the centre of the current field of view shows no peaks above the noise level, indicating that the exposure time was insufficient to detect elements. A longer exposure is needed to determine the elemental composition accurately.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 10.469264507293701,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.6130950450897217,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 8.85616946220398,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8459208816468516,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "error": null,
+          "infra_error": false,
+          "seconds": 32.2,
+          "caller": "wf-eds_spectrum_elements-general-112351-723",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": false,
+              "detail": "no peaks in the data; the answer does not say so"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_place_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_unblank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The spectrum shows no counts, indicating that either the beam was blanked or the detector was not properly positioned. No elements can be identified from this spectrum. Please check the beam status and detector position, then try again.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 10.592060565948486,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.4997169971466064,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 9.09234356880188,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8584112139645501,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "compare_two_regions/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 166.9,
+          "caller": "wf-compare_two_regions-general-112430-883",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 2 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_move_stage: 2 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": true,
+              "detail": "viewed ['stem_image_HAADF_20261101T112503492572.h5', 'stem_image_HAADF_20261101T112502714074.h5', 'stem_image_HAADF_20261101T112503492572.h5', 'stem_image_HAADF_20261101T112502714074.h5', 'stem_image_HAADF_20261101T112503492572.h5', 'stem_image_HAADF_20261101T112502714074.h5', 'stem_image_HAADF_20261101T112503492572.h5']; produced ['stem_image_HAADF_20261101T112502714074.h5', 'stem_image_HAADF_20261101T112503492572.h5']"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'same'"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "I stopped: the same call (view_data) gave the same result three times, so trying it again would not change anything. Here is what I have so far: stem_image_HAADF_20261101T112503492572.h5 contains: image/: 1 x (512, 512) uint16 (shape of HAADF) showing image/HAADF; choose another with dataset stem_image_HAADF_20261101T112503492572.h5 / image/HAADF: image, shape [512, 512], uint16 acquisition_type: stem_image detector: HAADF units: counts read [0:512, 0:512] 512 x 512 pixels, uint16 pixel 3.906e-10 m; field of view 2e-07 x 2e-07 m statistics",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.95681095123291,
+                "units": "s",
+                "reason": "first event start to last event end, 5 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 3.9442038536071777,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.012607097625732422,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.0031861763882866712,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 130.3,
+          "caller": "wf-compare_two_regions-general-112725-080",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 2 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_move_stage: 2 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": true,
+              "detail": "viewed ['stem_image_HAADF_20261101T112747326053.h5', 'stem_image_HAADF_20261101T112749232661.h5', 'stem_image_HAADF_20261101T112747326053.h5', 'stem_image_HAADF_20261101T112749232661.h5', 'stem_image_HAADF_20261101T112747326053.h5', 'stem_image_HAADF_20261101T112749232661.h5', 'stem_image_HAADF_20261101T112747326053.h5']; produced ['stem_image_HAADF_20261101T112747326053.h5', 'stem_image_HAADF_20261101T112749232661.h5']"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'same'"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "I stopped: the same call (view_data) gave the same result three times, so trying it again would not change anything. Here is what I have so far: stem_image_HAADF_20261101T112747326053.h5 contains: image/: 1 x (512, 512) uint16 (shape of HAADF) showing image/HAADF; choose another with dataset stem_image_HAADF_20261101T112747326053.h5 / image/HAADF: image, shape [512, 512], uint16 acquisition_type: stem_image detector: HAADF units: counts read [0:512, 0:512] 512 x 512 pixels, uint16 pixel 3.906e-10 m; field of view 2e-07 x 2e-07 m statistics",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 4.021856784820557,
+                "units": "s",
+                "reason": "first event start to last event end, 5 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 4.004483222961426,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.01737356185913086,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.004319786304848749,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "describe_latest_image/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 102.6,
+          "caller": "wf-describe_latest_image-general-112943-593",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "list_data: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "list_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "T112941878940.h5`. \n\n- **Size**: 512 x 512 pixels.\n- **Field of View**: Approximately $2 \\times 10^{-7}$ metres (200 nm) in both x and y directions.\n- **Intensity Range**: The pixel values range from a minimum of 3 to a maximum of 133, with a mean of 7.256 and a standard deviation of 9.131. The histogram shows a distribution of intensities, with the majority of pixels having values between 3 and 68.\n\nThe image appears to show a relatively uniform intensity distribution with some variation, likely representing a sample's microstructure under the STEM (Scanning Transmission Electron Microscope).",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 102.5,
+          "caller": "wf-describe_latest_image-general-113133-467",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "list_data: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "list_data",
+            "list_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "recover_from_errors",
+            "inspect_data"
+          ],
+          "final": "The most recently acquired image is `stem_image_HAADF_20261101T112941878940.h5`, a 512x512 pixel HAADF image. The field of view is 200 nm x 200 nm (2e-7 m), and the intensity range spans from 3 to 133 counts. The image shows a relatively uniform distribution of intensities with some variations, indicating a structured sample.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "short_exposure_spectrum/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 68.3,
+          "caller": "wf-short_exposure_spectrum-general-113418-339",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Eu', 'Fe', 'Gd', 'Tb']; named ['Eu', 'Fe', 'Gd', 'Tb']"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261101T113324755773.h5` shows the following elements:\n\n- **Fe (Iron)**: 100% of the signal is consistent with Fe.\n- **Eu (Europium)**: 62% of the signal is consistent with Eu.\n- **Tb (Terbium)**: 38% of the signal is consistent with Tb.\n- **Gd (Gadolinium)**: 38% of the signal is consistent with Gd.\n\nThe strongest peaks are associated with Fe, Eu, Tb, and Gd, indicating the presence of these elements in the sample.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 52.6,
+          "caller": "wf-short_exposure_spectrum-general-113541-479",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Eu', 'Fe', 'Gd', 'Tb']; named ['Eu', 'Fe', 'Gd', 'Tb']"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261101T113324755773.h5` shows the following elements:\n\n- **Fe (Iron)**: 100% of the signal is consistent with Fe.\n- **Eu (Europium)**: 62% of the signal is consistent with Eu.\n- **Tb (Terbium)**: 38% of the signal is consistent with Tb.\n- **Gd (Gadolinium)**: 38% of the signal is consistent with Gd.\n\nThe strongest peaks are associated with Fe, Eu, Tb, and Gd, indicating the presence of these elements in the sample.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "find_particle_then_eds/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 78.9,
+          "caller": "wf-find_particle_then_eds-general-113645-603",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Ni', 'Pt', 'Se', 'Tm', 'W']; named ['Pt', 'Se']"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The particle was found near the current position, and an EDS spectrum was taken. The spectrum indicates the presence of Platinum (Pt) and Selenium (Se), with Pt making up 80% of the signal and Se contributing 27%. \n\n- **Feature Position**: x_m = -4.3014740610147887e-7 m, y_m = 2.836175163487032e-7 m\n- **Spectrum Key**: spectrum_eds_20261101T113723933227.h5\n- **Elements Detected**: Platinum (Pt), Selenium (Se)",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.1977009773254395,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181439999999384,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.8584468364715576,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.3392541408538818,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.41881781640947413,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 40.4,
+          "caller": "wf-find_particle_then_eds-general-113811-975",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Pt']; named ['Pt']"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The particle is located at the stage position $ x_m = -3.524916043430853 \\times 10^{-7} $ metres, $ y_m = 2.161214066725819 \\times 10^{-7} $ metres. The EDS spectrum of the particle shows that it is predominantly composed of Platinum (Pt), with Pt L3-M5 and Pt L2-M4 peaks indicating a high concentration of Pt.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.5686557292938232,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181439999999384,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.8903207778930664,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.6783349514007568,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.4702989245008711,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focus_series/general": {
+      "passed": 2,
+      "of": 2,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 199.1,
+          "caller": "wf-focus_series-general-113859-586",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 7,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm. Here are the results:\n\n1. **Defocus -20 nm**: `stem_image_HAADF_20261101T113939895424.h5` - Image with shape [512, 512], uint16, showing detector noise (beam blanked).\n2. **Defocus 0 nm**: `stem_image_HAADF_20261101T114020897972.h5` - Image with shape [512, 512], uint16, showing detector noise (beam blanked).\n3. **Defocus +20 nm**: `stem_image_HAADF_20261101T114036324888.h5` - Image with shape [512, 512], uint16, showing detector noise (beam blanked).\n\nThe defocus was set back to 0 nm. All images were taken with the beam blanked.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 122.61870551109314,
+                "units": "s",
+                "reason": "first event start to last event end, 7 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5544320000003609,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 2.9676687717437744,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 119.65103673934937,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9757975852103961,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 115.2,
+          "caller": "wf-focus_series-general-114226-534",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 7,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "I have taken HAADF images at defocus -20 nm, 0 nm, and +20 nm. The images are stored with the following keys:\n\n- `stem_image_HAADF_20261101T114235718961.h5` (defocus -20 nm)\n- `stem_image_HAADF_20261101T114250876083.h5` (defocus 0 nm)\n- `stem_image_HAADF_20261101T114306421586.h5` (defocus +20 nm)\n\nThe defocus has been set back to 0 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 81.02479147911072,
+                "units": "s",
+                "reason": "first event start to last event end, 7 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5544320000003609,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 2.973389148712158,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 78.05140233039856,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9633027238400392,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 13,
+  "of": 16,
+  "sleepwalking_calls": 0
+}

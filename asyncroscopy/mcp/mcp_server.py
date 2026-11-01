@@ -438,8 +438,9 @@ class MCPServer:
         status["to_resume"] = resume if status["state"] == "aborted" else f"once wait_for_job says aborted, {resume}"
         return json.dumps(status)
 
-    def _augment_with_preview(self, command_name: str, result: Any) -> Any:
-        """Attach a PNG of what an acquire command saved; never fails the acquisition.
+    def _augment_with_preview(self, command_name: str, result: Any, device: str = "") -> Any:
+        """Attach a PNG of what an acquire command saved; fails the acquisition only when it was taken with the beam
+        blanked, naming the calls that retake it (a small model told so in a summary reported the noise as the result).
 
         Returns a ToolResult with the Tiled key as text (unchanged for existing
         callers) and the image, plus structured_content matching the tool's
@@ -461,6 +462,12 @@ class MCPServer:
                 return result
             note = f"image preview unavailable ({exc}). The data were saved; look at them later with view_data(key={result!r}) instead of acquiring again."
             return ToolResult(content=[TextContent(type="text", text=result), TextContent(type="text", text=note)], structured_content={"result": result})
+        if summary.get("beam_blanked"):
+            unblank = f"{device}_unblank_beam" if device else "the beam unblank command"
+            # The retake comes first and the key last: a model given the key first viewed and reported the noise.
+            raise ToolError(f"Not acquired: the beam is blanked. Next call {unblank}, then {device + '_' if device else ''}{command_name} "
+                            f"again with the same arguments, and use the key that call returns. (The noise-only file {result} was "
+                            f"saved; do not view or report it.)")
         # The text summary (statistics; for a spectrum its peaks and candidate elements) goes with the picture,
         # so a model that cannot see images still learns what it acquired without another call.
         described = str(summary.get("text") or "")[:PREVIEW_TEXT_CHARS]
@@ -630,7 +637,7 @@ class MCPServer:
                     normalized = self._limit_reservation(tool_prefix or dev_class, normalized)
                 if envelope and command_name == "abort":
                     normalized = self._resume_note(tool_prefix or dev_class, normalized)
-                result = self._augment_with_preview(command_name, normalized)
+                result = self._augment_with_preview(command_name, normalized, unique_name[: -len(command_name) - 1])
             except Exception as exc:
                 if self.tool_log is not None:
                     self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc, caller=caller, run=run)
