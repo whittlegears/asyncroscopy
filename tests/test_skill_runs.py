@@ -19,8 +19,8 @@ TWIN = {
 }
 
 
-def instrument(features):
-    """Stand-ins for the twin's tools that record every call; find_features finds ``features``."""
+def instrument(features, more=None, names=TWIN):
+    """Stand-ins for the twin's tools that record every call; find_features finds ``features``; ``more`` adds or replaces replies."""
     sent = []
     replies = {
         "DigitalTwin_acquire_scanned_image": lambda a: "survey.h5",
@@ -29,6 +29,7 @@ def instrument(features):
         "view_data": lambda a: "peaks: Au M 2.12 keV\ndata (sums of 11 channels):\n1,2",
         "DigitalTwin_place_beam_at": lambda a: json.dumps([0.6, 0.4]),
         "DigitalTwin_get_stage": lambda a: json.dumps([0.0, 0.0, 1e-9, 0.1, 0.0]),
+        **(more or {}),
     }
 
     def tool(name):
@@ -38,7 +39,7 @@ def instrument(features):
 
         return StructuredTool(name=name, description=name, args_schema={"type": "object", "properties": {}}, coroutine=run)
 
-    return [tool(n) for n in sorted(TWIN)], sent
+    return [tool(n) for n in sorted(names)], sent
 
 
 def run(features, inputs=None):
@@ -198,3 +199,36 @@ def test_pixel_conversions_are_not_offered_when_the_request_gives_a_stage_positi
         request_ = SimpleNamespace(state={"messages": messages, "skills_applied": applied}, messages=messages, tools=tools,
                                    override=lambda **changes: SimpleNamespace(**changes))
         assert [t.name for t in middleware._prompted(request_).tools] == offered, request
+
+
+def best_region(regions, inputs):
+    async def go():
+        pois = {"list_pois": lambda a: json.dumps({"total": len(regions), "pois": regions})}
+        tools, sent = instrument([{"x_m": 1.2e-7, "y_m": -1.9e-7}], pois, TWIN | {"Mapper_reserve", "list_pois"})
+        runs = SkillRuns(tools)
+        started = json.loads(await runs.start("best_region_spectrum", inputs))
+        return json.loads(await runs.wait(started["run_id"])), sent
+
+    return asyncio.run(go())
+
+
+def test_a_spectrum_at_the_best_region_moves_to_the_maps_first_region_and_measures_on_the_feature_there():
+    reply, sent = best_region([{"id": "a", "x_m": 1e-7, "y_m": -2e-7, "score": 0.9}, {"id": "b", "x_m": 0.0, "y_m": 0.0, "score": 0.5}],
+                              {"map": "m_map", "top_k": "5"})
+    assert reply["state"] == "done" and reply["outputs"]["peaks"] == "peaks: Au M 2.12 keV"
+    assert sent[0] == ("list_pois", {"map": "m_map", "kind": "candidate", "limit": 5})
+    assert ("DigitalTwin_move_stage", {"position": [1e-7, -2e-7, 1e-9, 0.1, 0.0]}) in sent
+    assert ("DigitalTwin_set_fov", {"fov": 3e-7}) in sent  # the nested skill's own default
+    assert ("DigitalTwin_place_beam_at", {"position": [1.2e-7, -1.9e-7]}) in sent  # on the feature found at the region
+    assert reply["outputs"]["regions"]["pois"][0]["id"] == "a" and "regions are regions pois" in reply["next"]
+
+
+def test_a_map_without_regions_stops_the_run_before_the_stage_moves():
+    reply, sent = best_region([], {"map": "m_map"})
+    assert reply["state"] == "stopped" and "the regions step's reply has no pois.0.x_m" in reply["stopped"]
+    assert [name for name, _ in sent if name.startswith("DigitalTwin_")] == ["DigitalTwin_get_stage"]
+
+def test_a_skill_that_runs_another_is_runnable_only_when_that_one_is():
+    with_mapper = TWIN | {"Mapper_reserve", "list_pois"}
+    assert "best_region_spectrum" in SkillRuns([SimpleNamespace(name=n) for n in with_mapper]).skills
+    assert "best_region_spectrum" not in SkillRuns([SimpleNamespace(name=n) for n in with_mapper - {"find_features"}]).skills

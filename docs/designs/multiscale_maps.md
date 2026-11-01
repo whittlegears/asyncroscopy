@@ -339,12 +339,37 @@ After these fixes:
 | `revisit_point_of_interest` | 2 of 2 |
 | `explore_then_zoom` | 2 of 2 |
 | `eds_spectrum_elements` | 2 of 2 |
-| `survey_rank_and_analyse` | 1 of 6 |
+| `survey_rank_and_analyse` | 1 of 6 (3 of 3 after the next section) |
 
 `survey_rank_and_analyse` asks for five things in one request: map, stitch, rank, go to the best region, take a
-spectrum. qwen3:8b usually leaves `find_regions` out of the map plan and then takes the spectrum at a map tile rather
+spectrum. qwen3:8b usually left `find_regions` out of the map plan and then took the spectrum at a map tile rather
 than at the best region. On a real microscope with approvals on, a held step stops the run. The model then has to get the call
 approved and start the run again. This is the same as a held `run_job`.
+
+#### A spectrum at the best region (2026-11-01)
+
+The skill `best_region_spectrum` covers this request. qwen3:8b always runs the map job first, with
+`find_regions` once the skill is in its prompt, then calls `run_skill` with the map key. So the skill takes the map
+key and does the rest:
+
+1. List the map's scored regions, best first.
+2. Move the stage to the best one, keeping z and the tilts.
+3. Run `find_feature_then_measure` there.
+
+A skill run can now name another run-list skill as a step (`{skill: <name>, inputs: {...}}`, with that skill's
+defaults otherwise), so the image, find, park, measure, blank and read steps are written once. The beam goes on the
+most distinct feature in the region rather than the region's centre: on the twin the centre was often bare support,
+and the spectrum had too few counts to name any element.
+
+The live reruns also found three bugs:
+
+| Bug | Fix |
+| :-- | :-- |
+| The agent judged which skills can run against its own tool list, which has no `Mapper_reserve`, so no Mapper skill could run | Judge them against the endpoint's tools, as skill choice does |
+| Every input without a default was turned into a number, so a map key failed | Turn it into a number only when it reads as one |
+| The benchmark read ground truth from the first six spectra of a run. After a map with a spectrum per tile, these were all tiles, and the spectrum the answer named was never checked | Read the newest six |
+
+`survey_rank_and_analyse` then passed 3 of 3 runs, taking 160 to 222 s.
 
 ### What P4 to P7 require of this
 

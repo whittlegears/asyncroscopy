@@ -123,8 +123,8 @@ def _parse(path: Path) -> Skill:
     if meta.get("run") is not None:
         run = meta["run"]
         steps = run.get("steps") if isinstance(run, dict) else None
-        if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) and s.get("tool") for s in steps):
-            raise ValueError(f"{path} run needs steps: a list of {{tool, args}}")
+        if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) and bool(s.get("tool")) != bool(s.get("skill")) for s in steps):
+            raise ValueError(f"{path} run needs steps: a list of {{tool, args}} or {{skill, inputs}}")
         skill.run = run
     tools = skill.tools
     skill.acts = bool(meta["acts"]) if "acts" in meta else any(tool_risk(str(t)) == "high" for t in tools)
