@@ -528,6 +528,8 @@ class Mapper(JobDevice):
         fov = float(p["fov_m"])
         revisit = None
         if p.get("revisit"):
+            if "fov_m" not in p["revisit"]:
+                raise ValueError(f"revisit fov_m is required with a map: a few times smaller than the tiles' {fov:.3g} m (between {fov * REVISIT_FOV_MIN_FRACTION:.3g} m and {fov:.3g} m)")
             revisit = profile.resolve_revisit(p, p["revisit"])
             if not fov * REVISIT_FOV_MIN_FRACTION <= revisit["fov_m"] <= fov:
                 raise ValueError(f"revisit fov_m must be between {fov * REVISIT_FOV_MIN_FRACTION:.3g} m (a twentieth of the tile) and the tile's {fov:.3g} m")
@@ -608,6 +610,11 @@ class Mapper(JobDevice):
         if live_drift.tracking(p):
             raise ValueError("live drift tracking (drift.track) corrects tiles of a map, and a revisit-only plan has none: leave out drift")
         profile.resolve(p)
+        if "fov_m" not in revisit:
+            # A small agent wrote "fov_m": <Microscope>_get_fov into its plan (invalid JSON, so no call at all): the job reads it.
+            revisit["fov_m"] = profile.current_fov_m()
+            if revisit["fov_m"] is None:
+                raise ValueError(f"give revisit fov_m: the {profile.name!r} instrument profile has no field of view to read")
         revisit.update(profile.resolve_revisit(p, revisit))
         fov = float(revisit["fov_m"])
         half = fov / 2.0
@@ -630,7 +637,9 @@ class Mapper(JobDevice):
         duration = count * (float(self.estimate_move_s) + profile.revisit_seconds(revisit))
         budgeted = check_budgets(budgets, costs, duration, profile)
         for r in regions:
-            if not (x_min + half <= r["x_m"] <= x_max - half and y_min + half <= r["y_m"] <= y_max - half):
+            # With the tolerance: a box built as point +/- half the fov rounds the point a hair outside its own box.
+            tol = EDGE_TOLERANCE_M
+            if not (x_min + half - tol <= r["x_m"] <= x_max - half + tol and y_min + half - tol <= r["y_m"] <= y_max - half + tol):
                 raise ValueError(f"revisit point ({r['x_m']:.3e}, {r['y_m']:.3e}) m is outside the approved area {[x_min, x_max, y_min, y_max]} for a {fov:.2e} m image")
         steps = count + (1 if "map" in revisit else 0)
         estimate = {

@@ -56,6 +56,7 @@ from typing import Any
 
 import yaml
 
+from asyncroscopy.agents.skill_runs import skill_run_calls
 from asyncroscopy.safety.policy import tool_risk
 from asyncroscopy.skills.registry import read_only_request
 
@@ -278,6 +279,8 @@ def trace_from_messages(messages) -> list[Call]:
             text = content if isinstance(content, str) else json.dumps(content, default=str)
             error = reply is None or getattr(reply, "status", "") == "error" or text.startswith(("Error", "APPROVAL REQUIRED"))
             calls.append(Call(call["name"], dict(call.get("args") or {}), text, error))
+            # A skill run's calls were made for the agent in the background: they count as its own.
+            calls += [Call(c["tool"], dict(c.get("args") or {}), str(c.get("result", "")), bool(c.get("error"))) for c in skill_run_calls(text)]
     return calls
 
 

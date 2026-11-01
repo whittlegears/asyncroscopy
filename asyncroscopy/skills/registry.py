@@ -2,10 +2,13 @@
 
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
 description, version, min_asyncroscopy, envelope_schema, tools, requires,
-keywords, acts) followed by instructions in Markdown. ``acts`` says whether
+keywords, acts, run) followed by instructions in Markdown. ``acts`` says whether
 following the skill moves or exposes the instrument; when it is left out it
 is true if any of its ``tools`` is high risk by the safety policy. A request
 that only asks about data (``read_only_request``) never gets a skill that acts.
+``matched: false`` keeps a skill out of request matching: it is reached only through another skill that
+names it (a run another skill sends the agent to). ``run`` lists a fixed procedure's tool calls, which ``run_skill`` sends one
+after another in the background (see ``asyncroscopy.agents.skill_runs``).
 
 Agents do not have to look skills up: ``select_skills`` matches a request's
 words against each skill's keywords, name and description (no model call,
@@ -60,6 +63,8 @@ class Skill:
     learned: bool = False  # drafted by an agent from a past run (promoted by an operator)
     status: str | None = None  # a learned skill's review state: draft or promoted
     acts: bool = False  # following it moves or exposes the instrument
+    run: dict | None = None  # its fixed list of tool calls, for run_skill
+    matched: bool = True  # chosen for a request by its words (false: only another skill sends the agent to it)
 
     @property
     def available(self) -> bool:
@@ -113,7 +118,14 @@ def _parse(path: Path) -> Skill:
         min_asyncroscopy=meta.get("min_asyncroscopy"),
         envelope_schema=meta.get("envelope_schema"),
         status=meta.get("status"),
+        matched=bool(meta.get("matched", True)),
     )
+    if meta.get("run") is not None:
+        run = meta["run"]
+        steps = run.get("steps") if isinstance(run, dict) else None
+        if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) and s.get("tool") for s in steps):
+            raise ValueError(f"{path} run needs steps: a list of {{tool, args}}")
+        skill.run = run
     tools = skill.tools
     skill.acts = bool(meta["acts"]) if "acts" in meta else any(tool_risk(str(t)) == "high" for t in tools)
     installed = _installed_version()
@@ -205,7 +217,9 @@ NEGATED_WORD = re.compile(r"\b(?:without|no|not|don't|do not|skip)\s+(?:any\s+|a
 
 def match_score(skill: Skill, request: str) -> float:
     """How well a skill matches a request: a keyword phrase counts 3, a word of its name 2, of its description 0.5.
-    Words the request negates ("without EDS", "no spectra") do not count."""
+    Words the request negates ("without EDS", "no spectra") do not count; a skill with ``matched: false`` scores 0."""
+    if not skill.matched:
+        return 0.0
     asked = content_words(NEGATED_WORD.sub(" ", request))
     hits = sum(3.0 for k in skill.keywords if content_words(k) and content_words(k) <= asked)
     hits += 2.0 * len(asked & content_words(skill.name.replace("_", " ")))
@@ -296,7 +310,8 @@ def skills_text(names: list[str], endpoint_tools: set[str] | None = None, budget
             continue
         body = read_front_matter(skill.path)[1]
         if used + len(body) <= budget:
-            parts.append(f"=== skill: {name} ===\n{body}")
+            # Not "skill: <name>": qwen3:8b called the name as a tool, which Ollama drops, so the run got an empty reply.
+            parts.append(f"=== instructions (not a tool) ===\n{body}")
             used += len(body)
         else:
             parts.append(f"=== skill: {name} (call load_skill for its instructions) ===\n{skill.description}")

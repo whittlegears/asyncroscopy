@@ -79,6 +79,22 @@ def test_one_given_point_is_imaged_even_when_rounding_makes_its_box_a_hair_narro
     assert results["summary"]["revisits"]["imaged"] == 1, results["summary"]
 
 
+def test_one_given_point_is_not_refused_when_rounding_puts_it_a_hair_outside_its_own_box(mapper_proxy):
+    # -4.43e-8 - 1e-7 + 1e-7 is -4.430000000000001e-08: the point was refused as outside its own box (qwen run 2026-10-31).
+    reserved = call(mapper_proxy, "reserve", {"plan": {"revisit": {"fov_m": 2e-7, "points": [[-4.43e-8, 1.835e-7]]}}})
+    assert "reservation_id" in reserved, reserved
+    call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
+
+
+def test_a_revisit_of_given_points_without_a_field_of_view_keeps_the_current_one_and_a_maps_revisit_needs_one(mapper_proxy, mapping_twin_proxy, analysis):
+    mapping_twin_proxy.set_fov(4e-8)
+    reserved = call(mapper_proxy, "reserve", {"plan": {"revisit": {"points": [[0.0, 0.0]]}}})
+    assert reserved["resolved_plan"]["revisit"]["fov_m"] == pytest.approx(4e-8), reserved
+    call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
+    message = refusal(mapper_proxy, {**PLAN, "find_regions": 1, "revisit": {"imsize": 128}})
+    assert "revisit fov_m is required with a map" in message
+
+
 def test_given_points_stay_inside_the_box_and_the_dose_budget(mapper_proxy):
     message = refusal(mapper_proxy, {"box_m": [-1e-7, 1e-7, -1e-7, 1e-7], "revisit": {"fov_m": 3e-8, "points": [[9e-8, 0.0]]}})
     assert "outside the approved area" in message

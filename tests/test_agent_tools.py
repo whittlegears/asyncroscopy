@@ -8,6 +8,7 @@ import pytest
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs import general
+from asyncroscopy.agents.skill_runs import RUN_TOOLS
 from asyncroscopy.mcp.agent_tools import for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
 
@@ -75,7 +76,9 @@ def test_endpoint_info_agent_tools_are_the_general_agents_tools(endpoint, monkey
     picked, config = general_agent_tools(server, monkeypatch, tmp_path)
     patterns = server.endpoint_info()["agent_tools"]
     offered = config.own + ANALYSIS
-    assert picked == sorted(n for n in offered if for_model(n, patterns))
+    # run_skill and wait_for_skill are the agent's own (they send a skill's listed calls): offered once a skill's run list can be sent.
+    assert [n for n in picked if n not in RUN_TOOLS] == sorted(n for n in offered if for_model(n, patterns))
+    assert not set(RUN_TOOLS) & set(picked)  # no run list here has every tool it calls (place_beam_at, find_features)
     assert "endpoint_info" not in picked and "list_skills" not in picked and "load_skill" in picked
 
 

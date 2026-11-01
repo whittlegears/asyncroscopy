@@ -95,6 +95,12 @@ class TestDigitalTwin:
             twin_proxy.place_beam([2.5e-7, -1.0e-7])
         twin_proxy.place_beam([0.5, 0.5])
 
+    def test_a_position_outside_the_view_given_to_place_beam_at_says_the_move_that_reaches_it(self, twin_proxy: tango.DeviceProxy):
+        twin_proxy.move_stage([0.0, 0.0, 0.0, 0.0, 0.0])
+        twin_proxy.set_fov(2e-7)
+        with pytest.raises(tango.DevFailed, match=r'call move_stage with \{"position": \[5e-07, -2e-07, 0\.0, 0\.0, 0\.0\]\}'):
+            twin_proxy.place_beam_at([5e-7, -2e-7])
+
     def test_spectrum_is_repeatable_at_same_pose_and_beam(
         self,
         twin_proxy: tango.DeviceProxy,

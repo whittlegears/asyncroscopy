@@ -21,6 +21,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
+from asyncroscopy.agents.skill_runs import SkillRuns
 # Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model, is_stem_endpoint
 
@@ -79,6 +80,9 @@ async def make_graph(config: dict | None = None):
     # load_skill stays in, so the middleware can show it while a matched skill does not fit.
     patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen)
     tools = [t for t in every if for_model(t.name, patterns)]
+    runs = SkillRuns(tools)
+    if runs.offered():
+        tools += runs.as_tools()
     if not chosen and not stem:
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")

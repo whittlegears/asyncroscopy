@@ -357,8 +357,12 @@ def stop_message(messages: list) -> AIMessage:
     return AIMessage(STOP_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))
 
 
+# qwen3:8b's empty replies were tool calls Ollama dropped (about 55 tokens): a call to a skill's name, which is not
+# a tool, or arguments that are not JSON (a placeholder such as <Microscope>_get_fov where a number goes).
 ASK_AGAIN = ("Your last reply was empty. The latest tool reply ({name}) is above: make the next tool call the "
-             "request needs, or give your final answer from what the tools returned.")
+             "request needs, or give your final answer from what the tools returned. A call to a name that is not one "
+             "of your tools (the instructions you follow are not tools) or with arguments that are not plain JSON is "
+             "dropped: call only listed tools, and write every value as a number or a quoted string.")
 EMPTY_TEXT = "I stopped: the model gave no reply twice after {name}. The last tool reply was: {reply}"
 
 
