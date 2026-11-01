@@ -466,7 +466,8 @@ def data_truth(keys: list[str]) -> dict:
 
     uri = STACK["tiled"]
     spectra, strongest = {}, None
-    for key in keys[:6]:
+    # The newest: a map with a spectrum per tile came before the spectrum the answer is about, and the first six were all tiles.
+    for key in keys[-6:]:
         try:
             node = tiled_client.node_for_key(key, uri)
             ds = views.pick(node, key)

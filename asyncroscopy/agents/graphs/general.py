@@ -24,6 +24,7 @@ from asyncroscopy.agents.skill_middleware import SkillMiddleware
 from asyncroscopy.agents.skill_runs import SkillRuns
 # Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model, is_stem_endpoint
+from asyncroscopy.skills.registry import list_skills
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
@@ -80,7 +81,7 @@ async def make_graph(config: dict | None = None):
     # load_skill stays in, so the middleware can show it while a matched skill does not fit.
     patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen)
     tools = [t for t in every if for_model(t.name, patterns)]
-    runs = SkillRuns(tools)
+    runs = SkillRuns(tools, list_skills(offered))  # usable on this endpoint, as the middleware chooses them
     if runs.offered():
         tools += runs.as_tools()
     if not chosen and not stem:

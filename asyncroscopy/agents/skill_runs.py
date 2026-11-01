@@ -19,7 +19,9 @@ type and all: ``inputs.<name>``, or a step's ``id`` followed by keys and list in
 (``found.features.0.x_m``). A step that fails, is held for approval, or names a value an earlier reply does not
 have, stops the run with why; the steps marked ``always`` run anyway (blanking the beam). A step's ``cut_at`` keeps
 its reply's text only up to that text (a spectrum's peaks without its channel table, which crowded the peaks out of
-a small model's view). ``answer`` tells the model where in a finished run's ``outputs`` its answer is. A finished
+a small model's view). A step with ``skill`` instead of ``tool`` runs that skill's own steps with the ``inputs``
+given (its defaults otherwise), so a procedure is written once (a spectrum at a map's best region ends with
+``find_feature_then_measure``). ``answer`` tells the model where in a finished run's ``outputs`` its answer is. A finished
 run's reply lists every call it made (``calls``), so traces, the claim check and benchmarks count them as the
 agent's own.
 """
@@ -104,9 +106,21 @@ class SkillRuns:
     def __init__(self, tools, skills=None):
         self.tools = {t.name: t for t in tools}
         found = skills if skills is not None else list_skills(set(self.tools))
+        self.listed = {s.name: s for s in found if s.run and s.available}
         # Runnable only when every step's tool is offered: a run must not fail part way for a tool that is not there.
-        self.skills = {s.name: s for s in found if s.run and s.available and all(self._offers(str(step["tool"])) for step in s.run["steps"])}
+        self.skills = {name: s for name, s in self.listed.items() if self._runnable(name, set())}
         self.runs: dict[str, dict] = {}
+
+    def _runnable(self, name: str, seen: set) -> bool:
+        if name in seen or name not in self.listed:
+            return False
+        steps = self.listed[name].run["steps"]
+        return all(self._runnable(str(step["skill"]), seen | {name}) if "skill" in step else self._offers(str(step["tool"])) for step in steps)
+
+    def _resolve(self, steps: list[dict]) -> list[dict]:
+        return [{**s, "defaults": dict(self.listed[str(s["skill"])].run.get("inputs") or {}),
+                 "steps": self._resolve(self.listed[str(s["skill"])].run["steps"])} if "skill" in s
+                else {**s, "tool": self._tool_for(str(s["tool"]))} for s in steps]
 
     def offered(self) -> bool:
         return bool(self.skills)
@@ -133,8 +147,16 @@ class SkillRuns:
             wrong = f"takes inputs {sorted(declared) or 'none'}, not {unknown}" if unknown else f"needs inputs {missing}"
             raise ValueError(f"{skill.name} {wrong}: send {example}")
         for name, default in declared.items():
-            if (default is None or isinstance(default, (int, float))) and not isinstance(default, bool) and name in given:
-                given[name] = float(given[name])
+            if name in given and not isinstance(default, bool):
+                if isinstance(default, int):
+                    given[name] = int(float(given[name]))
+                elif isinstance(default, float):
+                    given[name] = float(given[name])
+                elif default is None:  # a position sent as a string becomes a number; a key stays a key
+                    try:
+                        given[name] = float(given[name])
+                    except (TypeError, ValueError):
+                        pass
         return {**declared, **given}
 
     async def start(self, skill: str, inputs: Any = None) -> str:
@@ -152,7 +174,7 @@ class SkillRuns:
             return json.dumps({"error": f"skill run {going['run_id']} is still going: call wait_for_skill with {{\"run_id\": \"{going['run_id']}\"}}"})
         try:
             values = self._inputs(self.skills[skill], inputs)
-            steps = [{**s, "tool": self._tool_for(str(s["tool"]))} for s in self.skills[skill].run["steps"]]
+            steps = self._resolve(self.skills[skill].run["steps"])
         except (ValueError, StepFailed) as exc:
             return json.dumps({"error": str(exc)})
         run_id = uuid.uuid4().hex[:8]
@@ -163,8 +185,8 @@ class SkillRuns:
         return json.dumps({"run_id": run_id, "skill": skill, "state": "running", "steps": len(steps),
                            "next": f"call wait_for_skill with {{\"run_id\": \"{run_id}\"}} for the outcome"})
 
-    async def _call(self, run: dict, step: dict, replies: dict) -> None:
-        args = fill(step.get("args") or {}, run["inputs"], replies)
+    async def _call(self, run: dict, step: dict, inputs: dict, replies: dict) -> None:
+        args = fill(step.get("args") or {}, inputs, replies)
         try:
             text = await self.tools[step["tool"]].ainvoke(args)
         except Exception as exc:  # a tool without handle_tool_error, or a dropped connection
@@ -180,16 +202,25 @@ class SkillRuns:
             replies[step["id"]] = _reply(text)
             run["outputs"][step["id"]] = replies[step["id"]] if len(text) <= OUTPUT_CHARS else text[:OUTPUT_CHARS]
 
-    async def _run(self, run: dict, steps: list[dict]) -> None:
+    async def _steps(self, run: dict, steps: list[dict], inputs: dict) -> str | None:
+        """Run ``steps`` with ``inputs``; why they stopped, or None. A nested skill's steps have their own inputs and replies."""
         replies: dict = {}
         stopped = None
         for step in steps:
             if stopped and not step.get("always"):
                 continue
             try:
-                await self._call(run, step, replies)
+                if "skill" in step:
+                    inner = await self._steps(run, step["steps"], {**step["defaults"], **fill(step.get("inputs") or {}, inputs, replies)})
+                    stopped = stopped or inner
+                else:
+                    await self._call(run, step, inputs, replies)
             except StepFailed as exc:
                 stopped = stopped or str(exc)
+        return stopped
+
+    async def _run(self, run: dict, steps: list[dict]) -> None:
+        stopped = await self._steps(run, steps, run["inputs"])
         run["state"] = "stopped" if stopped else "done"
         if stopped:
             run["stopped"] = stopped
