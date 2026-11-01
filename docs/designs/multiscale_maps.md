@@ -371,6 +371,22 @@ The live reruns also found three bugs:
 
 `survey_rank_and_analyse` then passed 3 of 3 runs, taking 160 to 222 s.
 
+#### Every twin workflow once, and the beam left blanked (2026-11-01)
+
+All 32 twin workflows, run once each at 93e43c1: 30 passed. The two failures and the reruns found:
+
+| Failure | Cause | Fix |
+| :-- | :-- | :-- |
+| `focus_series`: the 0 nm image was never taken, but the answer listed all three defoci | The claim check only checked final settings, not "images at A, B and C" | A new claim: each value named after "images at <setting>" needs an acquisition made while the setting had that value |
+| `image_at_field_of_view`: the first image was taken with the beam blanked, then the agent moved the image shift for no reason | The acquisition reply was the bare key. The MCP server sends a summary with it ("taken with the beam blanked…", a spectrum's peaks), but the agent kept only the structured result, so no summary ever reached the model | The agent keeps the summary after the key. A skill run still passes the key alone to its next step |
+| Reruns: the agent now read "taken with the beam blanked" and reported the noise as the answer | A note in a successful reply is information, not something to act on | An acquisition with `beam_current_pa` 0 now fails. The error names the unblank call and the retake first, and gives the noise file's key last with "do not view or report it" |
+| Reruns: an answer gave a failed acquisition's key as its result | Nothing checked keys that only an error reply named | A new claim, which says to leave the key out and to retake only if nothing replaced it. A blunt "acquire again" made the agent take an extra image after it had already retaken the image |
+| Reruns: `image_and_read_back` failed `viewed_own_data` with a correct answer | The check counted only `view_data` calls | The check now also counts an acquisition reply that carries its reading |
+
+After the fixes, `image_and_read_back`, `image_at_field_of_view`, `eds_spectrum_elements` and `focus_series` passed
+12 of 12 runs, then 6 of 6, with no sleepwalking calls. `benchmarks/results/workflows_twin_general_{93e43c1,
+summaries,blanked_fails,blanked_retake,failed_key}.json` hold the full pass and each rerun.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.

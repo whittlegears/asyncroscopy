@@ -715,6 +715,17 @@ class TestDataToolRobustness:
         assert any("instead of acquiring again" in getattr(block, "text", "") for block in result.content)
         assert not any("try again" in getattr(block, "text", "").lower() for block in result.content)
 
+    def test_an_acquisition_taken_with_the_beam_blanked_fails_naming_the_calls_that_retake_it(self, server, monkeypatch) -> None:
+        monkeypatch.setattr(server, "_tiled_node", lambda key, hints=True: None)
+        blanked = {"text": "taken with the beam blanked", "beam_blanked": True}
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.views.view", lambda node, key, fmt: (blanked, b"png"))
+        with pytest.raises(ToolError) as raised:
+            server._augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin")
+        assert "noise-only file scan_20261101.h5 was saved; do not view or report it" in str(raised.value)
+        assert str(raised.value).startswith("Not acquired: the beam is blanked. Next call DigitalTwin_unblank_beam, then DigitalTwin_acquire_scanned_image again")
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.views.view", lambda node, key, fmt: ({"text": "512 x 512 pixels"}, b"png"))
+        assert server._augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin").structured_content == {"result": "scan_20261101.h5"}
+
     def test_view_data_turns_unexpected_errors_into_tool_errors(self, server, monkeypatch) -> None:
         def broken(key, hints=True):
             raise KeyError("a plug-in kind looked up a missing attribute")

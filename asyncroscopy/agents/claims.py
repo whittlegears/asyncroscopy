@@ -17,6 +17,11 @@ setting value        "<setting> set back to / reset to / is now <value>": the la
                      set or read for it differs (or none was); "set <setting> to
                      <value>": no successful set call used that value. Lengths are
                      metres in tool calls; a unitless value is checked only when 0
+failed acquisition   a data key given as a result that only a failed acquisition named (one
+                     taken with the beam blanked saves noise and fails); unless negated
+acquired at          "I took images at <setting> <value>, <value> and <value>": no acquisition
+                     ran while that setting had one of the values (the defocus series that
+                     skipped its 0 nm image); unchecked if an acquisition ran with it unknown
 action               "I took / acquired / captured ...", "moved to ...": no successful
                      call of that kind (an acquisition, a stage move, or a job) at all;
                      "a higher-magnification image", "zoomed in": no set_fov call succeeded
@@ -61,7 +66,9 @@ NUMBER = r"(?P<num>[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)"
 UNIT = r"(?:\s*(?P<unit>nanomet(?:er|re)s?|micromet(?:er|re)s?|millimet(?:er|re)s?|picomet(?:er|re)s?|met(?:er|re)s?|nm|pm|µm|μm|um|mm|m)\b)?"
 SCALE = {"nm": 1e-9, "pm": 1e-12, "µm": 1e-6, "μm": 1e-6, "um": 1e-6, "mm": 1e-3, "m": 1.0,
          "nanomet": 1e-9, "micromet": 1e-6, "millimet": 1e-3, "picomet": 1e-12, "met": 1.0}
-FINAL_STATE = r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+back\s+to|(?:reset|restored|returned)\s+to|is\s+now(?:\s+at)?|now\s+at|left\s+at|ends?\s+at)"
+_VALUE = NUMBER.replace("?P<num>", "?:") + UNIT.replace("?P<unit>", "?:")
+VALUES = rf"{_VALUE}(?:\s*(?:,\s*(?:and\s+)?|\s+and\s+){_VALUE})*"  # "-20 nm, 0 nm, and +20 nm"
+FINAL_STATE =r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+back\s+to|(?:reset|restored|returned)\s+to|is\s+now(?:\s+at)?|now\s+at|left\s+at|ends?\s+at)"
 SETTING_ALIASES = {"fov": ("fov", "field of view"), "defocus": ("defocus", "focus")}
 
 ACQUIRED = re.compile(
@@ -109,7 +116,7 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 
 @dataclass
 class Claim:
-    kind: str  # key, setting, action, deferred_read
+    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read
     text: str  # what the answer says
     why: str  # why no tool call supports it
 
@@ -186,9 +193,13 @@ class _Settings:
         self.names = {n for t in tool_names for n in [_setting_of(t, "set")] if n} | {n for c in calls for n in [_setting_of(c.name, "set")] if n}
         self.last: dict[str, tuple[float, str]] = {}
         self.set: dict[str, list[float]] = {}
+        self.setter: dict[str, str] = {}
+        self.acquired: list[dict[str, float]] = []  # the known settings in effect at each successful acquisition
         for call in calls:
             if call.error:
                 continue
+            if action_category(call.name) == "acquire":
+                self.acquired.append({name: value for name, (value, _) in self.last.items()})
             name = _setting_of(call.name, "set")
             if name:
                 value = _number(call.args.get(name))
@@ -198,6 +209,7 @@ class _Settings:
                 if value is not None:
                     self.set.setdefault(name, []).append(value)
                     self.last[name] = (value, call.name)
+                    self.setter[name] = call.name
                 continue
             name = _setting_of(call.name, "get")
             if name and _number(call.result) is not None:
@@ -280,6 +292,56 @@ def _setting_claims(answer: str, settings: _Settings) -> list[Claim]:
                         elif all(_matches(stated, scale, v) is False for v in values):
                             shown = ", ".join(_show(v, scale, unit) for v in values)
                             claims.append(Claim("setting", said, f"the {phrase} values set in this run were {shown}"))
+    return claims
+
+
+def _acquired_at_claims(answer: str, settings: _Settings) -> list[Claim]:
+    """"I took images at defocus -20 nm, 0 nm and +20 nm": each value needs an acquisition while the setting had it.
+    Unchecked when an acquisition ran with the setting unknown (it may have had the value)."""
+    claims: list[Claim] = []
+    for sentence in _sentences(answer):
+        acquired = ACQUIRED.search(sentence)
+        if not acquired or _negated(sentence, acquired):
+            continue
+        checked: set[str] = set()
+        for name, phrase in settings.phrases():
+            if name in checked:
+                continue
+            m = re.search(rf"\bat\s+(?:an?\s+|the\s+)?{re.escape(phrase)}s?(?:\s+values?)?(?:\s+of)?\s+(?P<list>{VALUES})", sentence, re.I)
+            if not m or not settings.acquired:
+                continue
+            checked.add(name)
+            during = [a.get(name) for a in settings.acquired]
+            if None in during:
+                continue
+            items = list(re.finditer(rf"{NUMBER}{UNIT}", m.group("list")))
+            unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # "-20, 0 and +20 nm"
+            setter = settings.setter.get(name)
+            for item in items:
+                stated = float(item.group("num").replace("−", "-"))
+                scale = _scale(item.group("unit") or unit)
+                if any(_matches(stated, scale, v) is not False for v in during):
+                    continue
+                shown = _show(stated * scale if scale else stated, scale, item.group("unit") or unit)
+                how = f"; to make it true, call {setter} with {json.dumps({name: stated * scale if scale else stated})}, acquire again, then restore the {phrase}" if setter else ""
+                claims.append(Claim("acquired_at", m.group(0).strip(),f"no acquisition in this run ran while the {phrase} was {shown}{how}"))
+    return claims
+
+
+def _failed_acquisition_claims(answer: str, calls) -> list[Claim]:
+    """A key given as a result that only a failed acquisition named (saved with the beam blanked: noise, not the sample)."""
+    made = {k for c in calls if c.ok and action_category(c.name) in ("acquire", "job") for k in DATA_KEY.findall(c.result)}
+    failed = {k: c.result for c in calls if c.error and action_category(c.name) == "acquire" for k in DATA_KEY.findall(c.result) if k not in made}
+    claims = []
+    for sentence in _sentences(answer):
+        for key in dict.fromkeys(DATA_KEY.findall(sentence)):
+            if key in failed and not NEGATION.search(sentence):
+                # The reason's first sentence only, and no blind "acquire again": a model that had already retaken the
+                # image took one more when told to, and still listed this key.
+                why = failed[key].split("ToolError:", 1)[-1].strip().split(". ")[0][:120]
+                claims.append(Claim("failed_acquisition", key, f"that acquisition failed ({why}), so this file is not a result: leave this key "
+                                                                "out and report the key of the successful acquisition that replaced it; "
+                                                                "only if none did, make that acquisition again"))
     return claims
 
 
@@ -366,7 +428,10 @@ def check_answer(messages: list, answer: str, tool_names=(), context: str = "") 
     for key in named:
         if key not in known:
             claims.append(Claim("key", key, "no tool returned this key in this run"))
-    claims += _setting_claims(answer, _Settings(calls, tool_names))
+    claims += _failed_acquisition_claims(answer, calls)
+    settings = _Settings(calls, tool_names)
+    claims += _setting_claims(answer, settings)
+    claims += _acquired_at_claims(answer, settings)
     claims += _action_claims(answer, calls)
     claims += _placement_claims(answer, calls)
     claims += _unfinished_claims(answer)

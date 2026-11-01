@@ -30,11 +30,12 @@ def bearer_header(token: str | None) -> dict[str, str]:
 
 
 def result_text(result) -> str:
-    """Text of a fastmcp CallToolResult: the structured result when it is a string, else the text blocks."""
+    """Text of a fastmcp CallToolResult: the structured result when it is a string, then any other text blocks (an
+    acquisition's summary: "taken with the beam blanked", a spectrum's peaks), else the text blocks."""
     structured = getattr(result, "structured_content", None)
-    if isinstance(structured, dict) and isinstance(structured.get("result"), str):
-        return structured["result"]
     texts = [getattr(block, "text", None) for block in (getattr(result, "content", None) or [])]
+    if isinstance(structured, dict) and isinstance(structured.get("result"), str):
+        return "\n".join([structured["result"], *(t for t in texts if t and t != structured["result"])])
     joined = "".join(t for t in texts if t)
     if joined:
         return joined
