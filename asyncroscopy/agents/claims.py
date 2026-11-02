@@ -29,6 +29,8 @@ placement            "<key> was placed", "placed it on ...": place_image said "u
                      that key (its latest call), or never said "placed" for any image
 deferred read        the request asks what the data contain, the answer leaves viewing
                      them to the user, and no tool read any data (view_data, get_region)
+missing positions    the request asks for coordinates / positions / where things are, a
+                     reply gave points' x_m, y_m, and the answer states none of them
 ==================== =================================================================
 
 Negated and hedged sentences ("could not", "was not", "previously acquired")
@@ -98,6 +100,12 @@ DEFERS = re.compile(
     re.I,
 )
 
+# The unit a table's column header or a sentence gives its bare numbers: "x (nm)", "in nm", "in metres".
+HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phrase>nanomet(?:er|re)s|micromet(?:er|re)s|met(?:er|re)s|nm|µm|μm|um|m)\b", re.I)
+
+# "at the current position" asks for nothing: only a plural, "position of", or "where ... is" asks where.
+POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
+
 PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
@@ -116,7 +124,7 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 
 @dataclass
 class Claim:
-    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read
+    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions
     text: str  # what the answer says
     why: str  # why no tool call supports it
 
@@ -412,6 +420,40 @@ def _unfinished_claims(answer: str) -> list[Claim]:
     return []
 
 
+def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
+    """The request asks where things are, a reply gave their x_m, y_m, and the answer states none of those positions
+    (qwen3:8b answered "Here are their stage coordinates:" with no coordinates after a list_pois of 19 points)."""
+    if not POSITION_QUESTION.search(request):
+        return []
+    found: dict[str, set] = {}  # each tool's distinct positions (a point's links may repeat it)
+    for call in calls:
+        if call.error:
+            continue
+        for node in _walk(_json(call.result)):
+            x, y = _number(node.get("x_m")), _number(node.get("y_m"))
+            if x is not None and y is not None:
+                found.setdefault(call.name, set()).add((x, y))
+    values = [abs(v) for points in found.values() for point in points for v in point if v]
+    if not values:
+        return []
+    text = MAP_KEY.sub(" ", DATA_KEY.sub(" ", answer))
+    # A table headed "x (nm)" leaves its numbers without a unit: they are read in the units its headers name. Only
+    # headers: "x_m" and "spectrum" end in unit letters, and read as units they made tile numbers into positions.
+    headed = {_scale(m["header"] or m["phrase"]) for m in HEADER_UNIT.finditer(text)} - {None}
+    for m in re.finditer(NUMBER + UNIT, text):
+        stated = abs(float(m["num"].replace("−", "-")))
+        scales = [_scale(m["unit"])] if m["unit"] else [1.0, *headed]
+        # Within 2% and 1 nm of rounding: _matches allows half a unit, and "tile 2" read in µm matched every point.
+        if stated and any(abs(stated * scale - value) <= 0.02 * value + 1e-9 for scale in scales if scale for value in values):
+            return []
+    tool, points = list(found.items())[-1]
+    # Not "make the missing call": qwen3:8b called list_pois again, and its second copy filled the 8k context.
+    return [Claim("missing_positions", "the positions asked for",
+                  f"the request asks where, and the {tool} reply above gave x_m, y_m for {len(points)} point(s), but the "
+                  f"answer states none of them; do not call {tool} again: answer now, listing each point's id with its "
+                  f"x_m and y_m copied from that reply")]
+
+
 def check_answer(messages: list, answer: str, tool_names=(), context: str = "") -> list[Claim]:
     """The claims in ``answer`` that the tool calls in ``messages`` do not support (see the module docstring).
 
@@ -435,6 +477,7 @@ def check_answer(messages: list, answer: str, tool_names=(), context: str = "") 
     claims += _action_claims(answer, calls)
     claims += _placement_claims(answer, calls)
     claims += _unfinished_claims(answer)
+    claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
         m = DEFERS.search(answer)
         if m:

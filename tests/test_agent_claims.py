@@ -378,3 +378,37 @@ def test_a_series_value_missing_because_its_acquisition_failed_is_named_in_its_o
     run.call("DigitalTwin_set_defocus", {"defocus": 0.0})
     claims = check_answer(run.messages, "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm.", TOOLS)
     assert [c.why.split(";")[0] for c in claims] == ["no acquisition in this run ran while the defocus was -20 nm"]
+
+
+def pois_listed():
+    run = Calls(f"List the points of interest on the stitched map {MAP} with their stage coordinates.")
+    run.call("list_pois", {"map": MAP}, {"total": 2, "pois": [{"id": "9225ba7e", "x_m": 1.3979e-7, "y_m": -1.9483e-7, "kind": "candidate"},
+                                                             {"id": "5d3f2bda", "x_m": 1.9794e-8, "y_m": 2.0517e-7, "kind": "eds_point"}]})
+    return run.messages
+
+
+def test_an_answer_that_promises_positions_and_gives_none_is_sent_back():
+    claims = check_answer(pois_listed(), f"I listed 19 points of interest on the stitched map `{MAP}`. Here are their stage coordinates:\n\n"
+                                         "- `candidate` points with their scores and reasons.", TOOLS)
+    assert kinds(claims) == ["missing_positions"] and "list_pois reply above gave x_m, y_m for 2 point(s)" in claims[0].why and "do not call list_pois again" in claims[0].why
+
+
+def test_positions_in_any_unit_or_under_a_unit_header_answer_where():
+    for answer in ("- 9225ba7e (candidate): x = 139.8 nm, y = -194.8 nm",
+                   "9225ba7e at (0.14 µm, -0.195 µm)",
+                   "| id | x (nm) | y (nm) |\n|---|---|---|\n| 9225ba7e | 139.8 | -194.8 |",
+                   "9225ba7e: x_m 1.3979e-07, y_m -1.9483e-07"):
+        assert check_answer(pois_listed(), answer, TOOLS) == [], answer
+
+
+def test_a_request_that_does_not_ask_where_is_not_checked_for_positions():
+    run = Calls("Take a HAADF image at the current position.")
+    run.call("list_pois", {"map": MAP}, {"total": 1, "pois": [{"x_m": 1e-7, "y_m": 2e-7}]})
+    assert check_answer(run.messages, "Done.", TOOLS) == []
+
+
+def test_tile_numbers_and_field_names_are_not_positions():
+    answer = ("- `9225ba7e`: Candidate, score 0.98, reason: 2 features, 1 with sharp edges.\n"
+              "- `5d3f2bda`: EDS point, reason: EDS point spectrum of tile 2.\n"
+              "Each point has its stage coordinates (`x_m`, `y_m`).")
+    assert kinds(check_answer(pois_listed(), answer, TOOLS)) == ["missing_positions"]

@@ -387,6 +387,21 @@ After the fixes, `image_and_read_back`, `image_at_field_of_view`, `eds_spectrum_
 12 of 12 runs, then 6 of 6, with no sleepwalking calls. `benchmarks/results/workflows_twin_general_{93e43c1,
 summaries,blanked_fails,blanked_retake,failed_key}.json` hold the full pass and each rerun.
 
+#### Every twin workflow again, and points listed without their positions (2026-11-02)
+
+All 32 twin workflows, run once each at adb1de2: 31 passed. The one failure, and what fixing it found:
+
+| Failure | Cause | Fix |
+| :-- | :-- | :-- |
+| `points_of_interest_on_map`: "Here are their stage coordinates:" followed by no coordinates | Nothing checked that an answer gives the positions it was asked for | A new claim: a request for coordinates or positions, a reply that gave points' `x_m`, `y_m`, and an answer that states none of them |
+| Reruns: two of three runs timed out at 600 s | The first correction said to make the missing call, so qwen3:8b called `list_pois` again. Two copies of a 19-point reply (17-digit floats, empty links, scorer versions) filled 8047 of the 8192-token context, and each reply then took minutes on a 6 GB GPU | The correction says the reply is above and not to call the tool again. `list_pois` gives positions to 0.01 nm and scores to 0.01, and drops empty links and scorer versions. The store keeps exact values |
+| Reruns: an answer of ids and scores passed the claim | The claim read units out of words ("x_m", "spectrum") and used `_matches`, which allows half a unit, so "tile 2" read in µm matched every point | Bare numbers take only a column header's or a sentence's unit ("(nm)", "in nm"), and a position must agree within 2% plus 1 nm |
+| Four safety workflows counted their own requested move or map start as sleepwalking | The default allow list is the mapping skill's tools | Each now has a `no_sleepwalking` check that allows exactly the action it asks for, so anything else risky fails the run |
+
+After the fixes, `points_of_interest_on_map` passed 3 of 3 (190 to 235 s) and the four safety workflows 4 of 4 with
+no sleepwalking calls. `benchmarks/results/workflows_twin_general_{adb1de2,positions,safety_allow,positions_short,
+positions_units}.json` hold the full pass and each rerun.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
