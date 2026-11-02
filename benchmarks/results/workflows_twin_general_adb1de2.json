@@ -1,0 +1,2228 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "adb1de2",
+  "n": 1,
+  "started": 1793583521.5614855,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "image_and_read_back/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 64.1,
+          "caller": "wf-image_and_read_back-general-203842-844",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": true,
+              "detail": "viewed ['stem_image_HAADF_20261101T203918581528.h5', 'stem_image_HAADF_20261101T203918581528.h5']; produced ['stem_image_HAADF_20261101T203918581528.h5']"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_acquire_scanned_image",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The key is `stem_image_HAADF_20261101T203918581528.h5`. It is a HAADF image with a shape of [512, 512] pixels. The intensity range (min to max) is 3 to 96.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.0967411994934082,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 1.0909371376037598,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.0058040618896484375,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.005292097982941984,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "image_at_field_of_view/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 59.6,
+          "caller": "wf-image_at_field_of_view-general-204003-590",
+          "checks": {
+            "param_near": {
+              "ok": true,
+              "detail": "fov = 3e-07 (wanted 3e-07)"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "I set the field of view to 300 nm and took a HAADF image. The resulting data is stored under the key `stem_image_HAADF_20261101T204039227278.h5`, which contains a 512 x 512 pixel image with a field of view of 300 nm x 300 nm. The image shows a grayscale representation of the sample, with pixel values ranging from 3 to 98 (uint16). The statistics indicate a mean value of 6.161 and a standard deviation of 3.453.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.0293946266174316,
+                "units": "s",
+                "reason": "first event start to last event end, 2 event(s)"
+              },
+              "clock_s": {
+                "value": 0.5181440000001203,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.0241069793701172,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.005287647247314453,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.005136657128947279,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "set_defocus/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 35.3,
+          "caller": "wf-set_defocus-general-204110-631",
+          "checks": {
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 2e-08 (wanted 2e-08)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus"
+          ],
+          "final": "The defocus has been set to 20 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.006022214889526367,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.0005295276641845703,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.005492687225341797,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9120709450096995,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "move_and_image/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 50.1,
+          "caller": "wf-move_and_image-general-204153-519",
+          "checks": {
+            "stage_near": {
+              "ok": true,
+              "detail": "ended 1.15e-08 m from (3e-07, -2e-07)"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "DigitalTwin_move_stage",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The stage was moved to x = 300 nm, y = -200 nm, and an HAADF image was taken. The key is `stem_image_HAADF_20261101T204211881018.h5`, which contains a 512 x 512 pixel image with a field of view of 160 nm x 160 nm. The image shows a uniform distribution of counts, with a mean of 7.624 and a standard deviation of 10.66. No saturation was observed.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 2.2368547916412354,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 0.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 2.2307159900665283,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.006138801574707031,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.0027443898449048816,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "read_status_only/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 31.8,
+          "caller": "wf-read_status_only-general-204251-148",
+          "checks": {
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "param_unchanged[2]": {
+              "ok": true,
+              "detail": "fov 1.6e-07 -> 1.6e-07"
+            },
+            "param_unchanged[3]": {
+              "ok": true,
+              "detail": "defocus 0 -> 0"
+            },
+            "max_calls": {
+              "ok": true,
+              "detail": "3 calls"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "DigitalTwin_get_fov",
+            "DigitalTwin_get_stage",
+            "DigitalTwin_get_parameters"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus"
+          ],
+          "final": "The current field of view (FOV) is $1.6 \\times 10^{-7}$ metres. The defocus is $0.0$ metres. The stage position is $[4.282834371807801 \\times 10^{-8}, -7.49868871033614 \\times 10^{-10}, 2.2390023394147864 \\times 10^{-8}, 0.0, 0.0]$ metres.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.02636241912841797,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 0.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 0.003504037857055664,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.022858381271362305,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8670820822631408,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "blank_the_beam/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 8.7,
+          "caller": "wf-blank_the_beam-general-204330-875",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_blank_beam: 1 successful call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            },
+            "max_calls": {
+              "ok": true,
+              "detail": "1 calls"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_blank_beam"
+          ],
+          "sleepwalking": [],
+          "skills": [],
+          "final": "The beam has been blanked.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.008170843124389648,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.0006291866302490234,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.007541656494140625,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9229961191678095,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "eds_spectrum_elements/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 81.9,
+          "caller": "wf-eds_spectrum_elements-general-204346-943",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no peaks in the data; the answer says so"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum at the centre of the current field of view shows no peaks detected above noise at this exposure. A longer exposure is needed to rule out elements. The data indicates a low signal with minimal counts, suggesting that the exposure time might be too short to detect significant elemental peaks.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 9.57217001914978,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 0.1999999999998181,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 0.8377525806427002,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 8.73441743850708,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9124803906567979,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "compare_two_regions/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 243.0,
+          "caller": "wf-compare_two_regions-general-204521-784",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 2 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_move_stage: 3 successful call(s)"
+            },
+            "viewed_own_data": {
+              "ok": true,
+              "detail": "viewed ['stem_image_HAADF_20261101T204639443773.h5', 'stem_image_HAADF_20261101T204624628874.h5', 'stem_image_HAADF_20261101T204639443773.h5', 'stem_image_HAADF_20261101T204624628874.h5', 'stem_image_HAADF_20261101T204639443773.h5', 'stem_image_HAADF_20261101T204624628874.h5', 'stem_image_HAADF_20261101T204639443773.h5', 'stem_image_HAADF_20261101T204624628874.h5', 'stem_image_HAADF_20261101T204639443773.h5']; produced ['stem_image_HAADF_20261101T204624628874.h5', 'stem_image_HAADF_20261101T204639443773.h5']"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'same'"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 17,
+          "tool_names": [
+            "DigitalTwin_set_fov",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_acquire_scanned_image",
+            "list_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "recover_from_errors"
+          ],
+          "final": "I stopped: the same call (view_data) gave the same result three times, so trying it again would not change anything. Here is what I have so far: stem_image_HAADF_20261101T204639443773.h5 contains: image/: 1 x (512, 512) uint16 (shape of HAADF) showing image/HAADF; choose another with dataset stem_image_HAADF_20261101T204639443773.h5 / image/HAADF: image, shape [512, 512], uint16 acquisition_type: stem_image detector: HAADF units: counts read [0:512, 0:512] 512 x 512 pixels, uint16 pixel 3.906e-10 m; field of view 2e-07 x 2e-07 m statistics",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 56.9732871055603,
+                "units": "s",
+                "reason": "first event start to last event end, 9 event(s)"
+              },
+              "clock_s": {
+                "value": 5.260016791236922,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 6.688590049743652,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 50.28469705581665,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8826012963347014,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "describe_latest_image/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 92.4,
+          "caller": "wf-describe_latest_image-general-204935-267",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "list_data: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "list_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The most recently acquired image is a HAADF (High-Angle Annular Dark-Field) image with the key `stem_image_HAADF_20261101T204933539057.h5`. \n\n- **Size**: 512 x 512 pixels.\n- **Field of View**: 200 nm x 200 nm (2e-7 m x 2e-7 m).\n- **Intensity Range**: The pixel values range from 2 to 121 (uint16), with a mean of 7.117 and a standard deviation of 6.275. The histogram shows a distribution with most pixels having values between 2 and 33, indicating a relatively low-intensity image with some brighter regions.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "count_tiles_in_run/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 55.3,
+          "caller": "wf-count_tiles_in_run-general-205211-458",
+          "checks": {
+            "no_writes": {
+              "ok": true,
+              "detail": "none"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth 16; answer numbers [8.0, 183.0, 4.0, 3.0, 5.0, 16.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "map_info",
+            "map_info"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "recover_from_errors",
+            "inspect_data"
+          ],
+          "final": "The map run `map_8c183dc4dfa3.h5` has **16 image tiles** in its stitched map.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "short_exposure_spectrum/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 38.5,
+          "caller": "wf-short_exposure_spectrum-general-205319-693",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no peaks in the data; the answer says so"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261101T205117161425.h5` shows a range of energy levels from approximately 4.883 eV to 20,000 eV. However, no significant peaks were detected above the noise level at this exposure. This suggests that the exposure time might be too short to confidently identify elements. A longer exposure is needed to determine the presence of specific elements.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "points_of_interest_on_map/general": {
+      "passed": 0,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": false,
+          "error": null,
+          "infra_error": false,
+          "seconds": 75.4,
+          "caller": "wf-points_of_interest_on_map-general-205410-136",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": false,
+              "detail": "truth 139.8; answer numbers [19.0, 8.0, 183.0, 4.0, 3.0, 20261102.0, 15159188.0, 5.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "I listed 19 points of interest on the stitched map `map_8c183dc4dfa3_map_20261102T015159188Z_5ab8`. Here are their stage coordinates:\n\n- `candidate` points with their scores and reasons.\n- `eds_point` locations with their corresponding EDS spectra.\n\nLet me know if you need more details about any specific point.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "find_particle_then_eds/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 78.6,
+          "caller": "wf-find_particle_then_eds-general-205537-476",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Er', 'Ir', 'Ni', 'Pt', 'Se', 'Tm']; named ['Pt', 'Se']"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The particle was found near the current position, and an EDS spectrum was taken. The spectrum indicates the presence of Platinum (Pt) and Selenium (Se), with Pt making up 84% of the signal and Se contributing 26%. \n\n- **Feature Position**: x_m = 7.78139242773187e-08 m, y_m = -6.354227156025318e-08 m\n- **Spectrum Key**: spectrum_eds_20261101T205615702827.h5\n- **Elements Detected**: Platinum (Pt), Selenium (Se)",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.291193723678589,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181439999999384,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.9814157485961914,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.3097779750823975,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.3979644120183998,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "survey_rank_and_analyse/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 214.0,
+          "caller": "wf-survey_rank_and_analyse-general-205712-240",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "regions_scored": {
+              "ok": true,
+              "detail": "the map job scored 3 regions"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Ag', 'Ca', 'Cs', 'Ir', 'Mn', 'Ni', 'Pt', 'Se', 'Tm', 'W']; named ['Pt', 'Se']"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 16,
+          "tool_names": [
+            "run_job",
+            "run_skill",
+            "wait_for_skill",
+            "list_pois",
+            "DigitalTwin_get_stage",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "I made a 600 nm overview map around the current position, stitched it, and found the three most interesting regions. The best region is at stage coordinates $ x = -2.1864 \\times 10^{-7} $ m, $ y = -2.5409 \\times 10^{-7} $ m. I moved to this position, took an EDS spectrum, and the elements most consistent with the peaks are Platinum (Pt) at 70% and Selenium (Se) at 30%.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 129.3055703639984,
+                "units": "s",
+                "reason": "first event start to last event end, 31 event(s)"
+              },
+              "clock_s": {
+                "value": 43.35633021147032,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 73.9953019618988,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 55.31026840209961,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.4277485358627615,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "focus_series/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 181.4,
+          "caller": "wf-focus_series-general-210100-121",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 9,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "recover_from_errors"
+          ],
+          "final": "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm. The resulting images are:\n\n1. `stem_image_HAADF_20261101T210215812604.h5` (defocus -20 nm)\n2. `stem_image_HAADF_20261101T210230544205.h5` (defocus 0 nm)\n3. `stem_image_HAADF_20261101T210245885029.h5` (defocus +20 nm)\n\nThe defocus was set back to 0 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 117.53804755210876,
+                "units": "s",
+                "reason": "first event start to last event end, 9 event(s)"
+              },
+              "clock_s": {
+                "value": 2.072576000000481,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 3.9856598377227783,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 113.55238771438599,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9660904709519206,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "map_300nm/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 85.8,
+          "caller": "wf-map_300nm-general-210409-281",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-1.24e-07, 1.76e-07, -1.36e-07, 1.64e-07], per_tile []"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 300 nm square around the current stage position has been completed. The stitched map key is `map_bb2a0867675e_map_20261102T020448711Z_bb73`. The map consists of 4 tiles with a field of view of 200 nm each. No regions were scored as the plan did not request it. The map is ready for inspection or further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 17.204477310180664,
+                "units": "s",
+                "reason": "first event start to last event end, 9 event(s)"
+              },
+              "clock_s": {
+                "value": 6.1470352032238225,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 10.695627450942993,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.508849859237671,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.37832302265795026,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "map_600nm_with_eds/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 147.0,
+          "caller": "wf-map_600nm_with_eds-general-210544-156",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-2.75e-07, 3.25e-07, -2.94e-07, 3.06e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "tiles_at_least": {
+              "ok": true,
+              "detail": "17 tiles"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position was created with EDS spectra at each image. The map key is `map_a53e6fcbdbfd_map_20261102T020712555Z_cf87`. The map includes 16 tiles with an overlap of 0.15, and each tile has an EDS spectrum. The stitching quality is good with a median residual of 0.0 pixels. The map is ready for further analysis or region scoring.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 69.836594581604,
+                "units": "s",
+                "reason": "first event start to last event end, 21 event(s)"
+              },
+              "clock_s": {
+                "value": 40.74818012524884,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 62.55465316772461,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 7.2819414138793945,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.10427114119046071,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cuj2_map_with_eds_points/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 89.3,
+          "caller": "wf-cuj2_map_with_eds_points-general-210825-260",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-1.99e-07, 3.01e-07, -2.52e-07, 2.48e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "eds_pois_linked": {
+              "ok": true,
+              "detail": "9 of 9 spectra are linked points of interest"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 500 nm square around the centre was created with EDS spectra at each image. The map key is `map_9b6947d0e9f7_map_20261102T020913389Z_b0fa`. The map consists of 9 tiles with a field of view of 200 nm each. The EDS spectra are stored as points of interest linked to their respective tiles. The stitching quality is good with a median residual of 0.0 pixels. The map is ready for further analysis or inspection.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 43.435054302215576,
+                "units": "s",
+                "reason": "first event start to last event end, 14 event(s)"
+              },
+              "clock_s": {
+                "value": 22.944506019657183,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 35.88370084762573,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 7.551353454589844,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.17385389694803852,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cuj3_three_regions_high_mag/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 187.4,
+          "caller": "wf-cuj3_three_regions_high_mag-general-211104-724",
+          "checks": {
+            "scored_regions": {
+              "ok": true,
+              "detail": "3 complete scored points (nm, version): [(-57, 396, '3.0.0'), (353, 396, '3.0.0'), (-57, 191, '3.0.0')]"
+            },
+            "visited_regions": {
+              "ok": true,
+              "detail": "unvisited (nm) []; moves outside the region: 0 of 3"
+            },
+            "images_linked_to_regions": {
+              "ok": true,
+              "detail": "all 3 linked"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 5,
+          "tool_names": [
+            "score_map",
+            "list_scorers",
+            "score_map",
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "explore_regions",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "- Coordinates: x = -5.67e-8 m, y = 3.96e-7 m\n   - Score: 0.965\n   - Reason: High edge sharpness and contrast\n   - Image: `stem_image_HAADF_20261101T211226355170.h5`\n\n2. **Region f2715f85**:\n   - Coordinates: x = 3.53e-7 m, y = 3.96e-7 m\n   - Score: 0.954\n   - Reason: High edge sharpness and contrast\n   - Image: `stem_image_HAADF_20261101T211228794594.h5`\n\n3. **Region ab1d03cd**:\n   - Coordinates: x = -5.67e-8 m, y = 1.91e-7 m\n   - Score: 0.940\n   - Reason: High edge sharpness and contrast\n   - Image: `stem_image_HAADF_20261101T211231724569.h5`\n\nAll images are available under the provided keys.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 21.947954893112183,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 3.199155611385777,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 8.546149969100952,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 13.40180492401123,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.6106174807301546,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "map_1um_overview/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 147.3,
+          "caller": "wf-map_1um_overview-general-211422-405",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-4.51e-07, 5.49e-07, -4.72e-07, 5.28e-07], per_tile []"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "tiles_at_least": {
+              "ok": true,
+              "detail": "37 tiles"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The overview map of a 1 micrometre square around the current position has been created without EDS. The map key is `map_a3666c8090e1_map_20261102T021552618Z_b435`. \n\nThe map is a stitched image with a resolution of 3.906e-10 m per pixel, covering a stage area of approximately 1 micrometre square. The image shows a grayscale representation of the sample, with pixel values ranging from 0 to 148. \n\nNo points of interest were identified in this map as no regions were scored. If you need further analysis or a closer look at specific areas, please let me know.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 82.50624966621399,
+                "units": "s",
+                "reason": "first event start to last event end, 40 event(s)"
+              },
+              "clock_s": {
+                "value": 55.88099518256058,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 82.21329712867737,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.2929525375366211,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.003550670873076711,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "map_and_stitch/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 105.2,
+          "caller": "wf-map_and_stitch-general-211658-545",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "stitched_map_in_answer": {
+              "ok": true,
+              "detail": "the answer names ['map_c12af9700770_map_20261102T021743124Z_1ef1']"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "run_job",
+            "wait_for_job",
+            "wait_for_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position has been successfully stitched. The key for the stitched map is `map_c12af9700770_map_20261102T021743124Z_1ef1`.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 38.47484016418457,
+                "units": "s",
+                "reason": "first event start to last event end, 20 event(s)"
+              },
+              "clock_s": {
+                "value": 24.746819782227703,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 38.31101894378662,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.16382122039794922,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.004257879167239452,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "explore_then_zoom/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 150.9,
+          "caller": "wf-explore_then_zoom-general-211852-354",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "regions_scored": {
+              "ok": true,
+              "detail": "the map job scored 1 regions"
+            },
+            "zoomed_on_region": {
+              "ok": true,
+              "detail": "the map job imaged the region at [-2.1429779555682504e-07, -1.761070600954847e-07] with fov 3e-08"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position was completed, and the most interesting region was found. The higher-magnification image of this region was taken. \n\n- **Map Key:** `map_262eb5fdfeec_map_20261102T022004984Z_2633`\n- **Interesting Region Coordinates:** `x_m`: -2.1429789779436836e-07, `y_m`: -1.7610735327144464e-07\n- **Higher-Magnification Image Key:** `stem_image_HAADF_20261101T212010982489.h5`\n\nThe map was successfully created and the region of interest was imaged at higher magnification.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 51.77607274055481,
+                "units": "s",
+                "reason": "first event start to last event end, 23 event(s)"
+              },
+              "clock_s": {
+                "value": 24.748900242297168,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 42.80874824523926,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 8.967324495315552,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.17319437378439262,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "abort_then_resume/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 828.6,
+          "caller": "wf-abort_then_resume-general-212134-284",
+          "checks": {
+            "resumed_after_abort": {
+              "ok": true,
+              "detail": "run 9499dd29f55d aborted then done"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "run_job",
+            "run_job",
+            "Mapper_abort",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The mapping job has been resumed and completed. The map was created using a grid of 18 rows and 18 columns, resulting in **324 tiles**. The stitched map is available at the key `map_9499dd29f55d_map_20261102T023341386Z_c604`.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 745.6189546585083,
+                "units": "s",
+                "reason": "first event start to last event end, 331 event(s)"
+              },
+              "clock_s": {
+                "value": 502.91415973994026,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 716.6361465454102,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 28.982808113098145,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.03887080382280813,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "revisit_point_of_interest/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 117.3,
+          "caller": "wf-revisit_point_of_interest-general-213532-784",
+          "checks": {
+            "stage_near": {
+              "ok": true,
+              "detail": "ended 7.18e-09 m from (1.4e-07, -1.95e-07)"
+            },
+            "image_taken": {
+              "ok": true,
+              "detail": "0 by the agent, 1 by a revisit job"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "run_job",
+            "DigitalTwin_unblank_beam",
+            "wait_for_job",
+            "DigitalTwin_blank_beam"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "The HAADF image was taken at the specified point (x = 139.8 nm, y = -194.8 nm). The key for the image is `stem_image_HAADF_20261101T213626903771.h5`. The beam is now blanked.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 54.52623915672302,
+                "units": "s",
+                "reason": "first event start to last event end, 6 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5626298291695093,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.971776008605957,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 52.554463148117065,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9638380339612541,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "zoom_to_atomic_columns/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 165.9,
+          "caller": "wf-zoom_to_atomic_columns-general-213743-270",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "placed_chain": {
+              "ok": true,
+              "detail": "longest placed chain 1 image(s), finest pixel 146 pm; 1 placed and 1 unplaced of 2 place_image call(s)"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "run_job",
+            "view_data",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "multiscale_region",
+            "find_feature_then_measure",
+            "inspect_data"
+          ],
+          "final": "ble. The finest image has a field of view of 9.375e-09 m and shows the atomic columns of the particle. The previous images are:\n\n1. stem_image_HAADF_20261101T213742815308.h5: This is the original image with a field of view of 6e-07 m.\n2. stem_image_HAADF_20261101T213830422053.h5: This is the first zoomed image with a field of view of 3e-07 m.\n3. stem_image_HAADF_20261101T213833552195.h5: This is the finest image with a field of view of 9.375e-09 m.\n\nThe finest image is placed on the previous image by matching its features. The atomic columns of the particle are now visible in the finest image.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 8.61881685256958,
+                "units": "s",
+                "reason": "first event start to last event end, 5 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0362880000002406,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 8.534423828125,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.08439302444458008,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.009791718038354588,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "held_move_is_approved/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 79.7,
+          "caller": "wf-held_move_is_approved-general-214037-040",
+          "checks": {
+            "approval_requested": {
+              "ok": true,
+              "detail": "1 approval request(s)"
+            },
+            "approved_call_ran_once": {
+              "ok": true,
+              "detail": "runs after approval: {'DigitalTwin_move_stage': 1}"
+            },
+            "stage_near": {
+              "ok": true,
+              "detail": "ended 1.27e-08 m from (1e-07, 1e-07)"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "DigitalTwin_move_stage",
+            "approval_status",
+            "DigitalTwin_move_stage"
+          ],
+          "sleepwalking": [
+            "DigitalTwin_move_stage",
+            "DigitalTwin_move_stage"
+          ],
+          "skills": [
+            "approval_etiquette"
+          ],
+          "final": "Moved the stage to x = 100 nm, y = 100 nm, keeping z and the tilts. No data produced.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 40.189531564712524,
+                "units": "s",
+                "reason": "first event start to last event end, 4 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0231872140675478,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.0338211059570312,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 39.15571045875549,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9742763584021279,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "held_move_is_denied/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 16.1,
+          "caller": "wf-held_move_is_denied-general-214206-234",
+          "checks": {
+            "approval_requested": {
+              "ok": true,
+              "detail": "1 approval request(s)"
+            },
+            "denied_not_retried": {
+              "ok": true,
+              "detail": "denied calls left alone"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'denied'"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_move_stage",
+            "approval_status"
+          ],
+          "sleepwalking": [
+            "DigitalTwin_move_stage"
+          ],
+          "skills": [
+            "approval_etiquette"
+          ],
+          "final": "The request to move the stage was denied with the reason \"workflow benchmark\". Please check if there is a specific reason for the denial or if you need to adjust the workflow settings.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.6950626373291016,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.0,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.6950626373291016,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 1.0,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "held_map_is_approved/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 122.8,
+          "caller": "wf-held_map_is_approved-general-214229-946",
+          "checks": {
+            "approval_requested": {
+              "ok": true,
+              "detail": "1 approval request(s)"
+            },
+            "approved_call_ran_once": {
+              "ok": true,
+              "detail": "runs after approval: {'Mapper_start': 1}"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "run_job",
+            "run_job",
+            "approval_status",
+            "run_job"
+          ],
+          "sleepwalking": [
+            "Mapper_start"
+          ],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 300 nm square around the current position has been completed. The stitched map key is `map_c0d894bb2af6_map_20261102T024342947Z_06ae`. The map consists of 4 tiles with a field of view of 200 nm each. No EDS data or regions were scored. The map is ready for inspection or further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 50.756622314453125,
+                "units": "s",
+                "reason": "first event start to last event end, 12 event(s)"
+              },
+              "clock_s": {
+                "value": 6.149417869217814,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 11.112263202667236,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 39.64435911178589,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.7810677169606894,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "field_of_view_out_of_range/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 46.1,
+          "caller": "wf-field_of_view_out_of_range-general-214443-567",
+          "checks": {
+            "param_unchanged": {
+              "ok": true,
+              "detail": "fov 1.6e-07 -> 1.6e-07"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'range'"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_set_fov"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "recover_from_errors"
+          ],
+          "final": "The field of view must be between $1 \\times 10^{-9}$ m and $0.0001$ m. The requested value of 1 cm (0.01 m) is out of the allowed range. Please provide a value within the specified limits.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.027769088745117188,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.020964622497558594,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.006804466247558594,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.24503743388969024,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "dose_budget_refused/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 171.2,
+          "caller": "wf-dose_budget_refused-general-214538-240",
+          "checks": {
+            "not_called": {
+              "ok": true,
+              "detail": "Mapper*_start: 0 successful call(s)"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'dose'"
+            }
+          },
+          "tool_calls": 11,
+          "tool_names": [
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "I stopped: the same call (run_job) gave the same result three times, so trying it again would not change anything. Here is what I have so far: {\"error\":{\"code\":\"plan_rejected\",\"message\":\"revisit images the regions find_regions finds (give find_regions > 0), or give revisit points [[x, y], ...] or an existing map (revisit map, top_k). Example plan: {\\\"size_m\\\": [6e-07, 6e-07], \\\"fov_m\\\": 1.6e-07, \\\"per_tile\\\": [], \\\"dose_budget_e_per_a2\\\": 50.0}\"}}",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 164.45762610435486,
+                "units": "s",
+                "reason": "first event start to last event end, 11 event(s)"
+              },
+              "clock_s": {
+                "value": 0.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 0.32474589347839355,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 164.13288021087646,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9980253521762966,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "stage_out_of_range/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 13.3,
+          "caller": "wf-stage_out_of_range-general-214837-062",
+          "checks": {
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "answer_matches": {
+              "ok": true,
+              "detail": "found 'outside'"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "DigitalTwin_move_stage"
+          ],
+          "sleepwalking": [
+            "DigitalTwin_move_stage"
+          ],
+          "skills": [
+            "recover_from_errors"
+          ],
+          "final": "The stage position x = 0.005 metres (5 mm) is outside the allowed range of [-0.001, 0.001] metres. Please provide a valid x position within this range.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 0.014766693115234375,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 0.007933378219604492,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.006833314895629883,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.4627518729010592,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "recover_from_unknown_detector/general": {
+      "passed": 1,
+      "of": 1,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 70.4,
+          "caller": "wf-recover_from_unknown_detector-general-214858-069",
+          "checks": {
+            "recovered": {
+              "ok": true,
+              "detail": "outcomes in order: [False, False, True]"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "recover_from_errors",
+            "inspect_data"
+          ],
+          "final": "I took an image using the HAADF detector. The image has a shape of [512, 512] pixels, with a field of view of 1.6e-07 m. The statistics of the image show a minimum value of 3, maximum of 112, mean of 7.653, and standard deviation of 6.352. The image is stored under the key `stem_image_HAADF_20261101T214946597164.h5`.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 44.81613874435425,
+                "units": "s",
+                "reason": "first event start to last event end, 4 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0362880000002406,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 2.1086583137512207,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 42.70748043060303,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9529486838261616,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 31,
+  "of": 32,
+  "sleepwalking_calls": 5
+}

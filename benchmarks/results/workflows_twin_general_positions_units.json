@@ -1,0 +1,149 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "adb1de2",
+  "n": 3,
+  "started": 1793657368.5251837,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "points_of_interest_on_map/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 235.4,
+          "caller": "wf-points_of_interest_on_map-general-171022-821",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth -32.8; answer numbers [42150.0, 709.0, 20261102.0, 221011789.0, 17.0, 1.0, 3.0, 9.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "9e-8 - **y_m**: 4.231e-8\n13. **ID**: `map_ac042150d709.h5:eds:11` - **x_m**: 1.8376e-7 - **y_m**: 5.238e-8\n14. **ID**: `map_ac042150d709.h5:eds:9` - **x_m**: -4.693e-8 - **y_m**: 5.817e-8\n15. **ID**: `map_ac042150d709.h5:eds:8` - **x_m**: -1.2167e-7 - **y_m**: 7.47e-8\n16. **ID**: `map_ac042150d709.h5:eds:13` - **x_m**: 7.522e-8 - **y_m**: 1.5916e-7\n17. **ID**: `map_ac042150d709.h5:eds:14` - **x_m**: -5.464e-8 - **y_m**: 1.6668e-7\n18. **ID**: `map_ac042150d709.h5:eds:15` - **x_m**: -1.3787e-7 - **y_m**: 1.7369e-7\n19. **ID**: `map_ac042150d709.h5:eds:12` - **x_m**: 1.6185e-7 - **y_m**: 1.8038e-7",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 189.2,
+          "caller": "wf-points_of_interest_on_map-general-171433-952",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth -32.8; answer numbers [19.0, 42150.0, 709.0, 20261102.0, 221011789.0, 17.0, 1.0, 3.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "150d709.h5:eds:9`: x = -4.693e-8 m, y = 5.817e-8 m\n   - `id: map_ac042150d709.h5:eds:10`: x = 7.399e-8 m, y = 4.231e-8 m\n   - `id: map_ac042150d709.h5:eds:11`: x = 1.8376e-7 m, y = 5.238e-8 m\n   - `id: map_ac042150d709.h5:eds:12`: x = 1.6185e-7 m, y = 1.8038e-7 m\n   - `id: map_ac042150d709.h5:eds:13`: x = 7.522e-8 m, y = 1.5916e-7 m\n   - `id: map_ac042150d709.h5:eds:14`: x = -5.464e-8 m, y = 1.6668e-7 m\n   - `id: map_ac042150d709.h5:eds:15`: x = -1.3787e-7 m, y = 1.7369e-7 m\n\nThese points include both candidate features and EDS spectra. Let me know if you'd like to explore any of them further.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 231.0,
+          "caller": "wf-points_of_interest_on_map-general-171754-515",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth -32.8; answer numbers [42150.0, 709.0, 20261102.0, 221011789.0, 17.0, 1.0, 3.0, 9.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "9e-8 - **y_m**: 4.231e-8\n13. **ID**: `map_ac042150d709.h5:eds:11` - **x_m**: 1.8376e-7 - **y_m**: 5.238e-8\n14. **ID**: `map_ac042150d709.h5:eds:9` - **x_m**: -4.693e-8 - **y_m**: 5.817e-8\n15. **ID**: `map_ac042150d709.h5:eds:8` - **x_m**: -1.2167e-7 - **y_m**: 7.47e-8\n16. **ID**: `map_ac042150d709.h5:eds:13` - **x_m**: 7.522e-8 - **y_m**: 1.5916e-7\n17. **ID**: `map_ac042150d709.h5:eds:14` - **x_m**: -5.464e-8 - **y_m**: 1.6668e-7\n18. **ID**: `map_ac042150d709.h5:eds:15` - **x_m**: -1.3787e-7 - **y_m**: 1.7369e-7\n19. **ID**: `map_ac042150d709.h5:eds:12` - **x_m**: 1.6185e-7 - **y_m**: 1.8038e-7",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 3,
+  "of": 3,
+  "sleepwalking_calls": 0
+}

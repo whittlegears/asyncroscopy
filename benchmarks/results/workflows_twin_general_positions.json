@@ -1,0 +1,153 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "adb1de2",
+  "n": 3,
+  "started": 1793588021.1182055,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "points_of_interest_on_map/general": {
+      "passed": 1,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 447.5,
+          "caller": "wf-points_of_interest_on_map-general-215439-105",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": true,
+              "detail": "truth -189.1; answer numbers [19.0, 1955.0, 6020.0, 7.0, 20261102.0, 25426402.0, 93.0, 7.0]"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "map_1955b06020c7.h5:eds:13`: x = 8.342565977184247e-8 m, y = 1.7710294823591823e-7 m\n   - `id: map_1955b06020c7.h5:eds:15`: x = -1.3159615453621875e-7 m, y = 1.8293295814344412e-7 m\n   - `id: map_1955b06020c7.h5:eds:12`: x = 2.024710581358305e-7 m, y = 1.8861169659498205e-7 m\n   - `id: map_1955b06020c7.h5:eds:14`: x = -3.972917361263817e-8 m, y = 1.9188187206598658e-7 m\n   - `id: map_1955b06020c7.h5:eds:2`: x = 6.560599552410716e-8 m, y = -1.4018820776440684e-7 m\n\nThese points include both candidate features identified by the baseline scorer and EDS point spectra collected from specific tiles.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "error": "timed out after 600 s",
+          "infra_error": false,
+          "seconds": 600.0,
+          "caller": "wf-points_of_interest_on_map-general-220234-204",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": false,
+              "detail": "truth -189.1; answer numbers []"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "answered": {
+              "ok": false,
+              "detail": "the agent gave no final answer"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [],
+          "final": "",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": false,
+          "error": "timed out after 600 s",
+          "infra_error": false,
+          "seconds": 600.0,
+          "caller": "wf-points_of_interest_on_map-general-221251-234",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "list_pois: 1 successful call(s)"
+            },
+            "answer_number_near": {
+              "ok": false,
+              "detail": "truth -189.1; answer numbers []"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            },
+            "answered": {
+              "ok": false,
+              "detail": "the agent gave no final answer"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "list_pois"
+          ],
+          "sleepwalking": [],
+          "skills": [],
+          "final": "",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 1,
+  "of": 3,
+  "sleepwalking_calls": 0
+}
