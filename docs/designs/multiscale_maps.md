@@ -417,6 +417,14 @@ After both fixes, `cuj3_three_regions_high_mag` passed 3 of 3 (median 117 s) and
 `benchmarks/results/workflows_twin_general_{1593771,scorer_version,revisit_distinct}.json` hold the full pass and
 each rerun.
 
+The next full pass, at 1ed13dc, passed 31 of 32 with no sleepwalking calls. `focus_series` skipped the 0 nm image;
+the claim check caught "at defocus -20 nm, 0 nm, and +20 nm", but its correction offered "make the missing tool
+call ... or answer again without these claims", and qwen3:8b took the second: a true answer to a request left
+undone. A value the answer claims and the request asked for is now to be acquired: the correction says the request
+asks for it and not to answer without it. A value only the answer names keeps the old choice. In three reruns
+qwen3:8b took all three images unprompted (7 calls each), so the new wording is covered by unit tests only.
+`benchmarks/results/workflows_twin_general_{1ed13dc,requested_values}.json` hold the pass and the reruns.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.

@@ -1,0 +1,257 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "1ed13dc",
+  "n": 3,
+  "started": 1793669527.6943767,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "focus_series/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 167.5,
+          "caller": "wf-focus_series-general-203208-915",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 7,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "I have taken HAADF images at defocus -20 nm, 0 nm, and +20 nm. The images are saved with the following keys:\n\n1. `stem_image_HAADF_20261102T203251558244.h5` (defocus -20 nm)\n2. `stem_image_HAADF_20261102T203332050248.h5` (defocus 0 nm)\n3. `stem_image_HAADF_20261102T203347242013.h5` (defocus +20 nm)\n\nThe defocus has been set back to 0 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 103.492751121521,
+                "units": "s",
+                "reason": "first event start to last event end, 7 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5544320000000198,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 4.256986379623413,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 99.23576474189758,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9588668159509561,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 108.5,
+          "caller": "wf-focus_series-general-203507-076",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 7,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "I have taken HAADF images at defocus -20 nm, 0 nm, and +20 nm. The images are saved with the following keys:\n\n1. `stem_image_HAADF_20261102T203515960900.h5` (defocus -20 nm)\n2. `stem_image_HAADF_20261102T203530903469.h5` (defocus 0 nm)\n3. `stem_image_HAADF_20261102T203545964367.h5` (defocus +20 nm)\n\nThe defocus has been set back to 0 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 78.11606574058533,
+                "units": "s",
+                "reason": "first event start to last event end, 7 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5544320000000198,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 3.909457206726074,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 74.20660853385925,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9499532244787015,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 105.5,
+          "caller": "wf-focus_series-general-203703-803",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_set_defocus: 4 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 3 successful call(s)"
+            },
+            "param_near": {
+              "ok": true,
+              "detail": "defocus = 0 (wanted 0)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 7,
+          "tool_names": [
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_set_defocus"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "focus",
+            "revisit_point",
+            "inspect_data"
+          ],
+          "final": "I have taken HAADF images at defocus -20 nm, 0 nm, and +20 nm. The keys for the images are:\n\n- `stem_image_HAADF_20261102T203712249748.h5` (defocus -20 nm)\n- `stem_image_HAADF_20261102T203727169450.h5` (defocus 0 nm)\n- `stem_image_HAADF_20261102T203741918346.h5` (defocus +20 nm)\n\nThe defocus has been set back to 0 nm.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 76.22007894515991,
+                "units": "s",
+                "reason": "first event start to last event end, 7 event(s)"
+              },
+              "clock_s": {
+                "value": 1.5544320000000198,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 3.533853530883789,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 72.68622541427612,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9536361864250182,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 3,
+  "of": 3,
+  "sleepwalking_calls": 0
+}
