@@ -487,7 +487,9 @@ def data_truth(keys: list[str]) -> dict:
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
             entry["peaks_ev"] = [round(row[0], 1) for row in rows]
-            entry["elements"] = sorted({c.strip().split()[0] for row in rows if row[4] and not row[4].startswith("possible") for c in row[4].split(",")})
+            likely = views.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
+            entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
+            entry["could_be"] = sorted({el for row in rows for el in views.note_elements(row[4])})
         spectra[key] = entry
     return {"spectra": {k: v for k, v in spectra.items() if "elements" in v or "error" not in v}, "strongest_peak": strongest}
 

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from benchmarks import run_workflows
+from benchmarks import workflow_checks as check_module
 from benchmarks.workflow_checks import CHECKS, Call, Run, evaluate
 
 WORKFLOWS = Path(run_workflows.__file__).parent / "workflows"
@@ -112,16 +113,18 @@ def test_recovered_needs_a_failure_followed_by_a_success():
 
 
 def test_instrument_state_checks_use_the_readings_before_and_after():
-    run = Run(facts={"before": {"stage": [0, 0, 0, 0, 0], "fov": 2e-7, "defocus": 0.0}, "after": {"stage": [3.1e-7, -1.9e-7, 0, 0, 0], "fov": 3e-7, "defocus": 2e-8}})
+    run = Run(facts={"before": {"stage": [1e-7, 0, 0, 0, 0], "fov": 2e-7, "defocus": 0.0}, "after": {"stage": [3.1e-7, -1.9e-7, 0, 0, 0], "fov": 3e-7, "defocus": 2e-8}})
     got = results(
         run,
         {"check": "stage_near", "x": 3e-7, "y": -2e-7},
         {"check": "stage_unchanged"},
+        {"check": "stage_moved_by", "dx": 2e-7, "dy": -2e-7},
+        {"check": "stage_moved_by", "dx": 4e-7, "dy": -2e-7},
         {"check": "param_near", "name": "fov", "value": 3e-7},
         {"check": "param_near", "name": "defocus", "value": 2e-8, "rel": 0, "abs_tol": 1e-9},
         {"check": "param_unchanged", "name": "fov"},
     )
-    assert [c["ok"] for c in got.values()] == [True, False, True, True, False]
+    assert [c["ok"] for c in got.values()] == [True, False, True, False, True, True, False]
 
 
 def test_map_plan_from_the_job_trace_even_when_the_reserve_event_has_no_caller():
@@ -192,12 +195,20 @@ def test_approval_checks_follow_the_request_through_the_decision():
 
 def test_eds_answers_must_agree_with_the_peaks_in_the_data():
     with_peaks = {"truth": {"spectra": {"s.h5": {"peaks_ev": [9713.0], "elements": ["Au"]}}}}
-    assert results(Run(final="It shows gold (Au) and some carbon.", facts=with_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    assert results(Run(final="It shows gold (Au).", facts=with_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
     assert not results(Run(final="It shows Fe.", facts=with_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
     no_peaks = {"truth": {"spectra": {"s.h5": {"peaks_ev": [], "elements": []}}}}
     assert results(Run(final="No peaks were detected above the noise; a longer exposure is needed.", facts=no_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
     assert not results(Run(final="It is mostly Au and Pt.", facts=no_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
     assert not results(Run(final="Au.", facts={}), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    listed_absent = "Mostly gold (Au); other elements include Se, Ir and La, with weaker contributions such as **Zr** and Mn L3-M1."
+    assert not results(Run(final=listed_absent, facts=with_peaks), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    ambiguous = {"truth": {"spectra": {"s.h5": {"elements": ["Pd"], "could_be": ["Cd", "Pd"]}}}}
+    assert results(Run(final="Palladium (Pd), possibly cadmium.", facts=ambiguous), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    unidentified = {"truth": {"spectra": {"s.h5": {"peaks_ev": [308.0], "elements": [], "could_be": []}}}}
+    assert results(Run(final="One peak at 308 eV, but it could not be identified.", facts=unidentified), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    assert not results(Run(final="A weak calcium (Ca) peak at 308 eV.", facts=unidentified), {"check": "answer_eds_consistent"})["answer_eds_consistent"]["ok"]
+    assert check_module.elements_claimed("Lead the beam over gold; tin is absent, Pb (Pb) is not") == {"Au", "Pb"}
 
 
 def test_numbers_in_the_answer_are_compared_with_the_truth():

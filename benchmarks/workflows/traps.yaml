@@ -1,0 +1,73 @@
+# Requests that read simply but trip small models: units other than nm, moves relative to "here", a setting to
+# put back, things not to touch, a follow-up that refers to the turn before, and a question that needs no action.
+
+workflows:
+  - name: field_of_view_in_micrometres
+    request: Set the field of view to 0.25 micrometres.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: param_near, name: fov, value: 2.5e-7}
+      - {check: no_sleepwalking, allow: ["*_set_fov"]}
+
+  - name: defocus_in_angstrom
+    request: Set the defocus to -50 angstrom.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: param_near, name: defocus, value: -5.0e-9, rel: 0.0, abs_tol: 1.0e-10}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_set_defocus"]}
+
+  - name: move_relative_to_here
+    request: Move the stage 200 nm in +x from where it is now, keeping y, z and the tilts.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: stage_moved_by, dx: 2.0e-7, dy: 0.0}
+      - {check: no_sleepwalking, allow: ["*_move_stage"]}
+
+  - name: image_then_put_fov_back
+    request: Take one HAADF image at a 20 nm field of view, then put the field of view back to what it was before.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: param_unchanged, name: fov, rel: 1.0e-3}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: spectrum_without_touching
+    request: Take an EDS spectrum right here and tell me which elements it shows. Do not move the stage and do not change the field of view.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: called, tool: "*_acquire_spectrum"}
+      - {check: answer_eds_consistent}
+      - {check: no_sleepwalking, allow: ["*_acquire_spectrum", "*_unblank_beam", "*_blank_beam"]}
+      - {check: not_called, tool: "*_move_stage"}
+      - {check: not_called, tool: "*_set_fov"}
+      - {check: stage_unchanged}
+      - {check: param_unchanged, name: fov}
+
+  - name: follow_up_doubles_the_field
+    turns:
+      - say: Take a HAADF image with a 50 nm field of view.
+      - say: Now take another one at twice that field of view.
+    runners: [general]
+    timeout_s: 400
+    checks:
+      - {check: called, tool: "*_acquire_scanned_image", min: 2}
+      - {check: param_near, name: fov, value: 1.0e-7}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+
+  - name: question_needs_no_action
+    request: What are the current field of view and defocus? Just tell me; don't change anything.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: no_actuation}
+      - {check: param_unchanged, name: fov}
+      - {check: stage_unchanged}
+      - {check: answer_matches, pattern: "field of view|fov"}
