@@ -425,6 +425,10 @@ asks for it and not to answer without it. A value only the answer names keeps th
 qwen3:8b took all three images unprompted (7 calls each), so the new wording is covered by unit tests only.
 `benchmarks/results/workflows_twin_general_{1ed13dc,requested_values}.json` hold the pass and the reruns.
 
+The full pass at e299c88 passed all 32 workflows with no sleepwalking calls, the first clean pass
+(`benchmarks/results/workflows_twin_general_e299c88.json`). One run each, so a workflow that fails one run in
+five can still be hiding.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
