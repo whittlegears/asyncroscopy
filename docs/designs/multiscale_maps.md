@@ -429,6 +429,12 @@ The full pass at e299c88 passed all 32 workflows with no sleepwalking calls, the
 (`benchmarks/results/workflows_twin_general_e299c88.json`). One run each, so a workflow that fails one run in
 five can still be hiding.
 
+Three runs of each at c751134 (the same code) passed all 96 with no sleepwalking calls
+(`benchmarks/results/workflows_twin_general_c751134_n3.json`). A workflow that fails one run in five would have
+shown in three runs about half the time, so this narrows the hiding place but does not close it. In all three
+focus_series runs qwen3:8b took the three images unprompted (7 or 9 calls), so the request-aware correction is still
+covered by unit tests only.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
