@@ -31,6 +31,8 @@ try:
 except ImportError:  # imported as benchmarks.workflow_checks
     from benchmarks._common import skill_tools, sleepwalking
 
+from ase.data import atomic_names, chemical_symbols
+
 from asyncroscopy.agents.goals import MAP_KEY, Call  # the one record of a tool call and its reply (.ok, .error, .result)
 
 NOT_APPLICABLE = "n/a"
@@ -242,6 +244,17 @@ def stage_unchanged(run: Run, tol: float = 5e-8) -> tuple[bool, str]:
         return False, "missing a stage reading"
     d = math.hypot(after[0] - before[0], after[1] - before[1])
     return d <= tol, f"moved {d:.3g} m"
+
+
+@check
+def stage_moved_by(run: Run, dx: float, dy: float, tol: float = 1.5e-7) -> tuple[bool, str]:
+    """The stage ended within ``tol`` metres of where it started plus (dx, dy): a move relative to "here"."""
+    before, after = _stage(run, "before"), _stage(run, "after")
+    if before is None or after is None:
+        return False, "missing a stage reading"
+    moved = (after[0] - before[0], after[1] - before[1])
+    d = math.hypot(moved[0] - float(dx), moved[1] - float(dy))
+    return d <= tol, f"moved ({moved[0]:.3g}, {moved[1]:.3g}) m, {d:.3g} m from ({float(dx):.3g}, {float(dy):.3g})"
 
 
 @check
@@ -673,22 +686,36 @@ def answer_peak_near(run: Run, position: float, tol: float) -> tuple[bool, str]:
 
 
 ELEMENT = r"(?<![A-Za-z]){sym}(?![a-z])"
-NO_PEAKS = r"no (clear |significant |detectable )?peaks|no peaks? (were |was )?detected|not enough counts|too few counts|longer exposure|below (the )?noise"
+NO_PEAKS = (r"no (clear |significant |detectable )?peaks|no peaks? (were |was )?detected|not enough counts|too few counts|longer exposure|"
+            r"below (the )?noise|unidentified|could not be identified|no element")
+# A name that is also a common English word is matched by its symbol only.
+NAMED_ELEMENTS = {sym: ("" if name in ("Lead", "Tin") else name) for sym, name in zip(chemical_symbols[1:], atomic_names[1:])}
+
+
+def elements_claimed(text: str) -> set[str]:
+    """Elements an answer names: by name ("Calcium"), or by symbol in brackets, in bold or with a line ("Ca L3-M1")."""
+    text = text or ""
+    return {sym for sym, name in NAMED_ELEMENTS.items()
+            if (name and re.search(rf"\b{name}\b", text, re.IGNORECASE)) or re.search(rf"\({sym}\)|\*\*{sym}\*\*|(?<![A-Za-z]){sym} [KLM]\d?-", text)}
 
 
 @check
 def answer_eds_consistent(run: Run) -> tuple[bool, str]:
-    """The answer agrees with the run's spectra: when peaks were found it names at least one
-    candidate element; when none were found it says so instead of naming elements."""
+    """The answer agrees with the run's spectra: when peaks were found it names at least one element view_data
+    named and none the peaks cannot support; when none were found (or none could be identified) it says so.
+    Naming any one right element once passed while the answer also listed nine absent ones (qwen run 2026-11-03)."""
     spectra = (run.facts.get("truth") or {}).get("spectra") or {}
     if not spectra:
         return False, "the run produced no spectrum"
     elements = sorted({el for s in spectra.values() for el in s.get("elements", [])})
+    supported = set(elements) | {el for s in spectra.values() for el in s.get("could_be", [])}
+    unsupported = sorted(elements_claimed(run.final) - supported)
     if elements:
         named = [el for el in elements if re.search(ELEMENT.format(sym=el), run.final or "")]
-        return bool(named), f"candidates {elements}; named {named}"
+        return bool(named) and not unsupported, f"candidates {elements}; named {named}; unsupported {unsupported}"
     says_none = re.search(NO_PEAKS, _words(run.final), re.IGNORECASE)
-    return bool(says_none), "no peaks in the data; the answer " + ("says so" if says_none else "does not say so")
+    detail = "no element in the data; the answer " + ("says so" if says_none else "does not say so")
+    return bool(says_none) and not unsupported, f"{detail}; unsupported {unsupported}"
 
 
 def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:

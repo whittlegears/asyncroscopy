@@ -146,6 +146,22 @@ a sum peak of a stronger one is flagged as such rather than named as an element,
 and a spectrum with no significant peak says a longer exposure is needed before
 an element can be ruled out.
 
+A peak's note names only the lines that could make it: a weaker line of a family
+counts when that family's strongest line also has a peak, and a line outside its
+element's main family (K if in range, else L, else M) counts when that family's
+strongest line has a peak. A peak no such line fits is "unidentified". Below 1 keV
+a line may sit a full line width from its peak, since the detector window pushes a
+low peak's top up (carbon K, 277 eV, is found at 298 to 308 eV). The "elements most
+consistent" line names the fewest elements that explain the peaks, and a peak two
+elements fit equally is split between them. Before this (2026-11-03) qwen3:8b read
+a carbon peak as calcium and silver, and a Pd particle as Pd, Cd and In.
+
+Still open: the window also bends the continuum into a broad rise near 0.6 keV,
+which the peak search can take for a peak and which can then read as O or F
+(5 of 168 simulated spectra on the twin). Rejecting rises wider than five line
+widths stopped that but also lost carbon peaks that sit on the rise (20 of 48
+long carbon exposures), so it was not kept.
+
 `list_data` looks through the newest 300 keys in registration order (files
 registered after a Tiled outage count as new). `offset` counts keys from the
 newest; when `more` is true, call again with `offset = next_offset`. A scan cut

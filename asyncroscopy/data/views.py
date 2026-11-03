@@ -561,7 +561,8 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
 
 @lru_cache(maxsize=1)
 def _xray_lines() -> tuple[tuple[float, str, float], ...]:
-    """(energy eV, "Fe K-L3", weight) for the main X-ray lines in pyTEMlib's tables."""
+    """(energy eV, "Fe K-L3", weight) for the X-ray lines in pyTEMlib's tables, down to 1% of their family's
+    strongest: a Pt particle's L3-M1 and L2-N4 peaks (weights 0.06 and 0.08) were left unnamed at 10%."""
     try:
         from pyTEMlib import xrpa_x_sections
     except ImportError:
@@ -569,14 +570,50 @@ def _xray_lines() -> tuple[tuple[float, str, float], ...]:
     out = []
     for entry in xrpa_x_sections.x_sections.values():
         for line, info in (entry.get("lines") or {}).items():
-            if float(info.get("weight", 0)) >= 0.1 and 100.0 <= float(info["position"]) <= 40000.0:
+            if float(info.get("weight", 0)) >= 0.01 and 100.0 <= float(info["position"]) <= 40000.0:
                 out.append((float(info["position"]), f"{entry['name']} {line}", float(info["weight"])))
     return tuple(sorted(out))
 
 
-def xray_candidates(energy_ev: float, tolerance_ev: float) -> list[str]:
-    near = [(abs(e - energy_ev), name) for e, name, _w in _xray_lines() if abs(e - energy_ev) <= tolerance_ev]
-    return [name for _d, name in sorted(near)[:3]]
+def xray_candidates(energy_ev: float, tolerance_ev: float, peaks_ev: list[float] | None = None, energy_max_ev: float = math.inf) -> str:
+    """The lines that could make a peak, nearest first; "unidentified" when lines are near but none could.
+
+    A line could not when it is a minor line whose family's main line has no peak, or when it is not in its element's
+    main family (K if in range, else L, else M) and that family's main line has no peak. A carbon peak was once listed as Ca L and Ag M lines and read as both; listing them as
+    "less likely" still had them named as present (qwen runs 2026-11-03), so they are left out.
+    """
+    near = sorted((abs(e - energy_ev), name, w) for e, name, w in _xray_lines() if abs(e - energy_ev) <= tolerance_ev)
+    likely = [name for _d, name, weight in near if peaks_ev is None or not _unlikely_line(name, weight, peaks_ev, energy_max_ev)]
+    if near and not likely:
+        return "unidentified: no element whose main lines are present has a line here"
+    return ", ".join(likely[:3])
+
+
+@lru_cache(maxsize=1)
+def _lines_by_element() -> dict[str, list[tuple[float, str, float]]]:
+    out: dict[str, list[tuple[float, str, float]]] = {}
+    for energy, name, weight in _xray_lines():
+        element, line = name.split(" ", 1)
+        out.setdefault(element, []).append((energy, line, weight))
+    return out
+
+
+def _unlikely_line(name: str, weight: float, peaks_ev: list[float], energy_max_ev: float) -> str:
+    element, line = name.split(" ", 1)
+    lines = _lines_by_element()[element]
+    _w, top_energy, top_line = max((w, e, l) for e, l, w in lines if l[0] == line[0])
+    if weight < _w and not _seen(top_energy, peaks_ev):
+        return f"minor line, no {element} {top_line} peak at {top_energy:.0f} eV"
+    # The element's main family is its K lines when they are in range, else its L lines, else its M lines.
+    main = next((f for f in "KLM" if any(l[0] == f and e <= energy_max_ev for e, l, _w in lines)), line[0])
+    if line[0] == main:
+        return ""
+    _w, main_energy, main_line = max((w, e, l) for e, l, w in lines if l[0] == main and e <= energy_max_ev)
+    return "" if _seen(main_energy, peaks_ev) else f"no {element} {main_line} peak at {main_energy:.0f} eV"
+
+
+def _seen(energy_ev: float, peaks_ev: list[float]) -> bool:
+    return any(abs(p - energy_ev) <= float(eds_fwhm_ev(energy_ev)) / 2 for p in peaks_ev)
 
 
 def is_xray(ds: Dataset) -> bool:
@@ -597,10 +634,19 @@ def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, xray: bool, step: int =
         position = float(x[peak.index])
         note = ""
         if xray:
-            tolerance = max(float(eds_fwhm_ev(position)) / 2, 2 * abs(axis.scale * step))
-            note = _artefact(position, [row[0] for row in rows], tolerance) or ", ".join(xray_candidates(position, tolerance))
+            note = _artefact(position, [row[0] for row in rows], _line_tolerance(position, axis, step))
         rows.append((position, peak.net, peak.significance, peak.index, note))
+    if xray:  # every peak is known before any is named, so a line can be checked against its element's other lines
+        positions, top = [row[0] for row in rows], float(np.nanmax(x)) if x.size else math.inf
+        rows = [(e, net, sig, i, note or xray_candidates(e, _line_tolerance(e, axis, step), positions, top)) for e, net, sig, i, note in rows]
     return sorted(rows, key=lambda row: row[1], reverse=True)
+
+
+def _line_tolerance(energy_ev: float, axis: Axis, step: int) -> float:
+    """Half the line width, or all of it below 1 keV: there the detector window cuts the background steeply and a
+    peak's top shifts up (a carbon K peak, 277 eV, is found at 298 to 308 eV)."""
+    width = float(eds_fwhm_ev(energy_ev))
+    return max(width if energy_ev < 1000.0 else width / 2, 2 * abs(axis.scale * step))
 
 
 def _artefact(energy: float, stronger: list[float], tolerance: float) -> str:
@@ -620,18 +666,42 @@ def _real(ds: Dataset) -> bool:
 # ----------------------------------------------------------------- 1-D: spectra and profiles
 
 
+def note_elements(note: str) -> set[str]:
+    """The elements a peak's note says could make it: none for an escape, sum or unidentified peak."""
+    if not note or note.startswith(("possible", "unidentified")):
+        return set()
+    return {c.strip().split(" ")[0] for c in note.split(",") if c.strip()}
+
+
 def likely_elements(rows, share: float = 0.25) -> str:
-    """Elements ranked by the summed sigma of the peaks they could explain, each peak counted once per element, kept
-    while an element explains at least ``share`` of what the best one does: "Au 85%, Pt 7%"."""
+    """The fewest elements that explain the peaks, as the share of the peak signal (summed sigma) each explains:
+    "Au 85%, Pt 7%", kept while an element explains at least ``share`` of what the best one does.
+
+    The element explaining the most of what is left takes its peaks, then the next; elements tied on the same peaks
+    share them. Every element that could make a peak once got all of it: a Pd particle's weaker L lines read as Cd and
+    In too, and one peak as "Ca 100%, Ag 100%" (qwen runs 2026-11-03).
+    """
+    left = {i: (float(row[2]), note_elements(row[4])) for i, row in enumerate(rows)}
     score: dict[str, float] = {}
-    for _energy, _net, sigma, _index, note in rows:
-        for element in {c.strip().split(" ")[0] for c in (note or "").split(",") if c.strip() and not c.strip().startswith("possible")}:
-            score[element] = score.get(element, 0.0) + float(sigma)
+    while True:
+        gain: dict[str, float] = {}
+        for sigma, elements in left.values():
+            for element in elements:
+                gain[element] = gain.get(element, 0.0) + sigma
+        if not gain:
+            break
+        best = max(gain.values())
+        tied = sorted(e for e in gain if gain[e] >= best * (1 - 1e-9))
+        taken = [i for i, (_s, elements) in left.items() if set(tied) & elements]
+        for i in taken:
+            sigma, elements = left.pop(i)
+            for element in set(tied) & elements:
+                score[element] = score.get(element, 0.0) + sigma / len(set(tied) & elements)
     if not score:
         return ""
     total = sum(float(r[2]) for r in rows) or 1.0
-    best = max(score.values())
-    ranked = sorted((e for e in score if score[e] >= share * best), key=lambda e: -score[e])[:4]
+    top = max(score.values())
+    ranked = sorted((e for e in score if score[e] >= share * top), key=lambda e: (-score[e], e))[:4]
     return ", ".join(f"{e} {100.0 * score[e] / total:.0f}%" for e in ranked)
 
 

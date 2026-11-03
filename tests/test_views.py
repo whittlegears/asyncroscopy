@@ -122,6 +122,20 @@ def test_spectrum_text_lists_peaks_with_energies_and_xray_candidates():
     assert len(text) <= views.MAX_TEXT_CHARS
 
 
+def test_a_low_peak_is_named_by_an_element_whose_main_lines_fit_not_by_minor_lines():
+    # A carbon support's K peak at about 300 eV was named Ca L and Ag M, though no Ca K or Ag L peak was there.
+    attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
+    carbon = views.view(Recorded((2048,), attrs, values=gaussian_spectrum([298.0])), "c.h5", "text")[0]["text"]
+    assert "consistent with these peaks (the share of the peak signal each one explains): C 100%" in carbon
+    assert "Ca " not in carbon and "Ag " not in carbon
+    stranded = views.view(Recorded((2048,), attrs, values=gaussian_spectrum([2430.0])), "stranded.h5", "text")[0]["text"]
+    assert "unidentified" in stranded and "consistent with these peaks" not in stranded
+    calcium = views.view(Recorded((2048,), attrs, values=gaussian_spectrum([302.0, 3692.0])), "ca.h5", "text")[0]["text"]
+    assert "no Ca K-L3 peak" not in calcium and "Ca " in calcium.split("explains): ")[1].splitlines()[0]
+    iron = views.view(Recorded((2048,), attrs, values=gaussian_spectrum([6404.0, 7058.0])), "fe.h5", "text")[0]["text"]
+    assert "Fe K-M3" in iron and "Fe K-M3 (" not in iron
+
+
 def test_spectrum_csv_is_binned_by_summing_and_capped():
     counts = np.ones(2048)
     node = Recorded((2048,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0}, values=counts)
@@ -399,6 +413,11 @@ def test_likely_elements_rank_the_elements_that_explain_the_most_peak_signal():
             (2134, 173, 12.83, 0, "Pt M4-N6, Zr L2-M4, Au M5-N7"), (590, 105, 8.15, 0, "Cr L2-M4, Ba M5-N3")]
     assert views.likely_elements(rows).startswith("Au ")
     assert views.likely_elements([]) == "" and views.likely_elements([(500, 10, 5.0, 0, "")]) == ""
+    assert views.likely_elements([(300, 30, 6.0, 0, "Ca L3-M1, Ag L3-M5")]) == "Ag 50%, Ca 50%"
+    palladium = [(2838, 90, 9.0, 0, "Pd L3-M5, Pd L3-M4"), (2990, 40, 4.0, 0, "Pd L2-M4"), (3172, 30, 3.0, 0, "Cd L3-M5, Pd L2-N4"),
+                 (3290, 20, 2.0, 0, "In L3-M5, Pd L1-M3")]
+    assert views.likely_elements(palladium) == "Pd 100%"
+    assert views.likely_elements(palladium + [(4651, 30, 5.0, 0, "La L3-M5")]) == "Pd 78%, La 22%"
     attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
     signal = np.random.default_rng(2).poisson(gaussian_spectrum([6404.0])).astype(np.float64)
     summary, _ = views.view(Recorded((2048,), attrs, values=signal), "fe.h5", "text")
