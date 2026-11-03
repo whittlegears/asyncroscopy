@@ -33,12 +33,13 @@ import fnmatch
 import json
 import re
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
-from langchain_core.tools import StructuredTool
+from langchain_core.tools import BaseTool, StructuredTool
 
 from asyncroscopy.agents import goals  # goals reads skill runs back, so its names are looked up at call time
-from asyncroscopy.skills.registry import list_skills
+from asyncroscopy.skills.registry import Skill, list_skills
 
 RUN_TOOLS = ("run_skill", "wait_for_skill")
 REFERENCE = re.compile(r"^\{([A-Za-z_][\w.]*)\}$")
@@ -106,7 +107,7 @@ def skill_run_calls(reply: Any) -> list[dict]:
 class SkillRuns:
     """``run_skill`` and ``wait_for_skill`` over an agent's tools: one background run at a time."""
 
-    def __init__(self, tools, skills=None):
+    def __init__(self, tools: Iterable[BaseTool], skills: list[Skill] | None = None) -> None:
         self.tools = {t.name: t for t in tools}
         found = skills if skills is not None else list_skills(set(self.tools))
         self.listed = {s.name: s for s in found if s.run and s.available}

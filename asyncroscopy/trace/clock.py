@@ -14,7 +14,7 @@ class InstrumentClock:
     for ``retry_after_s``, so a stopped instrument never slows the trace down.
     """
 
-    def __init__(self, address: str, timeout_ms: int = 1000, retry_after_s: float = 10.0):
+    def __init__(self, address: str, timeout_ms: int = 1000, retry_after_s: float = 10.0) -> None:
         self.address = address
         self.timeout_ms = timeout_ms
         self.retry_after_s = retry_after_s

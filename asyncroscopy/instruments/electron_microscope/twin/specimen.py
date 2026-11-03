@@ -40,6 +40,8 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -88,7 +90,7 @@ class Specimen:
         """Atoms per square angstrom of each element along the beam at (x, y), support film excluded."""
         return {}
 
-    def height_at(self, x, y):
+    def height_at(self, x: float | np.ndarray, y: float | np.ndarray) -> np.ndarray:
         gx, gy = self.height_gradient
         return gx * np.asarray(x) + gy * np.asarray(y)
 
@@ -177,8 +179,8 @@ def specimen_sources() -> dict[str, type[Specimen]]:
         for point in entry_points(group="asyncroscopy.specimens"):
             try:
                 register_specimen(point.load())
-            except Exception:  # a broken plug-in must not take the twin down
-                pass
+            except Exception as exc:  # a broken plug-in must not take the twin down
+                print(f"[asyncroscopy.specimens] could not load specimen {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
     return SPECIMENS
 
 
@@ -230,7 +232,7 @@ def parse_specimen(text: str) -> dict:
     return value
 
 
-def check_options(source: str, options: dict, accepted) -> None:
+def check_options(source: str, options: dict, accepted: Iterable[str]) -> None:
     """Refuse an option the source does not know, naming the ones it does (a typo must not pass silently)."""
     unknown = sorted(set(options) - set(accepted))
     if unknown:

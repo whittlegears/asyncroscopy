@@ -246,6 +246,21 @@ def test_abort_works_while_paused_and_leaves_the_instrument_safe(tmp_path):
     assert job.stopped == ["aborted"] and job.ran == []
 
 
+def test_a_pause_that_could_not_make_the_instrument_safe_says_so(tmp_path):
+    job, _beam = beam_job(tmp_path, 2.0, resume_after_s=60)
+
+    def broken_blank(job_record, reason):
+        raise RuntimeError("DevFailed: blank_beam timed out")
+
+    job.on_suspend = broken_blank
+    reservation = job.call("reserve", {"plan": {"xs": [0.0]}})["reservation_id"]
+    job_id = job.call("start", {"reservation_id": reservation})["job_id"]
+    paused = job.wait_for(job_id, {"paused_suspended"})
+    assert "not made safe" in paused["last_error"] and "blank_beam timed out" in paused["last_error"]
+    job.call("abort", {"job_id": job_id})
+    job.wait_for(job_id, {"aborted"})
+
+
 def test_an_unreadable_condition_counts_as_bad(tmp_path):
     job, beam = beam_job(tmp_path, RuntimeError("DevFailed: beam monitor offline"))
     reservation = job.call("reserve", {"plan": {"xs": [0.0]}})["reservation_id"]

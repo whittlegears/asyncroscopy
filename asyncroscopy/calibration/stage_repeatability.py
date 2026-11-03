@@ -8,6 +8,7 @@ reference image. Prints twin stage properties.
 from __future__ import annotations
 
 import numpy as np
+import tango
 
 from asyncroscopy.calibration._common import (
     acquire,
@@ -18,7 +19,7 @@ from asyncroscopy.calibration._common import (
 )
 
 
-def measure(microscope, fov: float, imsize: int, excursion: float, repeats: int) -> dict[str, float]:
+def measure(microscope: tango.DeviceProxy, fov: float, imsize: int, excursion: float, repeats: int) -> dict[str, float]:
     """Return twin stage properties measured on ``microscope`` around its current position."""
     pixel = fov / imsize
     home = np.array(microscope.get_stage(), dtype=float)

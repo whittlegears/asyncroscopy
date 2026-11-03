@@ -166,7 +166,7 @@ class STAGE(Device):
     def read_position(self) -> list[float]:
         return self._read_position()
 
-    def write_position(self, value) -> None:
+    def write_position(self, value: list[float]) -> None:
         if getattr(self, "_frozen", None):
             raise ValueError(f"the stage did not move: {self._frozen}")
         for axis, v in zip(("x", "y", "z", "alpha", "beta"), value):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Callable
 
 import h5py
 import numpy as np
@@ -12,19 +13,19 @@ import tango
 from skimage.registration import phase_cross_correlation
 
 
-def parse_args(description: str, extra=None) -> argparse.Namespace:
+def parse_args(description: str, extra: Callable[[argparse.ArgumentParser], object] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--device", default="asyncroscopy/instrument/default", help="Microscope Tango device.")
     parser.add_argument("--scan", default="asyncroscopy/scan/default", help="SCAN settings device.")
     parser.add_argument("--fov", type=float, default=200e-9, help="Field of view (m).")
-    parser.add_argument("--imsize", type=int, default=256)
-    parser.add_argument("--dwell", type=float, default=2e-6)
+    parser.add_argument("--imsize", type=int, default=256, help="Image size (pixels per side).")
+    parser.add_argument("--dwell", type=float, default=2e-6, help="Dwell time per pixel (s).")
     if extra:
         extra(parser)
     return parser.parse_args()
 
 
-def connect(args) -> tuple[tango.DeviceProxy, tango.DeviceProxy]:
+def connect(args: argparse.Namespace) -> tuple[tango.DeviceProxy, tango.DeviceProxy]:
     microscope = tango.DeviceProxy(args.device)
     microscope.set_timeout_millis(120_000)
     scan = tango.DeviceProxy(args.scan)

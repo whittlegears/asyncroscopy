@@ -48,7 +48,7 @@ class SimIndenter(Device):
         return list(self._xy)
 
     @command(dtype_in=[float], doc_in=":param xy: Target stage position [x, y] in metres.")
-    def move_xy(self, xy) -> None:
+    def move_xy(self, xy: list[float]) -> None:
         """Move the stage. Retracts the tip first."""
         x, y = float(xy[0]), float(xy[1])
         if max(abs(x), abs(y)) > float(self.travel_m):

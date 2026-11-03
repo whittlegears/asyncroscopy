@@ -20,9 +20,11 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 import numpy as np
 from fastmcp import Client
+from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 
 AGENT = "http://127.0.0.1:8000/mcp"
@@ -33,24 +35,24 @@ CALLER = "gui-contract-agent"
 results = []
 
 
-def check(name, ok, detail=""):
+def check(name: str, ok: bool, detail: str = "") -> bool:
     results.append(ok)
     print(("PASS " if ok else "FAIL ") + name + (f"  -- {detail}" if detail else ""))
     return ok
 
 
-def get(path, accept="application/json"):
+def get(path: str, accept: str = "application/json") -> Any:
     req = urllib.request.Request(TILED + path, headers={**HEADERS, "Accept": accept})
     with urllib.request.urlopen(req, timeout=30) as r:
         body = r.read()
     return json.loads(body) if accept == "application/json" else body
 
 
-def text(result):
+def text(result: CallToolResult) -> str:
     return "".join(b.text for b in result.content if getattr(b, "type", "") == "text")
 
 
-async def mcp_side():
+async def mcp_side() -> None:
     async with Client(OPERATOR) as op:
         names = {t.name for t in await op.list_tools()}
         check("operator role detected (Approvals_approve + Approvals_set_mode)", {"Approvals_approve", "Approvals_set_mode"} <= names)
@@ -114,7 +116,7 @@ def eds_points(key: str, meta: dict, cells: int = 3) -> list[dict]:
     return points
 
 
-def tiled_side():
+def tiled_side() -> None:
     query = "&".join([
         "filter[eq][condition][key]=kind",
         "filter[eq][condition][value]=" + urllib.parse.quote('"stitched_map"'),

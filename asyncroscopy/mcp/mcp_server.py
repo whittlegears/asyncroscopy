@@ -11,6 +11,7 @@ import socket
 import threading
 import time
 import traceback
+import warnings
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import Annotated, Any, Callable, Literal
 
@@ -104,7 +105,7 @@ class _Lane:
     """A small thread pool with a slot count: work that outlives its deadline keeps its slot until it ends,
     so a stuck Tiled fills one lane with a clear "busy" answer instead of starving every data tool."""
 
-    def __init__(self, name: str, slots: int):
+    def __init__(self, name: str, slots: int) -> None:
         self.name, self.slots = name, slots
         self.pool = ThreadPoolExecutor(max_workers=slots, thread_name_prefix=f"data-{name}")
         self.free = threading.BoundedSemaphore(slots)
@@ -170,7 +171,7 @@ class ApprovalHeld(ToolError):
     """A high-risk call held for an operator; ``request_id`` is the approval request to wait on, ``why`` why
     auto mode held it (None in approve mode)."""
 
-    def __init__(self, message: str, request_id: str, why: str | None = None):
+    def __init__(self, message: str, request_id: str, why: str | None = None) -> None:
         super().__init__(message)
         self.request_id = request_id
         self.why = why
@@ -192,13 +193,13 @@ class MCPServer:
         approvals_device_address: str | None = None,
         risk_overrides: dict[str, str] | None = None,
         trace_path: str | None = None,
-        database=None,
+        database: Any = None,
         analysis_url: str | None = None,
         job_limits: dict[str, float] | None = None,
         auth: dict | None = None,
         clock_device: str | None = None,
         trace_follow: list[str] | None = None,
-    ):
+    ) -> None:
         """
         Args:
             name (str): Display name for the MCP server instance.
@@ -325,8 +326,8 @@ class MCPServer:
                 dev_class = dev.info().dev_class
                 if not self._is_blocked_class(dev_class):
                     available.append(device_name)
-            except Exception:
-                pass
+            except Exception as exc:
+                warnings.warn(f"list_devices: left out {device_name}: {type(exc).__name__}: {exc}", RuntimeWarning, stacklevel=2)
         return available
 
     def _tiled_node(self, key: str, hints: bool = True) -> Any:
@@ -1151,8 +1152,8 @@ class MCPServer:
             try:
                 self.trace.record("stop_all", all(s["ok"] for s in report), time.time(), caller=self._caller(), run=self._run_id() or None,
                                   arguments={"steps": [s["tool"] for s in report]})
-            except Exception:
-                pass
+            except Exception as exc:
+                warnings.warn(f"stop_all: trace event not written: {type(exc).__name__}: {exc}", RuntimeWarning, stacklevel=2)
         return {"stopped": bool(report) and all(s["ok"] for s in report), "steps": report,
                 **({} if work else {"note": "this endpoint reaches no beam, job or probe to stop"})}
 
@@ -1508,7 +1509,7 @@ class MCPServer:
         """Wait on a stitching or scoring job of the analysis server; when it is done, add its results."""
         from fastmcp import Client
 
-        def text(reply) -> str:
+        def text(reply: Any) -> str:
             return "".join(getattr(b, "text", "") for b in getattr(reply, "content", []) or [])
 
         async def call() -> dict[str, Any]:
@@ -1696,7 +1697,7 @@ class MCPServer:
         for line in warnings:
             print(f"[safety] {line}")
 
-    def setup(self, print_summary: bool = True):
+    def setup(self, print_summary: bool = True) -> None:
         """Configure tools and add them to the MCP instance.
 
         Args:
@@ -1789,7 +1790,7 @@ class MCPServer:
                     print("")
                 print("")
 
-    def start(self, transport: Transport | None = None, **kwargs):
+    def start(self, transport: Transport | None = None, **kwargs: Any) -> None:
         """
         Synchronizes with Tango DB and begins serving the MCP protocol.
 

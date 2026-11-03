@@ -42,7 +42,7 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
-    ):
+    ) -> None:
         """
         Args:
             name (str): Display name for this MCP server instance.

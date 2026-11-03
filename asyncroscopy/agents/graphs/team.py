@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 import os
 import re
 from typing import TypedDict
@@ -33,6 +34,7 @@ from typing import TypedDict
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
@@ -47,6 +49,8 @@ try:  # import the model client here: an import inside the async factory blocks 
     import langchain_ollama  # noqa: F401
 except ImportError:
     pass
+
+log = logging.getLogger(__name__)
 
 # Jobs go through run_job (reserve + start) and wait_for_job (which waits on instrument and analysis jobs
 # and returns their results), so the envelope's separate reserve/start/status/results/release tools and
@@ -150,7 +154,7 @@ def heuristic_plan(request: str, roles: set[str]) -> list[dict]:
 
 
 class TeamGraph:
-    def __init__(self, config: AgentConfig | None = None, memory: Memory | None = None):
+    def __init__(self, config: AgentConfig | None = None, memory: Memory | None = None) -> None:
         self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "team"))
         self.memory = memory or Memory.from_env()
         self._tools: dict[str, list] | None = None
@@ -167,7 +171,7 @@ class TeamGraph:
             self._tools = {role: ts for role, ts in self._tools.items() if any(role_of(t.name, stem, waits) == role for t in ts)}
         return self._tools
 
-    def specialist(self, role: str, tools: list, task: str, notes: list[str]):
+    def specialist(self, role: str, tools: list, task: str, notes: list[str]) -> CompiledStateGraph:
         """A tool-using agent for one step: its role's tools and rules, the notes so far, and (each model call) the skills and memory that apply."""
         names = {t.name for t in tools}
         known = ("\n\nWhat earlier steps produced:\n" + "\n".join(notes[-4:])) if notes else ""
@@ -189,6 +193,7 @@ class TeamGraph:
             steps = [{"agent": str(s["agent"]).lower(), "task": str(s["task"])} for s in steps if isinstance(s, dict) and s.get("task")]
             steps = [s for s in steps if s["agent"] in roles][:MAX_STEPS]
         except Exception:
+            log.warning("the planner model failed; using the heuristic plan", exc_info=True)
             steps = []
         return {"plan": steps or heuristic_plan(state["request"], roles), "step": 0, "notes": [], "trace": [], "retried": False, "skills_applied": []}
 
@@ -230,11 +235,12 @@ class TeamGraph:
             ])
             answer = reply.content if isinstance(reply.content, str) else str(reply.content)
         except Exception:
+            log.warning("the report model failed; answering with the step notes", exc_info=True)
             answer = ""
         return {"answer": answer.strip() or f"Steps run:\n{notes}\nFacts: {facts.summary()}"}
 
     # ------------------------------------------------------------------ graph
-    def build(self):
+    def build(self) -> CompiledStateGraph:
         graph = StateGraph(TeamState)
         graph.add_node("plan", self.plan)
         graph.add_node("work", self.work)
@@ -253,7 +259,7 @@ async def run_team(request: str, config: AgentConfig | None = None) -> tuple[str
     return state["answer"], [Call.from_dict(c) for c in state.get("trace", [])], state.get("skills_applied", [])
 
 
-def make_graph(config: dict | None = None):
+def make_graph(config: dict | None = None) -> CompiledStateGraph:
     """Graph factory for LangGraph Studio (input: {"request": "..."})."""
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
     return TeamGraph(AgentConfig.from_env(model=configurable.get("model"), caller=configurable.get("caller") or "team")).build()

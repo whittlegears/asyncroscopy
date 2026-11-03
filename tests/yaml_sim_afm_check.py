@@ -9,7 +9,9 @@ import json
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import h5py
 import tango
@@ -28,7 +30,7 @@ devices = [{"class": device_class("AFMTwin", jobs=True), "devices": [{"name": "a
 outcome = {}
 
 
-def attempt(func, *args):
+def attempt(func: Callable[..., Any], *args: Any) -> Any:
     try:
         return func(*args)
     except Exception as exc:

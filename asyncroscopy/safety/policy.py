@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatchcase
+from typing import Iterable
 
 # A safe stop is recognised by an allow-list (anything else is high, like any unknown name):
 # exactly one stop verb, and every other word one of the objects that verb may take.
@@ -229,7 +230,7 @@ AUTO_DEFAULT = frozenset({
 })
 
 
-def auto_allows(tool_name: str, switched_on=(), stem_devices=()) -> bool:
+def auto_allows(tool_name: str, switched_on: Iterable[str] = (), stem_devices: Iterable[str] = ()) -> bool:
     """True when auto mode may run the high-risk tool ``tool_name`` ("<Prefix>_<command>") without a
     person: an operator switched it on (``switched_on``: tool-name globs, case ignored), or it is a
     routine command (AUTO_DEFAULT) of an electron microscope (``stem_devices``: the tool prefixes of
@@ -243,7 +244,7 @@ def auto_allows(tool_name: str, switched_on=(), stem_devices=()) -> bool:
     return False
 
 
-def auto_allows_start(tool_name: str, drives, switched_on=(), stem_devices=()) -> bool:
+def auto_allows_start(tool_name: str, drives: Iterable[str] | None, switched_on: Iterable[str] = (), stem_devices: Iterable[str] = ()) -> bool:
     """True when auto mode may start a job without a person: its start was switched on, or ``drives``
     (the high-risk tools the reserved plan drives) is known and auto mode allows every one."""
     if any(fnmatchcase(tool_name.lower(), str(pattern).lower()) for pattern in switched_on):
@@ -286,19 +287,19 @@ def _glob_risk(pattern: str, risks: dict[str, str] | None) -> str:
     return risk_of(device.strip("*?[]") or "Any", command, envelope=command.lower() in ENVELOPE_VERBS)
 
 
-def is_stem_device(command_names) -> bool:
+def is_stem_device(command_names: Iterable[str]) -> bool:
     """True for an electron microscope: it scans images and blanks a beam, so the STEM_LOW
     commands are beam settings. An AFM's acquire_scanned_image alone does not count."""
     return {"acquire_scanned_image", "blank_beam"} <= {c.lower() for c in command_names}
 
 
-def is_probe_device(command_names) -> bool:
+def is_probe_device(command_names: Iterable[str]) -> bool:
     """True for a device that brings a probe to the sample (an SPM's approach, an indenter's indent):
     there a bare retract or withdraw lifts it away. A syringe pump's withdraw does not count."""
     return any(set(_word_list(str(c))) & PROBE_WORDS for c in command_names)
 
 
-def is_envelope_device(command_names) -> bool:
+def is_envelope_device(command_names: Iterable[str]) -> bool:
     """True when a device exposes the whole job envelope (reserve ... release)."""
     return ENVELOPE_VERBS <= {c.lower() for c in command_names}
 

@@ -45,12 +45,17 @@ import importlib.util
 import math
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
 
 from asyncroscopy.routines.drift import DEFAULT_WINDOW, bounded_correction, get_tracker, tile_offset_m
 from asyncroscopy.routines.grid import index_at
+
+if TYPE_CHECKING:
+    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+    from asyncroscopy.jobs.map_profile import InstrumentProfile
 
 DEFAULTS = {"track": False, "tracker": "linear", "window": DEFAULT_WINDOW}
 MAX_SHIFT_FOV = 0.1  # default max_shift_m: a tenth of a tile per correction
@@ -64,7 +69,7 @@ def tracking(plan: dict) -> dict | None:
     return drift if isinstance(drift, dict) and drift.get("track") else None
 
 
-def resolve(p: dict, profile, tile_size_m: tuple[float, float], tiles: int) -> None:
+def resolve(p: dict, profile: InstrumentProfile, tile_size_m: tuple[float, float], tiles: int) -> None:
     """Check and complete ``p["drift"]`` at reserve; refuse, by name, what tracking cannot do here."""
     drift = p.get("drift")
     if drift is None:
@@ -96,7 +101,7 @@ def resolve(p: dict, profile, tile_size_m: tuple[float, float], tiles: int) -> N
     drift["window"] = int(drift["window"])
 
 
-def needed_commands(plan: dict, profile) -> tuple:
+def needed_commands(plan: dict, profile: InstrumentProfile) -> tuple:
     return tuple(profile.image_shift_commands) if tracking(plan) else ()
 
 
@@ -113,7 +118,7 @@ def _tracker(job: dict):
     return get_tracker(str(settings["tracker"]))(settings, state.get("tracker_state"))
 
 
-def start(job: dict, profile) -> None:
+def start(job: dict, profile: InstrumentProfile) -> None:
     """At the start (and on a resume): remember the image shift before the map, once."""
     if not tracking(job["resolved_plan"]):
         return
@@ -125,7 +130,7 @@ def start(job: dict, profile) -> None:
         state["base_shift_m"] = profile.get_image_shift(job)
 
 
-def correct(mapper, job: dict, profile, tile: dict) -> dict | None:
+def correct(mapper: Mapper, job: dict, profile: InstrumentProfile, tile: dict) -> dict | None:
     """Before acquiring ``tile``: set the bounded image shift that cancels the predicted placement error; traced."""
     settings = tracking(job["resolved_plan"])
     if not settings:
@@ -182,7 +187,7 @@ def _previous_image(mapper, job: dict, index: int) -> np.ndarray | None:
         return None
 
 
-def measure(mapper, job: dict, tile: dict, images: dict | None, acquired: float) -> dict | None:
+def measure(mapper: Mapper, job: dict, tile: dict, images: dict | None, acquired: float) -> dict | None:
     """After acquiring ``tile``: register it on an overlapping neighbour and give the tracker the placement error."""
     settings = tracking(job["resolved_plan"])
     if not settings:
@@ -252,7 +257,7 @@ def tile_arrays(job: dict, record: dict | None) -> dict:
     return {"drift_correction_m": list(record["correction_m"]), "drift_error_m": list(error) if error is not None else [math.nan, math.nan]}
 
 
-def finish(job: dict, profile) -> None:
+def finish(job: dict, profile: InstrumentProfile) -> None:
     """Put the image shift back to its value before the map (once; again after another correction)."""
     if not tracking(job.get("resolved_plan") or {}) or KEY not in job:
         return
@@ -282,7 +287,7 @@ def summary(job: dict) -> dict | None:
     return {k: v for k, v in out.items() if v is not None}
 
 
-def check_shift(job: dict, arguments) -> dict | None:
+def check_shift(job: dict, arguments: Any) -> dict | None:
     """A dry run's check of a recorded set_image_shift: within max_total_m of the shift before the map?"""
     settings = tracking(job["resolved_plan"])
     if not settings or KEY not in job:

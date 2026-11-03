@@ -38,7 +38,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -58,6 +60,9 @@ from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
 from asyncroscopy.instruments.electron_microscope.tuner import Tuner
 from asyncroscopy.mcp.tool_log import TraceWriter
 from asyncroscopy.trace.stream import read_trace
+
+if TYPE_CHECKING:
+    from tango.test_context import MultiDeviceTestContext
 
 # ---------------------------------------------------------------------- the study
 # Tuning budgets: the Tuner's search sizes (image_metric). "none" skips tuning.
@@ -106,7 +111,7 @@ OBJECTIVES = ("information", "information_in_focus")
 class FocusDriftTwin(DigitalTwin):
     """The particle twin plus two things the bench needs: a focus that drifts, and a fixed overhead per frame."""
 
-    def init_device(self):
+    def init_device(self) -> None:
         super().init_device()
         self._focus_drift = 0.0
         self._drift_t0 = 0.0
@@ -124,7 +129,7 @@ class FocusDriftTwin(DigitalTwin):
             ab["C10"] = float(ab.get("C10", 0.0)) + drift * (self._clock.now() - self._drift_t0) * 1e9
         return ab
 
-    def _scan_frame(self, imsize, dwell_time, scan_region):
+    def _scan_frame(self, imsize: int, dwell_time: float, scan_region: Sequence[float]) -> dict:
         self._clock.advance(getattr(self, "_frame_overhead_s", 0.0))  # set-up, settle and read-out of a frame
         self.last_frame_focus = self._focus_truth()  # the hidden focus error this frame is taken with
         return super()._scan_frame(imsize, dwell_time, scan_region)
@@ -147,7 +152,7 @@ def devices_info(work: Path) -> list[dict]:
     ]
 
 
-def _call(proxy, verb: str, payload: dict) -> dict:
+def _call(proxy: tango.DeviceProxy, verb: str, payload: dict) -> dict:
     return json.loads(getattr(proxy, verb)(json.dumps(payload)))
 
 
@@ -163,7 +168,7 @@ def map_tiles() -> list[tuple[float, float]]:
 
 
 class Bench:
-    def __init__(self, ctx, work: Path, frame_overhead_s: float):
+    def __init__(self, ctx: MultiDeviceTestContext, work: Path, frame_overhead_s: float) -> None:
         self.work = work
         self.twin = tango.DeviceProxy(ctx.get_device_access("bench/twin/tva"))
         self.scan = tango.DeviceProxy(ctx.get_device_access("bench/scan/tva"))
@@ -371,7 +376,7 @@ def git_head() -> str:
         return "?"
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--budget-s", type=float, default=120.0, help="Instrument time per trial, tuning plus acquisition (s).")
     parser.add_argument("--conditions", nargs="*", default=list(CONDITIONS), choices=list(CONDITIONS))

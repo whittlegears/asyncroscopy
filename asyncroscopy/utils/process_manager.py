@@ -8,7 +8,8 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from types import FrameType, TracebackType
+from typing import Any, Iterable
 import threading
 
 try:
@@ -34,7 +35,7 @@ def stop_on_termination() -> None:
     """
     stopping = False
 
-    def interrupt(_signum, _frame) -> None:
+    def interrupt(_signum: int, _frame: FrameType | None) -> None:
         nonlocal stopping
         if stopping:
             return
@@ -229,12 +230,12 @@ class ProcessManager:
 
     def __init__(
         self,
-        name: str = None,
+        name: str | None = None,
         state_dir: str | Path = ".processes",
         timeout: float = 5.0,
         max_output_lines: int = 200,
         echo_output: bool = False,
-    ):
+    ) -> None:
         if name is None:
             name = Path(sys.argv[0]).stem
         if name.endswith(".json"):
@@ -251,11 +252,11 @@ class ProcessManager:
         self.active_processes: list[ManagedProcess] = []
         self.history: deque[ManagedProcess] = deque(maxlen=1000)
 
-    def __enter__(self):
+    def __enter__(self) -> "ProcessManager":
         self._cleanup_stale_state()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
         self.shutdown_all()
 
     def start_process(
@@ -265,7 +266,7 @@ class ProcessManager:
         command: list[str],
         env: dict[str, str] | None = None,
         cwd: Path | str | None = PROJECT_DIR,
-        **kwargs,
+        **kwargs: Any,
     ) -> ManagedProcess:
         """Launches a child process, sets group/session execution, and records state."""
         popen_kwargs: dict = {"env": env, "cwd": cwd, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
@@ -315,7 +316,7 @@ class ProcessManager:
             stream.close()
         threading.Thread(target=_read, daemon=True).start()
 
-    def save(self):
+    def save(self) -> None:
         """Atomically saves live PIDs to this launcher's state file."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
         active_pids = [mp.pid for mp in self.active_processes if mp.running]
@@ -326,7 +327,7 @@ class ProcessManager:
         temp_file.replace(self.state_file)
 
 
-    def stop_process(self, managed: ManagedProcess):
+    def stop_process(self, managed: ManagedProcess) -> None:
         """Stops a single managed process safely."""
         if not managed.running:
             if managed in self.active_processes:
@@ -345,7 +346,7 @@ class ProcessManager:
             self.active_processes.remove(managed)
             self.save()
 
-    def shutdown_all(self):
+    def shutdown_all(self) -> None:
         """Performs a fast, concurrent shutdown of every tracked process."""
         old_handler = None
         # Temporarily ignore Ctrl+C so a second press doesn't abort the cleanup
@@ -525,7 +526,7 @@ class ProcessManager:
             except OSError:
                 pass
 
-    def wipe_databases(self):
+    def wipe_databases(self) -> None:
         """Deletes stale database files to prevent startup corruption."""
         for filename in TANGO_DATABASE_FILES:
             path = PROJECT_DIR / filename
@@ -541,7 +542,7 @@ class ProcessManager:
         ports: list[int],
         device_servers: Iterable[tuple[str, str]] = (),
         tango_host: str | None = None,
-    ):
+    ) -> None:
         """Frees the given ports and stops this config's own stale device servers.
 
         Args:

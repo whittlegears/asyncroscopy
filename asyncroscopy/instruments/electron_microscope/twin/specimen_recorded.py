@@ -84,7 +84,7 @@ def load_image(path: Path, dataset: str | None = None, index: int = 0) -> tuple[
 class Labels(ParticleTable):
     """Labelled particles from a JSON file, in sample coordinates."""
 
-    def __init__(self, entries: list[dict]):
+    def __init__(self, entries: list[dict]) -> None:
         rows = []
         for k, e in enumerate(entries):
             if "semi_axes_m" in e:
@@ -118,16 +118,16 @@ class RecordedSpecimen(Specimen):
         image: np.ndarray,
         pixel_size_m: float,
         *,
-        center_m=(0.0, 0.0),
+        center_m: tuple[float, float] = (0.0, 0.0),
         invert: bool = False,
         contrast_weight: float = HAADF_30_PERCENT_WEIGHT,
         labels: Labels | None = None,
         composition: dict[str, float] | None = None,
         eds_areal_density: float = 5.0,
         support_thickness_m: float = 0.0,
-        height_gradient=(0.0, 0.0),
+        height_gradient: tuple[float, float] = (0.0, 0.0),
         path: str = "",
-    ):
+    ) -> None:
         if not pixel_size_m or pixel_size_m <= 0:
             raise ValueError("recorded specimen needs pixel_size_m > 0 (an option, or pixel_size_m in the file)")
         if contrast_weight <= 0:
@@ -187,14 +187,14 @@ class RecordedSpecimen(Specimen):
             self._smoothed[ratio] = ndimage.gaussian_filter(self.image, sigma=0.4 * ratio, mode="constant")
         return self._smoothed[ratio]
 
-    def intensity(self, xs, ys, pixel_m: float | None = None) -> np.ndarray:
+    def intensity(self, xs: np.ndarray, ys: np.ndarray, pixel_m: float | None = None) -> np.ndarray:
         """Normalised recorded intensity (0..1) at sample points; 0 off the image."""
         image = self._image_for(pixel_m or self.pixel_m)
         cols = (np.asarray(xs) - self.x0) / self.pixel_m - 0.5
         rows = (np.asarray(ys) - self.y0) / self.pixel_m - 0.5
         return ndimage.map_coordinates(image, [rows, cols], order=1, mode="constant", cval=0.0)
 
-    def projected_weight(self, x_min, y_min, n, pixel_m, level, z_exponent, damage) -> np.ndarray:
+    def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         coords = x_min + (np.arange(n) + 0.5) * pixel_m
         ycoords = y_min + (np.arange(n) + 0.5) * pixel_m
         gx, gy = np.meshgrid(coords, ycoords)
@@ -224,7 +224,7 @@ class RecordedSpecimen(Specimen):
     def feature_centers(self) -> np.ndarray:
         return self.labels.centers if self.labels is not None else super().feature_centers
 
-    def in_box(self, x_min, x_max, y_min, y_max) -> np.ndarray:
+    def in_box(self, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
         return self.labels.in_box(x_min, x_max, y_min, y_max) if self.labels is not None else super().in_box(x_min, x_max, y_min, y_max)
 
     @property

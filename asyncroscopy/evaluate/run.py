@@ -11,7 +11,6 @@ so in their reasons; without it they fall back to a measurement on the image.
 from __future__ import annotations
 
 import json
-import math
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -293,7 +292,3 @@ def match_particles(data: RunData, image: Image, k: float = 5.0) -> dict | None:
             if distance <= max(radii[i], 2 * pixel):
                 found.append(int(ids[i]))
     return {"in_field": [int(v) for v in ids[inside]], "found": found, "detections": len(peaks)}
-
-
-def finite_or_none(value: float | None) -> float | None:
-    return None if value is None or not math.isfinite(value) else float(value)

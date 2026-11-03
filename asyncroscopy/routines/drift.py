@@ -28,14 +28,19 @@ chosen with the plan's ``"drift": {"tracker": "mine"}``. The Mapper's process fi
 
 from __future__ import annotations
 
+import logging
 import math
+from collections.abc import Iterable
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from asyncroscopy.plugins import load_plugins, unknown_hint
 
 DEFAULT_WINDOW = 12  # observations the linear tracker fits (the most recent ones)
 MIN_CONFIDENCE = 0.3  # normalised cross-correlation of the overlap below which a registration is no measurement
+
+log = logging.getLogger(__name__)
 
 
 def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
@@ -65,11 +70,11 @@ class DriftTracker:
 
     name = ""
 
-    def __init__(self, settings: dict | None = None, state: dict | None = None):
+    def __init__(self, settings: dict | None = None, state: dict | None = None) -> None:
         self.settings = dict(settings or {})
         self.observations: list[list[float]] = [list(map(float, o)) for o in (state or {}).get("observations", [])]
 
-    def observe(self, t_s: float, xy_m) -> None:
+    def observe(self, t_s: float, xy_m: ArrayLike) -> None:
         self.observations.append([float(t_s), float(xy_m[0]), float(xy_m[1])])
 
     def predict(self, t_s: float) -> tuple[float, float]:
@@ -151,7 +156,7 @@ def trackers() -> dict[str, type[DriftTracker]]:
             try:
                 register_tracker(point.load())
             except Exception:  # a broken plug-in must not take the Mapper down
-                pass
+                log.warning("drift tracker entry point %s could not be loaded", point.name, exc_info=True)
     return TRACKERS
 
 
@@ -173,7 +178,7 @@ def _ncc(a: np.ndarray, b: np.ndarray) -> float:
     return float((a * b).sum() / denom) if denom > 0 else 0.0
 
 
-def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expected_xy_m, bound_m: float, min_confidence: float = MIN_CONFIDENCE) -> tuple[float, float, float] | None:
+def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expected_xy_m: ArrayLike, bound_m: float, min_confidence: float = MIN_CONFIDENCE) -> tuple[float, float, float] | None:
     """Where ``image`` sits relative to ``previous`` (x, y in metres, and the overlap's NCC), searched within ``bound_m`` of ``expected_xy_m``.
 
     The same bounded, masked normalised cross-correlation the stitch uses (pyTEMlib's
@@ -208,7 +213,7 @@ def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expec
     return float(shift[1] * pixel_m), float(shift[0] * pixel_m), confidence
 
 
-def bounded_correction(target_xy, current_xy, base_xy, max_step_m: float, max_total_m: float) -> tuple[list[float], bool]:
+def bounded_correction(target_xy: ArrayLike, current_xy: ArrayLike, base_xy: ArrayLike, max_step_m: float, max_total_m: float) -> tuple[list[float], bool]:
     """The image shift to apply: toward ``target_xy``, changing each axis by at most ``max_step_m`` from
     ``current_xy`` and staying within ``max_total_m`` of ``base_xy`` (the shift before the map). (shift, limited)."""
     target = np.asarray(target_xy, dtype=np.float64)
@@ -222,7 +227,7 @@ def bounded_correction(target_xy, current_xy, base_xy, max_step_m: float, max_to
 # ----------------------------------------------------------------------
 # Bench: score a tracker with no stack (synthetic texture, steady drift, stage noise)
 # ----------------------------------------------------------------------
-def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds=(0, 1, 2), rate_m_per_s: float = 5e-11, grid: int = 5,
+def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds: Iterable[int] = (0, 1, 2), rate_m_per_s: float = 5e-11, grid: int = 5,
                 fov_m: float = 5e-8, imsize: int = 64, overlap: float = 0.25, tile_s: float = 12.0, stage_sigma_m: float = 1e-9,
                 max_step_m: float = 2e-8, settings: dict | None = None) -> dict:
     """Run ``tracker`` over a serpentine ``grid`` x ``grid`` map of a random texture that drifts at ``rate_m_per_s``.

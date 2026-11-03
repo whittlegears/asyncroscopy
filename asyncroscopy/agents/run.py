@@ -20,11 +20,16 @@ import os
 import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage
 
 from .config import AgentConfig
 from .skill_middleware import recursion_limit
+
+if TYPE_CHECKING:
+    from .goals import Goal
 
 GRAPHS = ("mapping", "general", "team")
 # Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark
@@ -35,7 +40,7 @@ GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is thr
 
 
 @contextlib.asynccontextmanager
-async def task_events(graph: str, request: str):
+async def task_events(graph: str, request: str) -> AsyncIterator[dict]:
     """Write task_start now and task_end (with duration_s and whether it succeeded) when the block ends.
     The block sets ``outcome["ok"]`` (and ``outcome["error"]``); an exception counts as a failure."""
     from asyncroscopy.mcp.tool_log import TraceWriter
@@ -65,7 +70,7 @@ async def run_named_graph(name: str, prompt: str, model: str | None = None) -> s
         return text
 
 
-async def run_goal_text(goal, worker: str = "team", model: str | None = None) -> tuple[str, bool]:
+async def run_goal_text(goal: Goal | dict | str, worker: str = "team", model: str | None = None) -> tuple[str, bool]:
     """Work toward ``goal`` (a Goal, a dict as in a goal file, or a statement) with ``team`` or ``general``."""
     from .goals import Goal
     from .graphs.goal import run_goal

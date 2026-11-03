@@ -11,7 +11,7 @@ import time
 
 
 class SimClock:
-    def __init__(self, time_scale: float = 0.0):
+    def __init__(self, time_scale: float = 0.0) -> None:
         self.time_scale = max(0.0, float(time_scale))
         self._now = 0.0
 

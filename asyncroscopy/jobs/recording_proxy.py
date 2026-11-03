@@ -27,9 +27,12 @@ performed)``; the job device writes it to the Instrument Trace with
 from __future__ import annotations
 
 from fnmatch import fnmatchcase
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from asyncroscopy.safety.policy import check_overrides, is_read_only
+
+if TYPE_CHECKING:
+    import tango
 
 DRY_RUN_PLACEHOLDER = "dry_run:not_performed"
 # Commands that really run in a dry run: blanking only makes the instrument safer.
@@ -82,7 +85,7 @@ def is_read_command(name: str, dev_class: str = "", risk_overrides: dict[str, st
 class RecordingProxy:
     """Wraps a DeviceProxy: reads pass through, writes and commands are recorded (see the module doc)."""
 
-    def __init__(self, proxy, address: str, recorder: Callable[[str, str, str, Any, bool], None], risk_overrides: dict[str, str] | None = None):
+    def __init__(self, proxy: tango.DeviceProxy, address: str, recorder: Callable[[str, str, str, Any, bool], None], risk_overrides: dict[str, str] | None = None) -> None:
         object.__setattr__(self, "_proxy", proxy)
         object.__setattr__(self, "_address", address)
         object.__setattr__(self, "_recorder", recorder)

@@ -50,12 +50,13 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, Facts, action_category, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
@@ -136,7 +137,7 @@ def enabled_from_env() -> bool:
     return os.environ.get(ENV, "1").strip().lower() not in ("0", "false", "no", "off")
 
 
-def is_correction(message) -> bool:
+def is_correction(message: BaseMessage) -> bool:
     return getattr(message, "type", "") == "human" and not is_request(message)
 
 
@@ -467,7 +468,7 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
                   f"x_m and y_m copied from that reply")]
 
 
-def check_answer(messages: list, answer: str, tool_names=(), context: str = "") -> list[Claim]:
+def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), context: str = "") -> list[Claim]:
     """The claims in ``answer`` that the tool calls in ``messages`` do not support (see the module docstring).
 
     ``tool_names``: the tools the agent has (they name the settings it can set); ``context``: other text
@@ -529,7 +530,7 @@ class ClaimCheckMiddleware(AgentMiddleware):
     into the state (and so into traces).
     """
 
-    def __init__(self, tool_names=(), enabled: bool | None = None, max_corrections: int = 1):
+    def __init__(self, tool_names: Iterable[str] = (), enabled: bool | None = None, max_corrections: int = 1) -> None:
         super().__init__()
         self.tool_names = set(tool_names)
         self.enabled = enabled_from_env() if enabled is None else enabled
@@ -568,7 +569,7 @@ class ClaimCheckMiddleware(AgentMiddleware):
         correction = HumanMessage(CORRECTION.format(items="\n".join(c.line() for c in claims)), name=CLAIM_CHECK)
         return correction, request.override(messages=[*request.messages, answer, correction])
 
-    def wrap_model_call(self, request, handler):
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
         response = handler(request)
         planned = self._plan(request, response)
         if planned is None:
@@ -578,7 +579,7 @@ class ClaimCheckMiddleware(AgentMiddleware):
             return next_request
         return self._finish(request, planned[2], planned[0], correction, handler(next_request))
 
-    async def awrap_model_call(self, request, handler):
+    async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]) -> ModelCallResult:
         response = await handler(request)
         planned = self._plan(request, response)
         if planned is None:

@@ -84,7 +84,7 @@ def instrument_context(devices_info: list[dict], process: bool = False, startup_
 class _DeviceList:
     """Stands in for the Tango database: the MCP server only asks it which devices are exported."""
 
-    def __init__(self, names: list[str]):
+    def __init__(self, names: list[str]) -> None:
         self.value_string = names
 
     def get_device_exported(self, pattern: str) -> "_DeviceList":

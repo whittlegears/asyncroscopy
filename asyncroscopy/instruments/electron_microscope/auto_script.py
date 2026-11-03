@@ -34,7 +34,6 @@ from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisit
 # Wrapped in try/except so the device can still be imported and tested
 # on a development machine without AutoScript installed.
 try:
-    import autoscript_tem_microscope_client
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
     from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem, ExposureTimeType
@@ -269,7 +268,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
 
     @command(dtype_out=tango.DevVarFloatArray)
-    def register_stage(self):
+    def register_stage(self) -> np.ndarray:
         """Read the live stage position from the instrument: [x, y, z, alpha, beta], x/y/z in metres, tilts in degrees.
 
         Nothing is written back: the AutoScript STAGE device reads the same hardware, and a write there
@@ -322,7 +321,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return {"frame_attrs_error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
         try:  # the field's centre is the stage plus this; a frame without it is placed as if it were zero
             shift = {"image_shift_m": [float(v) for v in self._get_image_shift()][:2]}
-        except Exception:
+        except Exception as exc:
+            self.debug_stream(f"frame recorded without image_shift_m: {exc}")
             shift = {}
         return {
             "stage_reported_m": stage, "fov_m": fov, "pixel_size_m": fov / int(imsize), "dwell_time_s": float(dwell_time),

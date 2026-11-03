@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 import tango
 
@@ -112,19 +113,19 @@ class YamlProfile(InstrumentProfile):
             costs[name] = Cost(value, budget["units"], why=why, advice=f"change the plan's settings, or map less: see the instrument's map budgets ({name})")
         return costs
 
-    def costs(self, p, grid, revisit, revisits, budgets):
+    def costs(self, p: dict, grid: dict, revisit: dict | None, revisits: int, budgets: dict) -> tuple[dict[str, Cost], dict]:
         tiles = grid["rows"] * grid["cols"]
         costs = self._costs(self._info(p), tiles, revisit, revisits)
         return costs, {f"max_{name}": round(cost.value, 6) for name, cost in costs.items()}
 
-    def revisit_only_costs(self, p, revisit, count, budgets):
+    def revisit_only_costs(self, p: dict, revisit: dict, count: int, budgets: dict) -> tuple[dict[str, Cost], dict]:
         costs = self._costs(self._info(p), 0, revisit, count)
         return costs, {f"max_{name}": round(cost.value, 6) for name, cost in costs.items()}
 
     def needed_commands(self, plan: dict) -> dict[str, list[str]]:
         return {self.mapper.microscope_device_address: list(self._info(plan)["commands"])}
 
-    def stage_targets(self, plan, xs, ys):
+    def stage_targets(self, plan: dict, xs: list[tuple[str, float]], ys: list[tuple[str, float]]) -> list[dict]:
         stage = self._info(plan)["stage"]
         device = self.mapper.microscope_device_address
         out = []
@@ -134,7 +135,7 @@ class YamlProfile(InstrumentProfile):
                 out.append({"step": step, "device": device, "attribute": limits["setting"], "value": float(value), "min": limits["min"], "max": limits["max"]})
         return out
 
-    def move_target(self, plan, name, arguments):
+    def move_target(self, plan: dict, name: str, arguments: Any) -> dict | None:
         stage = self._info(plan)["stage"]
         for axis in ("x", "y"):
             if name.lower() == f"set_{stage[axis]['setting']}":

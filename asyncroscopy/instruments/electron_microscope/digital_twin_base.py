@@ -443,11 +443,11 @@ class AtomisticDigitalTwin(ElectronMicroscope):
         """Read method for the manufacturer attribute."""
         return self._manufacturer
 
-    def read_beam_pos(self):
+    def read_beam_pos(self) -> list[float]:
         """Read method for the beam position attribute."""
         return [self._beam_pos_x, self._beam_pos_y]
 
-    def write_beam_pos(self, value):
+    def write_beam_pos(self, value: list[float]) -> None:
         """Write method for the beam position attribute."""
         x, y = value[0], value[1]
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):

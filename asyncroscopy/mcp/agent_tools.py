@@ -50,9 +50,14 @@ def is_stem_endpoint(names: Iterable[str]) -> bool:
     )
 
 
+def _matches(name: str, pattern: str) -> bool:
+    """fnmatch ignoring case on every OS, as the approval policy and SciAgentGUI match (fnmatch.fnmatch follows the OS)."""
+    return fnmatch.fnmatchcase(name.lower(), pattern.lower())
+
+
 def has_mapper(names: Iterable[str]) -> bool:
     """The endpoint offers a Mapper (whose maps the analysis server stitches and scores)."""
-    return any(fnmatch.fnmatch(n, "Mapper*_reserve") for n in names)
+    return any(_matches(n, "Mapper*_reserve") for n in names)
 
 
 def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: list[str] | None = None) -> list[str]:
@@ -81,4 +86,4 @@ def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: li
 
 def for_model(name: str, patterns: Iterable[str]) -> bool:
     """Whether a tool named ``name`` goes to the model under ``patterns`` (never one of NOT_FOR_MODELS)."""
-    return name not in NOT_FOR_MODELS and any(fnmatch.fnmatch(name, p) for p in patterns)
+    return name not in NOT_FOR_MODELS and any(_matches(name, p) for p in patterns)

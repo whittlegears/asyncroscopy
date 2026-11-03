@@ -21,7 +21,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from asyncroscopy.evaluate.core import _instances, _safe
+from asyncroscopy.evaluate.core import Evaluator, _instances, _safe
 from asyncroscopy.evaluate.run import RunData, as_run_data
 
 
@@ -47,7 +47,7 @@ def trace_features(data: RunData) -> dict[str, Any]:
     }
 
 
-def features(run: RunData | str | list, evaluators=None) -> dict[str, Any]:
+def features(run: RunData | str | list, evaluators: str | Iterable[str | Evaluator] | None = None) -> dict[str, Any]:
     """One flat row for ``run`` (a RunData, a run id read from outputs/trace, or a list of events)."""
     data = as_run_data(run)
     row = trace_features(data)
@@ -57,12 +57,12 @@ def features(run: RunData | str | list, evaluators=None) -> dict[str, Any]:
     return row
 
 
-def feature_units(evaluators=None) -> dict[str, str]:
+def feature_units(evaluators: str | Iterable[str | Evaluator] | None = None) -> dict[str, str]:
     """Units of the evaluator columns of ``features`` ({"dose.max_dose_e_per_a2": "e/A^2", ...})."""
     return {f"{e.name}.{objective}": units for e in _instances(evaluators) for objective, (units, _better) in e.objectives.items()}
 
 
-def features_table(runs: Iterable[RunData | str | list], evaluators=None) -> list[dict[str, Any]]:
+def features_table(runs: Iterable[RunData | str | list], evaluators: str | Iterable[str | Evaluator] | None = None) -> list[dict[str, Any]]:
     return [features(run, evaluators) for run in runs]
 
 

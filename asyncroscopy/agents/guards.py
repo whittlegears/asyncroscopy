@@ -33,11 +33,14 @@ import json
 import re
 import sys
 import time
+from collections.abc import Awaitable, Iterable
 from typing import Any, Callable
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse, ToolCallRequest
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.types import Command
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
 
@@ -55,7 +58,7 @@ def context_chars(num_ctx: int) -> int:
     return int(max(2048, num_ctx - OUTPUT_RESERVE_TOKENS) * CHARS_PER_TOKEN)
 
 
-def tools_chars(tools) -> int:
+def tools_chars(tools: Iterable[BaseTool] | None) -> int:
     """Characters the tool schemas take in the prompt."""
     total = 0
     for tool in tools or []:
@@ -146,7 +149,7 @@ CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message 
 EMPTY_REPLY = "empty_reply"  # the name of EmptyReplyMiddleware's request for a reply
 
 
-def is_request(message) -> bool:
+def is_request(message: BaseMessage) -> bool:
     """A message from the user: a human message that is not a guard's own turn (the claim check's correction,
     the request for a reply after an empty one)."""
     return getattr(message, "type", "") == "human" and getattr(message, "name", None) not in (CLAIM_CHECK, EMPTY_REPLY)
@@ -233,8 +236,8 @@ def _progress(job_id: str, status: dict, waited: float) -> None:
 class JobWaitMiddleware(AgentMiddleware):
     """Waits for a job inside one tool call: the model sees one reply when the job ends (see the module docstring)."""
 
-    def __init__(self, tools, default_cap_s: float = 3600.0, deadline: float | None = None,
-                 on_progress: Callable[[str, dict, float], None] | None = _progress, stop: Callable[[], bool] | None = None):
+    def __init__(self, tools: Iterable[BaseTool], default_cap_s: float = 3600.0, deadline: float | None = None,
+                 on_progress: Callable[[str, dict, float], None] | None = _progress, stop: Callable[[], bool] | None = None) -> None:
         super().__init__()
         self.wait_tool = next((t for t in tools if getattr(t, "name", "") == "wait_for_job"), None)
         self.default_cap_s = default_cap_s
@@ -295,7 +298,7 @@ class JobWaitMiddleware(AgentMiddleware):
         text = ALREADY_DONE.format(job_id=reply.get("job_id"), results=json.dumps(results, default=str)[:3000])
         return ToolMessage(json.dumps({"error": {"code": "already_done", "message": text}}), tool_call_id=call.get("id"), name="run_job", status="error")
 
-    async def awrap_tool_call(self, request, handler):
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
         done = self._already_done(request)
         if done is not None:
             return done
@@ -320,7 +323,7 @@ class JobWaitMiddleware(AgentMiddleware):
                 await asyncio.sleep(1.0)  # the server returned before its own wait ended: do not spin
         return self._final(request, first, status, time.monotonic() - began, checks)
 
-    def wrap_tool_call(self, request, handler):
+    def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
         done = self._already_done(request)
         if done is not None:
             return done
@@ -392,14 +395,14 @@ class EmptyReplyMiddleware(AgentMiddleware):
             result = [m for m in result if not isinstance(m, AIMessage)] + [AIMessage(EMPTY_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))]
         return ModelResponse(result=[ask, *result], structured_response=getattr(retry, "structured_response", None))
 
-    def wrap_model_call(self, request, handler):
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
         response = handler(request)
         if _empty(response) is None:
             return response
         ask, again = self._again(request)
         return self._settle(request, ask, handler(again))
 
-    async def awrap_model_call(self, request, handler):
+    async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]) -> ModelCallResult:
         response = await handler(request)
         if _empty(response) is None:
             return response

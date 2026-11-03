@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -116,7 +115,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     return {"seconds": round(time.time() - started, 1), "model_calls": len([m for m in messages if getattr(m, "tool_calls", None) is not None and m.type == "ai"]), "tool_calls": len(calls), "tool_names": tool_names, "sleepwalking": sleepwalking(tool_names, None, (await config.info()).get("risks")), "skills_loaded": skills, "skills_applied": state.get("skills_applied", []), "checks": checks, "ok": all(checks.values()), "plan": plan, "final": final[-600:]}
 
 
-async def main(args) -> None:
+async def main(args: argparse.Namespace) -> None:
     config = AgentConfig.from_env(model=args.model, caller="trials")
     await warm_up(config)
     results = {"model": args.model, "n": args.n, "started": time.time(), "tasks": {}}

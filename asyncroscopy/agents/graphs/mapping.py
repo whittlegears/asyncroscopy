@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -26,6 +27,7 @@ from typing import TypedDict
 import jsonschema
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
@@ -38,6 +40,8 @@ ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop b
 MAX_POLL_MISSES = 5  # consecutive failed status polls before the graph gives up on a job
 DEFAULT_FOV_M = 200e-9
 load("map_plan")  # read the schema now: file I/O inside async nodes blocks the event loop
+
+log = logging.getLogger(__name__)
 
 
 class MapState(TypedDict, total=False):
@@ -133,7 +137,7 @@ WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full)\s+(?:sample|specimen|grid)\b
 
 
 class MappingGraph:
-    def __init__(self, config: AgentConfig | None = None):
+    def __init__(self, config: AgentConfig | None = None) -> None:
         self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "mapping-graph"))
         self.instrument: McpServer = self.config.instrument()
         self.analysis: McpServer | None = self.config.analysis()
@@ -472,7 +476,7 @@ class MappingGraph:
                     await asyncio.sleep(POLL_S)
             await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         except Exception:
-            pass
+            log.warning("could not stop or release reservation %s", state["reservation_id"], exc_info=True)
 
     @staticmethod
     def _guarded(node):
@@ -487,7 +491,7 @@ class MappingGraph:
         return run
 
     # ------------------------------------------------------------------ graph
-    def build(self):
+    def build(self) -> CompiledStateGraph:
         graph = StateGraph(MapState)
         for name in ("gather_context", "make_plan", "reserve", "start", "wait", "stitch", "score", "report"):
             graph.add_node(name, self._guarded(getattr(self, name)))
@@ -504,7 +508,7 @@ class MappingGraph:
         return graph.compile()
 
 
-def build_graph(config: AgentConfig | None = None):
+def build_graph(config: AgentConfig | None = None) -> CompiledStateGraph:
     return MappingGraph(config).build()
 
 

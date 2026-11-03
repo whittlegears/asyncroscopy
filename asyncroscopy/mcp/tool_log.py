@@ -16,7 +16,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import IO, Any, Callable, Iterator
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
 
@@ -47,7 +47,7 @@ def seq_path(path: str | Path) -> Path:
 
 
 @contextmanager
-def file_lock(handle, deadline: float) -> Iterator[None]:
+def file_lock(handle: IO[bytes], deadline: float) -> Iterator[None]:
     """An exclusive lock between processes on ``handle`` (the .seq file, opened "a+b"), waited for until ``deadline``."""
     if os.name == "nt":
         import msvcrt
@@ -111,7 +111,7 @@ class SequencedAppender:
     line and closed again, so it can be renamed (rotated) between lines, on Windows too.
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -145,7 +145,7 @@ class SequencedAppender:
 
 
 class ToolCallLog:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self._out = SequencedAppender(self.path)
 
@@ -197,7 +197,7 @@ class TraceWriter:
         writer: str | None = None,
         defaults: dict[str, Any] | None = None,
         clock: Callable[[], float | None] | None = None,
-    ):
+    ) -> None:
         self.path = Path(path)
         self._out = SequencedAppender(self.path)
         self.source = source

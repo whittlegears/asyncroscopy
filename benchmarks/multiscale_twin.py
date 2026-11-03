@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -42,11 +43,11 @@ WRONG_PX = 2.0
 class FrameRecorder:
     """Keeps each frame's real pixel-to-sample coordinates, which the twin computes and then forgets."""
 
-    def __init__(self, device):
+    def __init__(self, device: Any) -> None:
         self.frames: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         real = device._scan_frame
 
-        def scan_frame(imsize, dwell_time, scan_region):
+        def scan_frame(imsize: int, dwell_time: float, scan_region: Any) -> dict:
             frame = real(imsize, dwell_time, scan_region)
             self.frames[frame["index"]] = (frame["xs"].copy(), frame["ys"].copy())
             return frame
@@ -64,7 +65,7 @@ def where_in(frame: tuple[np.ndarray, np.ndarray], point_xy: np.ndarray) -> np.n
     return np.linalg.solve(linear, np.asarray(point_xy, dtype=np.float64) - offset)
 
 
-def acquire(device, saved: list, fov_m: float, imsize: int, dwell_s: float, shift_xy: np.ndarray) -> tuple[np.ndarray, dict]:
+def acquire(device: Any, saved: list, fov_m: float, imsize: int, dwell_s: float, shift_xy: np.ndarray) -> tuple[np.ndarray, dict]:
     device._set_fov(float(fov_m))
     device._set_image_shift([float(shift_xy[0]), float(shift_xy[1])])
     device._acquire_scanned_image(int(imsize), float(dwell_s), ["haadf"])
@@ -78,7 +79,7 @@ def predicted(parent_record: dict, parent_shift: np.ndarray, child_shift: np.nda
     return np.array([(imsize - 1) / 2.0 + d[1], (imsize - 1) / 2.0 + d[0]])
 
 
-def run(args) -> dict:
+def run(args: argparse.Namespace) -> dict:
     import tango
 
     from asyncroscopy.instruments.electron_microscope import digital_twin as digital_twin_module
@@ -91,7 +92,7 @@ def run(args) -> dict:
     pixels = [f / args.imsize for f in fovs]
     saved: list = []
 
-    def keep(_device, _data_server, kind, _detectors, arrays, **_kwargs):
+    def keep(_device: Any, _data_server: Any, kind: str, _detectors: list, arrays: list, **_kwargs: Any) -> str:
         saved.append(np.asarray(arrays[0]))
         return f"image-{len(saved)}"
 
@@ -136,7 +137,7 @@ def run(args) -> dict:
                 results["tier3"].append(entry3)
     elapsed = time.perf_counter() - started
 
-    def summary(entries):
+    def summary(entries: list[dict]) -> dict:
         placed = [e for e in entries if e["status"] == "placed"]
         errors = np.array([e["error_px"] for e in placed]) if placed else np.array([np.nan])
         return {
@@ -172,7 +173,7 @@ def verdict(result: dict) -> dict[str, bool]:
 def report(result: dict, passed: dict[str, bool]) -> str:
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
 
-    def row(name, s):
+    def row(name: str, s: dict) -> str:
         return f"| {name} | {s['children']} | {s['placed']} ({s['placed_share'] * 100:.0f} %) | {s['median_px']:.3f} / {s['p95_px']:.3f} | {s['wrong']} | {'; '.join(s['unplaced_reasons']) or '—'} |"
 
     checks = "\n".join(f"| {k} | {'pass' if ok else 'FAIL'} |" for k, ok in passed.items())

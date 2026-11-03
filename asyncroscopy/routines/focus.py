@@ -16,9 +16,10 @@ much finer than the sampling and robust to shot noise.
 from __future__ import annotations
 
 import math
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 # ----------------------------------------------------------------------
 # Sharpness metrics: image (2-D array) -> float, higher is sharper
@@ -32,14 +33,14 @@ def _as_image(image) -> np.ndarray:
     return array
 
 
-def normalized_variance(image) -> float:
+def normalized_variance(image: ArrayLike) -> float:
     """Variance over mean squared: independent of beam current and gain."""
     array = _as_image(image)
     mean = float(array.mean())
     return float(array.var() / (mean * mean)) if mean > 0 else 0.0
 
 
-def gradient_energy(image) -> float:
+def gradient_energy(image: ArrayLike) -> float:
     """Mean squared gradient (Tenengrad-like) over mean squared, with the shot-noise part removed.
 
     Poisson noise adds about ``2 * mean`` to the squared difference of two
@@ -56,7 +57,7 @@ def gradient_energy(image) -> float:
     return max(0.0, energy - 2.0 * mean) / (mean * mean)
 
 
-def smoothed_gradient_energy(image) -> float:
+def smoothed_gradient_energy(image: ArrayLike) -> float:
     """Gradient energy of the image after a 3 x 3 box filter, which averages shot noise down first."""
     array = _as_image(image)
     kernel = np.ones(3) / 3.0
@@ -79,7 +80,7 @@ METRICS: dict[str, Callable[[np.ndarray], float]] = {
 }
 
 
-def sharpness(image, metric: str = "normalized_variance") -> float:
+def sharpness(image: ArrayLike, metric: str = "normalized_variance") -> float:
     """Score ``image`` with the named metric (see METRICS)."""
     try:
         return METRICS[metric](image)
@@ -92,7 +93,7 @@ def sharpness(image, metric: str = "normalized_variance") -> float:
 # ----------------------------------------------------------------------
 
 
-def parabola_vertex(xs, ys) -> float | None:
+def parabola_vertex(xs: ArrayLike, ys: ArrayLike) -> float | None:
     """x of the top of the least-squares parabola through (xs, ys); None if it opens upwards or is flat."""
     x = np.asarray(xs, dtype=np.float64)
     y = np.asarray(ys, dtype=np.float64)
@@ -106,7 +107,7 @@ def parabola_vertex(xs, ys) -> float | None:
     return centre + scale * float(-b / (2.0 * a))
 
 
-def peak_estimate(xs, ys) -> float:
+def peak_estimate(xs: ArrayLike, ys: ArrayLike) -> float:
     """Where the peak of a sampled score lies: the vertex of a parabola through the best sample and its
     neighbours (in x order), kept within those neighbours; the best sample itself when no parabola fits."""
     order = np.argsort(np.asarray(xs, dtype=np.float64))
@@ -188,7 +189,7 @@ def search_2d(
     centre: tuple[float, float],
     half_range: float,
     passes: int = 2,
-    **search_options,
+    **search_options: Any,
 ) -> dict:
     """Find the sharpest (a, b) within ``centre +/- half_range`` per axis: alternate 1-D searches along a
     then b, ``passes`` times, each pass around the last estimate with half the range. For two-fold
@@ -222,7 +223,7 @@ def search_1d_evaluations(coarse_points: int = 9, fine_points: int = 7, rounds: 
     return int(coarse_points) + max(0, int(rounds)) * int(fine_points)
 
 
-def search_2d_evaluations(passes: int = 2, **search_options) -> int:
+def search_2d_evaluations(passes: int = 2, **search_options: int) -> int:
     """Most images ``search_2d`` takes with these options."""
     return 2 * max(1, int(passes)) * search_1d_evaluations(**search_options)
 

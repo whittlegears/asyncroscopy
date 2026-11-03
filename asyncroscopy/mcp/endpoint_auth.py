@@ -35,9 +35,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from asyncroscopy.mcp.binding import is_loopback_host
+
+if TYPE_CHECKING:
+    from fastmcp.server.auth import AccessToken
+
+    from asyncroscopy.mcp.mcp_server import MCPServer
 
 ROLES = ("read", "operate", "approve")
 # Scopes a WG1 token carries, and the roles each grants. A deployment can map its own scope names
@@ -189,7 +194,7 @@ def _verifier(settings: AuthSettings):
                               audience=settings.audience, algorithm=settings.algorithm)
 
 
-def current_token():
+def current_token() -> AccessToken | None:
     """The verified access token of the current request, or None (no token, or not over HTTP)."""
     try:
         from fastmcp.server.dependencies import get_access_token
@@ -204,13 +209,13 @@ def token_subject() -> str | None:
     return (token.claims.get("sub") or token.subject) if token is not None else None
 
 
-def attach(server, raw: AuthSettings | dict | None) -> AuthSettings | None:
+def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings | None:
     """Put token verification and the role gate on ``server.mcp``; returns the settings, or None (no auth)."""
     settings = raw if isinstance(raw, AuthSettings) else AuthSettings.from_config(raw)
     if settings is None:
         return None
     from fastmcp.exceptions import ToolError
-    from fastmcp.server.middleware import Middleware
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
     class RoleGate(Middleware):
         """Refuses a tool call whose token lacks the tool's role, and lists only the tools a token may call.
@@ -226,7 +231,7 @@ def attach(server, raw: AuthSettings | dict | None) -> AuthSettings | None:
         def _needs(self, name: str) -> str:
             return required_role(name, server.tool_risks, server._risk_keys)
 
-        async def on_call_tool(self, context, call_next):
+        async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> Any:
             token, roles = self._roles()
             name = context.message.name
             if token is None:
@@ -241,7 +246,7 @@ def attach(server, raw: AuthSettings | dict | None) -> AuthSettings | None:
                     raise ToolError(f"{checked} refused: it needs the {need} role (scope {scopes}); the token of {token_subject()!r} grants {sorted(roles) or 'no role'}")
             return await call_next(context)
 
-        async def on_list_tools(self, context, call_next):
+        async def on_list_tools(self, context: MiddlewareContext, call_next: CallNext) -> list:
             tools = await call_next(context)
             _token, roles = self._roles()
             return [t for t in tools if self._needs(t.name) in roles]

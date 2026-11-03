@@ -40,9 +40,16 @@ docs/Adding_New_Hardware/new_instrument.md ("Map any instrument") walks through 
 from __future__ import annotations
 
 import importlib
+import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from asyncroscopy.plugins import load_plugins, unknown_hint
+
+if TYPE_CHECKING:
+    import tango
+
+    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
 GENERIC_PLAN_FIELDS = frozenset({
@@ -65,7 +72,7 @@ class Cost:
     advice: str = ""
     message: str | None = None
 
-    def refusal(self, budget) -> str:
+    def refusal(self, budget: float) -> str:
         if self.message:
             return self.message.format(budget=budget, value=self.value, units=self.units)
         parts = f" ({self.why})" if self.why else ""
@@ -93,11 +100,11 @@ class InstrumentProfile:
     # Mapper device property naming a device -> commands that device must offer (checked at reserve).
     needs: dict = {}
 
-    def __init__(self, mapper):
+    def __init__(self, mapper: Mapper) -> None:
         self.mapper = mapper
 
     # -- helpers ---------------------------------------------------------
-    def instrument(self):
+    def instrument(self) -> tango.DeviceProxy:
         """The instrument (``microscope_device_address``), through the Mapper's proxy."""
         return self.mapper.proxy(self.mapper.microscope_device_address)
 
@@ -154,7 +161,7 @@ class InstrumentProfile:
         """Limit-check targets (JobDevice.step_targets) for the plan's extreme stage x and y values."""
         return []
 
-    def move_target(self, plan: dict, name: str, arguments) -> dict | None:
+    def move_target(self, plan: dict, name: str, arguments: Any) -> dict | None:
         """For a dry run's check: the stage position a recorded command goes to ({"x": ..., "y": ...}, either or both), or None."""
         return None
 
@@ -246,8 +253,8 @@ def profiles() -> dict[str, type[InstrumentProfile]]:
         for point in entry_points(group="asyncroscopy.map_profiles"):
             try:
                 register_profile(point.load())
-            except Exception:  # a broken plug-in must not take the Mapper down
-                pass
+            except Exception as exc:  # a broken plug-in must not take the Mapper down
+                print(f"[asyncroscopy.map_profile] could not load entry point {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
     return PROFILES
 
 

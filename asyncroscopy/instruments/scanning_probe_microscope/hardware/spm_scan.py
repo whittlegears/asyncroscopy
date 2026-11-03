@@ -310,7 +310,7 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
         self._refresh_params()
 
     @tango.server.command(dtype_in=tango.DevVarDoubleArray)
-    def move_probe(self, position) -> None:
+    def move_probe(self, position: list[float]) -> None:
         """Move the probe to an absolute position [x, y] in meters."""
         if len(position) != 2:
             raise ValueError("position must contain exactly two values: [x, y]")

@@ -687,7 +687,7 @@ def wait_for_database(host: str, port: int, timeout: int) -> float:
     raise TimeoutError(f"Tango database did not become ready after {timeout}s. Last error: {last_error}")
 
 
-def wait_for_device(device_name: str, timeout: int, process=None) -> float:
+def wait_for_device(device_name: str, timeout: int, process: ManagedProcess | None = None) -> float:
     start = time.monotonic()
     last_error: Exception | None = None
     while time.monotonic() - start < timeout:
@@ -772,8 +772,8 @@ def tiled_key_warning(tiled_host: str, api_key: str) -> str | None:
 def stop_tiled_server() -> None:
     try:
         get_data_proxy().stop_tiled_server()
-    except Exception:
-        pass
+    except Exception as exc:
+        status_line("WARN", "could not stop the Tiled server", str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
 
 
 def print_debug_output(processes: Iterable[ManagedProcess]) -> None:

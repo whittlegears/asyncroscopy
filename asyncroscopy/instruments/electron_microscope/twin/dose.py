@@ -42,7 +42,7 @@ class DoseParams:
 
 
 class DoseMap:
-    def __init__(self, params: DoseParams, bounds: tuple[float, float, float, float], margin_m: float = 0.0):
+    def __init__(self, params: DoseParams, bounds: tuple[float, float, float, float], margin_m: float = 0.0) -> None:
         if not (params.cell_m > 0 and 0 < params.min_cell_m <= params.cell_m):
             raise ValueError("dose cells need 0 < min_cell_m <= cell_m")
         self.params = params
@@ -102,7 +102,7 @@ class DoseMap:
         cells = self.levels[level]
         cells[(r, c)] = cells.get((r, c), 0.0) + electrons / (cell * cell * ANGSTROM2_PER_M2)
 
-    def dose_at(self, x, y) -> np.ndarray:
+    def dose_at(self, x: float | list[float], y: float | list[float]) -> np.ndarray:
         xs, ys = np.broadcast_arrays(np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64))
         total = np.zeros(xs.shape, dtype=np.float64)
         for level, cells in self.levels.items():
@@ -119,7 +119,7 @@ class DoseMap:
         d = float(self.dose_at(x, y))
         return p.contamination_angstrom_max * (1.0 - np.exp(-d / p.contamination_dose_e_per_a2))
 
-    def damage_factors(self, centers: np.ndarray, indices) -> dict[int, float]:
+    def damage_factors(self, centers: np.ndarray, indices: np.ndarray) -> dict[int, float]:
         p = self.params
         if not p.enabled or p.damage_critical_dose_e_per_a2 <= 0:
             return {}

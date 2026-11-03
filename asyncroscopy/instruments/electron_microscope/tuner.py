@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import json
 import math
-import time
+import sys
 from typing import Any
 
 import numpy as np
@@ -94,7 +94,7 @@ PLAN_FIELDS = set(PLAN_DEFAULTS) | {"dose_budget_e_per_a2"}
 HISTORY_KEPT = 200  # history entries a job keeps (the trace has every step)
 
 
-def read_image(key: str, detector: str, data_proxy=None) -> np.ndarray:
+def read_image(key: str, detector: str, data_proxy: tango.DeviceProxy | None = None) -> np.ndarray:
     """The ``detector`` image of an acquisition (a local file, or a Tiled key through the DATA device)."""
     datasets = read_acquisition(key, data_proxy)
     named = [array for name, (array, _attrs) in datasets.items() if np.ndim(array) == 2 and detector.upper() in name.upper()]
@@ -107,7 +107,7 @@ def read_image(key: str, detector: str, data_proxy=None) -> np.ndarray:
 class TuneFailed(RuntimeError):
     """A safety rule stopped the tuning; the job fails and the snapshot is restored."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str) -> None:
         super().__init__(f"{code}: {message}")
         self.code = code
 
@@ -174,8 +174,8 @@ def strategies() -> dict[str, type[Strategy]]:
         for point in entry_points(group="asyncroscopy.focus_strategies"):
             try:
                 register_strategy(point.load())
-            except Exception:  # a broken plug-in must not take the Tuner down
-                pass
+            except Exception as exc:  # a broken plug-in must not take the Tuner down
+                print(f"[asyncroscopy.tuner] could not load focus strategy {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
     return STRATEGIES
 
 
@@ -300,7 +300,7 @@ class Corrector(Strategy):
 class TuneContext:
     """Every instrument call a strategy can make, each bounded, counted, blanked and abortable."""
 
-    def __init__(self, device: "Tuner", job: dict):
+    def __init__(self, device: "Tuner", job: dict) -> None:
         self.device, self.job = device, job
         self.plan: dict = job["resolved_plan"]
         self.state: dict = job["tune"]
@@ -329,7 +329,7 @@ class TuneContext:
         state["steps"] += 1
         state["dose_e_per_a2"] += dose
 
-    def log(self, **record) -> None:
+    def log(self, **record: Any) -> None:
         history = self.state["history"]
         history.append({"step": self.state["steps"], **record})
         if len(history) > HISTORY_KEPT:
@@ -365,7 +365,7 @@ class TuneContext:
     def get_stigmator(self) -> list[float]:
         return list(self._stigmator)
 
-    def set_stigmator(self, value) -> None:
+    def set_stigmator(self, value: list[float]) -> None:
         """Set the stigmator [a, b], each within snapshot +/- stig_range_m, ramping in steps of at most max_step_m."""
         if "stigmator" not in self.plan["capabilities"]:
             raise TuneFailed("unsupported", "this microscope offers no stigmator")
@@ -396,7 +396,7 @@ class TuneContext:
         self.log(kind="image", defocus_m=self._defocus, stigmator_m=list(self._stigmator), sharpness=value)
         return value
 
-    def sharpness_at(self, defocus: float | None = None, stigmator=None) -> float:
+    def sharpness_at(self, defocus: float | None = None, stigmator: list[float] | None = None) -> float:
         """Move (bounded), then image and score: the ``evaluate`` callback the searches use."""
         if defocus is not None:
             self.set_defocus(defocus)
@@ -461,7 +461,7 @@ class TuneContext:
         self.log(kind="corrector_measure", **{f"{k}_m": v for k, v in measured.items()})
         return measured
 
-    def corrector_correct(self, name: str, values) -> None:
+    def corrector_correct(self, name: str, values: list[float]) -> None:
         """Send one correction, each component at most max_step_m, and the running total within the plan's range."""
         if name not in ("C1", "A1"):
             raise TuneFailed("unsupported", f"the Tuner corrects C1 and A1 only, not {name}")
@@ -571,7 +571,7 @@ class Tuner(JobDevice):
 
         # The budget is only as good as the current: on hardware a default or stale current is refused (routines/beam.py).
         beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
-        current, source = beam.pa, beam.source
+        current = beam.pa
         frames_per = {"image": 1, "autofocus": int(self.autofocus_frames), "corrector_measure": int(self.corrector_measure_frames)}
         # Images are taken at the plan's own fov_m, imsize and dwell_s (on_start sets them), so their dose is known.
         # OptiSTEM and the corrector scan at their own settings, which the Tuner cannot read: each run is counted as

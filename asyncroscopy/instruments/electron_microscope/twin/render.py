@@ -61,7 +61,7 @@ def object_signal(weight: np.ndarray, detector: str, params: RenderParams) -> np
 
 
 class Renderer:
-    def __init__(self, sample: Specimen, params: RenderParams):
+    def __init__(self, sample: Specimen, params: RenderParams) -> None:
         self.sample = sample  # any Specimen: it gives the projected weight, the renderer applies the instrument
         self.params = params
 

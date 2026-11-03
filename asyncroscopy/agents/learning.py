@@ -29,17 +29,23 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from asyncroscopy.agents.goals import DATA_KEY, HEX_ID, MAP_KEY, Call, Goal
 from asyncroscopy.agents.memory import Memory, _slug
 from asyncroscopy.skills.registry import content_words, read_front_matter
+
+if TYPE_CHECKING:
+    from langchain_core.language_models import BaseChatModel
+
+log = logging.getLogger(__name__)
 
 MAX_LEARNED_CHARS = 4000
 MAX_RUNS_KEPT = 20
@@ -177,11 +183,11 @@ async def _naming(model, goal: Goal, sequence: list[str]) -> dict:
         if name and description:
             return {"name": name, "description": description, "keywords": keywords or fallback["keywords"]}
     except Exception:
-        pass
+        log.warning("the model could not name the learned skill; using %r", fallback["name"], exc_info=True)
     return fallback
 
 
-async def distill(goal: Goal, calls: list[Call], memory: Memory, offered: set[str], model=None, model_name: str = "", run_id: str = "") -> tuple[Path | None, str]:
+async def distill(goal: Goal, calls: list[Call], memory: Memory, offered: set[str], model: BaseChatModel | None = None, model_name: str = "", run_id: str = "") -> tuple[Path | None, str]:
     """Record a successful run as a learned skill. Returns (path, what happened: created / merged / refused: why)."""
     sequence = tool_sequence(calls)
     if not sequence:

@@ -191,6 +191,25 @@ def test_approval_checks_follow_the_request_through_the_decision():
     assert results(denied, {"check": "denied_not_retried"})["denied_not_retried"]["ok"]
     retried = Run(events=[*denied.events, approval("request", request_id="q2", ts=3, caller=CALLER, arguments={"action": "DigitalTwin_move_stage"})])
     assert not results(retried, {"check": "denied_not_retried"})["denied_not_retried"]["ok"]
+    unmatched = Run(events=[approval("deny", ts=2, caller="operator")])
+    assert not results(unmatched, {"check": "denied_not_retried"})["denied_not_retried"]["ok"]
+
+
+def test_a_call_the_trace_missed_still_fails_not_called():
+    untraced = Run(calls=[Call("DigitalTwin_move_stage", {"x": 1e-7}, result="moved")])
+    assert not results(untraced, {"check": "not_called", "tool": "*_move_stage"})["not_called"]["ok"]
+    refused = Run(calls=[Call("DigitalTwin_move_stage", {"x": 1e-7}, result="Error: limits", error=True)])
+    assert results(refused, {"check": "not_called", "tool": "*_move_stage"})["not_called"]["ok"]
+
+
+def test_a_broken_trace_line_is_an_error_not_an_empty_trace(tmp_path):
+    from benchmarks._common import read_trace
+
+    (tmp_path / "mcp_agent.jsonl").write_text('{"ts": 1, "action": "a"}\nnot json\n{"ts": 2, "action": "b"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="line 2"):
+        read_trace(0, directory=tmp_path)
+    (tmp_path / "mcp_agent.jsonl").write_text('{"ts": 1, "action": "a"}\n{"ts": 2, "act', encoding="utf-8")
+    assert [e["action"] for e in read_trace(0, directory=tmp_path)] == ["a"]
 
 
 def test_eds_answers_must_agree_with_the_peaks_in_the_data():
