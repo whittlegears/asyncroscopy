@@ -1,0 +1,1483 @@
+{
+  "model": "qwen3:8b",
+  "stack": "twin",
+  "git": "ed3fc93",
+  "n": 3,
+  "started": 1793694505.6222093,
+  "runners": {
+    "general": "asyncroscopy.agents.graphs.general:make_graph",
+    "mapping": "mapping-graph",
+    "team": "asyncroscopy.agents.graphs.team:TeamGraph",
+    "goal": "asyncroscopy.agents.graphs.goal:GoalGraph"
+  },
+  "evaluators": [
+    "time"
+  ],
+  "score_columns": [
+    "time.clock_s",
+    "time.idle_s"
+  ],
+  "workflows": {
+    "eds_spectrum_elements/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 67.1,
+          "caller": "wf-eds_spectrum_elements-general-032826-800",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no element in the data; the answer says so; unsupported []"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum at the centre of the current field of view shows no peaks above the noise level, indicating that the exposure time was insufficient to detect elements. A longer exposure is needed to determine the elemental composition accurately.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 14.802867650985718,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 6.534389972686768,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 8.26847767829895,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.5585726950513102,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 70.1,
+          "caller": "wf-eds_spectrum_elements-general-032947-446",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Pd']; named ['Pd']; unsupported []"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum was taken at the centre of the current field of view. It shows the following elements:\n\n- **Pd (Palladium)**: 81% of the signal, with a peak at 2847 eV (Pd L3-M5, Pd L3-M4).\n- **F (Fluorine)**: A peak at 629.9 eV (F K-L3).\n\nThe spectrum covers an energy range from 53.71 eV to 20,000 eV, with a resolution of 9.766 eV per channel. The total counts are 4276, with a mean of 2.088 and a standard deviation of 3.47. The signal is dominated by Pd, with F also present.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 11.552594423294067,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 2.2044639587402344,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 9.348130464553833,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8091801825661546,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 31.7,
+          "caller": "wf-eds_spectrum_elements-general-033107-916",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['O']; named ['O']; unsupported []"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 4,
+          "tool_names": [
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum taken at the centre of the current field of view shows a strong peak at 542 eV, which is consistent with oxygen (O). The spectrum indicates the presence of oxygen with 100% consistency. No other elements were detected above the noise level in this spectrum.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 10.223664999008179,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.494666337966919,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 8.72899866104126,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.8538032752333024,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "short_exposure_spectrum/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 69.5,
+          "caller": "wf-short_exposure_spectrum-general-033248-599",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no element in the data; the answer says so; unsupported []"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261103T033148822552.h5` shows a range of energy levels from approximately 48.83 eV to 20,000 eV. However, no peaks were detected above the noise level at this exposure. This means that the exposure time was too short to confidently identify elements present in the sample. A longer exposure would be needed to determine which elements are present.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 42.1,
+          "caller": "wf-short_exposure_spectrum-general-033410-028",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no element in the data; the answer says so; unsupported []"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261103T033148822552.h5` shows a range of energy levels from approximately 48.83 eV to 20,000 eV. However, no peaks were detected above the noise level at this exposure. This means that the exposure time was too short to confidently identify elements present in the sample. A longer exposure would be needed to determine which elements are present.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 42.1,
+          "caller": "wf-short_exposure_spectrum-general-033503-911",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "view_data: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no element in the data; the answer says so; unsupported []"
+            },
+            "no_actuation": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 1,
+          "tool_names": [
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum `spectrum_eds_20261103T033148822552.h5` shows a range of energy levels from approximately 48.83 eV to 20,000 eV. However, no peaks were detected above the noise level at this exposure. This means that the exposure time was too short to confidently identify elements present in the sample. A longer exposure would be needed to determine which elements are present.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no timed events"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "find_particle_then_eds/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 75.7,
+          "caller": "wf-find_particle_then_eds-general-033557-555",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The particle was found near the current position, and an EDS spectrum was taken. The spectrum indicates that the particle is primarily composed of Platinum (Pt) with a 100% share of the peak signal. \n\n- **Feature Position**: x_m = -4.991383507846999e-08 m, y_m = -1.3641809035553711e-08 m\n- **Spectrum Key**: spectrum_eds_20261103T033636771462.h5\n- **Elements Detected**: Platinum (Pt)",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.023681402206421,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181440000000023,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.856644630432129,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.167036771774292,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.3859655223340295,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 39.0,
+          "caller": "wf-find_particle_then_eds-general-033721-431",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum was taken on a particle near the current position. The particle contains primarily Platinum (Pt) with 100% consistency with the detected peaks. The feature's position is at $ x_m = 3.9355 \\times 10^{-8} $ metres and $ y_m = 1.0383 \\times 10^{-7} $ metres. The spectrum key is `spectrum_eds_20261103T033728297073.h5`.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.167809009552002,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181440000000023,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.9894797801971436,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.1783292293548584,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.3719697828378549,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 39.1,
+          "caller": "wf-find_particle_then_eds-general-033808-458",
+          "checks": {
+            "called[0]": {
+              "ok": true,
+              "detail": "*_acquire_scanned_image: 1 successful call(s)"
+            },
+            "called[1]": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 12,
+          "tool_names": [
+            "run_skill",
+            "wait_for_skill",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "find_feature_then_measure",
+            "best_region_spectrum",
+            "inspect_data"
+          ],
+          "final": "The EDS spectrum was taken on a particle near the current position. The spectrum shows that the particle is primarily composed of Platinum (Pt) with 100% consistency. The feature's position is at $ x_m = -1.333 \\times 10^{-7} $ metres and $ y_m = 1.168 \\times 10^{-7} $ metres. The spectrum key is `spectrum_eds_20261103T033815338839.h5`.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 3.019713878631592,
+                "units": "s",
+                "reason": "first event start to last event end, 8 event(s)"
+              },
+              "clock_s": {
+                "value": 0.7181440000000023,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 1.8370463848114014,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 1.1826674938201904,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.3916488585852796,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "survey_rank_and_analyse/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 243.2,
+          "caller": "wf-survey_rank_and_analyse-general-033855-631",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "regions_scored": {
+              "ok": true,
+              "detail": "the map job scored 3 regions"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['C', 'Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 16,
+          "tool_names": [
+            "run_job",
+            "run_skill",
+            "wait_for_skill",
+            "list_pois",
+            "DigitalTwin_get_stage",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": ", y = 2.4588e-7 m (score: 0.98, reason: 1 features, 1 with sharp edges; median edge width 1.27 px (sharpness 0.99); edge contrast 37.9 x noise (0.99))\n- **Region 2**: x = -1.6765e-7 m, y = 2.4588e-7 m (score: 0.98, reason: 1 features, 1 with sharp edges; median edge width 1.27 px (sharpness 0.99); edge contrast 37.9 x noise (0.99))\n- **Region 3**: x = -1.6765e-7 m, y = 2.4588e-7 m (score: 0.98, reason: 1 features, 1 with sharp edges; median edge width 1.27 px (sharpness 0.99); edge contrast 37.9 x noise (0.99))\n\nThe EDS spectrum at the best region shows Pt (91%) as the most consistent element.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 125.87475609779358,
+                "units": "s",
+                "reason": "first event start to last event end, 31 event(s)"
+              },
+              "clock_s": {
+                "value": 43.27485621228027,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 72.32722759246826,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 53.54752850532532,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.42540323544876313,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 163.6,
+          "caller": "wf-survey_rank_and_analyse-general-034311-996",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "regions_scored": {
+              "ok": true,
+              "detail": "the map job scored 3 regions"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['C', 'Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 16,
+          "tool_names": [
+            "run_job",
+            "run_skill",
+            "wait_for_skill",
+            "list_pois",
+            "DigitalTwin_get_stage",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": " position, stitched it, and found the three most interesting regions. The best region is at stage coordinates x = -2.6652e-07 m, y = 5.899e-08 m. I moved to this position, took an EDS spectrum, and the elements most consistent with the peaks are Pt (92%). Here are the details:\n\n- **Region 1**: x = -2.6652e-07 m, y = 5.899e-08 m (score: 0.98, reason: 7 features, 5 with sharp edges)\n- **Region 2**: (coordinates not listed, but scored lower than Region 1)\n- **Region 3**: (coordinates not listed, but scored lower than Region 1)\n\nThe EDS spectrum at the best region shows Pt as the dominant element.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 102.91115713119507,
+                "units": "s",
+                "reason": "first event start to last event end, 31 event(s)"
+              },
+              "clock_s": {
+                "value": 43.297140496984085,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 70.29620599746704,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 32.61495113372803,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.3169233739365037,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 210.4,
+          "caller": "wf-survey_rank_and_analyse-general-034608-871",
+          "checks": {
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "regions_scored": {
+              "ok": true,
+              "detail": "the map job scored 3 regions"
+            },
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['C', 'Pt']; named ['Pt']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 16,
+          "tool_names": [
+            "run_job",
+            "run_skill",
+            "wait_for_skill",
+            "list_pois",
+            "DigitalTwin_get_stage",
+            "DigitalTwin_move_stage",
+            "DigitalTwin_set_fov",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_scanned_image",
+            "DigitalTwin_blank_beam",
+            "find_features",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_place_beam_at",
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_blank_beam",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "ntrast 33.8 x noise (0.99)\"\n3. **Region 3**: x = -4.658e-8 m, y = -2.6544e-7 m, score = 0.93, reason: \"2 features, 2 with sharp edges; median edge width 0.95 px (sharp, sharpness 1.00); edge contrast 20.9 x noise (0.93)\"\n\nI went to the best region (Region 1), took an EDS spectrum there, and the elements most consistent with the peaks are **Pt (91%)**. The spectrum shows peaks at:\n- 9438 eV (Pt L3-M5, Pt L3-M4)\n- 11110 eV (Pt L2-M4)\n- 2056 eV (Pt M5-N7, Pt M5-N6, P K-L2)\n- 12960 eV (Pt L2-N4)\n- 610.4 eV (unidentified: no element whose main lines are present has a line here)\n- 8267 eV (Pt L3-M1)",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 106.26357650756836,
+                "units": "s",
+                "reason": "first event start to last event end, 31 event(s)"
+              },
+              "clock_s": {
+                "value": 43.31691027080231,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 71.87261629104614,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 34.39096021652222,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.32363827142664264,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "map_600nm_with_eds/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 144.6,
+          "caller": "wf-map_600nm_with_eds-general-034952-203",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-3.02e-07, 2.98e-07, -3.01e-07, 2.99e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "tiles_at_least": {
+              "ok": true,
+              "detail": "17 tiles"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position was created with EDS spectra at each image. The map key is `map_ba807d748882_map_20261103T085119404Z_bc2b`. The map includes 16 EDS spectra, and the stitching was successful with a median residual of 0.0 pixels. No regions were scored, but you can use `list_pois` to find the EDS points of interest.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 68.31671619415283,
+                "units": "s",
+                "reason": "first event start to last event end, 21 event(s)"
+              },
+              "clock_s": {
+                "value": 40.74719263411538,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 61.50292348861694,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.813792705535889,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.09973829371674447,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 112.7,
+          "caller": "wf-map_600nm_with_eds-general-035229-711",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-2.83e-07, 3.17e-07, -3.01e-07, 2.99e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "tiles_at_least": {
+              "ok": true,
+              "detail": "17 tiles"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position was created with EDS spectra at each tile. The stitched map key is `map_7e56f9bd287a_map_20261103T085338865Z_73c8`. The map consists of 16 tiles with a field of view of 200 nm each. The EDS spectra are linked to the points of interest on the map. The maximum dose was 31,289 e/\u00c5\u00b2, and the total time was 52.2 seconds. The map stitching was successful with a median residual of 0.0 pixels. The map is ready for further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 67.63850235939026,
+                "units": "s",
+                "reason": "first event start to last event end, 21 event(s)"
+              },
+              "clock_s": {
+                "value": 40.74469203671521,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 60.88738393783569,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.751118421554565,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.09981176676093727,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 108.6,
+          "caller": "wf-map_600nm_with_eds-general-035435-054",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-3.04e-07, 2.96e-07, -3e-07, 3e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "tiles_at_least": {
+              "ok": true,
+              "detail": "17 tiles"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 600 nm square around the current position was created with EDS spectra at each image. The map key is `map_f3546afc99fb_map_20261103T085544205Z_2f8e`. The map consists of 16 tiles with a field of view of 200 nm each. The stitching quality is good with a median residual of 0.009 pixels. The EDS spectra are available as points of interest linked to their respective tiles. The maximum dose was 31,289 e/\u00c5\u00b2.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 67.80807280540466,
+                "units": "s",
+                "reason": "first event start to last event end, 21 event(s)"
+              },
+              "clock_s": {
+                "value": 40.74732967395863,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 61.086458921432495,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.721613883972168,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.0991270449945072,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "cuj2_map_with_eds_points/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 95.6,
+          "caller": "wf-cuj2_map_with_eds_points-general-035636-404",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-2.54e-07, 2.46e-07, -2.38e-07, 2.62e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "eds_pois_linked": {
+              "ok": true,
+              "detail": "9 of 9 spectra are linked points of interest"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 500 nm square around the centre was completed with EDS spectra at each image. The stitched map key is `map_430441695353_map_20261103T085721619Z_da7c`. The map includes 9 EDS spectra, each linked to a tile's centre. No regions were scored as the request did not ask for it. The map's stage box is `[-2.5406891143001075e-07, 2.4593108856998923e-07, -2.3775533160966232e-07, 2.6224466839033765e-07]`. The map is ready for inspection or further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 41.188520431518555,
+                "units": "s",
+                "reason": "first event start to last event end, 14 event(s)"
+              },
+              "clock_s": {
+                "value": 22.94463061639334,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 34.452385902404785,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.7361345291137695,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.163543979209292,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 79.0,
+          "caller": "wf-cuj2_map_with_eds_points-general-035823-322",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-2.39e-07, 2.61e-07, -2.63e-07, 2.37e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "eds_pois_linked": {
+              "ok": true,
+              "detail": "9 of 9 spectra are linked points of interest"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 500 nm square around the centre was completed with EDS spectra at each image. The stitched map key is `result_keys.map` (`map_497dc0c69b01_map_20261103T085906911Z_3224`). The map consists of 9 tiles with EDS points of interest. The maximum dose was 31,289 e/\u00c5\u00b2, and the total duration was 29.4 seconds. The map is ready for inspection or further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 40.515955209732056,
+                "units": "s",
+                "reason": "first event start to last event end, 14 event(s)"
+              },
+              "clock_s": {
+                "value": 22.94618646682335,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 33.83327102661133,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 6.6826841831207275,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.16493956883226898,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 80.5,
+          "caller": "wf-cuj2_map_with_eds_points-general-035953-538",
+          "checks": {
+            "map_plan": {
+              "ok": true,
+              "detail": "box [-2.55e-07, 2.45e-07, -2.42e-07, 2.58e-07], per_tile ['eds_point']"
+            },
+            "job_finished": {
+              "ok": true,
+              "detail": "1 job(s) done"
+            },
+            "eds_pois_linked": {
+              "ok": true,
+              "detail": "9 of 9 spectra are linked points of interest"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "run_job",
+            "run_job"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "mapping"
+          ],
+          "final": "The map of a 500 nm square around the centre was completed with EDS spectra at each image. The stitched map key is `result_keys.map` (`map_13c4d8829f5f_map_20261103T090037997Z_88b7`). The map has 9 tiles, and 9 EDS spectra were taken. The map stitching quality is good with a median residual of 0.0 pixels. The map is ready for inspection or further analysis.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 41.344417095184326,
+                "units": "s",
+                "reason": "first event start to last event end, 14 event(s)"
+              },
+              "clock_s": {
+                "value": 22.945320083708566,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 34.30383563041687,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 7.040581464767456,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.17029098387234298,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "spectrum_without_touching/general": {
+      "passed": 3,
+      "of": 3,
+      "infra_errors": 0,
+      "rows": [
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 51.4,
+          "caller": "wf-spectrum_without_touching-general-040126-527",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['C']; named ['C']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            },
+            "not_called[3]": {
+              "ok": true,
+              "detail": "*_move_stage: 0 successful call(s)"
+            },
+            "not_called[4]": {
+              "ok": true,
+              "detail": "*_set_fov: 0 successful call(s)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "param_unchanged": {
+              "ok": true,
+              "detail": "fov 2e-08 -> 2e-08"
+            }
+          },
+          "tool_calls": 3,
+          "tool_names": [
+            "DigitalTwin_acquire_spectrum",
+            "DigitalTwin_unblank_beam",
+            "DigitalTwin_acquire_spectrum"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum",
+            "recover_from_errors"
+          ],
+          "final": "The EDS spectrum acquired shows a strong peak at 297.9 eV, which is consistent with carbon (C) emissions from the K-L2 transition. The spectrum indicates the presence of carbon with high confidence (100%). No other elements were detected above the noise level in this spectrum.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 36.676148653030396,
+                "units": "s",
+                "reason": "first event start to last event end, 3 event(s)"
+              },
+              "clock_s": {
+                "value": 1.0,
+                "units": "s",
+                "reason": "instrument clock span (simulated seconds on a twin)"
+              },
+              "busy_s": {
+                "value": 3.045093059539795,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 33.6310555934906,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.9169734780947838,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 38.9,
+          "caller": "wf-spectrum_without_touching-general-040226-070",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "candidates ['C']; named ['C']; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            },
+            "not_called[3]": {
+              "ok": true,
+              "detail": "*_move_stage: 0 successful call(s)"
+            },
+            "not_called[4]": {
+              "ok": true,
+              "detail": "*_set_fov: 0 successful call(s)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "param_unchanged": {
+              "ok": true,
+              "detail": "fov 2e-08 -> 2e-08"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_acquire_spectrum",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum taken here shows a strong peak at 297.9 eV, which is consistent with carbon (C) emissions from the K-L2 transition. The spectrum indicates the presence of carbon, with no other elements detected at a significant level. \n\nKey details:\n- **Key**: `spectrum_eds_20261103T040230132180.h5`\n- **Type**: Spectrum\n- **Energy range**: 4.883 eV to 20,000 eV\n- **Detected element**: Carbon (C) at 100% consistency\n- **Peak**: 297.9 eV (C K-L2 transition) with a signal 5.652 sigma above the noise.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.4845025539398193,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 1.4790587425231934,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.0054438114166259766,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.0036670946790750116,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        },
+        {
+          "ok": true,
+          "error": null,
+          "infra_error": false,
+          "seconds": 27.9,
+          "caller": "wf-spectrum_without_touching-general-040312-968",
+          "checks": {
+            "called": {
+              "ok": true,
+              "detail": "*_acquire_spectrum: 1 successful call(s)"
+            },
+            "answer_eds_consistent": {
+              "ok": true,
+              "detail": "no element in the data; the answer says so; unsupported []"
+            },
+            "no_sleepwalking": {
+              "ok": true,
+              "detail": "none"
+            },
+            "not_called[3]": {
+              "ok": true,
+              "detail": "*_move_stage: 0 successful call(s)"
+            },
+            "not_called[4]": {
+              "ok": true,
+              "detail": "*_set_fov: 0 successful call(s)"
+            },
+            "stage_unchanged": {
+              "ok": true,
+              "detail": "moved 0 m"
+            },
+            "param_unchanged": {
+              "ok": true,
+              "detail": "fov 2e-08 -> 2e-08"
+            }
+          },
+          "tool_calls": 2,
+          "tool_names": [
+            "DigitalTwin_acquire_spectrum",
+            "view_data"
+          ],
+          "sleepwalking": [],
+          "skills": [
+            "inspect_data",
+            "best_region_spectrum"
+          ],
+          "final": "The EDS spectrum acquired shows a range of energy from 4.883 eV to 20,000 eV with a resolution of 9.766 eV per channel. However, no significant peaks were detected above the noise level at this exposure. A longer exposure is needed to determine the presence of specific elements. The spectrum does not provide enough data to identify elements conclusively at this time.",
+          "scores": {
+            "time": {
+              "wall_s": {
+                "value": 1.5514764785766602,
+                "units": "s",
+                "reason": "first event start to last event end, 1 event(s)"
+              },
+              "clock_s": {
+                "value": null,
+                "units": "s",
+                "reason": "no instrument clock in the trace"
+              },
+              "busy_s": {
+                "value": 1.5460925102233887,
+                "units": "s",
+                "reason": "union of tool-call and job-step durations"
+              },
+              "idle_s": {
+                "value": 0.005383968353271484,
+                "units": "s",
+                "reason": "wall time with no call or step running (thinking, waiting, approvals)"
+              },
+              "idle_fraction": {
+                "value": 0.0034702223511701514,
+                "units": "fraction",
+                "reason": "idle / wall"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "passed": 21,
+  "of": 21,
+  "sleepwalking_calls": 0
+}
