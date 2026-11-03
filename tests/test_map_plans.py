@@ -121,6 +121,18 @@ def test_an_existing_maps_best_regions_are_imaged_without_mapping_again(mapper_p
     assert len(high_mag) == imaged and all(p["links"][1].startswith("poi:") for p in high_mag)
 
 
+def test_a_map_scored_twice_has_each_region_imaged_once(mapper_proxy, mapping_twin_proxy, analysis):
+    _, first = run(mapper_proxy, {**PLAN, "find_regions": 4})
+    map_key = first["result_keys"]["map"]
+    candidates = analysis.server.tools.list_pois(map_key, kind="candidate")["pois"]
+    analysis.server.tools.store.add_pois(map_key, [{**p, "id": f"{p['id']}-again"} for p in candidates])
+    best = sorted(candidates, key=lambda p: p["score"], reverse=True)[:2]
+
+    _, results = run(mapper_proxy, {"revisit": {"fov_m": 3e-8, "map": map_key, "top_k": 2}})
+    chosen = results["summary"]["regions"]["first"]
+    assert [(r["x_m"], r["y_m"]) for r in chosen] == [(p["x_m"], p["y_m"]) for p in best]
+
+
 def test_a_map_with_no_scored_regions_says_to_score_it(mapper_proxy, mapping_twin_proxy, analysis):
     _, first = run(mapper_proxy, PLAN)
     map_key = first["result_keys"]["map"]

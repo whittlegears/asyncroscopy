@@ -85,6 +85,7 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import math
 import os
 import shutil
 import threading
@@ -1128,7 +1129,13 @@ class Mapper(JobDevice):
         revisit = job["resolved_plan"]["revisit"]
         reply = self._analysis("list_pois", {"map": revisit["map"], "kind": "candidate", "limit": 500})
         candidates = sorted((p for p in reply.get("pois", []) if p.get("score") is not None), key=lambda p: p["score"], reverse=True)
-        top = candidates[: int(revisit.get("top_k", 3))]
+        # Scoring a map twice stores the same regions again under new ids, and two regions closer than half a
+        # field of view share one image: each is imaged once, and the next best distinct region takes its place.
+        apart = float(revisit["fov_m"]) / 2.0
+        top: list[dict] = []
+        for c in candidates:
+            if len(top) < int(revisit.get("top_k", 3)) and all(math.hypot(c["x_m"] - t["x_m"], c["y_m"] - t["y_m"]) >= apart for t in top):
+                top.append(c)
         with self._lock:
             pipeline["map"] = revisit["map"]
             pipeline["regions"] = [{k: c.get(k) for k in ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")} for c in top]
