@@ -84,6 +84,26 @@ def test_survey_leaves_viewing_the_spectrum_to_the_user_without_reading_it():
     assert "view_data" in claims[0].why
 
 
+def skipped_zero(request):
+    run = Calls(request)
+    for value, key in ((-2e-8, IMAGES[0]), (2e-8, IMAGES[2])):
+        run.call("DigitalTwin_set_defocus", {"defocus": value})
+        run.call("DigitalTwin_acquire_scanned_image", {"detector": "HAADF"}, {"key": key})
+    run.call("DigitalTwin_set_defocus", {"defocus": 0.0})
+    return run.messages
+
+
+def test_a_requested_value_never_acquired_is_to_be_acquired_not_dropped():
+    answer = f"I took HAADF images at defocus -20 nm, 0 nm, and +20 nm. The keys are {IMAGES[0]} and {IMAGES[2]}."
+    claims = check_answer(skipped_zero("Take HAADF images at defocus -20 nm, 0 nm and +20 nm, then set the defocus back to 0."), answer, TOOLS)
+    assert kinds(claims) == ["acquired_at"]
+    assert "the request asks for an acquisition at defocus 0 nm" in claims[0].why and "Do not answer without it" in claims[0].why
+    assert '"defocus": 0.0' in claims[0].why
+    # Not asked for: the value is only said, so it may be acquired or left out of the answer.
+    claims = check_answer(skipped_zero("Take two HAADF images at different defocus, then set the defocus back to 0."), answer, TOOLS)
+    assert kinds(claims) == ["acquired_at"] and "request" not in claims[0].why and "to make it true" in claims[0].why
+
+
 # ---------------------------------------------------------------------- no false alarms
 def test_correct_answers_are_not_flagged():
     assert check_answer(focus_series(last_defocus=0.0), FOCUS_ANSWER.replace("+20 nm", "0 nm"), TOOLS) == []
@@ -342,7 +362,7 @@ def test_a_series_with_one_shared_unit_or_an_unknown_starting_setting_is_checked
     run.call("DigitalTwin_set_defocus", {"defocus": 2e-8})
     run.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[1])
     claims = check_answer(run.messages, "I acquired images at defocus -20, 0 and +20 nm.", TOOLS)
-    assert [c.why.split(";")[0] for c in claims] == ["no acquisition in this run ran while the defocus was 0 nm"]
+    assert [c.why.split(";")[0] for c in claims] == ["the request asks for an acquisition at defocus 0 nm, and none ran while the defocus was 0 nm"]
     unknown = Calls("Take images at defocus 0 and +20 nm.")
     unknown.call("DigitalTwin_acquire_scanned_image", {}, IMAGES[0])
     unknown.call("DigitalTwin_set_defocus", {"defocus": 2e-8})
@@ -377,7 +397,7 @@ def test_a_series_value_missing_because_its_acquisition_failed_is_named_in_its_o
         run.call("DigitalTwin_acquire_scanned_image", {}, key)
     run.call("DigitalTwin_set_defocus", {"defocus": 0.0})
     claims = check_answer(run.messages, "I took HAADF images at defocus -20 nm, 0 nm, and +20 nm.", TOOLS)
-    assert [c.why.split(";")[0] for c in claims] == ["no acquisition in this run ran while the defocus was -20 nm"]
+    assert [c.why.split(";")[0] for c in claims] == ["the request asks for an acquisition at defocus -20 nm, and none ran while the defocus was -20 nm"]
 
 
 def pois_listed():

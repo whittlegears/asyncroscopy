@@ -303,9 +303,20 @@ def _setting_claims(answer: str, settings: _Settings) -> list[Claim]:
     return claims
 
 
-def _acquired_at_claims(answer: str, settings: _Settings) -> list[Claim]:
+def _at_values(sentence: str, phrase: str):
+    """"at defocus -20, 0 and +20 nm" in ``sentence``: the match and each (stated number, scale, unit), or None."""
+    m = re.search(rf"\bat\s+(?:an?\s+|the\s+)?{re.escape(phrase)}s?(?:\s+values?)?(?:\s+of)?\s+(?P<list>{VALUES})", sentence, re.I)
+    if not m:
+        return None
+    items = list(re.finditer(rf"{NUMBER}{UNIT}", m.group("list")))
+    unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # "-20, 0 and +20 nm"
+    return m, [(float(i.group("num").replace("−", "-")), _scale(i.group("unit") or unit), i.group("unit") or unit) for i in items]
+
+
+def _acquired_at_claims(answer: str, settings: _Settings, request: str = "") -> list[Claim]:
     """"I took images at defocus -20 nm, 0 nm and +20 nm": each value needs an acquisition while the setting had it.
-    Unchecked when an acquisition ran with the setting unknown (it may have had the value)."""
+    Unchecked when an acquisition ran with the setting unknown (it may have had the value). A value the request
+    asked for is to be acquired, not dropped from the answer."""
     claims: list[Claim] = []
     for sentence in _sentences(answer):
         acquired = ACQUIRED.search(sentence)
@@ -313,26 +324,28 @@ def _acquired_at_claims(answer: str, settings: _Settings) -> list[Claim]:
             continue
         checked: set[str] = set()
         for name, phrase in settings.phrases():
-            if name in checked:
-                continue
-            m = re.search(rf"\bat\s+(?:an?\s+|the\s+)?{re.escape(phrase)}s?(?:\s+values?)?(?:\s+of)?\s+(?P<list>{VALUES})", sentence, re.I)
-            if not m or not settings.acquired:
+            found = _at_values(sentence, phrase)
+            if name in checked or not found or not settings.acquired:
                 continue
             checked.add(name)
             during = [a.get(name) for a in settings.acquired]
             if None in during:
                 continue
-            items = list(re.finditer(rf"{NUMBER}{UNIT}", m.group("list")))
-            unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # "-20, 0 and +20 nm"
+            m, items = found
+            asked = [stated * scale if scale else stated for s in _sentences(request) for stated, scale, _ in (_at_values(s, phrase) or (None, []))[1] if scale or stated == 0]
             setter = settings.setter.get(name)
-            for item in items:
-                stated = float(item.group("num").replace("−", "-"))
-                scale = _scale(item.group("unit") or unit)
+            for stated, scale, unit in items:
                 if any(_matches(stated, scale, v) is not False for v in during):
                     continue
-                shown = _show(stated * scale if scale else stated, scale, item.group("unit") or unit)
-                how = f"; to make it true, call {setter} with {json.dumps({name: stated * scale if scale else stated})}, acquire again, then restore the {phrase}" if setter else ""
-                claims.append(Claim("acquired_at", m.group(0).strip(),f"no acquisition in this run ran while the {phrase} was {shown}{how}"))
+                value = stated * scale if scale else stated
+                shown = _show(value, scale, unit)
+                if setter and any(_matches(stated, scale, v) for v in asked):
+                    why = (f"the request asks for an acquisition at {phrase} {shown}, and none ran while the {phrase} was {shown}; "
+                           f"do it now: call {setter} with {json.dumps({name: value})}, acquire again, then restore the {phrase}. Do not answer without it")
+                else:
+                    how = f"; to make it true, call {setter} with {json.dumps({name: value})}, acquire again, then restore the {phrase}" if setter else ""
+                    why = f"no acquisition in this run ran while the {phrase} was {shown}{how}"
+                claims.append(Claim("acquired_at", m.group(0).strip(), why))
     return claims
 
 
@@ -473,7 +486,7 @@ def check_answer(messages: list, answer: str, tool_names=(), context: str = "") 
     claims += _failed_acquisition_claims(answer, calls)
     settings = _Settings(calls, tool_names)
     claims += _setting_claims(answer, settings)
-    claims += _acquired_at_claims(answer, settings)
+    claims += _acquired_at_claims(answer, settings, _request(messages))
     claims += _action_claims(answer, calls)
     claims += _placement_claims(answer, calls)
     claims += _unfinished_claims(answer)
