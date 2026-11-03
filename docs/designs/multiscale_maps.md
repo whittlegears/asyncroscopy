@@ -402,6 +402,21 @@ After the fixes, `points_of_interest_on_map` passed 3 of 3 (190 to 235 s) and th
 no sleepwalking calls. `benchmarks/results/workflows_twin_general_{adb1de2,positions,safety_allow,positions_short,
 positions_units}.json` hold the full pass and each rerun.
 
+#### A full pass at 1593771: a regression of ours, and a region imaged twice (2026-11-02)
+
+All 32 twin workflows, run once each at 1593771: 31 passed, with no sleepwalking calls. The one failure, and what
+the reruns found:
+
+| Failure | Cause | Fix |
+| :-- | :-- | :-- |
+| `cuj3_three_regions_high_mag`: 0 complete scored points, although the three regions were visited and imaged | The previous fix dropped every `scorer_version` from `list_pois`, so no reader (the agent or the benchmark) could tell which scorer found a region | `list_pois` drops only empty versions (unscored points); a scored point keeps its version |
+| Rerun: one region imaged twice and the third not at all | The setup map had been scored by an earlier run. Scoring it again stored the same regions under new ids, and the Mapper's revisit took the top 3 by score, two of them the same place | The revisit takes the best regions at least half a field of view apart (two regions closer than that share one image), so the next best distinct region takes a duplicate's place |
+
+After both fixes, `cuj3_three_regions_high_mag` passed 3 of 3 (median 117 s) and `points_of_interest_on_map` 2 of 2
+(240 and 318 s; the versions add about 6 tokens a scored point), with no sleepwalking calls.
+`benchmarks/results/workflows_twin_general_{1593771,scorer_version,revisit_distinct}.json` hold the full pass and
+each rerun.
+
 ### What P4 to P7 require of this
 
 *   P4 (viewer) needs every tier stored as chunked arrays readable by block, placements as similarity transforms in metres, and unplaced images listed: all provided above.
