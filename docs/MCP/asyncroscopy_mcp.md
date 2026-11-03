@@ -160,7 +160,10 @@ Still open: the window also bends the continuum into a broad rise near 0.6 keV,
 which the peak search can take for a peak and which can then read as O or F
 (5 of 168 simulated spectra on the twin). Rejecting rises wider than five line
 widths stopped that but also lost carbon peaks that sit on the rise (20 of 48
-long carbon exposures), so it was not kept.
+long carbon exposures), so it was not kept. Live at ed3fc93 the EDS workflows passed 21 of 21
+(`benchmarks/results/workflows_twin_general_ed3fc93_eds.json`); one of the three
+eds_spectrum_elements runs read that rise as oxygen, and the check cannot catch it
+because the note itself offers O.
 
 `list_data` looks through the newest 300 keys in registration order (files
 registered after a Tiled outage count as new). `offset` counts keys from the
