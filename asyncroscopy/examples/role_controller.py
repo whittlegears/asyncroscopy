@@ -23,9 +23,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from asyncroscopy.mcp.action_space import DEFAULT_URL, actions_with, structured
+
+if TYPE_CHECKING:
+    from fastmcp import Client
 
 MAIN_OBSERVABLES = ("acquire.image", "acquire.spectrum", "acquire.other")
 
@@ -33,7 +36,7 @@ MAIN_OBSERVABLES = ("acquire.image", "acquire.spectrum", "acquire.other")
 class RoleController:
     """Calls tools by role on one MCP client (a fastmcp Client, already open)."""
 
-    def __init__(self, client, space: dict):
+    def __init__(self, client: Client, space: dict) -> None:
         self.client, self.space = client, space
         self.calls: list[tuple[str, str]] = []  # (role, tool) in call order
         # The main observable (an acquisition marked primary, else the first image, spectrum, ...); every
@@ -108,7 +111,7 @@ class RoleController:
         return await self.call(reader, {"key": key, **extra})
 
 
-async def run(client, offset_m: tuple[float, float] = (1e-7, 1e-7)) -> dict:
+async def run(client: Client, offset_m: tuple[float, float] = (1e-7, 1e-7)) -> dict:
     """Move the stage by ``offset_m`` (x, y), acquire, read it back. Returns what happened."""
     space = structured(await client.call_tool("action_space", {}))
     controller = RoleController(client, space)

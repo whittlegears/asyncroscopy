@@ -26,6 +26,7 @@ import time
 import urllib.parse
 
 from fastmcp import Client
+from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 
 FAILURES: list[str] = []
@@ -38,14 +39,14 @@ def report(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def text(result) -> str:
+def text(result: CallToolResult) -> str:
     structured = getattr(result, "structured_content", None)
     if isinstance(structured, dict) and isinstance(structured.get("result"), str):
         return structured["result"]
     return "".join(getattr(block, "text", "") or "" for block in (result.content or []))
 
 
-async def call(client: Client, tool: str, args: dict | None = None, raise_on_error: bool = True):
+async def call(client: Client, tool: str, args: dict | None = None, raise_on_error: bool = True) -> CallToolResult:
     return await client.call_tool(tool, args or {}, raise_on_error=raise_on_error)
 
 
@@ -62,6 +63,7 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
 
         async def finish(job):
             deadline = time.time() + args.timeout
+            status = {"state": "not checked", "last_error": f"--timeout {args.timeout} left no time to wait"}
             while time.time() < deadline:
                 status = await structured("analysis_job_status", {"job_id": job["job_id"]})
                 if status.get("state") in {"done", "failed", "aborted"}:

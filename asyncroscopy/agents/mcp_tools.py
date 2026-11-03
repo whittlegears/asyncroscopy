@@ -11,11 +11,15 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastmcp import Client
+from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain_core.tools import StructuredTool, ToolException
+
+if TYPE_CHECKING:
+    from mcp.types import Tool
 
 # A bearer token for endpoints that verify tokens (the MCP config's mcp.auth; docs/Operation/remote_access.md).
 TOKEN_ENV = "ASYNCROSCOPY_MCP_TOKEN"
@@ -29,7 +33,7 @@ def bearer_header(token: str | None) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-def result_text(result) -> str:
+def result_text(result: CallToolResult) -> str:
     """Text of a fastmcp CallToolResult: the structured result when it is a string, then any other text blocks (an
     acquisition's summary: "taken with the beam blanked", a spectrum's peaks), else the text blocks."""
     structured = getattr(result, "structured_content", None)
@@ -50,7 +54,7 @@ class McpServer:
     what it started (the goal graph reads it; see ``AgentConfig.ledger``).
     """
 
-    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0, ledger: list | None = None):
+    def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0, ledger: list | None = None) -> None:
         self.url = url
         self.headers = dict(headers or {})
         if not any(k.lower() == "authorization" for k in self.headers):  # e.g. the swarm, which builds its own headers
@@ -61,11 +65,11 @@ class McpServer:
     def _client(self) -> Client:
         return Client(StreamableHttpTransport(self.url, headers=self.headers), timeout=self.timeout_s)
 
-    async def list_tools(self):
+    async def list_tools(self) -> list[Tool]:
         async with self._client() as client:
             return await client.list_tools()
 
-    async def call(self, name: str, arguments: dict[str, Any] | None = None):
+    async def call(self, name: str, arguments: dict[str, Any] | None = None) -> CallToolResult:
         """Call a tool; returns the fastmcp result (check ``is_error``) without raising on tool errors."""
         async with self._client() as client:
             result = await client.call_tool(name, arguments or {}, raise_on_error=False)

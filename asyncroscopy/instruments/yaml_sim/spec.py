@@ -98,6 +98,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -936,7 +937,7 @@ def load_spec(path: str | Path) -> InstrumentSpec:
 class SimInstrument:
     """The instrument's state: setting values, and running commands and acquisitions against them."""
 
-    def __init__(self, spec: InstrumentSpec, sleep=time.sleep):
+    def __init__(self, spec: InstrumentSpec, sleep: Callable[[float], None] = time.sleep) -> None:
         self.spec = spec
         self.values = {name: q.default for name, q in spec.settings.items()}
         self.rng = np.random.default_rng(spec.seed)
@@ -964,7 +965,7 @@ class SimInstrument:
                 state = {n: scope[n] for n in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id in scope})}
                 raise Refused(f"{name} refused: it needs {text} (now {json.dumps(state)})")
 
-    def seconds(self, duration, scope) -> float:
+    def seconds(self, duration: tuple[Any, ast.Expression | None], scope: dict[str, Any]) -> float:
         raw, tree = duration
         return float(evaluate(tree, scope) if tree is not None else raw)
 
@@ -1006,7 +1007,7 @@ class SimInstrument:
             return ""
         return result if isinstance(result, str) else json.dumps(result)
 
-    def acquire(self, name: str, argument: Any = None, limit: float | None = MAX_DURATION_S, sleep=None) -> tuple[str, str, np.ndarray, dict]:
+    def acquire(self, name: str, argument: Any = None, limit: float | None = MAX_DURATION_S, sleep: Callable[[float], None] | None = None) -> tuple[str, str, np.ndarray, dict]:
         """Run an acquisition: (acquisition_type, detector, data, dataset attrs). ``value`` kinds return data=None.
 
         ``limit`` is the longest one call may take (None inside a job); ``sleep`` replaces the

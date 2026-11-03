@@ -25,7 +25,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import h5py
-import numpy as np
 import pytest
 import tango
 from autoscript_core.common import ApplicationServerException

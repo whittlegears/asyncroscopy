@@ -10,6 +10,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 import yaml
 
 
@@ -126,7 +127,7 @@ def load_config(path: Path) -> Config:
     )
 
 
-def remote_auth_problem(config: Config, simulated=None) -> str | None:
+def remote_auth_problem(config: Config, simulated: Callable[[str, int, str | None], bool] | None = None) -> str | None:
     """Why this endpoint must not start: a stack that is not simulated, reachable from other machines,
     with no mcp.auth. ``simulated``: a callable (tango_host, tango_port, approvals address) -> bool; by
     default the stack's Approvals device is asked, as the server itself does."""

@@ -3,7 +3,9 @@
 import json
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import h5py
 import tango
@@ -23,7 +25,7 @@ with instrument_context(devices):
     risks = server.list_tool_risks()
     xrd = server.tools["XRDTwin"]
 
-    def attempt(func, *args):
+    def attempt(func: Callable[..., Any], *args: Any) -> Any:
         try:
             return func(*args)
         except Exception as exc:

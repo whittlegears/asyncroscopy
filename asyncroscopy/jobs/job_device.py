@@ -55,6 +55,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import tango
@@ -73,7 +74,7 @@ STOPPABLE_STATES = {"running", "paused_suspended", "paused"}  # abort sets the w
 PAUSE_POLL_S = 0.2
 
 
-def lease_seconds(device) -> float:
+def lease_seconds(device: object) -> float:
     """A job device's lease_s (0: no lease), also for a stand-in that does not declare the property."""
     return float(getattr(device, "lease_s", 0.0) or 0.0)
 SUSPENDER_KEYS = {"attr", "min", "max", "equals", "resume_after_s", "label"}
@@ -164,7 +165,7 @@ def done_ranges_from(job: dict) -> list[list[int]]:
 
 
 class JobError(Exception):
-    def __init__(self, code: str, message: str, **details):
+    def __init__(self, code: str, message: str, **details: Any) -> None:
         super().__init__(message)
         self.code = code
         self.details = details  # extra fields of the error object, e.g. violations
@@ -211,7 +212,7 @@ def parse_suspenders(text: str) -> list[dict]:
     return out
 
 
-def suspender_problem(suspender: dict, value) -> str | None:
+def suspender_problem(suspender: dict, value: Any) -> str | None:
     """Why ``value`` trips ``suspender``, or None when it is fine."""
     label = suspender["label"]
     if "equals" in suspender and value != suspender["equals"]:
@@ -341,7 +342,7 @@ class JobDevice(Device):
         """Whether this stack drives a simulator: the ``simulated`` property run_servers sets (False, real hardware, by default)."""
         return bool(getattr(self, "simulated", False))
 
-    def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
+    def check_dry_call(self, job: dict, device: str, name: str, arguments: Any) -> dict | None:
         """In a dry run, check one recorded call against the plan: {"ok": bool, ...}, or None for no check.
         Default: no check. The Mapper checks every move_stage against the plan box."""
         return None
@@ -383,7 +384,8 @@ class JobDevice(Device):
         for path in sorted(self._state_dir.glob(f"{self._name.replace('/', '_')}__*.json")):
             try:
                 job = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as exc:
+                self.warn_stream(f"Skipping job state file {path}: {exc}")
                 continue
             job.pop("pause_requested", None)
             if job.get("state") in RUNNING_STATES:
@@ -790,14 +792,18 @@ class JobDevice(Device):
             if not job.get("pause_requested"):
                 return "running"
         cls = type(self).__name__
+        unsafe = None
         try:  # make the instrument safe before reporting the pause
             self.on_suspend(job, "paused by a person")
         except Exception as exc:
-            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=f"{type(exc).__name__}: {exc}", **self._dry(job))
+            unsafe = f"{type(exc).__name__}: {exc}"
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._dry(job))
         with self._lock:
             if job["state"] not in ("running", "paused"):  # aborting already
                 return "aborted"
             job["state"] = "paused"
+            if unsafe:  # a pause that could not make the instrument safe must not look safe
+                job["last_error"] = f"paused, but the instrument was not made safe: {unsafe}"
             job["paused_since"] = time.time()
             self._save(job)
         self._trace.record(f"{cls}.paused", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
@@ -987,14 +993,18 @@ class JobDevice(Device):
         cls = type(self).__name__
         tripped = {i for i, _ in problems}
         reason = "; ".join(r for _, r in problems)
+        unsafe = None
         try:  # make the instrument safe before reporting the pause
             self.on_suspend(job, reason)
         except Exception as exc:
-            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=f"{type(exc).__name__}: {exc}", **self._dry(job))
+            unsafe = f"{type(exc).__name__}: {exc}"
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._dry(job))
         with self._lock:
             if job["state"] != "running":  # aborting already
                 return False
             job["state"] = "paused_suspended"
+            if unsafe:
+                job["last_error"] = f"suspended, but the instrument was not made safe: {unsafe}"
             job["suspended"] = {"reason": reason, "since": time.time()}
             self._save(job)
         self._trace.record(f"{cls}.suspended", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=reason, **self._dry(job))

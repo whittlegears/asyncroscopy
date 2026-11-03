@@ -64,7 +64,7 @@ def energy_axis(params: EdsParams) -> np.ndarray:
     return (np.arange(params.channels) + 0.5) * width
 
 
-def fwhm_ev(energy_ev, params: EdsParams):
+def fwhm_ev(energy_ev: float | np.ndarray, params: EdsParams) -> np.ndarray:
     return np.sqrt(np.maximum(params.fwhm_mn_ka_ev**2 + 2.5 * (np.asarray(energy_ev) - MN_KA_EV), 30.0**2))
 
 

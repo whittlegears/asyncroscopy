@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import logging
 import os
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import StructuredTool
 
 from .mcp_tools import TOKEN_ENV, McpServer, bearer_header
 
@@ -14,6 +19,8 @@ DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
 CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"  # one agent run: run_job finds a held start again by caller and run
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,7 +50,7 @@ class AgentConfig:
     _info: dict | None = field(default=None, repr=False, compare=False)
 
     @classmethod
-    def from_env(cls, **overrides) -> AgentConfig:
+    def from_env(cls, **overrides: Any) -> AgentConfig:
         env = os.environ
         config = cls(
             model=env.get("ASYNCROSCOPY_MODEL", cls.model),
@@ -59,7 +66,7 @@ class AgentConfig:
                 setattr(config, key, value)
         return config
 
-    def chat_model(self):
+    def chat_model(self) -> BaseChatModel:
         """The chat model. Ollama always gets an explicit num_ctx: its default silently truncates tool descriptions."""
         if self.model_provider == "ollama":
             from langchain_ollama import ChatOllama
@@ -69,7 +76,7 @@ class AgentConfig:
 
         return init_chat_model(model=self.model, model_provider=self.model_provider, temperature=self.temperature)
 
-    def for_run(self, **changes) -> AgentConfig:
+    def for_run(self, **changes: Any) -> AgentConfig:
         """A copy for another agent run: a new run id and ledger (and any other changes, e.g. caller)."""
         return dataclasses.replace(self, run_id=uuid.uuid4().hex[:12], ledger=[], **changes)
 
@@ -92,14 +99,15 @@ class AgentConfig:
                 result = await McpServer(self.mcp_url, self._headers()).call("endpoint_info", {})
                 payload = getattr(result, "structured_content", None) if result is not None and not result.is_error else None
                 self._info = dict(payload or {})
-            except Exception:
-                self._info = {}
+            except Exception:  # not cached: one transient failure must not hide the risks for the whole run
+                log.warning("endpoint_info from %s failed; going on without it", self.mcp_url, exc_info=True)
+                return {}
             if self.analysis_url is None and "analysis_url" in self._info:
                 # The MCP config's mcp.analysis_url; empty there means this instrument has no analysis server.
                 self.analysis_url = self._info["analysis_url"] or ""
         return self._info
 
-    async def tools(self, include_analysis: bool = True, allow: list[str] | None = None):
+    async def tools(self, include_analysis: bool = True, allow: list[str] | None = None) -> list[StructuredTool]:
         """LangChain tools from the instrument endpoint (and the analysis server), filtered by a glob allow-list."""
         try:
             tools = await self.instrument().langchain_tools()

@@ -4,7 +4,9 @@ import json
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import h5py
 import tango
@@ -20,14 +22,14 @@ devices = [{"class": device_class("RamanTwin", jobs=True), "devices": [{"name": 
 outcome = {}
 
 
-def attempt(func, *args):
+def attempt(func: Callable[..., Any], *args: Any) -> Any:
     try:
         return func(*args)
     except Exception as exc:
         return f"error: {exc}"
 
 
-def wait(server, job_id, limit_s=60.0):
+def wait(server: Any, job_id: str, limit_s: float = 60.0) -> dict:
     deadline = time.monotonic() + limit_s
     status = {}
     while time.monotonic() < deadline:

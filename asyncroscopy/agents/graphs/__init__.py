@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import Runnable
 
 
-async def run_keeping_partial(graph, inputs: dict, config: dict | None = None, timeout: float | None = None) -> tuple[dict, str]:
+async def run_keeping_partial(graph: Runnable, inputs: dict, config: dict | None = None, timeout: float | None = None) -> tuple[dict, str]:
     """Run a graph to the end and return (its state, ""); on a recursion limit, a timeout or a crash,
     return (the last state it reached, what went wrong) instead of raising.
 

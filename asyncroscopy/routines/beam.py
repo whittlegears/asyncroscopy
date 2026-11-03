@@ -108,7 +108,7 @@ def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DE
 START_CURRENT_TOLERANCE = 0.05
 
 
-def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
+def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa: float | None, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
     """The current, checked again when a job with a dose budget starts or resumes; raises ``BeamCurrentRefused``.
 
     The approval may come long after the reserve: the current must still be usable for a budget, and no more

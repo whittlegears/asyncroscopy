@@ -28,10 +28,13 @@ import asyncio
 import json
 import re
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from asyncroscopy.mcp.roles import ACTION_HINTS, NATIVE_ROLES, ROLES, check_role, role_for
 from asyncroscopy.safety.policy import ENVELOPE_VERBS, NATIVE_HIGH, is_read_only
+
+if TYPE_CHECKING:
+    from asyncroscopy.mcp.mcp_server import MCPServer
 
 SCHEMA_VERSION = "1.0.0"
 DEFAULT_URL = "http://127.0.0.1:8000/mcp"
@@ -181,7 +184,7 @@ def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
     return found
 
 
-def build(server) -> dict[str, Any]:
+def build(server: MCPServer) -> dict[str, Any]:
     """The action space of an MCPServer after setup()."""
     warnings: list[str] = []
     actions: list[dict] = []
@@ -335,7 +338,7 @@ def format_table(space: dict) -> str:
     return "\n".join(lines)
 
 
-def structured(result) -> Any:
+def structured(result: Any) -> Any:
     """The value of an MCP tool result (fastmcp CallToolResult): its structured content, unwrapped."""
     content = getattr(result, "structured_content", None)
     if isinstance(content, dict):

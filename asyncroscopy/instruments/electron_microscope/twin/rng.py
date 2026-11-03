@@ -11,7 +11,7 @@ import numpy as np
 
 
 class EventRng:
-    def __init__(self, seed: int):
+    def __init__(self, seed: int) -> None:
         self.seed = int(seed)
 
     def for_event(self, event: str, index: int = 0) -> np.random.Generator:

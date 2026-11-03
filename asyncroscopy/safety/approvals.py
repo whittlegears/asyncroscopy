@@ -31,6 +31,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 from tango import DevState
 from tango.server import Device, command, device_property
@@ -46,7 +47,7 @@ AUTO_ON_HARDWARE = (
 )
 
 
-def fingerprint(action: str, arguments) -> str:
+def fingerprint(action: str, arguments: Any) -> str:
     canonical = json.dumps(arguments, sort_keys=True, default=str)
     return hashlib.sha256(f"{action}\n{canonical}".encode()).hexdigest()[:16]
 

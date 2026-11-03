@@ -19,6 +19,8 @@ device offering the subset above maps as an SEM. Live drift tracking (plan
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import tango
 
@@ -80,7 +82,7 @@ class ElectronBeamProfile(InstrumentProfile):
     def _spectra_dose(self, p: dict, current: float, fov: float, exposures: int) -> float:
         return 0.0
 
-    def costs(self, p, grid, revisit, revisits, budgets):
+    def costs(self, p: dict, grid: dict, revisit: dict | None, revisits: int, budgets: dict) -> tuple[dict[str, Cost], dict]:
         mapper = self.mapper
         imsize, dwell, fov = int(p["imsize"]), float(p["dwell_s"]), float(p["fov_m"])
         beam = mapper._beam_current()
@@ -121,7 +123,7 @@ class ElectronBeamProfile(InstrumentProfile):
             fields["beam_current_reason"] = reason
         return fields
 
-    def revisit_only_costs(self, p, revisit, count, budgets):
+    def revisit_only_costs(self, p: dict, revisit: dict, count: int, budgets: dict) -> tuple[dict[str, Cost], dict]:
         beam = self.mapper._beam_current()
         current = beam["pa"]
         budget = budgets.get("dose_e_per_a2")
@@ -131,10 +133,10 @@ class ElectronBeamProfile(InstrumentProfile):
         extra = {"max_dose_e_per_a2": round(dose, 3), "revisit_dose_e_per_a2": round(dose, 3), "beam_current_pa": current, **self.current_fields(beam)}
         return {"dose_e_per_a2": Cost(dose, "e/A^2", message=message)}, extra
 
-    def sample_stage(self):
+    def sample_stage(self) -> str | None:
         return self.mapper.stage_device_address or None
 
-    def stage_targets(self, plan, xs, ys):
+    def stage_targets(self, plan: dict, xs: list[tuple[str, float]], ys: list[tuple[str, float]]) -> list[dict]:
         stage = self.mapper.stage_device_address
         if not stage:
             return []
@@ -142,7 +144,7 @@ class ElectronBeamProfile(InstrumentProfile):
             {"step": s, "device": stage, "attribute": "y", "value": float(v)} for s, v in ys
         ]
 
-    def move_target(self, plan, name, arguments):
+    def move_target(self, plan: dict, name: str, arguments: Any) -> dict | None:
         if name != "move_stage":
             return None
         x, y = (float(v) for v in list(arguments[0])[:2])

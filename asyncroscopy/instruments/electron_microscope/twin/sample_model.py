@@ -149,7 +149,7 @@ class SampleModel(ParticleTable, Specimen):
 
     source = "procedural"
 
-    def __init__(self, params: SampleParams, rng: EventRng):
+    def __init__(self, params: SampleParams, rng: EventRng) -> None:
         if params.size_xy_m <= 0:
             raise ValueError("sample size must be > 0")
         if params.cluster_count < 0 or not 0.0 <= params.cluster_fraction <= 1.0 or params.cluster_radius_m < 0:
@@ -216,7 +216,7 @@ class SampleModel(ParticleTable, Specimen):
         amplitude = np.full(TEXTURE_WAVES, self.params.support_texture * np.sqrt(2.0 / TEXTURE_WAVES))
         return k * np.cos(angles), k * np.sin(angles), phases, amplitude
 
-    def support_texture(self, x_min, y_min, n, pixel_m) -> np.ndarray | None:
+    def support_texture(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray | None:
         if self._texture_waves is None:
             return None
         kx, ky, phases, amplitude = self._texture_waves
@@ -231,7 +231,7 @@ class SampleModel(ParticleTable, Specimen):
         texture = (np.cos(ay) * amplitude) @ np.cos(ax).T - (np.sin(ay) * amplitude) @ np.sin(ax).T
         return np.maximum(texture, -1.0)
 
-    def projected_weight(self, x_min, y_min, n, pixel_m, level, z_exponent, damage) -> np.ndarray:
+    def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         if level == "survey":
             return self._weight_survey(x_min, y_min, n, pixel_m, z_exponent, damage)
         return self._weight_atomic(x_min, y_min, n, pixel_m, z_exponent, damage)
@@ -376,7 +376,7 @@ class SampleModel(ParticleTable, Specimen):
         self.bounds = (-half, half, -half, half)
         self.requested_count = target  # may exceed len(self) when the particles do not fit
 
-    def height_at(self, x, y):
+    def height_at(self, x: float | np.ndarray, y: float | np.ndarray) -> np.ndarray:
         gx, gy = self.params.height_gradient
         return gx * np.asarray(x) + gy * np.asarray(y)
 

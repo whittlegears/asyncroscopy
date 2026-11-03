@@ -60,8 +60,8 @@ class CrystalSpecimen(Specimen):
         channeling: float = 0.3,
         size_xy_m: float = 4e-7,
         support_thickness_m: float = 0.0,
-        height_gradient=(0.0, 0.0),
-    ):
+        height_gradient: tuple[float, float] = (0.0, 0.0),
+    ) -> None:
         if element not in ELEMENTS:
             raise ValueError(f"crystal element {element!r} unknown; known: {sorted(ELEMENTS)}")
         if size_xy_m <= 0 or thickness_m <= 0 or grain_count < 1:
@@ -95,7 +95,7 @@ class CrystalSpecimen(Specimen):
         return cls(context.rng_for(options).for_event("crystal"), **kwargs)
 
     # ------------------------------------------------------------------
-    def grain_at(self, xs, ys) -> np.ndarray:
+    def grain_at(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
         """Grain index at sample points; -1 off the film."""
         xs, ys = np.asarray(xs, dtype=np.float64), np.asarray(ys, dtype=np.float64)
         _d, grain = self._tree.query(np.stack([xs.ravel(), ys.ravel()], axis=-1))
@@ -103,7 +103,7 @@ class CrystalSpecimen(Specimen):
         on = (xs.ravel() >= x_min) & (xs.ravel() <= x_max) & (ys.ravel() >= y_min) & (ys.ravel() <= y_max)
         return np.where(on, grain, -1).reshape(xs.shape)
 
-    def projected_weight(self, x_min, y_min, n, pixel_m, level, z_exponent, damage) -> np.ndarray:
+    def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         coords = x_min + (np.arange(n) + 0.5) * pixel_m
         ycoords = y_min + (np.arange(n) + 0.5) * pixel_m
         gx, gy = np.meshgrid(coords, ycoords)
@@ -143,7 +143,7 @@ class CrystalSpecimen(Specimen):
     def feature_centers(self) -> np.ndarray:
         return self.seeds
 
-    def in_box(self, x_min, x_max, y_min, y_max) -> np.ndarray:
+    def in_box(self, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
         """Grains whose region may overlap the box: those nearest to any corner or the centre, and those seeded in it."""
         probe = np.array([[x_min, y_min], [x_max, y_min], [x_min, y_max], [x_max, y_max], [(x_min + x_max) / 2, (y_min + y_max) / 2]])
         near = set(int(g) for g in self._tree.query(probe)[1])

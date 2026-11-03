@@ -15,6 +15,7 @@ import asyncio
 import os
 
 from langchain.agents import create_agent
+from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
@@ -53,7 +54,7 @@ STEM_RULES = """
 - STEM: the beam is blanked when idle. Before you acquire an image or spectrum yourself, call <Microscope>_unblank_beam; after the last one, <Microscope>_blank_beam. Jobs do this themselves."""
 
 
-async def make_graph(config: dict | None = None):
+async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     """Graph factory for LangGraph Studio and the agent server (tools are discovered when the graph is built).
 
     Tools: ``configurable["tools"]``, else ASYNCROSCOPY_AGENT_TOOLS (comma-separated globs), else the

@@ -21,18 +21,19 @@ arguments.
 from __future__ import annotations
 
 import inspect
+from typing import Any, Callable
 
 from tango.server import command as tango_command
 
 
-def summary(func) -> str:
+def summary(func: Callable[..., Any]) -> str:
     """First paragraph of a function's docstring, on one line."""
     doc = inspect.getdoc(func) or ""
     return " ".join(doc.split("\n\n", 1)[0].split())
 
 
-def command(f=None, **kwargs):
-    def decorate(func):
+def command(f: Callable[..., Any] | None = None, **kwargs: Any) -> Any:
+    def decorate(func: Callable[..., Any]) -> Any:
         options = dict(kwargs)  # a decorator reused on several functions must not share their docs
         if not options.get("doc_out"):
             options["doc_out"] = summary(func)

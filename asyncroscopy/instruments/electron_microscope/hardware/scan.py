@@ -86,7 +86,7 @@ class SCAN(Device):
     def read_scan_region(self) -> list[float]:
         return self._scan_region
 
-    def write_scan_region(self, value) -> None:
+    def write_scan_region(self, value: list[float]) -> None:
         self._scan_region = self._validate_scan_region(value)
 
     def read_output_format(self) -> str:

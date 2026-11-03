@@ -60,14 +60,14 @@ class StageModel:
         self._walk_time = 0.0
         self.history: list[MoveRecord] = []
 
-    def move_seconds(self, target) -> float:
+    def move_seconds(self, target: list[float]) -> float:
         """Simulated time a move to ``target`` takes."""
         target = np.asarray(target, dtype=np.float64)
         distance = float(np.hypot(*(target[:2] - self.commanded[:2])))
         p = self.params
         return p.move_overhead_s + (distance / p.speed_m_s if p.speed_m_s > 0 else 0.0)
 
-    def move(self, target, wait: bool = True) -> None:
+    def move(self, target: list[float], wait: bool = True) -> None:
         target = np.asarray(target, dtype=np.float64)
         if target.shape != (5,):
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")

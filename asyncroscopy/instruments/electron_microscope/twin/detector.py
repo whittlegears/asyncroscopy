@@ -44,7 +44,7 @@ class DetectorDrift:
     """Gain and offset that wander smoothly with time: each is a seeded sum of slow sine waves whose swing never
     exceeds ``gain_drift`` (a fraction of the gain) or ``offset_drift`` (counts). Both 0: the detector is steady."""
 
-    def __init__(self, gain_drift: float, offset_drift: float, rng: np.random.Generator):
+    def __init__(self, gain_drift: float, offset_drift: float, rng: np.random.Generator) -> None:
         if gain_drift < 0 or gain_drift >= 1 or offset_drift < 0:
             raise ValueError("detector gain drift must be in [0, 1) and offset drift >= 0")
         self.gain_drift, self.offset_drift = float(gain_drift), float(offset_drift)

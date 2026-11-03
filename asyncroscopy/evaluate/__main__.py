@@ -46,7 +46,7 @@ def _fmt(value) -> str:
     return str(value)
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m asyncroscopy.evaluate", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", help="Agent run id (X-Asyncroscopy-Run), caller, or job/reservation id.")
     parser.add_argument("--evaluators", default=None, help="Comma-separated evaluator names (default: information,resolution,dose,time).")

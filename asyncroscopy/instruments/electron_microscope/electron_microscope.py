@@ -201,7 +201,7 @@ class ElectronMicroscope(Instrument):
         return json.dumps(meta), img_data.tobytes()
 
     @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param position: [x, y] beam position as fractions (0-1) of the field of view; [0.5, 0.5] is the centre.')
-    def place_beam(self, position) -> None:
+    def place_beam(self, position: list[float]) -> None:
         """Set resting beam position, [0:1]."""
         x, y = (float(v) for v in list(position)[:2])
         if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
@@ -213,7 +213,7 @@ class ElectronMicroscope(Instrument):
         self._place_beam(position)
 
     @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.')
-    def place_beam_list(self, positions) -> None:
+    def place_beam_list(self, positions: list[float]) -> None:
         """Place beam at multiple positions sequentially."""
         if len(positions) % 2 != 0:
             raise ValueError('Input must contain pairs of (x, y) values.')
@@ -239,38 +239,38 @@ class ElectronMicroscope(Instrument):
         self._unblank_beam()
 
     @command(dtype_in=DevDouble, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).')
-    def set_defocus(self, defocus):
+    def set_defocus(self, defocus: float) -> None:
         """Set the defocus in meters."""
         self._set_defocus(defocus)
 
     @command(dtype_out=DevDouble)
-    def get_defocus(self):
+    def get_defocus(self) -> float:
         """Read the defocus in meters."""
         return self._get_defocus()
 
     @command(dtype_in=DevDouble, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).')
-    def set_fov(self, fov):
+    def set_fov(self, fov: float) -> None:
         """Set the field of view for the next acquisition, in meters."""
         self._set_fov(fov)
 
     @command(dtype_out=DevDouble)
-    def get_fov(self):
+    def get_fov(self) -> float:
         """Read the field of view for the next acquisition, in meters."""
         return self._get_fov()
     
     @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] image shift in metres.')
-    def set_image_shift(self, shift):
+    def set_image_shift(self, shift: list[float]) -> None:
         """Set the image shift to [x_shift, y_shift] in meters."""
         self._set_image_shift(shift)
 
     @command(dtype_out=DevVarFloatArray)
-    def get_image_shift(self):
+    def get_image_shift(self) -> list[float]:
         """Get the image shiftas [x, y] in m."""
         return self._get_image_shift()
 
     @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
              doc_in=':param position: [x, y] stage position in metres for the centre of the next image.')
-    def aim_image_shift(self, position):
+    def aim_image_shift(self, position: list[float]) -> list[float]:
         """Centre the next image on stage position [x, y] (metres) with the image shift alone; the stage does not move.
         Sets the shift to the position minus the stage's and returns it, [x, y] in metres; set_image_shift [0, 0] goes
         back to the stage's centre. The instrument refuses a shift beyond its limit (about 1 um)."""
@@ -281,7 +281,7 @@ class ElectronMicroscope(Instrument):
     
     @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
              doc_in=':param position: [x, y] stage position in metres to park the beam on (inside the current field of view).')
-    def place_beam_at(self, position):
+    def place_beam_at(self, position: list[float]) -> list[float]:
         """Park the beam on stage position [x, y] (metres; a find_features x_m, y_m) for a spectrum, without moving the stage.
         For the centre of the image, or any other fraction of it, use place_beam (centre: [0.5, 0.5]). Works out place_beam's
         fractions from the stage, the image shift and the field of view, and returns them. Refused outside the current
@@ -302,22 +302,22 @@ class ElectronMicroscope(Instrument):
         return fraction
 
     @command(dtype_out=DevVarFloatArray)
-    def get_beam_tilt(self):
+    def get_beam_tilt(self) -> list[float]:
         """Get the current beam tilt as [alpha, beta] in radian."""
         return self._get_beam_tilt()
 
     @command(dtype_in=DevVarFloatArray, doc_in=':param tilt: [x, y] beam tilt in radians.')
-    def set_beam_tilt(self, tilt):
+    def set_beam_tilt(self, tilt: list[float]) -> None:
         """Set the beam tilt to [x_tilt, y_tilt] in radian."""
         self._set_beam_tilt(tilt)
 
     @command(dtype_out=DevVarFloatArray)
-    def get_diffraction_shift(self):
+    def get_diffraction_shift(self) -> list[float]:
         """Get the current  diffraction shift as [alpha, beta] in radian."""
         return self._get_diffraction_shift()
     
     @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift.')
-    def set_diffraction_shift(self, shift):
+    def set_diffraction_shift(self, shift: list[float]) -> None:
         """Set the diffraction shift to [x_shift, y_shift] in radian."""
         self._set_diffraction_shift(shift)
 
@@ -331,33 +331,33 @@ class ElectronMicroscope(Instrument):
         self._set_screen(position)
 
     @command()
-    def calibrate_screen_current(self):
+    def calibrate_screen_current(self) -> None:
         """Set the screen current in pA."""
         self._calibrate_screen_current()
 
 
     @command(dtype_in=DevFloat, doc_in=':param current: Screen current in picoamperes (pA).')
-    def set_screen_current(self, current):
+    def set_screen_current(self, current: float) -> None:
         """Set the screen current in pA."""
         self._set_screen_current(current)
 
     @command(dtype_out=DevFloat)
-    def get_screen_current(self):
+    def get_screen_current(self) -> float:
         """Get the screen current in pA."""
         return self._get_screen_current()
 
     @command(dtype_out=DevVarFloatArray)
-    def get_stage(self):
+    def get_stage(self) -> list[float]:
         """Get the current stage position as [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         return self._get_stage()
    
     @command(dtype_in=DevVarFloatArray, doc_in=':param position: [x, y, z, alpha, beta]; x, y, z in metres, alpha and beta in degrees.')
-    def move_stage(self, position):
+    def move_stage(self, position: list[float]) -> None:
         """Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         self._move_stage(position)
 
     @command()
-    def auto_focus(self):
+    def auto_focus(self) -> None:
         """Run the microscope's autofocus routine."""
         self._auto_focus()
 

@@ -104,13 +104,13 @@ class DigitalTwinParticles(AtomisticDigitalTwin):
         return self._manufacturer
 
 
-    def read_beam_pos(self):
+    def read_beam_pos(self) -> list[float]:
         """Return beam position as [x, y] fractional coordinates."""
         return [self._beam_pos_x, self._beam_pos_y]
 
     # --- Write Method ---
 
-    def write_beam_pos(self, value):
+    def write_beam_pos(self, value: list[float]) -> None:
         """Set beam position from [x, y] fractional coordinates."""
         x, y = value[0], value[1]
 

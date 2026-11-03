@@ -91,6 +91,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -176,7 +177,7 @@ def check_plan_fields(plan: dict) -> None:
     raise ValueError(f"unknown plan field(s): {', '.join(hints)}. Nothing was dropped or changed: resend the plan with the right names. Allowed fields: {', '.join(allowed)}")
 
 
-def profile_for(mapper) -> InstrumentProfile:
+def profile_for(mapper: Mapper) -> InstrumentProfile:
     """The mapper's instrument profile (its ``instrument_profile`` property; ``stem`` when it has none), made once."""
     name = getattr(mapper, "instrument_profile", None) or "stem"
     profile = getattr(mapper, "_map_profile", None)
@@ -220,7 +221,7 @@ def check_budgets(budgets: dict, costs: dict[str, Cost], duration_s: float, prof
     return {name: {"value": round(costs[name].value, 3), "budget": limit, "units": costs[name].units} for name, limit in budgets.items()}
 
 
-def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, image_key, images, spectrum, spectrum_key, arrays: dict | None = None) -> None:
+def write_tile(path: Path, n: int, tile: dict, plan: dict, reported: list[float], acquired: float, image_key: str, images: dict, spectrum: dict | None, spectrum_key: str | None, arrays: dict | None = None) -> None:
     """Put one tile into a run file's per-tile arrays (created at the first tile, sized for the whole grid).
 
     ``arrays``: more per-tile values by dataset name (live drift tracking's drift_correction_m and
@@ -273,7 +274,7 @@ def write_tile(path: Path, n: int, tile: dict, plan: dict, reported, acquired, i
 class AnalysisSession:
     """One MCP session to the analysis server, used from any thread; reopened after a failure."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str) -> None:
         self.url = url
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client = None
@@ -431,7 +432,7 @@ class Mapper(JobDevice):
         width, height = plan.get("tile_m") or (plan["fov_m"], plan["fov_m"])
         return float(width) / 2.0, float(height) / 2.0
 
-    def check_dry_call(self, job: dict, device: str, name: str, arguments) -> dict | None:
+    def check_dry_call(self, job: dict, device: str, name: str, arguments: Any) -> dict | None:
         """A dry run's check of each recorded stage move (does the image it is for lie inside the plan box?)
         and image shift (live drift tracking: within the plan's max_total_m of the shift before the map?)."""
         if name == "set_image_shift":
@@ -864,8 +865,8 @@ class Mapper(JobDevice):
             # move it back so reconcile does not register it half-written.
             try:
                 final.replace(final.with_name(final.name + ".partial"))
-            except OSError:
-                pass
+            except OSError as exc:
+                self.warn_stream(f"could not rename {final.name} back to .partial: {exc}")
         path = self._file(job)
         path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(path, "a") as h5:
@@ -1046,8 +1047,8 @@ class Mapper(JobDevice):
             if self.aborting(job):
                 try:
                     self._analysis("analysis_job_abort", {"job_id": job_id})
-                except Exception:
-                    pass
+                except Exception as exc:
+                    self.warn_stream(f"could not abort analysis job {job_id}: {exc}")
                 return None
             if time.monotonic() > deadline:
                 raise AnalysisFailed(f"analysis job {job_id} did not finish within {deadline_s:.0f} s")
@@ -1432,8 +1433,8 @@ class Mapper(JobDevice):
         if session is not None:
             try:
                 session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                self.warn_stream(f"analysis session did not close: {exc}")
         super().delete_device()
 
 

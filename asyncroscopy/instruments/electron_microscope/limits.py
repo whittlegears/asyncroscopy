@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 
-def check_fov(fov, min_fov: float, max_fov: float) -> float:
+def check_fov(fov: float, min_fov: float, max_fov: float) -> float:
     """Field of view in metres, refused outside [min_fov, max_fov]."""
     fov = float(fov)
     if not (math.isfinite(fov) and float(min_fov) <= fov <= float(max_fov)):
@@ -17,7 +17,7 @@ def check_fov(fov, min_fov: float, max_fov: float) -> float:
     return fov
 
 
-def check_defocus(defocus, max_defocus: float) -> float:
+def check_defocus(defocus: float, max_defocus: float) -> float:
     """Defocus in metres, refused beyond +/-max_defocus."""
     defocus = float(defocus)
     if not (math.isfinite(defocus) and abs(defocus) <= float(max_defocus)):
@@ -25,7 +25,7 @@ def check_defocus(defocus, max_defocus: float) -> float:
     return defocus
 
 
-def check_scan(imsize, dwell_time, scan_region) -> tuple[float, float, float, float]:
+def check_scan(imsize: int, dwell_time: float, scan_region: list[float] | None) -> tuple[float, float, float, float]:
     """A scan's [left, top, width, height] (fractions of the field), refused unless it lies inside the field."""
     region = tuple(float(v) for v in scan_region) if scan_region is not None else (0.0, 0.0, 1.0, 1.0)
     if len(region) != 4 or not all(math.isfinite(v) for v in region):

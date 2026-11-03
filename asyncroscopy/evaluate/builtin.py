@@ -13,7 +13,7 @@ import math
 import numpy as np
 
 from asyncroscopy.evaluate.core import Evaluator, Score, register_evaluator
-from asyncroscopy.evaluate.run import RunData, event_result, match_particles
+from asyncroscopy.evaluate.run import Image, RunData, event_result, match_particles
 
 
 def _proxy_scorer():
@@ -38,7 +38,7 @@ IN_FOCUS_M = 20e-9  # |C1, A1| below this counts as in focus: about the depth of
 IN_FOCUS_SCORE = 0.5  # without the twin's focus truth: a pyTEMlib baseline score at or above this counts as in focus
 
 
-def in_focus(data: RunData, image, tolerance_m: float = IN_FOCUS_M, sharp_score: float = IN_FOCUS_SCORE) -> dict:
+def in_focus(data: RunData, image: Image, tolerance_m: float = IN_FOCUS_M, sharp_score: float = IN_FOCUS_SCORE) -> dict:
     """Whether ``image`` was taken in focus: from the focus error the bench recorded (twin), else pyTEMlib's baseline score.
 
     Returns {"ok": bool, "error": m} or {"ok": bool, "sharpness": 0-1, "reason": ...}."""
@@ -88,7 +88,7 @@ class Information(Evaluator):
         sharp, _value, _reason = _sharp_features(image)
         return {"found_proxy": sharp}, "pyTEMlib baseline proxy"
 
-    def score_event(self, event, data):
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         images = data.images(event)
         if not images:
             return {}
@@ -110,7 +110,7 @@ class Information(Evaluator):
             out["recall"] = Score(found / in_field, "fraction", f"{found} of {in_field} ground-truth particles in the field")
         return out
 
-    def score_run(self, data):
+    def score_run(self, data: RunData) -> dict[str, Score]:
         pairs = data.all_images()
         unique: set[int] = set()
         in_field: set[int] = set()
@@ -171,7 +171,7 @@ class Resolution(Evaluator):
     def _one(self, data, image) -> dict:
         return in_focus(data, image, float(self.tolerance_m), float(self.sharp_score))
 
-    def score_event(self, event, data):
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         images = data.images(event)
         if not images:
             return {}
@@ -180,7 +180,7 @@ class Resolution(Evaluator):
             return {"focus_error_m": Score(one["error"], "m", "hypot(C1, |A1|) at this frame (twin ground truth)")}
         return {"sharpness": Score(one["sharpness"], "score 0-1", one["reason"])}
 
-    def score_run(self, data):
+    def score_run(self, data: RunData) -> dict[str, Score]:
         results = [self._one(data, image) for _event, image in data.all_images()]
         if not results:
             return {"in_focus_fraction": Score(None, "fraction", "no images in this run")}
@@ -213,7 +213,7 @@ class Dose(Evaluator):
     threshold_e_per_a2 = 1000.0  # a beam-sensitive specimen's budget; set per specimen
     cell_m = None  # grid cell; default: a quarter of the smallest field of view
 
-    def score_event(self, event, data):
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         doses = [d for d in (image.frame_dose_e_per_a2() for image in data.images(event)) if d is not None]
         reported = event_result(event).get("dose_e_per_a2")
         if doses:
@@ -222,7 +222,7 @@ class Dose(Evaluator):
             return {"job_dose_e_per_a2": Score(float(reported), "e/A^2", f"reported by {event.get('action')}")}
         return {}
 
-    def score_run(self, data):
+    def score_run(self, data: RunData) -> dict[str, Score]:
         frames = []
         for _event, image in data.all_images():
             dose, centre, fov = image.frame_dose_e_per_a2(), data.centre_m(image), image.fov_m
@@ -277,11 +277,11 @@ class Time(Evaluator):
         "idle_fraction": ("fraction", "min"),
     }
 
-    def score_event(self, event, data):
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         duration = event.get("duration_s")
         return {"duration_s": Score(float(duration), "s", "wall time of this call or step")} if isinstance(duration, (int, float)) else {}
 
-    def score_run(self, data):
+    def score_run(self, data: RunData) -> dict[str, Score]:
         spans = []
         for event in data.events:
             start = event.get("ts")

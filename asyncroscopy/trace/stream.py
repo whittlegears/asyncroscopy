@@ -27,6 +27,7 @@ import base64
 import glob
 import json
 import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -132,7 +133,7 @@ class TraceStream:
         cursor: str | None = None,
         from_end: bool = False,
         grace_s: float = GRACE_S,
-    ):
+    ) -> None:
         if sources is None:
             sources = DEFAULT_SOURCES
         elif isinstance(sources, (str, os.PathLike)):
@@ -162,7 +163,7 @@ class TraceStream:
         self._scan()
         return self._merge(final, limit)
 
-    def follow(self, timeout: float | None = None, poll_s: float = POLL_S, stop=None) -> Iterator[dict[str, Any]]:
+    def follow(self, timeout: float | None = None, poll_s: float = POLL_S, stop: threading.Event | None = None) -> Iterator[dict[str, Any]]:
         """Yield matching events as they are written, until ``timeout`` seconds pass or ``stop`` (a threading.Event) is set."""
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
@@ -367,17 +368,17 @@ class TraceStream:
         return True
 
 
-def read_trace(sources=None, **filters: Any) -> list[dict[str, Any]]:
+def read_trace(sources: Iterable[str | os.PathLike] | str | os.PathLike | None = None, **filters: Any) -> list[dict[str, Any]]:
     """Every matching event written so far, in order (the retrospective reader). Filters as for TraceStream."""
     return TraceStream(sources, **filters).poll(final=True)
 
 
-def follow_trace(sources=None, timeout: float | None = None, poll_s: float = POLL_S, stop=None, **filters: Any) -> Iterator[dict[str, Any]]:
+def follow_trace(sources: Iterable[str | os.PathLike] | str | os.PathLike | None = None, timeout: float | None = None, poll_s: float = POLL_S, stop: threading.Event | None = None, **filters: Any) -> Iterator[dict[str, Any]]:
     """Matching events as they are written, in the order read_trace gives (live). Filters as for TraceStream."""
     return TraceStream(sources, **filters).follow(timeout=timeout, poll_s=poll_s, stop=stop)
 
 
-def trace_since(sources, cursor: str = "", limit: int = 200, from_end: bool = False, grace_s: float = GRACE_S, **filters: Any) -> dict[str, Any]:
+def trace_since(sources: Iterable[str | os.PathLike] | str | os.PathLike | None, cursor: str = "", limit: int = 200, from_end: bool = False, grace_s: float = GRACE_S, **filters: Any) -> dict[str, Any]:
     """One poll for a client that keeps only a cursor (the GUI): {"events": [...], "cursor": next, "more": bool}.
 
     An empty cursor starts at the first line (``from_end``: at the current end). Pass the returned

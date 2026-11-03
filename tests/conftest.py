@@ -14,7 +14,9 @@ This avoids:
 import json
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -60,7 +62,7 @@ from tests.test_agent import setup_llm_stubs
 setup_llm_stubs()
 
 class FakeAdornedImage:
-    def __init__(self, data: np.ndarray):
+    def __init__(self, data: np.ndarray) -> None:
         self.data = data
 
 
@@ -151,17 +153,17 @@ SPECIMEN_TWINS = {
 
 
 @pytest.fixture(scope="session")
-def data_save_dir(tmp_path_factory):
+def data_save_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("data-acquisitions")
 
 
 @pytest.fixture(scope="session")
-def job_dir(tmp_path_factory):
+def job_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("jobs")
 
 
 @pytest.fixture(scope="session")
-def tango_ctx(data_save_dir, job_dir):
+def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestContext]:
     """
     One Tango device server hosting SCAN + STEMMicroscope together.
 
@@ -627,58 +629,58 @@ def tango_ctx(data_save_dir, job_dir):
 
 
 @pytest.fixture(scope="session")
-def scan_proxy(tango_ctx):
+def scan_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/scan/default"))
 
 
 @pytest.fixture(scope="session")
-def twin_proxy(tango_ctx):
+def twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/default"))
 
 
 @pytest.fixture(scope="session")
-def particles_twin_proxy(tango_ctx):
+def particles_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(
         tango_ctx.get_device_access("asyncroscopy/digitaltwinparticles/default")
     )
 
 
 @pytest.fixture(scope="session")
-def tilt_twin_proxy(tango_ctx):
+def tilt_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(
         tango_ctx.get_device_access("asyncroscopy/digitaltwintilt/default")
     )
 
 
 @pytest.fixture(scope="session")
-def eds_proxy(tango_ctx):
+def eds_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/eds/default"))
 
 
 @pytest.fixture(scope="session")
-def camera_proxy(tango_ctx):
+def camera_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/camera/default"))
 
 
 @pytest.fixture(scope="session")
-def stage_proxy(tango_ctx):
+def stage_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/default"))
 
 
 @pytest.fixture(scope="session")
-def corrector_proxy(tango_ctx):
+def corrector_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(
         tango_ctx.get_device_access("asyncroscopy/corrector/default")
     )
 
 
 @pytest.fixture(scope="session")
-def data_proxy(tango_ctx):
+def data_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/data/default"))
 
 
 @pytest.fixture(scope="session")
-def auto_script_proxy(tango_ctx):
+def auto_script_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/autoscriptmicroscope/default"))
 
 
@@ -688,7 +690,7 @@ def patched_single_image(monkeypatch: pytest.MonkeyPatch) -> None:
     Patch AutoScriptMicroscope._acquire_scanned_image so acquire_scanned_image() works
     without AutoScript/hardware.
     """
-    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5"):
+    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5") -> FakeAdornedImage:
         # Deterministic image makes tests stable
         arr = np.arange(imsize * imsize, dtype=np.uint16)
         return FakeAdornedImage(arr.reshape(imsize, imsize))
@@ -706,10 +708,10 @@ def patched_single_image(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def patched_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def patched_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict]:
     calls = []
 
-    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5"):
+    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5") -> str:
         calls.append(
             {
                 "imsize": imsize,
@@ -727,10 +729,10 @@ def patched_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 
 @pytest.fixture
-def patched_scanned_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def patched_scanned_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict]:
     calls = []
 
-    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5"):
+    def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5") -> str:
         calls.append(
             {
                 "imsize": imsize,
@@ -748,7 +750,7 @@ def patched_scanned_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 
 @pytest.fixture
-def patched_scanned_data_acquisition(monkeypatch: pytest.MonkeyPatch):
+def patched_scanned_data_acquisition(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     calls = []
 
     def fake_acquire(
@@ -757,7 +759,7 @@ def patched_scanned_data_acquisition(monkeypatch: pytest.MonkeyPatch):
         dwell_time: float,
         detector: str,
         scan_region: list[float],
-    ):
+    ) -> str:
         calls.append(
             {
                 "imsize": imsize,
@@ -773,7 +775,7 @@ def patched_scanned_data_acquisition(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def patched_camera_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def patched_camera_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict]:
     calls = []
 
     def fake_acquire(
@@ -784,7 +786,7 @@ def patched_camera_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
         readout_area: str,
         frame_combining: int = 1,
         output_format: str = ".h5",
-    ):
+    ) -> str:
         calls.append(
             {
                 "imsize": imsize,
@@ -804,10 +806,10 @@ def patched_camera_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
 
 
 @pytest.fixture
-def patched_spectrum_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path):
+def patched_spectrum_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[dict]:
     calls = []
 
-    def fake_acquire(self, detector_name: str, exposure_time: float):
+    def fake_acquire(self, detector_name: str, exposure_time: float) -> str:
         calls.append({"detector_name": detector_name, "exposure_time": exposure_time})
         path = tmp_path / f"spectrum_{detector_name}.h5"
         path.write_bytes(b"fake-spectrum-h5")
@@ -818,65 +820,65 @@ def patched_spectrum_path_acquisition(monkeypatch: pytest.MonkeyPatch, tmp_path)
 
 
 @pytest.fixture(scope="session")
-def mapping_twin_proxy(tango_ctx):
+def mapping_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/mapping"))
 
 
 @pytest.fixture(scope="session")
-def mapping_scan_proxy(tango_ctx):
+def mapping_scan_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/scan/mapping"))
 
 
 @pytest.fixture(scope="session")
-def mapping_stage_proxy(tango_ctx):
+def mapping_stage_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/mapping"))
 
 
 @pytest.fixture(scope="session")
-def slow_stage_twin_proxy(tango_ctx):
+def slow_stage_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/slowstage"))
 
 
 @pytest.fixture(scope="session")
-def mapper_proxy(tango_ctx):
+def mapper_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/default"))
     proxy.set_timeout_millis(60_000)
     return proxy
 
 
 @pytest.fixture(scope="session")
-def sem_mapper_proxy(tango_ctx):
+def sem_mapper_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/sem"))
     proxy.set_timeout_millis(60_000)
     return proxy
 
 
 @pytest.fixture(scope="session")
-def afm_mapper_proxy(tango_ctx):
+def afm_mapper_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/afm"))
     proxy.set_timeout_millis(60_000)
     return proxy
 
 
 @pytest.fixture(scope="session")
-def afm_twin_proxy(tango_ctx):
+def afm_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/afm/default"))
 
 
 @pytest.fixture(scope="session")
-def dose_twin_proxy(tango_ctx):
+def dose_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/dose"))
 
 
 @pytest.fixture(scope="session")
-def dose_mapper_proxy(tango_ctx):
+def dose_mapper_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/dose"))
     proxy.set_timeout_millis(60_000)
     return proxy
 
 
 @pytest.fixture(scope="session")
-def parity_twin_device(tango_ctx):
+def parity_twin_device(tango_ctx: MultiDeviceTestContext) -> Any:
     """The parity twin's device object itself (the context runs in this process), so tests/test_parity.py
     runs each command's body on it exactly as it does on AutoScriptMicroscope over the fake client."""
     tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/parity")).ping()
@@ -884,10 +886,10 @@ def parity_twin_device(tango_ctx):
 
 
 @pytest.fixture(scope="session")
-def approvals_proxy(tango_ctx):
+def approvals_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/approvals/default"))
 
 
 @pytest.fixture(scope="session")
-def indent_grid_proxy(tango_ctx):
+def indent_grid_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/indentgrid/default"))

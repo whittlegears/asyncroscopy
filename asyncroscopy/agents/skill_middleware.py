@@ -33,11 +33,13 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import re
+from collections.abc import Awaitable, Sequence
 from typing import Any, Callable, NotRequired
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain.agents.middleware.types import ModelResponse
-from langchain_core.messages import SystemMessage
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
+from langchain_core.messages import BaseMessage, SystemMessage
+from langgraph.runtime import Runtime
 
 from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, NEW_MAP
 from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, is_request, fit_messages, looping, stop_message, tool_rounds, tools_chars
@@ -90,7 +92,7 @@ def _request(messages) -> str:
     return next((_text(m) for m in reversed(messages) if is_request(m)), "")
 
 
-def skills_for(messages, agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
+def skills_for(messages: Sequence[BaseMessage], agent_tools: set[str], endpoint_tools: set[str] | None = None) -> list[dict]:
     """The skills that apply to a conversation so far, in the order they first applied, each with why.
 
     A request that only asks about data (``read_only_request``) never gets a skill that acts,
@@ -135,7 +137,7 @@ class SkillMiddleware(AgentMiddleware):
     state_schema = SkillState
 
     def __init__(self, base_prompt: str, agent_tools: set[str], endpoint_tools: set[str] | None = None,
-                 memory: Callable[[str], str] | None = None, num_ctx: int = 8192):
+                 memory: Callable[[str], str] | None = None, num_ctx: int = 8192) -> None:
         super().__init__()
         self.base_prompt = base_prompt
         self.agent_tools = set(agent_tools)
@@ -168,10 +170,10 @@ class SkillMiddleware(AgentMiddleware):
         applied = [{**a, "in_prompt": a["skill"] not in cut} for a in applied]
         return None if applied == state.get("skills_applied") else {"skills_applied": applied}
 
-    def before_model(self, state, runtime):
+    def before_model(self, state: SkillState, runtime: Runtime) -> dict[str, Any] | None:
         return self._update(state)
 
-    async def abefore_model(self, state, runtime):
+    async def abefore_model(self, state: SkillState, runtime: Runtime) -> dict[str, Any] | None:
         # Skill and memory files are read from disk: keep that off the event loop (LangGraph Studio checks).
         return await asyncio.to_thread(self._update, state)
 
@@ -226,12 +228,12 @@ class SkillMiddleware(AgentMiddleware):
             kept.remove(tool)
         return kept
 
-    def wrap_model_call(self, request, handler):
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
         if looping(request.messages) == 2:  # a third identical round in a row, or a fourth in a cycle: stop rather than loop
             return ModelResponse(result=[stop_message(request.messages)])
         return handler(self._prompted(request))
 
-    async def awrap_model_call(self, request, handler):
+    async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]) -> ModelCallResult:
         if looping(request.messages) == 2:
             return ModelResponse(result=[stop_message(request.messages)])
         return await handler(await asyncio.to_thread(self._prompted, request))

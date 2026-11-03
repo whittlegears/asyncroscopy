@@ -425,7 +425,7 @@ class DigitalTwin(AtomisticDigitalTwin):
         return self._image_shift.copy()
 
     @command(dtype_in=DevVarFloatArray, doc_in=":param stigmator: [a, b] objective stigmator in metres of A1.")
-    def set_stigmator(self, stigmator) -> None:
+    def set_stigmator(self, stigmator: list[float]) -> None:
         """Set the objective stigmator: the two A1 components it adds to the column, in metres (twin only)."""
         value = np.asarray(stigmator, dtype=np.float64)
         limit = float(self.max_stigmator)
@@ -436,11 +436,11 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._stigmator = value
 
     @command(dtype_out=DevVarFloatArray)
-    def get_stigmator(self):
+    def get_stigmator(self) -> np.ndarray:
         """Read the objective stigmator [a, b] in metres; the column's own astigmatism is not included."""
         return self._stigmator.copy()
 
-    def set_focus_error(self, c1_m: float, a1_m=(0.0, 0.0)) -> None:
+    def set_focus_error(self, c1_m: float, a1_m: tuple[float, float] = (0.0, 0.0)) -> None:
         """Test and bench hook, not a Tango command: replace the hidden focus error, as a new specimen would."""
         self._focus_error = {"c1_m": float(c1_m), "a1_m": [float(a1_m[0]), float(a1_m[1])]}
 

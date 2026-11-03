@@ -22,12 +22,14 @@ import fnmatch
 import json
 import os
 import sys
+from typing import Any
 
 from fastmcp import Client
+from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 
 
-def payload(result):
+def payload(result: CallToolResult) -> Any:
     structured = getattr(result, "structured_content", None)
     if isinstance(structured, dict):
         value = structured.get("result", structured) if set(structured) == {"result"} else structured

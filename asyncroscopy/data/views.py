@@ -148,7 +148,7 @@ def _family(node: Any) -> str:
 class _Loaded:
     """An array already in memory, with the node interface (for nodes that do not report their shape)."""
 
-    def __init__(self, array: np.ndarray, metadata: dict):
+    def __init__(self, array: np.ndarray, metadata: dict) -> None:
         self.array, self.metadata = array, metadata
         self.shape, self.dtype = array.shape, array.dtype
 
@@ -673,7 +673,7 @@ def note_elements(note: str) -> set[str]:
     return {c.strip().split(" ")[0] for c in note.split(",") if c.strip()}
 
 
-def likely_elements(rows, share: float = 0.25) -> str:
+def likely_elements(rows: list[tuple], share: float = 0.25) -> str:
     """The fewest elements that explain the peaks, as the share of the peak signal (summed sigma) each explains:
     "Au 85%, Pt 7%", kept while an element explains at least ``share`` of what the best one does.
 

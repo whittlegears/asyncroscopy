@@ -30,6 +30,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from types import ModuleType
+from typing import Any
 
 import numpy as np
 
@@ -48,7 +50,7 @@ THRESHOLDS = {
 }
 
 
-def _run_servers():
+def _run_servers() -> ModuleType:
     spec = importlib.util.spec_from_file_location("run_servers_for_benchmark", ROOT / "startup_scripts" / "run_servers.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -100,11 +102,11 @@ def serpentine(grid: int, step_m: float) -> list[tuple[int, int, float, float]]:
     return out
 
 
-def acquire(device, digital_twin_module, plan: list, fov_m: float, imsize: int, dwell_s: float) -> tuple[list, list[dict]]:
+def acquire(device: Any, digital_twin_module: ModuleType, plan: list, fov_m: float, imsize: int, dwell_s: float) -> tuple[list, list[dict]]:
     """Take every tile; returns (images, the twin's acquisition records for them)."""
     saved: list = []
 
-    def keep(_device, _data_server, kind, _detectors, arrays, **_kwargs):
+    def keep(_device: Any, _data_server: Any, kind: str, _detectors: list, arrays: list, **_kwargs: Any) -> str:
         saved.append(np.asarray(arrays[0]))
         return f"tile-{len(saved)}"
 
@@ -204,7 +206,7 @@ def neighbour_brightness(images: list[np.ndarray], tops: np.ndarray, gains: np.n
     return {"mean_pct": float(values.mean()), "p95_pct": float(np.percentile(values, 95)), "pairs": int(values.size)}
 
 
-def run(args) -> dict:
+def run(args: argparse.Namespace) -> dict:
     import tango
 
     from asyncroscopy.instruments.electron_microscope import digital_twin as digital_twin_module

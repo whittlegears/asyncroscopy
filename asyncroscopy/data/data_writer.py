@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from xml.etree import ElementTree as ET
 
 import h5py
@@ -19,10 +20,10 @@ DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
 
 def acquisition_filename(
-    device,
+    device: Any,
     acquisition_type: str,
     detector: str,
-    data_server=None,
+    data_server: Any = None,
     extension: str = "h5",
 ) -> Path:
     """Create a timestamped acquisition filename(Tiled uses this to retrieve the data)"""
@@ -56,11 +57,11 @@ def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
 
 
 def save_acquisition(
-    device,
-    data_server,
+    device: Any,
+    data_server: Any,
     acquisition_type: str,
-    detectors,
-    data,
+    detectors: str | list[str] | tuple[str, ...],
+    data: Any,
     dataset_name: str = "image",
     dataset_attrs: dict | list[dict] | None = None,
     file_attrs: dict | None = None,

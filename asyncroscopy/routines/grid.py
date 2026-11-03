@@ -7,6 +7,7 @@ plan checks use these; see docs/designs/concepts_brief.md, decision D1.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -39,7 +40,7 @@ def grid_axes(box: list[float], fov: float, overlap: float, limit: int | None = 
     return xs, ys
 
 
-def compact_grid(xs, ys) -> dict:
+def compact_grid(xs: Sequence[float] | np.ndarray, ys: Sequence[float] | np.ndarray) -> dict:
     """A grid as origin, step and count per axis (the tiles are evenly spaced)."""
     return {
         "rows": len(ys), "cols": len(xs),

@@ -23,6 +23,7 @@ import uuid
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 
 RECORD_KEYS = ("id", "instrument_id", "kind", "sample_id", "sample_load_id", "code_version", "created")
 
@@ -43,7 +44,7 @@ def code_version() -> str:
     return f"{text}+g{commit}{'.dirty' if dirty else ''}" if commit else text
 
 
-def current_sample(stage) -> dict:
+def current_sample(stage: Any) -> dict:
     """{"sample_id", "sample_load_id"} from a STAGE device proxy, or nulls with "sample_error" saying why."""
     if stage is None:
         return {"sample_id": None, "sample_load_id": None, "sample_error": "no STAGE device is configured for this instrument"}
@@ -73,7 +74,7 @@ def record_fields(instrument_id: str, kind: str, sample: dict) -> dict:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-def stage_of(device):
+def stage_of(device: Any) -> Any:
     """The STAGE proxy a microscope device already holds (twin and hardware devices keep it with their detectors)."""
     proxies = getattr(device, "_detector_proxies", None)
     return proxies.get("stage") if isinstance(proxies, dict) else None

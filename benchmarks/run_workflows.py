@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # benchmarks/ for _common, which also puts the project on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -54,6 +54,12 @@ from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
 from asyncroscopy.evaluate import RunData
 from asyncroscopy.evaluate import score_run as evaluator_scores
+
+if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
+
+    from asyncroscopy.agents.config import AgentConfig
+    from asyncroscopy.agents.mcp_tools import McpServer
 
 HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
@@ -197,7 +203,7 @@ def render(value: Any, facts: dict) -> Any:
 class Live:
     """The stack's endpoints, with tool names found from what they offer (never hard-coded)."""
 
-    def __init__(self, config):
+    def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self.instrument = config.instrument()
         self.analysis = config.analysis()
@@ -220,13 +226,22 @@ class Live:
     def tool(self, *suffixes: str, prefix: str = "") -> str | None:
         return find_tool(self.names, *suffixes, prefix=prefix)
 
-    async def text(self, name: str | None, args: dict | None = None, server=None) -> str | None:
+    async def text(self, name: str | None, args: dict | None = None, server: McpServer | None = None) -> str | None:
         if not name:
             return None
         try:
             return await (server or self.instrument).call_text(name, args or {})
         except Exception:
             return None
+
+    async def required(self, name: str | None, args: dict | None = None, server: McpServer | None = None) -> str:
+        """A call the benchmark itself depends on: a missing tool or a failed call is the stack's failure."""
+        if not name:
+            raise InfraError("a tool the benchmark needs is not offered")
+        try:
+            return await (server or self.instrument).call_text(name, args or {})
+        except Exception as exc:
+            raise InfraError(f"{name} failed: {type(exc).__name__}: {exc}") from exc
 
     async def snapshot(self) -> dict:
         stage = await self.text(self.tool("_get_stage"))
@@ -374,9 +389,9 @@ class Live:
         if name in ("image", "survey_image"):  # image: at the field of view the instrument has; survey_image: at SURVEY_FOV_M
             if name == "survey_image":
                 await self.text(self.tool("_set_fov"), {"fov": SURVEY_FOV_M})
-            await self.text(self.tool("_unblank_beam"), {})  # a blanked beam images noise
+            await self.required(self.tool("_unblank_beam"), {})  # a blanked beam images noise
             try:
-                key = await self.text(self.tool("_acquire_scanned_image"), {"detector_list": ["haadf"]})
+                key = await self.required(self.tool("_acquire_scanned_image"), {"detector_list": ["haadf"]})
             finally:
                 await self.text(self.tool("_blank_beam"), {})
             facts = {"image_key": key, "keys": [key] if key else []}
@@ -411,8 +426,8 @@ class Live:
 
     async def set_mode(self, mode: str) -> str | None:
         get_mode, set_mode = find_tool(self.operator_names, "_get_mode"), find_tool(self.operator_names, "_set_mode")
-        before = (await self.text(get_mode, server=self.operator) or "").strip().strip('"') or None
-        await self.text(set_mode, {"request": json.dumps({"mode": mode, "who": "workflow-benchmark"})}, server=self.operator)
+        before = (await self.required(get_mode, server=self.operator)).strip().strip('"') or None
+        await self.required(set_mode, {"request": json.dumps({"mode": mode, "who": "workflow-benchmark"})}, server=self.operator)
         return before
 
     async def operate(self, caller: str, decision: str, stop: asyncio.Event) -> None:
@@ -491,7 +506,8 @@ def data_truth(keys: list[str]) -> dict:
             entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
             entry["could_be"] = sorted({el for row in rows for el in views.note_elements(row[4])})
         spectra[key] = entry
-    return {"spectra": {k: v for k, v in spectra.items() if "elements" in v or "error" not in v}, "strongest_peak": strongest}
+    errors = {k: v["error"] for k, v in spectra.items() if "error" in v}
+    return {"spectra": {k: v for k, v in spectra.items() if "error" not in v}, "spectrum_errors": errors, "strongest_peak": strongest}
 
 
 def produced_keys(run: Run, pattern: str = "*_acquire_*") -> list[str]:
@@ -510,8 +526,6 @@ def produced_keys(run: Run, pattern: str = "*_acquire_*") -> list[str]:
             if step.get("spectrum_key") and step["spectrum_key"] != "eds_map":
                 keys.append(step["spectrum_key"])
     return keys
-
-
 
 
 def run_keys(job_events: list[dict]) -> list[str]:
@@ -552,7 +566,7 @@ def stitch_truth(map_meta: dict, tile_shape: tuple[int, int], steps: list[dict],
         return {"error": f"matched only {len(true_centres)} of {len(steps)} tiles to the twin's ground truth"}
     true_centres = np.asarray(true_centres)
 
-    def median_error(centres) -> float:
+    def median_error(centres: list) -> float:
         diff = np.asarray(centres) - true_centres
         diff -= np.median(diff, axis=0)
         return float(np.median(np.hypot(diff[:, 0], diff[:, 1])))
@@ -606,7 +620,7 @@ def skills_of(applied: list | None) -> list[str]:
     return [a.get("skill") for a in applied or [] if isinstance(a, dict) and a.get("skill") and a.get("in_prompt", True)]
 
 
-async def run_chat_graph(factory: str, config, wf: dict, facts: dict, caller: str, started: float) -> tuple[list, str, list[str]]:
+async def run_chat_graph(factory: str, config: AgentConfig, wf: dict, facts: dict, caller: str, started: float) -> tuple[list, str, list[str]]:
     """(messages, final answer, skills applied) of a chat graph over the workflow's turns."""
     module, _, function = factory.partition(":")
     make_graph = getattr(importlib.import_module(module), function or "make_graph")
@@ -788,7 +802,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
     }
 
 
-def transcript_entry(message) -> dict:
+def transcript_entry(message: BaseMessage) -> dict:
     """A message as a failed run's transcript keeps it: type, tool name, text, the calls it made with their arguments,
     and why the model stopped (an empty reply right after the model server reloaded says "load", not "stop")."""
     content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
@@ -800,7 +814,7 @@ def transcript_entry(message) -> dict:
     }
 
 
-def message_summary(message) -> dict:
+def message_summary(message: BaseMessage) -> dict:
     """A message's type, the end of its text and the tools it called: enough to tell an empty answer's cause."""
     content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
     return {
@@ -848,7 +862,7 @@ def git_head() -> str:
         return "?"
 
 
-async def main(args) -> int:
+async def main(args: argparse.Namespace) -> int:
     from asyncroscopy.agents.config import AgentConfig
 
     stacks = load_stacks(args.workflows)

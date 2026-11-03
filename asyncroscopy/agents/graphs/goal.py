@@ -29,10 +29,13 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import TypedDict
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, Goal, GoalChecker, trace_from_messages
@@ -59,8 +62,9 @@ class GoalState(TypedDict, total=False):
 
 
 class GoalGraph:
-    def __init__(self, goal: Goal, worker: str = "team", config: AgentConfig | None = None, checker: GoalChecker | None = None, run_worker=None,
-                 memory: Memory | None = None, learn: bool = True, offered: set[str] | None = None, namer=None):
+    def __init__(self, goal: Goal, worker: str = "team", config: AgentConfig | None = None, checker: GoalChecker | None = None,
+                 run_worker: Callable[[str, float], Awaitable[tuple]] | None = None, memory: Memory | None = None,
+                 learn: bool = True, offered: set[str] | None = None, namer: BaseChatModel | None = None) -> None:
         """``run_worker(request, remaining_s)`` returns (answer, calls) or (answer, calls, skills_applied);
         ``offered``: the endpoint's tool names (fetched when None) that a learned skill may use;
         ``namer``: the chat model that names a learned skill (default: the configured model)."""
@@ -209,7 +213,7 @@ class GoalGraph:
         except Exception as exc:  # memory is a help, never a reason to fail the run
             return f"Could not update the agent memory: {type(exc).__name__}: {exc}"
 
-    def build(self):
+    def build(self) -> CompiledStateGraph:
         graph = StateGraph(GoalState)
         graph.add_node("work", self.work)
         graph.add_node("check", self.check)

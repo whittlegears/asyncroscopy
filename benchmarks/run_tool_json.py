@@ -58,7 +58,7 @@ async def run(models: list[str], num_ctx: int, out: Path) -> dict:
                 calls = reply.tool_calls
             except Exception as exc:
                 calls, reply = [], f"error: {exc}"
-            ok, why = False, "no tool call"
+            ok, why = False, reply if isinstance(reply, str) else "no tool call"
             if calls:
                 name, args = calls[0]["name"], calls[0]["args"]
                 if not fnmatch.fnmatch(name, item["tool"]):

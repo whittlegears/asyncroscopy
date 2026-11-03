@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import math
 from numbers import Real
+from typing import Any
 
 import numpy as np
 from autoscript_core.common import ApplicationServerException
@@ -63,7 +64,7 @@ class _Recorder:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, path: str, op: str, value=None):
+    def __call__(self, path: str, op: str, value: Any = None) -> None:
         self.calls.append({"path": path, "op": op, "value": value})
 
 
@@ -73,13 +74,13 @@ def _refuse_outside(name: str, value: float, what: str) -> None:
         raise ApplicationServerException(f"{what} {value!r} is out of range [{low}, {high}]")
 
 
-def _number(value, what: str) -> float:
+def _number(value: Any, what: str) -> float:
     if isinstance(value, bool) or not isinstance(value, Real):
         raise TypeError(f"Cannot set {what} with the given type. Read the documentation for details.")
     return float(value)
 
 
-def _point(value, name: str, what: str) -> Point:
+def _point(value: Any, name: str, what: str) -> Point:
     point = Point.convert_from(value) if not isinstance(value, Point) else value
     for component in (point.x, point.y):
         _refuse_outside(name, _number(component, what), what)
@@ -89,16 +90,16 @@ def _point(value, name: str, what: str) -> Point:
 class _Node:
     """A member of the client tree whose reads, writes and calls are recorded under ``path``."""
 
-    def __init__(self, record: _Recorder, path: str):
+    def __init__(self, record: _Recorder, path: str) -> None:
         object.__setattr__(self, "_record", record)
         object.__setattr__(self, "_path", path)
 
-    def _rec(self, member: str, op: str, value=None):
+    def _rec(self, member: str, op: str, value: Any = None) -> None:
         self._record(f"{self._path}.{member}", op, value)
 
 
 class _Stage(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_position", StagePosition(0.0, 0.0, 0.0, 0.0, 0.0))
         object.__setattr__(self, "holder_type", "DoubleTilt")
@@ -109,7 +110,7 @@ class _Stage(_Node):
         self._rec("position", "get")
         return StagePosition(p.x, p.y, p.z, p.a, p.b)
 
-    def absolute_move(self, position) -> None:
+    def absolute_move(self, position: StagePosition | list[float]) -> None:
         p = position if isinstance(position, StagePosition) else StagePosition(*position)
         self._rec("absolute_move", "call", [p.x, p.y, p.z, p.a, p.b])
         for axis in "xyz":
@@ -133,7 +134,7 @@ class _Stage(_Node):
 
 
 class _Defocus(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_defocus", 0.0)
 
@@ -143,22 +144,22 @@ class _Defocus(_Node):
         return self._defocus
 
     @defocus.setter
-    def defocus(self, value) -> None:
+    def defocus(self, value: float) -> None:
         self._rec("defocus", "set", value)
         _refuse_outside("defocus", _number(value, "defocus"), "defocus")
         object.__setattr__(self, "_defocus", float(value))
 
 
 class _Blanker(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_blanked", True)
 
-    def blank(self):
+    def blank(self) -> None:
         self._rec("blank", "call")
         object.__setattr__(self, "_blanked", True)
 
-    def unblank(self):
+    def unblank(self) -> None:
         self._rec("unblank", "call")
         object.__setattr__(self, "_blanked", False)
 
@@ -169,7 +170,7 @@ class _Blanker(_Node):
 
 
 class _Monochromator(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_focus", 80.0)
 
@@ -179,7 +180,7 @@ class _Monochromator(_Node):
         return self._focus
 
     @focus.setter
-    def focus(self, value) -> None:
+    def focus(self, value: float) -> None:
         self._rec("focus", "set", value)
         _refuse_outside("monochromator_focus", _number(value, "monochromator focus"), "monochromator focus")
         object.__setattr__(self, "_focus", float(value))
@@ -188,18 +189,18 @@ class _Monochromator(_Node):
 class _Deflectors(_Node):
     UNITS = {"beam_shift": "beam_shift", "image_shift": "image_shift", "beam_tilt": "beam_tilt"}
 
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_values", {name: Point(0.0, 0.0) for name in self.UNITS})
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Point:
         if name in _Deflectors.UNITS:
             self._rec(name, "get")
             value = self._values[name]
             return Point(value.x, value.y)
         raise AttributeError(name)
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: Any) -> None:
         if name not in _Deflectors.UNITS:
             raise AttributeError(f"the AutoScript deflectors have no member {name!r} the fake mirrors")
         self._rec(name, "set", list(value) if isinstance(value, (list, tuple)) else value)
@@ -221,7 +222,7 @@ class _Apertures(_Node):
 
 
 class _Optics(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         sub = lambda cls, name: cls(record, f"{path}.{name}")  # noqa: E731
         focusing = _Node(record, f"{path}.focusing")
@@ -254,7 +255,7 @@ class _Optics(_Node):
 
     WRITABLE = {"optical_mode", "projector_mode", "scan_field_of_view", "paused_scan_beam_position"}
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         state = object.__getattribute__(self, "_state")
         if name in state:
             self._rec(name, "get")
@@ -262,7 +263,7 @@ class _Optics(_Node):
             return Point(value.x, value.y) if isinstance(value, Point) else value
         raise AttributeError(f"the fake AutoScript optics have no member {name!r} (mirror it only if the code uses it)")
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value: Any) -> None:
         if name not in _Optics.WRITABLE:
             raise AttributeError(f"the fake AutoScript optics cannot set {name!r}")
         self._rec(name, "set", list(value) if isinstance(value, (list, tuple)) else value)
@@ -279,11 +280,11 @@ class _Optics(_Node):
 
 
 class _ReadOnly(_Node):
-    def __init__(self, record, path, **values):
+    def __init__(self, record: _Recorder, path: str, **values: Any) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_values", values)
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str) -> Any:
         values = object.__getattribute__(self, "_values")
         if name in values:
             self._rec(name, "get")
@@ -294,17 +295,17 @@ class _ReadOnly(_Node):
 class FakeAdornedImage:
     """What AutoScript acquisitions return: ``data`` (a NumPy array) and ``metadata``."""
 
-    def __init__(self, data: np.ndarray):
+    def __init__(self, data: np.ndarray) -> None:
         self.data = data
         self.metadata = None
 
 
 class _Acquisition(_Node):
-    def __init__(self, record, path, optics: _Optics):
+    def __init__(self, record: _Recorder, path: str, optics: _Optics) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_optics", optics)
 
-    def acquire_stem_images_advanced(self, settings):
+    def acquire_stem_images_advanced(self, settings: Any) -> list[FakeAdornedImage]:
         self._rec("acquire_stem_images_advanced", "call", {
             "size": settings.size, "dwell_time": settings.dwell_time, "detector_types": list(settings.detector_types),
             "region": None if settings.region is None else [settings.region.rectangle.left, settings.region.rectangle.top,
@@ -323,7 +324,7 @@ class _Acquisition(_Node):
         size = int(settings.size)
         return [FakeAdornedImage(np.zeros((size, size), dtype=np.uint16)) for _ in settings.detector_types]
 
-    def acquire_camera_image_advanced(self, settings):
+    def acquire_camera_image_advanced(self, settings: Any) -> FakeAdornedImage:
         self._rec("acquire_camera_image_advanced", "call", {"camera_detector": settings.camera_detector, "size": settings.size,
                                                             "exposure_time": settings.exposure_time})
         size = int(settings.size)
@@ -331,7 +332,7 @@ class _Acquisition(_Node):
 
 
 class _Eds(_Node):
-    def acquire_spectrum(self, settings):
+    def acquire_spectrum(self, settings: Any) -> FakeAdornedImage:
         self._rec("acquire_spectrum", "call", {"exposure_time": settings.exposure_time})
         if not float(settings.exposure_time) > 0:
             raise ApplicationServerException("exposure_time must be > 0")
@@ -339,7 +340,7 @@ class _Eds(_Node):
 
 
 class _Screen(_Node):
-    def __init__(self, record, path, monochromator: _Monochromator):
+    def __init__(self, record: _Recorder, path: str, monochromator: _Monochromator) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_position", "Retracted")
         object.__setattr__(self, "_monochromator", monochromator)
@@ -349,11 +350,11 @@ class _Screen(_Node):
         self._rec("position", "get")
         return self._position
 
-    def insert(self):
+    def insert(self) -> None:
         self._rec("insert", "call")
         object.__setattr__(self, "_position", "Inserted")
 
-    def retract(self):
+    def retract(self) -> None:
         self._rec("retract", "call")
         object.__setattr__(self, "_position", "Retracted")
 
@@ -365,36 +366,36 @@ class _Screen(_Node):
 
 
 class _AutoFunctions(_Node):
-    def __init__(self, record, path, optics: _Optics):
+    def __init__(self, record: _Recorder, path: str, optics: _Optics) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_optics", optics)
 
-    def run_opti_stem(self, settings=None):
+    def run_opti_stem(self, settings: Any = None) -> None:
         self._rec("run_opti_stem", "call", getattr(settings, "method", None))
         if self._optics._state["optical_mode"] != "Stem":
             raise ApplicationServerException("OptiSTEM runs in STEM mode only")
 
-    def run_objective_auto_stigmator(self, settings):
+    def run_objective_auto_stigmator(self, settings: Any) -> None:
         self._rec("run_objective_auto_stigmator", "call", getattr(settings, "camera_detector", None))
         if self._optics._state["optical_mode"] != "Tem":
             raise ApplicationServerException("the objective auto-stigmator runs in TEM mode only")
 
 
 class _ColumnValves(_Node):
-    def __init__(self, record, path):
+    def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
         object.__setattr__(self, "_state", "Closed")
 
     @property
-    def state(self):
+    def state(self) -> str:
         self._rec("state", "get")
         return self._state
 
-    def open(self):
+    def open(self) -> None:
         self._rec("open", "call")
         object.__setattr__(self, "_state", "Opened")
 
-    def close(self):
+    def close(self) -> None:
         self._rec("close", "call")
         object.__setattr__(self, "_state", "Closed")
 

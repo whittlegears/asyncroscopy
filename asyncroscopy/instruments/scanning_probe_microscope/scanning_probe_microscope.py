@@ -35,7 +35,7 @@ class SPMMode(enum.IntEnum):
     TERS = 11
     SNOM = 12
 
-def refuse_if_engaged(approach) -> None:
+def refuse_if_engaged(approach: tango.DeviceProxy) -> None:
     """Raise unless the approach device says the tip is off the surface; an unreadable state counts as engaged."""
     try:
         engaged = bool(approach.approached)
@@ -239,7 +239,7 @@ class SPMMicroscope(Instrument):
         return proxy.setpoint
     
     @tango.server.command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray)
-    def move_stage(self, position) -> list[float]:
+    def move_stage(self, position: list[float]) -> list[float]:
         """Move the stage to an absolute position.
 
         :param position: [stage_x_m, stage_y_m] — absolute target in meters.
@@ -253,7 +253,7 @@ class SPMMicroscope(Instrument):
         return [proxy.stage_x_m, proxy.stage_y_m]
     
     @tango.server.command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray)
-    def move_probe(self, position) -> list[float]:
+    def move_probe(self, position: list[float]) -> list[float]:
         """Move the probe to an absolute position; returns the final position [x, y] in meters."""
         proxy = self._get_proxy('scan')
         proxy.move_probe(position)

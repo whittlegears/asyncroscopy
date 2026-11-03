@@ -21,11 +21,15 @@ A new evaluator is a small class registered with ``@register_evaluator`` or inst
 
 from __future__ import annotations
 
+import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 ENTRY_POINT_GROUP = "asyncroscopy.evaluators"
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -57,7 +61,7 @@ class Evaluator:
     description = ""
     objectives: dict[str, tuple[str, str]] = {}
 
-    def __init__(self, **options: Any):
+    def __init__(self, **options: Any) -> None:
         unknown = set(options) - set(self.options())
         if unknown:
             raise ValueError(f"evaluator {self.name} has no option(s) {sorted(unknown)}; options: {self.options()}")
@@ -99,7 +103,7 @@ def evaluators() -> dict[str, type[Evaluator]]:
             try:
                 register_evaluator(point.load())
             except Exception:  # a broken plug-in must not take the others down
-                pass
+                log.warning("evaluator entry point %s could not be loaded", point.name, exc_info=True)
     return EVALUATORS
 
 
@@ -130,7 +134,7 @@ def _safe(call, name: str) -> dict[str, dict]:
         return {"error": Score(None, "", f"{type(exc).__name__}: {exc}"[:300]).to_dict()}
 
 
-def score_run(data, names=None) -> dict[str, dict[str, dict]]:
+def score_run(data: RunData | str | list, names: str | Iterable[str | Evaluator] | None = None) -> dict[str, dict[str, dict]]:  # noqa: F821
     """{evaluator: {objective: {value, units, reason}}} for a whole run (``data``: a RunData, or a run id)."""
     from asyncroscopy.evaluate.run import as_run_data
 
@@ -138,7 +142,7 @@ def score_run(data, names=None) -> dict[str, dict[str, dict]]:
     return {e.name: _safe(lambda e=e: e.score_run(data), e.name) for e in _instances(names)}
 
 
-def score_event(event: dict, data, names=None) -> dict[str, dict[str, dict]]:
+def score_event(event: dict, data: RunData | str | list, names: str | Iterable[str | Evaluator] | None = None) -> dict[str, dict[str, dict]]:  # noqa: F821
     """{evaluator: {objective: ...}} for one event of ``data``; evaluators with nothing to say are left out."""
     from asyncroscopy.evaluate.run import as_run_data
 

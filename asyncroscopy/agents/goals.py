@@ -50,15 +50,21 @@ from __future__ import annotations
 import fnmatch
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from asyncroscopy.agents.skill_runs import skill_run_calls
 from asyncroscopy.safety.policy import tool_risk
 from asyncroscopy.skills.registry import read_only_request
+
+if TYPE_CHECKING:
+    from langchain_core.messages import BaseMessage
+
+    from asyncroscopy.agents.mcp_tools import McpServer
 
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
 DATA_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b")
@@ -145,7 +151,7 @@ class Goal:
     leave_running: bool = False  # the request said to start a job and not wait for it: never abort it
 
     @classmethod
-    def from_text(cls, statement: str, **budget) -> Goal:
+    def from_text(cls, statement: str, **budget: Any) -> Goal:
         """A goal with only the criteria its words make plain (see the module docstring).
 
         A new map is asked for by "map a ...", "make a ... map" and the like, never by a mention of an
@@ -264,7 +270,7 @@ class Call:
         return cls(str(data.get("name", "")), dict(data.get("args") or {}), str(data.get("result", "")), bool(error))
 
 
-def trace_from_messages(messages) -> list[Call]:
+def trace_from_messages(messages: Sequence[BaseMessage]) -> list[Call]:
     """The tool calls in a LangChain message list, each with the server's reply.
 
     A call failed when it has no reply, its reply has status "error", or the reply text is a
@@ -458,7 +464,7 @@ class GoalChecker:
     need it are judged from the facts alone and say so.
     """
 
-    def __init__(self, instrument=None, analysis=None):
+    def __init__(self, instrument: McpServer | None = None, analysis: McpServer | None = None) -> None:
         self.instrument = instrument
         self.analysis = analysis
         self._risks: dict[str, str] | None = None

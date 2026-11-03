@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from asyncroscopy.evaluate.core import Evaluator, Score, get_evaluator
+from asyncroscopy.evaluate.run import RunData
 
 
 class WeightedObjective(Evaluator):
@@ -62,10 +63,10 @@ class WeightedObjective(Evaluator):
     def _evaluator(self, name: str) -> Evaluator:
         return get_evaluator(name, **dict(self.evaluator_options).get(name, {}))
 
-    def score_run(self, data):
+    def score_run(self, data: RunData) -> dict[str, Score]:
         return self._combine({name: self._evaluator(name).score_run(data) for name in self._parts()})
 
-    def score_event(self, event, data):
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         scored = {name: self._evaluator(name).score_event(event, data) for name in self._parts()}
         if not any(scored.values()):
             return {}

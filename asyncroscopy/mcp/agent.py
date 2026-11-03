@@ -66,7 +66,7 @@ class AgentSwarm:
         use_init_chat_model: bool = False,
         num_ctx: int = DEFAULT_NUM_CTX,
         verbose: bool = True,
-    ):
+    ) -> None:
         """
         Args:
             model (str): Model name, interpreted by ``model_provider``. Defaults to DEFAULT_MODEL.
