@@ -16,9 +16,11 @@ Real AutoScript image commands save the adorned object on disk and return the
 DATA/Tiled unique id for that saved acquisition.
 """
 
+import contextlib
 import functools
 import json
 import math
+import threading
 import time
 from pathlib import Path
 
@@ -73,10 +75,19 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value=9095,
         doc="Port of the AutoScript microscope server",
     )
+    # Not applied: AutoScript 1.18's client waits for every reply with no time limit and offers none to set
+    # (autoscript_core ClientEndpoint.perform_call; connect has none either). A hung AutoScript server therefore
+    # holds the call until the server answers or the connection drops. Kept so configs that set timeout_seconds load.
     hardware_timeout_seconds = device_property(
         dtype=int,
         default_value=120,
-        doc="Hardware connection timeout in seconds.",
+        doc="Not applied: the AutoScript 1.18 client has no call or connect timeout to set.",
+    )
+    stage_timeout_seconds = device_property(
+        dtype=float,
+        default_value=180.0,
+        doc="How long a call to the STAGE device may take (s). AutoScript stage moves return on arrival, and a "
+        "large tilt takes far longer than other calls; too short, and a move reports failure while the stage still moves.",
     )
     acquisition_save_directory = device_property(
         dtype=str,
@@ -98,6 +109,15 @@ class AutoScriptMicroscope(ElectronMicroscope):
     min_fov = device_property(dtype=float, default_value=1e-9, doc="Smallest field of view accepted (m).")
     max_fov = device_property(dtype=float, default_value=1e-4, doc="Largest field of view accepted (m).")
     max_defocus = device_property(dtype=float, default_value=1e-5, doc="Largest |defocus| accepted (m).")
+    # 4D-STEM parks the probe and records one camera frame per scan point: bound it until first light has timed it.
+    max_4dstem_imsize = device_property(
+        dtype=int, default_value=64,
+        doc="Largest 4D-STEM scan accepted, per side (64: 4096 camera frames). Larger scans are refused.",
+    )
+    min_4dstem_exposure_s = device_property(
+        dtype=float, default_value=1e-3,
+        doc="Shortest camera exposure per 4D-STEM point (s), taken from the CAMERA device's exposure_time.",
+    )
     nominal_beam_current_pa = device_property(
         dtype=float,
         default_value=50.0,
@@ -168,6 +188,14 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # Initialisation
     # ------------------------------------------------------------------
 
+    def _init_device_attributes(self) -> None:
+        super()._init_device_attributes()
+        # The server runs without Tango's per-device lock (serve, below), so that blank_beam is never queued
+        # behind a long command. Every other hardware call takes this lock instead (_requires_microscope, below).
+        self._command_lock = threading.RLock()
+        self._blank_client = None  # a second AutoScript connection, used only to blank the beam
+        self._blank_count = 0  # counts blank_beam calls: a running 4D-STEM scan stops when it changes
+
     def _connect(self):
         self._connect_error = None
         self._connect_hardware()
@@ -178,6 +206,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if self._connect_error:
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {self._connect_error}")
+        elif self._microscope is not None and self._blank_client is None:
+            self.set_state(DevState.ALARM)
+            self.set_status("Connected to AutoScript, but the separate connection for blank_beam failed: "
+                            "an e-stop blank waits behind any AutoScript call already running")
         else:
             self.set_state(DevState.ON)
             self.set_status("Connected to AutoScript" if self._microscope is not None else "Connected (testing mode)")
@@ -200,6 +232,15 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self.error_stream(f"AutoScript connection failed: {e}")
             self._microscope = None
             self.is_autoscript = False
+            return
+        # The AutoScript client runs one call at a time, so a blank sent on the main connection waits for
+        # a running acquisition or stage move to end. blank_beam uses a connection of its own.
+        try:
+            self._blank_client = TemMicroscopeClient()
+            self._blank_client.connect(self.hardware_host, self.hardware_port)
+        except Exception as e:
+            self.error_stream(f"AutoScript connection for blank_beam failed: {e}")
+            self._blank_client = None
 
     def _connect_detector_proxies(self) -> None:
         """Build DeviceProxy objects for each configured detector device."""
@@ -219,7 +260,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 continue
             try:
                 proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(3_600_000 if name == "data" else 12_000)
+                timeout_ms = {"data": 3_600_000, "stage": int(1000 * float(self.stage_timeout_seconds))}.get(name, 12_000)
+                proxy.set_timeout_millis(timeout_ms)
                 self._detector_proxies[name] = proxy
                 self.info_stream(f"Connected to detector proxy: {name} @ {address}")
             except tango.DevFailed as e:
@@ -304,7 +346,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         detector_list = [d.upper() for d in detector_list]
         attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # before the frame: where and how it is taken
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
-        adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
+        with self._beam_restored():
+            adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
         if not isinstance(adorned, list):
             adorned = [adorned]
         data_server = self._detector_proxies.get("data")
@@ -357,7 +400,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
             fixed_readout_area=fixed_readout_area,
             frame_combining=frame_combining,
         )
-        adorned = self._microscope.acquisition.acquire_camera_image_advanced(settings)
+        with self._beam_restored():
+            adorned = self._microscope.acquisition.acquire_camera_image_advanced(settings)
         data_server = self._detector_proxies.get("data")
         return save_acquisition(
             self,
@@ -404,26 +448,47 @@ class AutoScriptMicroscope(ElectronMicroscope):
         '''
 
     def _acquire_scanned_data_advanced(self, imsize: int, dwell_time: float, detector: str, scan_region: list[float]) -> str:
-        """Acquire 4D-STEM data by placing the probe and recording one Ceta image per scan point."""
+        """Acquire 4D-STEM data by placing the probe and recording one Ceta image per scan point.
+
+        The scan is checked like any scan and refused above max_4dstem_imsize per side. Each frame's exposure is the
+        CAMERA device's exposure_time (at least min_4dstem_exposure_s), never the STEM dwell. A beam blanked before
+        the call is blanked again after every frame, so it is off while the probe moves; a blank_beam from any
+        client during the scan (an e-stop) stops it before the next frame.
+        """
+        left, top, width, height = check_scan(imsize, dwell_time, scan_region)  # refused here, before the instrument
         scan_size = int(imsize)
-        left, top, width, height = [float(value) for value in scan_region]
+        if scan_size > int(self.max_4dstem_imsize):
+            raise ValueError(f"4D-STEM scan {scan_size}x{scan_size} is larger than max_4dstem_imsize {int(self.max_4dstem_imsize)} per side; nothing was acquired")
+        camera = self._detector_proxies.get("camera")
+        if camera is None:
+            raise ValueError("4D-STEM needs a CAMERA device (camera_device_address) for its exposure time; nothing was acquired")
+        exposure_time = float(camera.exposure_time)
+        if not (math.isfinite(exposure_time) and exposure_time >= float(self.min_4dstem_exposure_s)):
+            raise ValueError(f"4D-STEM camera exposure {exposure_time:g} s is below min_4dstem_exposure_s {float(self.min_4dstem_exposure_s):g} s; "
+                             "set the CAMERA device's exposure_time; nothing was acquired")
         x_positions = left + (np.arange(scan_size) + 0.5) * width / scan_size
         y_positions = top + (np.arange(scan_size) + 0.5) * height / scan_size
         camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)
-        settings = CameraAcquisitionSettings(camera_detector=camera_detector, size=256, exposure_time=dwell_time, fixed_readout_area="Half")
+        settings = CameraAcquisitionSettings(camera_detector=camera_detector, size=256, exposure_time=exposure_time, fixed_readout_area="Half")
         starting_beam_position = self._microscope.optics.paused_scan_beam_position
+        blanks_before = self._blank_count
         frames = []
         try:
             for y_position in y_positions:
                 for x_position in x_positions:
+                    if self._blank_count != blanks_before:
+                        raise RuntimeError(f"4D-STEM stopped after {len(frames)} of {scan_size * scan_size} frames: "
+                                           "blank_beam was called during the scan (e-stop); nothing was saved")
                     self._microscope.optics.paused_scan_beam_position = [float(x_position), float(y_position)]
-                    image = self._microscope.acquisition.acquire_camera_image_advanced(settings)
+                    with self._beam_restored():
+                        image = self._microscope.acquisition.acquire_camera_image_advanced(settings)
                     frames.append(np.array(image.data, copy=True))
         finally:
             self._microscope.optics.paused_scan_beam_position = starting_beam_position
 
         stem_data = np.stack(frames).reshape(scan_size, scan_size, 256, 256)
-        attrs = {"scan_shape": [scan_size, scan_size], "diffraction_shape": [256, 256], "dwell_time": float(dwell_time), "scan_region": [left, top, width, height], "readout_area": "Half"}
+        attrs = {"scan_shape": [scan_size, scan_size], "diffraction_shape": [256, 256], "dwell_time": float(dwell_time),
+                 "exposure_time": exposure_time, "scan_region": [left, top, width, height], "readout_area": "Half"}
         data_server = self._detector_proxies.get("data")
         return save_acquisition(self, data_server, "stem_data", camera_detector, stem_data, dataset_name="stem_data", dataset_attrs=attrs)
 
@@ -435,7 +500,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         settings.shaping_time = 3e-6
         settings.exposure_time = exposure_time
         settings.exposure_time_type = ExposureTimeType.LIVE_TIME
-        spectrum = self._microscope.analysis.eds.acquire_spectrum(settings)
+        with self._beam_restored():
+            spectrum = self._microscope.analysis.eds.acquire_spectrum(settings)
         data_server = self._detector_proxies.get("data")
         return save_acquisition(self, data_server, "spectrum", detector_name, spectrum, dataset_name="spectrum")
 
@@ -475,9 +541,32 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 print(f"Invalid valve state '{state}'. Use 'open' or 'close'.")
 
     def _blank_beam(self) -> None:
-        """blank beam"""
-        if self._microscope is not None:
-            self._microscope.optics.blanker.blank()
+        """Blank the beam (the blank_beam command, and the e-stop's). It takes no command lock and uses its own
+        AutoScript connection, so it does not wait for a running acquisition or stage move; it also tells a running
+        4D-STEM scan to stop."""
+        if self._microscope is None:  # testing mode, which has no client by design (_requires_microscope refuses otherwise)
+            return
+        self._blank_count += 1
+        self._blank_now()
+
+    def _blank_now(self) -> None:
+        """Blank the beam on the blank connection (the main one when that failed to connect)."""
+        client = self._blank_client if self._blank_client is not None else self._microscope
+        client.optics.blanker.blank()
+
+    @contextlib.contextmanager
+    def _beam_restored(self):
+        """Around one acquisition: a beam that was blanked before it, or that blank_beam blanked during it (an
+        e-stop), is blanked again after it, even when it fails. An acquisition may open the blanker; the save that
+        follows must not leave the beam parked on the sample. A beam that was unblanked is otherwise left as it is
+        (the caller opened it, and closes it)."""
+        was_blanked = bool(self._microscope.optics.blanker.is_beam_blanked)
+        blanks_before = self._blank_count
+        try:
+            yield
+        finally:
+            if was_blanked or self._blank_count != blanks_before:
+                self._blank_now()
 
     def _unblank_beam(self) -> None:
         """
@@ -763,8 +852,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._microscope.optics.deflectors.beam_tilt = (x_tilt, y_tilt)
 
 
-def _requires_microscope(method):
-    """Raise NotConnected instead of an AttributeError when there is no client."""
+def _requires_microscope(method, serialized: bool = True):
+    """Raise NotConnected instead of an AttributeError when there is no client; with ``serialized``, run under the
+    device's command lock (the server runs without Tango's own: see serve)."""
 
     @functools.wraps(method)
     def guarded(self, *args, **kwargs):
@@ -780,24 +870,42 @@ def _requires_microscope(method):
                 f"Not connected to AutoScript: {reason}. {advice}",
                 f"{method.__name__}()",
             )
-        return method(self, *args, **kwargs)
+        if not serialized:
+            return method(self, *args, **kwargs)
+        with self._command_lock:
+            return method(self, *args, **kwargs)
 
     return guarded
 
 
 for _name in (
     "_acquire_scanned_image", "_acquire_camera_image", "_acquire_scanned_data_advanced", "_acquire_spectrum",
-    "_place_beam", "_set_fov", "_get_fov", "_set_column_valves", "_blank_beam", "_unblank_beam",
+    "_place_beam", "_set_fov", "_get_fov", "_set_column_valves", "_unblank_beam",
     "_set_defocus", "_get_defocus", "_set_screen", "_calibrate_screen_current", "_set_screen_current",
     "_get_screen_current", "_auto_focus", "_set_image_shift", "_get_image_shift",
     "_set_diffraction_shift", "_get_diffraction_shift", "_get_beam_tilt", "_set_beam_tilt",
-    "_get_parameters", "_get_stage",
+    "_get_parameters", "_get_stage", "_move_stage",
 ):
     setattr(AutoScriptMicroscope, _name, _requires_microscope(getattr(AutoScriptMicroscope, _name)))
+# The one call that must never wait for another: blanking the beam.
+AutoScriptMicroscope._blank_beam = _requires_microscope(AutoScriptMicroscope._blank_beam, serialized=False)
+
 
 # ----------------------------------------------------------------------
 # Server entry point
 # ----------------------------------------------------------------------
 
+def _without_tango_serialization() -> None:
+    """Turn off Tango's per-device command lock in this server, before any device starts: a long acquisition
+    or stage move would otherwise hold it, and an e-stop's blank_beam would queue behind it until it timed out.
+    The device serializes its own hardware calls instead (the command lock in _requires_microscope)."""
+    tango.Util.instance().set_serial_model(tango.SerialModel.NO_SYNC)
+
+
+def serve() -> None:
+    """Run the AutoScriptMicroscope device server, without Tango's per-device command lock."""
+    AutoScriptMicroscope.run_server(pre_init_callback=_without_tango_serialization)
+
+
 if __name__ == "__main__":
-    AutoScriptMicroscope.run_server()
+    serve()

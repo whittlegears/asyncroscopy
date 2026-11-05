@@ -21,6 +21,7 @@ import importlib.util
 import json
 import math
 import os
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -77,6 +78,9 @@ class FakeStageProxy:
     _read_position = AutoScriptSTAGE._read_position
     _write_position = AutoScriptSTAGE._write_position
     _read_beta_tilt_enabled = AutoScriptSTAGE._read_beta_tilt_enabled
+    _check_z_and_tilt = STAGE._check_z_and_tilt
+    read_beta_tilt_enabled = STAGE.read_beta_tilt_enabled
+    high_tilt_deg, high_tilt_max_abs_z_m = 15.0, 1e-4  # STAGE's defaults
 
     def __init__(self, client: FakeAutoScriptClient):
         self._microscope = client
@@ -100,6 +104,7 @@ def autoscript_device(client: FakeAutoScriptClient, save_dir: Path):
             setattr(device, name, value)
     device._microscope = client
     device._connect_error = None
+    device._command_lock, device._blank_client, device._blank_count = threading.RLock(), None, 0
     device.screen_current_calibration = None
     device.info_stream = device.warn_stream = device.error_stream = device.debug_stream = lambda *a, **k: None
     device._detector_proxies = {

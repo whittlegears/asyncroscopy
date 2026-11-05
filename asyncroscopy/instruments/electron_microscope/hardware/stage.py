@@ -7,6 +7,7 @@ reads these attributes via DeviceProxy before acquiring.
 """
 
 import json
+import math
 import time
 import uuid
 from pathlib import Path
@@ -54,6 +55,12 @@ class STAGE(Device):
     # specifications; there are no built-in holder values. Blank: the travel and TILT_LIMITS_DEG apply.
     holders = device_property(dtype=str, default_value="{}", doc='JSON {"holder name": {"z_m": [min, max], "alpha_deg": [min, max], "beta_deg": [min, max]}}; every key optional.')
     holder = device_property(dtype=str, default_value="", doc="The holder installed when no holder_file says otherwise (a name in holders); blank: none.")
+    # Z and tilt together: a tilted holder swings its edge toward the pole piece, and more so the further it sits
+    # from eucentric height. A move tilted beyond high_tilt_deg (alpha or beta) is refused unless |z| is at most
+    # high_tilt_max_abs_z_m. The defaults are conservative placeholders, not any holder's specification:
+    # set both from the fitted holder's pole-piece clearance before tilting far on the instrument.
+    high_tilt_deg = device_property(dtype=float, default_value=15.0, doc="Tilt (deg, alpha or beta) above which |z| is held to high_tilt_max_abs_z_m. Set from the fitted holder.")
+    high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
     sample_file = device_property(dtype=str, default_value="", doc="Where load_sample records the loaded sample, so a restart keeps it; blank: outputs/stage/<device name>_sample.json.")
 
@@ -175,7 +182,21 @@ class STAGE(Device):
                 holder = getattr(self, "_holder", "")
                 where = f"holder {holder!r}'s limits" if holder else "the stage limits"
                 raise ValueError(f"stage {axis} = {float(v):.6g} is outside {where} [{low}, {high}]")
+        self._check_z_and_tilt(value)
         self._write_position(value)
+
+    def _check_z_and_tilt(self, value: list[float]) -> None:
+        """Refuse a beta tilt on a holder without one (never drop it), and a high tilt far from eucentric height."""
+        z, alpha = float(value[2]), float(value[3])
+        beta = float(value[4]) if len(value) > 4 else 0.0
+        if beta != 0.0 and not math.isnan(beta) and not self.read_beta_tilt_enabled():
+            raise ValueError(f"stage beta = {beta:.6g}, but the fitted holder has no beta tilt: give beta 0; the stage did not move")
+        tilt = max((abs(t) for t in (alpha, beta) if not math.isnan(t)), default=0.0)
+        if tilt > float(self.high_tilt_deg) and abs(z) > float(self.high_tilt_max_abs_z_m):
+            raise ValueError(
+                f"stage z = {z:.6g} m with a tilt of {tilt:.6g} deg is refused: beyond {float(self.high_tilt_deg):g} deg, |z| must be "
+                f"at most {float(self.high_tilt_max_abs_z_m):g} m (high_tilt_deg, high_tilt_max_abs_z_m; the holder could touch the pole piece)"
+            )
 
     def _limits_for(self, holder: str) -> dict[str, tuple[float, float]]:
         """The travel, narrowed by ``holder``'s profile (blank: none)."""

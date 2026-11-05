@@ -1066,7 +1066,8 @@ class MCPServer:
         again without a person; then, on every device at once: blanks beams, closes shutters, switches lasers, lamps
         and X-rays off, aborts running jobs and lifts probes; then blanks and closes once more. Never waits for
         approval, and never switches off high tension, a gun or a filament (blanking is enough to stop, and those take
-        hours to recover). A device that cannot be stopped is reported, not skipped. Returns what each step did."""
+        hours to recover). A device that cannot be stopped is reported, not skipped. A stage move already under way
+        is not stopped (there is no stage stop to call) and is listed in "not_stopped". Returns what each step did."""
         from concurrent.futures import ThreadPoolExecutor, wait as wait_all
         from asyncroscopy.safety.policy import _word_list, is_safe_stop
 
@@ -1148,6 +1149,13 @@ class MCPServer:
             pool.shutdown(wait=False)
         with guard:
             report = list(steps)
+        # No stage stop exists to call: AutoScript 1.18's stage (CompuStage) has none, only stop_jogging, and its
+        # absolute moves run to the end; a twin's move does too. Say so, so "stopped" is not read as the stage too.
+        not_stopped = [
+            f"{prefix}: a stage move already under way is not stopped (no stage stop exists; AutoScript 1.18 has none); "
+            "stop it at the microscope's stage controls if it must not finish"
+            for prefix in sorted(self._stem_prefixes) if "move_stage" in self.tools.get(prefix, {})
+        ]
         if self.trace is not None:
             try:
                 self.trace.record("stop_all", all(s["ok"] for s in report), time.time(), caller=self._caller(), run=self._run_id() or None,
@@ -1155,6 +1163,7 @@ class MCPServer:
             except Exception as exc:
                 warnings.warn(f"stop_all: trace event not written: {type(exc).__name__}: {exc}", RuntimeWarning, stacklevel=2)
         return {"stopped": bool(report) and all(s["ok"] for s in report), "steps": report,
+                **({"not_stopped": not_stopped} if not_stopped else {}),
                 **({} if work else {"note": "this endpoint reaches no beam, job or probe to stop"})}
 
     @tool()

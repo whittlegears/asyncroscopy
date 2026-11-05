@@ -183,8 +183,9 @@ Open `configs/Spectra300.yaml` and confirm each item with the operator or the fa
    ```yaml
    holders: '{"<holder name>": {"z_m": [<min>, <max>], "alpha_deg": [<min>, <max>], "beta_deg": [<min>, <max>]}}'
    holder: "<holder name>"
-   # The combined z/tilt check (review B1), if this build's STAGE device has it: beyond high_tilt_deg,
-   # |z| must stay within high_tilt_max_abs_z_m. Its defaults are placeholders, not this holder's clearance.
+   # The combined z/tilt check (review B1): beyond high_tilt_deg (alpha or beta), |z| must stay within
+   # high_tilt_max_abs_z_m. Defaults 15 deg and 100 um are placeholders, not this holder's clearance.
+   # Moves that change z or a tilt go through AutoScript's absolute_move_safe (tilt to zero first).
    high_tilt_deg: <deg>
    high_tilt_max_abs_z_m: <m>
    ```
@@ -392,10 +393,23 @@ The scripts do not unblank the beam, and they do not blank it after their acquis
 unblanks from the microscope's user interface before each script (an image taken blanked is only noise) and
 blanks again as soon as it ends.
 
+## Instrument properties added by the safety fixes
+
+Optional, under `instrument:` in configs/Spectra300.yaml; the defaults are conservative.
+
+* `stage_timeout_seconds` (default 180): how long the microscope waits for a stage move or tilt.
+* `max_4dstem_imsize` (default 64) and `min_4dstem_exposure_s` (default 0.001): 4D-STEM scans larger than this
+  are refused, and the camera exposure comes from the CAMERA device, never below the minimum.
+* `timeout_seconds` has no effect: the AutoScript 1.18 client has no call timeout.
+
+The e-stop blanks the beam through a second AutoScript connection, so it does not wait for a running acquisition.
+It cannot stop a stage move: AutoScript 1.18 has no software stop for the CompuStage. `stop_all` lists such
+microscopes under `not_stopped`; stop the stage at the microscope's own controls.
+
 ## Never run on the microscope
 
 * `startup_scripts/check_stack.py`: digital twin only. It approves its own stage move to z = 0 and both tilts 0,
-  switches the approval mode and runs two maps.
+  switches the approval mode and runs two maps. It now refuses to start unless the stack says it is simulated.
 * `startup_scripts/check_gui_contract.py`: switches the approval mode and makes held agent calls.
 * Anything in `benchmarks/`, and `startup_scripts/run_llm.py` or any agent against `configs/mcp.yaml`, until
   section B of the review is fixed.

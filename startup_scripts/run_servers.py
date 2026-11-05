@@ -707,6 +707,31 @@ def wait_for_device(device_name: str, timeout: int, process: ManagedProcess | No
     raise TimeoutError(f"{device_name} did not become ready after {timeout}s. Last error: {last_error}")
 
 
+def device_health(device_name: str) -> tuple[str, str]:
+    """A device that answers its ping: its State and Status, as text. A device that started but could not
+    reach its hardware (no AutoScript, a refused connection) answers too, in FAULT; reading it says so."""
+    try:
+        proxy = tango.DeviceProxy(device_name)
+        return str(proxy.state()), str(proxy.status()).strip()
+    except Exception as exc:  # it answered the ping a moment ago: say why it cannot be read, as a fault
+        return "FAULT", f"State/Status could not be read: {exc}"
+
+
+def report_health(device_name: str, elapsed: float, faults: dict[str, str]) -> None:
+    """Print a device's State after it answered: FAULT is recorded in ``faults`` and shown as FAIL, any other
+    state but ON as WARN, both with the device's Status."""
+    state, status = device_health(device_name)
+    if state == "FAULT":
+        faults[device_name] = status
+        print(f" {color('FAULT', Style.bold + Style.red)} answered in {elapsed:.1f}s")
+        status_line("FAIL", device_name, status)
+    elif state != "ON":
+        print(f" {color(state, Style.yellow)} answered in {elapsed:.1f}s")
+        status_line("WARN", device_name, status)
+    else:
+        print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+
+
 def isolate_approvals(devices: list[DeviceConfig], isolated_dir: Path | None) -> None:
     """Keep an isolated stack's approval mode in its own folder.
 
@@ -808,6 +833,7 @@ def print_summary(
     tiled_config: dict | None = None,
     step: int = 5,
     total: int = 5,
+    faults: dict[str, str] | None = None,
 ) -> None:
     print_section(step, total, "Startup summary")
     print(f"  {color('TANGO_HOST', Style.bold):<18} {host}:{port}")
@@ -828,6 +854,13 @@ def print_summary(
         if tiled_config.get("tiled_log"):
             print(f"  {color('TILED_LOG', Style.bold):<18} {tiled_config['tiled_log']}")
     print()
+    if faults:
+        # The servers run, but these devices did not reach their hardware: the stack is not live.
+        print(color(f"NOT READY: {len(faults)} device(s) are in FAULT; the servers run, but the stack is not live:", Style.bold + Style.red))
+        for name, status in faults.items():
+            print(color(f"  {name}: {status}", Style.red))
+        print(color("Fix the cause, then call Connect on the device or restart the stack.", Style.bold + Style.red))
+        return
     print(color("All asyncroscopy servers are ready.", Style.bold + Style.green))
 
 
@@ -923,6 +956,7 @@ def main(argv: list[str] | None = None) -> int:
     if config.plugins:
         environment["ASYNCROSCOPY_PLUGINS"] = plugin_environment(config.plugins, environment.get("ASYNCROSCOPY_PLUGINS", ""))
     ready_times: dict[str, float] = {}
+    faults: dict[str, str] = {}  # device name -> Status, for devices that answered in FAULT
     tiled_config = None
 
     log_dir: Path | None = None
@@ -1027,7 +1061,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
                 elapsed = wait_for_device(device.device_name, device_timeout, started[device.key])
                 ready_times[device.key] = elapsed
-                print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+                report_health(device.device_name, elapsed, faults)
 
             if should_start_tiled:
                 warning = tiled_key_warning(tiled_host, os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret"))
@@ -1064,7 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
                 elapsed = wait_for_device(device.device_name, device_timeout, process)
                 ready_times[device.key] = elapsed
-                print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+                report_health(device.device_name, elapsed, faults)
 
             print_summary(
                 host,
@@ -1074,6 +1108,7 @@ def main(argv: list[str] | None = None) -> int:
                 tiled_config,
                 step=total_steps,
                 total=total_steps,
+                faults=faults,
             )
             print()
             print(color("Leave this terminal open while you use the servers. Press Ctrl+C to stop them.", Style.dim))

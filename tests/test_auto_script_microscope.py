@@ -1,4 +1,5 @@
 import json
+import threading
 import types
 from pathlib import Path
 
@@ -29,6 +30,28 @@ class FakeDataServer:
     def copy_and_register_remote_file(self, request_json: str) -> str:
         self.copy_requests.append(json.loads(request_json))
         return "registered-stem-data.h5"
+
+
+class FakeBlanker:
+    def __init__(self, blanked: bool = False) -> None:
+        self.is_beam_blanked = blanked
+
+    def blank(self) -> None:
+        self.is_beam_blanked = True
+
+
+def bare_microscope(client: types.SimpleNamespace) -> AutoScriptMicroscope:
+    """An AutoScriptMicroscope on ``client`` without Tango: the attributes _init_device_attributes sets, and a
+    blanker on the client's optics when it has none."""
+    optics = getattr(client, "optics", None)
+    if optics is None:
+        client.optics = optics = types.SimpleNamespace()
+    if not hasattr(optics, "blanker"):
+        optics.blanker = FakeBlanker()
+    microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+    microscope._command_lock, microscope._blank_client, microscope._blank_count = threading.RLock(), None, 0
+    microscope._microscope = client
+    return microscope
 
 
 class TestAutoScriptMicroscope:
@@ -137,8 +160,7 @@ class TestAutoScriptMicroscope:
                 return [FakeImage()]
 
         acquisition = FakeAcquisition()
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
-        microscope._microscope = types.SimpleNamespace(acquisition=acquisition)
+        microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition))
         microscope._detector_proxies = {"data": FakeDataServer()}
 
         def fake_new_path(device, acquisition_type: str, detector: str, data_server=None, extension="h5"):
@@ -209,11 +231,13 @@ class TestAutoScriptMicroscope:
         optics = types.SimpleNamespace(paused_scan_beam_position=[0.1, 0.2])
         acquisition = FakeAcquisition(optics)
         data_server = FakeDataServer(tmp_path)
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
-        microscope._microscope = types.SimpleNamespace(acquisition=acquisition, optics=optics)
-        microscope._detector_proxies = {"data": data_server}
+        microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition, optics=optics))
+        microscope._tango_properties = {}
+        microscope.max_4dstem_imsize, microscope.min_4dstem_exposure_s = 64, 1e-3
+        # The exposure is the CAMERA device's, not the 1 us STEM dwell.
+        microscope._detector_proxies = {"data": data_server, "camera": types.SimpleNamespace(exposure_time=10e-3)}
 
-        result = AutoScriptMicroscope._acquire_scanned_data_advanced(microscope, imsize=2, dwell_time=10e-3, detector="bm-ceta", scan_region=[0.25, 0.25, 0.5, 0.5])
+        result = AutoScriptMicroscope._acquire_scanned_data_advanced(microscope, imsize=2, dwell_time=1e-6, detector="bm-ceta", scan_region=[0.25, 0.25, 0.5, 0.5])
 
         assert acquisition.positions == [
             [0.375, 0.375],
@@ -273,8 +297,7 @@ class TestAutoScriptMicroscope:
                 return FakeImage()
 
         acquisition = FakeAcquisition()
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
-        microscope._microscope = types.SimpleNamespace(acquisition=acquisition)
+        microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition))
         microscope._detector_proxies = {"data": FakeDataServer()}
 
         def fake_new_path(
@@ -314,10 +337,7 @@ class TestAutoScriptMicroscope:
             def acquire_camera_image_advanced(self, settings):
                 return FakeImage()
 
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
-        microscope._microscope = types.SimpleNamespace(
-            acquisition=FakeAcquisition()
-        )
+        microscope = bare_microscope(types.SimpleNamespace(acquisition=FakeAcquisition()))
         microscope._detector_proxies = {"data": FakeDataServer(tmp_path)}
 
         key = AutoScriptMicroscope._acquire_camera_image(
@@ -384,8 +404,7 @@ class TestAutoScriptMicroscope:
                 return FakeSpectrum()
 
         eds = FakeEds()
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
-        microscope._microscope = types.SimpleNamespace(analysis=types.SimpleNamespace(eds=eds))
+        microscope = bare_microscope(types.SimpleNamespace(analysis=types.SimpleNamespace(eds=eds)))
         microscope._detector_proxies = {"data": FakeDataServer()}
 
         def fake_new_path(device, acquisition_type: str, detector: str, data_server=None, extension="h5"):
@@ -405,10 +424,9 @@ class TestAutoScriptMicroscope:
 
     def test_defocus_helpers_read_and_write_autoscript_optics(self) -> None:
         optics = types.SimpleNamespace(defocus=0.0)
-        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        microscope = bare_microscope(types.SimpleNamespace(optics=optics))
         microscope._tango_properties = {}
         microscope.max_defocus = 1e-5
-        microscope._microscope = types.SimpleNamespace(optics=optics)
 
         AutoScriptMicroscope._set_defocus(microscope, 8e-9)
 
@@ -508,6 +526,7 @@ def test_a_hardware_frame_records_what_the_dose_ledger_needs():
     microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
     microscope._get_stage = lambda: [1e-6, -2e-6, 0.0, 0.0, 0.0]
     microscope._get_fov = lambda: 2e-7
+    microscope._get_image_shift = lambda: [0.0, 0.0]  # unread, it would log through a device Tango never started
     microscope._beam_current = lambda: {"beam_current_pa": 30.0, "beam_current_source": "default", "beam_current_reason": "not measured"}
     attrs = microscope._frame_attrs(256, 4e-6, [0.0, 0.0, 1.0, 1.0])
     assert attrs["pixel_size_m"] == 2e-7 / 256 and attrs["beam_current_source"] == "default"

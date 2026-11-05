@@ -1301,5 +1301,7 @@ def test_stop_all_latches_first_stops_every_device_and_reports_what_it_could_not
     assert [s["tool"] for s in reply["steps"][:2]] == ["Approvals_set_mode", "Approvals_revoke_grants"]  # the latch comes first
     failed = {s["tool"] for s in reply["steps"] if not s["ok"]}
     assert failed == {"Mapper_abort_all", "OldJob_abort_all", "BlindStem_blank_beam", "SlowCam"} and not reply["stopped"]
+    # No stage stop exists to call (AutoScript 1.18 has none): a move under way is named, not passed over.
+    assert len(reply["not_stopped"]) == 1 and reply["not_stopped"][0].startswith("DigitalTwin: a stage move")
     assert approvals_proxy.get_mode() == "approve"
     assert not json.loads(approvals_proxy.check(json.dumps(held)))["allowed"]  # the approval given before the stop is void

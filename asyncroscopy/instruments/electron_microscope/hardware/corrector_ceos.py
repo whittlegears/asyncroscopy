@@ -28,8 +28,9 @@ class CEOSCorrector(CORRECTOR):
     )
     socket_timeout = device_property(
         dtype=float,
-        default_value=120000.0,
-        doc="Socket timeout in seconds for CEOS communication",
+        default_value=30.0,
+        doc="Socket timeout in seconds for CEOS communication: a CEOS server that does not answer in this time "
+        "fails the call instead of holding the corrector device.",
     )
 
     def init_device(self) -> None:
@@ -79,14 +80,32 @@ class CEOSCorrector(CORRECTOR):
                 sock.sendall(netstring)
                 raw_response = self._recv_netstring(sock)
             result = self._decode_netstring(raw_response)
-            self._last_status = "OK"
-            self.set_state(DevState.ON)
-            return result
         except OSError as exc:
             self._last_status = f"Error: {exc}"
             self.set_state(DevState.FAULT)
             tango.Except.throw_exception("CeosCommError", str(exc), "CEOSCorrector._call()")
             raise RuntimeError("unreachable")
+        # The server answered: a refusal comes back as the JSON-RPC error member, and must not read as success.
+        error = self._rpc_error(result)
+        self.set_state(DevState.ON)
+        if error is not None:
+            self._last_status = f"CEOS refused {method}: {error}"
+            tango.Except.throw_exception("CeosError", f"CEOS refused {method}: {error}", "CEOSCorrector._call()")
+        self._last_status = "OK"
+        return result
+
+    @staticmethod
+    def _rpc_error(reply: str) -> str | None:
+        """What is wrong with a CEOS JSON-RPC reply (its error member, or a reply that is not JSON-RPC); None when it succeeded."""
+        try:
+            body = json.loads(reply)
+        except ValueError:
+            return f"the reply is not JSON: {reply[:200]!r}"
+        if not isinstance(body, dict):
+            return f"the reply is not a JSON-RPC object: {reply[:200]!r}"
+        if body.get("error") is not None:
+            return json.dumps(body["error"])[:500]
+        return None
 
     @staticmethod
     def _encode_netstring(payload: dict) -> bytes:
