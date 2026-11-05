@@ -160,8 +160,14 @@ def yaml_text(config: dict) -> str:
 
 
 def write_yaml(path: Path, config: dict) -> Path:
+    """Write atomically, so a script never reads a half-written config (e.g. on a full disk)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml_text(config), encoding='utf-8')
+    temporary = path.with_name(f'.{path.name}.tmp')
+    try:
+        temporary.write_text(yaml_text(config), encoding='utf-8')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
 
 
@@ -357,28 +363,23 @@ def section_label(text: str) -> QLabel:
     return label
 
 
-def tool_count_badge() -> QLabel:
-    """A small pill next to a server name; starts neutral until a live count is known."""
-    label = QLabel('no tools yet')
+def status_badge() -> QLabel:
+    """A small pill next to the window title for a live status a script reports, e.g. '12 tools'."""
+    label = QLabel()
     label.setFont(_font('LABEL_FONT'))
-    set_tool_count_badge(label, None)
+    set_status_badge(label, None)
     return label
 
 
-def set_tool_count_badge(label: QLabel, count: int | None, error: str | None = None) -> None:
-    """Update a tool_count_badge() label.
-
-    Pass None to reset to the not-yet-known state, or a short error string to
-    show a red failure state (e.g. 'port in use').
-    """
-    if error is not None:
-        label.setText(error)
+def set_status_badge(label: QLabel, text: str | None, error: bool = False) -> None:
+    """Show text in a status_badge(); None resets it to 'not running', error=True shows it in red."""
+    if error:
         color = border = COLORS['danger']
+    elif text is not None:
+        color = border = COLORS['accent']
     else:
-        ready = count is not None
-        label.setText('no tools yet' if count is None else f'{count} tool{"" if count == 1 else "s"}')
-        color = COLORS['accent'] if ready else COLORS['text_dim']
-        border = COLORS['accent'] if ready else COLORS['border_strong']
+        color, border = COLORS['text_dim'], COLORS['border_strong']
+    label.setText(text or 'not running')
     label.setStyleSheet(
         'QLabel {'
         f'color: {color}; border: 1px solid {border}; border-radius: 9px;'
@@ -387,74 +388,43 @@ def set_tool_count_badge(label: QLabel, count: int | None, error: str | None = N
     )
 
 
-# The two Tango hosts this project's startup GUIs are actually pointed at day
-# to day: the local digital-twin stack, and the real Spectra 300 instrument.
-DIGITAL_TWIN_HOST = 'localhost'
-SPECTRA300_HOST = '10.46.217.241'
-HOST_PRESETS = {'digital_twin': DIGITAL_TWIN_HOST, 'spectra300': SPECTRA300_HOST}
+class PresetToggle(QWidget):
+    """Segmented buttons that set a field to one of a script's preset values, e.g. Tango hosts."""
 
-
-class HostToggle(QWidget):
-    """A Digital Twin / Spectra300 segmented switch that sets host field(s) to a known-good preset.
-
-    This only covers the Tango (and optionally Tiled) *host* value(s) - the
-    recurring pain point where a GUI is left pointed at the wrong machine.
-    It does not switch instrument file/device classes; that's config-driven
-    (load DigitalTwin.yaml / Spectra300.yaml) since those differ per instrument,
-    not just per host.
-    """
-
-    def __init__(self, on_change: Callable[[str], None], parent=None):
+    def __init__(self, presets: dict[str, str], on_change: Callable[[str], None], parent=None):
         super().__init__(parent)
+        self._presets = dict(presets)
         self._on_change = on_change
         self._buttons: dict[str, QPushButton] = {}
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        for key, label in (('digital_twin', 'Digital Twin'), ('spectra300', 'Spectra300')):
+        for label in self._presets:
             button = QPushButton(label)
             button.setCheckable(True)
             button.setFont(_font('LABEL_FONT'))
             button.setCursor(POINTING_HAND_CURSOR)
-            button.clicked.connect(lambda _checked, k=key: self._select(k, notify=True))
+            button.clicked.connect(lambda _checked, name=label: self._on_change(self._presets[name]))
             layout.addWidget(button)
-            self._buttons[key] = button
-        self.set_active(None)
+            self._buttons[label] = button
+        self.set_value(None)
 
-    def _select(self, key: str, notify: bool) -> None:
-        for button_key, button in self._buttons.items():
-            button.setChecked(button_key == key)
-        self._restyle()
-        if notify:
-            self._on_change(HOST_PRESETS[key])
-
-    def set_active(self, key: str | None) -> None:
-        """Reflect which preset (if any) a host field currently matches, without firing on_change."""
-        self._select(key, notify=False)
-
-    def _restyle(self) -> None:
-        for key, button in self._buttons.items():
-            checked = button.isChecked()
-            first = key == 'digital_twin'
-            radius = '6px 0px 0px 6px' if first else '0px 6px 6px 0px'
+    def set_value(self, value: str | None) -> None:
+        """Highlight the preset whose value matches, without firing on_change."""
+        labels = list(self._buttons)
+        for index, (label, button) in enumerate(self._buttons.items()):
+            button.setChecked(self._presets[label] == value)
+            first, last = index == 0, index == len(labels) - 1
+            radius = f'{"6px" if first else "0px"} {"6px" if last else "0px"} {"6px" if last else "0px"} {"6px" if first else "0px"}'
             border_fix = '' if first else 'border-left: none;'
-            if checked:
-                button.setStyleSheet(
-                    'QPushButton {'
-                    f'background: {COLORS["accent"]}; color: #ffffff; border: 1px solid {COLORS["accent"]};'
-                    f'{border_fix} border-radius: {radius}; padding: 4px 12px;'
-                    '}'
-                )
+            if button.isChecked():
+                style = (f'background: {COLORS["accent"]}; color: #ffffff; border: 1px solid {COLORS["accent"]};'
+                         f'{border_fix} border-radius: {radius}; padding: 4px 12px;')
+                button.setStyleSheet('QPushButton {' + style + '}')
             else:
-                button.setStyleSheet(
-                    'QPushButton {'
-                    f'background: {COLORS["panel"]}; color: {COLORS["text_dim"]}; border: 1px solid {COLORS["border"]};'
-                    f'{border_fix} border-radius: {radius}; padding: 4px 12px;'
-                    '}'
-                    'QPushButton:hover {'
-                    f'background: {COLORS["panel_hover"]};'
-                    '}'
-                )
+                style = (f'background: {COLORS["panel"]}; color: {COLORS["text_dim"]}; border: 1px solid {COLORS["border"]};'
+                         f'{border_fix} border-radius: {radius}; padding: 4px 12px;')
+                button.setStyleSheet('QPushButton {' + style + '}' f'QPushButton:hover {{background: {COLORS["panel_hover"]};}}')
 
 
 def configure_terminal(widget: QTextEdit) -> None:
@@ -576,76 +546,113 @@ def append_terminal_text(widget: QTextEdit, text: str) -> None:
 
 
 class ManagedCommand(QObject):
+    """Runs one startup script and stops it the way Ctrl+C would, so the script cleans up its own children."""
+
     output_ready = pyqtSignal(str)
     done = pyqtSignal(object)
+    STOP_TIMEOUT_S = 30.0
 
     def __init__(self, output: OutputCallback, done: DoneCallback):
         super().__init__()
         self.output_ready.connect(output)
         self.done.connect(done)
         self.process: subprocess.Popen[str] | None = None
+        self.cleanup: list[str] | None = None
+        self._stopping: threading.Thread | None = None
 
     @property
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
-    def start(self, command: list[str]) -> None:
+    @property
+    def stopping(self) -> bool:
+        return self._stopping is not None and self._stopping.is_alive()
+
+    def start(self, command: list[str], cleanup: list[str] | None = None) -> None:
+        """Start command; cleanup is run if the script has to be force-killed, to stop what it left behind."""
         if self.running:
             self.output_ready.emit('A process is already running.\n')
             return
+        if self.stopping:
+            # A cleanup still to come would read the same state file and stop the new run.
+            self.output_ready.emit('Still stopping the previous run; try again in a moment.\n')
+            return
         env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
-        popen_kwargs = {'cwd': PROJECT_DIR, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT, 'text': True, 'bufsize': 1}
+        popen_kwargs = {'cwd': PROJECT_DIR, 'env': env, 'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT, 'text': True, 'errors': 'replace', 'bufsize': 1}
         if os.name == 'nt':
             popen_kwargs['creationflags'] = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
         else:
             popen_kwargs['start_new_session'] = True
         self.output_ready.emit(f'$ {" ".join(command)}\n')
+        self.cleanup = cleanup
         self.process = subprocess.Popen(command, **popen_kwargs)
         threading.Thread(target=self._read_output, daemon=True).start()
 
-    def stop(self) -> None:
-        """Immediately kill the managed process and every subprocess it spawned.
-
-        The startup scripts launch whole trees (uv -> python -> device servers,
-        Tiled, ...), so a polite terminate of the root leaves orphans holding
-        ports. Kill the full tree instead.
-        """
+    def stop(self, wait: bool = False) -> None:
+        """Ask the script to stop; force-kill it and run cleanup only if it does not exit in time."""
         if not self.running:
             self.output_ready.emit('No process is running.\n')
             return
+        if self._stopping is None or not self._stopping.is_alive():
+            self.output_ready.emit('Stopping...\n')
+            self._interrupt()
+            self._stopping = threading.Thread(target=self._finish_stop, daemon=True)
+            self._stopping.start()
+        if wait:
+            self._stopping.join(self.STOP_TIMEOUT_S + 30)
+
+    def _interrupt(self) -> None:
         assert self.process is not None
-        if os.name == 'nt':
-            # /T walks the child tree, /F force-kills without waiting.
-            subprocess.run(
-                ['taskkill', '/PID', str(self.process.pid), '/T', '/F'],
-                capture_output=True,
-            )
-        else:
-            try:
-                # start_new_session=True in start() put the whole tree in one
-                # process group, so SIGKILL to the group takes everything down.
+        try:
+            if os.name == 'nt':
+                # The script runs in its own process group, so this reaches only it (as SIGBREAK).
+                os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(self.process.pid, signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
+    def _finish_stop(self) -> None:
+        assert self.process is not None
+        try:
+            self.process.wait(timeout=self.STOP_TIMEOUT_S)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        self.output_ready.emit(f'No exit after {self.STOP_TIMEOUT_S:.0f}s; killing it.\n')
+        try:
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/PID', str(self.process.pid), '/T', '/F'], capture_output=True)
+            else:
                 os.killpg(self.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                return
-            except OSError:
-                self.process.kill()
-        self.output_ready.emit('Killed process tree.\n')
+        except (ProcessLookupError, OSError):
+            self.process.kill()
+        if self.cleanup:
+            result = subprocess.run(self.cleanup, cwd=PROJECT_DIR, capture_output=True, text=True, errors='replace')
+            self.output_ready.emit(result.stdout + result.stderr)
+
+    def _emit(self, name: str, value) -> None:
+        try:
+            getattr(self, name).emit(value)
+        except RuntimeError:  # the window was closed while the script was still printing
+            pass
 
     def _read_output(self) -> None:
-        assert self.process is not None
-        if self.process.stdout is not None:
+        process = self.process
+        assert process is not None
+        if process.stdout is not None:
             while True:
-                line = self.process.stdout.readline()
+                line = process.stdout.readline()
                 if line:
-                    self.output_ready.emit(line)
+                    self._emit('output_ready', line)
                     continue
-                if self.process.poll() is not None:
-                    rest = self.process.stdout.read()
+                if process.poll() is not None:
+                    rest = process.stdout.read()
                     if rest:
-                        self.output_ready.emit(rest)
+                        self._emit('output_ready', rest)
                     break
                 threading.Event().wait(0.05)
-        self.done.emit(self.process.wait())
+        self._emit('done', process.wait())
 
 
 def _format(color: str) -> QTextCharFormat:
