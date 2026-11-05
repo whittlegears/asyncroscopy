@@ -38,6 +38,11 @@ mcp:
     Approvals: [request_status, list_pending]
     Mapper: [get_reservation]
     Tuner: [get_reservation]
+    # Until first light's sign test settles the CEOS correction's sign and units, the corrector is written only by
+    # the Tuner (allow_corrector_writes) or a person; set_aberrations_coeff_sim only stores a dict on hardware.
+    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau, set_aberrations_coeff_sim]
+    # After Disconnect even the e-stop cannot blank the beam.
+    AutoScriptMicroscope: [Disconnect]
   include_only_functions: []
   tool_log: ""
   # The analysis server (pyTEMlib: stitching, scoring) on the MCP host, so

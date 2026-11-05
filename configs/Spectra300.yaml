@@ -27,9 +27,14 @@ devices:
       hardware_host: 10.46.217.241
       hardware_port: 9095
   camera:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
+  # The CEOS server usually runs on the corrector PC: confirm its address and port before first light.
   corrector:
     class_name: CEOSCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos
+    properties:
+      ceos_host: 10.46.217.241
+      ceos_port: 9092
+      socket_timeout: 30
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
   # Background map jobs (reserve/start/status/abort/results/release) on the Spectra 300, as on the twin
@@ -44,8 +49,9 @@ devices:
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
-      # The pyTEMlib analysis server on the microscope PC stitches and scores finished maps.
-      analysis_url: http://10.46.217.241:8003/mcp
+      # The pyTEMlib analysis server on the microscope PC stitches and scores finished maps. It has no login,
+      # so it stays on 127.0.0.1 (docs/Operation/remote_access.md), as in configs/mcp.yaml.
+      analysis_url: http://127.0.0.1:8003/mcp
       # Goniometer readout error and drift bound for the stitch; placeholders until first light measures them.
       stage_sigma_m: 5.0e-8
       max_drift_m_per_s: 5.0e-11
@@ -74,6 +80,9 @@ devices:
 tango:
   host: 10.46.217.241
   port: 9094
+  # Listen on every interface, so the operator and monitor endpoints on this PC reach it as localhost.
+  # Firewall 9094 to the microscope PC: Tango itself has no access control (first_light_review.md, B5).
+  bind_host: 0.0.0.0
   reset_database_file: false
 
 tiled:
