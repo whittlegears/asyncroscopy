@@ -46,7 +46,8 @@ environment variables below override or add to that.
 | Tiled server logs | `ASYNCROSCOPY_LOG_DIR` (env) | `outputs/logs` | anywhere writable |
 | Approval mode file, job state, traces | device properties `mode_file`, `state_directory`, `trace_path`; `mcp.trace` | under `outputs/` | on the persistent volume (the approval mode must survive a restart) |
 | Tango database file and launcher process records | `--isolated DIR` | project root and `./.processes` | `outputs/stacks/<name>` (recreated at every start: `reset_database_file: true`) |
-| MCP bind address and port | `mcp.http_host`, `mcp.http_port` | `127.0.0.1` | `0.0.0.0` (allowed on a `simulated: true` stack; a hardware stack also needs `mcp.allow_remote_bind: true`) |
+| MCP bind address and port | `mcp.http_host`, `mcp.http_port` | `127.0.0.1` | `0.0.0.0` (allowed on a `simulated: true` stack; a hardware stack also needs `mcp.allow_remote_bind: true` and `mcp.auth`, or `run_mcp.py` refuses to start) |
+| MCP bearer tokens | `mcp.auth` (`jwks_url` or `public_key_file`, `issuer`, `audience`) in the MCP YAML; clients send `ASYNCROSCOPY_MCP_TOKEN` | none: no token check | the token service's JWKS URL, issuer and audience ([remote_access.md](remote_access.md)) |
 | Analysis server the Mapper and agent endpoint use | `analysis_url` on the Mapper device and in `mcp_dt.yaml` | `http://127.0.0.1:8003/mcp` | the analysis service's address |
 | Simulated or hardware | top-level `simulated:` in the stack YAML | false when absent | `true` for every twin |
 
@@ -102,7 +103,12 @@ set the published address; not tried here.)
 | Secrets storage (the Tiled API key) | The image contents: Python 3.12, `uv sync` with the extras the stack needs (no `agent` or `ollama` extras for the servers), the pinned pyTEMlib |
 | Monitoring, log collection, scheduling, the user portal | The process list, settings and health checks on this page |
 
-Until token verification lands in the MCP server, an agent endpoint reachable
-through a Route has no authentication of its own: anyone who reaches it can drive
-the stack. Put it behind WG1's endpoint proxy, and for a hardware stack switch
-approval mode to `approve` ([approval_mode.md](approval_mode.md)).
+The MCP server verifies bearer tokens itself when its YAML has an `mcp.auth`
+section (`asyncroscopy/mcp/endpoint_auth.py`, [remote_access.md](remote_access.md)):
+signature, expiry, issuer and audience, with the token's scopes deciding which
+tools it sees. Without `mcp.auth`, an agent endpoint reachable through a Route
+has no authentication of its own: anyone who reaches it can drive the stack. A
+hardware stack refuses that combination (a remote bind without `mcp.auth`); a
+twin allows it, so set `mcp.auth` or keep it behind WG1's endpoint proxy. Hardware
+stacks start in approval mode `approve` and refuse `auto`
+([approval_mode.md](approval_mode.md)).

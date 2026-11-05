@@ -27,21 +27,29 @@ uv run python startup_guis/server_gui.py
 - Press **Enter** at prompts to accept the value in brackets.
 - Leave the terminal open while you work. Press **Ctrl+C** to stop the managed
   processes and the managed Tiled server.
-- Start MCP in a second terminal or on another computer:
+- Start MCP in a second terminal (on a twin, or on another computer):
 
 ```bash
 uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
+On the Spectra 300, follow [first_light_runbook.md](first_light_runbook.md): it
+adds the read-only pre-flight (`startup_scripts/preflight_hardware.py`), the
+operator endpoint and the analysis server, in that order.
+
 ## What It Starts
 
 | Order | Device(s) | Tango name |
 |-------|-----------|------------|
-| 1 | support devices | `asyncroscopy/{camera,corrector,data,eds,scan,stage}/default` |
+| 1 | support devices: every key under `devices:` in the YAML | `asyncroscopy/<key>/default`; for `configs/Spectra300.yaml`: `asyncroscopy/{approvals,aperture,camera,corrector,data,eds,mapper,tuner,scan,stage}/default` |
 | 2 | Tiled HTTP server | started through the `data` device |
 | 3 | instrument | `asyncroscopy/instrument/default` |
 
-The instrument starts last because it depends on the support devices. The runner
+The instrument starts last because it depends on the support devices. "All
+asyncroscopy servers are ready" means every device answered a ping, not that
+the instrument reached the hardware: a device that failed to connect to
+AutoScript is in FAULT. On hardware, run `startup_scripts/preflight_hardware.py`
+next; it reads every device's State and Status. The runner
 writes support-device addresses and hardware connection values into Tango
 database properties before the instrument starts.
 
@@ -100,10 +108,16 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 If MCP runs on a different computer, edit `configs/mcp.yaml`:
 
 - `tango.host` should point to the machine running the Tango database.
-- `mcp.http_host` should be `127.0.0.1` for local-only clients. Set it to a LAN
-  address or `0.0.0.0` only on a trusted network when other machines need to
-  connect: the MCP endpoint has no authentication. The twin's
-  `configs/mcp_dt.yaml` and `configs/mcp_operator.yaml` default to `127.0.0.1`.
+- `mcp.http_host` should be `127.0.0.1` for local-only clients. Every shipped
+  MCP config defaults to `127.0.0.1`.
+- On a hardware stack (`simulated: false`), a LAN address or `0.0.0.0` needs
+  both `mcp.allow_remote_bind: true` and an `mcp.auth` section (bearer tokens,
+  [remote_access.md](remote_access.md)). Without `allow_remote_bind` the endpoint
+  binds `127.0.0.1` instead; with it but without `mcp.auth`, `run_mcp.py` refuses
+  to start. On a simulated stack a remote bind is allowed without tokens, so use
+  it only on a trusted network.
+- Never open the operator endpoint (`configs/mcp_operator.yaml`) to other
+  machines: it approves held calls and has no login.
 
 ## Prompts
 

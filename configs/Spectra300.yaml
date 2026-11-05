@@ -85,8 +85,15 @@ tango:
   bind_host: 0.0.0.0
   reset_database_file: false
 
+# Tiled listens on 127.0.0.1 only: everything that reads or writes it runs on this PC (the device servers, both MCP
+# endpoints, which take the address from the DATA device, and the pyTEMlib analysis server, started with
+# --tiled http://127.0.0.1:9091). Tiled runs with --public, so a LAN address would let anyone on the facility network
+# read the data. To serve other machines later: host 0.0.0.0 (still reached here on 127.0.0.1), set
+# ASYNCROSCOPY_TILED_PUBLIC_URI=http://10.46.217.241:9091 for the clients, and open 9091 only to those machines.
+# Set the same ASYNCROSCOPY_TILED_API_KEY (never the default 'secret') in the shell of run_servers, both MCP
+# endpoints and pyTEMlib (docs/Operation/first_light_runbook.md).
 tiled:
-  host: 10.46.217.241
+  host: 127.0.0.1
   port: 9091
   acquisition_dir: outputs/tiled_acquisitions
   autostart: true

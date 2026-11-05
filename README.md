@@ -24,15 +24,15 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml        # agent endp
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml  # operator endpoint, 127.0.0.1:8001
 uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003
 
-# Then check the whole stack
+# Then check the whole stack (digital twin only: it moves the stage and acquires)
 uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
 ```
 
-On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml`.
+On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml` (the Spectra 300 agent endpoint) and `configs/mcp_operator.yaml`, and follow [docs/Operation/first_light_runbook.md](docs/Operation/first_light_runbook.md). There, `startup_scripts/preflight_hardware.py` is the read-only check; never run `check_stack.py` on hardware.
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
-`check_stack.py` confirms every piece talks to the others; without `--pytemlib` it skips stitching and scoring. It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
+`check_stack.py` (digital twin only) confirms every piece talks to the others; without `--pytemlib` it skips stitching and scoring. It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
 
 ### Agentic control at a glance
 
@@ -102,7 +102,7 @@ asyncroscopy/
 | `digital_twin_mapping.yaml` | DigitalTwin with realistic instrument effects, a 2 um sample, Mapper and Approvals |
 | `mcp_dt.yaml` / `mcp_operator.yaml` | Agent MCP endpoint (port 8000) and operator endpoint for the GUI (port 8001) |
 | `qwen-llm.yaml` | Agent server on a local Qwen3 model (laptop GPU); `gemma-llm.yaml` is the 31B workstation version |
-| `mcp.yaml` | MCP server configuration (not hardware) |
+| `mcp.yaml` | Agent MCP endpoint for the Spectra 300 (hardware; 127.0.0.1:8000, approval gate on) |
 
 These are some examples of the available configs, which define the instrument class, supporting devices, Tango connection, and Tiled settings.
 
