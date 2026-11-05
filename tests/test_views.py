@@ -147,6 +147,14 @@ def test_the_detector_windows_continuum_rise_is_not_read_as_oxygen_but_real_line
     assert "C" in named and not named & {"O", "F"}
     assert any(row[4] == views.WINDOW_RISE_NOTE for row in rows)
 
+    # A spectrum whose only peak is the rise says no element was found (qwen once read the data rows as peaks).
+    attrs = {"energy_offset_ev": float(energies[0]), "energy_dispersion_ev": float(energies[1] - energies[0]), "detector": "eds"}
+    rise_only = counts.copy()
+    rise_only[energies < 400.0] = np.random.default_rng(2).poisson(2.0, int((energies < 400.0).sum()))
+    assert [row[4] for row in views.line_peaks(energies, rise_only, axis, True)] == [views.WINDOW_RISE_NOTE]
+    text = views.view(Recorded(counts.shape, attrs, values=rise_only), "rise.h5", "text")[0]["text"]
+    assert "no X-ray line of any element detected" in text and "consistent with these peaks" not in text
+
     oxygen = counts + np.random.default_rng(1).poisson(900.0 * np.exp(-0.5 * ((energies - 525.0) / (views.eds_fwhm_ev(525.0) / 2.355)) ** 2) / 5.0)
     rows = views.line_peaks(energies, oxygen, axis, True)
     assert "O" in set().union(*(views.note_elements(row[4]) for row in rows))

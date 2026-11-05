@@ -765,6 +765,9 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
                 # A small model given only per-peak candidates did not conclude; the ranking says which elements the
                 # peaks point to, strongest first, and stays a reading of the peaks (a light element can still hide).
                 lines.append(f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}")
+            else:  # only a window rise, escape, sum or unidentified peaks: say so, or the data rows get read as lines
+                lines.append(f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
+                             "a longer exposure is needed to rule elements out")
         if rows:
             lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
