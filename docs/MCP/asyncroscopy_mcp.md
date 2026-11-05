@@ -163,7 +163,9 @@ not is listed as "unidentified: a broad rise of the continuum (the detector wind
 X-ray line". On 288 twin spectra without O or F this cut the spectra read as O or F from
 93 to 1, while carbon was still named in 57 of the 63 where it had been (the six lost were
 near the detection limit). A strong O peak within a few line widths can still hide a weak
-C peak next to it, because it raises C's side-band background.
+C peak next to it, because it raises C's side-band background. Live at 0b1ce81 the EDS workflows
+passed 21 of 21 (`benchmarks/results/workflows_twin_general_0b1ce81_eds.json`), and every
+eds_spectrum_elements run called the rise a continuum rise, not O or F.
 
 `list_data` looks through the newest 300 keys in registration order (files
 registered after a Tiled outage count as new). `offset` counts keys from the
