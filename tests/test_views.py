@@ -136,6 +136,23 @@ def test_a_low_peak_is_named_by_an_element_whose_main_lines_fit_not_by_minor_lin
     assert "Fe K-M3" in iron and "Fe K-M3 (" not in iron
 
 
+def test_the_detector_windows_continuum_rise_is_not_read_as_oxygen_but_real_lines_are():
+    # The window bends the continuum into a broad rise near 0.6 keV, which read as O or F (qwen runs 2026-11-03).
+    from asyncroscopy.instruments.electron_microscope.twin.eds_model import EdsParams, point_spectrum
+
+    energies, counts, _live = point_spectrum({"C": 10.0}, 100.0, 3.0, EdsParams(), np.random.default_rng(6))
+    axis = Axis(float(energies[0]), float(energies[1] - energies[0]), "Energy", "eV")
+    rows = views.line_peaks(energies, counts, axis, True)
+    named = set().union(*(views.note_elements(row[4]) for row in rows))
+    assert "C" in named and not named & {"O", "F"}
+    assert any(row[4] == views.WINDOW_RISE_NOTE for row in rows)
+
+    oxygen = counts + np.random.default_rng(1).poisson(900.0 * np.exp(-0.5 * ((energies - 525.0) / (views.eds_fwhm_ev(525.0) / 2.355)) ** 2) / 5.0)
+    rows = views.line_peaks(energies, oxygen, axis, True)
+    assert "O" in set().union(*(views.note_elements(row[4]) for row in rows))
+    assert not any(row[4] == views.WINDOW_RISE_NOTE for row in rows)
+
+
 def test_spectrum_csv_is_binned_by_summing_and_capped():
     counts = np.ones(2048)
     node = Recorded((2048,), {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0}, values=counts)
