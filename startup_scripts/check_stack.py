@@ -11,8 +11,9 @@ then:
     uv run startup_scripts/check_stack.py
 
 Each check prints PASS or FAIL with the reason; the exit code is the number of
-failures. Safe on the digital twin; on a real instrument it moves the stage
-and acquires, so read it first.
+failures. It moves the stage, acquires and approves its own held calls, so it
+runs only on a simulated stack: it asks the Approvals device (the stack's
+top-level ``simulated:``) first, and refuses when the answer is not true.
 """
 
 from __future__ import annotations
@@ -98,6 +99,20 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         report("wait_for_job waits on an analysis job and returns its map key", "_map" in status.get("result_keys", {}).get("map", ""), json.dumps(status)[:200])
 
 
+async def simulated_stack(operator: Client) -> tuple[bool, str]:
+    """Whether the stack drives a simulator, as its Approvals device says (Approvals_get_simulated: run_servers'
+    top-level ``simulated:``, the flag the MCP endpoints read too). Anything but a clear true counts as hardware."""
+    try:
+        result = await operator.call_tool("Approvals_get_simulated", {}, raise_on_error=False)
+    except Exception as exc:
+        return False, f"could not ask the Approvals device ({type(exc).__name__}: {exc})"
+    if result.is_error:
+        return False, f"Approvals_get_simulated failed: {text(result)[:200]}"
+    structured = getattr(result, "structured_content", None)
+    answer = structured.get("result") if isinstance(structured, dict) and "result" in structured else text(result).strip().lower()
+    return answer is True or answer == "true", f"Approvals_get_simulated answered {answer!r}"
+
+
 def unreachable(*urls: str) -> list[str]:
     """The URLs nothing is listening on (a stack that was not started yet)."""
     down = []
@@ -118,6 +133,10 @@ async def main(args: argparse.Namespace) -> int:
     agent = Client(StreamableHttpTransport(args.agent, headers={"X-Asyncroscopy-Caller": "check_stack-agent"}))
     operator = Client(StreamableHttpTransport(args.operator, headers={"X-Asyncroscopy-Caller": "check_stack-operator"}))
     async with agent, operator:
+        simulated, why = await simulated_stack(operator)
+        if not report("the stack is simulated", simulated,
+                      why if simulated else f"{why}. This check moves the stage, acquires and approves its own calls: it runs only on a simulated stack"):
+            return len(FAILURES)
         agent_tools = {t.name for t in await agent.list_tools()}
         operator_tools = {t.name for t in await operator.list_tools()}
         report("agent endpoint lists tools", len(agent_tools) > 10, f"{len(agent_tools)} tools")

@@ -5,7 +5,8 @@ that ``AutoScriptMicroscope`` (and the AutoScript STAGE device) use, with the
 member names, types and units of AutoScript 1.18 (the client in ``stubs/``):
 
 - ``specimen.stage``: ``position`` (a ``StagePosition``: x, y, z in metres, a and b
-  in radians), ``absolute_move``, ``get_holder_type``, ``get_axis_limits``;
+  in radians), ``absolute_move``, ``absolute_move_safe`` (tilt to zero first, then the
+  move), ``get_holder_type``, ``get_axis_limits``;
 - ``optics``: ``optical_mode`` ("Stem" / "Tem"), ``projector_mode``,
   ``scan_field_of_view`` (m), ``focusing.stem.objective.defocus`` and
   ``focusing.tem.defocus`` (m), ``blanker``, ``paused_scan_beam_position``
@@ -26,6 +27,11 @@ a value of the wrong type raises ``TypeError``, as the client does before
 sending. The ``HARDWARE_LIMITS`` are placeholders until first light gives the
 Spectra 300's own; they are deliberately wider than the software limits the
 microscope devices apply, so a test can tell which layer refused.
+
+The blanker starts unblanked, and every acquisition opens it and leaves it open
+(``acquisition_opens_blanker``, the worst case: whether the real column does is
+not known before first light), so a test sees a beam left on after a frame.
+The camera refuses an exposure outside ``HARDWARE_LIMITS["camera_exposure"]``.
 """
 
 from __future__ import annotations
@@ -51,6 +57,7 @@ HARDWARE_LIMITS = {
     "image_shift": (-1.0e-5, 1.0e-5),
     "beam_tilt": (-1.0, 1.0),  # unitless
     "fraction": (0.0, 1.0),  # paused beam position, scan region
+    "camera_exposure": (1.0e-3, 60.0),  # s, placeholder
 }
 
 
@@ -113,6 +120,15 @@ class _Stage(_Node):
     def absolute_move(self, position: StagePosition | list[float]) -> None:
         p = position if isinstance(position, StagePosition) else StagePosition(*position)
         self._rec("absolute_move", "call", [p.x, p.y, p.z, p.a, p.b])
+        self._move(p)
+
+    def absolute_move_safe(self, position: StagePosition | list[float]) -> None:
+        """AutoScript sets the tilt to zero first, so the holder clears the pole piece, then moves."""
+        p = position if isinstance(position, StagePosition) else StagePosition(*position)
+        self._rec("absolute_move_safe", "call", [p.x, p.y, p.z, p.a, p.b])
+        self._move(p)
+
+    def _move(self, p: StagePosition) -> None:
         for axis in "xyz":
             _refuse_outside(f"stage_{axis}", _number(getattr(p, axis), f"stage {axis}"), f"stage {axis}")
         for axis in "ab":
@@ -153,7 +169,7 @@ class _Defocus(_Node):
 class _Blanker(_Node):
     def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
-        object.__setattr__(self, "_blanked", True)
+        object.__setattr__(self, "_blanked", False)  # a column as the operator leaves it
 
     def blank(self) -> None:
         self._rec("blank", "call")
@@ -242,6 +258,7 @@ class _Optics(_Node):
             "is_eftem_on": False,
         }
         object.__setattr__(self, "_state", state)
+        object.__setattr__(self, "_opens_blanker", True)  # see FakeAutoScriptClient.acquisition_opens_blanker
         for name, value in {
             "focusing": focusing,
             "blanker": sub(_Blanker, "blanker"),
@@ -300,6 +317,12 @@ class FakeAdornedImage:
         self.metadata = None
 
 
+def _open_blanker(optics: _Optics) -> None:
+    """The instrument opening the blanker for an acquisition (not a call the code sent, so not recorded)."""
+    if optics._opens_blanker:
+        object.__setattr__(optics.blanker, "_blanked", False)
+
+
 class _Acquisition(_Node):
     def __init__(self, record: _Recorder, path: str, optics: _Optics) -> None:
         super().__init__(record, path)
@@ -322,20 +345,28 @@ class _Acquisition(_Node):
                     and values[3] > 0 and values[0] + values[2] <= 1 + 1e-9 and values[1] + values[3] <= 1 + 1e-9):
                 raise ApplicationServerException(f"scan region {values} is outside the scan area")
         size = int(settings.size)
+        _open_blanker(self._optics)
         return [FakeAdornedImage(np.zeros((size, size), dtype=np.uint16)) for _ in settings.detector_types]
 
     def acquire_camera_image_advanced(self, settings: Any) -> FakeAdornedImage:
         self._rec("acquire_camera_image_advanced", "call", {"camera_detector": settings.camera_detector, "size": settings.size,
                                                             "exposure_time": settings.exposure_time})
+        _refuse_outside("camera_exposure", _number(settings.exposure_time, "camera exposure"), "camera exposure")
         size = int(settings.size)
+        _open_blanker(self._optics)
         return FakeAdornedImage(np.zeros((size, size), dtype=np.uint16))
 
 
 class _Eds(_Node):
+    def __init__(self, record: _Recorder, path: str, optics: _Optics) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "_optics", optics)
+
     def acquire_spectrum(self, settings: Any) -> FakeAdornedImage:
         self._rec("acquire_spectrum", "call", {"exposure_time": settings.exposure_time})
         if not float(settings.exposure_time) > 0:
             raise ApplicationServerException("exposure_time must be > 0")
+        _open_blanker(self._optics)
         return FakeAdornedImage(np.zeros(2048, dtype=np.uint32))
 
 
@@ -412,7 +443,7 @@ class FakeAutoScriptClient:
         self.optics = _Optics(record, "optics")
         self.acquisition = _Acquisition(record, "acquisition", self.optics)
         self.analysis = _Node(record, "analysis")
-        object.__setattr__(self.analysis, "eds", _Eds(record, "analysis.eds"))
+        object.__setattr__(self.analysis, "eds", _Eds(record, "analysis.eds", self.optics))
         self.detectors = _Node(record, "detectors")
         object.__setattr__(self.detectors, "screen", _Screen(record, "detectors.screen", self.optics.monochromator))
         self.auto_functions = _AutoFunctions(record, "auto_functions", self.optics)
@@ -422,6 +453,15 @@ class FakeAutoScriptClient:
         object.__setattr__(self.service, "system", _ReadOnly(record, "service.system", name="Spectra 300 (fake)"))
         self.source = _Node(record, "source")
         object.__setattr__(self.source, "acceleration_voltage", _ReadOnly(record, "source.acceleration_voltage", value=300e3))
+
+    @property
+    def acquisition_opens_blanker(self) -> bool:
+        """Whether acquisitions open the blanker and leave it open (True, the worst case, by default)."""
+        return self.optics._opens_blanker
+
+    @acquisition_opens_blanker.setter
+    def acquisition_opens_blanker(self, value: bool) -> None:
+        object.__setattr__(self.optics, "_opens_blanker", bool(value))
 
     def connect(self, host: str = "localhost", port: int | None = None) -> None:
         self._record("connect", "call", [host, port])
