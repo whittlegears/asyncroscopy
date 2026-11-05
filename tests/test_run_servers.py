@@ -71,7 +71,7 @@ def test_load_spectra300_config_starts_servers_only():
     stage = next(device for device in config.support_devices if device.key == "stage")
 
     assert config.tango_host == "10.46.217.241"
-    assert config.tiled.host == "10.46.217.241"
+    assert config.tiled.host == "127.0.0.1"
     assert config.tiled.register_on_startup is False
     assert config.instrument.class_name == "AutoScriptMicroscope"
     assert config.instrument.module_name == "asyncroscopy.instruments.electron_microscope.auto_script"
