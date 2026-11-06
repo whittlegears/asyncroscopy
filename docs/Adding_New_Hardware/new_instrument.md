@@ -378,13 +378,14 @@ The Mapper calls:
 | `current_xy()` | for `size_m` without `centre_m` | read the stage |
 | `costs(p, grid, revisit, revisits, budgets)` | at reserve | return `({name: Cost}, extra estimate fields)` |
 | `setup(job)` | before the first step, and on resume | apply the plan's settings; end safe |
-| `before_move` / `move(job, x, y)` / `after_move` | around every move | `move` returns False if `self.mapper.aborting(job)` |
+| `check_start(job)` | at start and on resume, before anything is set | raise `RuntimeError` when something checked at reserve no longer holds |
+| `before_move` / `move(job, x, y)` / `after_move` | around every move | `move` returns False if `self.ctx.aborting(job)` |
 | `stage_reported(job)` | after every move | where the stage says it is |
 | `acquire_tile(job, tile)` | every tile | return `{"image_key", "acquired"}` (optionally `spectrum_key`); end safe, even on an error |
 | `acquire_revisit(job, revisit)` | every revisit | image at `revisit["fov_m"]`, restore, end safe |
 | `make_safe(job)` | on finish, abort and failure | never raise for an instrument already safe |
 
-Declare `plan_fields` (fields beyond the generic ones; anything else is refused by name), `plan_defaults`, and `needs` (commands checked on the instrument at `reserve`); override `stage_targets` and `move_target` so reserve checks your stage limits and a dry run checks your moves. Reach the instrument only through `self.instrument()` or `self.mapper.proxy(...)`, so a dry run records instead of moving, and give every wait a deadline. `PinholeCamera` in `tests/test_map_profiles.py` is a complete profile in about 40 lines; `asyncroscopy/instruments/electron_microscope/map_profile.py` (STEM, SEM) and `asyncroscopy/instruments/yaml_sim/map_profile.py` are the built-in ones.
+Declare `plan_fields` (fields beyond the generic ones; anything else is refused by name), `plan_defaults`, `needs` (commands checked on the instrument at `reserve`) and `settings` (your own Mapper device properties, each a `Setting(type, default, doc)`, read with `self.setting(name)` and set under the Mapper's `properties:` like any other); override `stage_targets` and `move_target` so reserve checks your stage limits and a dry run checks your moves. A profile sees the Mapper only through `self.ctx`, a `MapContext`: `proxy(address)`, `instrument()`, `aborting(job)`, `clock_s()`, `wait_for_stage(job)`, `read_acquisition(key)` and `settings`. Reach the instrument only through `self.instrument()` or `self.ctx.proxy(...)`, so a dry run records instead of moving, and give every wait a deadline. `PinholeCamera` in `tests/test_map_profiles.py` is a complete profile in about 40 lines; `asyncroscopy/instruments/electron_microscope/map_profile.py` (STEM, SEM) and `asyncroscopy/instruments/yaml_sim/map_profile.py` are the built-in ones.
 
 ## Digital twin first
 

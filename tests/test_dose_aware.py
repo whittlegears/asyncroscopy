@@ -11,14 +11,15 @@ from __future__ import annotations
 
 import json
 import time
-from types import SimpleNamespace
 
 import pytest
 from autoscript_core.common import ApplicationServerException
 
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
-from asyncroscopy.jobs.mapping.mapper import Mapper, frame_dose
+from asyncroscopy.jobs.mapping import plan as plans
+from asyncroscopy.jobs.mapping.profile import MapContext, MapSettings, get_profile
+from asyncroscopy.routines.dose import frame_dose
 from tests.fake_autoscript import FakeAutoScriptClient, screen_current_a
 from tests.test_parity import autoscript_device
 
@@ -145,14 +146,12 @@ class RecordingMicroscope:
         return record
 
 
-def mapper_stub(microscope, **extra):
-    stub = SimpleNamespace(
-        microscope_device_address="m", analysis_url="", max_tiles=10_000, estimate_move_s=1.0,
-        default_beam_current_pa=50.0, max_beam_current_age_s=900.0, eds_dose_spread_m=1e-8, proxy=lambda address, timeout_s=None: microscope, **extra,
-    )
-    for name in ("_beam_current", "_stack_simulated", "_refuse_assumed_current"):
-        setattr(stub, name, getattr(Mapper, name).__get__(stub))
-    return stub
+def resolve(microscope, plan, simulated=False):
+    """The STEM profile's resolve of ``plan`` on ``microscope`` (no Mapper device), as reserve does it."""
+    stem = get_profile("stem")
+    settings = MapSettings("m", simulated=simulated, profile={name: setting.default for name, setting in stem.settings.items()})
+    profile = stem(MapContext(settings, lambda address, timeout_s=None: microscope, lambda job: False))
+    return plans.resolve(plan, profile, plans.PlanEnvironment(max_tiles=10_000, estimate_move_s=1.0, stage_sigma_m=5e-8))
 
 
 PLAN = {"box_m": [0.0, 4e-7, 0.0, 4e-7], "fov_m": 2e-7, "imsize": 32, "stitch": False}
@@ -162,20 +161,20 @@ def test_budgeted_plan_with_an_assumed_current_is_refused_on_a_stack_that_is_not
     monkeypatch.delenv("ASYNCROSCOPY_SIMULATED", raising=False)
     microscope = RecordingMicroscope({"defocus_m": 0.0})  # reports no current, and does not say it is simulated
     with pytest.raises(ValueError, match="beam current is assumed"):
-        Mapper.resolve_plan(mapper_stub(microscope), {**PLAN, "dose_budget_e_per_a2": 1e3})
+        resolve(microscope, {**PLAN, "dose_budget_e_per_a2": 1e3})
     assert microscope.calls == ["get_parameters"]  # refused at reserve: nothing moved, nothing unblanked
 
-    plan = Mapper.resolve_plan(mapper_stub(microscope), PLAN)  # without a budget the estimate says what it assumed
+    plan = resolve(microscope, PLAN)  # without a budget the estimate says what it assumed
     assert plan["estimate"]["beam_current_source"] == "default" and plan["estimate"]["beam_current_reason"]
 
     # A simulated stack may budget with an assumed current. Only the stack's `simulated` flag says so:
     # neither an environment variable nor the microscope's own report makes a stack simulated.
-    Mapper.resolve_plan(mapper_stub(microscope, simulated=True), {**PLAN, "dose_budget_e_per_a2": 1e3})
+    resolve(microscope, simulated=True, plan={**PLAN, "dose_budget_e_per_a2": 1e3})
     monkeypatch.setenv("ASYNCROSCOPY_SIMULATED", "1")
     with pytest.raises(ValueError, match="beam current is assumed"):
-        Mapper.resolve_plan(mapper_stub(RecordingMicroscope({"simulated": True})), {**PLAN, "dose_budget_e_per_a2": 1e3})
+        resolve(RecordingMicroscope({"simulated": True}), {**PLAN, "dose_budget_e_per_a2": 1e3})
     with pytest.raises(ValueError, match="beam current is assumed"):
-        Mapper.resolve_plan(mapper_stub(microscope, simulated=False), {**PLAN, "dose_budget_e_per_a2": 1e3})
+        resolve(microscope, simulated=False, plan={**PLAN, "dose_budget_e_per_a2": 1e3})
 
 
 def test_budgeted_plan_with_a_stale_or_unaged_measured_current_is_refused_on_hardware(monkeypatch):
@@ -185,11 +184,11 @@ def test_budgeted_plan_with_a_stale_or_unaged_measured_current_is_refused_on_har
     for parameters, reason in (({**measured, "beam_current_age_s": 3600.0}, "s old"), (measured, "no age")):
         microscope = RecordingMicroscope(parameters)
         with pytest.raises(ValueError, match="cannot be used for a dose budget") as refused:
-            Mapper.resolve_plan(mapper_stub(microscope, simulated=False), budget)
+            resolve(microscope, simulated=False, plan=budget)
         assert reason in str(refused.value) and microscope.calls == ["get_parameters"]
-    fresh = Mapper.resolve_plan(mapper_stub(RecordingMicroscope({**measured, "beam_current_age_s": 60.0}), simulated=False), budget)
+    fresh = resolve(RecordingMicroscope({**measured, "beam_current_age_s": 60.0}), simulated=False, plan=budget)
     assert fresh["estimate"]["beam_current_source"] == "measured"
-    Mapper.resolve_plan(mapper_stub(RecordingMicroscope({**measured, "beam_current_age_s": 3600.0}), simulated=True), budget)
+    resolve(RecordingMicroscope({**measured, "beam_current_age_s": 3600.0}), simulated=True, plan=budget)
 
 
 def test_autoscript_budgeted_plan_needs_the_screen_current(autoscript, monkeypatch):
@@ -197,12 +196,12 @@ def test_autoscript_budgeted_plan_needs_the_screen_current(autoscript, monkeypat
     device, client = autoscript
     microscope = RecordingMicroscope(device=device)
     with pytest.raises(ValueError, match="beam current is assumed"):
-        Mapper.resolve_plan(mapper_stub(microscope), {**PLAN, "dose_budget_e_per_a2": 1e3})
+        resolve(microscope, {**PLAN, "dose_budget_e_per_a2": 1e3})
     assert client.writes("optics.blanker") == [] and client.writes("specimen.stage.absolute_move") == []
 
     client.detectors.screen.insert()
     EM.get_screen_current(device)
     client.detectors.screen.retract()
-    plan = Mapper.resolve_plan(mapper_stub(microscope), {**PLAN, "dose_budget_e_per_a2": 1e3})
+    plan = resolve(microscope, {**PLAN, "dose_budget_e_per_a2": 1e3})
     assert plan["estimate"]["beam_current_source"] == "measured"
     assert plan["estimate"]["beam_current_pa"] == pytest.approx(screen_current_a(80.0) * 1e12)
