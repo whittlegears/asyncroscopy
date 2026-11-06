@@ -254,10 +254,43 @@ def _instrument_config(raw: dict) -> InstrumentConfig:
     )
 
 
-def load_config(path: Path) -> Config:
+def _merge(base: dict, override: dict, replace_values: bool = False) -> dict:
+    """``override`` laid over ``base``: mappings merge key by key, anything else replaces, and null removes.
+    Under a ``properties:`` mapping each property is replaced whole (a specimen mapping is one value)."""
+    merged = dict(base)
+    for key, value in override.items():
+        if value is None:
+            merged.pop(key, None)
+        elif not replace_values and isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value, replace_values=key == "properties")
+        else:
+            merged[key] = value
+    return merged
+
+
+def read_config(path: Path, _seen: tuple[Path, ...] = ()) -> dict:
+    """A stack config as a mapping, with its ``extends:`` chain merged in.
+
+    ``extends: other.yaml`` (relative to this file) starts from that config; this file's values win.
+    Sections and devices merge key by key, each property is replaced whole, and a value of null removes
+    what the base set (a device, a property). Lists are replaced, not appended to.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
+    resolved = path.resolve()
+    if resolved in _seen:
+        raise ValueError(f"{path}: extends goes round in a circle ({' -> '.join(p.name for p in (*_seen, resolved))})")
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    parent = raw.pop("extends", None)
+    if parent is None:
+        return raw
+    if not isinstance(parent, str) or not parent.strip():
+        raise ValueError(f"{path}: extends must name one config file, got {parent!r}")
+    return _merge(read_config(path.parent / parent, (*_seen, resolved)), raw)
+
+
+def load_config(path: Path) -> Config:
+    raw = read_config(path)
 
     support_devices = [
         DeviceConfig(
