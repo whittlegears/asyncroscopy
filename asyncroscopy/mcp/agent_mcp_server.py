@@ -1,20 +1,32 @@
-"""FastMCP server exposing the Tango-free agent swarm in ``asyncroscopy.mcp.agent``.
+"""FastMCP server exposing the Tango-free agent graphs: the swarm (``asyncroscopy.agents.graphs.swarm``)
+and the named graphs (``asyncroscopy.agents.run``).
 
-The swarm reaches the instruments as an MCP *client* of one or more MCP servers,
-so this process needs no pyTango. Clients (notebooks, chat UIs) reach the swarm
+The agents reach the instruments as an MCP *client* of one or more MCP servers,
+so this process needs no pyTango. Clients (notebooks, chat UIs) reach them
 here over MCP, in the same way they would reach any other tool server.
+
+It is the entry point that serves the agent layer, so it imports ``asyncroscopy.agents`` only
+when it builds the server, never at import: the MCP package stays below the agents.
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
 import json
 import socket
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Literal
 
 from fastmcp import FastMCP
 
-from asyncroscopy.agents.run import GraphName, run_goal_text, run_named_graph
-from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, Agent, AgentSwarm
+from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
+
+if TYPE_CHECKING:
+    from asyncroscopy.agents.graphs.swarm import Agent
+
+# What query_agent may run: the swarm (""), or one of the named graphs.
+GraphName = Literal["", *AGENT_GRAPHS]
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -38,7 +50,7 @@ class AgentMCPServer:
         mcp_urls: list[str],
         model: str | None = None,
         model_provider: str = "ollama",
-        max_steps: int = DEFAULT_MAX_STEPS,
+        max_steps: int | None = None,
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
@@ -49,20 +61,22 @@ class AgentMCPServer:
             mcp_urls (list[str]): Streamable-HTTP MCP endpoints the swarm inherits tools from.
             model (str): Model name, interpreted by ``model_provider``.
             model_provider (str): Provider passed to LangChain's ``init_chat_model``.
-            max_steps (int): LangGraph recursion limit per query.
+            max_steps (int): LangGraph recursion limit per query; None: the swarm's default.
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
         """
+        from asyncroscopy.agents.graphs.swarm import AgentSwarm
+
         self.verbose = verbose
         self.mcp_urls = list(mcp_urls)
         self.swarm = AgentSwarm(
             model=model,
             model_provider=model_provider,
-            max_steps=max_steps,
             startup_agents=startup_agents,
             use_init_chat_model=use_init_chat_model,
             verbose=verbose,
+            **({} if max_steps is None else {"max_steps": max_steps}),
         )
 
         # Swarm must be initialized inside the server's own event loop
@@ -117,6 +131,8 @@ class AgentMCPServer:
         If `include_transcript` is true (default), the routing decisions,
         tool calls, and generated text will also be included above the final answer.
         """
+        from asyncroscopy.agents.run import run_goal_text, run_named_graph
+
         async with self._query_lock:
             if goal:
                 stripped = prompt.strip()
@@ -181,7 +197,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mcp-urls-json", default=json.dumps([DEFAULT_MCP_URL]))
     parser.add_argument("--model", default=None, help="Model name; default: the default agent profile's model.")
     parser.add_argument("--model-provider", default="ollama")
-    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--max-steps", type=int, default=None, help="Recursion limit per query; default: the swarm's.")
     parser.add_argument("--startup-agents-json", default="[]")
     parser.add_argument("--use-init-chat-model", action="store_true")
     parser.add_argument("--quiet", action="store_true")
@@ -190,6 +206,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    from asyncroscopy.agents.graphs.swarm import Agent
 
     if args.transport == "streamable-http":
         bind_error = check_port_free(args.http_host, args.http_port)

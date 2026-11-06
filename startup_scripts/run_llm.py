@@ -131,7 +131,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_interactive(config: Config) -> int:
     """Run the swarm in this process and prompt it from stdin, without serving MCP."""
-    from asyncroscopy.mcp.agent import Agent, AgentSwarm
+    from asyncroscopy.agents.graphs.swarm import Agent, AgentSwarm
 
     swarm = AgentSwarm(
         model=config.agent.model,

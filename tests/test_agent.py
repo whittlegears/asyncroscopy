@@ -90,7 +90,7 @@ def setup_llm_stubs():
 
 setup_llm_stubs()
 
-from asyncroscopy.mcp.agent import Agent, AgentSwarm
+from asyncroscopy.agents.graphs.swarm import Agent, AgentSwarm
 from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
