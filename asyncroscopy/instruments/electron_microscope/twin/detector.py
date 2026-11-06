@@ -15,6 +15,8 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
+from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+
 ELECTRON_CHARGE = 1.602176634e-19
 DRIFT_PERIODS_S = (600.0, 7200.0)  # the slowest and fastest swings of gain and offset
 DRIFT_WAVES = 5
@@ -22,7 +24,7 @@ DRIFT_WAVES = 5
 
 @dataclass
 class DetectorParams:
-    beam_current_pa: float = 50.0
+    beam_current_pa: float = DEFAULT_BEAM_CURRENT_PA
     gain: float = 1.0
     offset: float = 0.0
     read_noise: float = 0.0

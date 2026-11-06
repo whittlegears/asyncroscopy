@@ -161,14 +161,14 @@ def test_impossible_twin_configuration_is_refused_at_start(mapping_twin_proxy):
     from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 
     class Bad:
-        beam_current_pa, particle_radius_mean, sample_size_xy = -50.0, 1e-9, 2e-6
+        probe_current_pa, particle_radius_mean, sample_size_xy = -50.0, 1e-9, 2e-6
         particle_elements, fov_scale_error = "", 0.0
         eds_channels, eds_energy_max, contamination_dose = 0, 20000.0, 0.0
         sample_cluster_count, sample_cluster_radius, sample_cluster_fraction = 0, 0.0, 0.0
 
     with pytest.raises(ValueError) as refused:
         DigitalTwin._check_properties(Bad())
-    for name in ("beam_current_pa", "particle_elements", "eds_channels", "contamination_dose"):
+    for name in ("probe_current_pa", "particle_elements", "eds_channels", "contamination_dose"):
         assert name in str(refused.value)
 
 

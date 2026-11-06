@@ -28,6 +28,8 @@ import math
 from dataclasses import dataclass
 
 DEFAULT_MAX_BEAM_CURRENT_AGE_S = 900.0
+# The current a microscope assumes until it has measured one (its default_beam_current_pa property).
+DEFAULT_BEAM_CURRENT_PA = 50.0
 
 
 class BeamCurrentRefused(ValueError):
@@ -62,7 +64,7 @@ def _number(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
+def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
     """The current a dose estimate should use, and (in ``refused``) why a budget may not rely on it."""
     parameters = parameters if isinstance(parameters, dict) else {}
     reported = _number(parameters.get("beam_current_pa"))
@@ -92,7 +94,7 @@ def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_M
     return BeamCurrent(pa, source, age, simulated, refused)
 
 
-def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
+def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
     """The current, for a dose budget; raises ``BeamCurrentRefused`` with the reason when it may not be used."""
     current = beam_current(parameters, simulated, max_age_s, default_pa)
     if current.refused:
@@ -108,7 +110,7 @@ def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DE
 START_CURRENT_TOLERANCE = 0.05
 
 
-def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa: float | None, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = 50.0) -> BeamCurrent:
+def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa: float | None, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
     """The current, checked again when a job with a dose budget starts or resumes; raises ``BeamCurrentRefused``.
 
     The approval may come long after the reserve: the current must still be usable for a budget, and no more

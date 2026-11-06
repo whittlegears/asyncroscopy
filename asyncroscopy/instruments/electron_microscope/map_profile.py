@@ -12,8 +12,9 @@ a real instrument when the beam current is only assumed; a budgeted job checks
 the current again when it starts or resumes (asyncroscopy/routines/beam.py).
 
 Their own Mapper settings (``settings``; set under the Mapper's ``properties:``):
-``scan_device_address``, ``default_beam_current_pa`` and ``max_beam_current_age_s``,
-and for the STEM also ``eds_device_address`` and ``eds_dose_spread_m``.
+``scan_device_address`` and ``max_beam_current_age_s``, and for the STEM also
+``eds_device_address`` and ``eds_dose_spread_m``. The current is the microscope's
+own (``get_parameters``): measured, or its ``default_beam_current_pa``, assumed.
 
 Both are registered through the ``asyncroscopy.map_profiles`` entry point
 (pyproject.toml), so the Mapper finds them without importing this module by name.
@@ -55,9 +56,6 @@ STEM_PLAN_DEFAULTS = {
 DOSE_BUDGET = "dose_e_per_a2"
 BEAM_SETTINGS = {
     "scan_device_address": Setting(str, "asyncroscopy/scan/default", "SCAN settings device (imsize, dwell_time, scan_region)."),
-    "default_beam_current_pa": Setting(
-        float, 50.0, "Used for dose estimates when the microscope does not report beam_current_pa; a dose budget on a stack that is not simulated refuses it.",
-    ),
     "max_beam_current_age_s": Setting(
         float, DEFAULT_MAX_BEAM_CURRENT_AGE_S, "Oldest screen-current measurement a dose budget accepts on hardware (asyncroscopy/routines/beam.py says why 15 min).",
     ),
@@ -106,7 +104,7 @@ class ElectronBeamProfile(InstrumentProfile):
         """The current dose estimates use: {"pa", "source" ("measured" or "default"), "reason" (when default),
         "refused" (why a dose budget may not rely on it; asyncroscopy.routines.beam), "simulated"}."""
         parameters, failure = self._parameters()
-        beam = beam_current(parameters, self.ctx.settings.simulated, float(self.setting("max_beam_current_age_s")), float(self.setting("default_beam_current_pa")))
+        beam = beam_current(parameters, self.ctx.settings.simulated, float(self.setting("max_beam_current_age_s")))
         current = {"simulated": beam.simulated, "pa": beam.pa, "source": beam.source, "refused": beam.refused}
         if beam.age_s is not None:
             current["age_s"] = beam.age_s
@@ -135,7 +133,7 @@ class ElectronBeamProfile(InstrumentProfile):
         try:
             check_current_at_start(
                 parameters, self.ctx.settings.simulated, job["estimate"].get("beam_current_pa"),
-                float(self.setting("max_beam_current_age_s")), float(self.setting("default_beam_current_pa")),
+                float(self.setting("max_beam_current_age_s")),
             )
         except BeamCurrentRefused as exc:
             raise RuntimeError(f"the map's dose budget no longer holds at start: {exc}") from exc

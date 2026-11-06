@@ -198,7 +198,7 @@ def tuner_stub(microscope, simulated=True, corrector=None, **extra):
     saved = []
     attrs = dict(
         microscope_device_address="m", scan_device_address="s", corrector_device_address="c" if corrector else "",
-        data_device_address="", default_beam_current_pa=50.0, autofocus_frames=8, corrector_measure_frames=4,
+        data_device_address="", autofocus_frames=8, corrector_measure_frames=4,
         allow_corrector_writes=False, vendor_dose_calibrated=False, max_beam_current_age_s=DEFAULT_MAX_BEAM_CURRENT_AGE_S,
         simulated=simulated, _lock=threading.RLock(), saved=saved,
         proxy=lambda address, timeout_s=None: devices[address], _save=lambda job: saved.append(json.loads(json.dumps(job.get("tune")))),

@@ -40,7 +40,7 @@ class PolycrystallineGoldDigitalTwin(AtomisticDigitalTwin):
     zone_axis_max_deviation_deg = device_property(dtype=float, default_value=2.0)
     acceleration_voltage_ev = device_property(dtype=float, default_value=200_000.0)
     convergence_angle_mrad = device_property(dtype=float, default_value=30.0)
-    beam_current_pa = device_property(dtype=float, default_value=100.0)
+    probe_current_pa = device_property(dtype=float, default_value=100.0, doc="Probe current (pA).")
     blur_noise_level = device_property(dtype=float, default_value=0.5)
 
     def init_device(self) -> None:
@@ -222,7 +222,7 @@ class PolycrystallineGoldDigitalTwin(AtomisticDigitalTwin):
         image = np.absolute(image)[edge_crop:-edge_crop, edge_crop:-edge_crop]
 
         scan_time = dwell_time * imsize * imsize
-        counts = scan_time * (float(self.beam_current_pa) * 1e-12) / 1.602e-19 / 100.0
+        counts = scan_time * (float(self.probe_current_pa) * 1e-12) / 1.602e-19 / 100.0
         pose_seed = abs(hash((int(self.sample_seed), int(imsize), round(fov_angstrom, 6), tuple(np.round(self._stage_position, 12))))) % (2**32)
         rng = np.random.default_rng(pose_seed)
         image -= image.min()
