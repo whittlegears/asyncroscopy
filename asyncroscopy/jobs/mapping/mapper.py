@@ -464,7 +464,7 @@ class Mapper(JobDevice):
         reply = super()._release(request)
         try:
             reservation_id = self._parse(request, "reservation_id")["reservation_id"]
-            job = self._jobs.get(reservation_id)
+            job = self._job(reservation_id)
             if job is not None and not job.get("run_closed") and "run_path" in job and self._run(job).exists():
                 self._close_run_file(job)
                 run = job["result_keys"].get("run")
