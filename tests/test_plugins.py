@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PROFILE = textwrap.dedent(
     """
-    from asyncroscopy.jobs.map_profile import InstrumentProfile, register_profile
+    from asyncroscopy.jobs.mapping.profile import InstrumentProfile, register_profile
     from asyncroscopy.routines.drift import LinearTracker, register_tracker
 
     @register_profile
@@ -33,7 +33,7 @@ PROFILE = textwrap.dedent(
 
 CHECK = textwrap.dedent(
     """
-    from asyncroscopy.jobs.map_profile import get_profile
+    from asyncroscopy.jobs.mapping.profile import get_profile
     from asyncroscopy.routines.drift import get_tracker
     print(get_profile("team_afm").__name__, get_tracker("team_tracker").__name__)
     """

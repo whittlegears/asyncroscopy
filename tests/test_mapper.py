@@ -12,8 +12,8 @@ import tango
 from types import SimpleNamespace
 
 from asyncroscopy.contracts import validate
-from asyncroscopy.instruments.electron_microscope import mapper as mapper_module
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, tile_centres
+from asyncroscopy.jobs.mapping import mapper as mapper_module
+from asyncroscopy.jobs.mapping.mapper import Mapper, tile_centres
 
 
 def call(proxy, verb, payload):
@@ -409,7 +409,7 @@ def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(t
 def test_a_plan_whose_overlap_is_smaller_than_the_stage_error_is_warned_about():
     from types import SimpleNamespace
 
-    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+    from asyncroscopy.jobs.mapping.mapper import Mapper
 
     twin_stage = SimpleNamespace(stage_sigma_m=2.9e-7)
     warning = Mapper._overlap_warning(twin_stage, 0.3, 5.6e-7)  # 560 nm tiles: neighbours often do not even overlap

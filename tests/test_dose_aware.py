@@ -18,7 +18,7 @@ from autoscript_core.common import ApplicationServerException
 
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, frame_dose
+from asyncroscopy.jobs.mapping.mapper import Mapper, frame_dose
 from tests.fake_autoscript import FakeAutoScriptClient, screen_current_a
 from tests.test_parity import autoscript_device
 

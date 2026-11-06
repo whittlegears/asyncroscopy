@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import h5py
 import numpy as np
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, compact_grid, tile_at
+from asyncroscopy.jobs.mapping.mapper import Mapper, compact_grid, tile_at
 from asyncroscopy.jobs.job_device import done_count, done_ranges_from, is_done, mark_done, read_last_steps
 
 
@@ -52,7 +52,7 @@ def test_the_run_file_keeps_every_tile_written_before_a_crash(tmp_path):
     writer = f"""
 import sys, time, numpy as np
 sys.path.insert(0, {str(Path.cwd())!r})
-from asyncroscopy.instruments.electron_microscope.mapper import write_tile
+from asyncroscopy.jobs.mapping.mapper import write_tile
 from pathlib import Path
 plan = {{"fov_m": 1e-7, "imsize": 32}}
 for k in range(100000):

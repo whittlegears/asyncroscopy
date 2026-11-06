@@ -54,8 +54,8 @@ from asyncroscopy.routines.drift import DEFAULT_WINDOW, bounded_correction, get_
 from asyncroscopy.routines.grid import index_at
 
 if TYPE_CHECKING:
-    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
-    from asyncroscopy.jobs.map_profile import InstrumentProfile
+    from asyncroscopy.jobs.mapping.mapper import Mapper
+    from asyncroscopy.jobs.mapping.profile import InstrumentProfile
 
 DEFAULTS = {"track": False, "tracker": "linear", "window": DEFAULT_WINDOW}
 MAX_SHIFT_FOV = 0.1  # default max_shift_m: a tenth of a tile per correction

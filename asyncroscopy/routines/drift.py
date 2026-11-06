@@ -2,7 +2,7 @@
 
 Pure numbers; no instrument. The Mapper's revisits use ``drift_at`` to put a mapped region
 back under the probe; its live drift tracking (plan ``"drift": {"track": true}``, see
-asyncroscopy/jobs/live_drift.py) uses a ``DriftTracker`` to predict, before each tile, how
+asyncroscopy/jobs/mapping/live_drift.py) uses a ``DriftTracker`` to predict, before each tile, how
 far the image will sit from where it was planned, and ``tile_offset_m`` to measure it from
 the overlap with a neighbouring tile. See docs/designs/concepts_brief.md (decision D1, item 8).
 

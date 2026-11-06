@@ -97,7 +97,7 @@ Conventions the rest of the stack relies on:
 - **Name stop commands plainly.** A safe stop is always allowed: an agent never waits for approval to make the instrument safe. It is a name with exactly one stop verb (`abort`, `stop`, `halt`, `pause`, `estop`, `retract`, `withdraw`, `disengage`, or `off` as the last word; `emergency` may qualify it) where every other word is something that verb may stop. Stop and retreat verbs take hardware: `beam`, `emission`, `lamp`, `light`, `laser`, `shutter`, `gun`, `filament`, `hv`, `tip`, `probe`, `stage`, `x`, `y`, `z`, `xy`, `xyz`, `motor(s)`, `indenter`, `head`, `objective`, `robot`, `xray`, `source`, `all`, `now` (`retract` and `withdraw` only `tip`, `probe`, `head`, `z`, `indenter`, `objective` or `needle`, named; a bare `retract` or `withdraw` is low only on a device that also has an `approach`, `engage` or `indent` command, since a syringe pump's `withdraw` aspirates; `disengage` only `tip`, `probe` or `head`, named); `abort`/`stop`/`halt`/`pause`/`estop` may also take a motion or job (`approach`, `move`, `motion`, `movement`, `scan`, `scanning`, `acquisition`, `acquire`, `job`, `run`, `travel`, `focus`, `autofocus`, `live`, `indent`, `imaging`, `exposure`, `protocol`). `off` needs one of these before it, so a bare `Off` is held; it switches off only a source of energy (`beam`, `emission`, `lamp`, `light`, `led`, `illumination`, `laser`, `gun`, `filament`, `hv`, `xray`, `source`), so `stage_off` is held. The pairs close + shutter, blank + beam and safe + state also count. This is an allow-list: anything else is held, so `brake_off`, `vacuum_off`, `retract_approach`, `stop_retract`, `close_valve` and `estop_ack` are held. `asyncroscopy/safety/policy.py` has the exact lists. `server.list_tool_risks()` (see `asyncroscopy.testing`) shows how each of your commands is classed, and the MCP server prints a `[safety]` line at start-up for any stop-like command it still holds; mark such a stop low with `mcp.safety.risk`, as `"Class.command"` or the tool name (`"OptiScope_park_stage": "low"`). It also prints a line for an override that matches no command; `server.risk_warnings` holds the same lines for a test to check. `stop_scan`, `AbortScan`, `abort_approach`, `retract_tip` and `shutter_close` qualify; a bare `Off`, `disengage_motor` (they de-energise an axis) and `retract_shutter` (it opens the beam path) do not.
 - **Return within a second; run anything longer as a job.** Tango runs one command per device at a time, so while a 6 s scan command is running, even a safe stop sent to that device waits for it (and the MCP server gives up after 30 s while the hardware keeps going). A command that takes longer than about a second should be a job on a `JobDevice` (section 2), or start its work in a thread, return at once, and report progress through a `get_*` command.
 - **Refuse unsafe arguments in the device** (`raise ValueError(...)`), not in the agent. The limit then applies to notebooks, the GUI and every agent. Expose the limits (the example's `get_limits`) so a job device can check a whole plan before it starts.
-- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/instruments/electron_microscope/mapper.py` does this for every tile. The MCP server attaches a PNG preview, read back through the DATA device, to any command whose name starts with `acquire` and whose result is a data key (a file name ending in `.h5`, `.hdf5`, `.hdf`, `.nxs`, `.tif` or `.tiff`; with `output_format=".tiff"` and several detectors the result is a JSON list of keys, which gets no preview). A preview never fails the command: for `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` the result says why there is none (for example, no reachable DATA device), for other commands it is just left out. The key of an `acquire*` result is recorded in the trace.
+- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/instruments/jobs/mapping/mapper.py` does this for every tile. The MCP server attaches a PNG preview, read back through the DATA device, to any command whose name starts with `acquire` and whose result is a data key (a file name ending in `.h5`, `.hdf5`, `.hdf`, `.nxs`, `.tif` or `.tiff`; with `output_format=".tiff"` and several detectors the result is a JSON list of keys, which gets no preview). A preview never fails the command: for `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` the result says why there is none (for example, no reachable DATA device), for other commands it is just left out. The key of an `acquire*` result is recorded in the trace.
 - **Write attributes that say how to read your data.** Agents look at stored data with `view_data` (a PNG or text, never raw arrays), which picks a view from the data's shape and attributes. A 1-D dataset with `axis_offset`, `axis_scale`, `axis_label` and `axis_units` (or `energy_offset_ev` and `energy_dispersion_ev`) is plotted against that axis with its peaks listed; a 2-D one with `pixel_size_m` is shown as an image with its field of view; 3-D and 4-D data show one frame (`index` picks it). The same PNG is attached to `acquire*` results (see above), and with it a short text summary (statistics, peaks), so an agent that cannot see images still learns what was taken. If your data needs its own drawing (a diffractogram in 2θ, a force curve), register a kind in a module you write and list it under `mcp.data_views` in your MCP YAML. The repository ships no such module; this one is the whole file, here saved as `asyncroscopy/instruments/x_ray_diffractometer/views.py` (any module the MCP server's Python can import works):
 
   ```python
@@ -285,7 +285,7 @@ No Tango database or ports are needed.
 
 ## Map any instrument
 
-The `Mapper` job device (`asyncroscopy/instruments/electron_microscope/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
+The `Mapper` job device (`asyncroscopy/instruments/jobs/mapping/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
 
 | Profile | Instrument | Budgets (plan `budgets`) |
 | :-- | :-- | :-- |
@@ -319,7 +319,7 @@ map:
 ```yaml
   mapper:
     class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
     properties:
       instrument_profile: yaml
       microscope_device_address: asyncroscopy/instrument/default   # the YAML device
@@ -331,13 +331,13 @@ Then `run_job(device="Mapper", plan={"size_m": [3e-6, 3e-6], "fov_m": 1e-6, "ove
 
 ### Writing a profile
 
-For a Python instrument, subclass `InstrumentProfile` (`asyncroscopy/jobs/map_profile.py`), set `name`, and register it with `@register_profile`, or with the `asyncroscopy.map_profiles` entry point for a package of your own.
+For a Python instrument, subclass `InstrumentProfile` (`asyncroscopy/jobs/mapping/profile.py`), set `name`, and register it with `@register_profile`, or with the `asyncroscopy.map_profiles` entry point for a package of your own.
 
 **Make the Mapper's process import it.** The launcher runs every device in its own process, which imports only that device's module, so a profile defined in your own file is never registered there and `reserve` answers `unknown instrument profile 'my_afm'`. Name the file or module in the stack YAML's top-level `plugins:` list (or the `ASYNCROSCOPY_PLUGINS` variable, entries separated by commas or `;` on Windows, `:` elsewhere). Every device process imports them before it looks a name up; the same holds for drift trackers (`@register_tracker`). A file path is relative to the repository; a module name must be importable (on `PYTHONPATH`, or installed with `uv add --editable`). The launcher checks each entry when it loads the config:
 
 ```python
 # my_lab/afm_profile.py
-from asyncroscopy.jobs.map_profile import InstrumentProfile, register_profile
+from asyncroscopy.jobs.mapping.profile import InstrumentProfile, register_profile
 
 @register_profile
 class MyAfm(InstrumentProfile):
@@ -352,7 +352,7 @@ plugins:
 devices:
   mapper:
     class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
     properties:
       instrument_profile: my_afm
 ```
@@ -384,7 +384,7 @@ The Mapper calls:
 | `acquire_revisit(job, revisit)` | every revisit | image at `revisit["fov_m"]`, restore, end safe |
 | `make_safe(job)` | on finish, abort and failure | never raise for an instrument already safe |
 
-Declare `plan_fields` (fields beyond the generic ones; anything else is refused by name), `plan_defaults`, and `needs` (commands checked on the instrument at `reserve`); override `stage_targets` and `move_target` so reserve checks your stage limits and a dry run checks your moves. Reach the instrument only through `self.instrument()` or `self.mapper.proxy(...)`, so a dry run records instead of moving, and give every wait a deadline. `PinholeCamera` in `tests/test_map_profiles.py` is a complete profile in about 40 lines; `asyncroscopy/instruments/electron_microscope/map_profiles.py` (STEM, SEM) and `asyncroscopy/instruments/yaml_sim/map_profile.py` are the built-in ones.
+Declare `plan_fields` (fields beyond the generic ones; anything else is refused by name), `plan_defaults`, and `needs` (commands checked on the instrument at `reserve`); override `stage_targets` and `move_target` so reserve checks your stage limits and a dry run checks your moves. Reach the instrument only through `self.instrument()` or `self.mapper.proxy(...)`, so a dry run records instead of moving, and give every wait a deadline. `PinholeCamera` in `tests/test_map_profiles.py` is a complete profile in about 40 lines; `asyncroscopy/instruments/electron_microscope/map_profile.py` (STEM, SEM) and `asyncroscopy/instruments/yaml_sim/map_profile.py` are the built-in ones.
 
 ## Digital twin first
 

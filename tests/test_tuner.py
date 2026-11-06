@@ -23,7 +23,7 @@ import tango
 from fastmcp.exceptions import ToolError
 
 from asyncroscopy.instruments.electron_microscope import tuner as tuner_module
-from asyncroscopy.instruments.electron_microscope.mapper import frame_dose
+from asyncroscopy.jobs.mapping.mapper import frame_dose
 from asyncroscopy.instruments.electron_microscope.tuner import STRATEGIES, Strategy, register_strategy
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.routines import focus

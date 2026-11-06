@@ -1,4 +1,4 @@
-"""One Mapper, many instruments: the instrument profiles (asyncroscopy/jobs/map_profile.py).
+"""One Mapper, many instruments: the instrument profiles (asyncroscopy/jobs/mapping/profile.py).
 
 * an AFM (the YAML twin's afm.yaml, profile ``yaml``) maps a few tiles that stitch, score and
   revisit on pyTEMlib's map tools, called in this process, with the tip lifted for every move;
@@ -20,9 +20,9 @@ import numpy as np
 import pytest
 import tango
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.jobs.mapping.mapper import Mapper
 from asyncroscopy.instruments.yaml_sim.spec import SimInstrument, load_spec, map_description, sample_spots
-from asyncroscopy.jobs.map_profile import Cost, InstrumentProfile, get_profile, register_profile
+from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, get_profile, register_profile
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
 needs_map_tools = pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools")
