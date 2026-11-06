@@ -204,9 +204,6 @@ def is_read_only(dev_class: str, command: str, overrides: dict[str, str] | None 
     return not any(level == "high" for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower()))
 
 
-# Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
-NATIVE_HIGH = frozenset({"run_job"})
-
 def check_auto_routine(raw: object, where: str = "auto_routine") -> dict[str, list[str]]:
     """``raw`` checked as an auto-routine mapping (the MCP config's ``mcp.safety.auto_routine``): {device kind
     ("stem", "probe", "envelope"): [command globs], "tools": [tool-name or "Class.command" globs]}. Anything
@@ -220,41 +217,6 @@ def check_auto_routine(raw: object, where: str = "auto_routine") -> dict[str, li
             raise ValueError(f"{where}: auto_routine.{kind} must be a list of command globs")
         checked[kind] = [p.strip() for p in patterns]
     return checked
-
-
-def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:
-    """"low" or "high" for an MCP tool name ("<Class>_<command>" or a native tool).
-
-    ``risks`` is the endpoint's own table (the MCP server's ``endpoint_info``), which knows each
-    device's envelope, STEM and override rules; without it, or for a name it lacks, the policy
-    is applied to the name alone: envelope verbs count as an envelope device's, and STEM_LOW
-    settings stay high (unknown is high).
-    """
-    if risks is not None and tool_name in risks:
-        return risks[tool_name]
-    if any(c in tool_name for c in "*?["):
-        return _glob_risk(tool_name, risks)
-    device, _, command = tool_name.partition("_")
-    if not command or not device[:1].isupper():
-        return "high" if tool_name in NATIVE_HIGH else "low"
-    return risk_of(device, command, envelope=command.lower() in ENVELOPE_VERBS)
-
-
-def _glob_risk(pattern: str, risks: dict[str, str] | None) -> str:
-    """A tool-name glob (a skill's ``tools: ["*_indent"]``) is high when any tool it may name is.
-
-    With the endpoint's table: high if a high tool there matches. Otherwise from the command part
-    alone: "*_indent" or "*_acquire_*" act, "*_get_*" and "Mapper*_abort" do not, a bare "*" may.
-    """
-    if risks is not None and any(level == "high" for name, level in risks.items() if fnmatchcase(name, pattern)):
-        return "high"
-    device, _, command = pattern.partition("_")
-    if not command or not command.strip("*?[]_"):  # "*" or "Mapper_*": every tool, or every command of a device
-        return "high" if not pattern.islower() or any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
-    if device[:1].islower():  # "analysis_job_*": a native tool family
-        return "high" if any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
-    # "*_indent" or "Mapper*_abort": the command decides, on any device of that name.
-    return risk_of(device.strip("*?[]") or "Any", command, envelope=command.lower() in ENVELOPE_VERBS)
 
 
 def is_stem_device(command_names: Iterable[str]) -> bool:

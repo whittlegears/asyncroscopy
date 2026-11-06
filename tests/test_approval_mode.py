@@ -140,20 +140,6 @@ class TestPolicy:
             assert risk_of(dev, command) == "low", command
         assert risk_of("Microscope", "retract_screen") == "high"  # uncovers the detectors below it
 
-    @pytest.mark.parametrize("glob, level", [
-        ("*_indent", "high"), ("*_acquire_*", "high"), ("*_move_stage", "high"), ("*_start", "high"), ("*", "high"), ("Mapper_*", "high"),
-        ("run_*", "high"), ("*_get_*", "low"), ("Mapper*_abort", "low"), ("*_retract_tip", "low"), ("*_job_status", "low"), ("analysis_job_*", "low"),
-    ])
-    def test_a_tool_glob_is_high_when_its_command_acts(self, glob, level):
-        from asyncroscopy.safety.policy import tool_risk
-
-        assert tool_risk(glob) == level
-
-    def test_a_tool_glob_uses_the_endpoints_table_when_given(self):
-        from asyncroscopy.safety.policy import tool_risk
-
-        assert tool_risk("*_park", {"Stage_park": "high", "Other_get_x": "low"}) == "high"
-        assert tool_risk("*_park", {"Stage_park": "low"}) == "high"  # not lowered: the name alone still decides
 
     def test_place_beam_is_high_even_on_a_stem(self):
         assert risk_of("DigitalTwin", "place_beam", stem=True) == "high"
@@ -803,9 +789,8 @@ class TestWaitForJob:
     def test_paused_jobs_are_waited_through_and_explained(self, monkeypatch):
         from asyncroscopy.agents.guidance import WAIT_NOTES
         from asyncroscopy.core.names import RUNNING_JOB_STATES
-        from asyncroscopy.jobs.job_device import RUNNING_STATES
 
-        assert set(WAIT_NOTES) == RUNNING_STATES == RUNNING_JOB_STATES
+        assert set(WAIT_NOTES) == RUNNING_JOB_STATES
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
 

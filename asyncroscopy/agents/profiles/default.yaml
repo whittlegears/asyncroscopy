@@ -30,3 +30,21 @@ tools:
   analysis_waits: [analysis_job_status, analysis_job_results]
   # For agent programs, not models: action_space is far too long for a small model's context.
   not_for_models: [list_skills, endpoint_info, action_space]
+
+# The team graph (asyncroscopy.agents.graphs.team): which tools each specialist holds. Jobs go through
+# run_job (reserve + start) and wait_for_job (which waits on instrument and analysis jobs and returns
+# their results), so the envelope's separate tools and the analysis job tools stay on the endpoint but no
+# specialist is given them. On an endpoint without an electron microscope the operator also gets every
+# other device command, as the general agent does.
+team:
+  # The first role whose globs match a tool gets it: the analyst first, since its tools are never the instrument's.
+  roles:
+    analyst: [list_data, view_data, assemble_map, score_map, map_info, get_region, list_pois, add_poi, list_scorers]
+    operator: [run_job, "*_abort", "*_get_stage", "*_move_stage", "*_get_parameters", "*_acquire_*", "*_set_fov", "*_get_fov",
+               "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam"]
+  # Both specialists get these. load_skill is shown to a model only while a matched skill did not fit its prompt.
+  shared: [wait_for_job, approval_status, load_skill]
+  # Never given to a specialist: covered by run_job / wait_for_job, skills come to the agent, and the operator side
+  # of approvals is the operator's.
+  hidden: ["*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", list_skills, endpoint_info,
+           action_space, "Approvals_*", "*_State", "*_Status", "*_Init"]

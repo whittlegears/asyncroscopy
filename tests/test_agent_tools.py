@@ -11,6 +11,7 @@ from asyncroscopy.agents.graphs import general
 from asyncroscopy.agents.skill_runs import RUN_TOOLS
 from asyncroscopy.mcp.agent_tools import for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
+from asyncroscopy.safety.policy import is_envelope_device, is_probe_device, is_stem_device
 
 NATIVE = ["list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "run_job", "wait_for_job", "approval_status"]
 TWIN = {
@@ -50,6 +51,10 @@ def endpoint(monkeypatch):
         server = MCPServer("t", "localhost", 1, blocked_classes=[], blocked_functions={}, data_device_address="d",
                            verbose=False, analysis_url=analysis_url)
         server.tools = {prefix: dict.fromkeys(commands) for prefix, commands in devices.items()}
+        for prefix, commands in devices.items():  # what discovery finds: each device's kind, and what each command is
+            server.add_device(prefix, None, prefix, stem=is_stem_device(commands), probe=is_probe_device(commands), envelope=is_envelope_device(commands))
+            for command in commands:
+                server._describe(prefix, prefix, command, None)
         server.native_names = set(NATIVE)
         return server
 
@@ -106,10 +111,9 @@ AFM_MAPPED = {
 
 
 def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_tools(endpoint, monkeypatch, tmp_path):
-    from asyncroscopy.mcp.agent_tools import is_stem_endpoint
-
     server = endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp")
-    assert not is_stem_endpoint(server.tool_names())
+    info = server.discovery.endpoint_info()
+    assert info["stem_devices"] == [] and info["map_devices"] == ["Mapper"]
     picked, _ = general_agent_tools(server, monkeypatch, tmp_path)
     for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"):
         assert tool in picked, tool
@@ -121,21 +125,20 @@ def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_too
 
 def test_the_stem_twins_curated_set_is_unchanged(endpoint):
     from asyncroscopy.agents.profile import load_profile
-    from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
-    assert is_stem_endpoint(server.tool_names())
+    assert server.discovery.endpoint_info()["stem_devices"] == ["DigitalTwin"]
     tools = load_profile("default").tools  # the curated lists are the default agent profile's data
     assert server.discovery.endpoint_info()["agent_tools"] == [*tools.stem, *tools.generic, "load_skill"]
     assert "*_move_stage" in tools.stem and "run_job" in tools.generic
 
 
-def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(tmp_path, monkeypatch):
+def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(endpoint, tmp_path, monkeypatch):
     from asyncroscopy.agents.graphs.team import TeamGraph
 
     monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))
     names = [f"{prefix}_{c}" for prefix, cs in AFM_MAPPED.items() for c in cs] + NATIVE
-    config = EndpointConfig(names, {"analysis_url": "http://127.0.0.1:8003/mcp"})
+    config = EndpointConfig(names, endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp").discovery.endpoint_info())
     roles = asyncio.run(TeamGraph(config).tools_by_role())
     operator = {t.name for t in roles["operator"]}
     assert {"AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"} <= operator

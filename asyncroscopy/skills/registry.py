@@ -43,7 +43,6 @@ from pathlib import Path
 import yaml
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
-from asyncroscopy.safety.policy import tool_risk
 
 HERE = Path(__file__).resolve().parent
 
@@ -126,8 +125,9 @@ def _parse(path: Path) -> Skill:
         if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) and bool(s.get("tool")) != bool(s.get("skill")) for s in steps):
             raise ValueError(f"{path} run needs steps: a list of {{tool, args}} or {{skill, inputs}}")
         skill.run = run
-    tools = skill.tools
-    skill.acts = bool(meta["acts"]) if "acts" in meta else any(tool_risk(str(t)) == "high" for t in tools)
+    # Whether following the skill acts on the instrument is the skill's to say (acts: false for one that only reads);
+    # one that does not say counts as acting, as an unknown command counts as high risk.
+    skill.acts = bool(meta["acts"]) if "acts" in meta else True
     installed = _installed_version()
     if skill.min_asyncroscopy and installed and _version_tuple(installed) < _version_tuple(str(skill.min_asyncroscopy)):
         skill.problem = f"needs asyncroscopy >= {skill.min_asyncroscopy}, installed {installed}"

@@ -73,12 +73,11 @@ from tango.server import Device, attribute, device_property
 from asyncroscopy.contracts import ENVELOPE_VERSION, load as load_schema
 from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
+from asyncroscopy.core.names import ACTIVE_JOB_STATES, RUNNING_JOB_STATES  # a worker owns a running job
 from asyncroscopy.trace.writer import TraceWriter
 from asyncroscopy.safety.policy import check_overrides
 from asyncroscopy.trace.clock import InstrumentClock
 
-ACTIVE_STATES = {"reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "paused", "aborting"}
-RUNNING_STATES = {"queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended", "paused"}  # a worker owns the job
 STOPPABLE_STATES = {"running", "paused_suspended", "paused"}  # abort sets the worker's abort event
 PAUSE_POLL_S = 0.2
 
@@ -422,7 +421,7 @@ class JobDevice(Device):
             if job is None:
                 continue
             job.pop("pause_requested", None)
-            if job.get("state") in RUNNING_STATES:
+            if job.get("state") in RUNNING_JOB_STATES:
                 job["state"] = "failed"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
             elif job.get("state") == "reserved":
@@ -543,7 +542,7 @@ class JobDevice(Device):
 
     def _active(self) -> dict | None:
         for job in self._jobs.values():
-            if job["state"] in ACTIVE_STATES:
+            if job["state"] in ACTIVE_JOB_STATES:
                 return job
         return None
 
@@ -935,7 +934,7 @@ class JobDevice(Device):
                     "caller": job.get("caller"), "dry_run": bool(job.get("dry_run")), "last_error": job.get("last_error"),
                     "suspended": job.get("suspended"), "lease_until": job.get("lease_until"),
                 }
-                for job in self._jobs.values() if job["state"] in ACTIVE_STATES
+                for job in self._jobs.values() if job["state"] in ACTIVE_JOB_STATES
             ]
         return self._reply({"jobs": jobs, "lease_s": lease_seconds(self)})
 
@@ -956,7 +955,7 @@ class JobDevice(Device):
                 return
 
     def _renew(self, job: dict) -> None:
-        if lease_seconds(self) > 0 and job["state"] in RUNNING_STATES:  # a paused job someone is watching keeps its lease
+        if lease_seconds(self) > 0 and job["state"] in RUNNING_JOB_STATES:  # a paused job someone is watching keeps its lease
             job["lease_until"] = time.time() + lease_seconds(self)
 
     def _omni_worker(self, job: dict, job_id: str) -> None:
@@ -1252,7 +1251,7 @@ class JobDevice(Device):
             job = self._job(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
-            if job["state"] in RUNNING_STATES:
+            if job["state"] in RUNNING_JOB_STATES:
                 raise JobError("bad_state", f"job is {job['state']}; abort it first")
             job["state"] = "released"
             self._save(job)

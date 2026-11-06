@@ -16,7 +16,6 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.safety.policy import tool_risk
 from asyncroscopy.skills.registry import list_skills
 
 if TYPE_CHECKING:
@@ -59,14 +58,14 @@ def sleepwalking(tool_names: list[str], allowed: Iterable[str] | None = None, ri
     """High-risk calls outside ``allowed`` (globs): actions nobody asked for.
 
     The term is from AILA (Nat. Commun. 2025). Risk is the endpoint's own table (``risks``,
-    from endpoint_info: overrides and STEM settings counted as the approval gate counts them),
-    else the safety policy applied to the name. ``allowed`` defaults to the mapping skill's
+    from endpoint_info: overrides and STEM settings counted as the approval gate counts them);
+    without it nothing can be judged and nothing is reported. ``allowed`` defaults to the mapping skill's
     tools. The job device's reserve and start that run_job makes are its own: the Instrument
     Trace marks them (via "run_job"), and the workflow checks leave them out when run_job is
     allowed; a direct ``Mapper_start`` still counts.
     """
     allowed = skill_tools() if allowed is None else set(allowed)
-    return [name for name in tool_names if not matches(name, allowed) and tool_risk(name, risks) == "high"]
+    return [name for name in tool_names if not matches(name, allowed) and (risks or {}).get(name) == "high"]
 
 
 async def endpoint_risks(config: AgentConfig) -> dict[str, str] | None:
