@@ -4,6 +4,10 @@ run_job reserves a plan, starts it through the approval gate and waits a little;
 person keeps its reservation ("a held run") so repeating the same run_job after approval starts that
 reservation instead of a new one. One reserve-and-start at a time per job device: identical retries
 never file twice, and a sweep never releases a reservation a retry is starting.
+
+Replies carry facts, not instructions: a job's ``state``, ``next_actions`` ({"tool", "args"}: the calls
+to make next), ``resume_with`` (the call that continues an aborted job) and ``warnings`` ({"code", ...}).
+The agent graphs turn them into sentences for a small model (``asyncroscopy.agents.guidance``).
 """
 
 from __future__ import annotations
@@ -37,19 +41,8 @@ MAX_HELD_RUNS = 32  # held reservations kept at once; the oldest is released bey
 # Estimate fields of a job that puts a dose on the sample (a beam job): max_dose_e_per_a2 applies to it.
 DOSE_FIELDS = ("max_dose_e_per_a2", "beam_current_pa", "beam_current_source")
 SETTLED = ("denied", "expired", "revoked")
-# Job states wait_for_job keeps waiting through, and what it tells the model when its wait ends first.
-WAIT_NOTES = {
-    "queued": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
-    "running": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
-    "aborting": "Abort in progress: call wait_for_job again to see the job stop.",
-    "paused_suspended": "Paused by a safety condition ({reason}); it resumes by itself when the condition clears. Call wait_for_job again, or abort if the user asked to stop.",
-    "paused_awaiting_approval": "Waiting for an operator to approve the next step: call wait_for_job again. Do not retry or start another job.",
-    "paused": "Paused by a person, with the instrument waiting safely; it goes on when they continue it. Call wait_for_job again; do not start it yourself or start another job.",
-}
-assert set(WAIT_NOTES) == RUNNING_JOB_STATES
-# A finished job's reply: a small model handed a finished map stitched it again and then ran the whole map again.
-DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
-             "reply and its result_keys; nothing needs running or stitching again.")
+def wait_action(job_id: str) -> dict[str, Any]:
+    return {"tool": "wait_for_job", "args": {"job_id": job_id}}
 
 
 def _is_number(value) -> bool:
@@ -326,12 +319,8 @@ class Jobs:
             proxy = self.job_device(device)
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
-            if not wait and reply.get("state") in ("queued", "running"):
-                reply["note"] = f"The job runs in the background: give the user its job_id. {device}_abort stops it; wait_for_job waits for it."
-            elif reply.get("state") in ("queued", "running"):
-                phases = (reply.get("estimate") or {}).get("phases")
-                reply["note"] = (f"Still running, which is normal: call wait_for_job with {{\"job_id\": \"{started['job_id']}\"}} now. The job does every phase "
-                                 f"of its plan itself{' (' + ', '.join(phases) + ')' if phases else ''}; other calls for it meanwhile repeat or spoil its work.")
+            if not wait and reply.get("state") in ("queued", "running"):  # in the background: it can be stopped, or waited for later
+                reply["next_actions"] = [wait_action(started["job_id"]), {"tool": f"{device}_abort", "args": {"job_id": started["job_id"]}}]
         return reply
 
     def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, key: tuple, resume: str | None = None) -> tuple[dict, dict]:
@@ -430,14 +419,13 @@ class Jobs:
             if "error" in status:
                 return status
             state = status.get("state")
-            if state not in WAIT_NOTES:
-                if state == "done":
+            if state not in RUNNING_JOB_STATES:
+                if state == "done":  # every phase of the plan ran: nothing needs running or stitching again
                     results = json.loads(proxy.results(json.dumps({"job_id": job_id})))
-                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results}, note=DONE_NOTE)
+                    status.update({k: results[k] for k in ("result_keys", "summary") if k in results}, next_actions=[], warnings=[{"code": "finished"}])
                 return status
-            if time.monotonic() >= deadline:
-                reason = (status.get("suspended") or {}).get("reason", "")
-                return {**status, "note": WAIT_NOTES[state].format(reason=reason)}
+            if time.monotonic() >= deadline:  # still active: waiting again is the next step (a paused job says why in "suspended")
+                return {**status, "next_actions": [wait_action(job_id)]}
             time.sleep(1.0)
             # Polls job_status (low risk) rather than blocking in the device, so abort stays immediate.
             status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
@@ -468,7 +456,7 @@ class Jobs:
                 if status.get("state") == "done":
                     results = await client.call_tool("analysis_job_results", {"job_id": job_id}, raise_on_error=False)
                     if results.is_error:
-                        status["note"] = f"done, but its results could not be read: {text(results)[:300]}"
+                        status["warnings"] = [{"code": "results_unreadable", "detail": text(results)[:300]}]
                     else:
                         status.update({k: v for k, v in (results.structured_content or {}).items() if k in ("result_keys", "summary")})
                 return status
@@ -481,18 +469,18 @@ class Jobs:
         if status.get("error", {}).get("code") == "unknown_job":
             raise ToolError(f"no job {job_id!r} on any job device here or on the analysis server")
         if status.get("state") in {"queued", "running"}:
-            status["note"] = WAIT_NOTES["running"]
+            status["next_actions"] = [wait_action(job_id)]
         return status
 
 
 # ---------------------------------------------------------------------- interceptors of job devices
-def resume_note(device: str, reply: Any) -> Any:
-    """An aborted job's reply says how to go on with it: models asked to resume start a new job instead."""
+def resume_with(device: str, reply: Any) -> Any:
+    """An aborted (or aborting) job's reply names the call that continues it (models asked to resume started a
+    new job instead); while aborting, that call is for once wait_for_job says aborted."""
     status = _json_object(reply)
     if status is None or status.get("state") not in ("aborting", "aborted") or not status.get("reservation_id"):
         return reply
-    resume = f'run_job with {{"device": "{device}", "resume": "{status["reservation_id"]}"}} and no plan: it goes on from the next step'
-    status["to_resume"] = resume if status["state"] == "aborted" else f"once wait_for_job says aborted, {resume}"
+    status["resume_with"] = {"tool": "run_job", "args": {"device": device, "resume": status["reservation_id"]}}
     return json.dumps(status)
 
 
@@ -580,7 +568,7 @@ class JobChecks(_EnvelopeOnly):
         if call.tool.command == "reserve" and self.jobs.job_limits:
             result = call.reply = self.jobs.limit_reservation(call.tool.device or "", result)
         elif call.tool.command == "abort":
-            result = call.reply = resume_note(call.tool.device or "", result)
+            result = call.reply = resume_with(call.tool.device or "", result)
         return result
 
 

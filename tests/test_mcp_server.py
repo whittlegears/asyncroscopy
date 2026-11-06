@@ -721,9 +721,17 @@ class TestDataToolRobustness:
         blanked = {"text": "taken with the beam blanked", "beam_blanked": True}
         monkeypatch.setattr("asyncroscopy.mcp.components.data_tools.views.view", lambda node, key, fmt: (blanked, b"png"))
         with pytest.raises(ToolError) as raised:
-            server.data.augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin")
-        assert "noise-only file scan_20261101.h5 was saved; do not view or report it" in str(raised.value)
-        assert str(raised.value).startswith("Not acquired: the beam is blanked. Next call DigitalTwin_unblank_beam, then DigitalTwin_acquire_scanned_image again")
+            server.data.augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin", {"fov_m": 1e-6})
+        error = json.loads(str(raised.value))
+        assert error["error"]["code"] == "beam_blanked" and error["warnings"] == [{"code": "noise_only_file", "key": "scan_20261101.h5"}]
+        assert error["next_actions"] == [{"tool": "DigitalTwin_unblank_beam", "args": {}}, {"tool": "DigitalTwin_acquire_scanned_image", "args": {"fov_m": 1e-6}}]
+        # What the agent graphs show the model (asyncroscopy.agents.guidance): the retake first, the key last.
+        from asyncroscopy.agents.guidance import render_error
+
+        prose = render_error(f"Error calling tool 'DigitalTwin_acquire_scanned_image': ToolError: {raised.value}")
+        assert "noise-only file scan_20261101.h5 was saved; do not view or report it" in prose
+        assert prose.startswith("Error calling tool 'DigitalTwin_acquire_scanned_image': ToolError: Not acquired: the beam is blanked. Next call "
+                                "DigitalTwin_unblank_beam, then DigitalTwin_acquire_scanned_image again")
         monkeypatch.setattr("asyncroscopy.mcp.components.data_tools.views.view", lambda node, key, fmt: ({"text": "512 x 512 pixels"}, b"png"))
         assert server.data.augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin").structured_content == {"result": "scan_20261101.h5"}
 
