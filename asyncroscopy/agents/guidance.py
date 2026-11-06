@@ -1,6 +1,8 @@
-"""Prose for a model from the instrument server's structured replies.
+"""Prose for a model from the instrument and analysis servers' structured replies.
 
-The MCP server answers with facts: a job's ``state``, the ``next_actions`` to take ({"tool", "args"}),
+The MCP servers answer with facts: a job's ``state``, the ``next_actions`` to take ({"tool", "args"}; an
+action on another server also names it, {"server": "instrument", "tool" or "command", "args"}, where
+"command" is a device command whose tool name carries the device's prefix),
 ``resume_with`` (the call that continues an aborted job) and ``warnings`` ({"code", ...}). Agent
 programs can act on those directly. A small model does better with a sentence telling it what to do
 and what not to, so the agent graphs turn the fields into the notes below before the model sees a
@@ -26,6 +28,12 @@ WAIT_NOTES = {
 DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
              "reply and its result_keys; nothing needs running or stitching again.")
 STRUCTURED = ("next_actions", "resume_with", "warnings")
+# Analysis server replies (asyncroscopy.analysis_server) whose next step is on the instrument endpoint.
+UNKNOWN_ANALYSIS_JOB_NOTE = ("not a stitching or scoring job: a job id from Mapper_start belongs to the instrument, "
+                             "so use wait_for_job or Mapper_job_status there")
+BUSY_ANALYSIS_JOB_NOTE = "wait for job {job_id} (analysis_job_status) instead of starting another"
+SAMPLE_LOAD_NOTE = "before moving there, check the instrument's get_sample gives this sample_load_id: another load puts the sample elsewhere"
+BEAM_BLANKED_HINT = "this image was taken with the beam blanked (beam_current_pa 0), so it shows only noise: unblank_beam and take it again"
 
 
 def _codes(reply: dict) -> dict[str, dict]:
@@ -63,7 +71,24 @@ def render_reply(tool: str, args: dict, reply: dict) -> dict:
                            f"of its plan itself{' (' + ', '.join(phases) + ')' if phases else ''}; other calls for it meanwhile repeat or spoil its work.")
         else:
             out["note"] = WAIT_NOTES[state].format(reason=(reply.get("suspended") or {}).get("reason", ""))
+    _render_analysis(reply, actions, codes, out)
     return out
+
+
+def _render_analysis(reply: dict, actions: list[dict], codes: dict[str, dict], out: dict) -> None:
+    """The notes for the analysis server's structured fields (``out`` is changed in place)."""
+    error = reply.get("error") if isinstance(reply.get("error"), dict) else {}
+    on_instrument = [a for a in actions if a.get("server") == "instrument"]
+    if error.get("code") == "unknown_job" and any(a.get("tool") == "wait_for_job" for a in on_instrument):
+        out["note"] = UNKNOWN_ANALYSIS_JOB_NOTE
+    elif error.get("code") == "busy":
+        waits = [a for a in actions if a.get("tool") == "analysis_job_status"]
+        if waits:
+            out["note"] = BUSY_ANALYSIS_JOB_NOTE.format(job_id=waits[0].get("args", {}).get("job_id"))
+    if any(a.get("command") == "get_sample" for a in on_instrument):
+        out["note"] = "; ".join(n for n in (out.get("note"), SAMPLE_LOAD_NOTE) if n)
+    if "beam_blanked" in codes and any(a.get("command") == "unblank_beam" for a in on_instrument):
+        out["hint"] = BEAM_BLANKED_HINT
 
 
 def render_error(text: str) -> str:
@@ -102,4 +127,5 @@ def render(tool: str, args: dict | None, text: str, error: bool = False) -> str:
     return text if rendered is reply else json.dumps(rendered)
 
 
-__all__ = ["DONE_NOTE", "WAIT_NOTES", "render", "render_error", "render_reply"]
+__all__ = ["BEAM_BLANKED_HINT", "BUSY_ANALYSIS_JOB_NOTE", "DONE_NOTE", "SAMPLE_LOAD_NOTE", "UNKNOWN_ANALYSIS_JOB_NOTE", "WAIT_NOTES",
+           "render", "render_error", "render_reply"]

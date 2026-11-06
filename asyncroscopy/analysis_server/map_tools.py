@@ -41,12 +41,21 @@ from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
 from fastmcp.utilities.types import Image as MCPImage
 
-from pyTEMlib.version import __version__
-from pyTEMlib.image_tools.image_mosaic import assemble, level_shapes, pyramid_levels, register_tiles, stage_canvas_shape, stitch_quality
-from pyTEMlib.image_tools.image_scoring import BaselineScorer, score_windows, select_regions
+from pyTEMlib import __version__
+from pyTEMlib.image_tools import (
+    BaselineScorer,
+    assemble,
+    level_shapes,
+    pyramid_levels,
+    register_tiles,
+    score_windows,
+    select_regions,
+    stage_canvas_shape,
+    stitch_quality,
+)
 
 from .frames import image_dataset
-from .jobs import JobRunner
+from .jobs import DEFAULT_MAX_WORKERS, JobRunner
 from .map_store import MapStore, level_shape_of, pixel_to_stage, stage_box_to_pixels
 
 PREVIEW_MAX_SIDE = 512
@@ -115,10 +124,10 @@ def inputs_sha256(plan: dict, info, stage_sigma_m: float) -> str:
 
 
 class MapTools:
-    def __init__(self, store: MapStore, max_canvas_pixels: int = DEFAULT_MAX_CANVAS_PIXELS):
+    def __init__(self, store: MapStore, max_canvas_pixels: int = DEFAULT_MAX_CANVAS_PIXELS, max_jobs: int = DEFAULT_MAX_WORKERS):
         self.store = store
         self.max_canvas_pixels = int(max_canvas_pixels)
-        self.jobs = JobRunner()
+        self.jobs = JobRunner(max_workers=max_jobs)
         # One job per run's map at a time: a second assemble (a retry after a timeout, a resumed
         # Mapper) is refused as busy with the running job's id, which the caller then waits for.
         self.jobs.register("assemble_map", self._check_assemble, self._run_assemble, resource=lambda plan: f"map of {plan['run']}")
@@ -255,8 +264,9 @@ class MapTools:
             added.append(poi)
         progress(0)  # an abort requested while scoring stops here, before any point is written
         if tag:
-            # The same tag's earlier regions (a retried or resumed scoring) are replaced, not repeated.
-            self.store.update_pois(plan["map"], lambda current: [p for p in current if p.get("tag") != tag] + added)
+            # The same tag's earlier regions (a retried or resumed scoring) are replaced, not repeated; only the
+            # highlights are rewritten, never the run's EDS points.
+            self.store.update_highlights(plan["map"], lambda current: [p for p in current if p.get("tag") != tag] + added)
         else:
             self.store.add_pois(plan["map"], added)
         progress(1)

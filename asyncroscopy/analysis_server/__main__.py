@@ -1,51 +1,71 @@
-"""Command line: ``python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --port 8003``."""
+"""Command line: ``python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003``.
+
+The tool log, the note events and the placement log go under the outputs folder of
+``asyncroscopy.settings`` (``$ASYNCROSCOPY_OUTPUTS``, default ``outputs`` here) unless given.
+"""
 
 from __future__ import annotations
 
 import argparse
+import os
+from pathlib import Path
 
-from . import create_server
+from asyncroscopy.settings import Settings
+
+from .jobs import DEFAULT_MAX_WORKERS
 from .map_tools import DEFAULT_MAX_CANVAS_PIXELS
+from .server import create_server
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="pyTEMlib MCP server: analysis and map tools.")
-    parser.add_argument("--tiled", default="", help="Tiled server URI; without it, tools take local file paths.")
-    parser.add_argument("--api-key", default=None, help="Tiled API key (default: $ASYNCROSCOPY_TILED_API_KEY or $TILED_API_KEY).")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8003)
-    parser.add_argument("--transport", default="streamable-http", choices=["streamable-http", "sse", "stdio"])
-    parser.add_argument(
+def parser(settings: Settings) -> argparse.ArgumentParser:
+    out = argparse.ArgumentParser(prog="python -m asyncroscopy.analysis_server", description="asyncroscopy analysis MCP server: map, scoring, placement and note tools.")
+    out.add_argument("--tiled", default="", help="Tiled server URI; without it, tools take local file paths.")
+    out.add_argument("--api-key", default=None, help="Tiled API key (default: $ASYNCROSCOPY_TILED_API_KEY or $TILED_API_KEY).")
+    out.add_argument("--host", default="127.0.0.1")
+    out.add_argument("--port", type=int, default=8003)
+    out.add_argument("--transport", default="streamable-http", choices=["streamable-http", "sse", "stdio"])
+    out.add_argument(
         "--local-root", action="append", default=None, metavar="DIR",
         help="Directory whose HDF5 files tools may read and write as local paths (repeatable; default: the working directory).",
     )
-    parser.add_argument(
+    out.add_argument(
         "--max-canvas-megapixels", type=float, default=DEFAULT_MAX_CANVAS_PIXELS / 1e6,
-        help="Largest full-resolution map assemble_map will stitch; the whole map is held in memory (default: %(default)g).",
+        help="Largest full-resolution map assemble_map will stitch, a guard against wrong run metadata (default: %(default)g).",
     )
-    parser.add_argument(
-        "--trace", default="outputs/trace/analysis.jsonl",
-        help="JSON-lines file with one line per tool call: tool, arguments, calling agent and run, outcome (empty: none).",
+    out.add_argument("--max-jobs", type=int, default=DEFAULT_MAX_WORKERS, help="Stitching and scoring jobs run at once; more wait queued (default: %(default)s).")
+    out.add_argument(
+        "--trace", default=str(settings.output("trace", "analysis.jsonl")),
+        help="JSON-lines file with one line per tool call: tool, arguments, calling agent and run, outcome (empty: none; default: %(default)s).",
     )
-    parser.add_argument(
-        "--annotations", default="outputs/annotations/notes.jsonl",
-        help="JSON-lines event file of the notes people and agents put on datasets (empty: no note tools).",
+    out.add_argument(
+        "--annotations", default=str(settings.output("annotations", "notes.jsonl")),
+        help="JSON-lines event file of the notes people and agents put on datasets (empty: no note tools; default: %(default)s).",
     )
-    parser.add_argument(
-        "--placements", default="outputs/placements/placements.jsonl",
-        help="JSON-lines log of finer images placed on coarser ones (empty: no placement tools).",
+    out.add_argument(
+        "--placements", default=str(settings.output("placements", "placements.jsonl")),
+        help="JSON-lines log of finer images placed on coarser ones (empty: no placement tools; default: %(default)s).",
     )
-    args = parser.parse_args(argv)
+    return out
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parser(Settings.from_env()).parse_args(argv)
+    api_key = args.api_key or os.environ.get("ASYNCROSCOPY_TILED_API_KEY") or os.environ.get("TILED_API_KEY")
+    local_roots = args.local_root if args.local_root is not None else [str(Path.cwd())]
     mcp, tools = create_server(
-        args.tiled or None, args.api_key, local_roots=args.local_root,
+        args.tiled or None, api_key, local_roots=local_roots,
         max_canvas_pixels=int(args.max_canvas_megapixels * 1e6), trace_path=args.trace or None,
-        annotations_path=args.annotations or None, placements_path=args.placements or None,
+        annotations_path=args.annotations or None, placements_path=args.placements or None, max_jobs=args.max_jobs,
     )
-    if args.transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        print(f"pyTEMlib MCP server at http://{args.host}:{args.port}/mcp (Tiled: {args.tiled or 'none, local files'}; local roots: {', '.join(map(str, tools.store.local_roots))})", flush=True)
-        mcp.run(transport=args.transport, host=args.host, port=args.port)
+    try:
+        if args.transport == "stdio":
+            mcp.run(transport="stdio")
+        else:
+            print(f"asyncroscopy analysis server at http://{args.host}:{args.port}/mcp (Tiled: {args.tiled or 'none, local files'}; "
+                  f"local roots: {', '.join(map(str, tools.store.local_roots))})", flush=True)
+            mcp.run(transport=args.transport, host=args.host, port=args.port)
+    finally:
+        tools.jobs.shutdown()
 
 
 if __name__ == "__main__":

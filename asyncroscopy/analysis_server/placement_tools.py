@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import threading
 import time
 import uuid
 from pathlib import Path
@@ -27,7 +26,9 @@ from typing import Any
 
 import numpy as np
 
-from pyTEMlib.image_tools.image_registration import register_to_parent
+from pyTEMlib.image_tools import register_to_parent
+
+from asyncroscopy.core.fileio import SequencedAppender
 
 from .frames import FrameError, frame_of, image_dataset, image_node, pixel_of, stage_of
 
@@ -36,24 +37,24 @@ EDGE_PX = 4  # parent pixels read beyond the window, so the correlation has room
 
 
 class PlacementLog:
-    """Placement records, appended one JSON line each and never rewritten."""
+    """Placement records, appended one JSON line each and never rewritten.
+
+    Appends go through ``asyncroscopy.core.fileio.SequencedAppender``, so several server processes may share
+    the file and each record carries the file's ``seq`` and the time it was ``written``.
+    """
 
     def __init__(self, path: str | os.PathLike):
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._out = SequencedAppender(self.path)
 
     def append(self, record: dict) -> dict:
-        record = {"id": uuid.uuid4().hex[:12], "at": time.time(), **record}
-        with self._lock, open(self.path, "a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
-        return record
+        return self._out.append({"id": uuid.uuid4().hex[:12], "at": time.time(), **record})
 
     def read(self) -> list[dict]:
         if not self.path.exists():
             return []
         out = []
-        with self._lock, open(self.path, encoding="utf-8") as handle:
+        with open(self.path, encoding="utf-8") as handle:
             for line in handle:
                 try:
                     out.append(json.loads(line))

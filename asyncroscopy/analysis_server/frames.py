@@ -26,8 +26,7 @@ import dask.array
 import numpy as np
 import sidpy
 
-from pyTEMlib.image_tools.image_atoms import find_blobs
-from pyTEMlib.image_tools.image_utilities import experiment_from_asyncroscopy, get_image_centre_m, pixel_to_stage, stage_to_pixel
+from pyTEMlib.image_tools import experiment_from_asyncroscopy, find_blobs, get_image_centre_m, pixel_to_stage, stage_to_pixel
 
 from . import map_store
 
@@ -169,13 +168,17 @@ def register(mcp, store) -> None:
                 f"0 to {rows - 1} and 0 to {cols - 1}. A position given in nanometres or metres is already a stage "
                 "position (metres = nm x 1e-9): use it as it is, without to_stage.")}}
         x, y = stage_of(frame, row, col)
-        notes =["this image does not record its image shift, so it is placed as if it had none"] if frame["kind"] == "image" and not frame["shift_recorded"] else []
-        notes.append(
-            "before moving there, check the instrument's get_sample gives this sample_load_id: another load puts the sample elsewhere"
-            if frame["sample"].get("sample_load_id") else "this dataset does not record which sample load it was taken on"
-        )
-        return {"x_m": x, "y_m": y, "inside": True, "kind": frame["kind"],
-                **frame["sample"], "note": "; ".join(notes)}
+        notes = ["this image does not record its image shift, so it is placed as if it had none"] if frame["kind"] == "image" and not frame["shift_recorded"] else []
+        reply = {"x_m": x, "y_m": y, "inside": True, "kind": frame["kind"], **frame["sample"]}
+        load = frame["sample"].get("sample_load_id")
+        if load:
+            # Another load puts the sample elsewhere: before moving there, the instrument's sample record must match.
+            reply["next_actions"] = [{"server": "instrument", "command": "get_sample", "args": {}, "expect": {"sample_load_id": load}}]
+        else:
+            notes.append("this dataset does not record which sample load it was taken on")
+        if notes:
+            reply["note"] = "; ".join(notes)
+        return reply
 
     @mcp.tool()
     def find_features(image: str, n: int = 5, min_size_m: float | None = None, max_size_m: float | None = None) -> dict[str, Any]:
@@ -196,7 +199,9 @@ def register(mcp, store) -> None:
         features = features_of(frame, image_node(store, image).read(), n, min_size_m, max_size_m)
         note = {} if frame["shift_recorded"] else {"note": "this image does not record its image shift, so x_m, y_m assume it had none"}
         if not features and n > 0 and frame.get("beam_current_pa") == 0:
-            note["hint"] = "this image was taken with the beam blanked (beam_current_pa 0), so it shows only noise: unblank_beam and take it again"
+            # Only noise: the beam must be unblanked on the instrument and the image taken again.
+            note["warnings"] = [{"code": "beam_blanked", "beam_current_pa": 0}]
+            note["next_actions"] = [{"server": "instrument", "command": "unblank_beam", "args": {}}]
         elif not features and n > 0:
             # A small agent at a 20 nm field searched for particles over and over: say why nothing was found and what would find it.
             fov = frame["pixel_size_m"] * max(frame["shape"])
