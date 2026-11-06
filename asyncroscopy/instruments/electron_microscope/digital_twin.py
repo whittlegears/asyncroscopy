@@ -16,6 +16,7 @@ import json
 import math
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import tango
@@ -194,7 +195,12 @@ class DigitalTwin(ElectronMicroscopeTwin):
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
         self._moving_until = 0.0  # monotonic time a long move ends (see _move_stage)
-        self._acquisitions: list[dict] = []
+        # Every acquisition's truth goes to a JSONL file as it is taken (export_ground_truth reads it back), so a
+        # long session does not hold them all in memory; only the count is kept here.
+        self._truth_path = Path(self.acquisition_save_directory) / "ground_truth" / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
+        self._truth_path.parent.mkdir(parents=True, exist_ok=True)
+        self._truth_path.write_text("", encoding="utf-8")
+        self._acquisition_count = 0
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
         # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
         # is the instrument, which only asks the specimen for weights, densities, heights and features.
@@ -552,8 +558,19 @@ class DigitalTwin(ElectronMicroscopeTwin):
             "scan": {**vars(self._scan_params), **scan_truth},
             "detector": {k: v for k, v in vars(self._detector_drift.at(self._detector_params, t0)).items() if k in ("gain", "offset")},
         }
-        self._acquisitions.append(record)
+        self._record_acquisition(record)
         return {"xs": xs, "ys": ys, "index": index, "pixel_m": pixel, "dwell_s": float(dwell_time), "record": record}
+
+    def _record_acquisition(self, record: dict) -> None:
+        """Append one acquisition's truth to the ground-truth file."""
+        with self._truth_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+        self._acquisition_count += 1
+
+    def _acquisition_records(self) -> list[dict]:
+        """Every acquisition's truth since the sample was made, from the ground-truth file."""
+        with self._truth_path.open("r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
 
     def _beam_xy_at(self, t: float) -> np.ndarray:
         """Where the scan is centred at sim time ``t``: the true stage position plus the image shift."""
@@ -675,7 +692,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
         electrons = self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE
         self._dose.add_point(float(xy[0]), float(xy[1]), electrons, 1e-20)
         self._clock.advance(real_time)
-        self._acquisitions.append(
+        self._record_acquisition(
             {
                 "index": index,
                 "kind": "spectrum",
@@ -757,7 +774,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
                 "particles": specimen_truth.get("particles", []),
                 "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
                 "moves": [vars(m) for m in self._stage.history],
-                "acquisitions": self._acquisitions,
+                "acquisitions": self._acquisition_records(),
                 "simulated_time_s": self._clock.now(),
                 "dose": self._dose.summary(),
                 "focus": {**self._focus_truth(), "hidden_error": self._focus_error},

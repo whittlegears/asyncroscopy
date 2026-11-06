@@ -265,12 +265,12 @@ def test_a_wrong_sign_corrector_stops_and_restores_the_snapshot(fresh, wrongsign
 # ----------------------------------------------------------------------
 def test_over_budget_plan_is_refused_before_the_beam_is_unblanked(fresh, tuner_proxy):
     twin, device = fresh
-    before = (len(device._acquisitions), device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
+    before = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
     per_frame = frame_dose(50.0, 2e-6, 1e-7, 256)
     reply = call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "dose_budget_e_per_a2": 10 * per_frame}})
     assert reply["error"]["code"] == "plan_rejected"
     assert "above the budget" in reply["error"]["message"] and "33 frames" in reply["error"]["message"]
-    after = (len(device._acquisitions), device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
+    after = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
     assert after == before  # nothing imaged, no dose, the beam still blanked, nothing moved
     # Bad plans are refused by name, too.
     assert "unknown plan field" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "focus_rnage_m": 1e-7}})["error"]["message"]
