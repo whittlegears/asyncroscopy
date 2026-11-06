@@ -22,17 +22,17 @@ uv run pytest -q -m "not slow"
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml        # agent endpoint, 127.0.0.1:8000
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml  # operator endpoint, 127.0.0.1:8001
-uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003
+uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
 
 # Then check the whole stack (digital twin only: it moves the stage and acquires)
-uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
+uv run startup_scripts/check_stack.py --analysis http://127.0.0.1:8003/mcp
 ```
 
 On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml` (the Spectra 300 agent endpoint) and `configs/mcp_operator.yaml`, and follow [docs/Operation/first_light_runbook.md](docs/Operation/first_light_runbook.md). There, `startup_scripts/preflight_hardware.py` is the read-only check; never run `check_stack.py` on hardware.
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
-`check_stack.py` (digital twin only) confirms every piece talks to the others; without `--pytemlib` it skips stitching and scoring. It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
+`check_stack.py` (digital twin only) confirms every piece talks to the others; without `--analysis` it skips stitching and scoring. It checks the STEM workflow; for another instrument, see [Adding a new instrument](docs/Adding_New_Hardware/new_instrument.md).
 
 ### Agentic control at a glance
 
@@ -41,7 +41,7 @@ On a real instrument use its config instead, for example `configs/Spectra300.yam
 | A realistic, seeded digital twin (stage error, drift, scan distortion, focus, noise, EDS spectra, dose) with hidden ground truth for scoring workflows | `configs/digital_twin_mapping.yaml`, [docs/digital_twin.md](docs/digital_twin.md) |
 | Long jobs (map acquisition) as reserve / start / job_status / abort / results / release | `Mapper` device, [asyncroscopy/contracts](asyncroscopy/contracts/README.md) |
 | An approval mode (`auto` / `approve`) that holds risky agent calls for an operator, and an Instrument Trace of every call | [docs/Operation/approval_mode.md](docs/Operation/approval_mode.md) |
-| Stitching, zoomable maps in Tiled, region scoring and points of interest | pyTEMlib MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
+| Stitching, zoomable maps in Tiled, region scoring and points of interest | analysis MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
 | LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
 | Calibrating the twin to your instrument | `asyncroscopy/calibration` |
 

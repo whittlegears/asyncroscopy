@@ -2,7 +2,7 @@
 
 Agents are judged here from facts: the Instrument Trace (`outputs/trace/*.jsonl`), readings
 of the instrument before and after a run, the stored data read back through
-`asyncroscopy.data.views`, the maps' point-of-interest layer (pyTEMlib's `list_pois`) and, on
+`asyncroscopy.data.views`, the maps' point-of-interest layer (the analysis server's `list_pois`) and, on
 the twin, its hidden ground truth. What the model says counts only where a check asks whether a
 fact was reported (a refusal, a peak position, the elements in a spectrum).
 
@@ -20,7 +20,7 @@ change a row's pass or fail.
 
 ## Running the workflow benchmark
 
-Start a stack, both MCP endpoints and the pyTEMlib server as in `docs/Operation/quickstart.md`, then:
+Start a stack, both MCP endpoints and the analysis server as in `docs/Operation/quickstart.md`, then:
 
 ```bash
 uv run python benchmarks/run_workflows.py --list                 # what would run (no stack needed)

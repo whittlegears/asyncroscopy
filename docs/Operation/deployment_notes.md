@@ -13,7 +13,7 @@ what such a deployment has to set, so writing one is mechanical.
 | 1 | Device stack: Tango database, every device server, Tiled (started by the DATA device), job devices | `python startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml --isolated outputs/stacks/twin --log-to-stdout` | Tango database `tango.port` (9094); Tiled `tiled.port` (9091); each device server on a port omniORB picks at random | Yes: Tiled catalog and acquisitions, approval mode, job state, traces |
 | 2 | Agent MCP endpoint | `python startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml` | `mcp.http_port` (8000) | Writes its trace file only |
 | 3 | Operator MCP endpoint (approvals, mode switch) | `python startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml` | `mcp.http_port` (8001) | Writes its trace file only |
-| 4 | pyTEMlib analysis server (stitching, scoring) | `python -m pyTEMlib.mcp_server --tiled http://<tiled>:9091 --host 0.0.0.0 --port 8003` | 8003 | No: results go to Tiled |
+| 4 | analysis server (stitching, scoring) | `python -m asyncroscopy.analysis_server --tiled http://<tiled>:9091 --host 0.0.0.0 --port 8003` | 8003 | No: results go to Tiled |
 
 The launchers start their children with `uv run --no-sync python` when uv is on
 `PATH` (or `UV` names it), and with the launcher's own Python otherwise, so an
@@ -65,7 +65,7 @@ set `UV_CACHE_DIR` to a writable path if uv is in the image.
 | 1 (Tiled) | `GET http://<tiled>:9091/healthz` | 200 |
 | 1 (Tango) | `python -c "import tango; tango.DeviceProxy('tango://<host>:9094/asyncroscopy/approvals/default').ping()"` | exit 0 |
 | 2, 3, 4 | `POST /mcp` with an MCP `initialize` request (below) | 200 |
-| All, end to end | `python startup_scripts/check_stack.py --agent <url> --operator <url> --pytemlib <url>` | every line PASS; it moves the twin's stage and briefly switches approval mode, so it is a smoke test, not a probe |
+| All, end to end | `python startup_scripts/check_stack.py --agent <url> --operator <url> --analysis <url>` | every line PASS; it moves the twin's stage and briefly switches approval mode, so it is a smoke test, not a probe |
 
 A plain `GET /mcp` returns 400 (no MCP session), so an HTTP probe that only does
 GET cannot check an MCP endpoint; use a TCP probe or this request:
@@ -79,7 +79,7 @@ curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8000/mcp \
 ## One pod or several
 
 The configs assume one host: the MCP YAMLs name the Tango database at
-`localhost`, the Mapper reaches pyTEMlib at `127.0.0.1:8003`, and Tiled binds
+`localhost`, the Mapper reaches the analysis server at `127.0.0.1:8003`, and Tiled binds
 `localhost`. Running all four processes as containers of **one pod** (they share
 `localhost`) needs only the bind addresses changed to `0.0.0.0` for the
 endpoints a Service exposes.

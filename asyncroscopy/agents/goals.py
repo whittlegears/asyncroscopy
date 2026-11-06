@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
 # A stitched map key ends in _map and carries its run id (so tool names such as assemble_map do not match).
 # A stitched map: <run>_map (stitched before map versions), <run>_map_<YYYYmmddTHHMMSS>_<hex4> (a re-stitch before
-# versions), or a version <run>_map_<YYYYmmddTHHMMSSmmm>Z_<hex4> (pyTEMlib keeps every version).
+# versions), or a version <run>_map_<YYYYmmddTHHMMSSmmm>Z_<hex4> (the analysis server keeps every version).
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
 # What kinds of instrument action a goal may take, read from tool names (any instrument, not only a STEM).

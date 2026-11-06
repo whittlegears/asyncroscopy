@@ -24,7 +24,7 @@ ASYNCROSCOPY_MODEL_PROVIDER  ollama, or any init_chat_model one     ollama
 ASYNCROSCOPY_NUM_CTX         Context window for Ollama              8192
 OLLAMA_HOST                  Ollama server (read by its client)     http://127.0.0.1:11434
 ASYNCROSCOPY_MCP_URL         asyncroscopy agent MCP endpoint        http://127.0.0.1:8000/mcp
-ASYNCROSCOPY_ANALYSIS_URL    pyTEMlib MCP server ("" to skip)       http://127.0.0.1:8003/mcp
+ASYNCROSCOPY_ANALYSIS_URL    analysis MCP server ("" to skip)       http://127.0.0.1:8003/mcp
 ASYNCROSCOPY_CALLER          name recorded in the trace             agent (general-agent / mapping-graph in the graphs)
 ASYNCROSCOPY_MICROSCOPE      mapping graph target (tool prefix)     the only device with move_stage + acquire_scanned_image
 ASYNCROSCOPY_AGENT_TOOLS     general agent tool globs, comma list   a STEM-oriented default set

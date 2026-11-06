@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Read-only pre-flight for a hardware stack: is everything up, and is it what we think it is?
 
-Run it after run_servers.py (and after the pyTEMlib analysis server), on the microscope PC:
+Run it after run_servers.py (and after the analysis server), on the microscope PC:
 
     uv run --no-sync startup_scripts/preflight_hardware.py --yaml configs/Spectra300.yaml
 

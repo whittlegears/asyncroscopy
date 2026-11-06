@@ -205,7 +205,7 @@ agent. Acquire commands get the same PNG attached to their result. The drawing
 lives in `asyncroscopy/data/views.py`; a new instrument either writes attributes
 the built-in kinds understand or registers its own kind (see
 `docs/Adding_New_Hardware/new_instrument.md`). Stitched maps in stage
-coordinates are read with pyTEMlib's `map_info` and `get_region`.
+coordinates are read with the analysis server's `map_info` and `get_region`.
 
 ## Safety Boundary
 

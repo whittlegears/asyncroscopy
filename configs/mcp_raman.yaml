@@ -1,5 +1,5 @@
 # Agent MCP endpoint for the Raman twin (configs/yaml_sim_raman.yaml), beside the
-# STEM twin's endpoints (8000 agent, 8001 operator, 8003 pyTEMlib):
+# STEM twin's endpoints (8000 agent, 8001 operator, 8003 analysis):
 #
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman.yaml
 #

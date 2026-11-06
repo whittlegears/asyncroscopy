@@ -301,7 +301,7 @@ No Tango database or ports are needed.
 
 ## Map any instrument
 
-The `Mapper` job device (`asyncroscopy/jobs/mapping/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
+The `Mapper` job device (`asyncroscopy/jobs/mapping/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
 
 | Profile | Instrument | Budgets (plan `budgets`) |
 | :-- | :-- | :-- |
@@ -384,7 +384,7 @@ my_afm = "my_lab.afm_profile:MyAfm"
 my_tracker = "my_lab.drift:MyTracker"
 ```
 
-Scorers for `score_map` run on the pyTEMlib analysis server, not in a device process; they install only through its `pytemlib.scorers` entry point (see [agentic_mapping.md](../Operation/agentic_mapping.md)).
+Scorers for `score_map` run on the analysis server, not in a device process; they install only through the `asyncroscopy.scorers` entry point (or `ASYNCROSCOPY_PLUGINS`) (see [agentic_mapping.md](../Operation/agentic_mapping.md)).
 
 The Mapper calls:
 

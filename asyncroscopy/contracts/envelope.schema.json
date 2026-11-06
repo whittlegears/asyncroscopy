@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/envelope.schema.json",
   "title": "ATHENA job envelope",
-  "description": "Request and response shapes for any long-running instrument or analysis job: reserve, start, status, abort, results, release. Every verb takes and returns one JSON object. Shared by asyncroscopy devices and the pyTEMlib MCP server; other instruments implement the same verbs.",
+  "description": "Request and response shapes for any long-running instrument or analysis job: reserve, start, status, abort, results, release. Every verb takes and returns one JSON object. Shared by asyncroscopy devices and the analysis MCP server; other instruments implement the same verbs.",
   "schema_version": "1.1.0",
   "$defs": {
     "state": {

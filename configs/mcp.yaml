@@ -45,7 +45,7 @@ mcp:
     AutoScriptMicroscope: [Disconnect]
   include_only_functions: []
   tool_log: ""
-  # The analysis server (pyTEMlib: stitching, scoring) on the MCP host, so
+  # The analysis server (asyncroscopy.analysis_server: stitching, scoring) on the MCP host, so
   # wait_for_job also waits on assemble_map and score_map jobs; agents read this
   # address from the endpoint (endpoint_info). Empty: no analysis server.
   analysis_url: http://127.0.0.1:8003/mcp

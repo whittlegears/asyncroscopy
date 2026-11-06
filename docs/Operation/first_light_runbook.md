@@ -14,7 +14,7 @@ Addresses used below (from `configs/Spectra300.yaml`):
 | AutoScript server | 10.46.217.241:9095 (confirm, see step 3) | this PC |
 | Tango database | listens on every interface, port 9094 | this PC only (firewall, step 4) |
 | Tiled (data) | 127.0.0.1:9091 | this PC only |
-| pyTEMlib analysis server | 127.0.0.1:8003 | this PC only (no login) |
+| analysis server | 127.0.0.1:8003 | this PC only (no login) |
 | Agent MCP endpoint (`configs/mcp.yaml`) | 127.0.0.1:8000 | this PC only, unless tokens are set up |
 | Operator MCP endpoint (`configs/mcp_operator.yaml`) | 127.0.0.1:8001 | this PC only, always |
 | Read-only monitor endpoint (`configs/mcp_monitor.yaml`) | 127.0.0.1:8002 | this PC only |
@@ -134,7 +134,7 @@ Expect `imports ok`, `1.18.0`, and the pyTEMlib commit pinned in `pyproject.toml
 
 Tiled runs with a single API key. The default, `secret`, is public knowledge. Pick a lab key and use the **same**
 key in every process that touches Tiled: `run_servers.py` (which starts Tiled with it), both MCP endpoints, the
-monitor endpoint, and the pyTEMlib analysis server (its `--api-key`).
+monitor endpoint, and the analysis server (its `--api-key`).
 
 The operator makes a key once:
 
@@ -237,13 +237,13 @@ It prints an `OK` line per stage, then a summary with each device's PID and read
 "Ready" means every device answered a ping. It does **not** mean the instrument reached AutoScript: a device that
 failed to connect is in FAULT and still counts as ready. Step 6 checks that.
 
-**Terminal 2: the pyTEMlib analysis server.**
+**Terminal 2: the analysis server.**
 
 ```powershell
-uv run --no-sync python -m pyTEMlib.mcp_server --tiled http://127.0.0.1:9091 --api-key $env:ASYNCROSCOPY_TILED_API_KEY --port 8003
+uv run --no-sync python -m asyncroscopy.analysis_server --tiled http://127.0.0.1:9091 --api-key $env:ASYNCROSCOPY_TILED_API_KEY --port 8003
 ```
 
-It prints `pyTEMlib MCP server at http://127.0.0.1:8003/mcp (Tiled: http://127.0.0.1:9091; ...)`. Leave
+It prints `asyncroscopy analysis server at http://127.0.0.1:8003/mcp (Tiled: http://127.0.0.1:9091; ...)`. Leave
 `--host` at its default, 127.0.0.1: the analysis server has no login.
 
 **Terminal 3: the read-only pre-flight.** See step 6.

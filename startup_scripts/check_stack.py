@@ -52,8 +52,8 @@ async def call(client: Client, tool: str, args: dict | None = None, raise_on_err
 
 
 async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) -> None:
-    """Stitch the run on the pyTEMlib MCP server, look at it, score it and mark a point."""
-    analysis = Client(StreamableHttpTransport(args.pytemlib))
+    """Stitch the run on the analysis MCP server, look at it, score it and mark a point."""
+    analysis = Client(StreamableHttpTransport(args.analysis))
     async with analysis:
 
         async def structured(tool, payload):
@@ -75,7 +75,7 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         job = await structured("assemble_map", {"run": run_key})
         status, stitched = await finish(job) if "job_id" in job else (job, {})
         detail = stitched.get("summary") if status.get("state") == "done" else status.get("last_error", status)
-        if not report("pyTEMlib stitches the run from Tiled", status.get("state") == "done", json.dumps(detail)[:300]):
+        if not report("the analysis server stitches the run from Tiled", status.get("state") == "done", json.dumps(detail)[:300]):
             return
         map_key = stitched["result_keys"]["map"]
         info = await structured("map_info", {"map": map_key})
@@ -171,7 +171,7 @@ async def main(args: argparse.Namespace) -> int:
                 picture = await call(agent, "view_data", {"key": newest, "format": "png"}) if newest else None
                 report("agent can find the newest image (list_data) and see it (view_data png)",
                        any(getattr(block, "type", "") == "image" for block in getattr(picture, "content", []) or []), str(newest))
-                if args.pytemlib:
+                if args.analysis:
                     await check_analysis(args, results["result_keys"]["run"], agent)
             await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
 
@@ -231,5 +231,5 @@ if __name__ == "__main__":
     parser.add_argument("--agent", default="http://127.0.0.1:8000/mcp")
     parser.add_argument("--operator", default="http://127.0.0.1:8001/mcp")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each job.")
-    parser.add_argument("--pytemlib", default="", help="pyTEMlib MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")
+    parser.add_argument("--analysis", default="", help="Analysis MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")
     sys.exit(asyncio.run(main(parser.parse_args())))

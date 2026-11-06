@@ -1,6 +1,6 @@
 """Seeded agent trials on the digital twin: does the agent map what was asked?
 
-Needs the twin stack, both MCP endpoints and the pyTEMlib server running
+Needs the twin stack, both MCP endpoints and the analysis server running
 (see docs/Operation/windows_quickstart.md). Each trial sends one request to
 the ``mapping`` graph (the model writes the plan; code runs it) or the
 ``general`` agent (the model makes every call), then checks the outcome

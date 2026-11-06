@@ -15,7 +15,7 @@ abort, approval and progress (`phase` in the status) cover all of them:
 1. **tiles**: one step per tile. Steps are computed from the plan's grid
    when needed, so a plan of millions of tiles stores a few numbers.
 2. **stitch** (`stitch`, default on; needs the Mapper's `analysis_url`):
-   the run is stitched on the pyTEMlib analysis server. Every EDS point
+   the run is stitched on the analysis server. Every EDS point
    spectrum becomes a point of interest at its tile's stitched centre,
    linked to its spectrum key.
 3. **score** (`find_regions: N`): the best N regions become points of
@@ -102,7 +102,7 @@ store once (`migrated_from`).
 ## Stitching accuracy: bounded search and drift
 
 The stage never lands exactly where it was told, and the sample drifts
-over the hours a large map takes. Stitching (pyTEMlib `mosaic`) therefore:
+over the hours a large map takes. Stitching (pyTEMlib `image_tools.image_mosaic`) therefore:
 
 * searches each overlap only within the stage's stated uncertainty
   (`stage_sigma_m` on the Mapper, or the STAGE device's `position_sigma_m` when
@@ -177,7 +177,7 @@ uv run startup_scripts/run_servers.py --yaml configs/digital_twin_large_map.yaml
 
 That twin has an 8 um sample with particle clusters (structure at every
 zoom) and does not wait in real time, so a 40 x 40 map takes minutes. Start
-the MCP servers and the pyTEMlib analysis server as in the quickstart.
+the MCP servers and the analysis server as in the quickstart.
 
 ## Limits for hackathon users
 

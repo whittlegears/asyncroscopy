@@ -1,6 +1,6 @@
 """Which local model reliably turns instrument requests into valid tool calls?
 
-Binds the live MCP tools (instrument endpoint plus the pyTEMlib server) to
+Binds the live MCP tools (instrument endpoint plus the analysis server) to
 each candidate model, asks a fixed set of requests, and counts a call as
 valid when the model picks the expected tool and its arguments satisfy that
 tool's JSON schema. No tool is executed.

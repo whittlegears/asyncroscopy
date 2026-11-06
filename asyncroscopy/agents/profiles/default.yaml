@@ -15,7 +15,7 @@ middleware: [skills, job_wait, empty_reply, claim_check]
 
 # Which tools a tool-using model is given (asyncroscopy.mcp.agent_tools).
 tools:
-  # Tools every instrument endpoint and the pyTEMlib analysis server offer. Left out, from the trial
+  # Tools every instrument endpoint and the analysis server offer. Left out, from the trial
   # traces (benchmarks/results/tool_usage_analysis.md): calls that always come as a pair or are always
   # made first. run_job is reserve+start, wait_for_job also waits on analysis jobs and returns results,
   # and the skills are put in the prompt. find_tools and call_tool reach every other tool of the endpoint.

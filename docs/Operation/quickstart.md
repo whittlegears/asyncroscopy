@@ -1,6 +1,6 @@
 # Quick start: from clone to an agent mapping the digital twin
 
-This takes a fresh machine to a running digital twin, both MCP endpoints, the pyTEMlib analysis server and a local-model agent that maps a sample. It was written while doing exactly that on Windows 11 and checked from a fresh clone on Ubuntu (WSL2); macOS and Linux differ only where noted.
+This takes a fresh machine to a running digital twin, both MCP endpoints, the analysis server and a local-model agent that maps a sample. It was written while doing exactly that on Windows 11 and checked from a fresh clone on Ubuntu (WSL2); macOS and Linux differ only where noted.
 
 Nothing here needs a microscope, vendor software or a GPU. A GPU makes the local model faster.
 
@@ -79,9 +79,9 @@ if (-not $uv) {
     if ($ready) {   # if the servers stopped, read the lines above and fix that first
         $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
         $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
-        $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.mcp_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput pytem.log -RedirectStandardError pytem.err -WindowStyle Hidden -PassThru
+        $analysis = Start-Process $uv 'run','python','-m','asyncroscopy.analysis_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput analysis.log -RedirectStandardError analysis.err -WindowStyle Hidden -PassThru
         Start-Sleep 20
-        foreach ($s in @(@($agent, 'mcp_dt.err'), @($operator, 'mcp_op.err'), @($analysis, 'pytem.err'))) {
+        foreach ($s in @(@($agent, 'mcp_dt.err'), @($operator, 'mcp_op.err'), @($analysis, 'analysis.err'))) {
             if (-not $s[0] -or $s[0].HasExited) { "$($s[1]) says the server stopped (or did not start):"; Get-Content -Encoding utf8 $s[1] -Tail 10 -ErrorAction SilentlyContinue }
         }
     }
@@ -95,10 +95,10 @@ setsid uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping
 until grep -q 'Leave this terminal open' servers.log; do sleep 1; done          # about a minute
 setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml > mcp_dt.log 2> mcp_dt.err & echo $! > mcp_dt.pid
 setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml > mcp_op.log 2> mcp_op.err & echo $! > mcp_op.pid
-setsid uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003 > pytem.log 2> pytem.err & echo $! > pytem.pid
+setsid uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003 > analysis.log 2> analysis.err & echo $! > analysis.pid
 ```
 
-Stop them with `for f in servers mcp_dt mcp_op pytem; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.mcp_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.
+Stop them with `for f in servers mcp_dt mcp_op analysis; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.mcp_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.
 
 Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers (in the same PowerShell window; from another one, see Troubleshooting); check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
 
@@ -112,8 +112,8 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 # 3. Operator MCP endpoint for the GUI (port 8001, this machine only)
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 
-# 4. pyTEMlib analysis server: stitching, scoring, points of interest (port 8003)
-uv run python -m pyTEMlib.mcp_server --tiled http://localhost:9091 --api-key secret --port 8003
+# 4. analysis server: stitching, scoring, points of interest (port 8003)
+uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
 ```
 
 `configs/digital_twin_mapping.yaml` simulates a real instrument's timing (`time_scale: 1.0`): stage moves take seconds. Set `time_scale: 0` in that file for fast runs. `configs/DigitalTwin.yaml` is an ideal instrument with a tiny sample, useful for unit-style experiments.
@@ -122,14 +122,14 @@ The environment was synced in step 2, so after that the launchers start their ch
 
 Both MCP endpoints listen on `127.0.0.1` only. They have no authentication, and the agent endpoint runs in `auto` approval mode, so anyone who can reach it can drive the instrument. To use the agent endpoint from another machine, do it deliberately: set `mcp.http_host` in `configs/mcp_dt.yaml` to this machine's address on a network you trust (or `0.0.0.0` for every interface), switch approval mode to `approve` (see section 7), and point the other machine's `ASYNCROSCOPY_MCP_URL` at `http://<this machine>:8000/mcp`. Keep the operator endpoint (`mcp_operator.yaml`) on `127.0.0.1`: it can approve held calls. For bearer tokens (WG1's token service, or development tokens to test with), TLS and a reverse proxy, see [Remote access](remote_access.md).
 
-The Tiled API key `secret` is the default the DATA device starts Tiled with; set `ASYNCROSCOPY_TILED_API_KEY` to change it (and pass the same value to the pyTEMlib server).
+The Tiled API key `secret` is the default the DATA device starts Tiled with; set `ASYNCROSCOPY_TILED_API_KEY` to change it (and pass the same value to the analysis server).
 
 ## 4. Check that everything talks to everything
 
 (In PowerShell without `uv` on `PATH`, write `& $uv` for `uv` here and in section 5, as in section 1.)
 
 ```bash
-uv run startup_scripts/check_stack.py --pytemlib http://127.0.0.1:8003/mcp
+uv run startup_scripts/check_stack.py --analysis http://127.0.0.1:8003/mcp
 ```
 
 It runs a small map, stitches it, scores it, marks a point, and exercises the approval mode. Every line should say PASS. A FAIL line says what failed and why.
@@ -150,7 +150,7 @@ uv run startup_scripts/check_gui_contract.py
 
 The checks use whatever stack is on these ports, so two people testing on one machine share it. Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected.
 
-Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, pyTEMlib 8003.
+Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, analysis server 8003.
 
 ## 5. Map with an agent
 
@@ -190,7 +190,7 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | The agent stops with `llama-server process has terminated ... 0xc0000409` or `CUDA error` | Ollama's GPU runner crashed loading the model (not asyncroscopy); it happens most on the first load on a small GPU. Run the command again; if it keeps failing, restart Ollama or use a smaller model (`ASYNCROSCOPY_MODEL=qwen3:4b`). The agent command exits with status 1 when a map did not complete. |
 | `uv sync` fails to fetch pyTEMlib | It is installed from GitHub (git must be installed and github.com reachable). |
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
-| pyTEMlib server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
+| Analysis server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
 | `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the two `run_mcp.py` servers. |
 | The recipe prints `mcp_op.err says the server stopped (or did not start)` (or another server's) | Read that `.err` file: it names the error. If it is empty, the process was stopped from outside before it printed anything (seen once while other test scripts were killing processes on the same machine). Start just that server again with its `Start-Process` line from the recipe. |

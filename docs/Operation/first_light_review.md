@@ -53,7 +53,7 @@ Verdict: **not ready for a session where an agent drives the microscope.** A sup
 ## D. Network and documentation
 
 - Tiled runs with `--public` and the API key `secret` on the LAN address. Anyone on the facility network can read the data, and anyone with the well-known key can write it. The same key must be set for run_servers, both MCP endpoints and pyTEMlib; no doc says so.
-- The pyTEMlib analysis server has no login. Its `--api-key` is only the Tiled key.
+- The analysis server has no login. Its `--api-key` is only the Tiled key.
 - `gemma-llm.yaml` and `qwen-llm.yaml` bind the agent server to `0.0.0.0:8002`, with no login, on the same port as the monitor endpoint.
 - Windows Firewall prompts (admin needed) the first time 9094 and 9091 bind on the LAN. Device servers use random ports, so remote clients need wide rules.
 - Stale docs:

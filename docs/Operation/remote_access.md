@@ -65,7 +65,7 @@ Without `auth`, nothing changes: no token is asked for, and the caller is the se
 3. Keep the MCP servers and Tiled on 127.0.0.1. Put the proxy in front: `deploy/proxy/nginx.conf` terminates TLS, forwards `/mcp` to 8000, `/analysis/mcp` to 8003 and port 9443 to Tiled (9091), and passes the bearer token through. It needs your certificate paths and host name, and nginx 1.25.1 or newer for `http2 on;`. **It has not been validated** (no nginx where it was written): run `nginx -t` first.
 4. Leave the operator endpoint (8001) unforwarded unless WG1 decides approvers may decide remotely; if so, give it `auth` too (deciding then needs `instrument:approve`).
 
-The analysis server (pyTEMlib, port 8003) does not verify tokens yet; keep it on 127.0.0.1 behind the proxy.
+The analysis server (`asyncroscopy.analysis_server`, port 8003) does not verify tokens yet; keep it on 127.0.0.1 behind the proxy.
 
 ## Clients
 
