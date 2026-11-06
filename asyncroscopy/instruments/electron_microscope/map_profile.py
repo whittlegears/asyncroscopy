@@ -72,7 +72,9 @@ class ElectronBeamProfile(InstrumentProfile):
     budget_fields = {"dose_budget_e_per_a2": DOSE_BUDGET}
     settings = BEAM_SETTINGS
     needs = {"microscope_device_address": BEAM_COMMANDS}
-    safe_commands = frozenset({"blank_beam"})
+
+    def safe_commands(self, plan: dict) -> frozenset:
+        return frozenset({"blank_beam"})
     # Live drift tracking moves the beam with set_image_shift (the beam shift in STEM on AutoScript).
     # 1 um is the twin's own limit (max_image_shift) and well inside a Spectra's beam-shift range.
     image_shift_limit_m = IMAGE_SHIFT_LIMIT_M

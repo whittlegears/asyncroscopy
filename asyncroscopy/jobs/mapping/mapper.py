@@ -131,6 +131,9 @@ class Mapper(JobDevice):
             self._map_profile = cls(MapContext(settings, self.proxy, self.aborting, self.data_device_address))
         return self._map_profile
 
+    def safe_commands(self, job: dict) -> frozenset:
+        return self.profile().safe_commands(job["resolved_plan"])
+
     def pipeline(self) -> Pipeline:
         """The analysis phases, over one session to ``analysis_url``."""
         if self._pipeline_ is None or self._pipeline_.url != self.analysis_url:

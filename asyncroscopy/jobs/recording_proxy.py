@@ -16,8 +16,9 @@ method nobody listed can never reach the instrument by accident:
   ``DRY_RUN_PLACEHOLDER`` (``None`` for the DeviceProxy writes);
 * any other DeviceProxy method (one on neither list) is refused with
   ``DryRunRefused``: an unknown method is assumed to write;
-* blanking (``blank_beam``) is the one write that really runs: making the
-  instrument safer is never rehearsed.
+* the job device's safe commands (``JobDevice.safe_commands``: blanking the beam for a
+  Mapper on an electron microscope, retracting the tip for a probe) really run:
+  making the instrument safer is never rehearsed.
 
 Each call that is not a plain read goes to ``recorder(address, name, kind, args,
 performed)``; the job device writes it to the Instrument Trace with
@@ -35,8 +36,6 @@ if TYPE_CHECKING:
     import tango
 
 DRY_RUN_PLACEHOLDER = "dry_run:not_performed"
-# Commands that really run in a dry run: blanking only makes the instrument safer.
-PASS_THROUGH_WRITES = frozenset({"blank_beam"})
 # The job envelope's and approval device's reads, beside the policy's read-only names.
 READ_COMMANDS = frozenset({"job_status", "results", "request_status"})
 # DeviceProxy methods that only read or set up the local proxy: passed through.
@@ -85,8 +84,16 @@ def is_read_command(name: str, dev_class: str = "", risk_overrides: dict[str, st
 class RecordingProxy:
     """Wraps a DeviceProxy: reads pass through, writes and commands are recorded (see the module doc)."""
 
-    def __init__(self, proxy: tango.DeviceProxy, address: str, recorder: Callable[[str, str, str, Any, bool], None], risk_overrides: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        proxy: tango.DeviceProxy,
+        address: str,
+        recorder: Callable[[str, str, str, Any, bool], None],
+        risk_overrides: dict[str, str] | None = None,
+        safe_commands: frozenset[str] = frozenset(),
+    ) -> None:
         object.__setattr__(self, "_proxy", proxy)
+        object.__setattr__(self, "_safe", frozenset(c.lower() for c in safe_commands))
         object.__setattr__(self, "_address", address)
         object.__setattr__(self, "_recorder", recorder)
         object.__setattr__(self, "_risk_overrides", risk_overrides)
@@ -121,10 +128,10 @@ class RecordingProxy:
         return self._dev_class
 
     def _call(self, name: str, args: tuple) -> Any:
-        """One command: read -> pass through; blank_beam -> run and record; anything else -> record only."""
+        """One command: read -> pass through; a safe command -> run and record; anything else -> record only."""
         if is_read_command(name, self._class(), self._risk_overrides):
             return getattr(self._proxy, name)(*args)
-        performed = name.lower() in PASS_THROUGH_WRITES
+        performed = name.lower() in self._safe
         self._recorder(self._address, name, "command", list(args), performed)
         if performed:
             return getattr(self._proxy, name)(*args)

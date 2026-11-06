@@ -164,6 +164,9 @@ class YamlProfile(InstrumentProfile):
     def make_safe(self, job: dict) -> None:
         self._run(self._info(job["resolved_plan"])["safe"])
 
+    def safe_commands(self, plan: dict) -> frozenset:
+        return frozenset(self._info(plan)["safe"])
+
     def before_move(self, job: dict) -> None:
         self._run(self._info(job["resolved_plan"])["before_move"])
 

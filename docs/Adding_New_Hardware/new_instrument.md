@@ -159,7 +159,7 @@ Inside `run_step`, reach other devices with `self.proxy(address)`, not `tango.De
 - `release`.
 - A state file per job, so a job interrupted by a restart can be started again and skips the steps already done.
 - One Instrument Trace line per step.
-- A dry run, once you opt in: `"dry_run": true` in a plan rehearses the job without moving anything. `SUPPORTS_DRY_RUN` is False by default, and `reserve` then refuses a dry-run plan with code `dry_run_unsupported`. Set it True only when every step copes with one. In a dry run `self.proxy()` passes reads through, runs `blank_beam`, and records every other command and attribute write in the trace without sending it, returning a placeholder (`DRY_RUN_PLACEHOLDER`), so a step must not parse what a command returns. `IndentGrid` is the pattern to copy:
+- A dry run, once you opt in: `"dry_run": true` in a plan rehearses the job without moving anything. `SUPPORTS_DRY_RUN` is False by default, and `reserve` then refuses a dry-run plan with code `dry_run_unsupported`. Set it True only when every step copes with one. In a dry run `self.proxy()` passes reads through, runs the commands in `SAFE_COMMANDS` (they only make the instrument safer: `IndentGrid` lists `retract`; a Mapper takes them from its profile, `blank_beam` for an electron beam), and records every other command and attribute write in the trace without sending it, returning a placeholder (`DRY_RUN_PLACEHOLDER`), so a step must not parse what a command returns. `IndentGrid` is the pattern to copy:
 
   ```python
   SUPPORTS_DRY_RUN = True  # run_step below copes with a dry run

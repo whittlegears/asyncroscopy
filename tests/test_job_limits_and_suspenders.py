@@ -318,7 +318,10 @@ class Scan(Steps):
     SUPPORTS_DRY_RUN = True
     proxy = vars(JobDevice)["proxy"]
     check_dry_call = vars(JobDevice)["check_dry_call"]
+    safe_commands = vars(JobDevice)["safe_commands"]
+    SAFE_COMMANDS = frozenset()
     step_timeout_s = 5.0
+    _proxies = threading.local()
 
     def resolve_plan(self, plan):
         return {"steps": [{}], "estimate": {"steps": 1}}
