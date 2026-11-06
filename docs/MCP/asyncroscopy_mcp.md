@@ -156,14 +156,16 @@ consistent" line names the fewest elements that explain the peaks, and a peak tw
 elements fit equally is split between them. Before this (2026-11-03) qwen3:8b read
 a carbon peak as calcium and silver, and a Pd particle as Pd, Cd and In.
 
-Still open: the window also bends the continuum into a broad rise near 0.6 keV,
-which the peak search can take for a peak and which can then read as O or F
-(5 of 168 simulated spectra on the twin). Rejecting rises wider than five line
-widths stopped that but also lost carbon peaks that sit on the rise (20 of 48
-long carbon exposures), so it was not kept. Live at ed3fc93 the EDS workflows passed 21 of 21
-(`benchmarks/results/workflows_twin_general_ed3fc93_eds.json`); one of the three
-eds_spectrum_elements runs read that rise as oxygen, and the check cannot catch it
-because the note itself offers O.
+The window also bends the continuum into a broad rise near 0.6 keV, which the running
+background takes for a peak. Below 1.2 keV a peak must therefore also stand 3 sigma above
+a smooth (quadratic) curve fitted with it over three line widths each side; one that does
+not is listed as "unidentified: a broad rise of the continuum (the detector window), not an
+X-ray line". On 288 twin spectra without O or F this cut the spectra read as O or F from
+93 to 1, while carbon was still named in 57 of the 63 where it had been (the six lost were
+near the detection limit). A strong O peak within a few line widths can still hide a weak
+C peak next to it, because it raises C's side-band background. Live at 0b1ce81 the EDS workflows
+passed 21 of 21 (`benchmarks/results/workflows_twin_general_0b1ce81_eds.json`), and every
+eds_spectrum_elements run called the rise a continuum rise, not O or F.
 
 `list_data` looks through the newest 300 keys in registration order (files
 registered after a Tiled outage count as new). `offset` counts keys from the
