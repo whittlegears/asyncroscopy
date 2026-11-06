@@ -7,13 +7,13 @@ plan={...})`` reserves, approves and starts it like any job.
 
 How the tuning is done is a **strategy**, chosen by name in the plan:
 
-* ``optistem``: the microscope's own autofocus (AutoScript runs OptiSTEM C1A1
-  in STEM; the twin simulates it). The default (decision D2).
+* ``vendor_autofocus``: the microscope's own autofocus (AutoScript runs OptiSTEM
+  C1A1 in STEM; the twin simulates it). The default (decision D2).
 * ``image_metric``: bounded searches over the defocus, and over the stigmator
   where the microscope offers one, scoring images with
   ``asyncroscopy.routines.focus``.
-* ``corrector``: the aberration corrector's own measure and correct commands
-  (CEOS ``measureC1A1`` / ``correctAberration``; the twin's corrector).
+* ``corrector``: the aberration corrector's typed ``measure_aberrations`` and
+  ``correct`` commands (hardware/corrector.py; CEOS or the twin's corrector behind them).
 
 A strategy is one small class registered with ``register_strategy`` (or the
 ``asyncroscopy.focus_strategies`` entry point). It never talks to Tango: it
@@ -36,11 +36,14 @@ every strategy alike:
 
 * the beam current must be usable for a dose budget (``routines/beam.py``): on
   hardware a default or stale current is refused, at reserve and again at start;
-* OptiSTEM's and the corrector's own scans are counted as a fixed number of frames
-  at the plan's settings, which is a placeholder: on hardware those strategies are
-  refused until ``vendor_dose_calibrated`` is set. OptiSTEM is refused on a
-  microscope whose stigmator cannot be read and restored, and its result is checked
-  against the plan's ranges.
+* the vendor autofocus's and the corrector's own scans are counted as a fixed number
+  of frames at the plan's settings, which is a placeholder: on hardware those
+  strategies are refused until ``vendor_dose_calibrated`` is set. The vendor
+  autofocus is refused on a microscope whose stigmator cannot be read and restored,
+  and its result is checked against the plan's ranges.
+
+Images are taken with the plan's ``detector``, or the microscope's own
+``default_detector`` when the plan names none.
 
 A job is one step, so a resumed job starts again from a fresh snapshot, but only
 after undoing whatever an earlier attempt left in place (a restart mid-tune, a
@@ -69,7 +72,7 @@ from asyncroscopy.registry import Registry
 CORRECTIONS = ("focus", "stigmation")
 PLAN_DEFAULTS: dict[str, Any] = {
     "corrections": ["focus"],
-    "strategy": "optistem",
+    "strategy": "vendor_autofocus",
     "max_steps": 80,
     "focus_range_m": 3e-7,
     "stig_range_m": 1e-7,
@@ -77,7 +80,6 @@ PLAN_DEFAULTS: dict[str, Any] = {
     "fov_m": 1e-7,
     "imsize": 256,
     "dwell_s": 2e-6,
-    "detector": "haadf",
     "metric": "normalized_variance",
     "coarse_points": 13,
     "fine_points": 9,
@@ -89,7 +91,7 @@ PLAN_DEFAULTS: dict[str, Any] = {
     "corrector_target_m": 2e-9,
     "error_tolerance_m": 1e-9,
 }
-PLAN_FIELDS = set(PLAN_DEFAULTS) | {"dose_budget_e_per_a2"}
+PLAN_FIELDS = set(PLAN_DEFAULTS) | {"dose_budget_e_per_a2", "detector"}
 HISTORY_KEPT = 200  # history entries a job keeps (the trace has every step)
 
 
@@ -153,10 +155,10 @@ strategies = STRATEGIES.all
 
 
 @register_strategy
-class OptiStem(Strategy):
-    """The vendor routine: one OptiSTEM C1A1 run (it corrects C1 and A1 together)."""
+class VendorAutofocus(Strategy):
+    """The microscope's own autofocus: one run (OptiSTEM C1A1 on a Spectra corrects C1 and A1 together)."""
 
-    name = "optistem"
+    name = "vendor_autofocus"
     corrections = frozenset(CORRECTIONS)
     needs = frozenset({"autofocus"})
 
@@ -167,18 +169,18 @@ class OptiStem(Strategy):
         return 1
 
     def check(self, plan: dict, capabilities: set) -> None:
-        # OptiSTEM C1A1 changes the stigmator whatever the plan's corrections. A microscope whose stigmator the
-        # Tuner cannot read and write (AutoScriptMicroscope offers no get_stigmator/set_stigmator) could not
-        # put it back on an abort or a failure, so the run is refused rather than left unrestorable.
+        # The vendor autofocus (OptiSTEM C1A1) changes the stigmator whatever the plan's corrections. A microscope
+        # whose stigmator the Tuner cannot read and write could not put it back on an abort or a failure, so the
+        # run is refused rather than left unrestorable.
         if "stigmator" not in capabilities:
             raise ValueError(
-                "strategy optistem runs OptiSTEM C1A1, which changes the stigmator, and this microscope offers no "
+                "strategy vendor_autofocus changes the stigmator, and this microscope offers no "
                 "get_stigmator/set_stigmator to snapshot and restore it; use strategy image_metric for focus only"
             )
 
     def run(self, ctx: "TuneContext") -> dict:
         ctx.auto_focus()
-        return {"runs": 1, "note": "OptiSTEM C1A1 corrects C1 and A1 together, whatever the plan's corrections"}
+        return {"runs": 1, "note": "the vendor autofocus corrects C1 and A1 together, whatever the plan's corrections"}
 
 
 @register_strategy
@@ -190,7 +192,7 @@ class ImageMetric(Strategy):
 
     def check(self, plan: dict, capabilities: set) -> None:
         if "stigmation" in plan["corrections"] and "stigmator" not in capabilities:
-            raise ValueError("this microscope offers no stigmator (set_stigmator/get_stigmator), so image_metric can only focus; use strategy optistem or corrector for stigmation")
+            raise ValueError("this microscope offers no stigmator (set_stigmator/get_stigmator), so image_metric can only focus; use strategy vendor_autofocus or corrector for stigmation")
         if plan["metric"] not in focus.METRICS:
             raise ValueError(f"unknown metric {plan['metric']!r}; known: {sorted(focus.METRICS)}")
 
@@ -383,7 +385,7 @@ class TuneContext:
             raise TuneFailed("dose_uncalibrated", f"a {kind} scans at its own settings, and this instrument's vendor_dose_calibrated is not set; its dose is unknown")
 
     def auto_focus(self) -> None:
-        """The microscope's own autofocus (OptiSTEM C1A1 on the Spectra); it scans, so the beam is on for it.
+        """The microscope's own autofocus (OptiSTEM C1A1 on a Spectra); it scans, so the beam is on for it.
 
         The vendor routine sets the defocus and stigmator itself, so they are read back and checked against the
         plan's ranges: a result outside them fails the job, and the snapshot is restored."""
@@ -406,31 +408,17 @@ class TuneContext:
     def _corrector(self) -> tango.DeviceProxy:
         return self.device.proxy(self.device.corrector_device_address)
 
-    @staticmethod
-    def _reply(text: str, command: str) -> dict:
-        try:
-            reply = json.loads(text)
-        except (TypeError, ValueError) as exc:
-            raise TuneFailed("corrector_error", f"{command} returned something that is not JSON: {str(text)[:200]}") from exc
-        if not isinstance(reply, dict) or "error" in reply:  # a JSON-RPC error is a failure, never a result
-            raise TuneFailed("corrector_error", f"{command} failed: {json.dumps(reply.get('error') if isinstance(reply, dict) else reply)[:300]}")
-        return reply.get("result", reply)
-
     def corrector_measure(self) -> dict:
         """C1 and A1 as the corrector measures them ({"C1": [m], "A1": [m, m]}); the beam is on for it."""
         self._require_vendor_dose("corrector measurement")
         self._expose("corrector_measure", self.frames_per["corrector_measure"])
         self.microscope.unblank_beam()
         try:
-            text = self._corrector().measure_c1a1()
+            measured = json.loads(self._corrector().measure_aberrations())
+        except tango.DevFailed as exc:
+            raise TuneFailed("corrector_error", f"measure_aberrations failed: {exc.args[0].desc.strip()[:300]}") from exc
         finally:
             self.microscope.blank_beam()
-        result = self._reply(text, "measure_c1a1")
-        aberrations = result.get("aberrations", result)
-        try:
-            measured = {name: [float(v) for v in np.atleast_1d(aberrations[name])] for name in ("C1", "A1")}
-        except (KeyError, TypeError, ValueError) as exc:
-            raise TuneFailed("corrector_error", f"measure_c1a1 gave no C1/A1: {json.dumps(result)[:300]}") from exc
         self.log(kind="corrector_measure", **{f"{k}_m": v for k, v in measured.items()})
         return measured
 
@@ -446,8 +434,10 @@ class TuneContext:
         if any(abs(t) > half for t in totals):
             raise TuneFailed("out_of_range", f"corrections of {name} would add up to {totals} m, beyond the plan's +/-{half:g} m")
         self._check_abort()
-        command = f"{name} " + " ".join(f"{v:.6e}" for v in values)
-        self._reply(self._corrector().correct_aberration(command), f"correct_aberration {command}")
+        try:
+            self._corrector().correct((values, [name]))
+        except tango.DevFailed as exc:
+            raise TuneFailed("corrector_error", f"correct {name} {values} failed: {exc.args[0].desc.strip()[:300]}") from exc
         self.state["corrector_sent"][name] = totals  # recorded only once sent, so a restore undoes exactly this
         self.state["writes"] += 1
         self.device._persist(self.job)  # on disk too: a device restart must not forget a correction it never undid
@@ -460,7 +450,7 @@ class TuneContext:
 class Tuner(JobDevice):
     """Autofocus and stigmation as a job: a pluggable strategy, bounded steps, a dose budget, snapshot and restore."""
 
-    JOB_KIND = "autofocus and astigmatism correction (strategies: optistem, image_metric, corrector), bounded and restored on abort"
+    JOB_KIND = "autofocus and astigmatism correction (strategies: vendor_autofocus, image_metric, corrector), bounded and restored on abort"
     PLAN_EXAMPLE = {"corrections": ["focus"], "strategy": "image_metric", "dose_budget_e_per_a2": 3000.0}
     # No dry runs: every measurement reads an image or a corrector reply, which a dry run does not produce.
     # Rehearse a tune on a simulated stack instead.
@@ -536,15 +526,17 @@ class Tuner(JobDevice):
         if lacking:
             raise ValueError(f"strategy {strategy.name} needs {sorted(lacking)}, which this stack does not offer (corrector_device_address, auto_focus, set_stigmator)")
         if strategy.name == "corrector" and not simulated and not bool(self.allow_corrector_writes):
-            raise ValueError("corrector writes are not allowed on this instrument until first light has settled their sign and units (allow_corrector_writes); use strategy optistem")
+            raise ValueError("corrector writes are not allowed on this instrument until first light has settled their sign and units (allow_corrector_writes); use strategy vendor_autofocus")
         strategy.check(p, capabilities)
+        if not p.get("detector"):
+            p["detector"] = self._default_detector(microscope)
 
         # The budget is only as good as the current: on hardware a default or stale current is refused (routines/beam.py).
         beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
         current = beam.pa
         frames_per = {"image": 1, "autofocus": int(self.autofocus_frames), "corrector_measure": int(self.corrector_measure_frames)}
         # Images are taken at the plan's own fov_m, imsize and dwell_s (on_start sets them), so their dose is known.
-        # OptiSTEM and the corrector scan at their own settings, which the Tuner cannot read: each run is counted as
+        # The vendor autofocus and the corrector scan at their own settings, which the Tuner cannot read: each run is counted as
         # autofocus_frames / corrector_measure_frames frames at the plan's settings, an assumption the estimate states.
         vendor = sorted(set(strategy.needs) & {"autofocus", "corrector"})
         calibrated = bool(self.vendor_dose_calibrated)
@@ -605,12 +597,20 @@ class Tuner(JobDevice):
             microscope.append("auto_focus")
         drives = {self.microscope_device_address: microscope}
         if "corrector" in strategy.needs:
-            drives.setdefault(self.corrector_device_address, []).extend(["measure_c1a1", "correct_aberration"])
+            drives.setdefault(self.corrector_device_address, []).extend(["measure_aberrations", "correct"])
         return drives
 
     # ------------------------------------------------------------------
     # Snapshot, run, restore
     # ------------------------------------------------------------------
+    @staticmethod
+    def _default_detector(microscope) -> str:
+        """The scanning detector the microscope uses when none is named (its default_detector attribute)."""
+        try:
+            return str(microscope.read_attribute("default_detector").value)
+        except (tango.DevFailed, AttributeError) as exc:
+            raise ValueError(f"give the plan's detector: the microscope reports no default_detector ({str(exc).strip()[:160]})") from None
+
     def _read_image(self, key: str, detector: str) -> np.ndarray:
         return read_image(key, detector, self.proxy(self.data_device_address) if self.data_device_address else None)
 
@@ -782,9 +782,7 @@ class Tuner(JobDevice):
                     remaining = [-float(v) for v in totals]
                     while max(abs(v) for v in remaining) > 1e-15:
                         piece = [max(-step, min(step, v)) for v in remaining]
-                        reply = json.loads(corrector.correct_aberration(f"{name} " + " ".join(f"{v:.6e}" for v in piece)))
-                        if isinstance(reply, dict) and "error" in reply:
-                            raise RuntimeError(json.dumps(reply["error"])[:200])
+                        corrector.correct((piece, [name]))
                         remaining = [r - p for r, p in zip(remaining, piece)]
                         state["corrector_sent"][name] = [-r for r in remaining]
                         self._persist(job, quiet=True)
