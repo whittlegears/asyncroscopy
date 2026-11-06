@@ -166,16 +166,25 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
 
 * `core/` holds plumbing with no asyncroscopy imports: file locks and sequenced appends
   (`fileio.py`), bind-address rules (`net.py`) and the shared names (`names.py`: headers,
-  envelope verbs, job states, data-key patterns, action roles).
+  envelope verbs, job states, data-key patterns, action roles, the agent graph names).
 * `trace/writer.py` writes the tool log and the Instrument Trace.
 * `safety/` decides risk and approval (`policy.py` for the name rules, `decide.py` for the one
   approval decision, `estop.py` for the emergency stop).
+* `instruments/` and `jobs/` are the devices. Each base class declares what its commands are
+  (`asyncroscopy.utils.commands.command(risk=, role=, stop=, routine=, operator_only=)`) and serves
+  the declarations as its `action_hints` attribute; vendor backends and twins inherit them.
 * `mcp/` serves the devices: `mcp_server.py` (discovery, wrapping, interceptors), `descriptors.py`,
-  and `components/` for the native tools.
-* `agents/` holds everything tuned to a model: graphs, middleware, `guidance.py` and `profiles/`.
+  and `components/` for the native tools. It learns what an instrument is only from the devices
+  it discovers (their declarations), never by importing `instruments/`.
+* `agents/` holds everything tuned to a model: graphs (`mapping`, `general`, `team`, `goal`,
+  `swarm`), middleware, `guidance.py`, `catalog.py` (what each tool is, read from the endpoint's
+  `endpoint_info` once per run) and `profiles/` (model-specific data, the team graph's tool split
+  among it). The agent MCP server (`mcp/agent_mcp_server.py`) imports the agent layer only when it
+  starts.
 
-`tests/test_layering.py` imports each lower package in a fresh interpreter and fails if it
-loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`.
+`tests/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
+loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`, if `mcp` loads anything from
+`instruments` or `agents`, or if `jobs` loads anything from `instruments`.
 
 ---
 

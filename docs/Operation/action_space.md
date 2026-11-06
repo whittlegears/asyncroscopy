@@ -29,28 +29,27 @@ In Python, `asyncroscopy.mcp.action_space.build(server)` makes the document for 
 
 Units and ranges come from, in order of preference:
 
-1. the device's own `action_hints` attribute (a YAML instrument has one, built from its file);
-2. for an electron microscope, `limits.action_hints` in `asyncroscopy/instruments/electron_microscope/limits.py`, the same ranges the `ElectronMicroscope` base enforces (`check_fov`, `check_defocus`), at the device's `min_fov`, `max_fov` and `max_defocus` properties;
-3. the tool's input schema, from the Tango command's types;
-4. a unit named in the command's doc, such as "in metres" or "(pA)".
+1. the device's own `action_hints` attribute (a YAML instrument builds it from its file; the `ElectronMicroscope` base adds its `argument_hints`, the same ranges it enforces with `check_fov` and `check_defocus`, at the device's own `min_fov`, `max_fov` and `max_defocus` properties);
+2. the tool's input schema, from the Tango command's types;
+3. a unit named in the command's doc, such as "in metres" or "(pA)".
 
 An excerpt for the STEM digital twin:
 
 ```json
-{"tool": "DigitalTwin_move_stage", "device": "DigitalTwin", "command": "move_stage", "role": "stage.move", "role_source": "rule",
- "purpose": "move stage: [x, y, z, alpha, beta]; x, y, z in metres, alpha and beta in degrees.", "risk": "high", "effect": "act",
+{"tool": "DigitalTwin_move_stage", "device": "DigitalTwin", "command": "move_stage", "role": "stage.move", "role_source": "annotation",
+ "purpose": "Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees.", "risk": "high", "effect": "act",
  "args": [{"name": "position", "type": "array", "items": "number", "required": true, "doc": "[x, y, z, alpha, beta]; ...",
            "elements": ["x", "y", "z", "alpha", "beta"], "units": ["m", "m", "m", "deg", "deg"]}]}
 {"tool": "DigitalTwin_set_fov", "role": "optics.fov", "risk": "low", "effect": "act",
  "args": [{"name": "fov", "type": "number", "required": true, "units": "m", "min": 1e-09, "max": 0.0001}]}
 ```
 
-The STEM's commands are declared with plain `tango.server.command`, so no doc reaches the MCP server. In that case the `purpose` is the command's name plus what its argument is. Declare commands with `asyncroscopy.utils.commands.command` to give a real purpose.
+The STEM's commands are declared on the `ElectronMicroscope` base with `asyncroscopy.utils.commands.command`, which carries each docstring to the MCP server as the `purpose` and declares the role and risk. A command declared with plain `tango.server.command` has no doc on the wire; its `purpose` is then the command's name plus what its argument is.
 
 And for the AFM YAML twin (`asyncroscopy/instruments/yaml_sim/examples/afm.yaml`):
 
 ```json
-{"tool": "AFMTwin_move_xy", "device": "AFMTwin", "command": "move_xy", "role": "stage.move", "role_source": "rule",
+{"tool": "AFMTwin_move_xy", "device": "AFMTwin", "command": "move_xy", "role": "stage.move", "role_source": "annotation",
  "purpose": "Move the coarse stage to (x_m, y_m). Refused while the tip is engaged; retract it first.", "risk": "high", "effect": "act",
  "args": [{"name": "x_m", "type": "number", "required": true, "units": "m", "min": -0.002, "max": 0.002, "doc": "Stage x", "axis": "x"},
           {"name": "y_m", "type": "number", "required": true, "units": "m", "min": -0.002, "max": 0.002, "doc": "Stage y", "axis": "y"}]}
@@ -80,8 +79,8 @@ The vocabulary is in `asyncroscopy/core/names.py` and the rules in `asyncroscopy
 
 ## How a tool gets its role
 
-1. **An annotation.** A device that has an `action_hints` attribute names its commands' roles there, as JSON: `{"<command>": {"role": "...", "args": [...], "returns": {...}, "primary": true}}`. A YAML instrument builds this attribute from its file. An unknown role in an annotation is reported in `warnings`, and the rules decide instead.
-2. **The rules** in `roles.role_for`, which reuse the safety policy's word lists (`asyncroscopy/safety/policy.py`). On a job device, the envelope verbs map to `job.*`. A plainly named stop becomes `beam.blank` (`blank_beam`, `laser_off`, `xray_off`), `probe.retract` (`retract_tip`) or `safe_stop`. A read (`get_*`, `list_*`) becomes `stage.read` or `setting.read`. An `acquire*` command becomes an image or a spectrum by its words. `move`/`goto` with a stage word becomes `stage.move`, `approach`/`engage` becomes `probe.approach`, a focus word becomes `optics.focus`, and `fov` or `scan_size` becomes `optics.fov`. Any other `set_*` command becomes `setting.set`.
+1. **An annotation.** A device that has an `action_hints` attribute names its commands' roles there, as JSON: `{"<command>": {"role": "...", "risk": "...", "args": [...], "returns": {...}, "primary": true}}`. A Python device declares them with `command(role=...)` on its base class (every device of the twin stack does, for every command); a YAML instrument builds the attribute from its file. An unknown role in an annotation is reported in `warnings`, and the rules decide instead.
+2. **The rules** (for a third-party device that declares nothing) in `action_roles.role_for`, which reuse the safety policy's word lists (`asyncroscopy/safety/policy.py`). On a job device, the envelope verbs map to `job.*`. A plainly named stop becomes `beam.blank` (`blank_beam`, `laser_off`, `xray_off`), `probe.retract` (`retract_tip`) or `safe_stop`. A read (`get_*`, `list_*`) becomes `stage.read` or `setting.read`. An `acquire*` command becomes an image or a spectrum by its words. `move`/`goto` with a stage word becomes `stage.move`, `approach`/`engage` becomes `probe.approach`, a focus word becomes `optics.focus`, and `fov` or `scan_size` becomes `optics.fov`. Any other `set_*` command becomes `setting.set`.
 3. **Otherwise** the role is `other`.
 
 ### Annotating your commands
@@ -105,9 +104,9 @@ Most YAML commands need no annotation, because the file already says more than t
 - A command input that `sets` a stage setting carries that setting's axis. This is how `move_xy`'s `x_m` gets `axis: x`.
 - The map's image acquisition is marked `primary`.
 
-`raman.yaml` and `xrd.yaml` annotate `laser_on` and `xray_on`, which the rules would leave as `other`.
+`raman.yaml` and `xrd.yaml` annotate `laser_on` and `xray_on` (`beam.unblank`) and `laser_off` and `xray_off` (`beam.blank`); `afm.yaml` its tip and stage commands. A command's role also sets its risk when the file gives no `risk:` (a stop role low, any other high), so annotate every command.
 
-A Python device annotates its commands by adding a read-only string attribute named `action_hints` that returns the same JSON. Name the attribute with `asyncroscopy.core.names.ACTION_HINTS`. When your command names already follow the rules (`move_stage`, `get_stage`, `acquire_image`, `retract_tip`), you only need the attribute for units, ranges, axes, or a role the rules miss.
+A Python device declares its commands with `asyncroscopy.utils.commands.command(risk=..., role=..., stop=..., routine=..., operator_only=...)` and serves them with `action_hints = action_hints_attribute()` (`Instrument` and the device bases already have it). `action_hints_attribute(extra=...)` adds what the device works out itself, such as units and ranges at its own limits.
 
 A job device publishes its plan's schema by setting `PLAN_SCHEMA` to the name of a schema in `asyncroscopy/contracts`. The Mapper sets it to `"map_plan"`. The `plan_schema` attribute then serves the schema. A device that gives no schema still has its `plan_example`.
 
