@@ -39,7 +39,7 @@ instrument:
     support_thickness: 1.0e-8
     acceleration_voltage: 300000
     convergence_angle_mrad: 30
-    beam_current_pa: 50
+    probe_current_pa: 50
     detector_read_noise: 0.5
     # The scanning detectors' gain swings by up to 10 % and their offset by up to 2 counts over tens of minutes,
     # so tiles taken far apart differ in brightness the way they do on the instrument.

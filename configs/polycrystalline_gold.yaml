@@ -18,7 +18,7 @@ instrument:
     zone_axis_max_deviation_deg: 2.0
     acceleration_voltage_ev: 200000
     convergence_angle_mrad: 30
-    beam_current_pa: 100
+    probe_current_pa: 100
     blur_noise_level: 0.5
 
 devices:

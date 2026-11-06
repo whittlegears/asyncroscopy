@@ -25,7 +25,7 @@ instrument:
     support_thickness: 1.0e-8
     acceleration_voltage: 300000
     convergence_angle_mrad: 30
-    beam_current_pa: 50
+    probe_current_pa: 50
     detector_read_noise: 0.5
     # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
     # readback error and settling are unverified placeholders.

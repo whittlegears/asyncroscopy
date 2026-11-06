@@ -170,8 +170,8 @@ class VendorAutofocus(Strategy):
 
     def check(self, plan: dict, capabilities: set) -> None:
         # The vendor autofocus (OptiSTEM C1A1) changes the stigmator whatever the plan's corrections. A microscope
-        # whose stigmator the Tuner cannot read and write could not put it back on an abort or a failure, so the
-        # run is refused rather than left unrestorable.
+        # whose stigmator the Tuner cannot read and write (AutoScript until objective_stigmator_m_per_unit is set)
+        # could not put it back on an abort or a failure, so the run is refused rather than left unrestorable.
         if "stigmator" not in capabilities:
             raise ValueError(
                 "strategy vendor_autofocus changes the stigmator, and this microscope offers no "
@@ -460,7 +460,6 @@ class Tuner(JobDevice):
     scan_device_address = device_property(dtype=str, default_value="asyncroscopy/scan/default", doc="SCAN settings device (image size and dwell for the tuning images).")
     corrector_device_address = device_property(dtype=str, default_value="", doc="Aberration corrector, for the corrector strategy; blank: none.")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device that resolves image keys; blank: keys are local files.")
-    default_beam_current_pa = device_property(dtype=float, default_value=50.0, doc="Used for the dose when the microscope does not report beam_current_pa; refused on a stack that is not simulated.")
     autofocus_frames = device_property(dtype=int, default_value=8, doc="Frames of dose one vendor autofocus run counts as, each at the plan's fov_m, imsize and dwell_s (OptiSTEM scans several at its own settings; 8 is a placeholder until first light measures it).")
     corrector_measure_frames = device_property(dtype=int, default_value=4, doc="Frames of dose one corrector measurement counts as, at the plan's settings (a placeholder until first light measures it).")
     vendor_dose_calibrated = device_property(
@@ -481,7 +480,7 @@ class Tuner(JobDevice):
     def _capabilities(self, microscope) -> set:
         commands = {c.cmd_name for c in microscope.command_list_query()}
         caps = set()
-        if {"set_stigmator", "get_stigmator"} <= commands:
+        if {"set_stigmator", "get_stigmator"} <= commands and self._reads_stigmator(microscope):
             caps.add("stigmator")
         if "auto_focus" in commands:
             caps.add("autofocus")
@@ -532,7 +531,8 @@ class Tuner(JobDevice):
             p["detector"] = self._default_detector(microscope)
 
         # The budget is only as good as the current: on hardware a default or stale current is refused (routines/beam.py).
-        beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s), float(self.default_beam_current_pa))
+        # The microscope reports its current (measured, or its own default_beam_current_pa, assumed).
+        beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s))
         current = beam.pa
         frames_per = {"image": 1, "autofocus": int(self.autofocus_frames), "corrector_measure": int(self.corrector_measure_frames)}
         # Images are taken at the plan's own fov_m, imsize and dwell_s (on_start sets them), so their dose is known.
@@ -604,6 +604,16 @@ class Tuner(JobDevice):
     # Snapshot, run, restore
     # ------------------------------------------------------------------
     @staticmethod
+    def _reads_stigmator(microscope) -> bool:
+        """Whether the microscope's stigmator can be read (and so snapshotted and restored): a backend may offer the
+        commands and refuse them (UnsupportedCommand, or AutoScript before its stigmator scale is calibrated)."""
+        try:
+            microscope.get_stigmator()
+            return True
+        except tango.DevFailed:
+            return False
+
+    @staticmethod
     def _default_detector(microscope) -> str:
         """The scanning detector the microscope uses when none is named (its default_detector attribute)."""
         try:
@@ -652,7 +662,7 @@ class Tuner(JobDevice):
         try:
             check_current_at_start(
                 parameters, bool(plan["simulated"]), plan["estimate"].get("beam_current_pa"),
-                float(self.max_beam_current_age_s), float(self.default_beam_current_pa),
+                float(self.max_beam_current_age_s),
             )
         except BeamCurrentRefused as exc:
             raise TuneFailed("beam_current", f"at start: {exc}") from exc
