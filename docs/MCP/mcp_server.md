@@ -57,6 +57,12 @@ mcp:
       - Init
       - Kill
       - RestartServer
+  safety:
+    approvals_device_address: asyncroscopy/approvals/default
+    risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
+    # auto_routine:          # what auto mode runs without a person; default: asyncroscopy/safety/profiles/auto_routine.yaml
+    #   stem: [move_stage, acquire_scanned_image]
+  # agent_profile: asyncroscopy/agents/profiles/default.yaml   # whose tool selection endpoint_info reports
 ```
 
 `startup_scripts/run_mcp.py` maps this config directly to:

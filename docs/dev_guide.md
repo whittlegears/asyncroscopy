@@ -156,6 +156,29 @@ Device interfaces become infrastructure. Stability protects downstream users.
 
 ---
 
+# Layering
+
+Packages depend on the ones below them, never the other way:
+
+```
+core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-  agents
+```
+
+* `core/` holds plumbing with no asyncroscopy imports: file locks and sequenced appends
+  (`fileio.py`), bind-address rules (`net.py`) and the shared names (`names.py`: headers,
+  envelope verbs, job states, data-key patterns, action roles).
+* `trace/writer.py` writes the tool log and the Instrument Trace.
+* `safety/` decides risk and approval (`policy.py` for the name rules, `decide.py` for the one
+  approval decision, `estop.py` for the emergency stop).
+* `mcp/` serves the devices: `mcp_server.py` (discovery, wrapping, interceptors), `descriptors.py`,
+  and `components/` for the native tools.
+* `agents/` holds everything tuned to a model: graphs, middleware, `guidance.py` and `profiles/`.
+
+`tests/test_layering.py` imports each lower package in a fresh interpreter and fails if it
+loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`.
+
+---
+
 # Pull Request Checklist
 
 Before submitting a PR, ensure:
