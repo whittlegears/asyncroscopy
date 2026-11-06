@@ -72,7 +72,7 @@ class TestRecordingProxy:
 
     def test_reads_pass_writes_are_recorded_and_blanking_runs(self):
         fake, recorded = self.Fake(), []
-        proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call))
+        proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call), safe_commands=frozenset({"blank_beam"}))
         assert proxy.get_stage() == "get_stage"  # a read: passed through, not recorded
         assert proxy.read_attribute("clock_s").value == 1.0
         assert proxy.stage_moving is False

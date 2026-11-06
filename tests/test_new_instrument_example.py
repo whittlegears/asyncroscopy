@@ -64,7 +64,8 @@ def test_a_dry_run_records_every_move_and_indent_and_makes_none(grid, tango_ctx)
     status = wait(proxy, job_id)
     assert status["state"] == "done", status
     results = call(proxy, "results", job_id=job_id)
-    assert results["dry_run"]["recorded"] == 8 * 2 + 1 and results["dry_run"]["failed_checks"] == 0  # moves, indents, the final retract
+    assert results["dry_run"]["recorded"] == 8 * 2 and results["dry_run"]["failed_checks"] == 0  # moves and indents
+    assert results["dry_run"]["performed"] == 1  # the final retract: making the tip safe is never rehearsed
     assert all(i["hardness_gpa"] is None for i in results["summary"]["indents"])  # nothing was measured
     assert list(indenter.get_position()) == [1e-5, 1e-5]  # nothing moved
     call(proxy, "release", reservation_id=reserved["reservation_id"])

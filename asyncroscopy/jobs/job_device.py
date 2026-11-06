@@ -34,7 +34,8 @@ reserve and gets a new plan_id. ``get_jobs`` lists the jobs a supervisor can act
 
 Dry run (decision D3 of docs/designs/concepts_brief.md): a plan with ``"dry_run": true``
 is reserved, approved and started like any other, but inside its worker ``proxy()``
-returns a ``RecordingProxy``: reads pass through, ``blank_beam`` really runs, and every
+returns a ``RecordingProxy``: reads pass through, the device's ``safe_commands`` (making
+the instrument safer, such as blanking the beam) really run, and every
 other command or attribute write is recorded in the trace (``dry_run: true``), checked
 by ``check_dry_call`` and not performed. ``dry_run`` is part of the plan, so it is fixed
 at reserve, shown to the operator who approves the start, and kept on a resume. Only a device that
@@ -257,6 +258,8 @@ class JobDevice(Device):
     # True when run_step copes with a dry run: every recorded command returns DRY_RUN_PLACEHOLDER (no
     # image, no reply to parse). False (the default): reserve refuses a dry_run plan, naming the device.
     SUPPORTS_DRY_RUN = False
+    # Commands that only make the instrument safer (blank a beam, retract a tip): they really run in a dry run.
+    SAFE_COMMANDS: frozenset = frozenset()
     # Workers still finishing a step when the device was last re-initialised (see delete_device).
     _stale_workers: tuple = ()
     _generation = 0
@@ -351,6 +354,10 @@ class JobDevice(Device):
         """The example plan shown with a refusal; a device may tailor it to the refused request."""
         return self.PLAN_EXAMPLE
 
+    def safe_commands(self, job: dict) -> frozenset:
+        """The commands a dry run of ``job`` really runs because they only make the instrument safer (SAFE_COMMANDS)."""
+        return self.SAFE_COMMANDS
+
     def step_targets(self, job: dict) -> list[dict]:
         """What the steps will set, checked against limits at reserve: [{"step": i, "device": address,
         "attribute": name, "value": number}, ...]. A target may carry "min"/"max" for limits the device
@@ -371,6 +378,7 @@ class JobDevice(Device):
         self._name = self.get_name()
         self._state_dir = Path(self.state_directory)
         self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._proxies = threading.local()  # one DeviceProxy per (address, timeout) per thread: see proxy()
         self._trace = TraceWriter(
             self.trace_path, source="job", writer=self._name, defaults={"simulated": bool(self.simulated)},
             clock=InstrumentClock(self.trace_clock_device()),
@@ -1128,15 +1136,23 @@ class JobDevice(Device):
         """A proxy to another device whose commands may take longer than Tango's 3 s default
         (a stage move, an autofocus): use this, not a bare DeviceProxy, inside run_step.
 
+        One proxy per address and timeout is kept per thread, so a step that calls the instrument
+        many times does not build a new connection each time.
+
         Inside the worker of a dry-run job it is a RecordingProxy: reads pass through (except
-        commands the job's risk_overrides mark high), blank_beam runs, and every other command and
-        attribute write is recorded, not sent.
+        commands the job's risk_overrides mark high), the job's safe_commands run, and every other
+        command and attribute write is recorded, not sent.
         """
-        proxy = tango.DeviceProxy(address)
-        proxy.set_timeout_millis(int(1000 * (timeout_s if timeout_s is not None else self.step_timeout_s)))
+        timeout_ms = int(1000 * (timeout_s if timeout_s is not None else self.step_timeout_s))
+        cache = self._proxies.__dict__.setdefault("by_address", {})
+        proxy = cache.get((address, timeout_ms))
+        if proxy is None:
+            proxy = tango.DeviceProxy(address)
+            proxy.set_timeout_millis(timeout_ms)
+            cache[(address, timeout_ms)] = proxy
         job = getattr(WORKER, "job", None)
         if job is not None and job.get("dry_run"):
-            return RecordingProxy(proxy, address, lambda *call: self._record_dry_call(job, *call), job.get("risk_overrides") or None)
+            return RecordingProxy(proxy, address, lambda *call: self._record_dry_call(job, *call), job.get("risk_overrides") or None, self.safe_commands(job))
         return proxy
 
     def _record_dry_call(self, job: dict, device: str, name: str, kind: str, arguments, performed: bool) -> None:

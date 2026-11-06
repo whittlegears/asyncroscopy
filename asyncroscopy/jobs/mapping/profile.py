@@ -210,8 +210,6 @@ class InstrumentProfile:
     settings: dict[str, Setting] = {}
     # Setting naming a device -> commands that device must offer (checked at reserve).
     needs: dict = {}
-    # Commands that make the instrument safer: they really run in a dry run (everything else is recorded).
-    safe_commands: frozenset = frozenset()
 
     def __init__(self, ctx: MapContext) -> None:
         self.ctx = ctx
@@ -244,6 +242,10 @@ class InstrumentProfile:
     def summary(self, job: dict) -> dict:
         """Extra fields for the job's results (a STEM's spectra keys); none by default."""
         return {}
+
+    def safe_commands(self, plan: dict) -> frozenset:
+        """Commands that only make the instrument safer (blank the beam, retract the tip): a dry run really runs them."""
+        return frozenset()
 
     # -- plan ------------------------------------------------------------
     def resolve(self, p: dict) -> None:
