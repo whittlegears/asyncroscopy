@@ -521,6 +521,15 @@ class TestAgentMCPServerTools:
     def test_set_max_steps_tool_delegates_to_swarm(self) -> None:
         assert self._server().set_max_steps(7) == 7
 
+    def test_query_agent_lists_the_graphs_in_its_schema(self) -> None:
+        """SciAgentGUI offers the graphs it finds in the graph parameter's enum."""
+        from fastmcp.tools import Tool
+
+        from asyncroscopy.agents.run import GRAPHS
+
+        schema = Tool.from_function(self._server().query_agent).parameters["properties"]["graph"]
+        assert schema["enum"] == ["", *GRAPHS] and schema["default"] == ""
+
     def test_query_agent_tool_calls_swarm_query(self) -> None:
         server = self._server()
         server.swarm.query = AsyncMock(return_value="42")

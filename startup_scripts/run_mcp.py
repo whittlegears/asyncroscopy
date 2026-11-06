@@ -41,6 +41,7 @@ class MCPConfig:
     risk: dict[str, str] = field(default_factory=dict)
     # mcp.safety.auto_routine: what auto mode runs without a person; None: the packaged profile.
     auto_routine: dict[str, list[str]] | None = None
+    agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports; empty: the default
     trace: str = ''
     clock_device: str = ''  # instrument whose clock_s stamps trace events; empty: this computer's time
     trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads; empty: trace's directory
@@ -127,6 +128,7 @@ def load_config(path: Path) -> Config:
             approvals_device_address=_approvals_address(mcp, path),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             auto_routine=_auto_routine(mcp, path),
+            agent_profile=str(mcp.get('agent_profile') or ''),
             trace=str(mcp.get('trace') or ''),
             clock_device=str(mcp.get('clock_device') or ''),
             trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
@@ -192,6 +194,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--risk-json', json.dumps(config.mcp.risk)])
     if config.mcp.auto_routine is not None:
         command.extend(['--auto-routine-json', json.dumps(config.mcp.auto_routine)])
+    if config.mcp.agent_profile:
+        command.extend(['--agent-profile', config.mcp.agent_profile])
     if config.mcp.trace:
         command.extend(['--trace', config.mcp.trace])
     if config.mcp.clock_device:

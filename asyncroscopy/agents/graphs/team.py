@@ -36,14 +36,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
-from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.graphs import run_keeping_partial
 from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
-from asyncroscopy.agents.skill_middleware import SkillMiddleware, recursion_limit
+from asyncroscopy.agents.middleware import build_middleware
+from asyncroscopy.agents.skill_middleware import recursion_limit
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
@@ -176,10 +175,10 @@ class TeamGraph:
         names = {t.name for t in tools}
         known = ("\n\nWhat earlier steps produced:\n" + "\n".join(notes[-4:])) if notes else ""
         prompt = ROLE_PROMPTS[role] + known
-        skills = SkillMiddleware(prompt, names, self._all_names or names, memory=self.memory.notes_for, num_ctx=self.config.num_ctx)
-        waits = JobWaitMiddleware(tools, deadline=self.config.deadline)
-        claims = ClaimCheckMiddleware(names)  # the step's answer becomes the next step's notes: check it first
-        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, EmptyReplyMiddleware(), claims])
+        # The claim check matters here too: the step's answer becomes the next step's notes.
+        middleware = build_middleware(self.config.middleware, prompt=prompt, tool_names=names, offered=self._all_names or names, tools=tools,
+                                      memory=self.memory.notes_for, num_ctx=self.config.num_ctx, deadline=self.config.deadline)
+        return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=middleware)
 
     # ------------------------------------------------------------------ nodes
     async def plan(self, state: TeamState) -> TeamState:

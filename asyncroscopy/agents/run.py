@@ -21,7 +21,7 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from langchain_core.messages import HumanMessage
 
@@ -32,6 +32,8 @@ if TYPE_CHECKING:
     from .goals import Goal
 
 GRAPHS = ("mapping", "general", "team")
+# The graph a query names: "" for the agent swarm, or one of GRAPHS (query_agent lists them as an enum).
+GraphName = Literal["", *GRAPHS]
 # Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark
 # can put the time a task took beside the instrument, model and approval time inside it.
 TASK_TRACE_ENV = "ASYNCROSCOPY_TASK_TRACE"
