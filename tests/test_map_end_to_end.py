@@ -1,11 +1,10 @@
-"""Twin -> Mapper -> pyTEMlib stitching, scored against the twin's ground truth.
+"""Twin -> Mapper -> the analysis server's stitching, scored against the twin's ground truth.
 
 This is the test that says the twin is useful for rehearsing mapping: the
 stage really errs, stitching by reported position alone is visibly wrong,
 and image refinement recovers the true layout to under a pixel.
 """
 
-import importlib.util
 import json
 import time
 from pathlib import Path
@@ -15,7 +14,6 @@ import pytest
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools"),
 ]
 
 
@@ -24,8 +22,8 @@ def call(proxy, verb, payload):
 
 
 def test_stitched_map_matches_ground_truth(mapper_proxy, mapping_twin_proxy):
-    from pyTEMlib.mcp_server.map_store import MapStore
-    from pyTEMlib.mcp_server.map_tools import MapTools
+    from asyncroscopy.analysis_server.map_store import MapStore
+    from asyncroscopy.analysis_server.map_tools import MapTools
 
     mapping_twin_proxy.unblank_beam()
     mapping_twin_proxy.set_defocus(0.0)
@@ -43,7 +41,7 @@ def test_stitched_map_matches_ground_truth(mapper_proxy, mapping_twin_proxy):
     n_tiles = results["summary"]["steps_total"]
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
 
-    # pyTEMlib reads local run files only under its allowed roots; the run is in a pytest temp dir.
+    # The analysis server reads local run files only under its allowed roots; the run is in a pytest temp dir.
     tools = MapTools(MapStore(local_roots=[Path(run_file).parent]))
     job = tools.jobs.start(tools.jobs.reserve({"task": "assemble_map", "run": run_file, "stage_sigma_m": 8e-9})["reservation_id"])
     assert tools.jobs.wait(job["job_id"], timeout=120)["state"] == "done"

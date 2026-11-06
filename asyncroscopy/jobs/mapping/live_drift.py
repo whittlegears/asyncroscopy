@@ -87,8 +87,8 @@ def resolve(p: dict, profile: InstrumentProfile, tile_size_m: tuple[float, float
     if tiles < 2 or float(p["overlap"]) <= 0:
         raise ValueError("live drift tracking measures drift where neighbouring tiles overlap: it needs at least 2 tiles and overlap > 0")
     spec = importlib.util.find_spec("pyTEMlib")
-    if spec is None or not any((Path(d) / "image_tools" / "mosaic.py").exists() for d in spec.submodule_search_locations or []):
-        raise ValueError("live drift tracking registers tiles with pyTEMlib's image_tools.mosaic, which is not installed here")
+    if spec is None or not any((Path(d) / "image_tools" / "image_mosaic.py").exists() for d in spec.submodule_search_locations or []):
+        raise ValueError("live drift tracking registers tiles with pyTEMlib's image_tools.image_mosaic, which is not installed here")
     total = float(drift.get("max_total_m", limit))
     if total > limit:
         raise ValueError(f"drift.max_total_m {total:g} m is beyond the {profile.name!r} profile's image shift limit of {limit:g} m")

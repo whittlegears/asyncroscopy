@@ -2,7 +2,7 @@
 
 One survey tile (tier 1) is taken; inside it, children at a finer tier (tier 2, 16x) are aimed by image shift
 at points spread over it; inside each child, one grandchild at the finest tier (tier 3, 8x more, atomic
-columns) is aimed the same way. Every image is placed on its parent by pyTEMlib's ``register_child``, from a
+columns) is aimed the same way. Every image is placed on its parent by pyTEMlib's ``register_to_parent``, from a
 prediction made with the commanded image shift alone, and scored against where the twin knows it really
 landed: the true centre of the child, located in the parent's own pixels through the parent frame's real
 pixel-to-sample coordinates (which carry its scan distortion and drift).
@@ -85,7 +85,12 @@ def run(args: argparse.Namespace) -> dict:
     from asyncroscopy.instruments.electron_microscope import digital_twin as digital_twin_module
     from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
     from asyncroscopy.testing import instrument_context
-    from pyTEMlib.image_tools.register import register_child
+    from pyTEMlib.image_tools import register_to_parent
+
+    from asyncroscopy.analysis_server.frames import image_dataset
+
+    def register_child(child, child_pixel_m, parent, parent_pixel_m, predicted_px, window_px, **kwargs):
+        return register_to_parent(image_dataset(child, child_pixel_m), image_dataset(parent, parent_pixel_m), predicted_px, window_px, **kwargs)
 
     rng = np.random.default_rng(args.seed)
     fovs = [args.fov, args.fov / args.step1, args.fov / args.step1 / args.step2]

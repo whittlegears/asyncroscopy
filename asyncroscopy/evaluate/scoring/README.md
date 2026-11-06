@@ -1,8 +1,8 @@
 # Field-of-view scorers and their evaluation
 
 A scorer answers "how good is this region of a map as a field of view?" with a
-value in [0, 1], a short reason and its own version. `score_map` (the MCP
-analysis server) ranks map windows with any registered scorer and stores the
+value in [0, 1], a short reason and its own version. `score_map` (the analysis MCP
+server, `asyncroscopy.analysis_server`) ranks map windows with any registered scorer and stores the
 best as points of interest, each with its `scorer_version`.
 
 ## The baseline scorer (3.0.0)
@@ -81,7 +81,7 @@ On the earlier, single-kind set (`synthetic-fov-1`, seeds 0-2) 1.0.0 scored
 0.0 and 2.0.0 1.0; those records were in `benchmarks/results/reward_eval.jsonl`
 of pyTEMlib's feature/mcp-mapping branch.
 
-Probes from an independent review (`test_reward_eval.py`), score of the
+Probes from an independent review (`tests/test_scorer_evaluation.py`), score of the
 sharp version / the same defocused by 4 px:
 
 | probe | 2.0.0 | 3.0.0 |

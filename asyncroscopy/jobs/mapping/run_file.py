@@ -1,7 +1,7 @@
 """A map's HDF5 run file: every tile, its reported stage position and any spectra, in one file per run.
 
 The file is ``maps/map_<run>.h5``, named ``.h5.partial`` while tiles are being taken so DATA does not
-register it half-written. It uses layout 2 (see pyTEMlib.mcp_server.map_store): ``tiles`` is one chunked
+register it half-written. It uses layout 2 (see asyncroscopy.analysis_server.map_store): ``tiles`` is one chunked
 array [n, rows, cols] with per-tile arrays ``written``, ``stage_reported_m``, ``commanded_xy_m``,
 ``acquired_s``, ``row_col`` and ``source_keys``; further detectors go in ``channels/<DETECTOR>``;
 ``spectra`` [n, channels] and ``spectrum_keys`` [n] hold EDS point spectra, or ``spectrum_image`` a coarse

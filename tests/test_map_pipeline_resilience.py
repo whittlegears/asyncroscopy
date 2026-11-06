@@ -1,11 +1,10 @@
 """The Mapper's pipeline when things go wrong: dose of revisits, regions at the box edge, an analysis
 server that forgets jobs or never finishes, resumes mid-stitch and mid-revisit, and the real wire format.
 
-Most tests drive the Mapper against pyTEMlib's real MapTools in this process (``InProcessAnalysis``),
-with hooks that hold or break a call; the last test talks to a pyTEMlib MCP server over HTTP.
+Most tests drive the Mapper against the analysis server's real MapTools in this process (``InProcessAnalysis``),
+with hooks that hold or break a call; the last test talks to an analysis MCP server over HTTP.
 """
 
-import importlib.util
 import json
 import socket
 import threading
@@ -23,7 +22,6 @@ from test_map_pipeline import PLAN, InProcessAnalysis, call
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools"),
 ]
 
 
@@ -214,7 +212,7 @@ def free_port() -> int:
 def test_the_pipeline_over_the_real_mcp_wire_format(mapper_proxy, mapping_twin_proxy, tmp_path_factory, monkeypatch):
     import uvicorn
 
-    from pyTEMlib.mcp_server import create_server
+    from asyncroscopy.analysis_server import create_server
 
     # The run file is written under the test's temporary folders: let this server read that drive.
     mcp, _tools = create_server(include_basic=False, local_roots=[Path(Path.cwd().anchor)])

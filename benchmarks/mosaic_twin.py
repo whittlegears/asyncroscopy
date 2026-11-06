@@ -212,7 +212,7 @@ def run(args: argparse.Namespace) -> dict:
     from asyncroscopy.instruments.electron_microscope import digital_twin as digital_twin_module
     from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
     from asyncroscopy.testing import instrument_context
-    from pyTEMlib.image_tools.mosaic import Tile, register_tiles, stitch_to_arrays
+    from pyTEMlib.image_tools.image_mosaic import Tile, register_tiles, stitch_to_arrays
 
     step = args.fov * (1.0 - args.overlap)
     plan = serpentine(args.grid, step)

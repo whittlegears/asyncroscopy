@@ -17,15 +17,15 @@ from asyncroscopy.evaluate.run import Image, RunData, event_result, match_partic
 
 
 def _proxy_scorer():
-    """pyTEMlib's baseline field-of-view scorer (``pyTEMlib.scoring``): the stand-in where there is no ground truth."""
-    from pyTEMlib.scoring import available_scorers
+    """pyTEMlib's baseline field-of-view scorer (``pyTEMlib.image_tools.BaselineScorer``): the stand-in where there is no ground truth."""
+    from pyTEMlib.image_tools import BaselineScorer
 
-    return available_scorers()["baseline"]
+    return BaselineScorer()
 
 
 def _sharp_features(image) -> tuple[int, float, str]:
     """(features with sharp edges, score 0-1, reason) from pyTEMlib's baseline scorer."""
-    from pyTEMlib.scoring.baseline import EDGE_WIDTH_MID_PX
+    from pyTEMlib.image_tools.image_scoring import EDGE_WIDTH_MID_PX
 
     scorer = _proxy_scorer()
     measured = scorer.measure(image.array)

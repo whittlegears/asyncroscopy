@@ -1,10 +1,9 @@
 """Map plans the Mapper refuses or reshapes before anything moves, revisit-only plans, and the size of its reply.
 
 Revisit-only plans image given stage points, or the best scored regions of a map made earlier, without
-mapping again. The analysis server is pyTEMlib's real MapTools in this process (see test_map_pipeline).
+mapping again. The analysis server is the analysis server's real MapTools in this process (see test_map_pipeline).
 """
 
-import importlib.util
 import json
 
 import pytest
@@ -14,7 +13,6 @@ from test_map_pipeline_resilience import analysis, image_count, start, wait  # n
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools"),
 ]
 
 

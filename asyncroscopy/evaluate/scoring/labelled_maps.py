@@ -42,8 +42,8 @@ The dataset is synthetic and generated in-process from a seed, so the
 evaluation runs without a microscope, a twin or a server. Its image model
 follows the asyncroscopy digital twin's sample (ellipsoidal Au/Pt/Fe particles
 on a carbon support, HAADF intensity ~ Z^1.7 x thickness, Poisson counts) but
-does not import it: pyTEMlib must not depend on asyncroscopy. Twin images can
-be evaluated too: build a ``LabelledMap`` from the image and the twin's
+does not run it, so the evaluation needs no Tango device. Twin images can be
+evaluated too: build a ``LabelledMap`` from the image and the twin's
 ``export_ground_truth`` records with ``LabelledMap.from_twin``.
 """
 
