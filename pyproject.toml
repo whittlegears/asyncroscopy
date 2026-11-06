@@ -116,11 +116,12 @@ autoscript-tem-microscope-client = { path = "stubs/AutoScript_v_1.18/autoscript_
 autoscript-tem-toolkit = { path = "stubs/AutoScript_v_1.18/autoscript_tem_toolkit-1.18.0-py3-none-any.whl" }
 thermoscientific-logging = { path = "stubs/AutoScript_v_1.18/thermoscientific_logging-1.4.0-py3-none-any.whl" }
 pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
-# The map/analysis MCP server and the stitcher live in a pyTEMlib fork branch
-# (whittlegears/pyTEMlib, branch feature/mcp-mapping) until they are merged upstream
-# (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
-# Pinned to a commit so every fresh `uv sync` (uv.lock is not committed) gets the same code.
-pytemlib = { git = "https://github.com/whittlegears/pyTEMlib", rev = "2061d83ea0b2f49732dcc8aa7f255ef049530441" }
+# The stitcher, field-of-view scorer and image placement (pyTEMlib.image_tools) live in a
+# pyTEMlib fork branch (whittlegears/pyTEMlib, branch refactor/sidpy-tools) until they are
+# merged upstream (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
+# That branch is not pushed yet, so this points at its worktree beside this one; once it is
+# pushed, pin it here to a commit (git + rev) so every fresh `uv sync` gets the same code.
+pytemlib = { path = "../pyTEMlib-sidpy", editable = true }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
