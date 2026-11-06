@@ -260,10 +260,10 @@ def test_finding_a_feature_then_measuring_it_gets_its_own_skill():
     assert names[:1] == ["find_feature_then_measure"]
 
 
-def test_a_skill_listing_glob_tools_that_act_counts_as_acting(tmp_path):
+def test_a_skill_acts_unless_it_says_it_only_reads(tmp_path):
     from asyncroscopy.skills.registry import _parse
 
-    for tools, acts in ((["view_data", "*_indent"], True), (["view_data", "*_get_*", "Mapper*_abort"], False)):
+    for extra, acts in (("", True), ("acts: false\n", False), ("acts: true\n", True)):
         path = tmp_path / "SKILL.md"
-        path.write_text(f"---\nname: grid\ndescription: Indent a grid.\nversion: 1.0.0\ntools: {tools}\n---\n\n# Grid\n", encoding="utf-8")
-        assert _parse(path).acts is acts, tools
+        path.write_text(f"---\nname: grid\ndescription: Indent a grid.\nversion: 1.0.0\ntools: [view_data, '*_get_*']\n{extra}---\n\n# Grid\n", encoding="utf-8")
+        assert _parse(path).acts is acts, extra

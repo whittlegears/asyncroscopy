@@ -13,6 +13,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 
+from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER
 
 from asyncroscopy.mcp.agent_tools import ToolLists
@@ -123,6 +124,10 @@ class AgentConfig:
                 # The MCP config's mcp.analysis_url; empty there means this instrument has no analysis server.
                 self.analysis_url = self._info["analysis_url"] or ""
         return self._info
+
+    async def catalog(self) -> ToolCatalog:
+        """What the instrument endpoint's tools are (endpoint_info's tools, asked once per run); unknown without it."""
+        return ToolCatalog.from_info(await self.info())
 
     async def tools(self, include_analysis: bool = True, allow: list[str] | None = None) -> list[StructuredTool]:
         """LangChain tools from the instrument endpoint (and the analysis server), filtered by a glob allow-list."""

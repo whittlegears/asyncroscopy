@@ -8,8 +8,8 @@ the request into steps for named specialists:
 * ``analyst``: stored data and maps (list_data, view_data, stitching, scoring, points of interest).
 
 Each specialist is a tool-using agent that holds only its role's tools,
-discovered from the live endpoints by role patterns (so renamed or extra
-tools still land in the right role). Before each of its model calls the
+discovered from the live endpoints by the role patterns of the agent profile
+(its ``team`` section; so renamed or extra tools still land in the right role). Before each of its model calls the
 skills matching its step, and those its work has since needed, are put in
 its prompt with notes from the instrument's memory
 (``asyncroscopy.agents.skill_middleware``, ``asyncroscopy.agents.memory``);
@@ -36,12 +36,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
 from asyncroscopy.agents.graphs import run_keeping_partial
-from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
+from asyncroscopy.agents.profile import TeamTools, load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
@@ -51,23 +52,6 @@ except ImportError:
 
 log = logging.getLogger(__name__)
 
-# Jobs go through run_job (reserve + start) and wait_for_job (which waits on instrument and analysis jobs
-# and returns their results), so the envelope's separate reserve/start/status/results/release tools and
-# the analysis job tools stay on the endpoint but are not given to a specialist.
-ROLES = {
-    "operator": [
-        "run_job", "*_abort", "*_get_stage", "*_move_stage", "*_get_parameters", "*_acquire_*", "*_set_fov", "*_get_fov",
-        "*_set_defocus", "*_place_beam", "*_blank_beam", "*_unblank_beam",
-    ],
-    "analyst": ["list_data", "view_data", "assemble_map", "score_map", "map_info", "get_region", "list_pois", "add_poi", "list_scorers"],
-}
-# Both specialists get these. load_skill is shown to a model only while a matched skill did not fit its prompt.
-SHARED = ["wait_for_job", "approval_status", "load_skill"]
-# Never given to a specialist: covered by run_job / wait_for_job, skills come to the agent, and the operator side of approvals is the operator's.
-HIDDEN = [
-    "*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", "list_skills", "endpoint_info",
-    "Approvals_*", "*_State", "*_Status", "*_Init",
-]
 MAX_STEPS = 6
 STEP_TOOL_ROUNDS = 25  # tool calls one step may make (a long map is many wait_for_job calls)
 STEP_RECURSION = recursion_limit(STEP_TOOL_ROUNDS)
@@ -116,25 +100,25 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def role_of(name: str, stem: bool = True, analysis_waits: bool = True) -> str | None:
+def role_of(name: str, team: TeamTools, catalog: ToolCatalog, stem: bool = True, analysis_waits: bool = True) -> str | None:
     """Which specialist a tool belongs to: a role, "shared" (both), or None (nobody).
 
-    On a STEM endpoint the operator gets a curated set (a small model loses track with ~80
-    microscope tools); on any other instrument it gets every device command, as ``general`` does.
-    ``analysis_waits``: wait_for_job also waits on analysis jobs (the endpoint has mcp.analysis_url);
-    when it does not, the analyst gets analysis_job_status and analysis_job_results instead.
+    ``team``: the profile's split. On a STEM endpoint the operator gets a curated set (a small model loses
+    track with ~80 microscope tools); on any other instrument it also gets every device command (``catalog``:
+    what the endpoint's tools are), as ``general`` does. ``analysis_waits``: wait_for_job also waits on
+    analysis jobs (the endpoint has mcp.analysis_url); when it does not, the analyst gets
+    analysis_job_status and analysis_job_results instead.
     """
     if not analysis_waits and name in ("analysis_job_status", "analysis_job_results"):
         return "analyst"
-    if any(fnmatch.fnmatchcase(name, p) for p in HIDDEN):
+    if any(fnmatch.fnmatchcase(name, p) for p in team.hidden):
         return None
-    if any(fnmatch.fnmatchcase(name, p) for p in SHARED):
+    if any(fnmatch.fnmatchcase(name, p) for p in team.shared):
         return "shared"
-    for role in ("analyst", "operator"):  # analyst first: its tools are never the instrument's
-        if any(fnmatch.fnmatchcase(name, p) for p in ROLES[role]):
+    for role, patterns in team.roles.items():
+        if any(fnmatch.fnmatchcase(name, p) for p in patterns):
             return role
-    device, _, command = name.partition("_")
-    if not stem and command and device[:1].isupper():
+    if not stem and "operator" in team.roles and catalog.is_device_tool(name):
         return "operator"
     return None
 
@@ -156,6 +140,8 @@ class TeamGraph:
     def __init__(self, config: AgentConfig | None = None, memory: Memory | None = None) -> None:
         self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "team"))
         self.memory = memory or Memory.from_env()
+        self.team = load_profile(self.config.profile).team
+        self.catalog = ToolCatalog.unknown()  # what the endpoint's tools are (endpoint_info), read with the tools
         self._tools: dict[str, list] | None = None
         self._all_names: set[str] = set()
 
@@ -163,11 +149,14 @@ class TeamGraph:
         if self._tools is None:
             tools = await self.config.tools(allow=["*"])
             self._all_names = {t.name for t in tools}
-            self.memory.seed_instrument(self._all_names)
-            stem = is_stem_endpoint(self._all_names)
-            waits = bool((await self.config.info()).get("analysis_url"))  # else the analyst needs analysis_job_*
-            self._tools = {role: [t for t in tools if role_of(t.name, stem, waits) in (role, "shared")] for role in ROLES}
-            self._tools = {role: ts for role, ts in self._tools.items() if any(role_of(t.name, stem, waits) == role for t in ts)}
+            info = await self.config.info()
+            self.catalog = ToolCatalog.from_info(info)
+            stem = bool(info.get("stem_devices"))
+            self.memory.seed_instrument(self.catalog, stem=stem)
+            waits = bool(info.get("analysis_url"))  # else the analyst needs analysis_job_*
+            role = lambda name: role_of(name, self.team, self.catalog, stem, waits)  # noqa: E731
+            self._tools = {r: [t for t in tools if role(t.name) in (r, "shared")] for r in self.team.roles}
+            self._tools = {r: ts for r, ts in self._tools.items() if any(role(t.name) == r for t in ts)}
         return self._tools
 
     def specialist(self, role: str, tools: list, task: str, notes: list[str]) -> CompiledStateGraph:
@@ -177,7 +166,8 @@ class TeamGraph:
         prompt = ROLE_PROMPTS[role] + known
         # The claim check matters here too: the step's answer becomes the next step's notes.
         middleware = build_middleware(self.config.middleware, prompt=prompt, tool_names=names, offered=self._all_names or names, tools=tools,
-                                      memory=self.memory.notes_for, num_ctx=self.config.num_ctx, deadline=self.config.deadline)
+                                      memory=self.memory.notes_for, num_ctx=self.config.num_ctx, deadline=self.config.deadline,
+                                      catalog=self.catalog)
         return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=middleware)
 
     # ------------------------------------------------------------------ nodes
@@ -185,7 +175,7 @@ class TeamGraph:
         roles = set(await self.tools_by_role())
         if not roles:
             return {"plan": [], "notes": ["no instrument or analysis tools were found on the endpoints"], "step": 0, "trace": [], "skills_applied": []}
-        agents = "\n".join(AGENT_LINES[r] for r in ROLES if r in roles)
+        agents = "\n".join(line for r, line in AGENT_LINES.items() if r in roles)
         try:
             reply = await self.config.chat_model().ainvoke([SystemMessage(PLAN_PROMPT.format(agents=agents, max_steps=MAX_STEPS)), HumanMessage(state["request"])])
             steps = _parse_json(reply.content if isinstance(reply.content, str) else str(reply.content)).get("steps") or []
@@ -203,7 +193,7 @@ class TeamGraph:
         task = step["task"]
         if state.get("retried"):
             task += f"\n\nThe first try at this step failed: {notes[-1]}\nFix that and finish the step."
-            running = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])]).active_jobs()
+            running = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])], self.catalog).active_jobs()
             if running:  # never a second job while the first try's is still on the instrument
                 task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
                         ". Wait for it with wait_for_job (its reply has the results); do not start another job."
@@ -213,7 +203,7 @@ class TeamGraph:
         result, failed = await run_keeping_partial(agent, {"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
         messages, applied = result.get("messages", []), result.get("skills_applied") or []
         calls = trace_from_messages(messages)
-        facts = Facts.from_calls(calls)
+        facts = Facts.from_calls(calls, self.catalog)
         said = messages[-1].content if messages and isinstance(messages[-1].content, str) else ""
         if not failed and calls and all(c.error for c in calls):
             failed = f"every call failed; last: {calls[-1].name}: {calls[-1].result[:300]}"
@@ -225,7 +215,7 @@ class TeamGraph:
         return {"notes": notes + [note], "trace": trace, "retried": False, "step": state["step"] + 1, "skills_applied": skills}
 
     async def report(self, state: TeamState) -> TeamState:
-        facts = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])])
+        facts = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])], self.catalog)
         notes = "\n".join(state.get("notes", [])) or "(no steps ran)"
         try:
             reply = await self.config.chat_model().ainvoke([

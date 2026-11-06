@@ -58,7 +58,8 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     plan_example,
     resolve_job_plan,
 )
-from asyncroscopy.jobs.job_device import RUNNING_STATES, JobDevice
+from asyncroscopy.core.names import RUNNING_JOB_STATES
+from asyncroscopy.jobs.job_device import JobDevice
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
@@ -299,7 +300,7 @@ class YamlSimJobDevice(_YamlInstrument, JobDevice):
     def busy(self) -> str | None:
         with self._lock:
             job = self._active()
-            if job is not None and job["state"] in RUNNING_STATES:
+            if job is not None and job["state"] in RUNNING_JOB_STATES:
                 return f"busy: job {job.get('job_id', job['reservation_id'])} is {job['state']}; wait for it (wait_for_job) or abort it first"
         return None
 
