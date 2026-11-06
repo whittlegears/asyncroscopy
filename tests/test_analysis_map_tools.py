@@ -440,3 +440,23 @@ def test_assemble_progress_only_goes_up(tmp_path):
     seen = []
     tools._run_assemble({"run": path, "eds_pois": True}, lambda done, total=None: seen.append(done))
     assert seen == sorted(seen) and seen[-1] == PROGRESS_STEPS
+
+
+def test_a_registered_scorer_is_listed_and_used_by_score_map(client, run_file):
+    from asyncroscopy.analysis_server.map_tools import SCORERS
+
+    class Brightest:
+        name, version, description = "brightest", "0.1.0", "mean intensity (a test scorer)"
+
+        def score(self, region, metadata):
+            return float(np.mean(region)) / 65535.0, "mean intensity"
+
+    SCORERS.register(Brightest)
+    try:
+        c, tools = client
+        assert {"name": "brightest", "version": "0.1.0", "description": "mean intensity (a test scorer)"} in call(c, "list_scorers")["result"]
+        map_key = finish(c, tools, call(c, "assemble_map", run=run_file)["job_id"])["result_keys"]["map"]
+        added = finish(c, tools, call(c, "score_map", map=map_key, scorer="brightest", top_k=2)["job_id"])["summary"]["added_pois"]
+        assert len(added) == 2 and {p["source"] for p in added} == {"scorer:brightest"} and {p["scorer_version"] for p in added} == {"0.1.0"}
+    finally:
+        SCORERS.unregister("brightest")

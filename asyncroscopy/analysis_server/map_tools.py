@@ -54,6 +54,8 @@ from pyTEMlib.image_tools import (
     stitch_quality,
 )
 
+from asyncroscopy.registry import Registry
+
 from .frames import image_dataset
 from .jobs import DEFAULT_MAX_WORKERS, JobRunner
 from .map_store import MapStore, level_shape_of, pixel_to_stage, stage_box_to_pixels
@@ -65,8 +67,11 @@ DEFAULT_MAX_CANVAS_PIXELS = 400_000_000_000  # level-0 pixels; memory is bounded
 SCORE_MAX_SIDE = 4096  # score_map reads the finest level no larger than this, never a giant level 0 whole
 BLOCK = 512  # pyramid block and chunk side
 
-# The scorers score_map offers, by name.
-SCORERS = {scorer.name: scorer for scorer in (BaselineScorer(),)}
+# The scorers score_map offers, by name: pyTEMlib's baseline, and any class with ``name``, ``version``, ``description``
+# and ``score(region, metadata) -> (value, reason)`` registered under the ``asyncroscopy.scorers`` entry point or
+# named in ASYNCROSCOPY_PLUGINS (decorated with ``@SCORERS.register``).
+SCORERS: Registry[type] = Registry("asyncroscopy.scorers", kind="scorer")
+SCORERS.register(BaselineScorer)
 
 # FastMCP app -> the MapTools whose tools it serves; guards against registering the tools twice.
 _REGISTERED: "weakref.WeakKeyDictionary[FastMCP, MapTools]" = weakref.WeakKeyDictionary()
@@ -231,14 +236,13 @@ class MapTools:
 
     def _check_score(self, plan: dict) -> dict:
         scorer = plan.get("scorer", "baseline")
-        if scorer not in SCORERS:
-            raise ValueError(f"unknown scorer {scorer!r}; available: {sorted(SCORERS)}")
+        SCORERS.get(scorer)  # ValueError naming the registered ones
         self.store.map_metadata(plan["map"])
         return {"steps": 1}
 
     def _run_score(self, plan: dict, progress) -> dict:
         meta = self.store.map_metadata(plan["map"])
-        scorer = SCORERS[plan.get("scorer", "baseline")]
+        scorer = SCORERS.get(plan.get("scorer", "baseline"))()
         # The finest level that fits SCORE_MAX_SIDE, so scoring a map of any size reads a bounded image.
         fits = next((k for k in range(meta["levels"]) if max(level_shape_of(meta, k)) <= SCORE_MAX_SIDE), meta["levels"] - 1)
         level = max(int(plan.get("level", min(2, meta["levels"] - 1))), fits)
@@ -504,7 +508,7 @@ class MapTools:
         @mcp.tool()
         def list_scorers() -> list[dict[str, str]]:
             """Scorers available to score_map: name, version and what they look for."""
-            return [{"name": s.name, "version": s.version, "description": s.description} for s in SCORERS.values()]
+            return [{"name": s.name, "version": s.version, "description": s.description} for s in SCORERS.all().values()]
 
         @mcp.tool()
         def list_tiles(run: str, box_m: list[float] | None = None, limit: int = 200) -> dict[str, Any]:
