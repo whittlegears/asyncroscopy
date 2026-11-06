@@ -21,7 +21,7 @@ import yaml
 
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
-from asyncroscopy.instruments.electron_microscope.tuner import TuneContext, TuneFailed, Tuner
+from asyncroscopy.jobs.tuning.tuner import TuneContext, TuneFailed, Tuner
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, DryRunRefused, RecordingProxy
 from asyncroscopy.core.net import bind_host, is_loopback_host, is_remote_host
@@ -136,6 +136,9 @@ class FakeTunerMicroscope:
             names += ["get_stigmator", "set_stigmator"]
         return [SimpleNamespace(cmd_name=n) for n in names]
 
+    def read_attribute(self, name):
+        return SimpleNamespace(value={"default_detector": "haadf"}[name])
+
     def get_parameters(self):
         if self.parameters_from:
             return self.parameters_from()
@@ -177,11 +180,11 @@ class FakeCorrector:
     def __init__(self, fail=False):
         self.sent, self.fail = [], fail
 
-    def correct_aberration(self, command):
+    def correct(self, request):
         if self.fail:
             raise RuntimeError("corrector not answering")
-        self.sent.append(command)
-        return json.dumps({"result": {}})
+        values, names = request
+        self.sent.append((names[0], list(values)))
 
 
 def tuner_stub(microscope, simulated=True, corrector=None, **extra):
@@ -195,7 +198,7 @@ def tuner_stub(microscope, simulated=True, corrector=None, **extra):
     saved = []
     attrs = dict(
         microscope_device_address="m", scan_device_address="s", corrector_device_address="c" if corrector else "",
-        data_device_address="", default_beam_current_pa=50.0, autofocus_frames=8, corrector_measure_frames=4,
+        data_device_address="", autofocus_frames=8, corrector_measure_frames=4,
         allow_corrector_writes=False, vendor_dose_calibrated=False, max_beam_current_age_s=DEFAULT_MAX_BEAM_CURRENT_AGE_S,
         simulated=simulated, _lock=threading.RLock(), saved=saved,
         proxy=lambda address, timeout_s=None: devices[address], _save=lambda job: saved.append(json.loads(json.dumps(job.get("tune")))),
@@ -209,18 +212,18 @@ def tuner_stub(microscope, simulated=True, corrector=None, **extra):
 # ----------------------------------------------------------------------
 # 2. OptiSTEM and the stigmator; its result checked against the plan
 # ----------------------------------------------------------------------
-def test_optistem_is_refused_where_the_stigmator_cannot_be_restored():
+def test_vendor_autofocus_is_refused_where_the_stigmator_cannot_be_restored():
     tuner = tuner_stub(FakeTunerMicroscope(stigmator=False))
     with pytest.raises(ValueError, match="stigmator"):
-        Tuner.resolve_plan(tuner, {"strategy": "optistem", "dose_budget_e_per_a2": 1e4})
+        Tuner.resolve_plan(tuner, {"strategy": "vendor_autofocus", "dose_budget_e_per_a2": 1e4})
     Tuner.resolve_plan(tuner, {"strategy": "image_metric", "dose_budget_e_per_a2": 1e4})  # focus alone still runs
 
 
-def test_optistem_out_of_range_fails_and_the_stigmators_are_restored():
+def test_vendor_autofocus_out_of_range_fails_and_the_stigmators_are_restored():
     microscope = FakeTunerMicroscope(autofocus_to=(5e-7, [2e-8, -1e-8]))  # 500 nm: beyond focus_range_m 300 nm
     microscope.defocus, microscope.stig = 1e-8, [3e-9, 4e-9]
     tuner = tuner_stub(microscope)
-    job = {"resolved_plan": Tuner.resolve_plan(tuner, {"strategy": "optistem", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 1e4})}
+    job = {"resolved_plan": Tuner.resolve_plan(tuner, {"strategy": "vendor_autofocus", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 1e4})}
     Tuner.on_start(tuner, job)
     with pytest.raises(TuneFailed, match="out_of_range"):
         TuneContext(tuner, job).auto_focus()
@@ -233,9 +236,9 @@ def test_optistem_out_of_range_fails_and_the_stigmators_are_restored():
 def test_vendor_and_corrector_strategies_are_refused_on_hardware_until_their_dose_is_calibrated():
     tuner = tuner_stub(FakeTunerMicroscope(), simulated=False)
     with pytest.raises(ValueError, match="vendor_dose_calibrated"):
-        Tuner.resolve_plan(tuner, {"strategy": "optistem", "dose_budget_e_per_a2": 1e4})
+        Tuner.resolve_plan(tuner, {"strategy": "vendor_autofocus", "dose_budget_e_per_a2": 1e4})
     tuner.vendor_dose_calibrated = True
-    estimate = Tuner.resolve_plan(tuner, {"strategy": "optistem", "dose_budget_e_per_a2": 1e4})["estimate"]
+    estimate = Tuner.resolve_plan(tuner, {"strategy": "vendor_autofocus", "dose_budget_e_per_a2": 1e4})["estimate"]
     assert "own settings" in estimate["dose_assumption"] and "vendor_dose_calibrated" in estimate["dose_assumption"]
     assert "plan's" in Tuner.resolve_plan(tuner, {"strategy": "image_metric", "dose_budget_e_per_a2": 1e4})["estimate"]["dose_assumption"]
 
@@ -260,7 +263,7 @@ def test_a_resume_undoes_outstanding_corrector_offsets_before_a_new_snapshot():
     microscope.defocus = 2e-8  # where the failed attempt left it
     Tuner.on_start(tuner, job)
     # Undone in max_step_m pieces, negated, before anything else moved; the defocus put back to the old snapshot.
-    assert corrector.sent == ["C1 -1.000000e-07", "C1 -5.000000e-08"]
+    assert [name for name, _ in corrector.sent] == ["C1", "C1"] and [v for _, v in corrector.sent] == [pytest.approx([-1e-7]), pytest.approx([-5e-8])]
     assert microscope.calls.index(("set_fov", 1e-7)) > max(i for i, c in enumerate(microscope.calls) if c[0] == "set_defocus")
     assert job["tune"]["corrector_sent"] == {} and job["tune"]["outcome"] == "running"
     assert job["tune"]["snapshot"]["defocus_m"] == 0.0  # the new snapshot is taken after the undo

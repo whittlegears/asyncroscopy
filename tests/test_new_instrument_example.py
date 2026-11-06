@@ -64,7 +64,8 @@ def test_a_dry_run_records_every_move_and_indent_and_makes_none(grid, tango_ctx)
     status = wait(proxy, job_id)
     assert status["state"] == "done", status
     results = call(proxy, "results", job_id=job_id)
-    assert results["dry_run"]["recorded"] == 8 * 2 + 1 and results["dry_run"]["failed_checks"] == 0  # moves, indents, the final retract
+    assert results["dry_run"]["recorded"] == 8 * 2 and results["dry_run"]["failed_checks"] == 0  # moves and indents
+    assert results["dry_run"]["performed"] == 1  # the final retract: making the tip safe is never rehearsed
     assert all(i["hardness_gpa"] is None for i in results["summary"]["indents"])  # nothing was measured
     assert list(indenter.get_position()) == [1e-5, 1e-5]  # nothing moved
     call(proxy, "release", reservation_id=reserved["reservation_id"])
@@ -143,11 +144,11 @@ def test_a_failed_state_save_on_start_leaves_the_reservation_startable():
     import threading
 
     class Envelope:  # JobDevice's envelope logic only, no Tango server
-        _start, _parse, _active = JobDevice._start, JobDevice._parse, JobDevice._active
+        _start, _parse, _active, _job = JobDevice._start, JobDevice._parse, JobDevice._active, JobDevice._job
 
     grid = Envelope()
     job = {"reservation_id": "r1", "state": "reserved", "job_ids": [], "caller": None, "last_error": None}
-    grid._lock, grid._jobs, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, []
+    grid._lock, grid._jobs, grid._unloaded, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, {}, []
 
     def full_disk(_job):
         raise PermissionError("state file locked")
@@ -162,12 +163,12 @@ def test_a_worker_that_cannot_start_leaves_the_reservation_startable(monkeypatch
     import threading
 
     class Envelope:  # JobDevice's envelope logic only, no Tango server
-        _start, _parse, _active = JobDevice._start, JobDevice._parse, JobDevice._active
+        _start, _parse, _active, _job = JobDevice._start, JobDevice._parse, JobDevice._active, JobDevice._job
 
     grid = Envelope()
     job = {"reservation_id": "r1", "state": "reserved", "job_ids": [], "caller": None, "last_error": None}
     saved = []
-    grid._lock, grid._jobs, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, []
+    grid._lock, grid._jobs, grid._unloaded, grid._job_index, grid._abort, grid._threads, grid._stale_workers = threading.Lock(), {"r1": job}, {}, {}, {}, {}, []
     grid._save = lambda j: saved.append(j["state"])
     grid._omni_worker = lambda *a: None
 

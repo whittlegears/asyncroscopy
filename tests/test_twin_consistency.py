@@ -14,9 +14,10 @@ import numpy as np
 import pytest
 from scipy import ndimage
 
-from asyncroscopy.instruments.electron_microscope.twin import EventRng, SampleParams
+from asyncroscopy.instruments.electron_microscope.twin import SampleParams
+from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.instruments.electron_microscope.twin.detector import DetectorDrift, DetectorParams
-from asyncroscopy.instruments.electron_microscope.twin.dose import ANGSTROM2_PER_M2, DoseMap, DoseParams
+from asyncroscopy.sim.dose import ANGSTROM2_PER_M2, DoseMap, DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.sample_model import SampleModel
 
 SEED = 12345

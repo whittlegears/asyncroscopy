@@ -99,7 +99,7 @@ def autoscript_device(client: FakeAutoScriptClient, save_dir: Path):
     """An AutoScriptMicroscope connected to the fake client, with the Spectra 300 stack's settings devices."""
     device = _UnregisteredAutoScript.__new__(_UnregisteredAutoScript)
     device._tango_properties = {}
-    for name, value in {**SOFTWARE_LIMITS, "nominal_beam_current_pa": 50.0}.items():
+    for name, value in {**SOFTWARE_LIMITS, "default_beam_current_pa": 50.0, "default_scan_detector": "haadf"}.items():
         if hasattr(AutoScriptMicroscope, name):
             setattr(device, name, value)
     device._microscope = client
@@ -207,9 +207,11 @@ BAD_SCANS = [
 
 
 @pytest.mark.parametrize("imsize, dwell, region", BAD_SCANS)
-def test_bad_scan_settings_are_refused_before_the_instrument(backend, imsize, dwell, region):
+def test_bad_scan_settings_are_refused_before_the_instrument(backend, imsize, dwell, region, monkeypatch):
+    bad = SimpleNamespace(imsize=imsize, dwell_time=dwell, scan_region=region, output_format=".h5")
+    monkeypatch.setitem(backend.device._detector_proxies, "scan", bad)
     with pytest.raises(REFUSED):
-        backend.device._acquire_scanned_image(imsize, dwell, ["haadf"], region)
+        backend.call("acquire_scanned_image", ["haadf"])
     assert backend.instrument_writes("acquisition") == []
 
 

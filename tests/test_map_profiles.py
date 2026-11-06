@@ -1,4 +1,4 @@
-"""One Mapper, many instruments: the instrument profiles (asyncroscopy/jobs/map_profile.py).
+"""One Mapper, many instruments: the instrument profiles (asyncroscopy/jobs/mapping/profile.py).
 
 * an AFM (the YAML twin's afm.yaml, profile ``yaml``) maps a few tiles that stitch, score and
   revisit on pyTEMlib's map tools, called in this process, with the tip lifted for every move;
@@ -20,9 +20,10 @@ import numpy as np
 import pytest
 import tango
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from asyncroscopy.jobs.mapping.pipeline import Pipeline
 from asyncroscopy.instruments.yaml_sim.spec import SimInstrument, load_spec, map_description, sample_spots
-from asyncroscopy.jobs.map_profile import Cost, InstrumentProfile, get_profile, register_profile
+from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, MapContext, MapSettings, Setting, get_profile, register_profile
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
 needs_map_tools = pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools")
@@ -87,7 +88,7 @@ def analysis(monkeypatch):
         return servers[0](self, tool, arguments)
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Mapper, "_analysis", fake)
+    monkeypatch.setattr(Pipeline, "call", fake)
     return servers
 
 
@@ -166,6 +167,7 @@ class PinholeCamera(InstrumentProfile):
     doc = "a test camera: one frame per tile, a frames budget"
     plan_fields = frozenset({"imsize"})
     plan_defaults = {"imsize": 32}
+    settings = {"scan_device_address": Setting(str, "asyncroscopy/scan/default", "SCAN settings device.")}
     needs = {"microscope_device_address": ("move_stage", "get_stage", "acquire_scanned_image")}
 
     def current_xy(self):
@@ -178,7 +180,7 @@ class PinholeCamera(InstrumentProfile):
         return {"frames": Cost(grid["rows"] * grid["cols"], "frames", why="one per tile")}, {}
 
     def setup(self, job):
-        self.mapper.proxy(self.mapper.scan_device_address).imsize = int(job["resolved_plan"]["imsize"])
+        self.ctx.proxy(self.setting("scan_device_address")).imsize = int(job["resolved_plan"]["imsize"])
         job.setdefault("z", float(list(self.instrument().get_stage())[2]))
 
     def move(self, job, x, y):
@@ -231,17 +233,12 @@ def test_a_beam_profile_waits_for_a_move_already_under_way_before_its_own():
         def move_stage(self, position):
             events.append(("move", list(position)))
 
-    class FakeMapper:
-        microscope_device_address = "m"
-
-        def proxy(self, address, timeout_s=None):
-            return Microscope()
-
-        def _wait_for_stage(self, job, microscope):
+    class Context(MapContext):
+        def wait_for_stage(self, job):
             events.append("wait")
             return True
 
-    profile = get_profile("stem")(FakeMapper())
+    profile = get_profile("stem")(Context(MapSettings("m"), lambda address, timeout_s=None: Microscope(), lambda job: False))
     job = {"pose": {"z": 0.0, "alpha": 0.0, "beta": 0.0}}
     assert profile.move(job, 1e-7, 2e-7)
     assert events == ["wait", ("move", [1e-7, 2e-7, 0.0, 0.0, 0.0]), "wait"]

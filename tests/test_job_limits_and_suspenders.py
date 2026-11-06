@@ -48,7 +48,7 @@ class Steps(envelope_class()):
     PLAN_EXAMPLE = {"xs": [0.0]}
 
     def __init__(self, tmp_path, devices, suspenders=""):
-        self._lock, self._jobs, self._job_index, self._threads, self._abort = threading.RLock(), {}, {}, {}, {}
+        self._lock, self._jobs, self._unloaded, self._job_index, self._threads, self._abort = threading.RLock(), {}, {}, {}, {}, {}
         self._name, self._generation, self._stale_workers = "test/steps/1", 1, ()
         self._state_dir = tmp_path
         self._trace = TraceWriter(str(tmp_path / "trace.jsonl"), source="job")
@@ -318,7 +318,10 @@ class Scan(Steps):
     SUPPORTS_DRY_RUN = True
     proxy = vars(JobDevice)["proxy"]
     check_dry_call = vars(JobDevice)["check_dry_call"]
+    safe_commands = vars(JobDevice)["safe_commands"]
+    SAFE_COMMANDS = frozenset()
     step_timeout_s = 5.0
+    _proxies = threading.local()
 
     def resolve_plan(self, plan):
         return {"steps": [{}], "estimate": {"steps": 1}}
@@ -352,3 +355,25 @@ def test_a_device_that_cannot_rehearse_refuses_a_dry_run_at_reserve(tmp_path):
     reply = job.call("reserve", {"plan": {"xs": [0.0], "dry_run": True}})
     assert reply["error"]["code"] == "dry_run_unsupported" and "Steps does not support dry runs" in reply["error"]["message"]
     assert job._jobs == {}
+
+
+# ---------------------------------------------------------------- job state on disk
+def test_the_plan_is_written_once_and_a_finished_job_is_opened_only_when_asked_for(tmp_path):
+    job = Steps(tmp_path, {"test/stage/1": stage()})
+    reservation = job.call("reserve", {"plan": {"xs": [0.0, 1e-4, 2e-4]}})["reservation_id"]
+    plan_file = tmp_path / f"test_steps_1__{reservation}.plan.json"
+    progress_file = tmp_path / f"test_steps_1__{reservation}.json"
+    written = plan_file.stat().st_mtime_ns
+    job_id = job.call("start", {"reservation_id": reservation})["job_id"]
+    job.wait_for(job_id, {"done"})
+    assert plan_file.stat().st_mtime_ns == written  # rewritten per step: only the progress record
+    progress = json.loads(progress_file.read_text(encoding="utf-8"))
+    assert progress["state"] == "done" and "plan" not in progress and "resolved_plan" not in progress and "steps" not in progress
+    assert json.loads(plan_file.read_text(encoding="utf-8"))["plan"] == {"xs": [0.0, 1e-4, 2e-4]}
+
+    restarted = Steps(tmp_path, {"test/stage/1": stage()})
+    restarted._reload()
+    assert reservation not in restarted._jobs and reservation in restarted._unloaded  # a finished job stays on disk
+    status = restarted.call("status", {"job_id": job_id})  # until it is asked for by id
+    assert status["state"] == "done" and status["progress"]["done"] == 3
+    assert restarted._jobs[reservation]["plan"] == {"xs": [0.0, 1e-4, 2e-4]} and len(restarted._jobs[reservation]["step_results"]) == 3

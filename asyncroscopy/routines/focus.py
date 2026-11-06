@@ -2,7 +2,7 @@
 
 A focus routine is a loop: set a value, take an image, score it, choose the
 next value. Only the scoring and the choosing live here; the ``Tuner`` job
-(asyncroscopy/instruments/electron_microscope/tuner.py) owns the instrument,
+(asyncroscopy/jobs/tuning/tuner.py) owns the instrument,
 the step limits, the dose and the abort. Every search takes an ``evaluate(x)``
 callback that sets the value, images and returns the score, so the same code
 runs on the twin, on the instrument, or on a function in a test.

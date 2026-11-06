@@ -12,14 +12,15 @@ import json
 import numpy as np
 
 from asyncroscopy.calibration._common import acquire, connect, parse_args, print_yaml
+from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-ELECTRON_CHARGE = 1.602176634e-19
 
 
 def main() -> None:
     args = parse_args(__doc__, lambda p: p.add_argument("--frames", type=int, default=40))
     microscope, _scan = connect(args)
-    current_pa = float(json.loads(microscope.get_parameters()).get("beam_current_pa", 50.0))
+    current_pa = float(json.loads(microscope.get_parameters()).get("beam_current_pa", DEFAULT_BEAM_CURRENT_PA))
     dose_per_frame = current_pa * 1e-12 * args.dwell / ELECTRON_CHARGE / (args.fov / args.imsize / 1e-10) ** 2
     backgrounds, peaks = [], []
     for _ in range(args.frames):

@@ -5,30 +5,23 @@ decides what an acquisition looks like lives here so it can be tested without
 Tango. Coordinates are metres in the sample frame. Images are indexed
 ``[row, column]`` with row increasing along +y and column along +x.
 
-``clock``, ``rng`` and ``stage_model`` do not depend on electron optics and
-import in milliseconds, so other instruments' simulators can use them
-(``from asyncroscopy.instruments.electron_microscope.twin.stage_model import
-StageModel``). The names below load on first use, so importing one of those
-does not pull in pyTEMlib.
+The modality-free primitives (the clock, random streams, stage model and dose
+map) are in ``asyncroscopy.sim``. The names below load on first use, so importing
+one of them does not pull in pyTEMlib.
 """
 
 import importlib
 
 _EXPORTS = {
-    "DoseMap": ".dose",
     "EdsParams": ".eds_model",
-    "EventRng": ".rng",
     "SampleModel": ".sample_model",
     "SampleParams": ".sample_model",
     "ScanParams": ".scan_distortion",
-    "SimClock": ".clock",
     "Specimen": ".specimen",
     "SpecimenContext": ".specimen",
     "build_specimen": ".specimen",
     "register_specimen": ".specimen",
     "specimen_sources": ".specimen",
-    "StageModel": ".stage_model",
-    "StageParams": ".stage_model",
     "pixel_sample_coordinates": ".scan_distortion",
     "point_spectrum": ".eds_model",
 }

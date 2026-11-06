@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import numpy as np
-import tango
 from ase import Atoms
 from ase.build import bulk
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, AtomisticDigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, ElectronMicroscopeTwin
 
 FOV_NM = 500.0
 FOV_M = FOV_NM * 1e-9
@@ -25,7 +24,7 @@ EDGE_LATTICE_CHANGE_FRACTION = 0.25
 AMORPHOUS_EDGE_WIDTH_PX = 5.0
 
 
-class DigitalTwinDiffraction(AtomisticDigitalTwin):
+class DigitalTwinDiffraction(ElectronMicroscopeTwin):
     """Digital twin that pairs a HAADF nanoparticle overview with local diffraction."""
 
     acquisition_save_directory = device_property(
@@ -63,25 +62,6 @@ class DigitalTwinDiffraction(AtomisticDigitalTwin):
         super().init_device()
         self._manufacturer = 'UTKTeam Diffraction Twin'
         self._fov = FOV_M
-
-    def _connect_detector_proxies(self) -> None:
-        addresses: dict[str, str] = {
-            'camera': self.camera_device_address,
-            'scan': self.scan_device_address,
-            'stage': self.stage_device_address,
-            'data': self.data_device_address,
-        }
-        for name, address in addresses.items():
-            if not address:
-                self.info_stream(f'Skipping {name}: no address configured')
-                continue
-            try:
-                proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(12_000)
-                self._detector_proxies[name] = proxy
-                self.info_stream(f'Connected to detector proxy: {name} @ {address}')
-            except tango.DevFailed as exc:
-                self.error_stream(f'Failed to connect to {name} proxy at {address}: {exc}')
 
     def _update_view_cache(self, force: bool = False) -> None:
         self._cached_pose_key = tuple(np.round(self._stage_position, 12))

@@ -21,12 +21,13 @@ from tango.server import Device, attribute, device_property
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.twin.rng import EventRng
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
+from asyncroscopy.sim.rng import EventRng
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
 
-class AtomisticDigitalTwin(ElectronMicroscope):
+class ElectronMicroscopeTwin(ElectronMicroscope):
     """
     Persistent ASE-backed sample simulation with stage-coupled viewport rendering.
     """
@@ -102,8 +103,8 @@ class AtomisticDigitalTwin(ElectronMicroscope):
         self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self.set_state(DevState.INIT)
 
+        self._init_device_attributes()  # the base's detector proxies and command lock
         self._stem_mode = True
-        self._detector_proxies: dict[str, tango.DeviceProxy] = {}
         self._manufacturer = "UTKTeam"
         self._beam_pos_x = 0.5
         self._beam_pos_y = 0.5
@@ -134,28 +135,6 @@ class AtomisticDigitalTwin(ElectronMicroscope):
         self._connect_detector_proxies()
         self._generate_sample(seed=int(self.sample_seed))
         self.set_state(DevState.ON)
-
-    def _connect_detector_proxies(self) -> None:
-        """Build DeviceProxy objects for each configured detector device."""
-        addresses: dict[str, str] = {
-            "camera": self.camera_device_address,
-            "eds": self.eds_device_address,
-            "stage": self.stage_device_address,
-            "scan": self.scan_device_address,
-            "corrector": self.corrector_device_address,
-            "data": self.data_device_address,
-        }
-        for name, address in addresses.items():
-            if not address:
-                self.info_stream(f"Skipping {name}: no address configured")
-                continue
-            try:
-                proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(12_000)
-                self._detector_proxies[name] = proxy
-                self.info_stream(f"Connected to detector proxy: {name} @ {address}")
-            except tango.DevFailed as e:
-                self.error_stream(f"Failed to connect to {name} proxy at {address}: {e}")
 
     def _sync_stage_from_proxy(self) -> None:
         """Fetch the current stage position from the stage device proxy."""
@@ -515,7 +494,7 @@ class AtomisticDigitalTwin(ElectronMicroscope):
         image = image[edge_crop:-edge_crop, edge_crop:-edge_crop]
 
         scan_time = dwell_time * size * size
-        counts = scan_time * (beam_current * 1e-12) / (1.602e-19)
+        counts = scan_time * (beam_current * 1e-12) / ELECTRON_CHARGE
         pose_seed = int(abs(hash((tuple(np.round(self._stage_position, 10)), round(self._fov, 14), size))) % (2**32))
         rng = np.random.default_rng(pose_seed + int(self.sample_seed))
         noisy_image = self._poisson_noise(image, counts=counts, rng=rng)
@@ -733,4 +712,4 @@ class AtomisticDigitalTwin(ElectronMicroscope):
         return json.dumps(metadata)
 
 if __name__ == "__main__":
-    AtomisticDigitalTwin.run_server()
+    ElectronMicroscopeTwin.run_server()

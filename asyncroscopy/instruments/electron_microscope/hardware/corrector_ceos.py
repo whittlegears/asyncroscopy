@@ -10,7 +10,7 @@ import tango
 from tango import DevState
 from tango.server import device_property
 
-from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR
+from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR, FIRST_ORDER
 
 
 class CEOSCorrector(CORRECTOR):
@@ -62,6 +62,14 @@ class CEOSCorrector(CORRECTOR):
 
     def _correct_aberration(self, name: str, values: list[float]) -> str:
         return self._call("correctAberration", {"name": name, "value": values})
+
+    def _measure_aberrations(self) -> dict[str, list[float]]:
+        result = json.loads(self._measure_c1a1()).get("result") or {}
+        aberrations = result.get("aberrations", result)
+        return {name: [float(v) for v in (aberrations[name] if isinstance(aberrations[name], list) else [aberrations[name]])] for name in FIRST_ORDER}
+
+    def _correct(self, name: str, values: list[float]) -> None:
+        self._correct_aberration(name, values)  # a CEOS refusal raises in _call
 
     def _call(self, method: str, params: Optional[dict] = None) -> str:
         payload = {

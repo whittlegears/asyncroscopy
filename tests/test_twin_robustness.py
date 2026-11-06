@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 
 from asyncroscopy.instruments.electron_microscope.twin import (
-    EventRng,
     SampleModel,
     SampleParams,
     ScanParams,
     pixel_sample_coordinates,
     point_spectrum,
 )
+from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.instruments.electron_microscope.twin.detector import DetectorParams, count
 from asyncroscopy.instruments.electron_microscope.twin.eds_model import EdsParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
