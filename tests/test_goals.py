@@ -333,7 +333,7 @@ def test_agent_server_goal_accepts_text_or_json(monkeypatch):
         seen.append((goal, worker))
         return "Goal reached.", True
 
-    monkeypatch.setattr(agent_mcp_server, "run_goal_text", fake_run_goal_text)
+    monkeypatch.setattr("asyncroscopy.agents.run.run_goal_text", fake_run_goal_text)
     server = agent_mcp_server.AgentMCPServer("t", ["http://x/mcp"], verbose=False)
     assert asyncio.run(server.query_agent("map here", goal=True)) == "Goal reached."
     asyncio.run(server.query_agent('{"statement": "map here", "criteria": [{"kind": "map"}]}', graph="general", goal=True))

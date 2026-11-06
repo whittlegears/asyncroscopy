@@ -1,4 +1,8 @@
-"""Ollama/LangChain agent swarm that inherits its tools from MCP servers."""
+"""``swarm``: a supervisor and worker agents (spawned at run time) that inherit their tools from MCP servers.
+
+The agent MCP server (``asyncroscopy.mcp.agent_mcp_server``) serves it as ``query_agent`` with no graph
+named, beside the ``mapping``, ``general`` and ``team`` graphs of this package.
+"""
 
 import asyncio
 import fnmatch
@@ -15,20 +19,14 @@ from typing import Annotated, Sequence, TypedDict
 
 from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_MCP_URL
 
-try:
-    from langchain.agents import create_agent
-    from langchain.chat_models import init_chat_model
-    from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-    from langchain_core.tools import BaseTool
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.graph import END, START, StateGraph
 
-    from langgraph.graph import END, START, StateGraph
-
-    from asyncroscopy.agents.mcp_tools import McpServer
-    from asyncroscopy.agents.profile import load_profile
-except ImportError:
-    print("Missing dependencies! Please run:")
-    print("uv sync --extra agent --extra ollama")
-    sys.exit(1)
+from asyncroscopy.agents.mcp_tools import McpServer
+from asyncroscopy.agents.profile import load_profile
 
 DEFAULT_MAX_STEPS = 10
 # Ollama's default context silently truncates long tool lists; always set it.

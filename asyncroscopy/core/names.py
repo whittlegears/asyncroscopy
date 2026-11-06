@@ -18,6 +18,10 @@ CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
 
 
+# The agent graphs one request can name (asyncroscopy.agents.run), besides the swarm the agent MCP server runs by default.
+AGENT_GRAPHS = ("mapping", "general", "team")
+
+
 def tool_name(prefix: str, command: str) -> str:
     """The MCP tool name of a device command: ``<prefix>_<command>`` with "/" and "-" made "_"."""
     return f"{prefix}_{command}".replace("/", "_").replace("-", "_")
