@@ -7,12 +7,12 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from types import SimpleNamespace
 
 import h5py
 import numpy as np
 
-from asyncroscopy.jobs.mapping.mapper import Mapper, compact_grid, tile_at
+from asyncroscopy.jobs.mapping.run_file import RunFile, job_trace_events
+from asyncroscopy.routines.grid import compact_grid, tile_at
 from asyncroscopy.jobs.job_device import done_count, done_ranges_from, is_done, mark_done, read_last_steps
 
 
@@ -48,16 +48,19 @@ def test_only_the_tail_of_a_long_step_file_is_read_and_a_torn_last_line_is_skipp
 
 
 def test_the_run_file_keeps_every_tile_written_before_a_crash(tmp_path):
+    final = tmp_path / "run.h5"
     path = tmp_path / "run.h5.partial"
     writer = f"""
 import sys, time, numpy as np
 sys.path.insert(0, {str(Path.cwd())!r})
-from asyncroscopy.jobs.mapping.mapper import write_tile
+from asyncroscopy.jobs.mapping.run_file import RunFile
 from pathlib import Path
 plan = {{"fov_m": 1e-7, "imsize": 32}}
+run = RunFile(Path({str(final)!r}))
+run.open({{"run_id": "crash"}}, {{"id": "crash"}})
 for k in range(100000):
     tile = {{"index": k, "row": 0, "col": k, "x": 0.0, "y": 0.0}}
-    write_tile(Path({str(path)!r}), 100000, tile, plan, [0, 0, 0, 0, 0], time.time(), f"img{{k}}", {{"image/HAADF": (np.full((32, 32), k % 60000, np.uint16), {{"detector": "HAADF"}})}}, None, None)
+    run.write_tile(100000, tile, plan, [0, 0, 0, 0, 0], time.time(), f"img{{k}}", {{"image/HAADF": (np.full((32, 32), k % 60000, np.uint16), {{"detector": "HAADF"}})}}, None, None)
     print(k, flush=True)
 """
     process = subprocess.Popen([sys.executable, "-c", writer], stdout=subprocess.PIPE, text=True)
@@ -93,20 +96,15 @@ def test_the_trace_copied_into_the_run_file_reads_only_this_jobs_part_of_the_sha
     run = tmp_path / "run.h5"
     with h5py.File(run, "w"):
         pass
-    device = SimpleNamespace(trace_path=str(trace), _file=lambda job: run)
     t0 = time.perf_counter()
-    Mapper._write_trace(device, {"reservation_id": "job1", "trace_offset": offset})
+    events, dropped = job_trace_events(trace, "job1", offset)
+    RunFile(run).write_trace(events, str(trace), offset, dropped)
     elapsed = time.perf_counter() - t0
     with h5py.File(run, "r") as h5:
         events = [json.loads(line) for line in h5["trace"][()]]
         assert [e["action"] for e in events] == ["Mapper.reserve", "Mapper.step"] and events[1]["ok"] is False
         assert h5["trace"].attrs["trace_offset"] == offset
     assert elapsed < 0.5
-
-
-def test_a_job_saved_with_a_step_list_still_runs_its_tiles():
-    legacy = {"steps": [{"index": 0, "row": 0, "col": 0, "x": 1e-7, "y": 2e-7}], "resolved_plan": {}}
-    assert Mapper.step_at(None, legacy, 0) == {"phase": "tiles", "index": 0, "row": 0, "col": 0, "x": 1e-7, "y": 2e-7}
 
 
 def test_a_grid_of_a_million_tiles_is_a_few_numbers():

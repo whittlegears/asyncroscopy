@@ -9,11 +9,11 @@ import numpy as np
 import pytest
 import tango
 
-from types import SimpleNamespace
 
 from asyncroscopy.contracts import validate
-from asyncroscopy.jobs.mapping import mapper as mapper_module
-from asyncroscopy.jobs.mapping.mapper import Mapper, tile_centres
+from asyncroscopy.jobs.mapping import run_file
+from asyncroscopy.jobs.mapping.run_file import RunFile
+from asyncroscopy.routines.grid import tile_centres
 
 
 def call(proxy, verb, payload):
@@ -211,28 +211,20 @@ class TestRun:
 class TestRunFileName:
     """A finished run file gets its final name even when Windows keeps the .partial open."""
 
-    def stub(self, tmp_path):
-        stub = SimpleNamespace()
-        stub._run_path = lambda job: Mapper._run_path(stub, job)
-        stub._file = lambda job: Mapper._file(stub, job)
-        return stub, {"run_path": str(tmp_path / "map_r.h5")}
-
     def test_a_partial_file_is_renamed(self, tmp_path):
-        stub, job = self.stub(tmp_path)
         (tmp_path / "map_r.h5.partial").write_bytes(b"tiles")
-        path, note = Mapper._finalize_run_file(stub, job)
+        path, note = RunFile(tmp_path / "map_r.h5").finish()
         assert path == tmp_path / "map_r.h5" and note is None and path.read_bytes() == b"tiles"
 
     def test_a_file_that_cannot_be_renamed_is_copied_and_the_job_still_finishes(self, tmp_path, monkeypatch):
-        stub, job = self.stub(tmp_path)
         (tmp_path / "map_r.h5.partial").write_bytes(b"tiles")
-        monkeypatch.setattr(mapper_module, "RENAME_RETRY_DELAYS_S", (0.0, 0.0))
+        monkeypatch.setattr(run_file, "RENAME_RETRY_DELAYS_S", (0.0, 0.0))
 
         def locked(self, target):
             raise PermissionError("the file is open in another process")
 
         monkeypatch.setattr(Path, "replace", locked)
-        path, note = Mapper._finalize_run_file(stub, job)
+        path, note = RunFile(tmp_path / "map_r.h5").finish()
         assert path == tmp_path / "map_r.h5" and path.read_bytes() == b"tiles"
         assert "copied" in note
 
@@ -407,12 +399,9 @@ def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(t
 
 
 def test_a_plan_whose_overlap_is_smaller_than_the_stage_error_is_warned_about():
-    from types import SimpleNamespace
+    from asyncroscopy.jobs.mapping.plan import overlap_warning
 
-    from asyncroscopy.jobs.mapping.mapper import Mapper
-
-    twin_stage = SimpleNamespace(stage_sigma_m=2.9e-7)
-    warning = Mapper._overlap_warning(twin_stage, 0.3, 5.6e-7)  # 560 nm tiles: neighbours often do not even overlap
+    warning = overlap_warning(0.3, 5.6e-7, 2.9e-7)  # 560 nm tiles: neighbours often do not even overlap
     assert warning and "left unplaced" in warning and "560 nm" in warning
-    assert Mapper._overlap_warning(twin_stage, 0.5, 1.2e-5) is None  # 12 um tiles at half overlap: every pair is found
-    assert Mapper._overlap_warning(SimpleNamespace(stage_sigma_m=1e-9), 0.15, 2e-7) is None  # an accurate stage
+    assert overlap_warning(0.5, 1.2e-5, 2.9e-7) is None  # 12 um tiles at half overlap: every pair is found
+    assert overlap_warning(0.15, 2e-7, 1e-9) is None  # an accurate stage

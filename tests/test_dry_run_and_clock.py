@@ -19,7 +19,8 @@ import pytest
 import tango
 from fastmcp.exceptions import ToolError
 
-from asyncroscopy.jobs.mapping.mapper import DRY_RUN_SKIPPED, Mapper
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from asyncroscopy.jobs.mapping.pipeline import DRY_RUN_SKIPPED, Pipeline
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, RecordingProxy
 from asyncroscopy.mcp.binding import bind_host
 from asyncroscopy.mcp.mcp_server import MCPServer, stack_simulated
@@ -267,7 +268,7 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
         return reply
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Mapper, "_analysis", lambda self, tool, arguments: server(self, tool, arguments))
+    monkeypatch.setattr(Pipeline, "call", lambda self, tool, arguments: server(self, tool, arguments))
 
     revisit_fov = 5e-8
     plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.0e-7, "overlap": 0.25, "imsize": 128, "dwell_s": 2e-5,
