@@ -17,7 +17,7 @@ The instrument never looks inside the sample. It asks the specimen four question
 | Renderer (`twin/render.py`) | the projected Z^n-weighted mass thickness, `sum(Z^n * atoms/A^3 * thickness/A)`, on a regular grid at the frame's pixel size, at `level` "survey" or "atomic" | `projected_weight(x_min, y_min, n, pixel_m, level, z_exponent, damage)` |
 | EDS (`twin/eds_model.py`) | atoms per square angstrom of each element under the beam | `areal_density(x, y)` |
 | Focus (renderer, autofocus, Tuner truth) | the specimen height, which adds to the defocus | `height_at(x, y)` |
-| Dose map (`twin/dose.py`) | which features are in the frame and where they are, so it can fade them past the critical dose | `in_box(...)`, `feature_centers` |
+| Dose map (`asyncroscopy/sim/dose.py`) | which features are in the frame and where they are, so it can fade them past the critical dose | `in_box(...)`, `feature_centers` |
 | Renderer and EDS | the support film's element and thickness | `support_element`, `support_thickness_m` |
 | Dose map and status | the sample's extent | `bounds` |
 
@@ -236,6 +236,6 @@ To try a controller of your own across samples, use the same pattern. Start one 
 
 ## What is not swappable yet
 
-- The atomistic twins built on `AtomisticDigitalTwin` (`digital_twin_particles.py`, `digital_twin_tilt.py`, `digital_twin_diffraction.py` and `polycrystalline_gold_digital_twin.py`) still generate their own ASE samples. They rotate the whole atom set with the stage tilt, a coupling this interface does not cover yet.
+- The atomistic twins built on `ElectronMicroscopeTwin` (`digital_twin_particles.py`, `digital_twin_tilt.py`, `digital_twin_diffraction.py` and `polycrystalline_gold_digital_twin.py`) still generate their own ASE samples. They rotate the whole atom set with the stage tilt, a coupling this interface does not cover yet.
 - The specimen cannot be changed while the twin runs. Restart the twin with a new `specimen` property. This is deliberate: a Tango command to swap it would be an agent tool.
 - Stage z, alpha and beta still do not change what any specimen looks like.

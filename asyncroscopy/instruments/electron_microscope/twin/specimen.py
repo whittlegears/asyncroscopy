@@ -48,7 +48,7 @@ import numpy as np
 
 from asyncroscopy.registry import Registry
 
-from .rng import EventRng
+from asyncroscopy.sim.rng import EventRng
 
 if TYPE_CHECKING:
     from .sample_model import SampleParams
