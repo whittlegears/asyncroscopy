@@ -35,7 +35,7 @@ from collections.abc import Iterable
 import numpy as np
 from numpy.typing import ArrayLike
 
-from asyncroscopy.plugins import load_plugins, unknown_hint
+from asyncroscopy.registry import Registry
 
 DEFAULT_WINDOW = 12  # observations the linear tracker fits (the most recent ones)
 MIN_CONFIDENCE = 0.3  # normalised cross-correlation of the overlap below which a registration is no measurement
@@ -128,44 +128,12 @@ class LinearTracker(DriftTracker):
         return None if fit is None else (float(fit[1][0]), float(fit[1][1]))
 
 
-TRACKERS: dict[str, type[DriftTracker]] = {}
-_entry_points_loaded = False
-
-
-def register_tracker(cls: type[DriftTracker]) -> type[DriftTracker]:
-    """Make ``cls`` available as the plan's ``"drift": {"tracker": cls.name}``; usable as a class decorator."""
-    if not cls.name:
-        raise ValueError(f"{cls.__name__} needs a name")
-    TRACKERS[cls.name] = cls
-    return cls
-
+TRACKERS: Registry[type[DriftTracker]] = Registry("asyncroscopy.drift_trackers", kind="drift tracker")
+register_tracker = TRACKERS.register
+get_tracker = TRACKERS.get
+trackers = TRACKERS.all
 
 register_tracker(LinearTracker)
-
-
-def trackers() -> dict[str, type[DriftTracker]]:
-    """Every tracker: built in, registered, named in ``ASYNCROSCOPY_PLUGINS``, and installed with the
-    ``asyncroscopy.drift_trackers`` entry point."""
-    global _entry_points_loaded
-    load_plugins()
-    if not _entry_points_loaded:
-        _entry_points_loaded = True
-        from importlib.metadata import entry_points
-
-        for point in entry_points(group="asyncroscopy.drift_trackers"):
-            try:
-                register_tracker(point.load())
-            except Exception:  # a broken plug-in must not take the Mapper down
-                log.warning("drift tracker entry point %s could not be loaded", point.name, exc_info=True)
-    return TRACKERS
-
-
-def get_tracker(name: str) -> type[DriftTracker]:
-    """The tracker class called ``name``; ValueError listing the known ones otherwise."""
-    known = TRACKERS if name in TRACKERS else trackers()
-    if name not in known:
-        raise ValueError(f"unknown drift tracker {name!r}; registered: {sorted(known)}{unknown_hint()}")
-    return known[name]
 
 
 # ----------------------------------------------------------------------

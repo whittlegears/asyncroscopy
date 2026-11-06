@@ -38,15 +38,15 @@ docs/Operation/specimens.md explains the coupling and walks through a source.
 from __future__ import annotations
 
 import ast
-import importlib
 import json
-import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+
+from asyncroscopy.registry import Registry
 
 from .rng import EventRng
 
@@ -150,49 +150,19 @@ class SpecimenContext:
 # ----------------------------------------------------------------------
 # Registry
 # ----------------------------------------------------------------------
-SPECIMENS: dict[str, type[Specimen]] = {}
-BUILT_IN = {
-    "procedural": "asyncroscopy.instruments.electron_microscope.twin.sample_model",
-    "recorded": "asyncroscopy.instruments.electron_microscope.twin.specimen_recorded",
-    "crystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_crystal",
-}
-_entry_points_loaded = False
-
-
-def register_specimen(cls: type[Specimen]) -> type[Specimen]:
-    """Make ``cls`` available as ``specimen: {source: cls.source}``; usable as a class decorator."""
-    if not cls.source:
-        raise ValueError(f"{cls.__name__} needs a source name")
-    SPECIMENS[cls.source] = cls
-    return cls
-
-
-def specimen_sources() -> dict[str, type[Specimen]]:
-    """Every source: built in, registered, and installed with the ``asyncroscopy.specimens`` entry point."""
-    global _entry_points_loaded
-    for module in set(BUILT_IN.values()):
-        importlib.import_module(module)
-    if not _entry_points_loaded:
-        _entry_points_loaded = True
-        from importlib.metadata import entry_points
-
-        for point in entry_points(group="asyncroscopy.specimens"):
-            try:
-                register_specimen(point.load())
-            except Exception as exc:  # a broken plug-in must not take the twin down
-                print(f"[asyncroscopy.specimens] could not load specimen {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
-    return SPECIMENS
-
-
-def get_specimen_class(source: str) -> type[Specimen]:
-    """The class registered as ``source``; ValueError listing the known ones otherwise."""
-    if source not in SPECIMENS and source in BUILT_IN:
-        importlib.import_module(BUILT_IN[source])
-    if source not in SPECIMENS:
-        known = specimen_sources()
-        if source not in known:
-            raise ValueError(f"unknown specimen source {source!r}; registered: {sorted(known)}")
-    return SPECIMENS[source]
+SPECIMENS: Registry[type[Specimen]] = Registry(
+    "asyncroscopy.specimens",
+    {
+        "procedural": "asyncroscopy.instruments.electron_microscope.twin.sample_model",
+        "recorded": "asyncroscopy.instruments.electron_microscope.twin.specimen_recorded",
+        "crystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_crystal",
+    },
+    kind="specimen source",
+    key="source",
+)
+register_specimen = SPECIMENS.register
+get_specimen_class = SPECIMENS.get
+specimen_sources = SPECIMENS.all
 
 
 def build_specimen(options: dict, context: SpecimenContext) -> Specimen:
