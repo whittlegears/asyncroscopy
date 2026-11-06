@@ -66,6 +66,19 @@ class ElectronMicroscope(Instrument):
         "No-DB mode: 'tango://127.0.0.1:8888/asyncroscopy/camera/default#dbase=no'",
     )
 
+    default_scan_detector = device_property(
+        dtype=str,
+        default_value="haadf",
+        doc="Scanning detector used when a caller names none: acquire_scanned_image with an empty list, a Tuner plan without a detector.",
+    )
+
+    default_detector = attribute(
+        label="Default scanning detector",
+        dtype=str,
+        access=AttrWriteType.READ,
+        doc="The scanning detector used when a caller names none (the default_scan_detector property).",
+    )
+
     stem_mode = attribute(
         label="STEM Mode",
         dtype=bool,
@@ -109,6 +122,9 @@ class ElectronMicroscope(Instrument):
     def read_stem_mode(self) -> bool:
         return self._stem_mode
 
+    def read_default_detector(self) -> str:
+        return str(self.default_scan_detector)
+
     @command
     def Disconnect(self) -> None:
         """Disconnect from microscope hardware gracefully."""
@@ -137,18 +153,17 @@ class ElectronMicroscope(Instrument):
         dtype_in=DevVarStringArray,
         dtype_out=str,
         doc_in=":param detector_list: Scanning detector names, e.g. ['haadf']. "
-               "An empty list uses ['haadf'].",
+               "An empty list uses the microscope's default_detector.",
     )
-    def acquire_scanned_image(self, detector_list: list[str] = ['haadf']) -> str:
+    def acquire_scanned_image(self, detector_list: list[str]) -> str:
         """
         Acquire an image with scanning detectors and return its DATA/Tiled key.
-        The default detector list is ['haadf'].
+        An empty list uses the microscope's default_detector (haadf unless configured).
         """
         # Tango's wire protocol has no concept of "omitted", so remote callers (e.g. the
-        # MCP/LLM bridge) can and do send an empty list instead of relying on the Python
-        # default above; treat that the same as not specifying detectors.
+        # MCP/LLM bridge) send an empty list for "no detector named".
         if not detector_list:
-            detector_list = ['haadf']
+            detector_list = [str(self.default_scan_detector)]
         scan = self._detector_proxies.get('scan')
         return self._acquire_scanned_image(scan.imsize, scan.dwell_time, detector_list, list(scan.scan_region), scan.output_format)
 

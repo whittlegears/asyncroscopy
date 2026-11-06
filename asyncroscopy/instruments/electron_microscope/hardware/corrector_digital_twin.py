@@ -8,7 +8,7 @@ import json
 from tango import DevState
 from tango.server import device_property
 
-from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR
+from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR, FIRST_ORDER
 
 
 DEFAULT_ABERRATIONS = {
@@ -91,13 +91,14 @@ class DigitalTwinCorrector(CORRECTOR):
             }
         )
 
-    def _measure_c1a1(self) -> str:
+    def _measure_aberrations(self) -> dict[str, list[float]]:
         measured = self._measured_aberrations()
-        return self._response(
-            {"aberrations": {name: measured[name] for name in ("C1", "A1")}}
-        )
+        return {name: measured[name] for name in FIRST_ORDER}
 
-    def _correct_aberration(self, name: str, values: list[float]) -> str:
+    def _measure_c1a1(self) -> str:
+        return self._response({"aberrations": self._measure_aberrations()})
+
+    def _correct(self, name: str, values: list[float]) -> None:
         if name not in self._simulation_aberrations:
             raise ValueError(f"Unknown aberration {name!r}")
         current = self._simulation_aberrations[name]
@@ -110,6 +111,9 @@ class DigitalTwinCorrector(CORRECTOR):
             float(existing - sign * correction)
             for existing, correction in zip(current, values)
         ]
+
+    def _correct_aberration(self, name: str, values: list[float]) -> str:
+        self._correct(name, values)
         return self._response(
             {"name": name, "value": self._simulation_aberrations[name], "corrected": True}
         )
