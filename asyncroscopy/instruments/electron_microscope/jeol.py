@@ -101,26 +101,6 @@ class JeolMicroscope(ElectronMicroscope):
             self.set_state(DevState.FAULT)
             self._microscope = None
 
-    def _connect_detector_proxies(self) -> None:
-        addresses: dict[str, str] = {
-            'eds': self.eds_device_address,
-            'stage': self.stage_device_address,
-            'scan': self.scan_device_address,
-            'camera': self.camera_device_address,
-            'data': self.data_device_address,
-        }
-        for name, address in addresses.items():
-            if not address:
-                self.info_stream(f'Skipping {name}: no address configured')
-                continue
-            try:
-                proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(12_000)
-                self._detector_proxies[name] = proxy
-                self.info_stream(f'Connected to detector proxy: {name} @ {address}')
-            except tango.DevFailed as exc:
-                self.error_stream(f'Failed to connect to {name} proxy at {address}: {exc}')
-
     # ------------------------------------------------------------------
     # Attributes
     # ------------------------------------------------------------------

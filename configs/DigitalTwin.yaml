@@ -19,7 +19,7 @@ devices:
   # Background map jobs (reserve/start/status/abort/results/release) on this microscope.
   mapper:
     class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default
@@ -28,7 +28,7 @@ devices:
   # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
   tuner:
     class_name: Tuner
-    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default
@@ -39,7 +39,8 @@ devices:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

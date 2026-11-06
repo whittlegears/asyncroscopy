@@ -51,7 +51,7 @@ Inside the job's worker, `JobDevice.proxy()` returns a `RecordingProxy` (`asyncr
 | Call | In a dry run |
 | :-- | :-- |
 | Attribute reads, the read-only DeviceProxy methods (`read_attribute`, `get_attribute_config`, ...), commands read-only by the safety policy (`get_*`, `list_*`, `State`, `Status`, unless `risk_overrides` mark one high), `job_status`, `results` | pass through |
-| `blank_beam` | really runs (blanking only makes the instrument safer) and is recorded |
+| The job device's safe commands (`blank_beam` for a Mapper on an electron microscope, the YAML file's `safe` commands, `retract` for `IndentGrid`) | really run (they only make the instrument safer) and are recorded |
 | An AFM's `retract_tip` (and any other profile's safe-state command) | recorded, **not sent**: a dry run leaves the tip where it is, since retracting would disturb a tip someone may be using |
 | Every other command (`move_stage`, `unblank_beam`, `acquire_*`, `set_fov`, ...), every attribute write, and the DeviceProxy write methods (`write_attribute*`, `set_attribute_config`, `poll_attribute`, `write_pipe`, properties) | recorded in the trace, **not sent** |
 | Any other DeviceProxy method | refused (`DryRunRefused`): an unlisted method is assumed to write |
@@ -82,4 +82,4 @@ When `simulated` is false:
 
 ## One time source
 
-Every instrument device has a `clock_s` attribute. On a twin it is the simulated clock that drift, moves and frames run on (`twin/clock.py`); on hardware it is Unix time. The Mapper times each tile at the middle of its frame on `clock_s`. Those times are the run file's `acquired_s`, which pyTEMlib's stitch fits drift against. A revisit extrapolates the fitted drift to `clock_s` now. So drift fitting and revisits hold at any `time_scale`, including 0. Step trace events and revisit records carry `clock_s`.
+Every instrument device has a `clock_s` attribute. On a twin it is the simulated clock that drift, moves and frames run on (`asyncroscopy/sim/clock.py`); on hardware it is Unix time. The Mapper times each tile at the middle of its frame on `clock_s`. Those times are the run file's `acquired_s`, which pyTEMlib's stitch fits drift against. A revisit extrapolates the fitted drift to `clock_s` now. So drift fitting and revisits hold at any `time_scale`, including 0. Step trace events and revisit records carry `clock_s`.

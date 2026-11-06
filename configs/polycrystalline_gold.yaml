@@ -18,7 +18,7 @@ instrument:
     zone_axis_max_deviation_deg: 2.0
     acceleration_voltage_ev: 200000
     convergence_angle_mrad: 30
-    beam_current_pa: 100
+    probe_current_pa: 100
     blur_noise_level: 0.5
 
 devices:
@@ -37,8 +37,8 @@ devices:
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
   stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
 
 tango:
   host: 127.0.0.1

@@ -105,7 +105,8 @@ The stage never lands exactly where it was told, and the sample drifts
 over the hours a large map takes. Stitching (pyTEMlib `mosaic`) therefore:
 
 * searches each overlap only within the stage's stated uncertainty
-  (`stage_sigma_m` on the Mapper) plus the most the sample can drift between
+  (`stage_sigma_m` on the Mapper, or the STAGE device's `position_sigma_m` when
+  that is left at 0; a twin's STAGE reports its stage model's) plus the most the sample can drift between
   the two tiles (`max_drift_m_per_s`); a correlation peak outside that bound,
   or a weak one, is not a match, so a tile is never appended at a wrong
   place;
@@ -189,4 +190,4 @@ the MCP servers and the pyTEMlib analysis server as in the quickstart.
 * Beyond 400 000 tiles the solve switches to an iterative method that does
   not finish within 25 minutes: split such a map into several plans.
 * Use at least 25 % overlap for samples with little texture, and set
-  `stage_sigma_m` and `max_drift_m_per_s` on the Mapper to your stage.
+  `stage_sigma_m` (or the STAGE's `position_error_m`) and `max_drift_m_per_s` on the Mapper to your stage.

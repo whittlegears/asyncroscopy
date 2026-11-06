@@ -1,20 +1,13 @@
 # The mapping twin imaging a crystal specimen: a polycrystalline gold film built from ASE unit
-# cells (grains show in an overview, atomic columns below 0.2 nm pixels). The instrument is the
-# same as in digital_twin_mapping.yaml; only the specimen differs. See docs/Operation/specimens.md.
+# cells (grains show in an overview, atomic columns below 0.2 nm pixels). The instrument is
+# digital_twin_mapping.yaml's (extends: merges it in); only the specimen differs. See docs/Operation/specimens.md.
 #
 #   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_crystal.yaml
-
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
-simulated: true
+extends: digital_twin_mapping.yaml
 
 instrument:
-  class_name: DigitalTwin
-  file: asyncroscopy/instruments/electron_microscope/digital_twin.py
   description: "Mapping digital twin: a polycrystalline Au film as the specimen"
-  timeout_seconds: 120
   properties:
-    sample_seed: 12345
-    sample_size_xy: 2.0e-6
     specimen:
       source: crystal
       element: Au
@@ -22,96 +15,9 @@ instrument:
       thickness_variation: 0.15
       grain_count: 60
       mosaic_spread_mrad: 20
-    support_thickness: 1.0e-8
-    acceleration_voltage: 300000
-    convergence_angle_mrad: 30
-    beam_current_pa: 50
-    detector_read_noise: 0.5
-    # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
-    # readback error and settling are unverified placeholders.
-    stage_move_noise_std: 1.5e-7
-    stage_bias_x: 1.0e-7
-    stage_bias_y: -1.5e-7
-    stage_reported_noise_std: 1.0e-8
-    stage_backlash_x: 1.5e-7
-    stage_backlash_y: 2.5e-7
-    stage_speed: 5.0e-6
-    stage_move_overhead: 1.0
-    stage_settle_drift: 2.0e-9
-    stage_settle_tau: 30
-    # Thermo Fisher specifies <= 0.5 nm/min drift.
-    drift_rate_per_min: 5.0e-10
-    drift_random_walk: 2.0e-10
-    scan_flyback_time: 5.0e-4
-    scan_line_jitter_px: 0.3
-    scan_shear: 0.005
-    scan_flyback_compression: 0.05
-    fov_scale_error: 0.01
-    eds_fwhm_mn_ka: 130
-    eds_solid_angle: 0.7
-    eds_dead_time: 1.0e-6
-    dose_tracking: true
-    contamination_max: 3.0e-9
-    contamination_dose: 1.0e4
-    damage_critical_dose: 1.0e5
-    time_scale: 1.0
-
-devices:
-  camera:
-    module_name: asyncroscopy.instruments.electron_microscope.detectors.camera
-  data:
-    module_name: asyncroscopy.data.data
-  eds:
-    module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
-  scan:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
-  # Background map jobs (reserve/start/status/abort/results/release) on this microscope.
-  mapper:
-    class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
-    properties:
-      microscope_device_address: asyncroscopy/instrument/default
-      scan_device_address: asyncroscopy/scan/default
-      eds_device_address: asyncroscopy/eds/default
-      data_device_address: asyncroscopy/data/default
-      stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
-      # stage_sigma_m: how far a tile really lands from the reported position (the twin's 150 nm stage noise and
-      # up to 250 nm backlash together, about 290 nm, not its 10 nm readback noise); tests/test_twin_configs.py checks it.
-      analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 2.9e-7
-      max_drift_m_per_s: 5.0e-11
-  # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
-  # The twin's hidden focus error is set with its focus_offset_m / astigmatism_offset_*_m properties.
-  tuner:
-    class_name: Tuner
-    module_name: asyncroscopy.instruments.electron_microscope.tuner
-    properties:
-      microscope_device_address: asyncroscopy/instrument/default
-      scan_device_address: asyncroscopy/scan/default
-      corrector_device_address: asyncroscopy/corrector/default
-      data_device_address: asyncroscopy/data/default
-  # Approval mode (auto by default); switched from SciAgentGUI.
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
-  stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
-  corrector:
-    class_name: DigitalTwinCorrector
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin
-
-tango:
-  host: localhost
-  port: 9094
-  reset_database_file: true
-
-tiled:
-  host: localhost
-  port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
-  autostart: true
-  register_on_startup: false
-
-device_timeout_seconds: 120
+    # The procedural particles' settings do not apply to a film.
+    sample_particle_count: null
+    particle_radius_mean: null
+    particle_radius_std: null
+    particle_aspect_ratio: null
+    particle_elements: null

@@ -10,6 +10,8 @@ from ase import Atoms
 from ase.build import bulk
 from tango.server import device_property
 
+from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+
 from asyncroscopy.data.data_writer import (
     acquisition_filename,
     save_acquisition,
@@ -17,11 +19,11 @@ from asyncroscopy.data.data_writer import (
 )
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
-    AtomisticDigitalTwin,
+    ElectronMicroscopeTwin,
 )
 
 
-class DigitalTwinTilt(AtomisticDigitalTwin):
+class DigitalTwinTilt(ElectronMicroscopeTwin):
     """Silicon FIB-lamella twin with an imperfect, displaced tilt axis."""
 
     acquisition_save_directory = device_property(
@@ -162,25 +164,8 @@ class DigitalTwinTilt(AtomisticDigitalTwin):
         self._move_index = 0
         self._acquisition_index = 0
         self._screen_position = "out"
-        self._screen_current_pa = 50.0
+        self._screen_current_pa = DEFAULT_BEAM_CURRENT_PA
         self._defocus = 0.0
-
-    def _connect_detector_proxies(self) -> None:
-        addresses = {
-            "camera": self.camera_device_address,
-            "scan": self.scan_device_address,
-            "stage": self.stage_device_address,
-            "data": self.data_device_address,
-        }
-        for name, address in addresses.items():
-            if not address:
-                continue
-            try:
-                proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(12_000)
-                self._detector_proxies[name] = proxy
-            except tango.DevFailed as exc:
-                self.error_stream(f"Failed to connect to {name} proxy at {address}: {exc}")
 
     def _generate_sample(self, seed: int) -> None:
         self._fov = float(self.overview_fov_nm) * 1e-9

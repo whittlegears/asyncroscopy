@@ -1,48 +1,20 @@
-"""Value checks every electron-microscope backend applies before a value reaches the column.
+"""An electron microscope's limit defaults, and its commands' arguments with their units and ranges.
 
-The digital twin and the AutoScript backend call the same functions, so they refuse the
-same values with the same messages (tests/test_parity.py checks this).
+The ElectronMicroscope base checks every value against the device's own ``min_fov``, ``max_fov``,
+``max_defocus`` and ``max_stigmator`` properties before a backend sees it (electron_microscope.py);
+these are those properties' defaults. ``action_hints`` describes the same ranges for clients
+(asyncroscopy.mcp.action_space).
 """
 
 from __future__ import annotations
 
-import math
 
-
-def check_fov(fov: float, min_fov: float, max_fov: float) -> float:
-    """Field of view in metres, refused outside [min_fov, max_fov]."""
-    fov = float(fov)
-    if not (math.isfinite(fov) and float(min_fov) <= fov <= float(max_fov)):
-        raise ValueError(f"field of view must be between {min_fov} and {max_fov} m, got {fov}")
-    return fov
-
-
-def check_defocus(defocus: float, max_defocus: float) -> float:
-    """Defocus in metres, refused beyond +/-max_defocus."""
-    defocus = float(defocus)
-    if not (math.isfinite(defocus) and abs(defocus) <= float(max_defocus)):
-        raise ValueError(f"defocus must be within +/-{max_defocus} m (did you pass nanometres?), got {defocus}")
-    return defocus
-
-
-def check_scan(imsize: int, dwell_time: float, scan_region: list[float] | None) -> tuple[float, float, float, float]:
-    """A scan's [left, top, width, height] (fractions of the field), refused unless it lies inside the field."""
-    region = tuple(float(v) for v in scan_region) if scan_region is not None else (0.0, 0.0, 1.0, 1.0)
-    if len(region) != 4 or not all(math.isfinite(v) for v in region):
-        raise ValueError(f"scan_region must be four finite numbers [left, top, width, height], got {list(region)}")
-    left, top, width, height = region
-    if not (left >= 0 and top >= 0 and width > 0 and height > 0 and left + width <= 1 + 1e-9 and top + height <= 1 + 1e-9):
-        raise ValueError(f"scan_region [left, top, width, height] must lie inside the field (0..1), got {list(region)}")
-    if not (math.isfinite(imsize) and int(imsize) >= 1 and math.isfinite(dwell_time) and float(dwell_time) > 0):
-        raise ValueError(f"imsize must be >= 1 and dwell_time > 0, got {imsize}, {dwell_time}")
-    return region
-
-
-# The device-property defaults of the digital twin and the AutoScript backend (min_fov, max_fov,
-# max_defocus): what the checks above enforce when a deployment sets none.
+# The ElectronMicroscope properties' defaults (min_fov, max_fov, max_defocus, max_stigmator): what the base
+# enforces when a deployment sets none.
 DEFAULT_MIN_FOV = 1e-9
 DEFAULT_MAX_FOV = 1e-4
 DEFAULT_MAX_DEFOCUS = 1e-5
+DEFAULT_MAX_STIGMATOR = 1e-6
 STAGE_ELEMENTS = ("x", "y", "z", "alpha", "beta")
 STAGE_UNITS = ("m", "m", "m", "deg", "deg")
 
@@ -62,5 +34,5 @@ def action_hints(min_fov: float = DEFAULT_MIN_FOV, max_fov: float = DEFAULT_MAX_
         "get_stage": {"returns": stage},
         "get_screen_current": {"returns": {"type": "number", "units": "pA"}},
         "set_screen_current": {"args": [{"name": "current", "type": "number", "units": "pA"}]},
-        "acquire_scanned_image": {"primary": True, "args": [{"name": "detector_list", "type": "array", "items": "string", "doc": "scanning detectors; [] means ['haadf']"}]},
+        "acquire_scanned_image": {"primary": True, "args": [{"name": "detector_list", "type": "array", "items": "string", "doc": "scanning detectors; [] means the microscope's default_detector"}]},
     }

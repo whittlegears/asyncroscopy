@@ -139,6 +139,11 @@ class _Stage(_Node):
         old = self._position
         object.__setattr__(self, "_position", StagePosition(p.x, p.y, p.z, old.a if p.a is None else p.a, old.b if p.b is None else p.b))
 
+    @property
+    def is_moving(self) -> bool:
+        self._rec("is_moving", "get")
+        return False  # moves return on arrival
+
     def get_holder_type(self) -> str:
         self._rec("get_holder_type", "call")
         return self.holder_type
@@ -231,6 +236,27 @@ class _Deflectors(_Node):
         raise ApplicationServerException(f"no deflector {deflector!r}")
 
 
+class _Stigmators(_Node):
+    """The objective stigmator, in AutoScript's optical units (about -1 to 1)."""
+
+    def __init__(self, record: _Recorder, path: str) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "_objective", Point(0.0, 0.0))
+
+    @property
+    def objective_stigmator(self) -> Point:
+        self._rec("objective_stigmator", "get")
+        return Point(self._objective.x, self._objective.y)
+
+    @objective_stigmator.setter
+    def objective_stigmator(self, value: Any) -> None:
+        self._rec("objective_stigmator", "set", list(value) if isinstance(value, (list, tuple)) else value)
+        x, y = (float(v) for v in (value if isinstance(value, (list, tuple)) else (value.x, value.y)))
+        if not (abs(x) <= 1.0 and abs(y) <= 1.0):
+            raise ApplicationServerException(f"objective stigmator ({x}, {y}) is outside -1 to 1")
+        object.__setattr__(self, "_objective", Point(x, y))
+
+
 class _Apertures(_Node):
     def get_available(self) -> list[str]:
         self._rec("get_available", "call")
@@ -264,6 +290,7 @@ class _Optics(_Node):
             "blanker": sub(_Blanker, "blanker"),
             "monochromator": sub(_Monochromator, "monochromator"),
             "deflectors": sub(_Deflectors, "deflectors"),
+            "stigmators": sub(_Stigmators, "stigmators"),
             "aperture_mechanisms": sub(_Apertures, "aperture_mechanisms"),
             "beam_stopper": _ReadOnly(record, f"{path}.beam_stopper", insertion_state="Retracted"),
             "acceleration_voltage": _ReadOnly(record, f"{path}.acceleration_voltage", value=300e3),

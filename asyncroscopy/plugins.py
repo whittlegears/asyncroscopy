@@ -3,8 +3,9 @@
 A class registered with ``@register_profile`` (or ``@register_tracker``, ``@register_strategy``) only
 exists once its module has been imported. The launcher runs each device in its own process, and that
 process imports only the device's own module, so a team's decorator never runs there and the Mapper
-answers "unknown instrument profile". ``load_plugins`` closes the gap: it imports every module or file
-named in ``ASYNCROSCOPY_PLUGINS``, and the registries call it before saying a name is unknown::
+answers "unknown instrument profile". ``PLUGINS.load()`` closes the gap: it imports every module or file
+named in ``ASYNCROSCOPY_PLUGINS``, and every ``Registry`` (asyncroscopy/registry.py) calls it before saying
+a name is unknown::
 
     ASYNCROSCOPY_PLUGINS=my_lab.profiles,C:/lab/afm_profile.py
 
@@ -29,9 +30,6 @@ import sys
 from pathlib import Path
 
 ENV_VAR = "ASYNCROSCOPY_PLUGINS"
-
-_loaded: set[str] = set()
-_errors: dict[str, str] = {}
 
 
 def plugin_specs(value: str | None = None) -> list[str]:
@@ -72,37 +70,56 @@ def _import_file(path: Path):
     return module
 
 
-def load_plugins(specs: list[str] | str | None = None) -> dict[str, str]:
-    """Import every plug-in not yet imported in this process; returns {entry: error} for those that failed.
+class Plugins:
+    """The plug-in modules named in one environment variable, each imported at most once."""
 
-    ``specs`` defaults to ``ASYNCROSCOPY_PLUGINS``. Safe to call often: an entry is tried once, and the
-    variable is read again on each call, so one set later in the process is still picked up.
-    """
-    entries = plugin_specs(specs) if specs is None or isinstance(specs, str) else list(specs)
-    for spec in entries:
-        if spec in _loaded:
-            continue
-        _loaded.add(spec)
-        try:
-            if is_file_spec(spec):
-                _import_file(Path(spec))
-            else:
-                importlib.import_module(spec)
-        except Exception as exc:  # a broken plug-in must not take the device down; it is reported instead
-            _errors[spec] = f"{type(exc).__name__}: {exc}"
-            print(f"[asyncroscopy.plugins] could not import {spec!r}: {_errors[spec]}", file=sys.stderr)
-    return {spec: _errors[spec] for spec in entries if spec in _errors}
+    def __init__(self, env_var: str = ENV_VAR) -> None:
+        self.env_var = env_var
+        self._tried: set[str] = set()
+        self._errors: dict[str, str] = {}
+
+    def specs(self) -> list[str]:
+        """The entries named in the environment variable now."""
+        return plugin_specs(os.environ.get(self.env_var, ""))
+
+    def load(self, specs: list[str] | str | None = None) -> dict[str, str]:
+        """Import every plug-in not yet tried in this process; returns {entry: error} for those that failed.
+
+        ``specs`` defaults to the environment variable, which is read again on each call, so one set
+        later in the process is still picked up.
+        """
+        if specs is None:
+            entries = self.specs()
+        elif isinstance(specs, str):
+            entries = plugin_specs(specs)
+        else:
+            entries = list(specs)
+        for spec in entries:
+            if spec in self._tried:
+                continue
+            self._tried.add(spec)
+            try:
+                if is_file_spec(spec):
+                    _import_file(Path(spec))
+                else:
+                    importlib.import_module(spec)
+            except Exception as exc:  # a broken plug-in must not take the device down; it is reported instead
+                self._errors[spec] = f"{type(exc).__name__}: {exc}"
+                print(f"[asyncroscopy.plugins] could not import {spec!r}: {self._errors[spec]}", file=sys.stderr)
+        return {spec: self._errors[spec] for spec in entries if spec in self._errors}
+
+    def errors(self) -> dict[str, str]:
+        """{entry: error} for every plug-in that failed to import."""
+        return dict(self._errors)
+
+    def hint(self) -> str:
+        """Text for an "unknown name" error: what failed to import, or how to make a plug-in visible."""
+        if self._errors:
+            return "; plug-ins that failed to import: " + ", ".join(f"{k} ({v})" for k, v in self._errors.items())
+        if not self.specs():
+            return f"; a class defined in your own module is found only if {self.env_var} (or the stack YAML's plugins:) names it"
+        return ""
 
 
-def plugin_errors() -> dict[str, str]:
-    """{entry: error} for every plug-in that failed to import in this process."""
-    return dict(_errors)
-
-
-def unknown_hint() -> str:
-    """Text for an "unknown name" error: what failed to import, or how to make a plug-in visible."""
-    if _errors:
-        return "; plug-ins that failed to import: " + ", ".join(f"{k} ({v})" for k, v in _errors.items())
-    if not plugin_specs():
-        return f"; a class defined in your own module is found only if {ENV_VAR} (or the stack YAML's plugins:) names it"
-    return ""
+# The process's plug-ins. Every Registry imports through this one object, so each entry is tried once.
+PLUGINS = Plugins()

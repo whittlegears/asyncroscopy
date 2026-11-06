@@ -26,7 +26,7 @@ from typing import Any
 
 import tango
 
-from asyncroscopy.jobs.map_profile import Cost, InstrumentProfile, register_profile
+from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, register_profile
 
 FOV_TOLERANCE = 1e-6  # relative: the field_of_view setting must make the tile this close to fov_m
 
@@ -45,7 +45,7 @@ class YamlProfile(InstrumentProfile):
             reply = json.loads(self.instrument().get_map_profile(json.dumps({"settings": settings})))
         except tango.DevFailed as exc:
             raise ValueError(
-                f"{self.mapper.microscope_device_address} cannot be mapped with the yaml profile: get_map_profile failed "
+                f"{self.ctx.settings.microscope_device_address} cannot be mapped with the yaml profile: get_map_profile failed "
                 f"({exc.args[0].desc.strip()[:200] if exc.args else exc}). It needs an image acquisition and stage x and y settings"
             ) from None
         if "error" in reply:
@@ -123,11 +123,11 @@ class YamlProfile(InstrumentProfile):
         return costs, {f"max_{name}": round(cost.value, 6) for name, cost in costs.items()}
 
     def needed_commands(self, plan: dict) -> dict[str, list[str]]:
-        return {self.mapper.microscope_device_address: list(self._info(plan)["commands"])}
+        return {self.ctx.settings.microscope_device_address: list(self._info(plan)["commands"])}
 
     def stage_targets(self, plan: dict, xs: list[tuple[str, float]], ys: list[tuple[str, float]]) -> list[dict]:
         stage = self._info(plan)["stage"]
-        device = self.mapper.microscope_device_address
+        device = self.ctx.settings.microscope_device_address
         out = []
         for axis, values in (("x", xs), ("y", ys)):
             limits = stage[axis]
@@ -164,6 +164,9 @@ class YamlProfile(InstrumentProfile):
     def make_safe(self, job: dict) -> None:
         self._run(self._info(job["resolved_plan"])["safe"])
 
+    def safe_commands(self, plan: dict) -> frozenset:
+        return frozenset(self._info(plan)["safe"])
+
     def before_move(self, job: dict) -> None:
         self._run(self._info(job["resolved_plan"])["before_move"])
 
@@ -174,7 +177,7 @@ class YamlProfile(InstrumentProfile):
         stage = self._info(job["resolved_plan"])["stage"]
         self._set(stage["x"]["setting"], float(x))
         self._set(stage["y"]["setting"], float(y))
-        return not self.mapper.aborting(job)
+        return not self.ctx.aborting(job)
 
     def stage_reported(self, job: dict) -> list[float]:
         stage = self._info(job["resolved_plan"])["stage"]

@@ -1,6 +1,6 @@
 # Autofocus and stigmation (the Tuner job)
 
-The `Tuner` device (`asyncroscopy/instruments/electron_microscope/tuner.py`) runs autofocus and astigmatism correction as one background job with the same envelope as the Mapper: `reserve`, `start`, `job_status`, `abort`, `results`, `release`. An agent calls it in one go:
+The `Tuner` device (`asyncroscopy/jobs/tuning/tuner.py`) runs autofocus and astigmatism correction as one background job with the same envelope as the Mapper: `reserve`, `start`, `job_status`, `abort`, `results`, `release`. An agent calls it in one go:
 
 ```json
 run_job {"device": "Tuner", "plan": {"corrections": ["focus", "stigmation"], "strategy": "image_metric", "dose_budget_e_per_a2": 5000}}
@@ -13,12 +13,12 @@ The agent decides when to tune and the job runs the loop. A focus sweep is dozen
 | Field | Default | Meaning |
 | :-- | :-- | :-- |
 | `corrections` | `["focus"]` | `focus` (C1), `stigmation` (A1), or both |
-| `strategy` | `optistem` | One of the registered strategies (see below) |
+| `strategy` | `vendor_autofocus` | One of the registered strategies (see below) |
 | `dose_budget_e_per_a2` | required | Most dose the tuning may put on the field |
 | `max_steps` | 80 | Most measurements: images, vendor runs and corrector measurements |
 | `focus_range_m`, `stig_range_m` | 3e-7, 1e-7 | No defocus or stigmator value leaves snapshot ± this |
 | `max_step_m` | 1e-7 | Largest change per write; longer moves are ramped |
-| `fov_m`, `imsize`, `dwell_s`, `detector` | 1e-7, 256, 2e-6, haadf | Imaging settings for the tuning images |
+| `fov_m`, `imsize`, `dwell_s`, `detector` | 1e-7, 256, 2e-6, the microscope's `default_detector` | Imaging settings for the tuning images |
 | `metric` | `normalized_variance` | Sharpness metric (`asyncroscopy/routines/focus.py`) |
 | `coarse_points`, `fine_points`, `rounds`, `stig_passes` | 13, 9, 2, 1 | Search shape for `image_metric` |
 | `corrector_iterations`, `corrector_gain`, `corrector_target_m`, `error_tolerance_m` | 5, 1.0, 2e-9, 1e-9 | Loop settings for `corrector` |
@@ -27,9 +27,9 @@ The agent decides when to tune and the job runs the loop. A focus sweep is dozen
 
 ## Strategies
 
-- **`optistem`**, the default (decision D2). Runs the microscope's `auto_focus` once: OptiSTEM C1A1 through AutoScript on the Spectra 300, or the twin's stand-in. It corrects C1 and A1 together. Its dose counts as `autofocus_frames` frames, a device property to calibrate at first light.
+- **`vendor_autofocus`**, the default (decision D2). Runs the microscope's `auto_focus` once: OptiSTEM C1A1 through AutoScript on the Spectra 300, or the twin's stand-in. It corrects C1 and A1 together. Its dose counts as `autofocus_frames` frames, a device property to calibrate at first light.
 - **`image_metric`**. A coarse sweep over the defocus range, then two fine sweeps re-centred on the estimate, each fitted with a parabola. The score near focus is flat, so the information is in the flanks. A sweep that is symmetric about the peak cancels the misfit of the parabola. Stigmation runs the same search along each stigmator component in turn. It needs `set_stigmator` and `get_stigmator` on the microscope; the twin has them, and AutoScript does not yet. A peak at the edge of the range fails the job instead of settling there.
-- **`corrector`**. Measures C1 and A1 with the corrector (`measure_c1a1`), sends a correction bounded by `max_step_m` (`correct_aberration`), and measures again. A JSON-RPC reply that contains `error` counts as a failure. On a stack that is not simulated, this strategy is refused until `allow_corrector_writes` is set, which happens only after the first-light sign test.
+- **`corrector`**. Measures C1 and A1 with the corrector's typed `measure_aberrations` (one schema, metres, whatever the backend), sends a correction bounded by `max_step_m` with `correct`, and measures again. A corrector that refuses either command fails the job; the CEOS JSON-RPC stays inside the CEOS backend. On a stack that is not simulated, this strategy is refused until `allow_corrector_writes` is set, which happens only after the first-light sign test.
 
 On the twin, the column has a hidden focus error that `get_defocus` does not report. Set it with the twin's `focus_offset_m` and `astigmatism_offset_a_m`/`_b_m` properties, or with the `set_focus_error` method in tests. The twin's images blur with it, and `export_ground_truth()["focus"]` gives the residual C1 and A1 at the field, including the specimen height. The twin corrector's measurements are noisy by default. Its `correction_sign: -1` property makes a correction add instead of subtract.
 
@@ -47,7 +47,7 @@ On the twin, the column has a hidden focus error that `get_defocus` does not rep
 A strategy is one class. It never calls Tango; it tunes through the `TuneContext` it is given, which enforces every rule above.
 
 ```python
-from asyncroscopy.instruments.electron_microscope.tuner import Strategy, register_strategy
+from asyncroscopy.jobs.tuning.tuner import Strategy, register_strategy
 
 @register_strategy
 class HillClimb(Strategy):

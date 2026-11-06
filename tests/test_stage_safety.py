@@ -14,7 +14,12 @@ import pytest
 import tango
 
 from asyncroscopy.instruments.electron_microscope.digital_twin import MOVE_BLOCK_S
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.jobs.mapping.profile import MapContext, MapSettings
+
+
+def context(instrument, aborting: bool, timeout_s: float) -> MapContext:
+    """What a map profile sees of a Mapper driving ``instrument``."""
+    return MapContext(MapSettings("m", stage_timeout_s=timeout_s), lambda address, timeout_s=None: instrument, lambda job: aborting)
 
 
 def wait_until_still(twin, timeout=15.0):
@@ -88,21 +93,18 @@ def test_a_short_move_holds_the_device_no_longer_than_the_limit(slow_twin, tango
 
 def test_the_mapper_waits_for_a_long_move_and_stops_waiting_on_abort(slow_twin):
     slow_twin.move_stage([4e-6, 0.0, 0.0, 0.0, 0.0])
-    mapper = SimpleNamespace(aborting=lambda job: False, stage_timeout_s=600.0)
     t0 = time.monotonic()
-    assert Mapper._wait_for_stage(mapper, {}, slow_twin) is True
+    assert context(slow_twin, aborting=False, timeout_s=600.0).wait_for_stage({}) is True
     assert time.monotonic() - t0 > 2.5 and not slow_twin.read_attribute("stage_moving").value
     slow_twin.move_stage([0.0, 0.0, 0.0, 0.0, 0.0])
-    aborted = SimpleNamespace(aborting=lambda job: True, stage_timeout_s=600.0)
-    assert Mapper._wait_for_stage(aborted, {}, slow_twin) is False
+    assert context(slow_twin, aborting=True, timeout_s=600.0).wait_for_stage({}) is False
 
 
 def test_a_stage_that_never_arrives_fails_the_step_instead_of_waiting_forever():
     stuck = SimpleNamespace(read_attribute=lambda name: SimpleNamespace(value=True))
-    mapper = SimpleNamespace(aborting=lambda job: False, stage_timeout_s=0.3)
     t0 = time.monotonic()
     with pytest.raises(RuntimeError, match="stage_timeout_s"):
-        Mapper._wait_for_stage(mapper, {}, stuck)
+        context(stuck, aborting=False, timeout_s=0.3).wait_for_stage({})
     assert time.monotonic() - t0 < 2.0
 
 

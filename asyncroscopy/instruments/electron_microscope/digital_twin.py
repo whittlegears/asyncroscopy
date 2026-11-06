@@ -13,39 +13,42 @@ literature magnitudes. See docs/digital_twin.md.
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import tango
-from tango import DevVarFloatArray
-from tango.server import attribute, command, device_property
+from tango.server import command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
-    AtomisticDigitalTwin,
+    ElectronMicroscopeTwin,
 )
-from asyncroscopy.instruments.electron_microscope.limits import check_defocus, check_fov, check_scan
+from asyncroscopy.instruments.electron_microscope.electron_microscope import check_defocus, check_scan
 from asyncroscopy.instruments.electron_microscope.twin import (
-    DoseMap,
     EdsParams,
-    EventRng,
     SampleParams,
     ScanParams,
-    SimClock,
-    StageModel,
-    StageParams,
     pixel_sample_coordinates,
     point_spectrum,
 )
+from asyncroscopy.sim.dose import DoseMap
+from asyncroscopy.sim.rng import EventRng
+from asyncroscopy.sim.clock import SimClock
+from asyncroscopy.sim.stage_model import StageModel
+from asyncroscopy.sim.stage_model import StageParams
 from asyncroscopy.instruments.electron_microscope.twin.detector import (
     DetectorDrift,
     DetectorParams,
     count,
     electrons_per_pixel,
 )
-from asyncroscopy.instruments.electron_microscope.twin.dose import DoseParams
+from asyncroscopy.sim.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import (
     DETECTOR_SCALE,
@@ -75,7 +78,7 @@ def _limit(value) -> float | None:
         return None
 
 
-class DigitalTwin(AtomisticDigitalTwin):
+class DigitalTwin(ElectronMicroscopeTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
     # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
@@ -97,11 +100,8 @@ class DigitalTwin(AtomisticDigitalTwin):
     height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
     height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
     # Limits a real column enforces; the twin refuses rather than rendering nonsense (or running out of memory).
-    min_fov = _prop(float, 1e-9, "Smallest field of view accepted (m).")
-    max_fov = _prop(float, 1e-4, "Largest field of view accepted (m).")
-    max_defocus = _prop(float, 1e-5, "Largest |defocus| accepted (m); render cost grows with defocus squared.")
+    # min_fov, max_fov, max_defocus (render cost grows with defocus squared) and max_stigmator are the base's.
     max_image_shift = _prop(float, 1e-6, "Largest |image shift| per axis accepted (m).")
-    max_stigmator = _prop(float, 1e-6, "Largest |stigmator| component accepted (m of A1).")
     # Focus truth the operator does not see: get_defocus and get_stigmator never include it. A twin
     # started with these set is defocused and astigmatic, and its images are blurred accordingly, so a
     # focus routine has to find the correction from the images (export_ground_truth reports the residual).
@@ -113,7 +113,7 @@ class DigitalTwin(AtomisticDigitalTwin):
     # Optics and detector
     acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
     convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
-    beam_current_pa = _prop(float, 50.0, "Probe current (pA).")
+    probe_current_pa = _prop(float, DEFAULT_BEAM_CURRENT_PA, "Probe current (pA); reported as the measured beam_current_pa.")
     haadf_z_exponent = _prop(float, 1.7, "HAADF contrast exponent n in Z^n.")
     haadf_scattering_scale = _prop(float, 2.25e-5, "k in 1-exp(-k * sum Z^n rho t[A]).")
     atomic_pixel_threshold = _prop(float, 0.2e-9, "Below this pixel size (m) atoms are rendered.")
@@ -163,7 +163,7 @@ class DigitalTwin(AtomisticDigitalTwin):
     def _check_properties(self) -> None:
         """Refuse impossible configuration at start-up, not with a cryptic error at the first image."""
         rules = [
-            ("beam_current_pa", float(self.beam_current_pa) > 0, "must be > 0"),
+            ("probe_current_pa", float(self.probe_current_pa) > 0, "must be > 0"),
             ("particle_radius_mean", float(self.particle_radius_mean) > 0, "must be > 0"),
             ("sample_size_xy", float(self.sample_size_xy) > 0, "must be > 0"),
             ("particle_elements", any(e.strip() for e in str(self.particle_elements).split(",")), "must name at least one element"),
@@ -195,7 +195,12 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
         self._moving_until = 0.0  # monotonic time a long move ends (see _move_stage)
-        self._acquisitions: list[dict] = []
+        # Every acquisition's truth goes to a JSONL file as it is taken (export_ground_truth reads it back), so a
+        # long session does not hold them all in memory; only the count is kept here.
+        self._truth_path = Path(self.acquisition_save_directory) / "ground_truth" / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
+        self._truth_path.parent.mkdir(parents=True, exist_ok=True)
+        self._truth_path.write_text("", encoding="utf-8")
+        self._acquisition_count = 0
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
         # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
         # is the instrument, which only asks the specimen for weights, densities, heights and features.
@@ -255,7 +260,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             fov_scale_error=float(self.fov_scale_error),
         )
         self._detector_params = DetectorParams(
-            beam_current_pa=float(self.beam_current_pa),
+            beam_current_pa=float(self.probe_current_pa),
             gain=float(self.detector_gain),
             offset=float(self.detector_offset),
             read_noise=float(self.detector_read_noise),
@@ -291,6 +296,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
         self._last_written_stage: np.ndarray | None = None
+        self._stage_sigma_published = False
         self._stage_position = self._stage.true.copy()
         # The atom-renderer state of the base class is unused here.
         self._particle_records_base = []
@@ -327,12 +333,31 @@ class DigitalTwin(AtomisticDigitalTwin):
             return
         stage.x, stage.y, stage.z, stage.alpha, stage.beta = (float(v) for v in position)
         self._last_written_stage = np.asarray(position, dtype=np.float64).copy()
+        self._publish_stage_sigma()
+
+    def stage_sigma_m(self) -> float:
+        """How far the stage lands from where it reports, 1 sigma: the landing noise, the backlash on a reversal and
+        the readback noise together (the bias is the same for every tile, so it does not separate neighbours)."""
+        backlash = max(abs(float(self.stage_backlash_x)), abs(float(self.stage_backlash_y)))
+        return float(math.sqrt(float(self.stage_move_noise_std) ** 2 + backlash**2 + float(self.stage_reported_noise_std) ** 2))
+
+    def _publish_stage_sigma(self) -> None:
+        """Tell the STAGE device (a DigitalTwinSTAGE) the twin stage's error, once it answers; a STAGE that cannot take it is left alone."""
+        stage = self._detector_proxies.get("stage")
+        if stage is None or self._stage_sigma_published:
+            return
+        try:
+            stage.write_attribute("position_sigma_m", self.stage_sigma_m())
+            self._stage_sigma_published = True
+        except tango.DevFailed:  # not up yet (tried again at the next move), or a STAGE whose sigma is read-only
+            pass
 
     def _sync_stage_from_proxy(self) -> None:
         """A position written to the STAGE device directly counts as a stage command."""
         stage = self._detector_proxies.get("stage")
         if stage is None:
             return
+        self._publish_stage_sigma()
         try:
             proxy_position = np.array([stage.x, stage.y, stage.z, stage.alpha, stage.beta], dtype=np.float64)
         except tango.DevFailed:
@@ -347,9 +372,8 @@ class DigitalTwin(AtomisticDigitalTwin):
         self._stage_position = self._stage.true.copy()
         self._write_stage_proxy(self._stage.reported)
 
-    stage_moving = attribute(dtype=bool, doc="True while a long stage move is under way; moves and acquisitions are refused until it is false.")
-
-    def read_stage_moving(self) -> bool:
+    def _stage_moving(self) -> bool:
+        """True while a long stage move is under way; moves and acquisitions are refused until it is false."""
         return time.monotonic() < self._moving_until
 
     def instrument_clock_s(self) -> float:
@@ -400,10 +424,10 @@ class DigitalTwin(AtomisticDigitalTwin):
                 raise ValueError(f"stage {axis} = {value:.6g} is outside the stage limits [{low}, {high}]")
 
     def _set_fov(self, fov) -> None:
-        self._fov = check_fov(fov, self.min_fov, self.max_fov)
+        self._fov = float(fov)
 
     def _set_defocus(self, defocus) -> None:
-        self._defocus = check_defocus(defocus, self.max_defocus)
+        self._defocus = float(defocus)
 
     def _get_stage(self):
         self._sync_stage_from_proxy()
@@ -424,21 +448,15 @@ class DigitalTwin(AtomisticDigitalTwin):
     def _get_image_shift(self):
         return self._image_shift.copy()
 
-    @command(dtype_in=DevVarFloatArray, doc_in=":param stigmator: [a, b] objective stigmator in metres of A1.")
-    def set_stigmator(self, stigmator: list[float]) -> None:
-        """Set the objective stigmator: the two A1 components it adds to the column, in metres (twin only)."""
-        value = np.asarray(stigmator, dtype=np.float64)
-        limit = float(self.max_stigmator)
-        if value.shape != (2,) or not np.all(np.isfinite(value)):
-            raise ValueError(f"stigmator must be [a, b] in metres, got {np.atleast_1d(value).tolist()}")
-        if np.any(np.abs(value) > limit):
-            raise ValueError(f"stigmator must be within +/-{limit} m per component, got {value.tolist()}")
-        self._stigmator = value
+    def _set_stigmator(self, stigmator: list[float]) -> None:
+        self._stigmator = np.asarray(stigmator, dtype=np.float64)
 
-    @command(dtype_out=DevVarFloatArray)
-    def get_stigmator(self) -> np.ndarray:
-        """Read the objective stigmator [a, b] in metres; the column's own astigmatism is not included."""
-        return self._stigmator.copy()
+    def _get_stigmator(self) -> list[float]:
+        return self._stigmator.tolist()
+
+    def _beam_current(self) -> dict:
+        # Always current: nothing on the twin drifts it between readings.
+        return {"pa": float(self._detector_params.beam_current_pa), "source": "measured", "age_s": 0.0}
 
     def set_focus_error(self, c1_m: float, a1_m: tuple[float, float] = (0.0, 0.0)) -> None:
         """Test and bench hook, not a Tango command: replace the hidden focus error, as a new specimen would."""
@@ -540,8 +558,19 @@ class DigitalTwin(AtomisticDigitalTwin):
             "scan": {**vars(self._scan_params), **scan_truth},
             "detector": {k: v for k, v in vars(self._detector_drift.at(self._detector_params, t0)).items() if k in ("gain", "offset")},
         }
-        self._acquisitions.append(record)
+        self._record_acquisition(record)
         return {"xs": xs, "ys": ys, "index": index, "pixel_m": pixel, "dwell_s": float(dwell_time), "record": record}
+
+    def _record_acquisition(self, record: dict) -> None:
+        """Append one acquisition's truth to the ground-truth file."""
+        with self._truth_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+        self._acquisition_count += 1
+
+    def _acquisition_records(self) -> list[dict]:
+        """Every acquisition's truth since the sample was made, from the ground-truth file."""
+        with self._truth_path.open("r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
 
     def _beam_xy_at(self, t: float) -> np.ndarray:
         """Where the scan is centred at sim time ``t``: the true stage position plus the image shift."""
@@ -660,10 +689,10 @@ class DigitalTwin(AtomisticDigitalTwin):
             self._eds_params,
             self._rng.for_event("eds", index),
         )
-        electrons = self._beam_current_pa() * 1e-12 * real_time / 1.602176634e-19
+        electrons = self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE
         self._dose.add_point(float(xy[0]), float(xy[1]), electrons, 1e-20)
         self._clock.advance(real_time)
-        self._acquisitions.append(
+        self._record_acquisition(
             {
                 "index": index,
                 "kind": "spectrum",
@@ -721,12 +750,10 @@ class DigitalTwin(AtomisticDigitalTwin):
         parameters["scan_detectors"] = sorted(d.lower() for d in DETECTOR_SCALE)
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
-        parameters["beam_current_pa"] = self._detector_params.beam_current_pa
         # The twin delivers exactly its configured current, so it counts as measured (AutoScript: the screen current).
-        parameters["beam_current_source"] = "measured"
-        parameters["beam_current_age_s"] = 0.0  # always current: nothing on the twin drifts it between readings
+        parameters.update(self.beam_current_fields())
         parameters["beam_blanked"] = self._blanked
-        parameters["stage_moving"] = self.read_stage_moving()
+        parameters["stage_moving"] = self._stage_moving()
         parameters["simulated"] = True  # for clients; job devices take the stack's `simulated` property, never this
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
@@ -747,7 +774,7 @@ class DigitalTwin(AtomisticDigitalTwin):
                 "particles": specimen_truth.get("particles", []),
                 "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
                 "moves": [vars(m) for m in self._stage.history],
-                "acquisitions": self._acquisitions,
+                "acquisitions": self._acquisition_records(),
                 "simulated_time_s": self._clock.now(),
                 "dose": self._dose.summary(),
                 "focus": {**self._focus_truth(), "hidden_error": self._focus_error},
