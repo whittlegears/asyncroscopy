@@ -303,7 +303,7 @@ def test_a_strategy_that_exceeds_its_declared_dose_is_stopped_and_restored(fresh
         assert results["summary"]["tune"]["images"] == 4  # the fifth frame would pass the budget
         assert twin.get_defocus() == pytest.approx(1e-8)
     finally:
-        STRATEGIES.pop("greedy_test", None)
+        STRATEGIES.unregister("greedy_test")
 
 
 def test_abort_mid_search_restores_the_snapshot(fresh, tuner_proxy):
@@ -367,7 +367,7 @@ def test_a_forty_line_example_strategy_registered_from_a_test(fresh, tuner_proxy
         assert tune["sharpness_after"] > tune["sharpness_before"]
         assert abs(device._focus_truth()["c1_m"]) < 30e-9  # a crude search, but far better than 160 nm
     finally:
-        STRATEGIES.pop("hill_climb_example", None)
+        STRATEGIES.unregister("hill_climb_example")
 
 
 # ----------------------------------------------------------------------

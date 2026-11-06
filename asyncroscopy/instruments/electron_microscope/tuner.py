@@ -53,7 +53,6 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 from typing import Any
 
 import numpy as np
@@ -65,7 +64,7 @@ from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.routines import focus
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, check_current_at_start, usable_beam_current
-from asyncroscopy.plugins import unknown_hint
+from asyncroscopy.registry import Registry
 
 CORRECTIONS = ("focus", "stigmation")
 PLAN_DEFAULTS: dict[str, Any] = {
@@ -148,35 +147,9 @@ class Strategy:
         raise NotImplementedError
 
 
-STRATEGIES: dict[str, type[Strategy]] = {}
-_entry_points_loaded = False
-
-
-def register_strategy(cls: type[Strategy]) -> type[Strategy]:
-    """Make ``cls`` available as ``plan["strategy"] = cls.name``; usable as a class decorator."""
-    if not cls.name:
-        raise ValueError(f"{cls.__name__} needs a name")
-    STRATEGIES[cls.name] = cls
-    return cls
-
-
-def strategies() -> dict[str, type[Strategy]]:
-    """Registered strategies, including those named in ``ASYNCROSCOPY_PLUGINS`` (asyncroscopy/plugins.py)
-    and those installed with the ``asyncroscopy.focus_strategies`` entry point."""
-    global _entry_points_loaded
-    from asyncroscopy.plugins import load_plugins
-
-    load_plugins()
-    if not _entry_points_loaded:
-        _entry_points_loaded = True
-        from importlib.metadata import entry_points
-
-        for point in entry_points(group="asyncroscopy.focus_strategies"):
-            try:
-                register_strategy(point.load())
-            except Exception as exc:  # a broken plug-in must not take the Tuner down
-                print(f"[asyncroscopy.tuner] could not load focus strategy {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
-    return STRATEGIES
+STRATEGIES: Registry[type[Strategy]] = Registry("asyncroscopy.focus_strategies", kind="strategy")
+register_strategy = STRATEGIES.register
+strategies = STRATEGIES.all
 
 
 @register_strategy
@@ -539,9 +512,6 @@ class Tuner(JobDevice):
         if not isinstance(corrections, list) or not corrections or any(c not in CORRECTIONS for c in corrections):
             raise ValueError(f"corrections must be a non-empty list of {list(CORRECTIONS)}, got {p['corrections']!r}")
         p["corrections"] = [c for c in CORRECTIONS if c in corrections]
-        registry = strategies()
-        if p["strategy"] not in registry:
-            raise ValueError(f"unknown strategy {p['strategy']!r}; registered: {sorted(registry)}{unknown_hint()}")
         for key in ("focus_range_m", "stig_range_m", "max_step_m", "fov_m", "dwell_s", "dose_budget_e_per_a2", "corrector_target_m"):
             if isinstance(p[key], bool) or not isinstance(p[key], (int, float)) or not float(p[key]) > 0:
                 raise ValueError(f"{key} must be a number > 0, got {p[key]!r}")
@@ -550,7 +520,7 @@ class Tuner(JobDevice):
                 raise ValueError(f"{key} must be an integer >= 3, got {p[key]!r}")
         if not 0 < float(p["corrector_gain"]) <= 1:
             raise ValueError("corrector_gain must be in (0, 1]: a correction never sends more than was measured")
-        strategy = registry[p["strategy"]]()
+        strategy = STRATEGIES.get(p["strategy"])()
         missing = set(p["corrections"]) - set(strategy.corrections)
         if missing:
             raise ValueError(f"strategy {strategy.name} cannot correct {sorted(missing)}")
@@ -733,7 +703,7 @@ class Tuner(JobDevice):
     def run_step(self, job: dict, index: int) -> dict:
         plan, state = job["resolved_plan"], job["tune"]
         ctx = TuneContext(self, job)
-        strategy = strategies()[plan["strategy"]]()
+        strategy = STRATEGIES.get(plan["strategy"])()
         try:
             state["sharpness_before"] = ctx.sharpness()
             state["strategy_result"] = strategy.run(ctx)

@@ -39,12 +39,10 @@ docs/Adding_New_Hardware/new_instrument.md ("Map any instrument") walks through 
 
 from __future__ import annotations
 
-import importlib
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from asyncroscopy.plugins import load_plugins, unknown_hint
+from asyncroscopy.registry import Registry
 
 if TYPE_CHECKING:
     import tango
@@ -221,49 +219,16 @@ class InstrumentProfile:
         raise NotImplementedError
 
 
-PROFILES: dict[str, type[InstrumentProfile]] = {}
 # Built-in profiles, imported the first time they are asked for (so this module imports no instrument code).
-BUILT_IN = {
-    "stem": "asyncroscopy.instruments.electron_microscope.map_profiles",
-    "sem": "asyncroscopy.instruments.electron_microscope.map_profiles",
-    "yaml": "asyncroscopy.instruments.yaml_sim.map_profile",
-}
-_entry_points_loaded = False
-
-
-def register_profile(cls: type[InstrumentProfile]) -> type[InstrumentProfile]:
-    """Make ``cls`` available as ``instrument_profile = cls.name``; usable as a class decorator."""
-    if not cls.name:
-        raise ValueError(f"{cls.__name__} needs a name")
-    PROFILES[cls.name] = cls
-    return cls
-
-
-def profiles() -> dict[str, type[InstrumentProfile]]:
-    """Every profile: built in, registered, named in ``ASYNCROSCOPY_PLUGINS`` (asyncroscopy/plugins.py),
-    and installed with the ``asyncroscopy.map_profiles`` entry point."""
-    global _entry_points_loaded
-    for module in set(BUILT_IN.values()):
-        importlib.import_module(module)
-    load_plugins()
-    if not _entry_points_loaded:
-        _entry_points_loaded = True
-        from importlib.metadata import entry_points
-
-        for point in entry_points(group="asyncroscopy.map_profiles"):
-            try:
-                register_profile(point.load())
-            except Exception as exc:  # a broken plug-in must not take the Mapper down
-                print(f"[asyncroscopy.map_profile] could not load entry point {point.name!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
-    return PROFILES
-
-
-def get_profile(name: str) -> type[InstrumentProfile]:
-    """The profile class called ``name``; ValueError listing the known ones otherwise."""
-    if name not in PROFILES and name in BUILT_IN:
-        importlib.import_module(BUILT_IN[name])
-    if name not in PROFILES:
-        known = profiles()
-        if name not in known:
-            raise ValueError(f"unknown instrument profile {name!r}; registered: {sorted(known)}{unknown_hint()}")
-    return PROFILES[name]
+PROFILES: Registry[type[InstrumentProfile]] = Registry(
+    "asyncroscopy.map_profiles",
+    {
+        "stem": "asyncroscopy.instruments.electron_microscope.map_profiles",
+        "sem": "asyncroscopy.instruments.electron_microscope.map_profiles",
+        "yaml": "asyncroscopy.instruments.yaml_sim.map_profile",
+    },
+    kind="instrument profile",
+)
+register_profile = PROFILES.register
+get_profile = PROFILES.get
+profiles = PROFILES.all
