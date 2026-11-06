@@ -37,11 +37,23 @@ If you're editing this class, you're usually doing one of these:
    `_acquire_scanned_data_advanced`, `_acquire_spectrum`.
 
 4. **Adding a new detector**
-   Add a device property for its address (on the base), register it in
-   `_connect_detector_proxies`, and read it in the relevant helper.
+   Add a device property for its address on the base, add it to the base's
+   `DETECTOR_ADDRESSES`, and read its proxy in the relevant helper.
    ```python
-   "newdet": self.newdet_device_address,
+   DETECTOR_ADDRESSES = {..., "newdet": "newdet_device_address"}
    ```
+
+6. **What the base already does for AutoScript**
+   Limits are checked by the base before a helper runs; helpers send the value
+   as given. The command lock is the base's `@hardware_call()`; AutoScript adds
+   `_check_connected` (refuse with `NotConnected` when there is no client) and runs
+   the server without Tango's own per-device lock (`serve`), so `blank_beam` never
+   queues behind a long call. The beam current reported until the screen has
+   measured it is the base's `default_beam_current_pa`. The stigmator is
+   AutoScript's objective stigmator, in its optical units, converted with
+   `objective_stigmator_m_per_unit`; until first light sets that, `get_stigmator`
+   and `set_stigmator` are refused (and the Tuner treats the microscope as having
+   no stigmator). `stage_moving` reads `specimen.stage.is_moving`.
 
 5. **Adding or changing acquisition settings**
    Extend what is read from the detector devices — dwell time, resolution,

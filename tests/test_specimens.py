@@ -27,7 +27,8 @@ import pytest
 import tango
 
 import asyncroscopy.instruments.electron_microscope.digital_twin as digital_twin_module
-from asyncroscopy.instruments.electron_microscope.twin import EventRng, SampleParams
+from asyncroscopy.instruments.electron_microscope.twin import SampleParams
+from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import Renderer, RenderParams
 from asyncroscopy.instruments.electron_microscope.twin.specimen import (
@@ -179,7 +180,7 @@ def test_a_plug_in_source_needs_only_the_interface():
         assert np.allclose(image, image.mean()) and image.mean() > 0
         assert slab.ground_truth() == {"known": False, "particles": []}
     finally:
-        SPECIMENS.pop("test_slab", None)
+        SPECIMENS.unregister("test_slab")
 
 
 def test_the_documented_example_source_works():
@@ -196,7 +197,7 @@ def test_the_documented_example_source_works():
         assert grating.areal_density(1e-9, 5e-8) == {"Au": pytest.approx(0.059 * 200)}
         assert grating.areal_density(5e-8, 5e-8) == {}
     finally:
-        SPECIMENS.pop("cross_grating", None)
+        SPECIMENS.unregister("cross_grating")
 
 
 @pytest.mark.parametrize(

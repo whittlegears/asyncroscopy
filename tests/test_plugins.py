@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PROFILE = textwrap.dedent(
     """
-    from asyncroscopy.jobs.map_profile import InstrumentProfile, register_profile
+    from asyncroscopy.jobs.mapping.profile import InstrumentProfile, register_profile
     from asyncroscopy.routines.drift import LinearTracker, register_tracker
 
     @register_profile
@@ -33,7 +33,7 @@ PROFILE = textwrap.dedent(
 
 CHECK = textwrap.dedent(
     """
-    from asyncroscopy.jobs.map_profile import get_profile
+    from asyncroscopy.jobs.mapping.profile import get_profile
     from asyncroscopy.routines.drift import get_tracker
     print(get_profile("team_afm").__name__, get_tracker("team_tracker").__name__)
     """
@@ -117,13 +117,13 @@ def test_the_stack_yaml_plugins_list_reaches_every_device_through_the_env_var(tm
 def test_a_tuner_strategy_in_a_team_file_is_found_through_the_env_var(tmp_path):
     team = tmp_path / "team_strategy.py"
     team.write_text(textwrap.dedent("""
-        from asyncroscopy.instruments.electron_microscope.tuner import Strategy, register_strategy
+        from asyncroscopy.jobs.tuning.tuner import Strategy, register_strategy
 
         @register_strategy
         class TeamFocus(Strategy):
             name = "team_focus"
     """), encoding="utf-8")
-    code = "from asyncroscopy.instruments.electron_microscope.tuner import strategies; print('team_focus' in strategies())"
+    code = "from asyncroscopy.jobs.tuning.tuner import strategies; print('team_focus' in strategies())"
     assert _fresh_python(code, None).stdout.strip() == "False"
     found = _fresh_python(code, str(team))
     assert found.stdout.strip() == "True", found.stderr

@@ -63,6 +63,11 @@ class STAGE(Device):
     high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
     sample_file = device_property(dtype=str, default_value="", doc="Where load_sample records the loaded sample, so a restart keeps it; blank: outputs/stage/<device name>_sample.json.")
+    position_error_m = device_property(
+        dtype=float, default_value=0.0,
+        doc="1-sigma distance between where the stage lands and where it reports (m), from its specification; reported as "
+        "position_sigma_m, which a Mapper without its own stage_sigma_m uses to bound the stitching search. 0: unknown.",
+    )
 
     # ------------------------------------------------------------------
     # Attributes
@@ -127,6 +132,13 @@ class STAGE(Device):
         doc="Stage beta tilt in degrees",
     )
 
+    position_sigma_m = attribute(
+        dtype=float,
+        unit="m",
+        access=AttrWriteType.READ,
+        doc="1-sigma distance between where the stage lands and where it reports (m); 0 when unknown (position_error_m).",
+    )
+
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
@@ -172,6 +184,9 @@ class STAGE(Device):
 
     def read_position(self) -> list[float]:
         return self._read_position()
+
+    def read_position_sigma_m(self) -> float:
+        return float(self.position_error_m)
 
     def write_position(self, value: list[float]) -> None:
         if getattr(self, "_frozen", None):

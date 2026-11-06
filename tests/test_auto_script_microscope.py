@@ -462,7 +462,7 @@ class TestAutoScriptConnectionErrors:
         monkeypatch.setattr(auto_script_module, "_AUTOSCRIPT_AVAILABLE", available)
         device = self._device("connecting to 10.0.0.1:9095 failed: refused")
         with pytest.raises(tango.DevFailed) as excinfo:
-            AutoScriptMicroscope._acquire_scanned_image(device, 512, 1e-6, ["haadf"], [0, 0, 1, 1])
+            AutoScriptMicroscope.acquire_scanned_image(device, ["haadf"])
         error = excinfo.value.args[0]
         assert error.reason == "NotConnected"
         assert "10.0.0.1:9095 failed: refused" in error.desc
@@ -470,7 +470,7 @@ class TestAutoScriptConnectionErrors:
 
     def test_get_parameters_is_guarded(self) -> None:
         with pytest.raises(tango.DevFailed) as excinfo:
-            AutoScriptMicroscope._get_parameters(self._device(None))
+            AutoScriptMicroscope.get_parameters(self._device(None))
         assert excinfo.value.args[0].reason == "NotConnected"
 
     def test_testing_mode_keeps_dry_run_no_ops(self) -> None:
@@ -482,7 +482,7 @@ class TestAutoScriptConnectionErrors:
 
     def test_silent_setters_now_raise_when_disconnected(self) -> None:
         with pytest.raises(tango.DevFailed):
-            AutoScriptMicroscope._set_fov(self._device(None), 1e-8)
+            AutoScriptMicroscope.set_fov(self._device(None), 1e-8)
 
     def test_failed_hardware_connect_records_the_reason(self, monkeypatch) -> None:
         import asyncroscopy.instruments.electron_microscope.auto_script as module
@@ -527,7 +527,7 @@ def test_a_hardware_frame_records_what_the_dose_ledger_needs():
     microscope._get_stage = lambda: [1e-6, -2e-6, 0.0, 0.0, 0.0]
     microscope._get_fov = lambda: 2e-7
     microscope._get_image_shift = lambda: [0.0, 0.0]  # unread, it would log through a device Tango never started
-    microscope._beam_current = lambda: {"beam_current_pa": 30.0, "beam_current_source": "default", "beam_current_reason": "not measured"}
+    microscope._beam_current = lambda: {"pa": 30.0, "source": "default", "age_s": None, "reason": "not measured"}
     attrs = microscope._frame_attrs(256, 4e-6, [0.0, 0.0, 1.0, 1.0])
     assert attrs["pixel_size_m"] == 2e-7 / 256 and attrs["beam_current_source"] == "default"
     entry = exposure_of(attrs)

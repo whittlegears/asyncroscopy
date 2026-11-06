@@ -98,6 +98,13 @@ segment = [
     "torchvision",
 ]
 
+# Map profiles each modality registers with the Mapper (asyncroscopy/jobs/mapping/profile.py); a package
+# of your own adds its profiles to the same group.
+[project.entry-points."asyncroscopy.map_profiles"]
+stem = "asyncroscopy.instruments.electron_microscope.map_profile:STEMProfile"
+sem = "asyncroscopy.instruments.electron_microscope.map_profile:SEMProfile"
+yaml = "asyncroscopy.instruments.yaml_sim.map_profile:YamlProfile"
+
 [tool.setuptools]
 package-dir = { "" = "." }
 

@@ -8,122 +8,19 @@
 # 40 x 40-tile map takes minutes instead of hours. Use it to rehearse large
 # maps, stitching and zooming; use digital_twin_mapping.yaml to rehearse timing.
 # Measured sizes and times are in docs/Operation/large_maps.md.
-
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
-simulated: true
+#
+# Everything not set here is digital_twin_mapping.yaml's (extends: merges it in; null removes a device).
+extends: digital_twin_mapping.yaml
 
 instrument:
-  class_name: DigitalTwin
-  file: asyncroscopy/instruments/electron_microscope/digital_twin.py
   description: "Large-map digital twin: 8 um clustered sample, all effects, no simulated waiting"
-  timeout_seconds: 120
   properties:
-    specimen:
-      source: procedural
-      # The film varies in thickness at every length from 2 um down to 0.5 nm (30 % standard deviation, so it is
-      # visible above shot noise), and atoms land at their sub-pixel positions: overlapping tiles can be registered
-      # on the film anywhere, and one atomic column sits at one place in every frame that shows it.
-      support_texture: 0.3
-      support_texture_scale_m: 2.0e-6
-      subpixel_atoms: true
-    sample_seed: 12345
     sample_size_xy: 8.0e-6
     sample_particle_count: 6400
     sample_cluster_count: 60
     sample_cluster_radius: 2.0e-7
     sample_cluster_fraction: 0.5
-    particle_radius_mean: 8.0e-9
-    particle_radius_std: 4.0e-9
-    particle_aspect_ratio: 0.6
-    particle_elements: "Au,Pt,Fe,Pd"
-    support_thickness: 1.0e-8
-    acceleration_voltage: 300000
-    convergence_angle_mrad: 30
-    beam_current_pa: 50
-    detector_read_noise: 0.5
-    # The scanning detectors' gain swings by up to 10 % and their offset by up to 2 counts over tens of minutes,
-    # so tiles taken far apart differ in brightness the way they do on the instrument.
-    detector_gain_drift: 0.1
-    detector_offset_drift: 2.0
-    detector_offset: 5.0  # above the offset's swing, so dark pixels never clip at zero
-    # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
-    # readback error and settling are unverified placeholders.
-    stage_move_noise_std: 1.5e-7
-    stage_bias_x: 1.0e-7
-    stage_bias_y: -1.5e-7
-    stage_reported_noise_std: 1.0e-8
-    stage_backlash_x: 1.5e-7
-    stage_backlash_y: 2.5e-7
-    stage_speed: 5.0e-6
-    stage_move_overhead: 1.0
-    stage_settle_drift: 2.0e-9
-    stage_settle_tau: 30
-    # Thermo Fisher specifies <= 0.5 nm/min drift.
-    drift_rate_per_min: 5.0e-10
-    drift_random_walk: 2.0e-10
-    scan_flyback_time: 5.0e-4
-    scan_line_jitter_px: 0.3
-    scan_shear: 0.005
-    scan_rotation_deg: 0.3
-    scan_flyback_compression: 0.05
-    fov_scale_error: 0.01
-    eds_fwhm_mn_ka: 130
-    eds_solid_angle: 0.7
-    eds_dead_time: 1.0e-6
-    dose_tracking: true
-    contamination_max: 3.0e-9
-    contamination_dose: 1.0e4
-    damage_critical_dose: 1.0e5
     time_scale: 0.0
 
 devices:
-  camera:
-    module_name: asyncroscopy.instruments.electron_microscope.detectors.camera
-  data:
-    module_name: asyncroscopy.data.data
-  eds:
-    module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
-  scan:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
-  # Background map jobs (reserve/start/status/abort/results/release) on this microscope.
-  mapper:
-    class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
-    properties:
-      microscope_device_address: asyncroscopy/instrument/default
-      scan_device_address: asyncroscopy/scan/default
-      eds_device_address: asyncroscopy/eds/default
-      data_device_address: asyncroscopy/data/default
-      stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart).
-      # stage_sigma_m is how far a tile really lands from the position the stage reports: the twin's
-      # stage_move_noise_std (150 nm) and its backlash on a reversal (up to 250 nm) together,
-      # sqrt(150^2 + 250^2) = 290 nm, not its 10 nm readback noise. A smaller value makes the stitcher
-      # search too small a window and reject true matches (tests/test_twin_configs.py checks it).
-      analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 2.9e-7
-      max_drift_m_per_s: 5.0e-11
-  # Approval mode (auto by default); switched from SciAgentGUI.
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
-  stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
-  corrector:
-    class_name: DigitalTwinCorrector
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin
-
-tango:
-  host: localhost
-  port: 9094
-  reset_database_file: true
-
-tiled:
-  host: localhost
-  port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
-  autostart: true
-  register_on_startup: false
-
-device_timeout_seconds: 120
+  tuner: null

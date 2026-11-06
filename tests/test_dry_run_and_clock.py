@@ -19,7 +19,8 @@ import pytest
 import tango
 from fastmcp.exceptions import ToolError
 
-from asyncroscopy.instruments.electron_microscope.mapper import DRY_RUN_SKIPPED, Mapper
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from asyncroscopy.jobs.mapping.pipeline import DRY_RUN_SKIPPED, Pipeline
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, RecordingProxy
 from asyncroscopy.core.net import bind_host
 from dataclasses import replace
@@ -74,7 +75,7 @@ class TestRecordingProxy:
 
     def test_reads_pass_writes_are_recorded_and_blanking_runs(self):
         fake, recorded = self.Fake(), []
-        proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call))
+        proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call), safe_commands=frozenset({"blank_beam"}))
         assert proxy.get_stage() == "get_stage"  # a read: passed through, not recorded
         assert proxy.read_attribute("clock_s").value == 1.0
         assert proxy.stage_moving is False
@@ -207,7 +208,7 @@ def test_every_stack_config_says_whether_it_is_simulated_and_every_device_gets_i
     stacks = [p for p in sorted((ROOT / "configs").glob("*.yaml")) if "instrument" in (yaml.safe_load(p.read_text(encoding="utf-8")) or {})]
     assert {p.name for p in stacks} >= hardware
     for path in stacks:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = run_servers.read_config(path)  # with any extends: chain merged in
         assert isinstance(raw.get("simulated"), bool), f"{path.name} must say simulated: true or false"
         config = run_servers.load_config(path)
         assert config.simulated is (path.name not in hardware), path.name
@@ -271,7 +272,7 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
         return reply
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Mapper, "_analysis", lambda self, tool, arguments: server(self, tool, arguments))
+    monkeypatch.setattr(Pipeline, "call", lambda self, tool, arguments: server(self, tool, arguments))
 
     revisit_fov = 5e-8
     plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.0e-7, "overlap": 0.25, "imsize": 128, "dwell_s": 2e-5,

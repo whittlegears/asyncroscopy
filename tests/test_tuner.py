@@ -22,9 +22,9 @@ import pytest
 import tango
 from fastmcp.exceptions import ToolError
 
-from asyncroscopy.instruments.electron_microscope import tuner as tuner_module
-from asyncroscopy.instruments.electron_microscope.mapper import frame_dose
-from asyncroscopy.instruments.electron_microscope.tuner import STRATEGIES, Strategy, register_strategy
+from asyncroscopy.jobs.tuning import tuner as tuner_module
+from asyncroscopy.routines.dose import frame_dose
+from asyncroscopy.jobs.tuning.tuner import STRATEGIES, Strategy, register_strategy
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.routines import focus
 
@@ -216,10 +216,10 @@ def test_image_metric_corrects_stigmation_where_the_microscope_has_a_stigmator(f
     assert results["summary"]["tune"]["dose_e_per_a2"] <= plan["dose_budget_e_per_a2"]
 
 
-def test_optistem_strategy_runs_the_vendor_autofocus(fresh, tuner_proxy):
+def test_vendor_autofocus_strategy_runs_the_vendor_autofocus(fresh, tuner_proxy):
     twin, device = fresh
     setup_error(twin, device, 6, -180e-9, (15e-9, 5e-9))
-    _reserved, status, results = run(tuner_proxy, {"strategy": "optistem", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 1000.0})
+    _reserved, status, results = run(tuner_proxy, {"strategy": "vendor_autofocus", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 1000.0})
     assert status["state"] == "done", status
     tune = results["summary"]["tune"]
     assert tune["steps"] == 3 and tune["images"] == 2  # sharpness before and after, and one vendor run
@@ -265,16 +265,16 @@ def test_a_wrong_sign_corrector_stops_and_restores_the_snapshot(fresh, wrongsign
 # ----------------------------------------------------------------------
 def test_over_budget_plan_is_refused_before_the_beam_is_unblanked(fresh, tuner_proxy):
     twin, device = fresh
-    before = (len(device._acquisitions), device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
+    before = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
     per_frame = frame_dose(50.0, 2e-6, 1e-7, 256)
     reply = call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "dose_budget_e_per_a2": 10 * per_frame}})
     assert reply["error"]["code"] == "plan_rejected"
     assert "above the budget" in reply["error"]["message"] and "33 frames" in reply["error"]["message"]
-    after = (len(device._acquisitions), device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
+    after = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
     assert after == before  # nothing imaged, no dose, the beam still blanked, nothing moved
     # Bad plans are refused by name, too.
     assert "unknown plan field" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "focus_rnage_m": 1e-7}})["error"]["message"]
-    assert "dose_budget_e_per_a2 is required" in call(tuner_proxy, "reserve", {"plan": {"strategy": "optistem"}})["error"]["message"]
+    assert "dose_budget_e_per_a2 is required" in call(tuner_proxy, "reserve", {"plan": {"strategy": "vendor_autofocus"}})["error"]["message"]
     assert "unknown strategy" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "strategy": "magic"}})["error"]["message"]
 
 
@@ -303,7 +303,7 @@ def test_a_strategy_that_exceeds_its_declared_dose_is_stopped_and_restored(fresh
         assert results["summary"]["tune"]["images"] == 4  # the fifth frame would pass the budget
         assert twin.get_defocus() == pytest.approx(1e-8)
     finally:
-        STRATEGIES.pop("greedy_test", None)
+        STRATEGIES.unregister("greedy_test")
 
 
 def test_abort_mid_search_restores_the_snapshot(fresh, tuner_proxy):
@@ -367,7 +367,7 @@ def test_a_forty_line_example_strategy_registered_from_a_test(fresh, tuner_proxy
         assert tune["sharpness_after"] > tune["sharpness_before"]
         assert abs(device._focus_truth()["c1_m"]) < 30e-9  # a crude search, but far better than 160 nm
     finally:
-        STRATEGIES.pop("hill_climb_example", None)
+        STRATEGIES.unregister("hill_climb_example")
 
 
 # ----------------------------------------------------------------------
@@ -392,7 +392,7 @@ def test_run_job_tuner_goes_through_the_approval_gate(fresh, tuner_proxy, approv
     server.tools = {"Tuner": {
         verb: server._create_wrapper(getattr(tuner_proxy, verb), JSON_REQUEST, verb, "Tuner", tool_prefix="Tuner") for verb in ("reserve", "start")
     }}
-    plan = {"strategy": "optistem", "dose_budget_e_per_a2": 1000.0}
+    plan = {"strategy": "vendor_autofocus", "dose_budget_e_per_a2": 1000.0}
     approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
     try:
         with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
@@ -437,16 +437,16 @@ def test_auto_mode_starts_a_tune_only_when_it_drives_nothing_held(fresh, tuner_p
     server.add_device("DigitalTwin", Named("asyncroscopy/digitaltwin/tuner"), stem=True)
     server.add_device("Corrector", Named("asyncroscopy/corrector/tuner"))
     for prefix, commands in (("DigitalTwin", ("blank_beam", "unblank_beam", "set_fov", "set_defocus", "set_stigmator", "acquire_scanned_image", "auto_focus")),
-                             ("Corrector", ("measure_c1a1", "correct_aberration"))):
+                             ("Corrector", ("measure_aberrations", "correct"))):
         for command in commands:  # what discovery decides for each command the tune drives
             server._create_wrapper(lambda arg: None, JSON_REQUEST, command, prefix)
     server.tools = {"Tuner": {
         verb: server._create_wrapper(getattr(tuner_proxy, verb), JSON_REQUEST, verb, "Tuner", tool_prefix="Tuner") for verb in ("reserve", "start")
     }}
-    reply = server.jobs.run_job("Tuner", {"strategy": "optistem", "dose_budget_e_per_a2": 1000.0})
+    reply = server.jobs.run_job("Tuner", {"strategy": "vendor_autofocus", "dose_budget_e_per_a2": 1000.0})
     assert wait(tuner_proxy, reply["job_id"])["state"] == "done"
     call(tuner_proxy, "release", {"reservation_id": reply["reservation_id"]})
-    with pytest.raises(ToolError, match="Corrector_correct_aberration"):
+    with pytest.raises(ToolError, match="Corrector_correct(?!_)"):
         server.jobs.run_job("Tuner", {"strategy": "corrector", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 3000.0})
 
     request_id = next(p["request_id"] for p in json.loads(approvals_proxy.list_pending()) if p["action"] == "Tuner_start")
