@@ -95,21 +95,17 @@ devices:
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart).
-      # stage_sigma_m is how far a tile really lands from the position the stage reports: the twin's
-      # stage_move_noise_std (150 nm) and its backlash on a reversal (up to 250 nm) together,
-      # sqrt(150^2 + 250^2) = 290 nm, not its 10 nm readback noise. A smaller value makes the stitcher
-      # search too small a window and reject true matches (tests/test_twin_configs.py checks it).
+      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart). The stitch's
+      # stage error comes from the twin's STAGE device (position_sigma_m, from the twin's stage model).
       analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 2.9e-7
       max_drift_m_per_s: 5.0e-11
   # Approval mode (auto by default); switched from SciAgentGUI.
   approvals:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
   stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

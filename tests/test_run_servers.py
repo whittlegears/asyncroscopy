@@ -110,7 +110,7 @@ def test_load_tilt_twin_config_includes_simulation_properties():
 
     assert config.instrument.class_name == "DigitalTwinTilt"
     assert config.instrument.module_name.endswith("digital_twin_tilt")
-    assert stage.class_name == "TestStage"
+    assert stage.class_name == "DigitalTwinSTAGE"
     assert properties["silicon_lattice_parameter_angstrom"] == ["5.431"]
     assert properties["lattice_parameter_gradient_x_percent"] == ["2.0"]
     assert properties["crystal_rotation_gradient_x_deg"] == ["4.0"]

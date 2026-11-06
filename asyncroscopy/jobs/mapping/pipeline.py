@@ -113,7 +113,6 @@ class Pipeline:
     def __init__(
         self,
         url: str,
-        stage_sigma_m: float,
         max_drift_m_per_s: float,
         aborting: Callable[[dict], bool],
         lock: threading.RLock,
@@ -121,7 +120,6 @@ class Pipeline:
         warn: Callable[[str], None],
     ) -> None:
         self.url = url
-        self.stage_sigma_m = float(stage_sigma_m)
         self.max_drift_m_per_s = float(max_drift_m_per_s)
         self._aborting = aborting
         self._lock = lock
@@ -146,8 +144,9 @@ class Pipeline:
         """The job's pipeline record (analysis job ids, map, regions, revisits, zoom tiers, errors)."""
         return job.setdefault("pipeline", {})
 
-    def stitch_arguments(self, run: str) -> dict:
-        return {"run": run, "stage_sigma_m": self.stage_sigma_m, "max_drift_m_per_s": self.max_drift_m_per_s, "eds_pois": True}
+    def stitch_arguments(self, job: dict, run: str) -> dict:
+        """assemble_map's arguments: the run, bounded by the stage error the plan was resolved with."""
+        return {"run": run, "stage_sigma_m": float(job["resolved_plan"]["stage_sigma_m"]), "max_drift_m_per_s": self.max_drift_m_per_s, "eds_pois": True}
 
     def _submit(self, job: dict, slot: str, tool: str, arguments: dict) -> str:
         """Start (or adopt) an analysis job and save its id in the job before waiting on it."""
@@ -213,7 +212,7 @@ class Pipeline:
         pipeline = self.state(job)
         deadline = STITCH_DEADLINE_S[0] + STITCH_DEADLINE_S[1] * tiles
         try:
-            results = self._await(job, self._submit(job, "stitch_job", "assemble_map", self.stitch_arguments(run)), deadline)
+            results = self._await(job, self._submit(job, "stitch_job", "assemble_map", self.stitch_arguments(job, run)), deadline)
         except AnalysisFailed as exc:  # the tiles are safe, the job goes on
             if str(exc) == "aborted":
                 return None
@@ -235,7 +234,7 @@ class Pipeline:
     def stitch_released(self, job: dict, run: str) -> None:
         """Start a stitch of a released job's tiles; nobody waits for it (results name its analysis job)."""
         try:
-            started = self.call("assemble_map", self.stitch_arguments(run))
+            started = self.call("assemble_map", self.stitch_arguments(job, run))
             with self._lock:
                 job["result_keys"]["map_job"] = started.get("job_id")
         except Exception as exc:

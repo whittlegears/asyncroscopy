@@ -50,7 +50,9 @@ ZOOM_PLAN_FIELDS = frozenset({"zoom", "dry_run", "label", "budgets"})  # plus th
 
 @dataclass(frozen=True)
 class PlanEnvironment:
-    """What resolving a plan needs from the Mapper: its limits, and the analysis server (None: it has none)."""
+    """What resolving a plan needs from the Mapper: its limits, the stage's 1-sigma position error (kept in the
+    resolved plan: the stitch and live drift tracking bound their searches with it), and the analysis server
+    (None: it has none)."""
 
     max_tiles: int
     estimate_move_s: float
@@ -210,7 +212,10 @@ def _resolve_tiles(plan: dict, profile: InstrumentProfile, env: PlanEnvironment)
             estimate["warnings"] = [warning]
     else:
         estimate["stitch"] = "off" if not p["stitch"] else "this Mapper has no analysis_url; stitch the run with assemble_map"
-    return {**p, "box_m": [x_min, x_max, y_min, y_max], "stitch": stitch, "find_regions": regions, "step_count": steps, "estimate": estimate, "grid": grid}
+    return {
+        **p, "box_m": [x_min, x_max, y_min, y_max], "stitch": stitch, "find_regions": regions, "step_count": steps, "estimate": estimate, "grid": grid,
+        "stage_sigma_m": float(env.stage_sigma_m),
+    }
 
 
 def _resolve_revisit_only(plan: dict, profile: InstrumentProfile, env: PlanEnvironment) -> dict:

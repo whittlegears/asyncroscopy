@@ -13,6 +13,7 @@ literature magnitudes. See docs/digital_twin.md.
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import replace
 
@@ -289,6 +290,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
             "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
         self._last_written_stage: np.ndarray | None = None
+        self._stage_sigma_published = False
         self._stage_position = self._stage.true.copy()
         # The atom-renderer state of the base class is unused here.
         self._particle_records_base = []
@@ -325,12 +327,31 @@ class DigitalTwin(ElectronMicroscopeTwin):
             return
         stage.x, stage.y, stage.z, stage.alpha, stage.beta = (float(v) for v in position)
         self._last_written_stage = np.asarray(position, dtype=np.float64).copy()
+        self._publish_stage_sigma()
+
+    def stage_sigma_m(self) -> float:
+        """How far the stage lands from where it reports, 1 sigma: the landing noise, the backlash on a reversal and
+        the readback noise together (the bias is the same for every tile, so it does not separate neighbours)."""
+        backlash = max(abs(float(self.stage_backlash_x)), abs(float(self.stage_backlash_y)))
+        return float(math.sqrt(float(self.stage_move_noise_std) ** 2 + backlash**2 + float(self.stage_reported_noise_std) ** 2))
+
+    def _publish_stage_sigma(self) -> None:
+        """Tell the STAGE device (a DigitalTwinSTAGE) the twin stage's error, once it answers; a STAGE that cannot take it is left alone."""
+        stage = self._detector_proxies.get("stage")
+        if stage is None or self._stage_sigma_published:
+            return
+        try:
+            stage.write_attribute("position_sigma_m", self.stage_sigma_m())
+            self._stage_sigma_published = True
+        except tango.DevFailed:  # not up yet (tried again at the next move), or a STAGE whose sigma is read-only
+            pass
 
     def _sync_stage_from_proxy(self) -> None:
         """A position written to the STAGE device directly counts as a stage command."""
         stage = self._detector_proxies.get("stage")
         if stage is None:
             return
+        self._publish_stage_sigma()
         try:
             proxy_position = np.array([stage.x, stage.y, stage.z, stage.alpha, stage.beta], dtype=np.float64)
         except tango.DevFailed:

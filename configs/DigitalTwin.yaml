@@ -39,7 +39,8 @@ devices:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

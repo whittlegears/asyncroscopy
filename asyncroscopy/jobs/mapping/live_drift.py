@@ -53,7 +53,7 @@ from asyncroscopy.routines.drift import DEFAULT_WINDOW, bounded_correction, get_
 from asyncroscopy.routines.grid import index_at
 
 if TYPE_CHECKING:
-    from .profile import InstrumentProfile, MapSettings
+    from .profile import InstrumentProfile
     from .run_file import RunFile
 
 DEFAULTS = {"track": False, "tracker": "linear", "window": DEFAULT_WINDOW}
@@ -176,9 +176,9 @@ def _image(images: dict) -> np.ndarray | None:
     return None
 
 
-def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: RunFile | None, bounds: MapSettings) -> dict | None:
+def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: RunFile | None, max_drift_m_per_s: float) -> dict | None:
     """After acquiring ``tile``: register it on an overlapping neighbour (read back from the run file) and give
-    the tracker the placement error. ``bounds`` gives the stage and drift errors that bound the search.
+    the tracker the placement error. The plan's stage_sigma_m and ``max_drift_m_per_s`` bound the search.
     ``images`` and ``run`` are None in a dry run, which measures nothing."""
     settings = tracking(job["resolved_plan"])
     if not settings:
@@ -212,7 +212,7 @@ def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: Ru
             p_planned, p_shift, p_error = (np.asarray(record[k], dtype=np.float64) for k in ("p", "s", "e"))
             predicted = np.asarray(tracker.predict(acquired) if tracker.observations else (0.0, 0.0))
             expected = (planned + shift + predicted) - (p_planned + p_shift + p_error)
-            bound = 4.0 * math.sqrt(2.0) * float(bounds.stage_sigma_m) + float(bounds.max_drift_m_per_s) * abs(acquired - record["t"]) + REGISTRATION_MARGIN_PX * pixel
+            bound = 4.0 * math.sqrt(2.0) * float(plan["stage_sigma_m"]) + float(max_drift_m_per_s) * abs(acquired - record["t"]) + REGISTRATION_MARGIN_PX * pixel
             found = tile_offset_m(previous, image, pixel, expected, bound)
             if found is not None:
                 measured = np.asarray(found[:2]) - (planned - p_planned) - (shift - p_shift) + p_error

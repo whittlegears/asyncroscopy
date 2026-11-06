@@ -109,7 +109,6 @@ class MapSettings:
 
     microscope_device_address: str
     stage_device_address: str = ""
-    stage_sigma_m: float = 5e-8
     max_drift_m_per_s: float = 5e-11
     stage_timeout_s: float = 600.0
     simulated: bool = False
