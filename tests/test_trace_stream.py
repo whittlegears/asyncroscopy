@@ -193,7 +193,7 @@ def test_old_lines_without_seq_are_still_read_and_numbering_continues(tmp_path):
     assert len(read_tool_log(path)) == 4  # the one-file reader is unchanged
     for event in events:
         jsonschema.validate({k: v for k, v in event.items() if k != "file"}, load("trace_event"))
-    # pyTEMlib's analysis trace (tool, run, seconds) reads alongside, its tool as the action.
+    # the analysis server's tool log (tool, run, duration_s) reads alongside, its tool as the action.
     (tmp_path / "analysis.jsonl").write_text(json.dumps({"ts": 1001.5, "source": "analysis", "tool": "score_map", "run": "r", "ok": True}) + "\n", encoding="utf-8")
     merged = read_trace(tmp_path)
     assert [e["action"] for e in merged][:3] == ["Old.step", "Old.step", "score_map"]

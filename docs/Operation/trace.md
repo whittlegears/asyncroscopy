@@ -12,7 +12,7 @@ Each process appends JSON lines to its own file under `outputs/trace/`:
 | `mcp_operator.jsonl` | the operator (GUI) endpoint | tool call |
 | `jobs.jsonl` | every job device (`trace_path` property) | reserve, step, failure, suspend and resume, the end state (`Mapper.done`), and, in a dry run, each recorded call |
 | `approvals.jsonl` | the Approvals device | request, approve, deny, expire, mode change |
-| `analysis.jsonl` | pyTEMlib's analysis server | analysis tool call (its lines use `tool` for the action) |
+| `analysis.jsonl` | the analysis server | analysis tool call (its lines use `tool` for the action) |
 
 The trace has gaps. A notebook or script that calls a Tango device directly, without the MCP server or a job, is not traced.
 
@@ -80,8 +80,6 @@ Lines are never delivered twice and never missed in these cases:
 
 Name rotated files `<name>.jsonl.<n>`. Rotate the `.seq` sidecar with its file, or leave it in place.
 On Windows a rename fails (`PermissionError`, WinError 32) while a writer or the follower has the file open for its brief append or read; a rotation script there should retry the rename for a moment.
-
-pyTEMlib's `analysis.jsonl` lines have no `written`, so the reader orders them by `ts`, the time the call started. A live follower may therefore show an analysis call later than `read_trace` places it.
 
 ## Privacy
 

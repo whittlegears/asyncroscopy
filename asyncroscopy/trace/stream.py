@@ -1,7 +1,7 @@
 """Follow every Instrument Trace file of a stack at once and get its events in one order.
 
 Each process appends its own JSONL file (``outputs/trace/jobs.jsonl``, ``mcp_agent.jsonl``,
-``approvals.jsonl``, pyTEMlib's ``analysis.jsonl``, ...). Every line a TraceWriter writes
+``approvals.jsonl``, the analysis server's ``analysis.jsonl``, ...). Every line a TraceWriter writes
 carries the file's ``seq`` and the Unix time it was ``written`` (see
 ``asyncroscopy.trace.writer``). This module merges the files by ``written`` (``ts`` for lines
 that have none), file name and ``seq``:
@@ -344,7 +344,7 @@ class TraceStream:
 
     @staticmethod
     def _normalized(event: dict[str, Any], path: Path) -> dict[str, Any]:
-        """The event as written, plus the file it came from; pyTEMlib's ``tool`` also reads as ``action``."""
+        """The event as written, plus the file it came from; the analysis server's ``tool`` also reads as ``action``."""
         out = dict(event)
         if "action" not in out and "tool" in out:
             out["action"] = out["tool"]

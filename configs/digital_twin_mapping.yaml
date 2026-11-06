@@ -92,7 +92,7 @@ devices:
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart). The stitch's
+      # Finished maps are stitched on the analysis server (start it as in the quickstart). The stitch's
       # stage error comes from the twin's STAGE device (position_sigma_m, from the twin's stage model).
       analysis_url: http://127.0.0.1:8003/mcp
       max_drift_m_per_s: 5.0e-11

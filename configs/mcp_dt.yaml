@@ -51,7 +51,7 @@ mcp:
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
-  # The analysis server (pyTEMlib: stitching, scoring). With it, wait_for_job also
+  # The analysis server (asyncroscopy.analysis_server: stitching, scoring). With it, wait_for_job also
   # waits on assemble_map and score_map jobs and returns their results, so an
   # agent needs one wait tool for every job. Empty: wait_for_job is for this
   # server's job devices only.

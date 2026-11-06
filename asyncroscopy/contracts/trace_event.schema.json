@@ -10,7 +10,7 @@
     "schema_version": {"type": "string"},
     "ts": {"type": "number", "description": "Wall-clock Unix time when the action started."},
     "iso": {"type": "string"},
-    "source": {"type": "string", "description": "Kind of writer: mcp, job, approvals, script; analysis for pyTEMlib's trace. Any other name is allowed so new writers need no schema change.", "examples": ["mcp", "job", "approvals", "script", "analysis"]},
+    "source": {"type": "string", "description": "Kind of writer: mcp, job, approvals, script; analysis for the analysis server's tool log. Any other name is allowed so new writers need no schema change.", "examples": ["mcp", "job", "approvals", "script", "analysis"]},
     "writer": {"type": "string", "description": "Who wrote the line: a Tango device name (asyncroscopy/mapper/default), mcp:<server name>:<role>, or <source>@<host>:<pid>."},
     "seq": {"type": "integer", "minimum": 1, "description": "The line's number in its file: rises by one per line, whichever process appended it (a lock shared by every writer of the file), and keeps rising across a rotation of the file."},
     "written": {"type": "number", "description": "Unix time the line was appended, never earlier than the line before it in the same file. Readers merge files by it."},

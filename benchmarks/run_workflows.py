@@ -5,7 +5,7 @@ or a hackathon team would make, the runners to try it with, and checks computed 
 Instrument Trace, readings taken before and after, and the stored data (see
 benchmarks/workflow_checks.py). Nothing is judged from what the model says alone.
 
-Needs a running stack, both MCP endpoints and the pyTEMlib server (docs/Operation/quickstart.md):
+Needs a running stack, both MCP endpoints and the analysis server (docs/Operation/quickstart.md):
 
     uv run python benchmarks/run_workflows.py                      # every twin workflow once
     uv run python benchmarks/run_workflows.py --only map_300nm --n 5
@@ -451,7 +451,7 @@ class InfraError(RuntimeError):
 
 
 def _poi_items(listed: Any) -> list | None:
-    """The points of a list_pois reply: {"total", "pois"} from pyTEMlib, {"result": [...]} or a plain list."""
+    """The points of a list_pois reply: {"total", "pois"} from the analysis server, {"result": [...]} or a plain list."""
     if isinstance(listed, dict):
         listed = listed.get("pois", listed.get("result"))
     return listed if isinstance(listed, list) else None
