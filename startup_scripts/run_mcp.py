@@ -39,7 +39,7 @@ class MCPConfig:
     endpoint_role: str = 'agent'
     approvals_device_address: str = ''
     risk: dict[str, str] = field(default_factory=dict)
-    # mcp.safety.auto_routine: what auto mode runs without a person; None: the packaged profile.
+    # mcp.safety.auto_routine: what auto mode runs without a person; None: what the devices declare.
     auto_routine: dict[str, list[str]] | None = None
     agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports; empty: the default
     trace: str = ''
@@ -77,7 +77,7 @@ def _approvals_address(mcp: dict, path) -> str:
 
 
 def _auto_routine(mcp: dict, path) -> dict[str, list[str]] | None:
-    """mcp.safety.auto_routine, checked; None when the config leaves it out (the packaged profile applies)."""
+    """mcp.safety.auto_routine, checked; None when the config leaves it out (what the devices declare applies)."""
     raw = (mcp.get('safety') or {}).get('auto_routine')
     if raw is None:
         return None

@@ -5,13 +5,16 @@ The approval gate, ``find_tools``, ``endpoint_info``, ``action_space``, the toke
 
 A device command's facts come from, in order:
 
-1. the MCP config (``mcp.safety.risk`` overrides; ``mcp.safety.auto_routine``);
+1. the MCP config (``mcp.safety.risk`` overrides; ``mcp.safety.auto_routine``, which, when the config
+   gives it, replaces every device's ``routine`` declaration);
 2. what the device declares in its ``action_hints`` attribute, per command: ``risk`` ("low" or "high"),
    ``operator_only``, ``stop`` (a no-argument command stop_all calls), ``routine`` (auto mode runs it
-   without a person), ``role`` (``asyncroscopy.core.names.ROLES``). A Python device declares them with
-   ``asyncroscopy.utils.commands.command(risk=..., ...)``; a YAML instrument from its file;
-3. the safety policy's name rules (``asyncroscopy.safety.policy``), only for what the device leaves out.
-   Unknown is high. The server prints, at startup, which commands fell back to the rules.
+   without a person), ``role`` (``asyncroscopy.core.names.ROLES``; a read role also says the command
+   only observes). A Python device declares them with ``asyncroscopy.utils.commands.command(risk=..., ...)``
+   on its base class, so every vendor and twin subclass inherits them; a YAML instrument from its file.
+   Tango's own State, Status (low, read) and Init (high, operator only) need no declaration;
+3. the safety policy's name rules (``asyncroscopy.safety.policy``), only for what a device leaves out (a
+   third-party device). Unknown is high. The server prints, at startup, which commands fell back to the rules.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from typing import Any
 
 import tango
 
-from asyncroscopy.core.names import ACTION_HINTS, check_role, tool_name
+from asyncroscopy.core.names import ACTION_HINTS, READ_ROLES, TANGO_ADMIN, TANGO_READS, check_role, tool_name
 from asyncroscopy.mcp.action_roles import role_for
 from asyncroscopy.safety import policy
 
@@ -119,12 +122,26 @@ def is_routine(device: DeviceInfo, command: str, name: str, routine: dict[str, l
     return False
 
 
-def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, str], routine: dict[str, list[str]],
+def tango_builtin(command: str) -> dict[str, Any] | None:
+    """What a Tango built-in command is, as a declaration: State and Status read, Init is the operator's."""
+    if command in TANGO_READS:
+        return {"risk": "low", "role": "setting.read"}
+    if command in TANGO_ADMIN:
+        return {"risk": "high", "operator_only": True}
+    return None
+
+
+def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, str], routine: dict[str, list[str]] | None,
                      warnings: list[str]) -> ToolDescriptor:
-    """The descriptor of one device command (see the module docstring for the order of sources)."""
+    """The descriptor of one device command (see the module docstring for the order of sources).
+
+    ``routine``: the config's mcp.safety.auto_routine, which replaces the devices' routine declarations;
+    None when the config gives none (the declarations decide).
+    """
     name = tool_name(device.prefix, command)
     key = f"{device.dev_class}.{command}"
-    hint = device.hints.get(command, {})
+    builtin = tango_builtin(command)
+    hint = builtin if builtin is not None and command not in device.hints else device.hints.get(command, {})
     matched = matched_overrides(name, key, overrides)
     declared = str(hint.get("risk", "")).strip().lower()
     if declared and declared not in ("low", "high"):
@@ -133,7 +150,7 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
     if matched:  # overrides that disagree (a broad "*": low and an exact high) never lower a tool: high wins
         risk, source = ("high" if "high" in matched else matched[0]), "override"
     elif declared:
-        risk, source = declared, "declared"
+        risk, source = declared, ("tango" if hint is builtin else "declared")
     else:
         risk = policy.risk_of(device.dev_class, command, envelope=device.envelope, stem=device.stem, probe=device.probe)
         source = "rule"
@@ -146,13 +163,20 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
     role = role or role_for(device.dev_class, command, envelope=device.envelope, probe=device.probe)
     if role == "other" and role_source == "rule":
         role_source = "default"
-    reads = policy.is_read_only(device.dev_class, command, overrides) or (device.envelope and command.lower() in JOB_READS)
     marked_high = "high" in matched
+    if role_source == "annotation":  # a declared role says whether the command only observes
+        reads = role in READ_ROLES and not marked_high
+    else:
+        reads = policy.is_read_only(device.dev_class, command, overrides) or (device.envelope and command.lower() in JOB_READS)
+    if routine is None:
+        listed = hint.get("routine") is True
+    else:
+        listed = is_routine(device, command, name, routine)
     return ToolDescriptor(
         name=name, device=device.prefix, command=command, native=False, action_role=role, risk=risk, acts=not reads,
         operator_only=hint.get("operator_only") is True or policy.operator_only(device.dev_class, command),
         dev_class=device.dev_class, role_source=role_source, risk_source=source,
-        routine=not marked_high and (hint.get("routine") is True or is_routine(device, command, name, routine)),
+        routine=not marked_high and listed,
         stop=hint.get("stop") is True, job_start=device.envelope and command == "start",
         void=_is_void(device.in_types.get(command)),
     )
@@ -160,7 +184,8 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
 
 def rule_risk(device: DeviceInfo, command: str) -> str:
     """The risk the declarations and rules give a command before any mcp.safety.risk override."""
-    declared = str(device.hints.get(command, {}).get("risk", "")).strip().lower()
+    hint = device.hints.get(command) or tango_builtin(command) or {}
+    declared = str(hint.get("risk", "")).strip().lower()
     if declared in ("low", "high"):
         return declared
     return policy.risk_of(device.dev_class, command, envelope=device.envelope, stem=device.stem, probe=device.probe)

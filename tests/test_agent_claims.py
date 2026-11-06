@@ -6,9 +6,24 @@ import json
 from langchain.agents.middleware.types import ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from asyncroscopy.agents.claims import CLAIM_CHECK, ClaimCheckMiddleware, check_answer, corrections_used
+from asyncroscopy.agents import claims as claims_module
+from asyncroscopy.agents.claims import CLAIM_CHECK, corrections_used
 from asyncroscopy.agents.guards import repeats
 from asyncroscopy.agents.skill_middleware import _request
+from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from tests.catalogs import catalog
+
+# What endpoint_info says the tools are: which calls acquire, move or run a job comes from it, not from names.
+CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper})
+
+
+def check_answer(*args, **kwargs):
+    return claims_module.check_answer(*args, catalog=CATALOG, **kwargs)
+
+
+def ClaimCheckMiddleware(*args, **kwargs):  # noqa: N802 (the middleware as the graphs build it, with the endpoint's catalog)
+    return claims_module.ClaimCheckMiddleware(*args, catalog=CATALOG, **kwargs)
 
 TOOLS = {"DigitalTwin_set_defocus", "DigitalTwin_get_defocus", "DigitalTwin_set_fov", "DigitalTwin_acquire_scanned_image",
          "DigitalTwin_acquire_spectrum", "DigitalTwin_move_stage", "DigitalTwin_get_parameters", "run_job", "view_data", "list_pois"}

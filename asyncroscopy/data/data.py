@@ -38,6 +38,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlparse
 
 from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
+from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
 from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
 from asyncroscopy.core.net import WILDCARD_HOSTS
@@ -46,7 +47,7 @@ import h5py
 import psutil
 from SciFiReaders import MRCReader
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command
+from tango.server import Device, attribute
 from tiled.client.register import identity, register
 
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
@@ -73,6 +74,9 @@ RESTART_WINDOW_SECONDS = 600.0
 
 class DATA(Device):
     """Tango bridge to the Tiled HTTP data server."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     host = attribute(label="Tiled Host", dtype=str, access=AttrWriteType.READ_WRITE, doc="Hostname or IP address for the Tiled HTTP data server.")
     port = attribute(label="Tiled Port", dtype=int, access=AttrWriteType.READ_WRITE, doc="TCP port for the Tiled HTTP data server.")
@@ -154,7 +158,7 @@ class DATA(Device):
         self._tiled_server = "yes" if self._tiled_alive() else "no"
         return self._tiled_server
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_config(self) -> str:
         config = {
             "host": self._host,
@@ -170,7 +174,7 @@ class DATA(Device):
         }
         return json.dumps(config)
 
-    @command(dtype_in=str, dtype_out=str)
+    @command(dtype_in=str, dtype_out=str, risk="high", operator_only=True, role="setting.set")
     def configure(self, config_json: str) -> str:
         config = json.loads(config_json) if config_json else {}
         for key, writer in {
@@ -182,7 +186,7 @@ class DATA(Device):
                 writer(config[key])
         return self.get_config()
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", operator_only=True, role="other")
     def start_tiled_server(self, timeout=30) -> str:
         """Start the catalog HTTP server without a filesystem watcher, and supervise it."""
         with self._tiled_lock:
@@ -266,7 +270,7 @@ class DATA(Device):
             self._tiled_server_status = f"not running; exit_code={process.poll()}{self._log_tail()}"
         return self.get_config()
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", operator_only=True, role="other")
     def stop_tiled_server(self) -> str:
         with self._tiled_lock:
             self._want_tiled = False
@@ -277,7 +281,7 @@ class DATA(Device):
         _join(supervisor)
         return self.get_config()
 
-    @command(dtype_in=str, dtype_out=str)
+    @command(dtype_in=str, dtype_out=str, risk="high", role="other")
     def register_path(self, path: str) -> str:
         """Register one acquisition file explicitly; no filesystem watcher is used.
 
@@ -362,7 +366,7 @@ class DATA(Device):
                     f"Tiled skipped {path}: it could not be read as {Path(key).suffix} (or it is not under the served save path)"
                 )
 
-    @command(dtype_in=str, dtype_out=str)
+    @command(dtype_in=str, dtype_out=str, risk="high", role="other")
     def copy_and_register_remote_file(self, request_json: str) -> str:
         """Convert a remote AutoScript MRC file to HDF5 and register it.
 
@@ -422,7 +426,7 @@ class DATA(Device):
 
         return self.register_path(str(destination))
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="other")
     def reconcile(self) -> str:
         """Register every acquisition file under the save path that Tiled does not have yet.
 

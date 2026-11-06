@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from asyncroscopy.mcp.agent_tools import is_stem_endpoint
+from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.skills.registry import content_words, learned_dir
 
 NOTES_BUDGET_CHARS = 1500  # about 400 tokens of notes per model call
@@ -149,19 +149,23 @@ class Memory:
         return "\n".join(out)
 
     # ------------------------------------------------------------------ writing
-    def seed_instrument(self, tool_names: set[str]) -> bool:
-        """Write INSTRUMENT.md from the endpoint's tools if it does not exist yet. True if written."""
-        if self.instrument_file.exists() or self.shared_instrument_file() is not None:
+    def seed_instrument(self, catalog: ToolCatalog, stem: bool = False) -> bool:
+        """Write INSTRUMENT.md from what the endpoint's tools are (``catalog``, from endpoint_info) if it does not exist
+        yet; ``stem``: the endpoint has an electron microscope. True if written; never from an unknown catalog."""
+        if self.instrument_file.exists() or self.shared_instrument_file() is not None or not catalog.known:
             return False
         devices: dict[str, list[str]] = {}
         native = []
-        for name in sorted(tool_names):
-            device, _, command = name.partition("_")
-            if command and device[:1].isupper():
-                devices.setdefault(device, []).append(command)
+        starts: set[str] = set()
+        for name in sorted(catalog.tools):
+            tool = catalog.tools[name]
+            if tool.device is not None:
+                devices.setdefault(tool.device, []).append(tool.command or name)
+                if tool.role == "job.start":
+                    starts.add(tool.device)
             else:
                 native.append(name)
-        jobs = sorted(d for d, cmds in devices.items() if "reserve" in cmds and "start" in cmds)
+        jobs = sorted(starts)
         lines = [
             "# Instrument",
             "",
@@ -181,7 +185,7 @@ class Memory:
             "## Conventions",
             "",
             "- Lengths are metres. Each command's description gives its arguments"
-            + (" (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees)." if is_stem_endpoint(tool_names) else "."),
+            + (" (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees)." if stem else "."),
             "- Data are keys in Tiled; look at them with view_data (text or png).",
             "- High-risk calls may be held for an operator (APPROVAL REQUIRED); never try to approve them yourself.",
             "",

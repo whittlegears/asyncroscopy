@@ -25,7 +25,10 @@ from fastmcp.exceptions import ToolError
 from asyncroscopy.jobs.tuning import tuner as tuner_module
 from asyncroscopy.routines.dose import frame_dose
 from asyncroscopy.jobs.tuning.tuner import STRATEGIES, Strategy, register_strategy
+from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
 from asyncroscopy.mcp.mcp_server import MCPServer
+from asyncroscopy.utils.commands import declared_hints
 from asyncroscopy.routines import focus
 
 FOCUS_PLAN = {"corrections": ["focus"], "strategy": "image_metric", "dose_budget_e_per_a2": 1500.0}
@@ -434,8 +437,8 @@ def test_auto_mode_starts_a_tune_only_when_it_drives_nothing_held(fresh, tuner_p
             return self.name
 
     server.add_device("Tuner", tuner_proxy, envelope=True)
-    server.add_device("DigitalTwin", Named("asyncroscopy/digitaltwin/tuner"), stem=True)
-    server.add_device("Corrector", Named("asyncroscopy/corrector/tuner"))
+    server.add_device("DigitalTwin", Named("asyncroscopy/digitaltwin/tuner"), stem=True, hints=declared_hints(DigitalTwin))
+    server.add_device("Corrector", Named("asyncroscopy/corrector/tuner"), hints=declared_hints(DigitalTwinCorrector))
     for prefix, commands in (("DigitalTwin", ("blank_beam", "unblank_beam", "set_fov", "set_defocus", "set_stigmator", "acquire_scanned_image", "auto_focus")),
                              ("Corrector", ("measure_aberrations", "correct"))):
         for command in commands:  # what discovery decides for each command the tune drives

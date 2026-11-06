@@ -22,7 +22,9 @@ from typing import Any
 
 import tango
 from tango import AttrWriteType, DevState, DevString, DevVarDoubleStringArray
-from tango.server import Device, attribute, command
+from tango.server import Device, attribute
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 # Components of each aberration a corrector reports (CEOS naming): one for round ones, two for the rest.
 ABERRATION_COMPONENTS = {"WD": 2, "C1": 1, "A1": 2, "B2": 2, "A2": 2, "C3": 1, "S3": 2, "A3": 2, "D4": 2, "B4": 2, "A4": 2}
@@ -47,6 +49,9 @@ class CORRECTOR(Device):
     supply backend operations.
     """
 
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
+
     status_message = attribute(
         label="Status message",
         dtype=str,
@@ -64,11 +69,11 @@ class CORRECTOR(Device):
     def read_status_message(self) -> str:
         return self._last_status
 
-    @command(dtype_out=DevString)
+    @command(dtype_out=DevString, risk="low", role="setting.read")
     def get_info(self) -> str:
         return self._get_info()
 
-    @command(dtype_in=str, dtype_out=DevString)
+    @command(dtype_in=str, dtype_out=DevString, risk="high", role="acquire.other")
     def acquire_tableau(self, args: str) -> str:
         parts = args.strip().split()
         if len(parts) != 2:
@@ -76,11 +81,11 @@ class CORRECTOR(Device):
         tab_type, angle = parts
         return self._acquire_tableau(tab_type, float(angle))
 
-    @command(dtype_out=DevString)
+    @command(dtype_out=DevString, risk="high", role="other")
     def measure_c1a1(self) -> str:
         return self._measure_c1a1()
 
-    @command(dtype_in=str, dtype_out=DevString)
+    @command(dtype_in=str, dtype_out=DevString, risk="high", role="other")
     def correct_aberration(self, args: str) -> str:
         parts = args.strip().split()
         if len(parts) < 2:
@@ -89,7 +94,7 @@ class CORRECTOR(Device):
         values = [float(value) for value in parts[1:]]
         return self._correct_aberration(name, values)
 
-    @command(dtype_out=DevString, doc_out='JSON {"C1": [c1], "A1": [a1_x, a1_y]}, in metres.')
+    @command(dtype_out=DevString, doc_out='JSON {"C1": [c1], "A1": [a1_x, a1_y]}, in metres.', risk="high", role="other")
     def measure_aberrations(self) -> str:
         """Measure the first-order aberrations (C1 and A1), in metres, in one fixed schema whatever the backend."""
         measured = self._measure_aberrations()
@@ -99,7 +104,7 @@ class CORRECTOR(Device):
             tango.Except.throw_exception("CorrectorMeasurement", f"the corrector's measurement has no usable C1/A1: {exc}", "measure_aberrations()")
             raise AssertionError("unreachable") from exc
 
-    @command(dtype_in=DevVarDoubleStringArray, doc_in="([values in metres], [aberration name]), e.g. ([2e-9], ['C1']).")
+    @command(dtype_in=DevVarDoubleStringArray, doc_in="([values in metres], [aberration name]), e.g. ([2e-9], ['C1']).", risk="high", role="other")
     def correct(self, request: tuple[list[float], list[str]]) -> None:
         """Correct one aberration by the values given: the corrector subtracts them from the aberration."""
         values, names = request
@@ -107,18 +112,18 @@ class CORRECTOR(Device):
             raise ValueError(f"correct takes one aberration name, got {list(names)!r}")
         self._correct(str(names[0]), check_values(str(names[0]), list(values)))
 
-    @command
+    @command(risk="high", role="other")
     def reconnect(self) -> None:
         self._connect_backend()
 
-    @command(dtype_in=str)
+    @command(dtype_in=str, risk="high", role="setting.set")
     def set_aberrations_coeff_sim(self, json_aberrations_string: str) -> None:
         coefficients = json.loads(json_aberrations_string)
         if not isinstance(coefficients, dict):
             raise ValueError("Simulation aberrations must be a JSON object")
         self._set_simulation_aberrations(coefficients)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_aberrations_coeff_sim(self) -> str:
         return json.dumps(self._get_simulation_aberrations())
 

@@ -32,8 +32,8 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    the sample (STEM_LOW);
 5. everything else is high: a new or renamed command is held in approval
    mode rather than waved through, and in auto mode too unless it is
-   routine (declared by its device, or listed in the auto-routine profile,
-   ``load_auto_routine``) or an operator switched it on.
+   routine (declared by its device, or listed in the MCP config's
+   ``mcp.safety.auto_routine``, ``check_auto_routine``) or an operator switched it on.
 
 The convention in (4) is a promise instrument authors keep: a command named
 ``get_...`` or ``list_...`` must not move or change anything (an SPM
@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatchcase
-from pathlib import Path
 from typing import Iterable
 
 from asyncroscopy.core.names import ENVELOPE_VERBS
@@ -91,32 +90,15 @@ DEFAULT_RISK: list[tuple[str, str]] = [
 # is not here: with the beam unblanked it parks the probe on one spot.
 STEM_LOW = frozenset({"set_fov", "set_defocus"})
 
-# Never offered on the agent endpoint, whatever the config says: an agent must
-# not approve its own requests, switch the mode, or read a twin's answers.
+# Never offered on the agent endpoint, whatever the config says: Tango's own admin commands, which no
+# device declares (restarting a device resets its state, the approval mode among it). Everything else
+# a device keeps from agents it declares itself: command(operator_only=True) (the Approvals device's
+# approve, deny, set_mode, ...; a twin's export_ground_truth; a stage's set_holder and load_sample; a
+# job device's revise; the DATA device's configure and Tiled server commands).
 OPERATOR_ONLY: list[str] = [
-    "approvals.approve",
-    "approvals.deny",
-    "approvals.set_mode",
-    "approvals.set_auto_allowed",
-    "approvals.revoke_grants",
-    # The MCP server reaches these through Tango itself; offering them to agents would let
-    # an agent consume a grant (check) or file requests under any caller name (request).
-    "approvals.check",
-    "approvals.request",
-    "approvals.list_grants",
-    "*.export_ground_truth",
-    # Restarting a device resets its state (the approval mode among it).
     "*.init",
     "*.kill",
     "*.restartserver",
-    # Which holder is fitted sets the stage's Z and tilt limits: an agent must not be able to widen them.
-    "*.set_holder",
-    "*.revise",
-    "*.load_sample",
-    # Running the data service is the operator's job; the launcher calls these over Tango.
-    "data.configure",
-    "data.start_tiled_server",
-    "data.stop_tiled_server",
 ]
 
 
@@ -222,26 +204,10 @@ def is_read_only(dev_class: str, command: str, overrides: dict[str, str] | None 
     return not any(level == "high" for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower()))
 
 
-# Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
-NATIVE_HIGH = frozenset({"run_job"})
-
-# The packaged auto-routine profile: the high-risk commands auto mode runs without a person, by device kind.
-AUTO_ROUTINE_PROFILE = Path(__file__).resolve().parent / "profiles" / "auto_routine.yaml"
-
-
-def load_auto_routine(path: str | Path | None = None) -> dict[str, list[str]]:
-    """An auto-routine profile: {device kind ("stem", "probe", "envelope"): [command globs], "tools": [tool-name
-    or "Class.command" globs]}. Without ``path``, the packaged one (AUTO_ROUTINE_PROFILE). A file that is not
-    such a mapping raises ValueError: a typo must not quietly hold, or run, a whole instrument's commands."""
-    import yaml
-
-    source = Path(path) if path is not None else AUTO_ROUTINE_PROFILE
-    raw = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
-    return check_auto_routine(raw.get("auto_routine", raw) if isinstance(raw, dict) else raw, str(source))
-
-
 def check_auto_routine(raw: object, where: str = "auto_routine") -> dict[str, list[str]]:
-    """``raw`` checked as an auto-routine mapping (see ``load_auto_routine``)."""
+    """``raw`` checked as an auto-routine mapping (the MCP config's ``mcp.safety.auto_routine``): {device kind
+    ("stem", "probe", "envelope"): [command globs], "tools": [tool-name or "Class.command" globs]}. Anything
+    else raises ValueError: a typo must not quietly hold, or run, a whole instrument's commands."""
     kinds = ("stem", "probe", "envelope", "tools")
     if not isinstance(raw, dict) or not all(k in kinds for k in raw):
         raise ValueError(f"{where}: auto_routine must map {', '.join(kinds)} to lists of command globs, not {raw!r}")
@@ -251,41 +217,6 @@ def check_auto_routine(raw: object, where: str = "auto_routine") -> dict[str, li
             raise ValueError(f"{where}: auto_routine.{kind} must be a list of command globs")
         checked[kind] = [p.strip() for p in patterns]
     return checked
-
-
-def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:
-    """"low" or "high" for an MCP tool name ("<Class>_<command>" or a native tool).
-
-    ``risks`` is the endpoint's own table (the MCP server's ``endpoint_info``), which knows each
-    device's envelope, STEM and override rules; without it, or for a name it lacks, the policy
-    is applied to the name alone: envelope verbs count as an envelope device's, and STEM_LOW
-    settings stay high (unknown is high).
-    """
-    if risks is not None and tool_name in risks:
-        return risks[tool_name]
-    if any(c in tool_name for c in "*?["):
-        return _glob_risk(tool_name, risks)
-    device, _, command = tool_name.partition("_")
-    if not command or not device[:1].isupper():
-        return "high" if tool_name in NATIVE_HIGH else "low"
-    return risk_of(device, command, envelope=command.lower() in ENVELOPE_VERBS)
-
-
-def _glob_risk(pattern: str, risks: dict[str, str] | None) -> str:
-    """A tool-name glob (a skill's ``tools: ["*_indent"]``) is high when any tool it may name is.
-
-    With the endpoint's table: high if a high tool there matches. Otherwise from the command part
-    alone: "*_indent" or "*_acquire_*" act, "*_get_*" and "Mapper*_abort" do not, a bare "*" may.
-    """
-    if risks is not None and any(level == "high" for name, level in risks.items() if fnmatchcase(name, pattern)):
-        return "high"
-    device, _, command = pattern.partition("_")
-    if not command or not command.strip("*?[]_"):  # "*" or "Mapper_*": every tool, or every command of a device
-        return "high" if not pattern.islower() or any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
-    if device[:1].islower():  # "analysis_job_*": a native tool family
-        return "high" if any(fnmatchcase(n, pattern) for n in NATIVE_HIGH) else "low"
-    # "*_indent" or "Mapper*_abort": the command decides, on any device of that name.
-    return risk_of(device.strip("*?[]") or "Any", command, envelope=command.lower() in ENVELOPE_VERBS)
 
 
 def is_stem_device(command_names: Iterable[str]) -> bool:

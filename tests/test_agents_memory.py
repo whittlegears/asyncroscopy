@@ -12,6 +12,7 @@ from asyncroscopy.agents.goals import Call, Goal
 from asyncroscopy.agents.learning import distill, learned_skills, lesson, lint, promote, tool_sequence
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.skills import list_skills, select_skills
+from tests.catalogs import catalog
 
 
 @pytest.fixture
@@ -40,8 +41,12 @@ class Namer:
 def test_instrument_notes_are_seeded_once_and_retrieved_by_relevance_within_a_cap(memory):
     assert memory.notes_for("map with eds") == ""  # empty memory: nothing, and nothing created
     assert not memory.root.exists()
-    assert memory.seed_instrument({"Mapper_reserve", "Mapper_start", "DigitalTwin_move_stage", "run_job", "view_data"})
-    assert not memory.seed_instrument({"other"})  # a person's edits are never overwritten
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+    from asyncroscopy.jobs.mapping.mapper import Mapper
+
+    assert not memory.seed_instrument(catalog({}).unknown())  # nothing known about the endpoint: nothing written
+    assert memory.seed_instrument(catalog({"Mapper": Mapper, "DigitalTwin": DigitalTwin}, natives=["run_job", "view_data"]), stem=True)
+    assert not memory.seed_instrument(catalog({}))  # a person's edits are never overwritten
     text = memory.instrument_file.read_text(encoding="utf-8")
     assert "Mapper" in text and "run_job" in text and "## Limits" in text
     memory.add_lesson("Mapper plans need fov_m below 1e-6 on this twin")
@@ -53,11 +58,13 @@ def test_instrument_notes_are_seeded_once_and_retrieved_by_relevance_within_a_ca
 
 
 def test_the_seeded_notes_give_the_stem_stage_hint_only_on_a_stem(tmp_path, monkeypatch):
-    for name, tools, stem in (("afm", {"AFMTwin_retract_tip", "AFMTwin_acquire_scanned_image", "Mapper_reserve", "Mapper_start"}, False),
-                              ("stem", {"DigitalTwin_acquire_scanned_image", "DigitalTwin_blank_beam", "DigitalTwin_move_stage"}, True)):
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+    from asyncroscopy.jobs.mapping.mapper import Mapper
+
+    for name, tools, stem in (("afm", catalog({"AFMTwin": "afm.yaml", "Mapper": Mapper}), False), ("stem", catalog({"DigitalTwin": DigitalTwin}), True)):
         monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / name))
         memory = Memory.from_env()
-        assert memory.seed_instrument(tools)
+        assert memory.seed_instrument(tools, stem=stem)
         text = memory.instrument_file.read_text(encoding="utf-8")
         assert ("STEM stage position" in text) is stem and "Lengths are metres" in text
 
@@ -194,7 +201,7 @@ def test_experiment_pages_are_capped(memory, monkeypatch):
 
 def test_a_teams_tracked_instrument_notes_are_read_and_not_reseeded(memory, monkeypatch):
     monkeypatch.setenv("ASYNCROSCOPY_INSTRUMENT_NOTES", str(RAMAN / "INSTRUMENT.md"))
-    assert memory.seed_instrument({"RamanTwin_laser_on"}) is False and not memory.instrument_file.exists()
+    assert memory.seed_instrument(catalog({"RamanTwin": "raman.yaml"})) is False and not memory.instrument_file.exists()
     assert "10 mW on graphene" in memory.notes_for("laser power on graphene")
 
 

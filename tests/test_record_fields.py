@@ -9,7 +9,8 @@ import pytest
 import tango
 
 from asyncroscopy.data.record import code_version, current_sample, record_fields
-from asyncroscopy.safety.policy import operator_only
+from asyncroscopy.instruments.electron_microscope.hardware.TestStage import TestStage
+from asyncroscopy.utils.commands import declared_hints
 
 
 def attrs_of(key: str) -> dict:
@@ -26,7 +27,8 @@ def test_a_new_load_gets_a_new_id_and_survives_a_restart(mapping_stage_proxy):
     assert json.loads(mapping_stage_proxy.get_sample()) == again
     with pytest.raises(tango.DevFailed, match="sample_id"):
         mapping_stage_proxy.load_sample(json.dumps({"sample_id": " "}))
-    assert operator_only("TestStage", "load_sample") and not operator_only("TestStage", "get_sample")
+    hints = declared_hints(TestStage)
+    assert hints["load_sample"]["operator_only"] and not hints["get_sample"].get("operator_only")
 
 
 def test_an_image_records_the_loaded_sample_and_where_it_came_from(mapping_stage_proxy, mapping_twin_proxy):

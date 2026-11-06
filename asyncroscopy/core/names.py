@@ -18,6 +18,10 @@ CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
 
 
+# The agent graphs one request can name (asyncroscopy.agents.run), besides the swarm the agent MCP server runs by default.
+AGENT_GRAPHS = ("mapping", "general", "team")
+
+
 def tool_name(prefix: str, command: str) -> str:
     """The MCP tool name of a device command: ``<prefix>_<command>`` with "/" and "-" made "_"."""
     return f"{prefix}_{command}".replace("/", "_").replace("-", "_")
@@ -82,6 +86,13 @@ ROLES: dict[str, str] = {
 }
 # Roles whose commands stop something: stop_all calls the no-argument ones, and they are never held.
 STOP_ROLES = frozenset({"beam.blank", "probe.retract", "safe_stop"})
+# Roles whose commands only observe: a command declared with one of these changes nothing.
+READ_ROLES = frozenset({"stage.read", "setting.read", "data.read", "job.status", "job.results"})
+
+# Commands every Tango device has. Nobody declares them, so the MCP server knows them by name:
+# State and Status read, Init restarts the device (its state, the approval mode among it, is lost).
+TANGO_READS = frozenset({"State", "Status"})
+TANGO_ADMIN = frozenset({"Init"})
 
 
 def check_role(role: str, where: str = "role") -> str:

@@ -28,12 +28,13 @@ kind                 met when                                       options
                      from a server in this run
 ==================== ============================================== ==========================================
 
-Risk is the endpoint's own classification (``endpoint_info`` on the MCP server,
-so deployment overrides and STEM settings count as the gate counts them).
-Without it ``no_unrequested`` is reported as not checked rather than guessed.
-Categories come from tool names on any instrument (``acquire*`` is acquire,
-``move*`` and ``set_stage*`` move, ``set_*`` settings, ``*_on``/``*_off`` and
-blanking beam, the job envelope and run_job job).
+What each tool is comes from the endpoint itself (``endpoint_info``'s ``tools``, read once per run:
+``asyncroscopy.agents.catalog``), never from its name: its risk as the approval gate sees it (so
+deployment overrides and STEM settings count as the gate counts them), the device it belongs to, and
+its canonical role, from which its category follows (acquire.* is acquire, stage.move move, setting.set
+and optics.* settings, beam.* beam, probe.* probe, the job envelope and run_job job). Without the
+endpoint's catalog ``no_unrequested`` is reported as not checked rather than guessed, and no call counts
+as an acquisition or a job.
 
 A goal written as text (``--goal "..."``) gets only the criteria its words
 make plain: a new map ("map a 600 nm square", "make an overview map"), never
@@ -57,9 +58,9 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.skill_runs import skill_run_calls
-from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT, ENVELOPE_VERBS
-from asyncroscopy.safety.policy import tool_risk
+from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
 from asyncroscopy.skills.registry import read_only_request
 
 if TYPE_CHECKING:
@@ -73,11 +74,10 @@ KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
 # versions), or a version <run>_map_<YYYYmmddTHHMMSSmmm>Z_<hex4> (the analysis server keeps every version).
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
-# What kinds of instrument action a goal may take, read from tool names (any instrument, not only a STEM).
+# What kinds of instrument action a goal may take, from each tool's canonical role (any instrument, not only a STEM).
 CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
 # A goal file's no_unrequested with neither allow nor categories: running (and stopping) the job it asks for.
 DEFAULT_CATEGORIES = ["job"]
-ENVELOPE = tuple(sorted(ENVELOPE_VERBS, key=len, reverse=True))  # longest-first matters for job_status
 
 # Inferring a goal from a sentence: only what the words say plainly. Unsure means fewer criteria, never
 # wrong ones: a criterion the request did not ask for would make the retry push actions nobody wanted.
@@ -111,27 +111,9 @@ LEAVE_RUNNING = re.compile(r"\b(?:do not|don't)\s+wait\b|\bleave\s+it\s+running\
 WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
 
-def action_category(tool_name: str) -> str:
-    """What a tool does, from its name: job, acquire, move, settings, beam, or other (any instrument)."""
-    if tool_name == "run_job":
-        return "job"
-    device, _, command = tool_name.partition("_")
-    command = command.lower()
-    if not command or not device[:1].isupper():
-        return "other"
-    if command.endswith(ENVELOPE) or command in ENVELOPE:
-        return "job"
-    if command.startswith(("acquire", "capture", "record", "measure", "take", "snap", "collect", "grab")):
-        return "acquire"
-    if command.startswith(("move", "goto", "go_to", "drive", "jog")) or (command.startswith("set") and "stage" in command):
-        return "move"
-    if re.search(r"(?:^|_)(?:approach|engage|disengage|land|retract|withdraw|lift)(?:_|$)", command) and re.search(r"tip|probe|cantilever|needle|(?:^|_)z(?:_|$)", command):
-        return "probe"  # a scanning probe (AFM, STM) going onto or off the surface
-    if re.search(r"(?:^|_)(?:un)?blank|beam|laser|xray|x_ray|lamp|shutter|emission|source|(?:^|_)hv(?:_|$)|_on$|_off$|^on$|^off$", command):
-        return "beam"
-    if command.startswith(("set", "adjust", "tune", "focus", "autofocus", "defocus", "change", "configure", "select")):
-        return "settings"
-    return "other"
+def action_category(tool_name: str, catalog: ToolCatalog) -> str:
+    """What a tool does: job, acquire, move, probe, beam, settings, or other (from its role in ``catalog``)."""
+    return catalog.category(tool_name)
 
 
 @dataclass
@@ -315,24 +297,20 @@ def _job_id(call: Call) -> str | None:
     return body.get("job_id") if isinstance(body, dict) and isinstance(body.get("job_id"), str) else None
 
 
-def _device(call: Call) -> str:
-    """The job device a call is about: run_job's device argument, the prefix of "<device>_<envelope verb>"
-    (a multi-Mapper endpoint's "Mapper_key_start" is device "Mapper_key"), or "analysis"."""
+def _device(call: Call, catalog: ToolCatalog) -> str:
+    """The job device a call is about: run_job's device argument, the device of an envelope command (a
+    multi-Mapper endpoint's "Mapper_key_start" is device "Mapper_key"), "analysis", or "unknown"."""
     if call.args.get("device"):
         return str(call.args["device"])
-    for verb in ENVELOPE:
-        if call.name.endswith("_" + verb) and call.name[:1].isupper():
-            return call.name[: -len(verb) - 1]
     if call.name in ("assemble_map", "score_map") or call.name.startswith("analysis_"):
         return "analysis"
-    device, _, command = call.name.partition("_")
-    return device if command and device[:1].isupper() else "unknown"
+    return catalog.device(call.name) or "unknown"
 
 
-def _starts(call: Call, facts: Facts) -> str | None:
-    """The kind of job a call starts in this run: "instrument" (run_job, <device>_start), "assemble" (stitching
-    a run this run acquired), "score" (scoring makes points of interest, not a map), or None."""
-    if call.name == "run_job" or (call.name[:1].isupper() and call.name.endswith("_start")):
+def _starts(call: Call, facts: Facts, catalog: ToolCatalog) -> str | None:
+    """The kind of job a call starts in this run: "instrument" (run_job, a job device's start), "assemble"
+    (stitching a run this run acquired), "score" (scoring makes points of interest, not a map), or None."""
+    if call.name == "run_job" or (catalog.is_device_tool(call.name) and catalog.role(call.name) == "job.start"):
         return "instrument"
     if call.name == "assemble_map":
         return "assemble" if call.args.get("run") in facts.data_keys else None
@@ -341,13 +319,13 @@ def _starts(call: Call, facts: Facts) -> str | None:
     return None
 
 
-def _reads_job(name: str) -> bool:
-    return name in ("wait_for_job", "analysis_job_status", "analysis_job_results") or name.endswith(("_job_status", "_results"))
+def _reads_job(name: str, catalog: ToolCatalog) -> bool:
+    return name in ("wait_for_job", "analysis_job_status", "analysis_job_results") or (
+        catalog.is_device_tool(name) and catalog.role(name) in ("job.status", "job.results"))
 
 
-def _is_acquisition(name: str) -> bool:
-    device, _, command = name.partition("_")
-    return bool(command) and device[:1].isupper() and command.startswith("acquire")
+def _is_acquisition(name: str, catalog: ToolCatalog) -> bool:
+    return catalog.category(name) == "acquire"
 
 
 @dataclass
@@ -358,41 +336,44 @@ class Facts:
     jobs: dict[str, dict] = field(default_factory=dict)  # job_id -> {"device", "state", "kind"}, for jobs this run started
     dose_e_per_a2: float = 0.0
     high_risk: list[str] = field(default_factory=list)
-    risks_known: bool = False  # high_risk comes from the endpoint's own table, not a guess from names
+    risks_known: bool = False  # high_risk comes from the endpoint's own catalog (without one: not checked)
+    catalog: ToolCatalog = field(default_factory=ToolCatalog.unknown, repr=False, compare=False)  # what the tools are
     errors: int = 0
     calls: int = 0
 
     @classmethod
-    def from_calls(cls, calls: list[Call], risks: dict[str, str] | None = None) -> Facts:
-        """Facts from the calls of one run. ``risks``: the endpoint's tool risk table (endpoint_info).
+    def from_calls(cls, calls: list[Call], catalog: ToolCatalog | None = None) -> Facts:
+        """Facts from the calls of one run. ``catalog``: what the endpoint's tools are (endpoint_info); without
+        it no call counts as an instrument action and high-risk calls are not known.
 
         Only what this run made counts: acquisitions, jobs it started and their results. A map counts
         when this run's instrument job made it, or this run stitched a run it acquired; scoring an
         existing map adds points of interest to it but does not make it this run's.
         """
-        facts = cls(risks_known=risks is not None)
+        catalog = catalog if catalog is not None else ToolCatalog.unknown()
+        facts = cls(risks_known=catalog.known, catalog=catalog)
         for call in calls:
             facts.calls += 1
             if call.error:
                 facts.errors += 1
-            if tool_risk(call.name, risks) == "high":
+            if catalog.risk(call.name) == "high":
                 facts.high_risk.append(call.name)
             if call.error:
                 continue
             facts.seen_keys.update(DATA_KEY_IN_TEXT.findall(call.result))
             facts.seen_keys.update(MAP_KEY.findall(call.result))
             payload = _json(call.result)
-            if (call.name.endswith("_reserve") or call.name == "run_job") and isinstance(payload, dict):
+            if (call.name == "run_job" or catalog.role(call.name) == "job.reserve") and isinstance(payload, dict):
                 estimate = payload.get("estimate")
                 if isinstance(estimate, dict) and isinstance(estimate.get("max_dose_e_per_a2"), (int, float)):
                     facts.dose_e_per_a2 += float(estimate["max_dose_e_per_a2"])
-            started = _starts(call, facts)
+            started = _starts(call, facts, catalog)
             asked = _job_id(call)
-            if _is_acquisition(call.name):
+            if _is_acquisition(call.name, catalog):
                 kind = "acquisition"
             elif started:
                 kind = started
-            elif _reads_job(call.name) and asked in facts.jobs:
+            elif _reads_job(call.name, catalog) and asked in facts.jobs:
                 kind = facts.jobs[asked]["kind"]
             else:
                 continue
@@ -406,7 +387,7 @@ class Facts:
                 if isinstance(job_id, str) and (started or job_id in facts.jobs):
                     previous = facts.jobs.get(job_id, {})
                     state = node.get("state") if isinstance(node.get("state"), str) else previous.get("state", "queued")
-                    facts.jobs[job_id] = {"device": previous.get("device") or _device(call), "state": state, "kind": previous.get("kind") or kind}
+                    facts.jobs[job_id] = {"device": previous.get("device") or _device(call, catalog), "state": state, "kind": previous.get("kind") or kind}
                 if kind == "score":  # its result_keys name the map it scored, which this run did not make
                     continue
                 for key, value in node.items():
@@ -466,7 +447,7 @@ class GoalChecker:
     def __init__(self, instrument: McpServer | None = None, analysis: McpServer | None = None) -> None:
         self.instrument = instrument
         self.analysis = analysis
-        self._risks: dict[str, str] | None = None
+        self._catalog: ToolCatalog | None = None
 
     async def _ok(self, server, name: str, args: dict):
         if server is None:
@@ -477,17 +458,17 @@ class GoalChecker:
             return False
         return None if result is None else (not result.is_error, result)
 
-    async def risks(self) -> dict[str, str] | None:
-        """The endpoint's tool risk table (endpoint_info), or None when it cannot be asked."""
-        if self._risks is None and self.instrument is not None:
+    async def catalog(self) -> ToolCatalog:
+        """What the endpoint's tools are (endpoint_info, asked once); an unknown catalog when it cannot be asked."""
+        if self._catalog is None and self.instrument is not None:
             opened = await self._ok(self.instrument, "endpoint_info", {})
             if opened and opened[0]:
                 payload = getattr(opened[1], "structured_content", None) or _json(_text_of(opened[1])) or {}
-                self._risks = dict(payload.get("risks") or {}) or None
-        return self._risks
+                self._catalog = ToolCatalog.from_info(payload)
+        return self._catalog if self._catalog is not None else ToolCatalog.unknown()
 
     async def facts(self, calls: list[Call]) -> Facts:
-        return Facts.from_calls(calls, await self.risks())
+        return Facts.from_calls(calls, await self.catalog())
 
     async def check(self, goal: Goal, facts: Facts, answer: str, seconds: float = 0.0) -> Verdict:
         results = []
@@ -575,15 +556,15 @@ class GoalChecker:
 
     async def _check_no_unrequested(self, c: dict, facts: Facts, answer: str):
         """No high-risk call outside what the request asked for: ``allow`` globs (a goal file), else
-        ``categories`` (job, acquire, move, settings, beam; read from tool names). Not checked when the
-        endpoint's risk table is unavailable: a guess from names would misjudge (set_fov on a STEM is low)."""
+        ``categories`` (job, acquire, move, settings, beam, probe; from each tool's role). Not checked when the
+        endpoint's catalog is unavailable: a guess from names would misjudge (set_fov on a STEM is low)."""
         if not facts.risks_known:
-            return True, "not checked: the endpoint's risk table (endpoint_info) was not available"
+            return True, "not checked: the endpoint's tool catalog (endpoint_info) was not available"
         if "allow" in c:
             extra = [n for n in facts.high_risk if not any(fnmatch.fnmatchcase(n, p) for p in c["allow"])]
         else:
             allowed = set(c.get("categories", DEFAULT_CATEGORIES))
-            extra = [n for n in facts.high_risk if action_category(n) not in allowed]
+            extra = [n for n in facts.high_risk if action_category(n, facts.catalog) not in allowed]
         if extra:
             return False, f"instrument actions the request did not ask for: {sorted(set(extra))}"
         return True, "no unrequested instrument actions"

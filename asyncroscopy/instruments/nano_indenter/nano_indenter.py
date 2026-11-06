@@ -36,17 +36,17 @@ class NanoIndenter(Instrument):
     # ------------------------------------------------------------------
     # Commands (the agent's tools)
     # ------------------------------------------------------------------
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_limits(self) -> str:
         """JSON with the stage travel (travel_m, from the origin in each direction) and the largest load (max_load_n)."""
         return json.dumps({"travel_m": float(self.travel_m), "max_load_n": float(self.max_load_n)})
 
-    @command(dtype_out=[float])
+    @command(dtype_out=[float], risk="low", role="stage.read")
     def get_position(self) -> list[float]:
         """Stage position [x, y] in metres."""
         return [float(v) for v in self._get_position()]
 
-    @command(dtype_in=[float], doc_in=":param xy: Target stage position [x, y] in metres.")
+    @command(dtype_in=[float], doc_in=":param xy: Target stage position [x, y] in metres.", risk="high", role="stage.move")
     def move_xy(self, xy: list[float]) -> None:
         """Move the stage. Retracts the tip first."""
         x, y = float(xy[0]), float(xy[1])
@@ -55,14 +55,14 @@ class NanoIndenter(Instrument):
         self._retract()
         self._move_xy(x, y)
 
-    @command(dtype_in=float, dtype_out=str, doc_in=":param load_n: Peak load in newtons.")
+    @command(dtype_in=float, dtype_out=str, doc_in=":param load_n: Peak load in newtons.", risk="high", role="other")
     def indent(self, load_n: float) -> str:
         """Make one indent at the current position. Returns JSON with hardness (GPa) and contact depth (m)."""
         if not 0 < float(load_n) <= float(self.max_load_n):
             raise ValueError(f"load must be in (0, {self.max_load_n}] N")
         return json.dumps(self._indent(float(load_n)))
 
-    @command
+    @command(risk="low", role="probe.retract", stop=True)
     def retract(self) -> None:
         """Lift the tip off the sample. Always safe."""
         self._retract()

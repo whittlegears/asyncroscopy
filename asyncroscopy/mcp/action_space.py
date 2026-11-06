@@ -11,9 +11,8 @@ The MCP server (``asyncroscopy.mcp.mcp_server``) offers it as the native tool ``
 - ``instruments``: each device's kind (stem, probe, envelope).
 
 Units and ranges come from, in order: the device's ``action_hints`` attribute (a YAML instrument
-derives it from its file), an electron microscope's limits (``limits.action_hints`` with the device's
-min_fov, max_fov and max_defocus properties), the tool's input schema (Tango types), and the units
-named in the command's doc. A controller that picks tools by role, not by name, runs unchanged on
+derives it from its file; an electron microscope gives its limits at its own min_fov, max_fov and
+max_defocus), the tool's input schema (Tango types), and the units named in the command's doc. A controller that picks tools by role, not by name, runs unchanged on
 instruments whose commands are named differently (``asyncroscopy/examples/role_controller.py``).
 
 From a shell::
@@ -120,29 +119,6 @@ def _returns(tool, hint: dict | None, purpose: str) -> dict | None:
     return found or None
 
 
-def _stem_hints(device) -> dict:
-    """An electron microscope's argument ranges (limits.py), at the device's own min_fov, max_fov and max_defocus."""
-    from asyncroscopy.instruments.electron_microscope import limits
-
-    values = {"min_fov": limits.DEFAULT_MIN_FOV, "max_fov": limits.DEFAULT_MAX_FOV, "max_defocus": limits.DEFAULT_MAX_DEFOCUS}
-    try:
-        stored = device.get_property(list(values))
-        for name in values:
-            if stored.get(name):
-                values[name] = float(list(stored[name])[0])
-    except Exception:  # no database (a bare test context) or not a number: the backends' defaults apply
-        pass
-    return limits.action_hints(**values)
-
-
-def _device_hints(device, stem: bool) -> dict:
-    """Hints for one device: the limits of an electron microscope, then its own action_hints (read at discovery)."""
-    hints = _stem_hints(device.proxy) if stem and device.proxy is not None else {}
-    for command, hint in device.hints.items():
-        hints[command] = {**hints.get(command, {}), **hint}
-    return hints
-
-
 def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
     """Readable Tango attributes of a device (not the MCP server's own metadata), with type, units and range."""
     import tango
@@ -193,7 +169,7 @@ def build(server: MCPServer) -> dict[str, Any]:
         except Exception:
             address = None
         instruments.append({"device": prefix, "class": device.dev_class, "address": address, "kind": kind})
-        hints = _device_hints(device, device.stem)
+        hints = device.hints
         for command in sorted(server.tools[prefix]):
             tool = server.descriptors.get(tool_name(prefix, command))
             registered = server.registered.get(tool.name) if tool is not None else None

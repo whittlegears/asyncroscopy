@@ -10,7 +10,7 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-from tango import AttrWriteType, DevState
+from tango import AttrWriteType
 from tango.server import attribute, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
@@ -64,13 +64,14 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         self._manufacturer = "UTKTeam Particle Digital Twin"
         self._particle_records = []
 
-    def _connect(self):
-        """Connect the current support devices and build the persistent world."""
-        self._connect_detector_proxies()
-        np.random.seed(int(self.sample_seed))
+    def _generate_sample(self, seed: int) -> None:
+        """Build the persistent particle world (the shell connects the support devices first)."""
+        np.random.seed(int(seed))
         self._make_sample_recipe()
         self._cook_sample_recipe()
-        self.set_state(DevState.ON)
+
+    def _viewport_metadata(self) -> dict:
+        return {**super()._viewport_metadata(), "particle_count": len(self._particle_records)}
 
 
     # ------------------------------------------------------------------

@@ -12,9 +12,13 @@ from abc import abstractmethod
 import tango # type: ignore
 
 from asyncroscopy.instruments.instrument import CombinedMeta
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM feedback device: Z loop setpoint, gains, engage state."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -89,17 +93,17 @@ class SPM_FEEDBACK(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def feedback_on(self) -> None:
         """Engage the Z feedback loop."""
         self._hw_feedback_on()
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def feedback_off(self) -> None:
         """Disengage the Z feedback loop."""
         self._hw_feedback_off()
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def refresh_params(self) -> None:
         """Re-read all feedback parameters from hardware, e.g. after changes in the vendor GUI."""
         self._refresh_params()

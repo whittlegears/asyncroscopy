@@ -9,9 +9,13 @@ from abc import abstractmethod
 import tango # type: ignore
  
 from asyncroscopy.instruments.instrument import CombinedMeta
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM coarse stage device: XY position and moves."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -76,7 +80,7 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command(dtype_in=tango.DevVarDoubleArray)
+    @command(dtype_in=tango.DevVarDoubleArray, risk="high", role="stage.move")
     def move_stage(self, position) -> None:
         """Move the stage to an absolute position [x, y] in meters. Blocks until done."""
         if len(position) != 2:
@@ -84,14 +88,14 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
         current = self._hw_read_stage_position()
         self._do_move(float(position[0]) - current[0], float(position[1]) - current[1])
 
-    @tango.server.command(dtype_in=tango.DevVarDoubleArray)
+    @command(dtype_in=tango.DevVarDoubleArray, risk="high", role="stage.move")
     def move_stage_relative(self, delta) -> None:
         """Move the stage by [dx, dy] in meters. Blocks until done."""
         if len(delta) != 2:
             raise ValueError("delta must contain exactly two values: [dx, dy]")
         self._do_move(float(delta[0]), float(delta[1]))
 
-    @tango.server.command
+    @command(risk="low", role="safe_stop", stop=True)
     def stop(self) -> None:
         """Abort a running stage move immediately."""
         self._hw_stop()

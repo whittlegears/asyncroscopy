@@ -236,6 +236,6 @@ To try a controller of your own across samples, use the same pattern. Start one 
 
 ## What is not swappable yet
 
-- The atomistic twins built on `ElectronMicroscopeTwin` (`digital_twin_particles.py`, `digital_twin_tilt.py`, `digital_twin_diffraction.py` and `polycrystalline_gold_digital_twin.py`) still generate their own ASE samples. They rotate the whole atom set with the stage tilt, a coupling this interface does not cover yet.
+- The atomistic twins built on `ElectronMicroscopeTwin` (`digital_twin_particles.py`, `digital_twin_tilt.py`, `digital_twin_diffraction.py` and `polycrystalline_gold_digital_twin.py`) still generate their own samples in `_generate_sample`. Their renderers read per-view state this interface does not carry: the tilt twin's lattice fields follow the stage tilt, the gold twin's grain tree works with the corrector probe, the particles twin rebuilds a voxel recipe whenever the field of view changes, and the diffraction twin's particle maps feed abTEM. A `Specimen` gives projected weight, areal density and height at a point, so turning them into plug-ins would change what they render. The `crystal` source already gives `DigitalTwin` a polycrystalline film.
 - The specimen cannot be changed while the twin runs. Restart the twin with a new `specimen` property. This is deliberate: a Tango command to swap it would be an agent tool.
 - Stage z, alpha and beta still do not change what any specimen looks like.

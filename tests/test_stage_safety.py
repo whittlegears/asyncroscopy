@@ -167,6 +167,8 @@ def test_the_fitted_holder_survives_a_restart_and_a_bad_record_raises_an_alarm(h
 
 
 def test_set_holder_is_operator_only():
-    from asyncroscopy.safety.policy import operator_only
+    from asyncroscopy.instruments.electron_microscope.hardware.TestStage import TestStage
+    from asyncroscopy.utils.commands import declared_hints
 
-    assert operator_only("TestStage", "set_holder") and not operator_only("TestStage", "get_holder")
+    hints = declared_hints(TestStage)
+    assert hints["set_holder"]["operator_only"] and not hints["get_holder"].get("operator_only")

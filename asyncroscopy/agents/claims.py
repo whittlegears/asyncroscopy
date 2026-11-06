@@ -59,7 +59,8 @@ from langchain.agents.middleware.types import ModelCallResult, ModelRequest, Mod
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
-from asyncroscopy.agents.goals import MAP_KEY, Facts, action_category, trace_from_messages
+from asyncroscopy.agents.catalog import ToolCatalog
+from asyncroscopy.agents.goals import MAP_KEY, Facts, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
 
 ENV = "ASYNCROSCOPY_CLAIM_CHECK"
@@ -199,7 +200,7 @@ def _setting_of(tool: str, verb: str) -> str | None:
 class _Settings:
     """Values set and read for each setting in this run, from the calls in order."""
 
-    def __init__(self, calls, tool_names):
+    def __init__(self, calls, tool_names, catalog: ToolCatalog):
         self.names = {n for t in tool_names for n in [_setting_of(t, "set")] if n} | {n for c in calls for n in [_setting_of(c.name, "set")] if n}
         self.last: dict[str, tuple[float, str]] = {}
         self.set: dict[str, list[float]] = {}
@@ -208,7 +209,7 @@ class _Settings:
         for call in calls:
             if call.error:
                 continue
-            if action_category(call.name) == "acquire":
+            if catalog.category(call.name) == "acquire":
                 self.acquired.append({name: value for name, (value, _) in self.last.items()})
             name = _setting_of(call.name, "set")
             if name:
@@ -351,10 +352,10 @@ def _acquired_at_claims(answer: str, settings: _Settings, request: str = "") -> 
     return claims
 
 
-def _failed_acquisition_claims(answer: str, calls) -> list[Claim]:
+def _failed_acquisition_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
     """A key given as a result that only a failed acquisition named (saved with the beam blanked: noise, not the sample)."""
-    made = {k for c in calls if c.ok and action_category(c.name) in ("acquire", "job") for k in DATA_KEY_IN_TEXT.findall(c.result)}
-    failed = {k: c.result for c in calls if c.error and action_category(c.name) == "acquire" for k in DATA_KEY_IN_TEXT.findall(c.result) if k not in made}
+    made = {k for c in calls if c.ok and catalog.category(c.name) in ("acquire", "job") for k in DATA_KEY_IN_TEXT.findall(c.result)}
+    failed = {k: c.result for c in calls if c.error and catalog.category(c.name) == "acquire" for k in DATA_KEY_IN_TEXT.findall(c.result) if k not in made}
     claims = []
     for sentence in _sentences(answer):
         for key in dict.fromkeys(DATA_KEY_IN_TEXT.findall(sentence)):
@@ -368,13 +369,17 @@ def _failed_acquisition_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
-def _action_claims(answer: str, calls) -> list[Claim]:
+def _action_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
+    """Claims of acquiring, moving or zooming that no successful call backs. Not checked without the endpoint's
+    catalog: which calls acquire or move is what the endpoint says, not what their names suggest."""
+    if not catalog.known:
+        return []
     ok = [c for c in calls if c.ok]
-    jobs = any(action_category(c.name) == "job" for c in ok)
-    acquired = jobs or any(action_category(c.name) == "acquire" for c in ok)
-    moved = jobs or any(action_category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
+    jobs = any(catalog.category(c.name) == "job" for c in ok)
+    acquired = jobs or any(catalog.category(c.name) == "acquire" for c in ok)
+    moved = jobs or any(catalog.category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
     # A job zoomed only if its plan imaged finer than its tiles (a revisit or a zoom); a plain map changed nothing.
-    magnified = any(c.name.endswith("_set_fov") or (action_category(c.name) == "job" and re.search(r"revisit|zoom|images", json.dumps(c.args, default=str) + str(c.result))) for c in ok)
+    magnified = any(catalog.role(c.name) == "optics.fov" or (catalog.category(c.name) == "job" and re.search(r"revisit|zoom|images", json.dumps(c.args, default=str) + str(c.result))) for c in ok)
     claims = []
     for sentence in _sentences(answer):
         for pattern, done, why in ((ACQUIRED, acquired, "no acquisition or job call succeeded in this run"),
@@ -469,14 +474,17 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
                   f"x_m and y_m copied from that reply")]
 
 
-def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), context: str = "") -> list[Claim]:
+def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), context: str = "",
+                 catalog: ToolCatalog | None = None) -> list[Claim]:
     """The claims in ``answer`` that the tool calls in ``messages`` do not support (see the module docstring).
 
     ``tool_names``: the tools the agent has (they name the settings it can set); ``context``: other text
-    the model was given (its system prompt), whose keys it may name.
+    the model was given (its system prompt), whose keys it may name; ``catalog``: what the endpoint's tools
+    are (endpoint_info), without which claims about acquiring and moving are not checked.
     """
+    catalog = catalog if catalog is not None else ToolCatalog.unknown()
     calls = trace_from_messages(messages)
-    facts = Facts.from_calls(calls)
+    facts = Facts.from_calls(calls, catalog)
     claims: list[Claim] = []
     # Keys: any key a reply, a request or the prompt gave the model may be named (an error reply too).
     given = " ".join(_text(m) for m in messages if getattr(m, "type", "") in ("tool", "human")) + " " + context
@@ -485,11 +493,11 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     for key in named:
         if key not in known:
             claims.append(Claim("key", key, "no tool returned this key in this run"))
-    claims += _failed_acquisition_claims(answer, calls)
-    settings = _Settings(calls, tool_names)
+    claims += _failed_acquisition_claims(answer, calls, catalog)
+    settings = _Settings(calls, tool_names, catalog)
     claims += _setting_claims(answer, settings)
     claims += _acquired_at_claims(answer, settings, _request(messages))
-    claims += _action_claims(answer, calls)
+    claims += _action_claims(answer, calls, catalog)
     claims += _placement_claims(answer, calls)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
@@ -531,16 +539,18 @@ class ClaimCheckMiddleware(AgentMiddleware):
     into the state (and so into traces).
     """
 
-    def __init__(self, tool_names: Iterable[str] = (), enabled: bool | None = None, max_corrections: int = 1) -> None:
+    def __init__(self, tool_names: Iterable[str] = (), enabled: bool | None = None, max_corrections: int = 1,
+                 catalog: ToolCatalog | None = None) -> None:
         super().__init__()
         self.tool_names = set(tool_names)
+        self.catalog = catalog
         self.enabled = enabled_from_env() if enabled is None else enabled
         self.max_corrections = max_corrections
 
     def _claims(self, request, history: list, answer: AIMessage) -> list[Claim]:
         system = getattr(request, "system_message", None)
         return check_answer(history, _text(answer), self.tool_names | {getattr(t, "name", "") for t in request.tools or []},
-                            context=_text(system) if system is not None else "")
+                            context=_text(system) if system is not None else "", catalog=self.catalog)
 
     def _plan(self, request, response):
         """(answer, claims, history) when the response is a final answer with unsupported claims, else None."""

@@ -13,7 +13,9 @@ import uuid
 from pathlib import Path
 
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command, device_property
+from tango.server import Device, attribute, device_property
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 from abc import abstractmethod
 
 TILT_LIMITS_DEG = {"alpha": (-35.0, 35.0), "beta": (-20.0, 20.0)}
@@ -42,6 +44,9 @@ class STAGE(Device):
     Public stage vectors are always [x, y, z, alpha, beta], with x/y/z in
     meters and alpha/beta in degrees.
     """
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Device properties — set per-deployment in the Tango DB
@@ -250,13 +255,13 @@ class STAGE(Device):
             attr.set_min_value(low)
             attr.set_max_value(high)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_holder(self) -> str:
         """The installed holder and the stage limits it leaves: JSON {"holder", "holders", "limits": {axis: [min, max]}} (m, deg)."""
         return json.dumps({"holder": self._holder or None, "holders": sorted(self._holders), "frozen": self._frozen,
                            "limits": {axis: list(pair) for axis, pair in self._limits.items()}})
 
-    @command(dtype_in=str, dtype_out=str, doc_in="Name of the holder now installed (one of holders), or blank for none.")
+    @command(dtype_in=str, dtype_out=str, doc_in="Name of the holder now installed (one of holders), or blank for none.", risk="high", operator_only=True, role="setting.set")
     def set_holder(self, name: str) -> str:
         """Say which holder is installed, so moves are checked against its Z and tilt limits. Refused while the stage
         is outside them: move it inside first."""
@@ -277,7 +282,7 @@ class STAGE(Device):
         self.set_status(f"holder {name or 'none'}")
         return self.get_holder()
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_sample(self) -> str:
         """The sample in the holder: JSON {"sample_id", "sample_load_id", "loaded_at", "who"}; nulls when none was recorded.
         Every dataset records these, so a position from an earlier load is not mistaken for one on this sample."""
@@ -290,7 +295,7 @@ class STAGE(Device):
             return json.dumps({**empty, "error": f"the sample record in {self._sample_path} could not be read ({exc}); load the sample again"})
         return json.dumps({key: saved.get(key) for key in empty})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"sample_id": "...", "who": "..."}: the sample just put in the holder.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"sample_id": "...", "who": "..."}: the sample just put in the holder.', risk="high", operator_only=True, role="setting.set")
     def load_sample(self, request: str) -> str:
         """Record that a sample was loaded (operator only): it gets a new sample_load_id, so stage positions
         recorded before this load are known to belong to another load, even of the same sample."""

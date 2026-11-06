@@ -22,7 +22,7 @@ from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
 from asyncroscopy.agents.skill_runs import SkillRuns
 # Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
-from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model, is_stem_endpoint
+from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model
 from asyncroscopy.skills.registry import list_skills
 
 try:  # import the model client here: an import inside the async factory blocks the event loop
@@ -76,10 +76,11 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     every = await agent_config.tools(allow=["*"])
     offered = {t.name for t in every}
     own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
-    stem = is_stem_endpoint(own)
+    info = await agent_config.info()  # what discovery found: the electron microscopes, the Mappers, each tool's role
+    stem = bool(info.get("stem_devices"))
     # load_skill stays in, so the middleware can show it while a matched skill does not fit.
     lists = agent_config.tool_lists()
-    patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen, lists)
+    patterns = agent_tool_patterns(own, bool(info.get("analysis_url")), chosen, lists, stem=stem, maps=bool(info.get("map_devices")))
     tools = [t for t in every if for_model(t.name, patterns, lists)]
     runs = SkillRuns(tools, list_skills(offered))  # usable on this endpoint, as the middleware chooses them
     if runs.offered():
@@ -95,5 +96,6 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
     middleware = build_middleware(agent_config.middleware, prompt=prompt, tool_names=names, offered=offered, tools=tools, memory=memory.notes_for,
-                                  num_ctx=agent_config.num_ctx, deadline=agent_config.deadline, claim_check=configurable.get("claim_check"))
+                                  num_ctx=agent_config.num_ctx, deadline=agent_config.deadline, claim_check=configurable.get("claim_check"),
+                                  catalog=await agent_config.catalog())
     return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=middleware)

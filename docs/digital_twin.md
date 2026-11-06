@@ -84,11 +84,11 @@ Each acquisition's record is appended to `<acquisition_save_directory>/ground_tr
 
 ## Specialised twins
 
-`ElectronMicroscopeTwin` (`digital_twin_base.py`) holds the original atom-by-atom renderer and the Tango plumbing shared by the specialised twins:
+`ElectronMicroscopeTwin` (`digital_twin_base.py`) is the thin shell every twin shares: its properties, the detector proxies, the beam position, field of view and defocus, the stage basics, and `_generate_sample(seed)`, the hook each twin builds its sample in. Each twin renders its own way. The tilt, diffraction and gold twins also share `ParticleSpectrumMixin` (`twin/atomistic.py`): particle records that follow the stage, and the EDS spectrum they give under the parked beam. The specialised twins:
 
 - `DigitalTwinDiffraction`: parked-beam nanoparticle diffraction with abTEM (`uv sync --extra diffraction`). Fixes the field of view at 500 nm and saves a simulated diffraction pattern from `acquire_camera_image()`.
 - `DigitalTwinTilt`: silicon lamella tilt series with ASE/abTEM multislice.
 - `DigitalTwinParticles`: voxel-backed oriented particles.
 - `PolycrystallineGoldDigitalTwin`: polycrystalline gold driven by the corrector twin.
 
-To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.
+To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer (implement `_generate_sample`). Every command, and what it is (risk, role, stop, routine), comes from the `ElectronMicroscope` base: a twin declares nothing. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.
