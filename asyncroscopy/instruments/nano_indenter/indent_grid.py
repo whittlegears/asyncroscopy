@@ -35,6 +35,8 @@ class IndentGrid(JobDevice):
     PLAN_EXAMPLE = {"origin_m": [0.0, 0.0], "nx": 5, "ny": 5, "pitch_m": 2e-5, "load_n": 0.01}
     # run_step below copes with a dry run: it records the move and the indent and parses no reply.
     SUPPORTS_DRY_RUN = True
+    # Lifting the tip only makes the indenter safer: a dry run really does it.
+    SAFE_COMMANDS = frozenset({"retract"})
 
     indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Tango address of the indenter (the launcher names the instrument asyncroscopy/instrument/default).")
 

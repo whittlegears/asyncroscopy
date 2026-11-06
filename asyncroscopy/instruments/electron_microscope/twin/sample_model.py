@@ -15,7 +15,7 @@ import numpy as np
 from ase.build import bulk
 from scipy import ndimage
 
-from .rng import EventRng
+from asyncroscopy.sim.rng import EventRng
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10

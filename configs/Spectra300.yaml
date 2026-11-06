@@ -42,7 +42,7 @@ devices:
   # screen and call get_screen_current first (docs/Operation/agentic_mapping.md, "Dose budget and beam current").
   mapper:
     class_name: Mapper
-    module_name: asyncroscopy.instruments.electron_microscope.mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default
@@ -61,7 +61,7 @@ devices:
   # measured beam current, as for the Mapper; autofocus_frames is a placeholder to calibrate.
   tuner:
     class_name: Tuner
-    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default

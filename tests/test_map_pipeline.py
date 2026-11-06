@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, REVISIT_EDGE_SHIFT
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from asyncroscopy.jobs.mapping.pipeline import REVISIT_EDGE_SHIFT, Pipeline
 
 pytestmark = [
     pytest.mark.slow,
@@ -86,7 +87,7 @@ def analysis(monkeypatch, tmp_path_factory):
         return holder["server"](self, tool, arguments)
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Mapper, "_analysis", fake)
+    monkeypatch.setattr(Pipeline, "call", fake)
     return holder
 
 

@@ -110,7 +110,7 @@ def test_load_tilt_twin_config_includes_simulation_properties():
 
     assert config.instrument.class_name == "DigitalTwinTilt"
     assert config.instrument.module_name.endswith("digital_twin_tilt")
-    assert stage.class_name == "TestStage"
+    assert stage.class_name == "DigitalTwinSTAGE"
     assert properties["silicon_lattice_parameter_angstrom"] == ["5.431"]
     assert properties["lattice_parameter_gradient_x_percent"] == ["2.0"]
     assert properties["crystal_rotation_gradient_x_deg"] == ["4.0"]
@@ -419,3 +419,35 @@ def test_run_mcp_fails_when_its_server_stops_on_its_own(monkeypatch):
     monkeypatch.setattr(run_mcp, "ProcessManager", FakeManager)
     monkeypatch.setattr(run_mcp, "stop_on_termination", lambda: None)
     assert run_mcp.main(["--yaml", str(run_mcp.PROJECT_DIR / "configs" / "mcp_dt.yaml")]) == 3
+
+
+def test_a_config_extends_another_and_overrides_or_removes_what_it_sets(tmp_path):
+    base = tmp_path / "base.yaml"
+    base.write_text(
+        "simulated: true\n"
+        "instrument:\n  class_name: DigitalTwin\n  properties:\n    seed: 1\n    specimen: {source: procedural, support_texture: 0.3}\n    drift: 2.0\n"
+        "devices:\n  tuner: {class_name: Tuner, module_name: asyncroscopy.jobs.tuning.tuner}\n  data: {module_name: asyncroscopy.data.data}\n",
+        encoding="utf-8",
+    )
+    child = tmp_path / "child.yaml"
+    child.write_text(
+        "extends: base.yaml\n"
+        "instrument:\n  properties:\n    seed: 2\n    specimen: {source: crystal}\n    drift: null\n"
+        "devices:\n  tuner: null\n",
+        encoding="utf-8",
+    )
+    raw = run_servers.read_config(child)
+    assert raw["simulated"] is True and raw["instrument"]["class_name"] == "DigitalTwin"
+    assert raw["instrument"]["properties"] == {"seed": 2, "specimen": {"source": "crystal"}}  # a property is replaced whole
+    assert list(raw["devices"]) == ["data"]
+
+    base.write_text("extends: child.yaml\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="circle"):
+        run_servers.read_config(child)
+
+
+def test_the_twin_variants_extend_the_mapping_twin():
+    for name in ("digital_twin_crystal.yaml", "digital_twin_recorded.yaml", "digital_twin_large_map.yaml"):
+        config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / name)
+        assert config.instrument.class_name == "DigitalTwin"
+        assert {d.key for d in config.support_devices} >= {"data", "mapper", "stage"}
