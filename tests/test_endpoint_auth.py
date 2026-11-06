@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 import tango
 
-from asyncroscopy.mcp.endpoint_auth import AuthSettings, required_role, remote_without_auth
+from asyncroscopy.mcp.endpoint_auth import AuthSettings, remote_without_auth
 from asyncroscopy.mcp.mcp_server import MCPServer
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -317,16 +317,22 @@ def test_set_mode_needs_the_approve_role(stack, keys, approvals_proxy):
     assert approvals_proxy.get_mode() == "approve"
 
 
-def test_roles_follow_the_risk_policy():
-    risks = {"DigitalTwin_get_stage": "low", "DigitalTwin_move_stage": "high", "Approvals_approve": "high", "Mapper_job_status": "low"}
-    keys_ = {"DigitalTwin_get_stage": "DigitalTwin.get_stage", "DigitalTwin_move_stage": "DigitalTwin.move_stage",
-             "Approvals_approve": "Approvals.approve", "Mapper_job_status": "Mapper.job_status"}
-    assert required_role("DigitalTwin_get_stage", risks, keys_) == "read"
-    assert required_role("Mapper_job_status", risks, keys_) == "read"
-    assert required_role("DigitalTwin_move_stage", risks, keys_) == "operate"
-    assert required_role("Approvals_approve", risks, keys_) == "approve"
-    assert required_role("run_job", risks, keys_) == "operate"
-    assert required_role("view_data", risks, keys_) == "read"
+def test_roles_follow_the_tool_descriptors():
+    from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
+    from asyncroscopy.safety.decide import required_role
+
+    twin, mapper, approvals = DeviceInfo("DigitalTwin", "DigitalTwin", stem=True), DeviceInfo("Mapper", "Mapper", envelope=True), DeviceInfo("Approvals", "Approvals")
+
+    def described(device, command):
+        return describe_command(device, command, overrides={}, routine={}, warnings=[])
+
+    assert required_role(described(twin, "get_stage")) == "read"
+    assert required_role(described(mapper, "job_status")) == "read"
+    assert required_role(described(twin, "move_stage")) == "operate"
+    assert required_role(described(approvals, "approve")) == "approve"
+    assert required_role(describe_native("run_job")) == "operate"
+    assert required_role(describe_native("view_data")) == "read"
+    assert required_role(None) == "operate"  # a tool the endpoint does not know: unknown is high
 
 
 # ---------------------------------------------------------------------- the config
@@ -360,7 +366,7 @@ def test_without_auth_nothing_changes(monkeypatch):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
     assert server.auth is None and server.mcp.auth is None
-    server.mcp.add_tool(server.endpoint_info)
+    server.mcp.add_tool(server.discovery.endpoint_info)
 
     async def go():
         async with Client(server.mcp) as client:
@@ -368,7 +374,7 @@ def test_without_auth_nothing_changes(monkeypatch):
 
     assert not asyncio.run(go()).is_error
     monkeypatch.setattr("fastmcp.server.dependencies.get_http_headers", lambda include_all=False: {"x-asyncroscopy-caller": "general-agent"})
-    assert server._caller() == "general-agent"
+    assert server.caller() == "general-agent"
 
 
 # ---------------------------------------------------------------------- run_mcp refuses open hardware without auth

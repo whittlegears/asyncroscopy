@@ -105,7 +105,7 @@ include = ["asyncroscopy", "asyncroscopy.*"]
 
 [tool.setuptools.package-data]
 # Schemas and agent skills ship with the package so an installed copy can use them.
-asyncroscopy = ["contracts/*.json", "contracts/*.md", "skills/*/SKILL.md", "skills/README.md", "instruments/yaml_sim/examples/*.yaml"]
+asyncroscopy = ["contracts/*.json", "contracts/*.md", "safety/profiles/*.yaml", "agents/profiles/*.yaml", "skills/*/SKILL.md", "skills/README.md", "instruments/yaml_sim/examples/*.yaml"]
 
 [tool.uv.sources]
 autoscript-core = { path = "stubs/AutoScript_v_1.18/autoscript_core-1.4.0-py3-none-any.whl" }

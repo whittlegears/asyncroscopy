@@ -39,6 +39,8 @@ class MCPConfig:
     endpoint_role: str = 'agent'
     approvals_device_address: str = ''
     risk: dict[str, str] = field(default_factory=dict)
+    # mcp.safety.auto_routine: what auto mode runs without a person; None: the packaged profile.
+    auto_routine: dict[str, list[str]] | None = None
     trace: str = ''
     clock_device: str = ''  # instrument whose clock_s stamps trace events; empty: this computer's time
     trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads; empty: trace's directory
@@ -71,6 +73,16 @@ def _approvals_address(mcp: dict, path) -> str:
             "or, for a simulator only, mcp.safety.allow_ungated: true."
         )
     return address
+
+
+def _auto_routine(mcp: dict, path) -> dict[str, list[str]] | None:
+    """mcp.safety.auto_routine, checked; None when the config leaves it out (the packaged profile applies)."""
+    raw = (mcp.get('safety') or {}).get('auto_routine')
+    if raw is None:
+        return None
+    from asyncroscopy.safety.policy import check_auto_routine
+
+    return check_auto_routine(raw, f"{path}: mcp.safety")
 
 
 def _require(mapping: dict, key: str, where: str):
@@ -114,6 +126,7 @@ def load_config(path: Path) -> Config:
             endpoint_role=str(mcp.get('endpoint_role', 'agent')),
             approvals_device_address=_approvals_address(mcp, path),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
+            auto_routine=_auto_routine(mcp, path),
             trace=str(mcp.get('trace') or ''),
             clock_device=str(mcp.get('clock_device') or ''),
             trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
@@ -177,6 +190,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--approvals-device-address', config.mcp.approvals_device_address])
     if config.mcp.risk:
         command.extend(['--risk-json', json.dumps(config.mcp.risk)])
+    if config.mcp.auto_routine is not None:
+        command.extend(['--auto-routine-json', json.dumps(config.mcp.auto_routine)])
     if config.mcp.trace:
         command.extend(['--trace', config.mcp.trace])
     if config.mcp.clock_device:

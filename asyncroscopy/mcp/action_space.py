@@ -30,10 +30,7 @@ import re
 import sys
 from typing import TYPE_CHECKING, Any
 
-from asyncroscopy.core.names import ACTION_HINTS, ROLES, check_role
-from asyncroscopy.mcp.action_roles import NATIVE_ROLES, role_for
-from asyncroscopy.core.names import DEFAULT_MCP_URL, ENVELOPE_VERBS
-from asyncroscopy.safety.policy import NATIVE_HIGH, is_read_only
+from asyncroscopy.core.names import ACTION_HINTS, DEFAULT_MCP_URL, ENVELOPE_VERBS, ROLES, tool_name
 
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
@@ -41,7 +38,6 @@ if TYPE_CHECKING:
 SCHEMA_VERSION = "1.0.0"
 # Attributes that describe a device to the MCP server rather than the instrument's state.
 META_ATTRIBUTES = frozenset({"state", "status", "job_kind", "plan_example", "plan_schema", ACTION_HINTS})
-NATIVE_ACTS = frozenset(NATIVE_HIGH)  # every other native tool only reads
 # Unit words in command docs ("Field of view in metres", "(pA)") -> the unit.
 UNIT_WORDS = {
     "metres": "m", "meters": "m", "metre": "m", "meter": "m", "nanometres": "nm", "nanometers": "nm",
@@ -139,18 +135,11 @@ def _stem_hints(device) -> dict:
     return limits.action_hints(**values)
 
 
-def _device_hints(device, stem: bool, warnings: list[str], prefix: str) -> dict:
-    """Hints for one device: the limits of an electron microscope, then its own action_hints attribute."""
-    hints = _stem_hints(device) if stem else {}
-    try:
-        names = {a.lower() for a in device.get_attribute_list()}
-        own = json.loads(str(device.read_attribute(ACTION_HINTS).value)) if ACTION_HINTS in names else {}
-    except Exception as exc:
-        warnings.append(f"{prefix}: could not read its {ACTION_HINTS} ({type(exc).__name__}: {exc})")
-        own = {}
-    for command, hint in (own if isinstance(own, dict) else {}).items():
-        if isinstance(hint, dict):
-            hints[command] = {**hints.get(command, {}), **hint}
+def _device_hints(device, stem: bool) -> dict:
+    """Hints for one device: the limits of an electron microscope, then its own action_hints (read at discovery)."""
+    hints = _stem_hints(device.proxy) if stem and device.proxy is not None else {}
+    for command, hint in device.hints.items():
+        hints[command] = {**hints.get(command, {}), **hint}
     return hints
 
 
@@ -185,71 +174,62 @@ def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
     return found
 
 
+# Declaration keys of action_hints that the descriptors already carry (risk, role): not argument hints.
+_DECLARED = ("risk", "operator_only", "stop", "routine", "role")
+
+
 def build(server: MCPServer) -> dict[str, Any]:
-    """The action space of an MCPServer after setup()."""
-    warnings: list[str] = []
+    """The action space of an MCPServer after setup(), from its tool descriptors."""
+    warnings: list[str] = list(server.discovery_warnings)
     actions: list[dict] = []
     instruments: list[dict] = []
     state: list[dict] = []
     jobs: list[dict] = []
-    overrides = server.risk_overrides
     for prefix in sorted(server.tools):
-        device = server._devices.get(prefix)
-        dev_class = server._prefix_class.get(prefix, prefix)
-        kind = {"stem": prefix in server._stem_prefixes, "probe": prefix in server._probe_prefixes, "envelope": prefix in server._envelope_prefixes}
+        device = server.devices[prefix]
+        kind = {"stem": device.stem, "probe": device.probe, "envelope": device.envelope}
         try:
-            address = str(device.dev_name()) if device is not None else None
+            address = str(device.proxy.dev_name()) if device.proxy is not None else None
         except Exception:
             address = None
-        instruments.append({"device": prefix, "class": dev_class, "address": address, "kind": kind})
-        hints = _device_hints(device, kind["stem"], warnings, prefix) if device is not None else {}
+        instruments.append({"device": prefix, "class": device.dev_class, "address": address, "kind": kind})
+        hints = _device_hints(device, device.stem)
         for command in sorted(server.tools[prefix]):
-            name = f"{prefix}_{command}".replace("/", "_").replace("-", "_")
-            tool = server._registered.get(name)
-            if tool is None:
+            tool = server.descriptors.get(tool_name(prefix, command))
+            registered = server.registered.get(tool.name) if tool is not None else None
+            if registered is None:
                 continue
-            hint = hints.get(command, {})
-            role, source = None, "rule"
-            if hint.get("role"):
-                try:
-                    role, source = check_role(hint["role"], f"{prefix}.{command}"), "annotation"
-                except ValueError as exc:
-                    warnings.append(f"{exc}; the rules decide instead")
-            role = role or role_for(dev_class, command, envelope=kind["envelope"], probe=kind["probe"])
-            if role == "other":
-                source = "default"
-            purpose = _purpose(tool.description, prefix, command)
-            observes = is_read_only(dev_class, command, overrides) or (kind["envelope"] and command.lower() in ("job_status", "results"))
+            hint = {k: v for k, v in hints.get(command, {}).items() if k not in _DECLARED}
+            purpose = _purpose(registered.description, prefix, command)
             action = {
-                "tool": name, "device": prefix, "command": command, "role": role, "role_source": source,
-                "purpose": purpose, "risk": server.tool_risks.get(name, "high"), "effect": "observe" if observes else "act",
-                "args": _arguments(tool, hint.get("args")),
+                "tool": tool.name, "device": prefix, "command": command, "role": tool.action_role, "role_source": tool.role_source,
+                "purpose": purpose, "risk": tool.risk, "effect": "act" if tool.acts else "observe",
+                "args": _arguments(registered, hint.get("args")),
             }
-            returns = _returns(tool, hint.get("returns"), purpose)
+            returns = _returns(registered, hint.get("returns"), purpose)
             if returns:
                 action["returns"] = returns
             if hint.get("primary") is True:
                 action["primary"] = True
             actions.append(action)
-            if observes and not role.startswith("job."):
-                read = {"name": command[4:] if command.lower().startswith("get_") else command, "device": prefix, "source": "tool", "tool": name, "role": role}
+            if not tool.acts and not tool.action_role.startswith("job."):
+                read = {"name": command[4:] if command.lower().startswith("get_") else command, "device": prefix, "source": "tool", "tool": tool.name, "role": tool.action_role}
                 read.update({k: v for k, v in (returns or {}).items() if k in ("type", "items", "units", "axis", "elements", "kind")})
                 state.append(read)
-        if device is not None:
-            state += _attributes(device, prefix, warnings)
-        if kind["envelope"]:
+        if device.proxy is not None:
+            state += _attributes(device.proxy, prefix, warnings)
+        if device.envelope:
             jobs.append(_job(server, prefix, device))
-    for name in sorted(server._native_names):
-        tool = server._registered.get(name)
-        if tool is None:
+    for name in sorted(server.native_names):
+        tool, registered = server.descriptors.get(name), server.registered.get(name)
+        if tool is None or registered is None:
             continue
-        purpose = _purpose(tool.description, None)
-        role = NATIVE_ROLES.get(name, "other")
-        returns = _returns(tool, None, purpose)
+        purpose = _purpose(registered.description, None)
+        returns = _returns(registered, None, purpose)
         actions.append({
-            "tool": name, "device": None, "command": None, "role": role, "role_source": "rule" if role != "other" else "default",
-            "purpose": purpose, "risk": "high" if name in NATIVE_HIGH else "low", "effect": "act" if name in NATIVE_ACTS else "observe",
-            "args": _arguments(tool, None), **({"returns": returns} if returns else {}),
+            "tool": name, "device": None, "command": None, "role": tool.action_role, "role_source": tool.role_source,
+            "purpose": purpose, "risk": tool.risk, "effect": "act" if tool.acts else "observe",
+            "args": _arguments(registered, None), **({"returns": returns} if returns else {}),
         })
     return {
         "schema_version": SCHEMA_VERSION,
@@ -266,20 +246,20 @@ def build(server: MCPServer) -> dict[str, Any]:
 def _job(server, prefix: str, device) -> dict:
     def attribute(name: str) -> Any:
         try:
-            text = str(device.read_attribute(name).value)
+            text = str(device.proxy.read_attribute(name).value)
             return json.loads(text) if text else None
         except Exception:  # an older job device without it, or not JSON
             return None
 
-    example = server._plan_examples.get(prefix)
+    example = device.plan_example
     try:
         example = json.loads(example) if example else None
     except json.JSONDecodeError:
         pass
-    verbs = {verb: f"{prefix}_{verb}" for verb in server.tools.get(prefix, {}) if verb.lower() in ENVELOPE_VERBS | {"get_reservation"}}
+    verbs = {verb: tool_name(prefix, verb) for verb in server.tools.get(prefix, {}) if verb.lower() in ENVELOPE_VERBS | {"get_reservation"}}
     return {
-        "device": prefix, "kind": server._job_kinds.get(prefix), "plan_schema": attribute("plan_schema") if device is not None else None,
-        "plan_example": example, "tools": verbs, "run_with": "run_job" if "run_job" in server._native_names else None,
+        "device": prefix, "kind": device.job_kind, "plan_schema": attribute("plan_schema") if device.proxy is not None else None,
+        "plan_example": example, "tools": verbs, "run_with": "run_job" if "run_job" in server.native_names else None,
     }
 
 

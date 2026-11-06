@@ -55,15 +55,15 @@ def test_mcp_skill_tools(monkeypatch):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
     with pytest.raises(ToolError, match=r"Mapper\*_reserve"):
-        server.load_skill("mapping")  # this endpoint has no Mapper
+        server.skills.load_skill("mapping")  # this endpoint has no Mapper
     server.tools = {"Mapper": {"reserve": None}}
-    assert any(s["name"] == "mapping" and s["available"] for s in server.list_skills())
-    assert "run_job" in server.load_skill("mapping")
+    assert any(s["name"] == "mapping" and s["available"] for s in server.skills.list_skills())
+    assert "run_job" in server.skills.load_skill("mapping")
     with pytest.raises(ToolError):
-        server.load_skill("nope")
-    assert "Skills here at startup: " in server._load_skill_description() and "mapping" in server._load_skill_description()
+        server.skills.load_skill("nope")
+    assert "Skills here at startup: " in server.skills.load_skill_description() and "mapping" in server.skills.load_skill_description()
     server.tools = {}
-    assert "mapping" not in server._load_skill_description()  # a skill this endpoint cannot run is not offered
+    assert "mapping" not in server.skills.load_skill_description()  # a skill this endpoint cannot run is not offered
 
 
 def test_chosen_skills_go_into_the_prompt_in_full_while_they_fit(tmp_path, monkeypatch):

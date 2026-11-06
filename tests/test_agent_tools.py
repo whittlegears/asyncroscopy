@@ -50,7 +50,7 @@ def endpoint(monkeypatch):
         server = MCPServer("t", "localhost", 1, blocked_classes=[], blocked_functions={}, data_device_address="d",
                            verbose=False, analysis_url=analysis_url)
         server.tools = {prefix: dict.fromkeys(commands) for prefix, commands in devices.items()}
-        server._native_names = set(NATIVE)
+        server.native_names = set(NATIVE)
         return server
 
     return make
@@ -61,7 +61,7 @@ def general_agent_tools(server, monkeypatch, tmp_path):
     monkeypatch.delenv("ASYNCROSCOPY_AGENT_TOOLS", raising=False)
     given = {}
     monkeypatch.setattr(general, "create_agent", lambda model, tools, **_: given.setdefault("tools", tools))
-    config = EndpointConfig(server._all_tool_names(), server.endpoint_info())
+    config = EndpointConfig(server.tool_names(), server.discovery.endpoint_info())
     asyncio.run(general.make_graph({"configurable": {"agent_config": config, "claim_check": False}}))
     return sorted(t.name for t in given["tools"]), config
 
@@ -74,7 +74,7 @@ def general_agent_tools(server, monkeypatch, tmp_path):
 def test_endpoint_info_agent_tools_are_the_general_agents_tools(endpoint, monkeypatch, tmp_path, devices, analysis_url):
     server = endpoint(devices, analysis_url)
     picked, config = general_agent_tools(server, monkeypatch, tmp_path)
-    patterns = server.endpoint_info()["agent_tools"]
+    patterns = server.discovery.endpoint_info()["agent_tools"]
     offered = config.own + ANALYSIS
     # run_skill and wait_for_skill are the agent's own (they send a skill's listed calls): offered once a skill's run list can be sent.
     assert [n for n in picked if n not in RUN_TOOLS] == sorted(n for n in offered if for_model(n, patterns))
@@ -109,7 +109,7 @@ def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_too
     from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 
     server = endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp")
-    assert not is_stem_endpoint(server._all_tool_names())
+    assert not is_stem_endpoint(server.tool_names())
     picked, _ = general_agent_tools(server, monkeypatch, tmp_path)
     for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"):
         assert tool in picked, tool
@@ -123,8 +123,8 @@ def test_the_stem_twins_curated_set_is_unchanged(endpoint):
     from asyncroscopy.mcp.agent_tools import DEFAULT_TOOLS, is_stem_endpoint
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
-    assert is_stem_endpoint(server._all_tool_names())
-    assert server.endpoint_info()["agent_tools"] == DEFAULT_TOOLS + ["load_skill"]
+    assert is_stem_endpoint(server.tool_names())
+    assert server.discovery.endpoint_info()["agent_tools"] == DEFAULT_TOOLS + ["load_skill"]
 
 
 def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(tmp_path, monkeypatch):

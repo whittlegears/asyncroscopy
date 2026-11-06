@@ -1,4 +1,10 @@
-"""Which commands count as high risk, and which only an operator may call.
+"""The name rules: which commands count as high risk, and which only an operator may call.
+
+These rules are the fallback. The MCP server first takes what the MCP config says
+(``mcp.safety.risk``) and then what a device declares for its own commands (``risk``,
+``operator_only``, ``stop``, ``routine`` in its ``action_hints``; ``asyncroscopy.mcp.descriptors``);
+only a command its device declares nothing for is decided here, and the server lists those at
+startup. Unknown is high.
 
 Risk is decided by ``Class.command`` patterns, first match wins:
 
@@ -26,7 +32,8 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    the sample (STEM_LOW);
 5. everything else is high: a new or renamed command is held in approval
    mode rather than waved through, and in auto mode too unless it is
-   routine (AUTO_DEFAULT) or an operator switched it on.
+   routine (declared by its device, or listed in the auto-routine profile,
+   ``load_auto_routine``) or an operator switched it on.
 
 The convention in (4) is a promise instrument authors keep: a command named
 ``get_...`` or ``list_...`` must not move or change anything (an SPM
@@ -38,6 +45,7 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Iterable
 
 from asyncroscopy.core.names import ENVELOPE_VERBS
@@ -77,8 +85,6 @@ DEFAULT_RISK: list[tuple[str, str]] = [
     ("*.ping", "low"),
     ("*.state", "low"),
     ("*.status", "low"),
-    # Reading the approval state; the deciding commands are operator-only below.
-    ("approvals.request_status", "low"),
 ]
 # STEM settings that neither move hardware nor expose the sample. Low only on a device that
 # acquires scanned images: on an optical microscope set_defocus drives the objective. place_beam
@@ -219,38 +225,32 @@ def is_read_only(dev_class: str, command: str, overrides: dict[str, str] | None 
 # Native MCP tools (lower-case names, not device commands) that act on the instrument: run_job starts a job.
 NATIVE_HIGH = frozenset({"run_job"})
 
-# High-risk commands that auto mode runs without asking: routine imaging, spectra, stage moves (the
-# device refuses one outside its limits) and placing the beam. Every other high-risk command (column
-# valves, screen, apertures, corrector, spectrometer set-up, calibration, a camera exposure, or any
-# unknown or renamed command) is held in auto too, until an operator switches it on
-# (Approvals.set_auto_allowed). A job's start runs in auto when every command it drives would.
-AUTO_DEFAULT = frozenset({
-    "move_stage", "acquire_scanned_image", "acquire_scanned_data_advanced", "acquire_spectrum", "acquire_eels_spectrum",
-    "place_beam", "place_beam_list", "unblank_beam", "auto_focus", "set_stigmator", "set_beam_tilt", "set_image_shift",
-    "aim_image_shift", "place_beam_at",
-})
+# The packaged auto-routine profile: the high-risk commands auto mode runs without a person, by device kind.
+AUTO_ROUTINE_PROFILE = Path(__file__).resolve().parent / "profiles" / "auto_routine.yaml"
 
 
-def auto_allows(tool_name: str, switched_on: Iterable[str] = (), stem_devices: Iterable[str] = ()) -> bool:
-    """True when auto mode may run the high-risk tool ``tool_name`` ("<Prefix>_<command>") without a
-    person: an operator switched it on (``switched_on``: tool-name globs, case ignored), or it is a
-    routine command (AUTO_DEFAULT) of an electron microscope (``stem_devices``: the tool prefixes of
-    devices that scan images and blank a beam, see ``is_stem_device``). On any other instrument
-    (an AFM's move_stage drags an engaged tip) nothing is routine until an operator switches it on."""
-    if any(fnmatchcase(tool_name.lower(), str(pattern).lower()) for pattern in switched_on):
-        return True
-    for prefix in sorted(stem_devices, key=len, reverse=True):  # "EELS_Cam" before "EELS"
-        if tool_name.startswith(f"{prefix}_"):
-            return tool_name[len(prefix) + 1:].lower() in AUTO_DEFAULT
-    return False
+def load_auto_routine(path: str | Path | None = None) -> dict[str, list[str]]:
+    """An auto-routine profile: {device kind ("stem", "probe", "envelope"): [command globs], "tools": [tool-name
+    or "Class.command" globs]}. Without ``path``, the packaged one (AUTO_ROUTINE_PROFILE). A file that is not
+    such a mapping raises ValueError: a typo must not quietly hold, or run, a whole instrument's commands."""
+    import yaml
+
+    source = Path(path) if path is not None else AUTO_ROUTINE_PROFILE
+    raw = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+    return check_auto_routine(raw.get("auto_routine", raw) if isinstance(raw, dict) else raw, str(source))
 
 
-def auto_allows_start(tool_name: str, drives: Iterable[str] | None, switched_on: Iterable[str] = (), stem_devices: Iterable[str] = ()) -> bool:
-    """True when auto mode may start a job without a person: its start was switched on, or ``drives``
-    (the high-risk tools the reserved plan drives) is known and auto mode allows every one."""
-    if any(fnmatchcase(tool_name.lower(), str(pattern).lower()) for pattern in switched_on):
-        return True
-    return drives is not None and all(auto_allows(name, switched_on, stem_devices) for name in drives)
+def check_auto_routine(raw: object, where: str = "auto_routine") -> dict[str, list[str]]:
+    """``raw`` checked as an auto-routine mapping (see ``load_auto_routine``)."""
+    kinds = ("stem", "probe", "envelope", "tools")
+    if not isinstance(raw, dict) or not all(k in kinds for k in raw):
+        raise ValueError(f"{where}: auto_routine must map {', '.join(kinds)} to lists of command globs, not {raw!r}")
+    checked = {}
+    for kind, patterns in raw.items():
+        if not isinstance(patterns, list) or not all(isinstance(p, str) and p.strip() for p in patterns):
+            raise ValueError(f"{where}: auto_routine.{kind} must be a list of command globs")
+        checked[kind] = [p.strip() for p in patterns]
+    return checked
 
 
 def tool_risk(tool_name: str, risks: dict[str, str] | None = None) -> str:

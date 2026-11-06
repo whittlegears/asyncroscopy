@@ -1,8 +1,9 @@
 """Approvals: the instrument's approval mode, pending requests and grants.
 
 ``auto`` (the default) lets low-risk calls and routine high-risk ones through
-(policy.AUTO_DEFAULT: imaging, spectra, stage moves, placing the beam) and the
-trace records that no person approved them. Any other high-risk call is held
+(what the MCP server says is routine: declared by the device, or in the auto-routine
+profile, ``asyncroscopy/safety/profiles/auto_routine.yaml``) and the
+trace records that no person approved them. The decision is ``safety.decide``. Any other high-risk call is held
 in auto as in ``approve`` until an operator switches it on with
 ``set_auto_allowed`` (tool-name globs, saved beside the mode); a job's start
 runs in auto when every command its plan drives would. ``approve`` holds every
@@ -19,8 +20,9 @@ top-level ``simulated:``; false by default) ``auto`` is refused: the device
 starts in ``approve`` and ``set_mode(auto)`` fails with the reason.
 
 Every mode change, request and decision is written to the Instrument Trace.
-The mode is also saved to ``mode_file`` and restored on restart, so a crashed
-or re-initialised device does not silently fall back to ``auto``.
+The mode is also saved to ``mode_file`` (written atomically: a crash mid-write leaves the old
+file) and restored on restart, so a crashed or re-initialised device does not silently fall back
+to ``auto``.
 """
 
 from __future__ import annotations
@@ -30,14 +32,17 @@ import json
 import threading
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from tango import DevState
-from tango.server import Device, command, device_property
+from tango.server import Device, device_property
 
+from asyncroscopy.core.fileio import write_atomic
+from asyncroscopy.safety.decide import decide
 from asyncroscopy.trace.writer import TraceWriter
-from asyncroscopy.safety.policy import AUTO_DEFAULT, auto_allows, auto_allows_start
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 MODES = ("auto", "approve")
 PRUNE_AFTER_S = 86400.0
@@ -57,6 +62,25 @@ def _who(body: dict) -> tuple:
     return (body.get("caller") or None, body.get("run") or None)
 
 
+@dataclass(frozen=True)
+class _Asked:
+    """A high-risk call as check() is told about it, for safety.decide."""
+
+    name: str
+    routine: bool = False
+    job_start: bool = False
+    risk: str = "high"
+    operator_only: bool = False
+
+
+def _drives(body: dict) -> list[_Asked] | None:
+    """The high-risk tools a job start drives ({"tool", "routine"} each), or None when the job does not say."""
+    drives = body.get("drives")
+    if not isinstance(drives, list):
+        return None
+    return [_Asked(str(d.get("tool", "")), routine=d.get("routine") is True) if isinstance(d, dict) else _Asked(str(d)) for d in drives]
+
+
 def starting_mode(configured: str, saved: str) -> str:
     """The stricter of default_mode and the saved mode: a mode file saying "auto" (left by any
     earlier set_mode) must not undo a deployment configured to start in approve."""
@@ -64,6 +88,7 @@ def starting_mode(configured: str, saved: str) -> str:
 
 
 class Approvals(Device):
+    action_hints = action_hints_attribute()
     default_mode = device_property(dtype=str, default_value="auto", doc="Mode at start-up: auto or approve.")
     request_timeout_s = device_property(dtype=float, default_value=1800.0, doc="A request nobody answers expires after this long.")
     grant_ttl_s = device_property(dtype=float, default_value=900.0, doc="An approval must be used within this long.")
@@ -124,10 +149,8 @@ class Approvals(Device):
         return [p for p in saved if isinstance(p, str) and p.strip()] if isinstance(saved, list) else []
 
     def _save_mode(self, mode: str, who, auto_allowed: list[str] | None = None) -> None:
-        path = Path(self.mode_file)
-        path.parent.mkdir(parents=True, exist_ok=True)
         switches = self._auto_allowed if auto_allowed is None else auto_allowed
-        path.write_text(json.dumps({"mode": mode, "who": who, "at": time.time(), "auto_allowed": switches}), encoding="utf-8")
+        write_atomic(self.mode_file, json.dumps({"mode": mode, "who": who, "at": time.time(), "auto_allowed": switches}))
 
     def _expire(self) -> None:
         now = time.time()
@@ -155,17 +178,17 @@ class Approvals(Device):
             raise ValueError("expected a JSON object")
         return body
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low")
     def get_mode(self) -> str:
         """Current approval mode: 'auto' or 'approve'."""
         return self._mode
 
-    @command(dtype_out=bool)
+    @command(dtype_out=bool, risk="low")
     def get_simulated(self) -> bool:
         """True when this stack drives a simulator; False on real hardware (auto mode refused there)."""
         return bool(self.simulated)
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"mode": "auto" or "approve", "who": "operator name"}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"mode": "auto" or "approve", "who": "operator name"}.', operator_only=True)
     def set_mode(self, request: str) -> str:
         """Switch between auto and approve. Operator only; recorded in the trace. Auto is refused on a stack that is not simulated."""
         body = self._load(request)
@@ -188,13 +211,13 @@ class Approvals(Device):
         self._trace.record("Approvals.set_mode", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": mode, "persisted": persisted}, mode=mode)
         return json.dumps({"mode": mode, "previous": previous, "persisted": persisted})
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low")
     def get_auto_allowed(self) -> str:
-        """The high-risk commands auto mode runs without asking: JSON {"defaults": routine commands, "switched_on": tool-name globs an operator added}."""
+        """The commands an operator switched on for auto mode, beyond the routine ones: JSON {"switched_on": tool-name globs}."""
         with self._lock:
-            return json.dumps({"defaults": sorted(AUTO_DEFAULT), "switched_on": list(self._auto_allowed)})
+            return json.dumps({"switched_on": list(self._auto_allowed)})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"patterns": ["Prefix_command" or a glob, ...], "who": "operator name"}; the whole list, [] for the defaults.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"patterns": ["Prefix_command" or a glob, ...], "who": "operator name"}; the whole list, [] for the defaults.', operator_only=True)
     def set_auto_allowed(self, request: str) -> str:
         """Replace the commands switched on for auto mode. Operator only; recorded in the trace and saved beside the mode."""
         body = self._load(request)
@@ -213,7 +236,7 @@ class Approvals(Device):
         self._trace.record("Approvals.set_auto_allowed", True, time.time(), caller=body.get("who"), arguments={"from": previous, "to": patterns}, mode=self._mode)
         return json.dumps({"switched_on": patterns, "previous": previous})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "reason": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "reason": "..."}.', operator_only=True)
     def request(self, request: str) -> str:
         """File a request for a held call; the same pending call from the same caller and run returns the same request id."""
         body = self._load(request)
@@ -242,7 +265,7 @@ class Approvals(Device):
         self._trace.record("Approvals.request", True, time.time(), request_id=request_id, caller=body.get("caller"), run=body.get("run"), arguments={"action": action, "arguments": body.get("arguments")}, mode=self._mode)
         return json.dumps({"request_id": request_id, "state": "pending"})
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low")
     def list_pending(self) -> str:
         """Requests waiting for an operator, oldest first."""
         with self._lock:
@@ -250,7 +273,7 @@ class Approvals(Device):
             pending = [r for r in self._requests.values() if r["state"] == "pending"]
         return json.dumps(sorted(pending, key=lambda r: r["created"]), default=str)
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request_id: The request id returned when the call was held.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request_id: The request id returned when the call was held.', risk="low")
     def request_status(self, request_id: str) -> str:
         """State of one request: pending, approved, denied or expired."""
         with self._lock:
@@ -260,7 +283,7 @@ class Approvals(Device):
             raise ValueError(f"no request {request_id!r}")
         return json.dumps({k: request.get(k) for k in ("request_id", "action", "state", "grant_id", "reason", "decided_by")})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name"}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name"}.', operator_only=True)
     def approve(self, request: str) -> str:
         """Approve a pending request. Operator only. The call it covers may then run once."""
         body = self._load(request)
@@ -278,7 +301,7 @@ class Approvals(Device):
         self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "grant_id": grant_id, "state": "approved"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name", "reason": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"request_id": "...", "who": "operator name", "reason": "..."}.', operator_only=True)
     def deny(self, request: str) -> str:
         """Deny a pending request. Operator only."""
         body = self._load(request)
@@ -291,7 +314,7 @@ class Approvals(Device):
         self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "job_start": bool, "drives": [tool names] or null, "stem_devices": [tool prefixes of electron microscopes]}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"action": "Class_command", "arguments": {...}, "caller": "...", "run": "...", "routine": bool, "job_start": bool, "drives": [{"tool": name, "routine": bool}] or null}.', operator_only=True)
     def check(self, request: str) -> str:
         """May this high-risk call run without a new approval? In auto, yes for a routine or switched-on command
         (a job start: when every command it drives is); otherwise only by using an unused grant for exactly this
@@ -303,18 +326,19 @@ class Approvals(Device):
             self._expire()
             reason = None
             if self._mode == "auto":
-                drives = body.get("drives") if isinstance(body.get("drives"), list) else None
-                stem = [str(p) for p in body.get("stem_devices") or [] if isinstance(p, str) and p]
-                if body.get("job_start"):
-                    if auto_allows_start(action, drives, self._auto_allowed, stem):
-                        return json.dumps({"allowed": True, "approved_by": "auto"})
-                    held = [d for d in drives if not auto_allows(d, self._auto_allowed, stem)] if drives is not None else []
-                    reason = (f"this job drives {', '.join(held)}, held in auto mode until an operator switches it on" if held
-                              else "this job does not say which commands it drives, so auto mode holds its start")
-                elif auto_allows(action, self._auto_allowed, stem):
-                    return json.dumps({"allowed": True, "approved_by": "auto"})
+                asked = _Asked(action, routine=body.get("routine") is True, job_start=body.get("job_start") is True)
+                outcome = decide(asked, endpoint_role="agent", mode="auto", switched=self._auto_allowed)
+                drives = _drives(body)
+                if outcome == "job" and drives is not None:
+                    held = [d.name for d in drives if decide(d, endpoint_role="agent", mode="auto", switched=self._auto_allowed) != "runs"]
+                    outcome = "held" if held else "runs"
+                    reason = f"this job drives {', '.join(held)}, held in auto mode until an operator switches it on" if held else None
+                elif outcome == "job":
+                    outcome, reason = "held", "this job does not say which commands it drives, so auto mode holds its start"
                 else:
                     reason = f"{action} is held in auto mode until an operator switches it on"
+                if outcome == "runs":
+                    return json.dumps({"allowed": True, "approved_by": "auto"})
             for grant in self._grants.values():
                 if grant["fingerprint"] == key and not grant["used"] and _who(grant) == _who(body):
                     grant["used"] = True
@@ -322,7 +346,7 @@ class Approvals(Device):
                     return json.dumps({"allowed": True, "grant_id": grant["grant_id"], "approved_by": grant["who"], "request_id": grant["request_id"]})
         return json.dumps({"allowed": False, **({"held_in_auto": reason} if reason else {})})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"who": "...", "reason": "..."}.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"who": "...", "reason": "..."}.', operator_only=True)
     def revoke_grants(self, request: str) -> str:
         """Void every unused approval and deny every pending request (the e-stop): nothing approved before it can run after it. Operator only."""
         body = self._load(request)
@@ -341,7 +365,7 @@ class Approvals(Device):
         self._trace.record("Approvals.revoke_grants", True, time.time(), caller=body.get("who"), arguments={"grants": grants, "requests": pending, "reason": reason}, mode=self._mode)
         return json.dumps({"revoked_grants": grants, "denied_requests": pending})
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, operator_only=True)
     def list_grants(self) -> str:
         """Grants issued so far, used or not."""
         with self._lock:

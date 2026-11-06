@@ -60,7 +60,7 @@ def serve(monkeypatch, tango_ctx, data_save_dir, job_dir):
         server = MCPServer("as-test", "localhost", 1, blocked_classes=[], blocked_functions={"*": ["Init", "Kill", "RestartServer"]},
                            data_device_address="asyncroscopy/data/default", verbose=False, endpoint_role=role, database=database)
         server.setup(print_summary=False)
-        monkeypatch.setattr(server, "_tiled_node", node)
+        monkeypatch.setattr(server.data, "tiled_node", node)
         return server
 
     return make
@@ -130,11 +130,11 @@ def test_jobs_carry_the_plan_schema_and_example(serve):
 def test_action_space_is_a_native_tool_on_both_endpoints_but_not_for_models(serve):
     for role in ("agent", "operator"):
         server = serve("asyncroscopy/afm/default", role=role)
-        assert "action_space" in server._native_names
-        assert server.endpoint_info()["risks"]["action_space"] == "low"
+        assert "action_space" in server.native_names
+        assert server.discovery.endpoint_info()["risks"]["action_space"] == "low"
         space = asyncio.run(_call(server, "action_space"))
         assert space["endpoint"]["role"] == role and by_tool(space)["AFMTwin_move_xy"]["role"] == "stage.move"
-    patterns = agent_tool_patterns(server._all_tool_names(), False)
+    patterns = agent_tool_patterns(server.tool_names(), False)
     assert not for_model("action_space", patterns) and for_model("AFMTwin_move_xy", patterns)
 
 

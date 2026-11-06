@@ -7,7 +7,11 @@ import pytest
 import tango
 from fastmcp.exceptions import ToolError
 
+from dataclasses import replace
+
 from asyncroscopy.contracts import validate
+from asyncroscopy.mcp.components.jobs import resume_note, with_grant
+from asyncroscopy.mcp.descriptors import describe_native
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.policy import operator_only, risk_of
 
@@ -33,8 +37,8 @@ def server_factory(monkeypatch, approvals_proxy, tmp_path):
             approvals_device_address="asyncroscopy/approvals/default" if approvals else None,
             trace_path=str(tmp_path / f"trace_{role}.jsonl"),
         )
-        server._approvals = lambda: approvals_proxy
-        server._stem_prefixes = {"DigitalTwin"}  # an electron microscope: its routine commands run in auto
+        server.gate.approvals = lambda: approvals_proxy
+        server.add_device("DigitalTwin", stem=True)  # an electron microscope: its routine commands run in auto
         return server
 
     return make
@@ -188,21 +192,42 @@ class TestPolicy:
         ("DigitalTwin_set_screen", ["DigitalTwin_set_column_valves"], False),
     ])
     def test_auto_mode_runs_routine_and_switched_on_commands_only(self, tool, switched_on, allowed):
-        from asyncroscopy.safety.policy import auto_allows
-        assert auto_allows(tool, switched_on, ["DigitalTwin", "EELS_Cam", "EELS"]) is allowed
-        assert auto_allows(tool, switched_on) is bool(switched_on and allowed)
+        from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
+        from asyncroscopy.safety.decide import decide
+        from asyncroscopy.safety.policy import load_auto_routine
 
-    def test_a_job_start_runs_in_auto_only_when_everything_it_drives_would(self):
-        from asyncroscopy.safety.policy import auto_allows_start
-        stem = ["DigitalTwin"]
-        assert auto_allows_start("Mapper_start", ["DigitalTwin_move_stage", "DigitalTwin_acquire_spectrum"], (), stem)
-        assert not auto_allows_start("Mapper_start", ["DigitalTwin_move_stage"])
-        assert auto_allows_start("Mapper_start", [])
-        assert not auto_allows_start("Mapper_start", ["DigitalTwin_move_stage", "DigitalTwin_set_column_valves"], (), stem)
-        assert not auto_allows_start("Mapper_start", ["asyncroscopy/other/1:move_stage"], (), stem)
-        assert not auto_allows_start("Tuner_start", None)
-        assert auto_allows_start("Tuner_start", None, ["Tuner_start"])
-        assert auto_allows_start("Mapper_start", ["DigitalTwin_set_column_valves"], ["*_set_column_valves"])
+        kinds = {"DigitalTwin": {"stem": True}, "EELS_Cam": {"stem": True}, "AFMTwin": {"probe": True}, "Mapper": {"envelope": True}}
+        if tool == "run_job":
+            described = describe_native(tool)
+        else:
+            prefix = next(p for p in ("EELS_Cam", "DigitalTwinCorrector", "DigitalTwin", "AFMTwin", "Mapper") if tool.startswith(p + "_"))
+            device = DeviceInfo(prefix, prefix, **kinds.get(prefix, {}))
+            described = describe_command(device, tool[len(prefix) + 1:], overrides={}, routine=load_auto_routine(), warnings=[])
+        assert (decide(described, endpoint_role="agent", mode="auto", switched=switched_on) == "runs") is allowed
+        # Without the profile nothing is routine: only what an operator switched on runs.
+        if tool != "run_job":
+            bare = describe_command(device, tool[len(prefix) + 1:], overrides={}, routine={}, warnings=[])
+            assert (decide(bare, endpoint_role="agent", mode="auto", switched=switched_on) == "runs") is bool(switched_on and allowed)
+
+    def test_a_job_start_is_decided_by_what_it_drives(self):
+        from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command
+        from asyncroscopy.safety.decide import decide
+
+        start = describe_command(DeviceInfo("Mapper", "Mapper", envelope=True), "start", overrides={}, routine={}, warnings=[])
+        assert start.job_start and decide(start, endpoint_role="agent", mode="auto") == "job"
+        assert decide(start, endpoint_role="agent", mode="auto", switched=["Tuner_start", "Mapper_start"]) == "runs"
+        assert decide(start, endpoint_role="agent", mode="approve") == "held"
+        assert decide(start, endpoint_role="agent", mode="unknown") == "refused"
+        assert decide(start, endpoint_role="operator", mode="approve") == "runs"
+        assert decide(start, endpoint_role="agent", mode=None) == "runs"
+
+    def test_a_bad_auto_routine_profile_is_refused(self):
+        from asyncroscopy.safety.policy import check_auto_routine
+
+        assert check_auto_routine({"stem": ["move_stage"], "tools": ["Robot.pick"]}) == {"stem": ["move_stage"], "tools": ["Robot.pick"]}
+        for bad in ({"stm": ["move_stage"]}, {"stem": "move_stage"}, ["move_stage"], {"stem": [""]}):
+            with pytest.raises(ValueError):
+                check_auto_routine(bad)
 
 
 def test_a_configured_approve_beats_a_saved_auto():
@@ -276,10 +301,10 @@ class TestApprovalsDevice:
         assert status["state"] == "denied" and status["reason"] == "not now"
 
     def test_auto_mode_holds_a_command_until_it_is_switched_on(self, approvals_proxy, job_dir):
-        valves = {"action": "DigitalTwin_set_column_valves", "arguments": {"open": True}, "caller": "agent-1", "stem_devices": ["DigitalTwin"]}
+        valves = {"action": "DigitalTwin_set_column_valves", "arguments": {"open": True}, "caller": "agent-1", "routine": False}
         held = json.loads(approvals_proxy.check(json.dumps(valves)))
         assert not held["allowed"] and "switches it on" in held["held_in_auto"]
-        assert json.loads(approvals_proxy.check(json.dumps({**valves, "action": "DigitalTwin_move_stage"})))["allowed"]
+        assert json.loads(approvals_proxy.check(json.dumps({**valves, "action": "DigitalTwin_move_stage", "routine": True})))["allowed"]
         try:
             approvals_proxy.set_auto_allowed(json.dumps({"patterns": ["DigitalTwin_set_column_valves"], "who": "operator"}))
             first = json.loads(approvals_proxy.check(json.dumps(valves)))
@@ -298,9 +323,10 @@ class TestApprovalsDevice:
         assert not json.loads(approvals_proxy.check(json.dumps(valves)))["allowed"]
 
     def test_a_job_start_in_auto_follows_what_it_drives(self, approvals_proxy):
-        start = {"action": "Mapper_start", "arguments": {"reservation_id": "r1"}, "job_start": True, "stem_devices": ["DigitalTwin"]}
-        assert json.loads(approvals_proxy.check(json.dumps({**start, "drives": ["DigitalTwin_move_stage"]})))["allowed"]
-        held = json.loads(approvals_proxy.check(json.dumps({**start, "drives": ["DigitalTwin_set_screen"]})))
+        start = {"action": "Mapper_start", "arguments": {"reservation_id": "r1"}, "job_start": True}
+        assert json.loads(approvals_proxy.check(json.dumps({**start, "drives": [{"tool": "DigitalTwin_move_stage", "routine": True}]})))["allowed"]
+        assert json.loads(approvals_proxy.check(json.dumps({**start, "drives": []})))["allowed"]
+        held = json.loads(approvals_proxy.check(json.dumps({**start, "drives": [{"tool": "DigitalTwin_set_screen", "routine": False}]})))
         assert not held["allowed"] and "DigitalTwin_set_screen" in held["held_in_auto"]
         unknown = json.loads(approvals_proxy.check(json.dumps({**start, "drives": None})))
         assert not unknown["allowed"] and "does not say" in unknown["held_in_auto"]
@@ -343,27 +369,27 @@ class TestGate:
         calls = []
         for command in ("set_column_valves", "move_stage", "get_stage"):
             wrapper = server._create_wrapper(lambda arg, c=command: calls.append((c, arg)) or "ok", cmd_info(), command, "DigitalTwin")
-            server._registered[f"DigitalTwin_{command}"] = Tool.from_function(wrapper)
-        found = {t["name"]: t for t in server.find_tools()["tools"]}
+            server.registered[f"DigitalTwin_{command}"] = Tool.from_function(wrapper)
+        found = {t["name"]: t for t in server.discovery.find_tools()["tools"]}
         assert found["DigitalTwin_set_column_valves"]["when"] == "held"
         assert found["DigitalTwin_move_stage"]["when"] == "runs" and found["DigitalTwin_get_stage"]["when"] == "runs"
-        assert [t["name"] for t in server.find_tools("column valves")["tools"]] == ["DigitalTwin_set_column_valves"]
-        assert server.endpoint_info()["auto"] == {"DigitalTwin_move_stage": "routine", "DigitalTwin_set_column_valves": "held"}
+        assert [t["name"] for t in server.discovery.find_tools("column valves")["tools"]] == ["DigitalTwin_set_column_valves"]
+        assert server.discovery.endpoint_info()["auto"] == {"DigitalTwin_move_stage": "routine", "DigitalTwin_set_column_valves": "held"}
         arg = next(iter(found["DigitalTwin_move_stage"]["arguments"]))
-        asyncio.run(server.call_tool("DigitalTwin_move_stage", {arg: "here"}))
+        asyncio.run(server.discovery.call_tool("DigitalTwin_move_stage", {arg: "here"}))
         assert calls == [("move_stage", "here")]
         with pytest.raises(ToolError, match="held in auto mode"):
-            asyncio.run(server.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
+            asyncio.run(server.discovery.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
         assert calls == [("move_stage", "here")]
         try:
             approvals_proxy.set_auto_allowed(json.dumps({"patterns": ["DigitalTwin_set_column_valves"], "who": "operator"}))
-            assert {t["name"]: t for t in server.find_tools()["tools"]}["DigitalTwin_set_column_valves"]["when"] == "runs"
-            asyncio.run(server.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
+            assert {t["name"]: t for t in server.discovery.find_tools()["tools"]}["DigitalTwin_set_column_valves"]["when"] == "runs"
+            asyncio.run(server.discovery.call_tool("DigitalTwin_set_column_valves", {arg: "open"}))
         finally:
             approvals_proxy.set_auto_allowed(json.dumps({"patterns": [], "who": "operator"}))
         assert calls[-1] == ("set_column_valves", "open")
         with pytest.raises(ToolError, match="no tool"):
-            asyncio.run(server.call_tool("DigitalTwin_nothing", {}))
+            asyncio.run(server.discovery.call_tool("DigitalTwin_nothing", {}))
 
     def test_a_job_start_names_what_it_drives_to_the_gate(self, server_factory):
         server = server_factory()
@@ -378,16 +404,16 @@ class TestGate:
             def dev_name(self):
                 return "asyncroscopy/twin/default" if self.drives is None else "asyncroscopy/mapper/default"
 
-        server._envelope_prefixes.add("Mapper")
-        server._devices["DigitalTwin"] = Device(None)
-        server.tool_risks["DigitalTwin_get_stage"] = "low"
-        server._devices["Mapper"] = Device({"asyncroscopy/twin/default": ["move_stage", "get_stage", "acquire_scanned_image"]})
+        server.devices["DigitalTwin"].proxy = Device(None)
+        for command in ("move_stage", "get_stage", "acquire_scanned_image", "set_screen"):
+            server._create_wrapper(lambda arg: "ok", cmd_info(), command, "DigitalTwin")
+        mapper = server.add_device("Mapper", Device({"asyncroscopy/twin/default": ["move_stage", "get_stage", "acquire_scanned_image"]}), envelope=True)
         start = server._create_wrapper(lambda arg: "started", cmd_info(), "start", "Mapper")
         assert start(json.dumps({"reservation_id": "r1"})) == "started"
-        server._devices["Mapper"] = Device({"asyncroscopy/twin/default": ["move_stage", "set_screen"]})
+        mapper.proxy = Device({"asyncroscopy/twin/default": ["move_stage", "set_screen"]})
         with pytest.raises(ToolError, match="DigitalTwin_set_screen"):
             start(json.dumps({"reservation_id": "r2"}))
-        assert server._driven_tools(lambda: {"asyncroscopy/elsewhere/1": ["move_stage"]}) == ["asyncroscopy/elsewhere/1:move_stage"]
+        assert server.gate.driven(lambda: {"asyncroscopy/elsewhere/1": ["move_stage"]}) == [{"tool": "asyncroscopy/elsewhere/1:move_stage", "routine": False}]
 
     def test_approve_mode_holds_until_operator_approves(self, server_factory, approvals_proxy, tmp_path):
         server = server_factory()
@@ -398,7 +424,7 @@ class TestGate:
             wrapper("target-1")
         assert calls == []
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
-        assert server.approval_status(request_id)["state"] == "pending"
+        assert server.gate.approval_status(request_id)["state"] == "pending"
         approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
         assert wrapper("target-1") == "ok"
         assert calls == ["target-1"]
@@ -415,8 +441,7 @@ class TestGate:
             def get_reservation(self, request):
                 return json.dumps({"plan_id": plan["plan_id"], "resolved_plan": {"drives": {}}})
 
-        server._envelope_prefixes.add("Mapper")
-        server._devices["Mapper"] = Device()
+        server.add_device("Mapper", Device(), envelope=True)
         start = server._create_wrapper(lambda arg: "started", cmd_info(), "start", "Mapper")
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
@@ -452,7 +477,7 @@ class TestGate:
         def broken():
             raise tango.DevFailed()
 
-        server._approvals = broken
+        server.gate.approvals = broken
         high = server._create_wrapper(lambda arg: "ran", cmd_info(), "move_stage", "DigitalTwin")
         low = server._create_wrapper(lambda arg: "ran", cmd_info(), "get_thing", "DigitalTwin")
         with pytest.raises(ToolError, match="unreachable"):
@@ -608,7 +633,7 @@ class TestGateDetails:
     def server(monkeypatch, approvals_proxy):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, approvals_device_address="asyncroscopy/approvals/default")
-        monkeypatch.setattr(server, "_approvals", lambda: approvals_proxy)
+        monkeypatch.setattr(server.gate, "approvals", lambda: approvals_proxy)
         return server
 
     def test_a_held_start_shows_the_operator_what_it_will_do(self, monkeypatch, approvals_proxy):
@@ -616,7 +641,8 @@ class TestGateDetails:
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "test"}))
         try:
             with pytest.raises(ToolError):
-                server._gate("Mapper_start", "high", {"request": '{"reservation_id":"r1"}'}, "agent", describe=lambda: 'Reserved plan: {"size_m": [6e-7, 6e-7]}')
+                start = describe_native("Mapper_start")
+                server.gate.check(replace(start, risk="high"), {"request": '{"reservation_id":"r1"}'}, "agent", None, describe=lambda: 'Reserved plan: {"size_m": [6e-7, 6e-7]}')
             pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["action"] == "Mapper_start"]
             assert pending and "size_m" in pending[-1]["reason"]
             for p in pending:
@@ -625,7 +651,7 @@ class TestGateDetails:
             approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "test"}))
 
     def test_an_agent_cannot_name_its_own_grant(self):
-        body = json.loads(MCPServer._with_grant('{"reservation_id": "r1", "grant_id": "forged"}', {"approved_by": "auto"}, "agent"))
+        body = json.loads(with_grant('{"reservation_id": "r1", "grant_id": "forged"}', {"approved_by": "auto"}, "agent"))
         assert body.get("grant_id") != "forged"
 
 
@@ -644,14 +670,13 @@ class TestWaitForJob:
             def results(self, request):
                 return json.dumps({"schema_version": "1.1.0", "job_id": "j1", "state": "done", "result_keys": {"run": "map_r1.h5"}, "summary": {"grid": {"rows": 3}}})
 
-        server._devices = {"Mapper": Job()}
-        server._envelope_prefixes = {"Mapper"}
-        done = server.wait_for_job("j1", device="Mapper", max_wait_s=10)
+        server.add_device("Mapper", Job(), envelope=True)
+        done = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=10)
         assert done["state"] == "done" and Job.polls == 2
         # A finished job's reply carries its results, so <device>_results is not a separate call.
         assert done["result_keys"] == {"run": "map_r1.h5"} and done["summary"]["grid"]["rows"] == 3
         with pytest.raises(ToolError, match="Mapper"):
-            server.wait_for_job("j1", device="Camera")
+            server.jobs.wait_for_job("j1", device="Camera")
 
     def test_the_device_can_be_left_out(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -665,9 +690,9 @@ class TestWaitForJob:
             def job_status(self, request):
                 return json.dumps({"job_id": "j1", "state": "failed", "last_error": "stage refused"})
 
-        server._devices = {"IndentGrid": Other(), "Mapper": Mapper()}
-        server._envelope_prefixes = {"IndentGrid", "Mapper"}
-        assert server.wait_for_job("j1")["last_error"] == "stage refused"
+        server.add_device("IndentGrid", Other(), envelope=True)
+        server.add_device("Mapper", Mapper(), envelope=True)
+        assert server.jobs.wait_for_job("j1")["last_error"] == "stage refused"
 
     def test_analysis_jobs_are_waited_on_through_the_analysis_server(self, monkeypatch):
         from fastmcp import FastMCP
@@ -691,12 +716,11 @@ class TestWaitForJob:
             def job_status(self, request):
                 return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
 
-        server._devices = {"Mapper": Mapper()}
-        server._envelope_prefixes = {"Mapper"}
-        done = server.wait_for_job("assemble-1", max_wait_s=5)
+        server.add_device("Mapper", Mapper(), envelope=True)
+        done = server.jobs.wait_for_job("assemble-1", max_wait_s=5)
         assert done["result_keys"] == {"map": "map_r1_map"} and done["summary"]["tiles"] == 9 and asked == [5.0]
         with pytest.raises(ToolError, match="analysis server"):
-            server.wait_for_job("nowhere")
+            server.jobs.wait_for_job("nowhere")
 
     def test_one_dead_job_device_does_not_stop_waiting_on_the_others(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -712,11 +736,11 @@ class TestWaitForJob:
                     return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
                 return json.dumps({"job_id": "j1", "state": "failed", "last_error": "x"})
 
-        server._devices = {"Aaa": Dead(), "Mapper": Mapper()}
-        server._envelope_prefixes = {"Aaa", "Mapper"}
-        assert server.wait_for_job("j1")["state"] == "failed"
+        server.add_device("Aaa", Dead(), envelope=True)
+        server.add_device("Mapper", Mapper(), envelope=True)
+        assert server.jobs.wait_for_job("j1")["state"] == "failed"
         with pytest.raises(ToolError, match="not answering: \\['Aaa'\\]"):
-            server.wait_for_job("j-nowhere")
+            server.jobs.wait_for_job("j-nowhere")
 
     def test_an_analysis_error_reply_is_said_not_swallowed_and_old_servers_are_polled(self, monkeypatch):
         from fastmcp import FastMCP
@@ -738,11 +762,11 @@ class TestWaitForJob:
             return {"result_keys": {"map": "map_r2_map"}}
 
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, analysis_url=old)
-        server._devices, server._envelope_prefixes = {}, set()
-        done = server.wait_for_job("a1", max_wait_s=5)
+        server.devices.clear()
+        done = server.jobs.wait_for_job("a1", max_wait_s=5)
         assert done["state"] == "done" and done["result_keys"] == {"map": "map_r2_map"} and len(polls) == 2
         with pytest.raises(ToolError, match="job store is unreadable"):
-            server.wait_for_job("broken", max_wait_s=1)
+            server.jobs.wait_for_job("broken", max_wait_s=1)
 
     def test_a_job_still_running_at_the_deadline_says_to_wait_again(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -752,15 +776,14 @@ class TestWaitForJob:
             def job_status(self, request):
                 return json.dumps({"job_id": "j1", "state": "running", "progress": 0.4})
 
-        server._devices = {"Mapper": Job()}
-        server._envelope_prefixes = {"Mapper"}
-        status = server.wait_for_job("j1", device="Mapper", max_wait_s=0)
+        server.add_device("Mapper", Job(), envelope=True)
+        status = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=0)
         assert status["state"] == "running" and status["progress"] == 0.4
         assert "wait_for_job again" in status["note"]
 
     def test_paused_jobs_are_waited_through_and_explained(self, monkeypatch):
         from asyncroscopy.jobs.job_device import RUNNING_STATES
-        from asyncroscopy.mcp.mcp_server import WAIT_NOTES
+        from asyncroscopy.mcp.components.jobs import WAIT_NOTES
 
         assert set(WAIT_NOTES) == RUNNING_STATES
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -770,9 +793,8 @@ class TestWaitForJob:
             def job_status(self, request):
                 return json.dumps({"job_id": "j1", "state": "paused_suspended", "suspended": {"reason": "beam_current 2 < 10"}})
 
-        server._devices = {"Mapper": Job()}
-        server._envelope_prefixes = {"Mapper"}
-        status = server.wait_for_job("j1", device="Mapper", max_wait_s=0)
+        server.add_device("Mapper", Job(), envelope=True)
+        status = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=0)
         assert "beam_current 2 < 10" in status["note"] and "resumes by itself" in status["note"]
 
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
@@ -783,10 +805,9 @@ class TestWaitForJob:
             def job_status(self, request):
                 return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
 
-        server._devices = {"Mapper": Job()}
-        server._envelope_prefixes = {"Mapper"}
+        server.add_device("Mapper", Job(), envelope=True)
         with pytest.raises(ToolError, match="mcp.analysis_url"):
-            server.wait_for_job("assemble-job-1", device="Mapper")
+            server.jobs.wait_for_job("assemble-job-1", device="Mapper")
 
 
 JSON_REQUEST = type("CommandInfo", (), {
@@ -811,9 +832,9 @@ class TestRunJob:
         def start(request):
             body = json.loads(request)
             calls.append(("start", body["reservation_id"]))
-            if server._devices["Mapper"].start_fails == "raise":
+            if server.devices["Mapper"].proxy.start_fails == "raise":
                 raise RuntimeError("Tango: device not answering")
-            if server._devices["Mapper"].start_fails == "error":
+            if server.devices["Mapper"].proxy.start_fails == "error":
                 return json.dumps({"schema_version": "1.1.0", "error": {"code": "device_error", "message": "a worker from before the device restarted"}})
             return json.dumps({"schema_version": "1.1.0", "job_id": "j-" + body["reservation_id"], "state": "queued"})
 
@@ -838,8 +859,7 @@ class TestRunJob:
             def results(self, request):
                 return json.dumps({"job_id": json.loads(request)["job_id"], "result_keys": {"map": "map_r1_map"}, "summary": {"tiles": 9}})
 
-        server._envelope_prefixes = {"Mapper"}
-        server._devices = {"Mapper": Device()}
+        server.add_device("Mapper", Device(), envelope=True)
         server.tools = {"Mapper": {
             "reserve": server._create_wrapper(reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper"),
             "start": server._create_wrapper(start, JSON_REQUEST, "start", "Mapper", tool_prefix="Mapper"),
@@ -847,83 +867,83 @@ class TestRunJob:
         return server, calls
 
     def test_one_call_reserves_and_starts(self, server_factory, monkeypatch):
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 0.0)
         server, calls = self.mapper_server(server_factory)
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9} and reply["reservation_id"] == "r1"
         assert reply["state"] == "running" and 'call wait_for_job with {"job_id": "j-r1"} now' in reply["note"] and "every phase" in reply["note"]
         assert [c[0] for c in calls] == ["reserve", "start"]
 
     def test_wait_false_returns_at_once_with_the_job_id(self, server_factory, monkeypatch):
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 30.0)  # never reached: no wait
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 30.0)  # never reached: no wait
         server, calls = self.mapper_server(server_factory)
         began = time.monotonic()
-        reply = server.run_job("Mapper", {"fov_m": 2e-7}, wait=False)
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7}, wait=False)
         assert time.monotonic() - began < 5.0
         assert reply["job_id"] == "j-r1" and reply["state"] == "running" and "Mapper_abort" in reply["note"]
 
     def test_a_short_job_comes_back_finished_with_its_results(self, server_factory):
         server, calls = self.mapper_server(server_factory)
-        server._devices["Mapper"].finished = True
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        server.devices["Mapper"].proxy.finished = True
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9} and "nothing needs running" in reply["note"]
 
     def test_a_refused_plan_comes_back_without_a_start(self, server_factory):
         server, calls = self.mapper_server(server_factory)
-        assert server.run_job("Mapper", {"fov_m": 0})["error"]["code"] == "plan_rejected"
+        assert server.jobs.run_job("Mapper", {"fov_m": 0})["error"]["code"] == "plan_rejected"
         assert [c[0] for c in calls] == ["reserve"]
         with pytest.raises(ToolError, match="no job device"):
-            server.run_job("Camera", {"fov_m": 2e-7})
+            server.jobs.run_job("Camera", {"fov_m": 2e-7})
 
     def test_a_held_start_is_approved_once_and_the_same_call_starts_that_reservation(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError, match="repeat this run_job call unchanged") as held:
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
         pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["request_id"] == request_id]
         assert pending and pending[0]["action"] == "Mapper_start" and "fov_m" in pending[0]["reason"]  # the operator sees the plan
         approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["job_id"] == "j-r1"
         assert calls == [("reserve", {"plan": {"fov_m": 2e-7}}), ("start", "r1")]  # one reservation, started once
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
-            server.run_job("Mapper", {"fov_m": 2e-7})  # the grant was single use: a second map needs its own approval
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})  # the grant was single use: a second map needs its own approval
 
     def test_an_approved_hold_names_the_exact_call_and_a_changed_plan_is_pointed_back_to_it(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
-            server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
         approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "alice"}))
-        status = server.approval_status(request_id)
+        status = server.gate.approval_status(request_id)
         assert status["state"] == "approved" and '"plan": {"fov_m": 2e-07, "size_m": [3e-07, 3e-07]}' in status["next"] and "fov_m" not in status["reason"]
         with pytest.raises(ToolError, match="waiting for its approved start") as changed:
-            server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7], "overlap": 0.15})  # the resolved plan, copied
-        assert "Do not abort it" in str(changed.value) and server._devices["Mapper"].released == []
-        reply = server.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7], "overlap": 0.15})  # the resolved plan, copied
+        assert "Do not abort it" in str(changed.value) and server.devices["Mapper"].proxy.released == []
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7, "size_m": [3e-7, 3e-7]})
         assert reply["job_id"] == "j-r1" and [c[0] for c in calls] == ["reserve", "start"]
 
     def test_a_denied_run_frees_the_instrument(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
         approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "alice"}))
-        status = server.approval_status(request_id)
+        status = server.gate.approval_status(request_id)
         assert status["state"] == "denied" and "was released" in status["note"]
-        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}] and not server._held_runs
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r1"}] and not server.jobs.held_runs
 
     def test_a_denied_run_is_freed_even_if_the_agent_never_asks(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         approvals_proxy.deny(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
-        server._sweep_held(force=True)  # what any later run_job, wait_for_job or approval_status does
-        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}] and not server._held_runs
+        server.jobs.sweep_held(force=True)  # what any later run_job, wait_for_job or approval_status does
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r1"}] and not server.jobs.held_runs
 
     def test_asking_again_before_the_operator_decides_files_no_second_request(self, server_factory, approvals_proxy):
         server, calls = self.mapper_server(server_factory)
@@ -931,7 +951,7 @@ class TestRunJob:
         before = len(json.loads(approvals_proxy.list_pending()))
         for _ in range(3):
             with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
-                server.run_job("Mapper", {"fov_m": 2e-7})
+                server.jobs.run_job("Mapper", {"fov_m": 2e-7})
             assert "estimate" in str(held.value)  # what is held is said every time
         assert len(json.loads(approvals_proxy.list_pending())) == before + 1
         assert [c[0] for c in calls] == ["reserve"]  # one reservation; the gate held its start each time
@@ -940,39 +960,39 @@ class TestRunJob:
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         approvals_proxy.approve(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9}  # the goal checker counts its dose
 
     @pytest.mark.parametrize("failure", ["raise", "error"])
     def test_a_start_that_fails_releases_the_reservation_it_made(self, server_factory, failure):
         server, calls = self.mapper_server(server_factory)
-        server._devices["Mapper"].start_fails = failure
+        server.devices["Mapper"].proxy.start_fails = failure
         if failure == "raise":
             with pytest.raises(ToolError, match="did not start.*was released.*r1"):
-                server.run_job("Mapper", {"fov_m": 2e-7})
+                server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         else:
-            reply = server.run_job("Mapper", {"fov_m": 2e-7})
+            reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
             assert reply["error"]["code"] == "device_error" and reply["reservation_id"] == "r1" and "was released" in reply["note"]
-        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r1"}]
 
     def test_a_plan_over_the_endpoints_limits_never_starts_by_either_path(self, server_factory):
         server, calls = self.mapper_server(server_factory)
-        server.job_limits = {"max_duration_s": 3600.0}
+        server.jobs.job_limits = {"max_duration_s": 3600.0}
 
         def long_reserve(request):
             calls.append(("reserve", json.loads(request)))
             return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": {"duration_s": 36000.0, "max_dose_e_per_a2": 10}})
 
         server.tools["Mapper"]["reserve"] = server._create_wrapper(long_reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper")
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["error"]["code"] == "plan_rejected" and reply["error"]["violations"][0]["what"] == "duration_s"
         assert "ask" in reply["error"]["message"] and reply["estimate"]["duration_s"] == 36000.0
         direct = json.loads(server.tools["Mapper"]["reserve"]({"plan": {"fov_m": 2e-7}}))  # Mapper_reserve on the endpoint
         assert direct["error"]["code"] == "plan_rejected"
         assert [c[0] for c in calls] == ["reserve", "reserve"]  # never a start
-        assert server._devices["Mapper"].released == [{"reservation_id": "r1"}, {"reservation_id": "r2"}]
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r1"}, {"reservation_id": "r2"}]
 
     def test_an_approved_retry_through_a_new_mcp_session_starts_the_held_reservation(self, server_factory, approvals_proxy):
         """Agents open a new MCP session for every call (asyncroscopy.agents.mcp_tools): the retry must still match."""
@@ -981,7 +1001,7 @@ class TestRunJob:
         from fastmcp import Client
 
         server, calls = self.mapper_server(server_factory)
-        server.mcp.add_tool(server.run_job)
+        server.mcp.add_tool(server.jobs.run_job)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
 
         async def run_job_in_a_new_session():
@@ -1007,87 +1027,88 @@ class TestRunJob:
                             lambda include_all=False: {**headers, "mcp-session-id": f"s{next(sessions)}"})
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         with pytest.raises(ToolError) as held:
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         approvals_proxy.approve(json.dumps({"request_id": str(held.value).split("request_id=")[1].split(")")[0], "who": "alice"}))
-        assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
+        assert server.jobs.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
         # The reserve carries the caller and agent run from the headers, so the job's trace events name them.
         assert calls == [("reserve", {"plan": {"fov_m": 2e-7}, "caller": "general-agent", "run": "run-1"}), ("start", "r1")]
         headers["x-asyncroscopy-run"] = "run-2"  # another agent run with the same caller name: its own reservation
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert [c[0] for c in calls].count("reserve") == 2
 
     def test_a_sweep_waits_for_a_run_job_that_is_starting(self, server_factory):
         import threading
 
         server, _calls = self.mapper_server(server_factory)
-        server._held_runs[("c", "", "Mapper", "{}")] = {"reservation_id": "r9", "request_id": "", "device": "Mapper", "created": time.monotonic() - 3 * 3600, "summary": {}}
-        server._run_job_lock.acquire()  # a run_job reserving or starting
-        sweeper = threading.Thread(target=server._sweep_held, kwargs={"force": True})
+        server.jobs.held_runs[("c", "", "Mapper", "{}")] = {"reservation_id": "r9", "request_id": "", "device": "Mapper", "created": time.monotonic() - 3 * 3600, "summary": {}}
+        server.jobs.device_lock("Mapper").acquire()  # a run_job reserving or starting
+        sweeper = threading.Thread(target=server.jobs.sweep_held, kwargs={"force": True})
         sweeper.start()
         sweeper.join(0.3)
-        assert sweeper.is_alive() and server._devices["Mapper"].released == []  # it waits
-        server._run_job_lock.release()
+        assert sweeper.is_alive() and server.devices["Mapper"].proxy.released == []  # it waits
+        server.jobs.device_lock("Mapper").release()
         sweeper.join(5)
-        assert server._devices["Mapper"].released == [{"reservation_id": "r9"}]
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r9"}]
 
     def test_two_callers_with_one_name_do_not_share_a_held_run(self, server_factory, approvals_proxy, monkeypatch):
         server, calls = self.mapper_server(server_factory)
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         session = {"id": "s1"}
-        monkeypatch.setattr(type(server), "_run_id", staticmethod(lambda: session["id"]))
+        monkeypatch.setattr(server, "run_id", lambda: session["id"])
         with pytest.raises(ToolError):
-            server.run_job("Mapper", {"fov_m": 2e-7})
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         session["id"] = "s2"
         with pytest.raises(ToolError):
-            server.run_job("Mapper", {"fov_m": 2e-7})
-        assert len([c for c in calls if c[0] == "reserve"]) == 2 and len(server._held_runs) == 2
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7})
+        assert len([c for c in calls if c[0] == "reserve"]) == 2 and len(server.jobs.held_runs) == 2
 
     def test_stale_held_runs_are_bounded(self, server_factory, monkeypatch):
         server, _calls = self.mapper_server(server_factory)
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.MAX_HELD_RUNS", 2)
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.MAX_HELD_RUNS", 2)
         for i in range(4):
-            server._held_runs[("c", "", "Mapper", str(i))] = {"reservation_id": f"r{i}", "request_id": "", "device": "Mapper", "created": time.monotonic() - 10 + i, "summary": {}}
-        server._sweep_held(force=True)
-        assert sorted(h["reservation_id"] for h in server._held_runs.values()) == ["r2", "r3"]
-        assert server._devices["Mapper"].released == [{"reservation_id": "r0"}, {"reservation_id": "r1"}]
+            server.jobs.held_runs[("c", "", "Mapper", str(i))] = {"reservation_id": f"r{i}", "request_id": "", "device": "Mapper", "created": time.monotonic() - 10 + i, "summary": {}}
+        server.jobs.sweep_held(force=True)
+        assert sorted(h["reservation_id"] for h in server.jobs.held_runs.values()) == ["r2", "r3"]
+        assert server.devices["Mapper"].proxy.released == [{"reservation_id": "r0"}, {"reservation_id": "r1"}]
 
     def test_endpoint_info_reports_the_gates_risks(self, server_factory):
         server, _calls = self.mapper_server(server_factory)
-        server._native_names = {"run_job", "view_data"}
-        info = server.endpoint_info()
+        server.native_names = {"run_job", "view_data"}
+        server.descriptors.update({name: describe_native(name) for name in server.native_names})
+        info = server.discovery.endpoint_info()
         assert info["risks"]["Mapper_start"] == "high" and info["risks"]["Mapper_reserve"] == "low"
         assert info["risks"]["run_job"] == "high" and info["risks"]["view_data"] == "low" and info["job_devices"] == ["Mapper"]
 
 
 class TestRunJobResume:
     def test_an_abort_reply_says_how_to_resume(self):
-        reply = json.loads(MCPServer._resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
+        reply = json.loads(resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
         assert reply["to_resume"].startswith('run_job with {"device": "Mapper", "resume": "r1"}')
-        aborting = json.loads(MCPServer._resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborting"})))
+        aborting = json.loads(resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborting"})))
         assert aborting["to_resume"].startswith("once wait_for_job says aborted")
         done = json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "done"})
-        assert MCPServer._resume_note("Mapper", done) == done
+        assert resume_note("Mapper", done) == done
 
     def test_resume_starts_the_aborted_reservation_without_a_new_one(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
-        server._devices["Mapper"].finished = True
-        reply = server.run_job("Mapper", resume="r7")
+        server.devices["Mapper"].proxy.finished = True
+        reply = server.jobs.run_job("Mapper", resume="r7")
         assert reply["state"] == "done" and calls == [("start", "r7")]  # no reserve: the reservation holds the plan
 
     def test_a_failed_resume_keeps_the_reservation(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
-        server._devices["Mapper"].start_fails = "raise"
+        server.devices["Mapper"].proxy.start_fails = "raise"
         with pytest.raises(ToolError, match="is kept, so the job can still be resumed"):
-            server.run_job("Mapper", resume="r7")
-        assert server._devices["Mapper"].released == []
+            server.jobs.run_job("Mapper", resume="r7")
+        assert server.devices["Mapper"].proxy.released == []
 
     def test_a_plan_and_a_resume_together_are_refused(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
         with pytest.raises(ToolError, match="not both"):
-            server.run_job("Mapper", {"fov_m": 2e-7}, resume="r7")
+            server.jobs.run_job("Mapper", {"fov_m": 2e-7}, resume="r7")
         with pytest.raises(ToolError, match="not both"):
-            server.run_job("Mapper")
+            server.jobs.run_job("Mapper")
         assert calls == []
 
 
@@ -1100,17 +1121,17 @@ class TestEndpointGuards:
     @staticmethod
     def server_with(server_factory, tango_ctx, estimate, hardware=True, limits=None):
         server, calls = TestRunJob.mapper_server(server_factory)
-        server.job_limits = limits if limits is not None else {"max_dose_e_per_a2": 100.0}
+        server.jobs.job_limits = limits if limits is not None else {"max_dose_e_per_a2": 100.0}
         if hardware:  # the stack's Approvals device says simulated: false
             hw = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/approvals/hardware"))
-            server._approvals = lambda: hw
+            server.gate.approvals = lambda: hw
 
         def reserve(request):
             calls.append(("reserve", json.loads(request)))
             return json.dumps({"schema_version": "1.1.0", "reservation_id": f"r{len(calls)}", "estimate": dict(estimate)})
 
         server.tools["Mapper"]["reserve"] = server._create_wrapper(reserve, JSON_REQUEST, "reserve", "Mapper", tool_prefix="Mapper")
-        server._devices["Mapper"].get_reservation = lambda request: json.dumps({"reservation_id": json.loads(request)["reservation_id"], "estimate": dict(estimate), "resolved_plan": {"drives": {}}})
+        server.devices["Mapper"].proxy.get_reservation = lambda request: json.dumps({"reservation_id": json.loads(request)["reservation_id"], "estimate": dict(estimate), "resolved_plan": {"drives": {}}})
         return server, calls
 
     @pytest.mark.parametrize("estimate, why", [
@@ -1121,23 +1142,23 @@ class TestEndpointGuards:
     ])
     def test_on_hardware_the_dose_cap_refuses_a_dose_it_cannot_check(self, server_factory, tango_ctx, estimate, why):
         server, calls = self.server_with(server_factory, tango_ctx, estimate)
-        reply = server.run_job("Mapper", {"fov_m": 2e-7})
+        reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["error"]["code"] == "plan_rejected" and why in reply["error"]["message"], reply
-        assert [c[0] for c in calls] == ["reserve"] and server._devices["Mapper"].released == [{"reservation_id": "r1"}]
+        assert [c[0] for c in calls] == ["reserve"] and server.devices["Mapper"].proxy.released == [{"reservation_id": "r1"}]
 
     def test_a_measured_dose_and_a_job_without_a_dose_both_run_on_hardware(self, server_factory, tango_ctx, monkeypatch):
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 0.0)
         afm = {"duration_s": 60.0, "steps": 9, "budgets": {"tip_force_nn": {"value": 2.0, "budget": 5.0, "units": "nN"}}}
         for estimate in (MEASURED, afm):
             server, calls = self.server_with(server_factory, tango_ctx, estimate)
-            server._gate = lambda *args, **kwargs: {"mode": "approve", "approved_by": "test"}  # the approval itself is tested elsewhere
-            assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1", estimate
+            server.gate.check = lambda *args, **kwargs: {"mode": "approve", "approved_by": "test"}  # the approval itself is tested elsewhere
+            assert server.jobs.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1", estimate
 
     def test_the_twin_runs_with_its_measured_current(self, server_factory, tango_ctx, monkeypatch):
-        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.RUN_JOB_WAIT_S", 0.0)
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 0.0)
         assumed = {**MEASURED, "beam_current_source": "default", "beam_current_reason": "assumed"}
         server, _calls = self.server_with(server_factory, tango_ctx, assumed, hardware=False)  # a simulated stack
-        assert server.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
+        assert server.jobs.run_job("Mapper", {"fov_m": 2e-7})["job_id"] == "j-r1"
 
     def test_a_start_of_a_reservation_over_the_limits_never_starts(self, server_factory, tango_ctx):
         long = {**MEASURED, "duration_s": 36000.0}
@@ -1145,16 +1166,16 @@ class TestEndpointGuards:
         # Someone reserved it straight over Tango (or on another endpoint); this endpoint starts it directly or as a resume.
         direct = json.loads(server.tools["Mapper"]["start"]({"reservation_id": "r9"}))
         assert direct["error"]["code"] == "plan_rejected" and direct["error"]["violations"][0]["what"] == "duration_s"
-        resumed = server.run_job("Mapper", resume="r9")
+        resumed = server.jobs.run_job("Mapper", resume="r9")
         assert resumed["error"]["code"] == "plan_rejected"
         assert calls == []  # the device's start was never called
-        server._devices["Mapper"].get_reservation = lambda request: (_ for _ in ()).throw(RuntimeError("device not answering"))
+        server.devices["Mapper"].proxy.get_reservation = lambda request: (_ for _ in ()).throw(RuntimeError("device not answering"))
         unread = json.loads(server.tools["Mapper"]["start"]({"reservation_id": "r9"}))
         assert "could not read the reservation" in unread["error"]["message"] and calls == []
 
     def test_a_reserve_carries_the_endpoints_high_risk_overrides_for_a_dry_run(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
-        server.risk_overrides = {"AFMTwin.get_image": "high", "Mapper_reserve": "low"}
+        server.config.risk_overrides = {"AFMTwin.get_image": "high", "Mapper_reserve": "low"}
         server.tools["Mapper"]["reserve"]({"plan": {"fov_m": 2e-7, "dry_run": True}})
         assert calls[-1] == ("reserve", {"plan": {"fov_m": 2e-7, "dry_run": True}, "risk_overrides": {"AFMTwin.get_image": "high"}})
 
@@ -1200,17 +1221,17 @@ def test_find_tools_says_when_the_approval_service_is_not_answering(server_facto
     from fastmcp.tools import Tool
 
     server = server_factory()
-    server._registered["DigitalTwin_move_stage"] = Tool.from_function(server._create_wrapper(lambda arg: "ok", cmd_info(), "move_stage", "DigitalTwin"))
+    server.registered["DigitalTwin_move_stage"] = Tool.from_function(server._create_wrapper(lambda arg: "ok", cmd_info(), "move_stage", "DigitalTwin"))
 
     def broken():
         raise tango.DevFailed()
 
-    server._approvals = broken
-    found = server.find_tools()
+    server.gate.approvals = broken
+    found = server.discovery.find_tools()
     assert found["mode"] == "unknown" and found["tools"][0]["when"].startswith("refused")
     operator = server_factory(role="operator")
-    operator._registered["DigitalTwin_set_column_valves"] = Tool.from_function(operator._create_wrapper(lambda arg: "ok", cmd_info(), "set_column_valves", "DigitalTwin"))
-    assert operator.find_tools()["tools"][0]["when"] == "runs"  # the operator endpoint is never held
+    operator.registered["DigitalTwin_set_column_valves"] = Tool.from_function(operator._create_wrapper(lambda arg: "ok", cmd_info(), "set_column_valves", "DigitalTwin"))
+    assert operator.discovery.find_tools()["tools"][0]["when"] == "runs"  # the operator endpoint is never held
 
 
 def test_a_plan_cannot_say_what_its_job_drives(mapper_proxy):
@@ -1240,25 +1261,25 @@ def test_an_spm_stage_move_is_refused_while_the_tip_is_engaged():
 
 def test_a_deployment_that_marks_a_routine_command_high_holds_it_in_auto(server_factory):
     server = server_factory()
-    server.risk_overrides = {"DigitalTwin.unblank_beam": "high"}
+    server.config.risk_overrides = {"DigitalTwin.unblank_beam": "high"}
     calls = []
     unblank = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "unblank_beam", "DigitalTwin")
     move = server._create_wrapper(lambda arg: calls.append(arg) or "ok", cmd_info(), "move_stage", "DigitalTwin")
     with pytest.raises(ToolError, match="held in auto mode"):
         unblank("x")
     assert move("here") == "ok" and calls == ["here"]
-    assert server.endpoint_info()["auto"]["DigitalTwin_unblank_beam"] == "held"
+    assert server.discovery.endpoint_info()["auto"]["DigitalTwin_unblank_beam"] == "held"
 
 
 def test_stop_all_latches_first_stops_every_device_and_reports_what_it_could_not(server_factory, approvals_proxy, monkeypatch):
-    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.STOP_ALL_WAIT_S", 1.0)
+    monkeypatch.setattr("asyncroscopy.safety.estop.STOP_ALL_WAIT_S", 1.0)
     server = server_factory()
     approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
     held = {"action": "DigitalTwin_unblank_beam", "arguments": {}, "caller": "agent-1"}
     request_id = json.loads(approvals_proxy.request(json.dumps(held)))["request_id"]
     approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
     approvals_proxy.set_mode(json.dumps({"mode": "auto", "who": "operator"}))
-    server.risk_overrides = {"*": "high"}  # a deployment that marks everything high must not hold the e-stop
+    server.config.risk_overrides = {"*": "high"}  # a deployment that marks everything high must not hold the e-stop
     done = []
 
     class Device:
@@ -1285,14 +1306,13 @@ def test_stop_all_latches_first_stops_every_device_and_reports_what_it_could_not
         "SlowCam": (Device("SlowCam", [], hang=True), {"close_shutter": void}),
         "BlindStem": (Device("BlindStem", []), {"acquire_scanned_image": text}),
     }
-    server._devices = {prefix: d for prefix, (d, _) in devices.items()}
-    server._in_types = {prefix: types for prefix, (_, types) in devices.items()}
-    server._envelope_prefixes = {"Mapper", "Tuner", "OldJob"}
-    server._stem_prefixes = {"DigitalTwin", "BlindStem"}
-    server._probe_prefixes = {"AFMTwin"}
-    server.tools = {prefix: {c: (lambda: done.append("through the gate")) for c in types} for prefix, (_, types) in devices.items()}
+    kinds = {"Mapper": "envelope", "Tuner": "envelope", "OldJob": "envelope", "DigitalTwin": "stem", "BlindStem": "stem", "AFMTwin": "probe"}
+    server.tools = {}
+    for prefix, (device, types) in devices.items():
+        server.add_device(prefix, device, **({kinds[prefix]: True} if prefix in kinds else {}))
+        server.tools[prefix] = {c: server._create_wrapper(lambda *a: done.append("through the gate"), cmd_info(in_type=t), c, prefix) for c, t in types.items()}
     started = time.monotonic()
-    reply = server.stop_all()
+    reply = server.estop.stop_all()
     assert time.monotonic() - started < 3.0  # a hung device does not hold up the report (two phases of 1 s)
     assert "through the gate" not in done
     assert not set(done) & {"GunCtl_hv_off", "GunCtl_filament_off", "GunCtl_stop", "GunCtl_estop", "DigitalTwin_unblank_beam", "Raman_laser_on", "AFMTwin_approach_tip"}
