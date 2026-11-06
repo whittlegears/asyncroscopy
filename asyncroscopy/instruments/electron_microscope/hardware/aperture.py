@@ -8,11 +8,16 @@ implement the private read, write, and command helpers.
 from abc import abstractmethod
 
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command
+from tango.server import Device, attribute
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 
 class APERTURE(Device):
     """Base device for a motorized aperture mechanism."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -150,24 +155,29 @@ class APERTURE(Device):
     # Commands
     # ------------------------------------------------------------------
 
-    @command
+    @command(risk="high", role="setting.set")
     def insert(self) -> None:
+        """Insert the aperture into the beam path."""
         self._insert()
 
-    @command
+    @command(risk="high", role="setting.set")
     def retract(self) -> None:
+        """Retract the aperture from the beam path (more current reaches the sample)."""
         self._retract()
 
-    @command
+    @command(risk="high", role="setting.set")
     def enable(self) -> None:
+        """Enable the aperture mechanism."""
         self._enable()
 
-    @command
+    @command(risk="high", role="setting.set")
     def disable(self) -> None:
+        """Disable the aperture mechanism."""
         self._disable()
 
-    @command
+    @command(risk="high", role="setting.set")
     def reset_positions(self) -> None:
+        """Reset the aperture's stored positions."""
         self._reset_positions()
 
     # ------------------------------------------------------------------

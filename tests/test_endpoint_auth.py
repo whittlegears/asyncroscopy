@@ -321,10 +321,17 @@ def test_roles_follow_the_tool_descriptors():
     from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
     from asyncroscopy.safety.decide import required_role
 
-    twin, mapper, approvals = DeviceInfo("DigitalTwin", "DigitalTwin", stem=True), DeviceInfo("Mapper", "Mapper", envelope=True), DeviceInfo("Approvals", "Approvals")
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+    from asyncroscopy.jobs.mapping.mapper import Mapper
+    from asyncroscopy.safety.approvals import Approvals
+    from asyncroscopy.utils.commands import declared_hints
+
+    twin = DeviceInfo("DigitalTwin", "DigitalTwin", stem=True, hints=declared_hints(DigitalTwin))
+    mapper = DeviceInfo("Mapper", "Mapper", envelope=True, hints=declared_hints(Mapper))
+    approvals = DeviceInfo("Approvals", "Approvals", hints=declared_hints(Approvals))
 
     def described(device, command):
-        return describe_command(device, command, overrides={}, routine={}, warnings=[])
+        return describe_command(device, command, overrides={}, routine=None, warnings=[])
 
     assert required_role(described(twin, "get_stage")) == "read"
     assert required_role(described(mapper, "job_status")) == "read"

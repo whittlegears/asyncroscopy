@@ -59,8 +59,7 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     resolve_job_plan,
 )
 from asyncroscopy.jobs.job_device import RUNNING_STATES, JobDevice
-from asyncroscopy.core.names import ACTION_HINTS
-from asyncroscopy.utils.commands import command
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]
 TANGO_TYPES = {float: CmdArgType.DevDouble, int: CmdArgType.DevLong64, bool: CmdArgType.DevBoolean, str: CmdArgType.DevString}
@@ -117,6 +116,7 @@ class _YamlInstrument:
     def _load(self) -> bool:
         self.acquisition_save_directory = self.output_directory
         self.sim = None
+        self.spec_hints: dict = {}
         try:
             spec = load_spec(_resolve(self.yaml_path))
         except SpecError as exc:
@@ -135,7 +135,7 @@ class _YamlInstrument:
             self._build_acquisition(name, acquisition)
         if map_section(spec) is not None:
             self._build_map_profile()
-        self._build_action_hints(action_hints(spec))
+        self.spec_hints = action_hints(spec)
         self.set_state(DevState.ON)
         self.set_status(spec.description or f"Simulated instrument from {spec.path.name}")
         return True
@@ -223,16 +223,6 @@ class _YamlInstrument:
                "around moves and between tiles, the time per tile and the map budgets, at the current settings with the given ones.")
         self.add_command(command(f=_named(describe, MAP_COMMAND, doc), dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"settings": {name: value}} (may be {})'), device_level=True)
 
-    def _build_action_hints(self, hints: dict) -> None:
-        """The ``action_hints`` attribute: each command's role, arguments (units, ranges, stage axis) and returns,
-        as JSON. The MCP server's action space reads it (asyncroscopy.mcp.action_space)."""
-        text = json.dumps(hints)
-        attr = tango.Attr(ACTION_HINTS, CmdArgType.DevString, AttrWriteType.READ)
-        props = tango.UserDefaultAttrProp()
-        props.set_description("Each command's canonical role, arguments and returns, as JSON (for the MCP action space).")
-        attr.set_default_properties(props)
-        self.add_attribute(attr, r_meth=lambda _device, a: a.set_value(text))
-
     def _build_command(self, name, cmd) -> None:
         self._add_call(name, cmd.doc, cmd.inputs, lambda argument: _refusing(self.sim.run_command, name, argument))
 
@@ -260,7 +250,13 @@ class _YamlInstrument:
         )
 
 
+def _spec_hints_attribute():
+    """``action_hints``: what the file declares for each command (risk, role, stop, arguments, returns)."""
+    return action_hints_attribute(extra=lambda device: device.spec_hints)
+
+
 class YamlSimDevice(_YamlInstrument, Device):
+    action_hints = _spec_hints_attribute()
     yaml_path = _yaml_path_property()
     data_device_address = _data_property()
     output_directory = _output_property()
@@ -278,6 +274,7 @@ class YamlSimJobDevice(_YamlInstrument, JobDevice):
     # No dry runs: the steps drive the simulator directly, not through proxy(), so nothing would be recorded.
     SUPPORTS_DRY_RUN = False
 
+    action_hints = _spec_hints_attribute()
     yaml_path = _yaml_path_property()
     data_device_address = _data_property()
     output_directory = _output_property()

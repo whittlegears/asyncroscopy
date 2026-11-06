@@ -20,8 +20,9 @@ from pathlib import Path
 
 import numpy as np
 import tango
-from tango.server import command, device_property
+from tango.server import device_property
 
+from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
@@ -758,11 +759,11 @@ class DigitalTwin(ElectronMicroscopeTwin):
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
     def export_ground_truth(self) -> str:
         """Hidden truth for scoring workflows: particles, true stage pose and drift of every acquisition.
 
-        Blocked from agents in the MCP configs; tests and calibration scripts call it through Tango.
+        Operator only (an agent must not read a twin's answers); tests and calibration scripts call it through Tango.
         """
         specimen_truth = self._specimen.ground_truth()
         return json.dumps(

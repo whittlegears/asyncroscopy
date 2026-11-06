@@ -37,7 +37,7 @@ from asyncroscopy.mcp import endpoint_auth
 from asyncroscopy.mcp.components import data_tools, discovery, estop, gate, jobs, skills_tools, trace_tools
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
-from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, load_auto_routine, looks_like_stop, operator_only
+from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, looks_like_stop, operator_only
 from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
@@ -75,7 +75,7 @@ class ServerConfig:
     data_device_address: str
     approvals_device_address: str | None = None
     risk_overrides: dict[str, str] = field(default_factory=dict)
-    auto_routine: dict[str, list[str]] = field(default_factory=dict)
+    auto_routine: dict[str, list[str]] | None = None  # mcp.safety.auto_routine; None: the devices' routine declarations
     analysis_url: str | None = None
     job_limits: dict[str, float] = field(default_factory=dict)
     trace_follow: list[str] = field(default_factory=list)
@@ -138,8 +138,9 @@ class MCPServer:
             trace_follow: Trace files, directories or globs the operator endpoint's trace_since reads.
                 Empty: the directory of trace_path (every *.jsonl there).
             auto_routine: High-risk commands auto mode runs without a person, as {device kind ("stem", "probe",
-                "envelope"): [command globs], "tools": [tool-name or Class.command globs]}. None: the packaged
-                profile (asyncroscopy/safety/profiles/auto_routine.yaml).
+                "envelope"): [command globs], "tools": [tool-name or Class.command globs]}; it replaces what the
+                devices declare routine. None: the devices' declarations (an electron microscope's imaging,
+                spectra, stage moves and beam placement; asyncroscopy.utils.commands.command(routine=True)).
             agent_profile: Agent profile YAML whose tool selection endpoint_info.agent_tools reports. None: the
                 packaged default (asyncroscopy/agents/profiles/default.yaml).
         """
@@ -152,7 +153,7 @@ class MCPServer:
         self.config = ServerConfig(
             name=name, endpoint_role=endpoint_role, data_device_address=data_device_address,
             approvals_device_address=approvals_device_address or None, risk_overrides=check_overrides(risk_overrides),
-            auto_routine=load_auto_routine() if auto_routine is None else dict(auto_routine), analysis_url=analysis_url or None,
+            auto_routine=None if auto_routine is None else dict(auto_routine), analysis_url=analysis_url or None,
             job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
             verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
@@ -543,7 +544,10 @@ class MCPServer:
         example = next((t.name for t in devices if not t.name.endswith(("_State", "_Status"))), "Class_command")
         for pattern in self.config.risk_overrides:
             p = pattern.lower()
-            hidden = "." in pattern and operator_only(*pattern.split(".", 1))  # not on this endpoint, but real
+            # An operator-only command (declared, or Tango's admin commands) is not on this endpoint, but real.
+            hidden = any(fnmatchcase(f"{d.dev_class}.{c}".lower(), p) or fnmatchcase(tool_name(d.prefix, c).lower(), p)
+                         for d in self.devices.values() for c, h in d.hints.items() if h.get("operator_only") is True)
+            hidden = hidden or ("." in pattern and operator_only(*pattern.split(".", 1)))
             if not hidden and not any(fnmatchcase(t.name.lower(), p) or fnmatchcase(f"{t.dev_class}.{t.command}".lower(), p) for t in devices):
                 found.append(f"risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {example}")
         for t in devices:
