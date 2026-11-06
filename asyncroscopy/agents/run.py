@@ -25,13 +25,15 @@ from typing import TYPE_CHECKING, Literal
 
 from langchain_core.messages import HumanMessage
 
+from asyncroscopy.core.names import AGENT_GRAPHS
+
 from .config import AgentConfig
 from .skill_middleware import recursion_limit
 
 if TYPE_CHECKING:
     from .goals import Goal
 
-GRAPHS = ("mapping", "general", "team")
+GRAPHS = AGENT_GRAPHS
 # The graph a query names: "" for the agent swarm, or one of GRAPHS (query_agent lists them as an enum).
 GraphName = Literal["", *GRAPHS]
 # Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark

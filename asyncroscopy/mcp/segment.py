@@ -10,9 +10,10 @@ import numpy as np
 import tango
 from scipy import ndimage
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command, device_property
+from tango.server import Device, attribute, device_property
 
 from asyncroscopy.data import tiled_client
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 try:
     import torch
@@ -101,6 +102,9 @@ def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
 
 class SEGMENTATION(Device):
     """Segment DATA/Tiled image keys with SAM2 and save integer label images."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     model_size = device_property(
         dtype=str,
@@ -335,7 +339,7 @@ class SEGMENTATION(Device):
         """Return the statistics of segmented areas as JSON."""
         return json.dumps(self._area_stats)
 
-    @command(dtype_in=str, dtype_out=str)
+    @command(dtype_in=str, dtype_out=str, risk="high", role="other")
     def segment(self, data_key: str) -> str:
         """Segment a DATA/Tiled image key and return a label-image DATA key."""
         try:
@@ -364,7 +368,7 @@ class SEGMENTATION(Device):
             self.error_stream(message)
             raise RuntimeError(message) from exc
 
-    @command(dtype_in=int, dtype_out=str)
+    @command(dtype_in=int, dtype_out=str, risk="low", role="setting.read")
     def get_centroid(self, area_id: int) -> str:
         """Return the centroid of a one-based segmented area ID as JSON."""
         if area_id < 1 or area_id > len(self._centroids):

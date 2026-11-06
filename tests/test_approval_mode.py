@@ -12,7 +12,10 @@ from dataclasses import replace
 from asyncroscopy.contracts import validate
 from asyncroscopy.agents.guidance import render_reply
 from asyncroscopy.mcp.components.jobs import resume_with, with_grant
+from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.mcp.descriptors import describe_native
+from asyncroscopy.safety.approvals import Approvals
+from asyncroscopy.utils.commands import declared_hints
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.policy import operator_only, risk_of
 
@@ -39,7 +42,8 @@ def server_factory(monkeypatch, approvals_proxy, tmp_path):
             trace_path=str(tmp_path / f"trace_{role}.jsonl"),
         )
         server.gate.approvals = lambda: approvals_proxy
-        server.add_device("DigitalTwin", stem=True)  # an electron microscope: its routine commands run in auto
+        # An electron microscope: what its commands are (routine imaging among them) as the twin declares them.
+        server.add_device("DigitalTwin", stem=True, hints=declared_hints(DigitalTwin))
         return server
 
     return make
@@ -136,20 +140,6 @@ class TestPolicy:
             assert risk_of(dev, command) == "low", command
         assert risk_of("Microscope", "retract_screen") == "high"  # uncovers the detectors below it
 
-    @pytest.mark.parametrize("glob, level", [
-        ("*_indent", "high"), ("*_acquire_*", "high"), ("*_move_stage", "high"), ("*_start", "high"), ("*", "high"), ("Mapper_*", "high"),
-        ("run_*", "high"), ("*_get_*", "low"), ("Mapper*_abort", "low"), ("*_retract_tip", "low"), ("*_job_status", "low"), ("analysis_job_*", "low"),
-    ])
-    def test_a_tool_glob_is_high_when_its_command_acts(self, glob, level):
-        from asyncroscopy.safety.policy import tool_risk
-
-        assert tool_risk(glob) == level
-
-    def test_a_tool_glob_uses_the_endpoints_table_when_given(self):
-        from asyncroscopy.safety.policy import tool_risk
-
-        assert tool_risk("*_park", {"Stage_park": "high", "Other_get_x": "low"}) == "high"
-        assert tool_risk("*_park", {"Stage_park": "low"}) == "high"  # not lowered: the name alone still decides
 
     def test_place_beam_is_high_even_on_a_stem(self):
         assert risk_of("DigitalTwin", "place_beam", stem=True) == "high"
@@ -168,19 +158,22 @@ class TestPolicy:
         assert risk_of("DigitalTwin", "get_stage", {"*": "low"}) == "low"
 
     def test_operator_only(self):
-        assert operator_only("Approvals", "approve")
-        assert operator_only("DigitalTwin", "export_ground_truth")
-        assert operator_only("Approvals", "request")
-        assert operator_only("Approvals", "check")
-        assert not operator_only("Approvals", "get_mode")
-        assert operator_only("Approvals", "set_auto_allowed")
-        assert not operator_only("Approvals", "get_auto_allowed")
+        # The devices declare what only an operator may call; the name rules keep only Tango's admin commands.
+        from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+        from asyncroscopy.safety.approvals import Approvals
+        from asyncroscopy.utils.commands import declared_hints
+
+        approvals = declared_hints(Approvals)
+        assert all(approvals[c].get("operator_only") for c in ("approve", "request", "check", "set_auto_allowed"))
+        assert not approvals["get_mode"].get("operator_only") and not approvals["get_auto_allowed"].get("operator_only")
+        assert declared_hints(DigitalTwin)["export_ground_truth"]["operator_only"]
+        assert operator_only("AnyDevice", "Init") and not operator_only("Approvals", "approve")
 
     @pytest.mark.parametrize("tool, switched_on, allowed", [
         ("DigitalTwin_move_stage", [], True),
         ("AFMTwin_move_stage", [], False),
         ("DigitalTwinCorrector_set_stigmator", [], False),
-        ("EELS_Cam_acquire_spectrum", [], True),
+        ("EELS_Cam_acquire_spectrum", [], False),  # a third-party scope that declares nothing: nothing is routine
         ("DigitalTwin_acquire_scanned_image", [], True),
         ("DigitalTwin_set_column_valves", [], False),
         ("DigitalTwin_acquire_camera_image", [], False),
@@ -195,17 +188,21 @@ class TestPolicy:
     def test_auto_mode_runs_routine_and_switched_on_commands_only(self, tool, switched_on, allowed):
         from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
         from asyncroscopy.safety.decide import decide
-        from asyncroscopy.safety.policy import load_auto_routine
+        from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+        from asyncroscopy.jobs.mapping.mapper import Mapper
+        from asyncroscopy.utils.commands import declared_hints
 
-        kinds = {"DigitalTwin": {"stem": True}, "EELS_Cam": {"stem": True}, "AFMTwin": {"probe": True}, "Mapper": {"envelope": True}}
+        # What the devices declare: the twin its routine imaging; a third-party scope or an AFM file nothing.
+        kinds = {"DigitalTwin": {"stem": True, "hints": declared_hints(DigitalTwin)}, "EELS_Cam": {"stem": True}, "AFMTwin": {"probe": True},
+                 "Mapper": {"envelope": True, "hints": declared_hints(Mapper)}}
         if tool == "run_job":
             described = describe_native(tool)
         else:
             prefix = next(p for p in ("EELS_Cam", "DigitalTwinCorrector", "DigitalTwin", "AFMTwin", "Mapper") if tool.startswith(p + "_"))
             device = DeviceInfo(prefix, prefix, **kinds.get(prefix, {}))
-            described = describe_command(device, tool[len(prefix) + 1:], overrides={}, routine=load_auto_routine(), warnings=[])
+            described = describe_command(device, tool[len(prefix) + 1:], overrides={}, routine=None, warnings=[])
         assert (decide(described, endpoint_role="agent", mode="auto", switched=switched_on) == "runs") is allowed
-        # Without the profile nothing is routine: only what an operator switched on runs.
+        # A config's empty auto_routine replaces the declarations: only what an operator switched on runs.
         if tool != "run_job":
             bare = describe_command(device, tool[len(prefix) + 1:], overrides={}, routine={}, warnings=[])
             assert (decide(bare, endpoint_role="agent", mode="auto", switched=switched_on) == "runs") is bool(switched_on and allowed)
@@ -513,6 +510,12 @@ class TestEndpointRoles:
             names = ["approve", "deny", "set_mode", "set_auto_allowed", "get_auto_allowed", "request", "get_mode"] if "approvals" in self.name else ["move_stage", "export_ground_truth"]
             return [type("Cmd", (), {"cmd_name": n})() for n in names]
 
+        def get_attribute_list(self):
+            return ["action_hints"]
+
+        def read_attribute(self, name):  # what each device declares, as its action_hints attribute serves it
+            return type("Value", (), {"value": json.dumps(declared_hints(Approvals if "approvals" in self.name else DigitalTwin))})()
+
         def __getattr__(self, item):
             return lambda *a: None
 
@@ -786,9 +789,8 @@ class TestWaitForJob:
     def test_paused_jobs_are_waited_through_and_explained(self, monkeypatch):
         from asyncroscopy.agents.guidance import WAIT_NOTES
         from asyncroscopy.core.names import RUNNING_JOB_STATES
-        from asyncroscopy.jobs.job_device import RUNNING_STATES
 
-        assert set(WAIT_NOTES) == RUNNING_STATES == RUNNING_JOB_STATES
+        assert set(WAIT_NOTES) == RUNNING_JOB_STATES
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
 

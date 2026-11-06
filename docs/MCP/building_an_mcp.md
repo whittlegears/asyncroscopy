@@ -72,10 +72,23 @@ class CAMERA(Device):
         """Close the camera shutter."""
 ```
 
+Declare on the base class: every vendor backend and twin that subclasses it inherits the
+declarations and redeclares nothing (`declared_hints` merges them along the class hierarchy). A
+`role` from the read roles (`setting.read`, `stage.read`, `data.read`, `job.status`,
+`job.results`) also tells the server the command only observes. `routine=True` lets auto mode run a
+high-risk command without a person; `operator_only=True` keeps it off agent endpoints. A device
+that works out more about its commands (units and ranges at its own limits, as the
+`ElectronMicroscope` base does with `min_fov`, `max_fov` and `max_defocus`) passes
+`action_hints_attribute(extra=lambda device: device.argument_hints())`.
+
 A command with no declaration falls back to the name rules in `asyncroscopy/safety/policy.py`
 (`get_*` low, unknown high), and the server lists those commands at startup. `mcp.safety.risk`
 in the MCP config overrides both. `stop_all` calls the no-argument commands whose role is
 `beam.blank` or `probe.retract`, or that declare `stop=True`.
+
+Use `asyncroscopy.utils.commands.command` rather than `tango.server.command`: it also carries the
+docstring's first paragraph to the tool description and names the tool's argument after the
+Python parameter.
 
 ## Add A Native MCP Helper
 

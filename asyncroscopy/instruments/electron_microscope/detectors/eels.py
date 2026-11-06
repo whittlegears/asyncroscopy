@@ -9,11 +9,16 @@ from abc import abstractmethod
 
 import tango
 from tango import AttrWriteType, DevState, DevVarFloatArray
-from tango.server import Device, attribute, command, device_property
+from tango.server import Device, attribute, device_property
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 
 class EELSBase(Device):
     """Hardware-independent Tango API for an EELS detector."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Device properties — set per-deployment in the Tango DB
@@ -127,42 +132,42 @@ class EELSBase(Device):
     # Public Tango commands
     # ------------------------------------------------------------------
 
-    @command(dtype_out=bool)
+    @command(dtype_out=bool, risk="high", role="other")
     def initialize_eels(self) -> bool:
         """Initialize spectroscopy mode and verify the EELS hardware."""
         return self._initialize_eels()
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.spectrum")
     def acquire_eels_spectrum(self) -> str:
         """Acquire a spectrum and return its DATA/Tiled key or local path."""
         return self._acquire_eels_spectrum()
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_available_dispersions(self) -> str:
         """Return the available dispersions and their indices."""
         return self._get_available_dispersions()
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     def get_eels_dispersion(self) -> list[float]:
         """Return the current dispersion as ``[index, eV_per_channel]``."""
         return self._get_eels_dispersion()
 
-    @command(dtype_in=int)
+    @command(dtype_in=int, risk="high", role="setting.set")
     def set_eels_dispersion(self, dispersion_index: int) -> None:
         """Select a dispersion by index."""
         self._set_eels_dispersion(dispersion_index)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_eels_aperture(self) -> str:
         """Return the current EELS entrance aperture."""
         return self._get_eels_aperture()
 
-    @command(dtype_in=int)
+    @command(dtype_in=int, risk="high", role="setting.set")
     def set_eels_aperture(self, aperture_index: int) -> None:
         """Select an EELS entrance aperture by index."""
         self._set_eels_aperture(aperture_index)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_available_apertures(self) -> str:
         """Return the available EELS entrance apertures and their indices."""
         return self._get_available_apertures()

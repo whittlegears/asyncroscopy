@@ -10,8 +10,22 @@ import pytest
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs import team
-from asyncroscopy.agents.graphs.team import TeamGraph, heuristic_plan, role_of
+from asyncroscopy.agents.graphs import team as team_module
+from asyncroscopy.agents.graphs.team import TeamGraph, heuristic_plan
 from asyncroscopy.agents.memory import Memory
+from asyncroscopy.agents.profile import load_profile
+from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from asyncroscopy.safety.approvals import Approvals
+from tests.catalogs import catalog
+
+# What endpoint_info says the tools are, and the default profile's split of them between the specialists.
+CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper, "Approvals": Approvals, "XRDTwin": "xrd.yaml"})
+TEAM = load_profile("default").team
+
+
+def role_of(name, stem=True, analysis_waits=True):
+    return team_module.role_of(name, TEAM, CATALOG, stem, analysis_waits)
 
 TOOL_NAMES = [
     "run_job", "Mapper_reserve", "Mapper_start", "wait_for_job", "Mapper_results", "Mapper_release", "DigitalTwin_get_stage",
@@ -37,9 +51,10 @@ def test_tools_are_split_by_role_and_redundant_or_operator_only_tools_are_hidden
         assert roles[hidden] is None, hidden
     assert role_of("Mapper_abort") == "operator"  # stopping stays possible
     assert role_of("XRDTwin_acquire_diffractogram") == "operator"  # a YAML-defined instrument lands in a role too
-    assert role_of("XRDTwin_set_start_deg") is None and role_of("DigitalTwin_set_scan_rotation") is None  # STEM: curated
+    assert role_of("XRDTwin_set_start_deg") is None and role_of("DigitalTwin_set_image_shift") is None  # STEM: curated
     assert role_of("XRDTwin_set_start_deg", stem=False) == "operator"  # any other instrument: every device command
     assert role_of("XRDTwin_State", stem=False) is None and role_of("XRDTwin_reserve", stem=False) is None
+    assert role_of("made_up_tool", stem=False) is None  # not a device command the endpoint offers: nobody's
 
 
 def test_heuristic_plan_maps_then_analyses():

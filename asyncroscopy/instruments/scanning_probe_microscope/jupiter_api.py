@@ -16,6 +16,7 @@ from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_scan import
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_feedback import SPM_FEEDBACK
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_approach import SPM_APPROACH
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_stage import SPM_STAGE
+from asyncroscopy.utils.commands import command
 
 import math
 import subprocess
@@ -463,7 +464,7 @@ class SCAN_Jupiter(SPM_SCAN):
         self.info_stream(f"Scanner offset measured: {offset[0]:e}, {offset[1]:e} m")
         return offset
 
-    @tango.server.command(dtype_out=tango.DevVarDoubleArray)
+    @command(dtype_out=tango.DevVarDoubleArray, risk="high", role="other")
     def calibrate_probe_frame(self) -> list[float]:
         """Measure the scan-frame to scanner offset. Parks the tip at the centre.
 

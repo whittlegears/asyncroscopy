@@ -4,8 +4,6 @@ import h5py
 import numpy as np
 import pytest
 
-from ase import Atoms
-
 from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import (
     EDGE_LATTICE_CHANGE_FRACTION,
     OVAL_CENTER_LATTICE_MEAN_ANGSTROM,
@@ -19,8 +17,6 @@ def twin_for_path(tmp_path: Path) -> DigitalTwinDiffraction:
     twin = DigitalTwinDiffraction.__new__(DigitalTwinDiffraction)
     twin._tango_properties = {}
     twin._detector_proxies = {}
-    twin._sample_atoms_base = Atoms()
-    twin._sample_atoms_view = Atoms()
     twin._stage_position = np.zeros(5, dtype=np.float64)
     twin._beam_pos_x = 0.5
     twin._beam_pos_y = 0.5

@@ -10,9 +10,13 @@ from abc import abstractmethod
 
 import tango
 from asyncroscopy.instruments.instrument import CombinedMeta
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM approach device: tip engage / retract."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -46,7 +50,7 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command
+    @command(risk="high", role="probe.approach")
     def approach(self) -> None:
         """Engage the tip on the surface. Blocks until engaged."""
         if self.get_state() == tango.DevState.MOVING:
@@ -61,7 +65,7 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
         finally:
             self.set_state(tango.DevState.ON)
 
-    @tango.server.command
+    @command(risk="low", role="probe.retract", stop=True)
     def retract(self) -> None:
         """Retract the tip from the surface. Blocks until retracted."""
         if self.get_state() == tango.DevState.MOVING:
@@ -76,7 +80,7 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
         finally:
             self.set_state(tango.DevState.ON)
 
-    @tango.server.command
+    @command(risk="low", role="safe_stop", stop=True)
     def stop(self) -> None:
         """Abort a running approach or retract immediately."""
         self._hw_stop()

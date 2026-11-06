@@ -11,6 +11,12 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, Goal, GoalChecker, trace_from_messages
 from asyncroscopy.agents.graphs.goal import GoalGraph
 from asyncroscopy.agents.memory import Memory
+from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.jobs.mapping.mapper import Mapper
+from tests.catalogs import catalog, info_of
+
+# What endpoint_info says the tools are: a STEM twin with two Mappers, and the Raman and XRD YAML twins.
+CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper, "Mapper_key2": Mapper, "RamanTwin": "raman.yaml", "XRDTwin": "xrd.yaml"})
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +36,8 @@ class FakeServer:
         self.maps, self.pois, self.data = set(maps), pois, dict(data or {})
 
     async def call(self, name, args):
+        if name == "endpoint_info":
+            return reply(info_of(CATALOG))
         if name == "map_info":
             return reply({"map": args["map"]}) if args["map"] in self.maps else reply("no such map", error=True)
         if name == "list_pois":
@@ -84,7 +92,7 @@ def test_facts_come_from_server_replies_not_the_model():
     ]
     calls = trace_from_messages(messages)
     assert [c.name for c in calls] == ["Mapper_start", "DigitalTwin_move_stage"] and calls[1].error
-    facts = Facts.from_calls(calls + MAP_CALLS)
+    facts = Facts.from_calls(calls + MAP_CALLS, CATALOG)
     assert "map_fake_map" not in facts.map_keys  # the model's own text never counts
     assert facts.map_keys == {"map_r1_map"} and {"map_r1.h5", "spectrum_eds_1.h5"} <= facts.data_keys
     assert facts.jobs["j1"] == {"device": "Mapper", "state": "done", "kind": "instrument"}
@@ -92,12 +100,8 @@ def test_facts_come_from_server_replies_not_the_model():
     assert "DigitalTwin_move_stage" in facts.high_risk and "Mapper_start" in facts.high_risk
 
 
-# A STEM endpoint's risk table, as endpoint_info gives it (names it lacks fall back to the policy).
-RISKS = {"DigitalTwin_set_fov": "low", "DigitalTwin_set_defocus": "low"}
-
-
-def check(goal, calls, answer, server, risks=RISKS):
-    return asyncio.run(GoalChecker(server, server).check(goal, Facts.from_calls(calls, risks), answer))
+def check(goal, calls, answer, server, tools=CATALOG):
+    return asyncio.run(GoalChecker(server, server).check(goal, Facts.from_calls(calls, tools), answer))
 
 
 def test_checker_verifies_keys_on_the_live_servers():
@@ -207,7 +211,7 @@ def test_run_job_and_the_unified_wait_are_read_as_facts():
         Call("assemble_map", {"run": "map_r9.h5"}, json.dumps({"job_id": "a9"})),
         Call("wait_for_job", {"job_id": "a9"}, json.dumps({"job_id": "a9", "state": "done", "result_keys": {"map": "map_r9_map"}})),
     ]
-    facts = Facts.from_calls(calls)
+    facts = Facts.from_calls(calls, CATALOG)
     assert facts.jobs == {"j9": {"device": "Mapper", "state": "done", "kind": "instrument"}, "a9": {"device": "analysis", "state": "done", "kind": "assemble"}}
     assert facts.dose_e_per_a2 == 7.5 and facts.map_keys == {"map_r9_map"} and "map_r9.h5" in facts.data_keys
     assert facts.high_risk == ["run_job"]  # it starts a job: allowed when the goal asks for one
@@ -230,18 +234,18 @@ def test_take_an_image_here_is_met_by_the_acquisition_it_needs():
 def test_an_old_spectrum_found_by_listing_does_not_meet_take_a_spectrum():
     calls = [Call("list_data", {"kind": "spectrum"}, json.dumps({"data": [{"key": "spectrum_eds_20251201T000000.h5", "kind": "spectrum"}]}))]
     goal = Goal.from_text("Take an EDS spectrum here")
-    facts = Facts.from_calls(calls)
+    facts = Facts.from_calls(calls, CATALOG)
     assert facts.data_keys == set() and "spectrum_eds_20251201T000000.h5" in facts.seen_keys
     verdict = asyncio.run(GoalChecker().check(goal, facts, "The spectrum is spectrum_eds_20251201T000000.h5."))
     assert not verdict.met and "spectrum recorded in this run" in verdict.feedback()
     # A wait on a job this run did not start produces nothing either.
     other = [Call("wait_for_job", {"job_id": "old1"}, json.dumps({"job_id": "old1", "state": "done", "result_keys": {"map": "map_old1_map"}}))]
-    assert Facts.from_calls(other).map_keys == set() and Facts.from_calls(other).jobs == {}
+    assert Facts.from_calls(other, CATALOG).map_keys == set() and Facts.from_calls(other, CATALOG).jobs == {}
 
 
 def test_an_invented_key_passed_to_a_tool_is_not_grounded():
     calls = [Call("view_data", {"key": "spectrum_made_up_1.h5"}, "Error: no key", True)]
-    verdict = asyncio.run(GoalChecker().check(Goal("x", [{"kind": "grounded_answer"}]), Facts.from_calls(calls), "It is spectrum_made_up_1.h5."))
+    verdict = asyncio.run(GoalChecker().check(Goal("x", [{"kind": "grounded_answer"}]), Facts.from_calls(calls, CATALOG), "It is spectrum_made_up_1.h5."))
     assert not verdict.met
 
 
@@ -251,11 +255,10 @@ def test_a_read_only_goal_wants_no_data_and_allows_no_action():
     assert kinds == ["no_unrequested", "grounded_answer"] and goal.criteria[0]["categories"] == []
 
 
-def test_risk_comes_from_the_endpoint_table_when_there_is_one():
+def test_risk_comes_from_the_endpoints_catalog_never_from_a_name():
     calls = [Call("DigitalTwin_set_fov", {"fov": 2e-7}, "ok"), Call("DigitalTwin_acquire_scanned_image", {}, "img_1.h5")]
-    assert Facts.from_calls(calls).high_risk == ["DigitalTwin_set_fov", "DigitalTwin_acquire_scanned_image"]
-    table = {"DigitalTwin_set_fov": "low", "DigitalTwin_acquire_scanned_image": "high"}  # a STEM: set_fov does not expose the sample
-    assert Facts.from_calls(calls, table).high_risk == ["DigitalTwin_acquire_scanned_image"]
+    assert Facts.from_calls(calls).high_risk == []  # no catalog: nothing is known, nothing guessed
+    assert Facts.from_calls(calls, CATALOG).high_risk == ["DigitalTwin_acquire_scanned_image"]  # a STEM: set_fov does not expose the sample
 
 
 def test_the_retry_names_only_this_goals_keys_and_its_running_job():
@@ -296,7 +299,7 @@ def test_a_worker_that_stops_part_way_keeps_its_calls():
 
     state, failed = asyncio.run(run_keeping_partial(Graph(), {"messages": [HumanMessage("map")]}))
     assert "Recursion limit" in failed
-    assert Facts.from_calls(trace_from_messages(state["messages"])).jobs == {"j4": {"device": "unknown", "state": "running", "kind": "instrument"}}
+    assert Facts.from_calls(trace_from_messages(state["messages"]), CATALOG).jobs == {"j4": {"device": "unknown", "state": "running", "kind": "instrument"}}
 
 
 def test_cli_goal_sets_the_budget_and_exits_by_the_verdict(monkeypatch, capsys):
@@ -330,7 +333,7 @@ def test_agent_server_goal_accepts_text_or_json(monkeypatch):
         seen.append((goal, worker))
         return "Goal reached.", True
 
-    monkeypatch.setattr(agent_mcp_server, "run_goal_text", fake_run_goal_text)
+    monkeypatch.setattr("asyncroscopy.agents.run.run_goal_text", fake_run_goal_text)
     server = agent_mcp_server.AgentMCPServer("t", ["http://x/mcp"], verbose=False)
     assert asyncio.run(server.query_agent("map here", goal=True)) == "Goal reached."
     asyncio.run(server.query_agent('{"statement": "map here", "criteria": [{"kind": "map"}]}', graph="general", goal=True))
@@ -348,7 +351,7 @@ def test_scoring_or_restitching_an_existing_map_does_not_make_it_this_runs():
         Call("assemble_map", {"run": "map_20250101.h5"}, json.dumps({"job_id": "bbbbbbbbbbbb"})),  # a run this run did not acquire
         Call("wait_for_job", {"job_id": "bbbbbbbbbbbb"}, json.dumps({"job_id": "bbbbbbbbbbbb", "state": "done", "result_keys": {"map": "map_20250101_map"}})),
     ]
-    facts = Facts.from_calls(calls)
+    facts = Facts.from_calls(calls, CATALOG)
     assert facts.map_keys == set() and "bbbbbbbbbbbb" not in facts.jobs
     assert not check(Goal.from_text("Map a 600 nm square around here."), calls, "", FakeServer(maps={OLD})).met
 
@@ -395,28 +398,28 @@ def test_allowed_categories_follow_the_request(request_text, wanted):
     assert wanted <= categories
 
 
-def test_categories_are_read_from_any_instruments_tool_names():
+def test_categories_follow_any_instruments_tool_roles():
     from asyncroscopy.agents.goals import action_category
 
-    assert [action_category(n) for n in (
+    assert [action_category(n, CATALOG) for n in (
         "RamanTwin_acquire_raman_spectrum", "RamanTwin_laser_on", "RamanTwin_set_stage_x_m", "XRDTwin_xray_on",
         "XRDTwin_acquire_diffractogram", "DigitalTwin_set_defocus", "Mapper_key2_start", "run_job", "DigitalTwin_unblank_beam",
         "DigitalTwin_move_stage",
     )] == ["acquire", "beam", "move", "beam", "acquire", "settings", "job", "job", "beam", "move"]
     raman = [Call("RamanTwin_set_stage_x_m", {}, "ok"), Call("RamanTwin_laser_on", {}, "ok"), Call("RamanTwin_acquire_raman_spectrum", {}, "raman_1.h5"), Call("RamanTwin_laser_off", {}, "ok")]
     goal = Goal.from_text("Move the stage to x = 1 mm, take a Raman spectrum at 2 mW and switch the laser off afterwards.")
-    assert check(goal, raman, "raman_1.h5", None, risks={}).met  # every action was one the request asked for
+    assert check(goal, raman, "raman_1.h5", None).met  # every action was one the request asked for
 
 
 def test_without_the_endpoints_risk_table_no_unrequested_is_not_checked():
     calls = [Call("DigitalTwin_move_stage", {}, "ok")]
-    verdict = check(Goal("x", [{"kind": "no_unrequested", "categories": []}]), calls, "", None, risks=None)
+    verdict = check(Goal("x", [{"kind": "no_unrequested", "categories": []}]), calls, "", None, tools=None)
     assert verdict.met and "not checked" in verdict.results[0]["why"]
 
 
 def test_a_multi_mapper_endpoints_job_belongs_to_its_own_device():
     calls = [Call("Mapper_key2_start", {"request": "{}"}, json.dumps({"job_id": "j7", "state": "running"}))]
-    assert Facts.from_calls(calls).jobs["j7"]["device"] == "Mapper_key2"
+    assert Facts.from_calls(calls, CATALOG).jobs["j7"]["device"] == "Mapper_key2"
 
 
 class AbortingServer(FakeServer):

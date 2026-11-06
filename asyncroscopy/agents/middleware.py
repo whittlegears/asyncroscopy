@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
@@ -12,9 +13,10 @@ from asyncroscopy.agents.skill_middleware import SkillMiddleware
 
 def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str], offered: set[str], tools: list,
                      memory: Callable | None = None, num_ctx: int = 8192, deadline: float | None = None,
-                     claim_check: bool | None = None) -> list[Any]:
+                     claim_check: bool | None = None, catalog: ToolCatalog | None = None) -> list[Any]:
     """One middleware per name, in order (the first wraps the rest). ``tool_names``: the model's tools;
-    ``offered``: every tool of the endpoint; ``tools``: the LangChain tools (job_wait calls wait_for_job)."""
+    ``offered``: every tool of the endpoint; ``tools``: the LangChain tools (job_wait calls wait_for_job);
+    ``catalog``: what the endpoint's tools are (the claim check knows from it which calls acquire or move)."""
     makers: dict[str, Callable[[], Any]] = {
         # Skills that match the request and the progress, and memory notes, in the system prompt.
         "skills": lambda: SkillMiddleware(prompt, tool_names, offered, memory=memory, num_ctx=num_ctx),
@@ -22,7 +24,7 @@ def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str],
         "job_wait": lambda: JobWaitMiddleware(tools, deadline=deadline),
         "empty_reply": EmptyReplyMiddleware,
         # Last by default, so it wraps the model call itself: a final answer is checked against the run's tool calls.
-        "claim_check": lambda: ClaimCheckMiddleware(tool_names, enabled=claim_check),
+        "claim_check": lambda: ClaimCheckMiddleware(tool_names, enabled=claim_check, catalog=catalog),
     }
     unknown = [n for n in names if n not in makers]
     if unknown:

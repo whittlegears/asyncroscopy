@@ -11,10 +11,12 @@ import pyTEMlib.probe_tools as probe_tools
 from ase.build import bulk
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-from tango.server import command, device_property
+from tango.server import device_property
 
+from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
+from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
 # The share of the probe's electrons the annular detector counts, which sets the shot noise of an image
@@ -33,7 +35,7 @@ class GrainParameters:
     composition: dict[str, float]
 
 
-class PolycrystallineGoldDigitalTwin(ElectronMicroscopeTwin):
+class PolycrystallineGoldDigitalTwin(ParticleSpectrumMixin, ElectronMicroscopeTwin):
     """Atomistic FCC Au grains rendered through a digital-twin corrector probe."""
 
     volume_size_xy_nm = device_property(dtype=float, default_value=200.0)
@@ -96,8 +98,6 @@ class PolycrystallineGoldDigitalTwin(ElectronMicroscopeTwin):
         self._region_parameters = [GrainParameters(index + 1, index not in self._empty_grain_indices, tuple(float(value) for value in self._grain_centers[index]), self._grain_zone_axes[index], self._grain_zone_offsets[index], self._grain_angles[index], {"Au": 1.0} if index not in self._empty_grain_indices else {}) for index in range(grain_count)]
         self._world_bounds_ang = {"x_min": 0.0, "x_max": sample_xy_angstrom, "y_min": 0.0, "y_max": sample_xy_angstrom, "z_min": 0.0, "z_max": sample_z_angstrom}
         self._all_sample_elements = ["Au"]
-        self._particle_records_base = []
-        self._particle_records_view = []
         self._last_rendered_atom_count = 0
         self._raw_potential_cache = None
         self._raw_potential_cache_key = None
@@ -251,13 +251,15 @@ class PolycrystallineGoldDigitalTwin(ElectronMicroscopeTwin):
         attrs = [metadata.copy() for _image in images]
         return save_acquisition(self, self._detector_proxies.get("data"), "stem_image", detector_list, images, dataset_attrs=attrs, file_attrs=metadata, output_format=output_format)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_volume_metadata(self) -> str:
+        """The rendered sample's metadata as JSON: grains, atom count, defocus and corrector aberrations."""
         metadata = {**self._sample_metadata, "last_rendered_atom_count": self._last_rendered_atom_count, "raw_potential_cache_hits": self._raw_potential_cache_hits, "defocus_m": self._get_defocus(), "corrector_aberrations": self._corrector_coefficients()}
         return json.dumps(metadata)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_region_parameters(self) -> str:
+        """The sample's regions (grain orientation, thickness, ...) as a JSON list."""
         return json.dumps([asdict(parameter) for parameter in self._region_parameters])
 
 

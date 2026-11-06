@@ -1,5 +1,6 @@
 """LangGraph graphs: ``mapping`` (fixed workflow), ``general`` (tool-using agent with skills),
-``team`` (planner and specialists) and ``goal`` (work toward a goal checked from facts)."""
+``team`` (planner and specialists), ``goal`` (work toward a goal checked from facts) and ``swarm``
+(a supervisor and the worker agents spawned into it)."""
 
 from __future__ import annotations
 

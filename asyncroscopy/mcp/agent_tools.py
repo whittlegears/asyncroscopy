@@ -51,50 +51,34 @@ def _tool_lists(path: str) -> ToolLists:
     return ToolLists(**{k: tuple(str(p) for p in v) for k, v in tools.items()})
 
 
-def is_stem_endpoint(names: Iterable[str]) -> bool:
-    """A STEM: one device both scans images and blanks a beam (an AFM scans too), the same test as
-    ``asyncroscopy.safety.policy.is_stem_device``.
-
-    A Mapper alone does not make one: it maps any instrument (an AFM, or a YAML twin through the
-    ``yaml`` profile), and the curated STEM set would hide that instrument's own tools (an AFM's
-    retract_tip). move_stage, set_fov and the like are common to many instruments.
-    """
-    names = set(names)
-    return any(
-        n.endswith("_acquire_scanned_image") and f"{n[: -len('_acquire_scanned_image')]}_blank_beam" in names for n in names
-    )
-
-
 def _matches(name: str, pattern: str) -> bool:
     """fnmatch ignoring case on every OS, as the approval policy and SciAgentGUI match (fnmatch.fnmatch follows the OS)."""
     return fnmatch.fnmatchcase(name.lower(), pattern.lower())
 
 
-def has_mapper(names: Iterable[str]) -> bool:
-    """The endpoint offers a Mapper (whose maps the analysis server stitches and scores)."""
-    return any(_matches(n, "Mapper*_reserve") for n in names)
-
-
-def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: list[str] | None = None, lists: ToolLists | None = None) -> list[str]:
+def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: list[str] | None = None, lists: ToolLists | None = None,
+                        *, stem: bool = False, maps: bool = False) -> list[str]:
     """Tool-name globs a model is given, for an instrument endpoint offering ``names``.
 
-    ``names``: the instrument endpoint's own tools (not the analysis server's). ``chosen``: globs a
-    caller picked (ASYNCROSCOPY_AGENT_TOOLS); otherwise the profile's STEM set on a STEM (with the
-    analysis server's waits when the endpoint has no analysis server to wait through), else every
-    tool of the endpoint but its State/Status attributes, plus the generic job and map tools when it
-    has a Mapper. ``lists``: the profile's tool lists (the default profile's when None). load_skill is
-    always included, the profile's not_for_models never.
+    ``names``: the instrument endpoint's own tools (not the analysis server's). ``stem``: the endpoint has
+    an electron microscope, ``maps``: a Mapper (endpoint_info's stem_devices and map_devices, as discovery
+    found them). ``chosen``: globs a caller picked (ASYNCROSCOPY_AGENT_TOOLS); otherwise the profile's STEM
+    set on a STEM (a Mapper alone does not make one: it maps an AFM or a YAML twin too, and the STEM set
+    would hide that instrument's own tools; with the analysis server's waits when the endpoint has no
+    analysis server to wait through), else every tool of the endpoint but its State/Status attributes,
+    plus the generic job and map tools when it has a Mapper. ``lists``: the profile's tool lists (the
+    default profile's when None). load_skill is always included, the profile's not_for_models never.
     """
     lists = lists or tool_lists()
     names = set(names)
     waits = [] if has_analysis_url else list(lists.analysis_waits)
     if chosen:
         patterns = list(chosen)
-    elif is_stem_endpoint(names):
+    elif stem:
         patterns = list(lists.stem) + list(lists.generic) + waits
     else:
         patterns = sorted(n for n in names if not n.endswith(("_State", "_Status")))
-        if has_mapper(names):
+        if maps:
             patterns += [p for p in list(lists.generic) + waits if p not in patterns]
     patterns = [p for p in patterns if p not in lists.not_for_models]
     return patterns if "load_skill" in patterns else patterns + ["load_skill"]
