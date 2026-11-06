@@ -8,23 +8,33 @@ error out from its own stage model and reports it through its STAGE device (Digi
 position_sigma_m), which a Mapper without its own stage_sigma_m reads.
 """
 
+import importlib.util
 import json
 import math
+import sys
 from pathlib import Path
 
 import pytest
 import tango
-import yaml
 
 from tests.conftest import DRIFT_TWIN_PROPERTIES
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _read_config(path: Path) -> dict:
+    """The stack config as the launcher reads it (extends: merged in)."""
+    spec = importlib.util.spec_from_file_location("launcher_run_servers", ROOT / "startup_scripts" / "run_servers.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["launcher_run_servers"] = module
+    spec.loader.exec_module(module)
+    return module.read_config(path)
+
+
 def _twins_with_a_mapper() -> list[Path]:
     found = []
     for path in sorted((ROOT / "configs").glob("*.yaml")):
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = _read_config(path)
         instrument = raw.get("instrument") or {}
         mappers = [d for d in (raw.get("devices") or {}).values() if isinstance(d, dict) and d.get("class_name") == "Mapper"]
         if str(instrument.get("class_name", "")).startswith("DigitalTwin") and mappers:
@@ -38,7 +48,7 @@ def test_there_are_twin_configurations_with_a_mapper():
 
 @pytest.mark.parametrize("path", _twins_with_a_mapper(), ids=lambda p: p.name)
 def test_a_twin_mapper_takes_the_stage_error_from_the_twin_stage_or_states_at_least_it(path):
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw = _read_config(path)
     stage = raw["devices"].get("stage") or {}
     assert stage.get("class_name") == "DigitalTwinSTAGE", f"{path.name}: a twin's STAGE device is DigitalTwinSTAGE, not a test fixture"
     properties = raw["instrument"].get("properties") or {}

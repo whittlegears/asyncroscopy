@@ -204,7 +204,7 @@ def test_every_stack_config_says_whether_it_is_simulated_and_every_device_gets_i
     stacks = [p for p in sorted((ROOT / "configs").glob("*.yaml")) if "instrument" in (yaml.safe_load(p.read_text(encoding="utf-8")) or {})]
     assert {p.name for p in stacks} >= hardware
     for path in stacks:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        raw = run_servers.read_config(path)  # with any extends: chain merged in
         assert isinstance(raw.get("simulated"), bool), f"{path.name} must say simulated: true or false"
         config = run_servers.load_config(path)
         assert config.simulated is (path.name not in hardware), path.name
