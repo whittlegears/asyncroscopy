@@ -16,8 +16,16 @@ implements only `_helper` methods:
   against `min_fov`, `max_fov`, `max_defocus`, `max_stigmator` and a scan region
   inside the field (`check_fov`, `check_defocus`, `check_stigmator`, `check_scan`)
   before the helper is called. A helper receives a value already checked. The
-  properties' defaults are in `limits.py`, with the `action_hints` that describe
-  the same ranges to clients.
+  properties' defaults (`DEFAULT_MIN_FOV`, ...) are at the top of
+  `electron_microscope.py`, and `argument_hints()` describes the same ranges to
+  clients through the device's `action_hints` attribute.
+- **What each command is.** Every public command is declared on the base with
+  `asyncroscopy.utils.commands.command(risk=, role=, stop=, routine=)`: `blank_beam`
+  is a low-risk stop, `set_fov` and `set_defocus` are low, the imaging, spectra,
+  stage moves and beam placement are high and routine in auto mode, and the column
+  valves, screen and diffraction shift are high and held. A backend inherits all of
+  it and declares nothing; a new public command on the base needs its declaration
+  (the MCP server lists any undeclared command at start-up).
 - **Beam current.** The attributes `beam_current_pa`, `beam_current_source`
   (`measured` or `default`) and `beam_current_age_s`, and the same fields in
   `get_parameters` (`beam_current_fields()`), come from `_beam_current()`. Its

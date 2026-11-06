@@ -47,6 +47,8 @@ A small model loses track with many tools and long instructions, so the `team` g
    - `operator`: the instrument: `run_job`, `*_abort`, stage, beam and acquisitions. On a STEM a curated set; on any other instrument (for example a YAML-defined twin) every device command.
    - `analyst`: stored data and maps: `list_data`, `view_data`, `assemble_map`, `score_map`, `map_info`, `get_region`, points of interest.
    - both: `wait_for_job` and `approval_status`. Operator-only tools (`Approvals_*`) are never given to an agent.
+
+   The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/default.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
 3. Each step sees what earlier steps produced as **facts from the servers' replies** (run keys, map keys, job states), not the previous agent's prose. A failed step is retried once with the error as feedback.
 4. **Reporter**: writes the answer from those facts only.
 
@@ -64,7 +66,7 @@ Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents nev
 | `inspect_data` | a data key came back, or the request asks about data |
 | `explore_regions` | a stitched map came back and the request asks for regions |
 
-A request counts as acting unless it is clearly read-only: it says not to act ("do not acquire anything"), or it is a question about data that already exist (a key, "the latest", "the stitched map") with no instruction to act anywhere in it ("show me a new image", "by taking a spectrum", "blank it" all act). Taking an acting request for read-only would keep the skills it needs away; the opposite is still held by the risk policy and the approval gate. A read-only request never gets a skill that acts on the instrument (`acts: true` in its front matter), whatever comes back during the run. Each turn of a conversation is judged by its own latest request, and `load_skill` is hidden only from a read-only request whose skills all fitted.
+A request counts as acting unless it is clearly read-only: it says not to act ("do not acquire anything"), or it is a question about data that already exist (a key, "the latest", "the stitched map") with no instruction to act anywhere in it ("show me a new image", "by taking a spectrum", "blank it" all act). Taking an acting request for read-only would keep the skills it needs away; the opposite is still held by the risk policy and the approval gate. A read-only request never gets a skill that acts on the instrument (`acts: true` in its front matter, or no `acts` at all: a skill that does not say it only reads counts as acting), whatever comes back during the run. Each turn of a conversation is judged by its own latest request, and `load_skill` is hidden only from a read-only request whose skills all fitted.
 
 At most four skills per run, within about 7000 characters shared with the memory notes; a skill that does not fit is listed by its description and only then is `load_skill` shown to the model. A skill is given only to an agent holding at least one of its tools. Which skills were applied, and why, is kept in the run's state as `skills_applied` (per step in the team, per attempt in a goal run).
 

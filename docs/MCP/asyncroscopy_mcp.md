@@ -40,7 +40,10 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 6. Builds one `ToolDescriptor` per command (`asyncroscopy/mcp/descriptors.py`): role, risk,
    acts or observes, operator-only, routine in auto mode, stop. The MCP config's
    `safety.risk` comes first, then what the device declares, then the name rules; the
-   commands that fell back to the rules are printed as `[safety]` lines.
+   commands that fell back to the rules are printed as `[safety]` lines. Every device of the
+   twin stack declares all its commands on its base class, so for it that list is empty
+   (`tests/test_declared_risk.py`); Tango's own `State`, `Status` and `Init` are known by name.
+   The rules remain for third-party devices that declare nothing.
 7. Registers the remaining commands as FastMCP tools. A call runs through an ordered list
    of interceptors: the preview, logging and the trace, the job checks, the approval gate,
    job stamping, and the token subject.
@@ -48,8 +51,14 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 
 The approval decision is one function, `asyncroscopy.safety.decide.decide`, used by the gate,
 `find_tools`, `endpoint_info` and the Approvals device. The commands auto mode runs without a
-person come from `asyncroscopy/safety/profiles/auto_routine.yaml` (by device kind) or
-`mcp.safety.auto_routine`, or a device's `routine` declaration.
+person are the ones their device declares `routine` (the `ElectronMicroscope` base declares its
+imaging, spectra, stage moves, beam placement, unblank, stigmator, beam tilt, image shift and
+autofocus), unless the MCP config gives `mcp.safety.auto_routine`, which then replaces every
+declaration.
+
+`endpoint_info` also carries `tools`: each tool's device, command, canonical role, risk and
+whether it acts, as discovery decided them, with `stem_devices` and `map_devices`. Agent programs
+read it once per run (`asyncroscopy/agents/catalog.py`) instead of guessing from tool names.
 
 ## Replies carry facts
 
@@ -124,8 +133,9 @@ administration, `Approvals.request_status` and `list_pending`, and
 `Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
 (`configs/mcp_operator.yaml`) keeps them. The Approvals commands that decide
 or file requests are never offered on an agent endpoint whatever the config
-says: the Approvals device declares them operator-only, and `OPERATOR_ONLY` in
-`asyncroscopy/safety/policy.py` lists them too.
+says: the Approvals device declares them operator-only. `OPERATOR_ONLY` in
+`asyncroscopy/safety/policy.py` lists only Tango's admin commands (`Init`, `Kill`,
+`RestartServer`), which no device declares.
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
