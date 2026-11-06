@@ -14,7 +14,7 @@ import pytest
 import tango
 
 from asyncroscopy.instruments.electron_microscope.digital_twin import MOVE_BLOCK_S
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+from asyncroscopy.jobs.mapping.mapper import Mapper
 
 
 def wait_until_still(twin, timeout=15.0):

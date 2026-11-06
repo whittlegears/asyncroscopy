@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from asyncroscopy.instruments.electron_microscope import mapper as mapper_module
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, drift_at
+from asyncroscopy.jobs.mapping import mapper as mapper_module
+from asyncroscopy.jobs.mapping.mapper import Mapper, drift_at
 
 from test_map_pipeline import PLAN, InProcessAnalysis, call
 

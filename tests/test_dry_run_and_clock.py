@@ -19,7 +19,7 @@ import pytest
 import tango
 from fastmcp.exceptions import ToolError
 
-from asyncroscopy.instruments.electron_microscope.mapper import DRY_RUN_SKIPPED, Mapper
+from asyncroscopy.jobs.mapping.mapper import DRY_RUN_SKIPPED, Mapper
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, RecordingProxy
 from asyncroscopy.mcp.binding import bind_host
 from asyncroscopy.mcp.mcp_server import MCPServer, stack_simulated

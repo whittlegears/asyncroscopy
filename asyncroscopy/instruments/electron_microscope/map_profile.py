@@ -25,7 +25,7 @@ import numpy as np
 import tango
 
 from asyncroscopy.data.data_reader import read_acquisition
-from asyncroscopy.jobs.map_profile import Cost, InstrumentProfile, register_profile
+from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, register_profile
 from asyncroscopy.routines.dose import eds_dose, frame_dose
 from asyncroscopy.routines.grid import max_exposures
 

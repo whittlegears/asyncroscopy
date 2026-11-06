@@ -26,7 +26,7 @@ from typing import Any
 
 import tango
 
-from asyncroscopy.jobs.map_profile import Cost, InstrumentProfile, register_profile
+from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, register_profile
 
 FOV_TOLERANCE = 1e-6  # relative: the field_of_view setting must make the tile this close to fov_m
 

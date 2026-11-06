@@ -15,8 +15,8 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 
 | Piece | Where | What it does |
 | :-- | :-- | :-- |
-| `Mapper` | `asyncroscopy/instruments/electron_microscope/mapper.py` | One background job per map, for any instrument: serpentine tile grid inside a stage box, budgets checked at reserve, abort with the instrument made safe, resume after a restart, then stitch, score and revisit. |
-| Instrument profiles | `asyncroscopy/jobs/map_profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
+| `Mapper` | `asyncroscopy/instruments/jobs/mapping/mapper.py` | One background job per map, for any instrument: serpentine tile grid inside a stage box, budgets checked at reserve, abort with the instrument made safe, resume after a restart, then stitch, score and revisit. |
+| Instrument profiles | `asyncroscopy/jobs/mapping/profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
 | Routines | `asyncroscopy/routines/grid.py`, `dose.py`, `drift.py` | The pure arithmetic: tile grids, electron dose, the stitch's drift at a time, live drift trackers. |
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with pyTEMlib's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
 | Approval mode | `asyncroscopy/safety/` | `auto` or `approve`; see [approval_mode.md](approval_mode.md). |

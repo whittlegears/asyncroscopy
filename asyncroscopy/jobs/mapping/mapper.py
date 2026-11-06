@@ -8,7 +8,7 @@ AFM's setpoint). The worker visits tiles in serpentine order (to limit
 backlash) and never leaves the box.
 
 The Mapper is instrument-agnostic: what differs between a STEM, an SEM and an
-AFM is an instrument profile (asyncroscopy/jobs/map_profile.py), chosen with the
+AFM is an instrument profile (asyncroscopy/jobs/mapping/profile.py), chosen with the
 ``instrument_profile`` device property: ``stem`` (the default), ``sem``,
 ``yaml`` (any YAML twin with an image acquisition) or one registered by a
 plug-in. The profile acquires each tile, makes the instrument safe between
@@ -73,7 +73,7 @@ beam is still blanked, no image or run file is made, and the summary says so.
 
 Live drift tracking (plan ``"drift": {"track": true}``, off by default) corrects each tile with a
 bounded image shift between the stage move and the acquisition, from drift measured by registering
-overlapping tiles on the instrument's clock (asyncroscopy/jobs/live_drift.py). The profile says how to
+overlapping tiles on the instrument's clock (asyncroscopy/jobs/mapping/live_drift.py). The profile says how to
 shift the image; a profile that cannot is refused at reserve. Every correction is traced.
 
 The grid, dose and drift arithmetic are pure functions in asyncroscopy/routines
@@ -101,9 +101,10 @@ from tango.server import device_property
 from asyncroscopy.contracts import ENVELOPE_VERSION, load, validate
 from asyncroscopy.data.data_reader import read_acquisition
 from asyncroscopy.data.record import current_sample, record_fields
-from asyncroscopy.jobs import JobDevice, live_drift
+from asyncroscopy.jobs import JobDevice
+from asyncroscopy.jobs.mapping import live_drift
 from asyncroscopy.jobs.job_device import done_count
-from asyncroscopy.jobs.map_profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
+from asyncroscopy.jobs.mapping.profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile, get_profile
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, check_current_at_start
 from asyncroscopy.routines.dose import ELECTRON_CHARGE, eds_dose, frame_dose  # noqa: F401  (their old home; tests and plug-ins import them here)
 from asyncroscopy.routines.drift import drift_at
@@ -340,7 +341,7 @@ class Mapper(JobDevice):
     instrument_profile = device_property(
         dtype=str,
         default_value="stem",
-        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/map_profile.py): stem (the default), sem, yaml "
+        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/mapping/profile.py): stem (the default), sem, yaml "
         "(a YAML twin with an image acquisition), or a profile registered by a plug-in.",
     )
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Instrument to drive (a microscope, or any device the instrument profile drives).")

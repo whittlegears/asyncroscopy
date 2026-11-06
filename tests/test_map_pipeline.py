@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from asyncroscopy.instruments.electron_microscope.mapper import Mapper, REVISIT_EDGE_SHIFT
+from asyncroscopy.jobs.mapping.mapper import Mapper, REVISIT_EDGE_SHIFT
 
 pytestmark = [
     pytest.mark.slow,

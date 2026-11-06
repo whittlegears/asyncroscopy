@@ -1,6 +1,6 @@
 """Instrument profiles: what one kind of instrument does inside a map, so one Mapper maps any of them.
 
-The Mapper (asyncroscopy/instruments/electron_microscope/mapper.py, kept there so
+The Mapper (asyncroscopy/jobs/mapping/mapper.py, kept there so
 configs and tools keep their names) owns everything a map does whatever the
 instrument: plan resolution (area, grid and overlap, centre and size, revisit-only
 plans), the stage-limit and dry-run checks, ``clock_s`` stamping and resume, the
@@ -22,7 +22,7 @@ analysis server. A profile owns what differs:
 
 A profile is a small class registered by name, like the Tuner's strategies::
 
-    from asyncroscopy.jobs.map_profile import InstrumentProfile, register_profile
+    from asyncroscopy.jobs.mapping.profile import InstrumentProfile, register_profile
 
     @register_profile
     class MyProfile(InstrumentProfile):
@@ -47,7 +47,7 @@ from asyncroscopy.registry import Registry
 if TYPE_CHECKING:
     import tango
 
-    from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+    from asyncroscopy.jobs.mapping.mapper import Mapper
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
 GENERIC_PLAN_FIELDS = frozenset({
@@ -186,7 +186,7 @@ class InstrumentProfile:
 
     def clock_s(self) -> float:
         """The instrument's clock (simulated time on a twin); tiles and revisits are timed with it."""
-        from asyncroscopy.instruments.electron_microscope.mapper import Mapper
+        from asyncroscopy.jobs.mapping.mapper import Mapper
 
         return Mapper._clock_s(self.instrument())
 
@@ -203,7 +203,7 @@ class InstrumentProfile:
         """One image at ``revisit["fov_m"]`` at the current position; restore the tile settings; end safe. Returns its data key."""
         raise NotImplementedError
 
-    # -- live drift tracking (plan "drift": {"track": true}; asyncroscopy/jobs/live_drift.py) ---------
+    # -- live drift tracking (plan "drift": {"track": true}; asyncroscopy/jobs/mapping/live_drift.py) ---------
     # A profile that can move the image without moving the stage (a beam's image or beam shift) says
     # how far (``image_shift_limit_m``), which commands it needs, and reads and writes the shift. One
     # that cannot leaves ``image_shift_limit_m`` None, and a plan asking for tracking is refused at reserve.
@@ -223,8 +223,8 @@ class InstrumentProfile:
 PROFILES: Registry[type[InstrumentProfile]] = Registry(
     "asyncroscopy.map_profiles",
     {
-        "stem": "asyncroscopy.instruments.electron_microscope.map_profiles",
-        "sem": "asyncroscopy.instruments.electron_microscope.map_profiles",
+        "stem": "asyncroscopy.instruments.electron_microscope.map_profile",
+        "sem": "asyncroscopy.instruments.electron_microscope.map_profile",
         "yaml": "asyncroscopy.instruments.yaml_sim.map_profile",
     },
     kind="instrument profile",
