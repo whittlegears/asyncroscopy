@@ -32,6 +32,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         returns: "X-rays on"             # a string, a number, or a mapping (sent as JSON)
         duration_s: 0.5                  # optional simulated time (at most 25 s per call)
         role: beam.unblank               # optional canonical role (asyncroscopy.core.names.ROLES), for role-based controllers
+        risk: high                       # optional: low or high as the approval gate sees it (see below)
       move_xy:
         doc: Move the stage.
         inputs:                          # several arguments: the tool takes them by name
@@ -72,6 +73,14 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
       budgets:                           # what a plan can be refused for besides time_s
         tip_force_nn: {per_tile: "setpoint_v * 20", combine: max, units: nN, doc: peak tip force}
 
+The file declares what each command is, so the MCP server need not guess from its name
+(``asyncroscopy.mcp.descriptors``): ``get_<setting>`` reads (low); ``set_<setting>`` and every
+acquisition are high; ``get_map_profile`` reads. A command is what its ``risk:`` says; without one, a
+command whose ``role:`` stops something (beam.blank, probe.retract, safe_stop) is low and, taking no
+input, one the emergency stop calls; one with any other role is high, and a ``get_``/``list_`` command
+reads. A command with neither ``risk:`` nor ``role:`` is left to the MCP server's name rules, which list
+it at startup: give it one.
+
 An image's ``spots`` are drawn afresh for every image (``count`` of them), or,
 with ``x_m`` and ``y_m`` (expressions such as ``stage_x_m``: where the image
 centre is on the sample), fixed on the sample at ``per_um2`` per square
@@ -106,7 +115,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from asyncroscopy.core.names import check_role
+from asyncroscopy.core.names import STOP_ROLES, check_role
 
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -127,7 +136,7 @@ OPERATORS = (
 
 SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices", "requires"}
 INPUT_KEYS = {"name", "type", "min", "max", "units", "doc", "choices"}
-COMMAND_KEYS = {"doc", "input", "inputs", "requires", "sets", "returns", "duration_s", "role"}
+COMMAND_KEYS = {"doc", "input", "inputs", "requires", "sets", "returns", "duration_s", "role", "risk"}
 ACQUISITION_KEYS = {"doc", "kind", "requires", "duration_s", "detector", "axis", "peaks", "background", "noise", "shape", "pixel_size_m", "spots", "values", "inputs", "units", "noise_sigma", "role"}
 KIND_ROLES = {"image": "acquire.image", "spectrum": "acquire.spectrum", "value": "acquire.other"}
 AXIS_KEYS = {"start", "stop", "points", "label", "units"}
@@ -344,6 +353,24 @@ class Command:
     returns_trees: Any = None
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
     role: str | None = None  # a canonical role (asyncroscopy.core.names.ROLES); None: the rules decide
+    risk: str | None = None  # "low" or "high" as the file says; None: from the role (``declaration``)
+
+    def declaration(self) -> dict:
+        """What the command is, for the MCP server: {"risk", "role", "stop"} as far as the file says (see the
+        module docstring); {} for a command with neither risk nor role (the server's name rules decide)."""
+        found: dict = {}
+        role = self.role or ("setting.read" if self.name.startswith(("get_", "list_")) else None)
+        if role:
+            found["role"] = role
+        if self.risk:
+            found["risk"] = self.risk
+        elif role in STOP_ROLES or role == "setting.read":
+            found["risk"] = "low"
+        elif role:
+            found["risk"] = "high"
+        if role in STOP_ROLES and not self.inputs and found.get("risk") == "low":
+            found["stop"] = True
+        return found
 
 
 @dataclass
@@ -490,7 +517,17 @@ def _command(name: str, raw: Any, settings: dict[str, Quantity]) -> Command:
         returns_trees=_returns_trees(f"{where}.returns", raw.get("returns"), names),
         duration=_duration(where, raw.get("duration_s"), names),
         role=_role(where, raw.get("role")),
+        risk=_risk(where, raw.get("risk")),
     )
+
+
+def _risk(where: str, raw: Any) -> str | None:
+    """An optional ``risk:``: low or high."""
+    if raw is None:
+        return None
+    if str(raw).strip().lower() not in ("low", "high"):
+        raise SpecError(f"{where}.risk: {raw!r} is not low or high")
+    return str(raw).strip().lower()
 
 
 def _role(where: str, raw: Any) -> str | None:
@@ -777,12 +814,13 @@ def _argument(quantity: Quantity, axis: str | None = None) -> dict:
 
 
 def action_hints(spec: InstrumentSpec) -> dict:
-    """What the file says about each command beyond its doc, for the MCP server's action space
-    (asyncroscopy.mcp.action_space): {command: {"role", "args", "returns"}}.
+    """What the file says about each command beyond its doc, for the MCP server (its descriptors and action
+    space): {command: {"risk", "role", "stop", "args", "returns"}}.
 
-    A role is the file's own ``role:``, an acquisition's kind (KIND_ROLES), or, for the stage settings
-    and the field of view of the map section (given or inferred), stage.move / stage.read / optics.fov;
-    other commands are left to the MCP server's rules. Arguments carry type, units, range and choices,
+    Risk and role as the module docstring lists them. A role is the file's own ``role:``, an acquisition's
+    kind (KIND_ROLES), or, for the stage settings and the field of view of the map section (given or
+    inferred), stage.move / stage.read / optics.fov; any other setting is setting.read / setting.set.
+    Arguments carry type, units, range and choices,
     and ``axis`` (x, y, z) when they set a stage setting, so a controller can fill them from a position.
     The map section's image acquisition is ``primary``: the instrument's main observable.
     """
@@ -796,16 +834,19 @@ def action_hints(spec: InstrumentSpec) -> dict:
     hints: dict[str, dict] = {}
     for name, quantity in spec.settings.items():
         returns = {k: v for k, v in _argument(quantity, axes.get(name)).items() if k not in ("name", "doc")}
-        hints[f"get_{name}"] = {"returns": returns, **({"role": "stage.read"} if name in axes else {})}
+        hints[f"get_{name}"] = {"risk": "low", "role": "stage.read" if name in axes else "setting.read", "returns": returns}
         if quantity.settable:
-            role = "stage.move" if name in axes else "optics.fov" if name == fov else None
-            hints[f"set_{name}"] = {"args": [_argument(quantity, axes.get(name))], **({"role": role} if role else {})}
+            role = "stage.move" if name in axes else "optics.fov" if name == fov else "setting.set"
+            hints[f"set_{name}"] = {"risk": "high", "role": role, "args": [_argument(quantity, axes.get(name))]}
     for name, cmd in spec.commands.items():
         sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # input -> the setting it sets
-        hints[name] = {"args": [_argument(q, axes.get(sets.get(q.name, ""))) for q in cmd.inputs], **({"role": cmd.role} if cmd.role else {})}
+        hints[name] = {**cmd.declaration(), "args": [_argument(q, axes.get(sets.get(q.name, ""))) for q in cmd.inputs]}
+    if section is not None:
+        hints[MAP_COMMAND] = {"risk": "low", "role": "setting.read"}
     for name, acquisition in spec.acquisitions.items():
         hints[name] = {
             **({"primary": True} if section and name == section.image else {}),  # what a map tiles with: the main observable
+            "risk": "high",
             "role": acquisition.role or KIND_ROLES[acquisition.kind],
             "args": [_argument(q) for q in acquisition.inputs],
             "returns": {"type": "object" if acquisition.kind == "value" else "data key", "kind": acquisition.kind, "units": acquisition.units},

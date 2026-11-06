@@ -85,7 +85,8 @@ def test_stem_and_afm_name_the_stage_move_differently_and_share_its_role(serve):
     assert position["elements"] == ["x", "y", "z", "alpha", "beta"] and position["units"] == ["m", "m", "m", "deg", "deg"]
     assert [(a["name"], a["axis"], a["units"], a["min"], a["max"], a["required"]) for a in move_xy["args"]] == [
         ("x_m", "x", "m", -0.002, 0.002, True), ("y_m", "y", "m", -0.002, 0.002, True)]
-    assert move_xy["role_source"] == "rule" and by_tool(afm)["AFMTwin_set_stage_x_m"]["role_source"] == "annotation"
+    # Both declared: the twin on its base class, the AFM file with its role: key.
+    assert move_stage["role_source"] == move_xy["role_source"] == by_tool(afm)["AFMTwin_set_stage_x_m"]["role_source"] == "annotation"
     assert stem["instruments"] == [{"device": "DigitalTwin", "class": "DigitalTwin", "address": "asyncroscopy/digitaltwin/default",
                                     "kind": {"stem": True, "probe": False, "envelope": False}}]
     assert afm["instruments"][0]["kind"] == {"stem": False, "probe": True, "envelope": False}
@@ -197,7 +198,7 @@ def test_a_yaml_role_is_checked_and_reaches_the_hints(tmp_path):
     raman = action_hints(load_spec(EXAMPLES / "raman.yaml"))
     assert raman["laser_on"]["role"] == "beam.unblank"  # the file's annotation; the rules would say other
     assert raman["acquire_raman_spectrum"]["role"] == "acquire.spectrum"  # from the kind
-    assert raman["set_stage_x_m"] == {"role": "stage.move", "args": [{"name": "stage_x_m", "type": "number", "units": "m", "min": -0.005, "max": 0.005, "doc": "Stage x position", "axis": "x"}]}
+    assert raman["set_stage_x_m"] == {"risk": "high", "role": "stage.move", "args": [{"name": "stage_x_m", "type": "number", "units": "m", "min": -0.005, "max": 0.005, "doc": "Stage x position", "axis": "x"}]}
     bad = tmp_path / "bad.yaml"
     bad.write_text("settings: {power_w: {default: 1}}\ncommands:\n  fire:\n    doc: Fire.\n    role: beam.fire\n", encoding="utf-8")
     with pytest.raises(SpecError, match="commands.fire.role: 'beam.fire' is not a role"):

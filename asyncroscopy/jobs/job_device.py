@@ -68,9 +68,10 @@ from typing import Any
 import jsonschema
 import tango
 from tango import DevState
-from tango.server import Device, attribute, command, device_property
+from tango.server import Device, attribute, device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION, load as load_schema
+from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from asyncroscopy.trace.writer import TraceWriter
 from asyncroscopy.safety.policy import check_overrides
@@ -259,6 +260,9 @@ def _kind(value) -> str:
 
 
 class JobDevice(Device):
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
     # One line saying what this device's job does; MCP tool descriptions start with it.
     JOB_KIND = "background job"
     # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
@@ -591,7 +595,7 @@ class JobDevice(Device):
     # ------------------------------------------------------------------
     # Envelope verbs
     # ------------------------------------------------------------------
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job and returns reservation_id with an estimate; nothing moves until start.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job and returns reservation_id with an estimate; nothing moves until start.", risk="low", role="job.reserve")
     def reserve(self, request: str) -> str:
         """Validate a plan, hold the device for it, and return the resolved plan with an estimate."""
         return self._guard(self._reserve, request)
@@ -683,7 +687,7 @@ class JobDevice(Device):
         limits = self._check_limits({"plan": plan, "resolved_plan": resolved, **shape})
         return plan, dry_run, resolved, shape, limits
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "...", "plan": {...}}: the whole new plan.', doc_out="Replaces the plan of a reservation that has not started, checked as at reserve; returns the new resolved plan and estimate.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "...", "plan": {...}}: the whole new plan.', doc_out="Replaces the plan of a reservation that has not started, checked as at reserve; returns the new resolved plan and estimate.", risk="high", operator_only=True, role="other")
     def revise(self, request: str) -> str:
         """Edit a plan before it starts (operator only): the new plan is checked like a reserve and gets a new plan_id."""
         return self._guard(self._revise, request)
@@ -772,7 +776,7 @@ class JobDevice(Device):
             return f"could not read its limits: {exc}".splitlines()[0][:200]
         return _limit(config.min_value), _limit(config.max_value)
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="The plan, resolved plan, estimate and state of one reservation.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="The plan, resolved plan, estimate and state of one reservation.", risk="low", role="job.status")
     def get_reservation(self, request: str) -> str:
         """What a reservation will do; shown to the operator who approves its start."""
         return self._guard(self._get_reservation, request)
@@ -786,7 +790,7 @@ class JobDevice(Device):
             # dry_run comes first: the operator approving the start must see whether anything will move.
             return self._reply({"dry_run": bool(job.get("dry_run")), **{k: job.get(k) for k in ("reservation_id", "plan_id", "plan", "resolved_plan", "estimate", "state", "caller")}})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.", risk="high", role="job.start")
     def start(self, request: str) -> str:
         """Start a reserved job in the background and return its job id at once. Starting an aborted or failed job resumes it."""
         return self._guard(self._start, request)
@@ -902,7 +906,7 @@ class JobDevice(Device):
                     return "continued"
         return "aborted"
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Pauses this device's background job after the current step with the instrument waiting safely; start continues it. Always allowed.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Pauses this device's background job after the current step with the instrument waiting safely; start continues it. Always allowed.", risk="low", role="safe_stop")
     def pause(self, request: str) -> str:
         """Pause a running job after the current step; the device stays held. start continues it, abort stops it."""
         return self._guard(self._pause, request)
@@ -920,7 +924,7 @@ class JobDevice(Device):
             self._trace.record(f"{type(self).__name__}.pause", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"], caller=body.get("caller"), **self._dry(job))
         return self._status(json.dumps({"job_id": job.get("job_id") or job["reservation_id"]}))
 
-    @command(dtype_out=str, doc_out='JSON {"jobs": [...]}: every job that holds this device or is running, paused or aborting, with its progress.')
+    @command(dtype_out=str, doc_out='JSON {"jobs": [...]}: every job that holds this device or is running, paused or aborting, with its progress.', risk="low", role="setting.read")
     def get_jobs(self) -> str:
         """The jobs a supervisor can act on now: reserved, running, paused or aborting. Reading this renews no lease."""
         with self._lock:
@@ -1105,7 +1109,7 @@ class JobDevice(Device):
                 job["suspended"] = {**job["suspended"], "reason": "conditions are good again", "resumes_in_s": round(wait_s - waited, 1)}
         return False
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of this device's background job: state and steps done of total.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Progress of this device's background job: state and steps done of total.", risk="low", role="job.status")
     def job_status(self, request: str) -> str:
         """Progress of a job: state, steps done of total, last error."""
         return self._guard(self._status, request)
@@ -1129,7 +1133,7 @@ class JobDevice(Device):
             }
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops this device's background job after the current step (or sooner, where the step checks for it) and puts the instrument in its safe state. Always allowed.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Stops this device's background job after the current step (or sooner, where the step checks for it) and puts the instrument in its safe state. Always allowed.", risk="low", role="job.abort")
     def abort(self, request: str) -> str:
         """Stop a running job after the current step and put the instrument in a safe state. Always allowed."""
         return self._guard(self._abort_job, request)
@@ -1152,12 +1156,12 @@ class JobDevice(Device):
             thread.join(timeout=2.0)
         return self._status(json.dumps({"job_id": job_id or job["reservation_id"]}))
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."}.', doc_out="The job's status; its lease runs lease_s from now.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."}.', doc_out="The job's status; its lease runs lease_s from now.", risk="low", role="other")
     def renew_lease(self, request: str) -> str:
         """Keep a running job's lease (lease_s) from lapsing without reading anything else. job_status renews it too."""
         return self._guard(self._status, request)
 
-    @command(dtype_out=str, doc_out='JSON {"aborted": [status of each job that was running]}.')
+    @command(dtype_out=str, doc_out='JSON {"aborted": [status of each job that was running]}.', risk="low", role="safe_stop", stop=True)
     def abort_all(self) -> str:
         """Stop every job of this device that is running, without naming it: the e-stop. Always allowed."""
         with self._lock:
@@ -1171,7 +1175,7 @@ class JobDevice(Device):
         self._trace.record(f"{type(self).__name__}.abort_all", True, time.time(), arguments={"job_ids": running})
         return self._reply({"aborted": stopped})
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what this device's background job produced, and a summary.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"job_id": "..."} from start.', doc_out="Tiled keys of what this device's background job produced, and a summary.", risk="low", role="job.results")
     def results(self, request: str) -> str:
         """Tiled keys of everything the job produced so far, plus a summary."""
         return self._guard(self._results, request)
@@ -1237,7 +1241,7 @@ class JobDevice(Device):
             step=getattr(WORKER, "step", None), caller=job.get("caller"),
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.', doc_out="Frees the instrument for the next reservation.")
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."}.', doc_out="Frees the instrument for the next reservation.", risk="low", role="job.release")
     def release(self, request: str) -> str:
         """Free the device for the next reservation. A running job must be aborted first."""
         return self._guard(self._release, request)

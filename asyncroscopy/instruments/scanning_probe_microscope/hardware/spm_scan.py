@@ -16,6 +16,7 @@ import tango #type: ignore
 
 #from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.instrument import CombinedMeta
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 _PARAM_DEFAULTS = {
         "x_scan_center_m": float("nan"),
@@ -28,6 +29,9 @@ _PARAM_DEFAULTS = {
 
 class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM scan device: frame settings + scan execution."""
+
+    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Device properties
@@ -282,7 +286,7 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.other")
     def acquire_scan(self) -> str:
         """Acquire one frame with current settings; returns a DATA/Tiled key."""
         if self.get_state() == tango.DevState.RUNNING:
@@ -298,18 +302,18 @@ class SPM_SCAN(tango.server.Device, metaclass=CombinedMeta):
             self._set_state_and_status(tango.DevState.ON, "Idle.")
         return self._save_scan(path)
     
-    @tango.server.command
+    @command(risk="low", role="safe_stop", stop=True)
     def stop_scan(self) -> None:
         """Stop a running scan."""
         self._hw_stop_scan()
         self._set_state_and_status(tango.DevState.ON, "Idle.")
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def refresh_params(self) -> None:
         """Re-read all scan parameters from hardware."""
         self._refresh_params()
 
-    @tango.server.command(dtype_in=tango.DevVarDoubleArray)
+    @command(dtype_in=tango.DevVarDoubleArray, risk="high", role="other")
     def move_probe(self, position: list[float]) -> None:
         """Move the probe to an absolute position [x, y] in meters."""
         if len(position) != 2:

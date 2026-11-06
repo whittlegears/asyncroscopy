@@ -35,13 +35,13 @@ from typing import Optional
 
 import tango
 from tango import AttrWriteType, DevDouble, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
-from tango.server import attribute, command, device_property
+from tango.server import attribute, device_property
 
 from asyncroscopy.data.dose_ledger import dose_at
 from asyncroscopy.data.record import current_sample
-from asyncroscopy.instruments.electron_microscope.limits import DEFAULT_MAX_DEFOCUS, DEFAULT_MAX_FOV, DEFAULT_MAX_STIGMATOR, DEFAULT_MIN_FOV
 from asyncroscopy.instruments.instrument import Instrument
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 # Detector and sub-device proxies the base connects: {name: the device property holding its address}.
 DETECTOR_ADDRESSES = {
@@ -52,6 +52,13 @@ DETECTOR_ADDRESSES = {
     "corrector": "corrector_device_address",
     "data": "data_device_address",
 }
+# The limit properties' defaults: what the base enforces when a deployment sets none.
+DEFAULT_MIN_FOV = 1e-9
+DEFAULT_MAX_FOV = 1e-4
+DEFAULT_MAX_DEFOCUS = 1e-5
+DEFAULT_MAX_STIGMATOR = 1e-6
+STAGE_ELEMENTS = ("x", "y", "z", "alpha", "beta")
+STAGE_UNITS = ("m", "m", "m", "deg", "deg")
 DETECTOR_TIMEOUT_MS = 12_000
 DATA_TIMEOUT_MS = 3_600_000  # registering a large acquisition with Tiled can take long
 
@@ -178,7 +185,7 @@ class ElectronMicroscope(Instrument):
         doc="The scanning detector used when a caller names none (the default_scan_detector property).",
     )
 
-    # Limits checked before any backend sees a value (the defaults are in limits.py).
+    # Limits checked before any backend sees a value; action_hints tells clients the same ranges.
     min_fov = device_property(dtype=float, default_value=DEFAULT_MIN_FOV, doc="Smallest field of view accepted (m).")
     max_fov = device_property(dtype=float, default_value=DEFAULT_MAX_FOV, doc="Largest field of view accepted (m).")
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
@@ -194,6 +201,8 @@ class ElectronMicroscope(Instrument):
     beam_current_source = attribute(dtype=str, access=AttrWriteType.READ, doc="'measured', or 'default' when beam_current_pa is assumed.")
     beam_current_age_s = attribute(dtype=float, unit="s", access=AttrWriteType.READ, doc="Age of the measured current (s); NaN when it is assumed.")
     stage_moving = attribute(dtype=bool, access=AttrWriteType.READ, doc="True while a stage move is under way.")
+    # What each command is (declared on its @command) and its arguments' units and ranges at this device's limits.
+    action_hints = action_hints_attribute(extra=lambda device: device.argument_hints())
 
     stem_mode = attribute(
         label="STEM Mode",
@@ -272,6 +281,26 @@ class ElectronMicroscope(Instrument):
     def read_stage_moving(self) -> bool:
         return bool(self._stage_moving())
 
+    def argument_hints(self) -> dict:
+        """The commands' arguments and returns with the units and ranges the checks enforce, at this device's
+        min_fov, max_fov and max_defocus, in the shape of ``action_hints`` (asyncroscopy.mcp.action_space)."""
+        stage = {"type": "array", "items": "number", "elements": list(STAGE_ELEMENTS), "units": list(STAGE_UNITS)}
+        max_defocus = float(self.max_defocus)
+        return {
+            "set_fov": {"args": [{"name": "fov", "type": "number", "units": "m", "min": float(self.min_fov), "max": float(self.max_fov)}]},
+            "set_defocus": {"args": [{"name": "defocus", "type": "number", "units": "m", "min": -max_defocus, "max": max_defocus}]},
+            "get_fov": {"returns": {"type": "number", "units": "m"}},
+            "get_defocus": {"returns": {"type": "number", "units": "m"}},
+            "place_beam": {"args": [{"name": "position", "type": "array", "items": "number", "elements": ["x", "y"],
+                                     "units": "fraction of the field of view", "min": 0.0, "max": 1.0}]},
+            "move_stage": {"args": [{"name": "position", **stage}]},
+            "get_stage": {"returns": stage},
+            "get_screen_current": {"returns": {"type": "number", "units": "pA"}},
+            "set_screen_current": {"args": [{"name": "current", "type": "number", "units": "pA"}]},
+            "acquire_scanned_image": {"primary": True, "args": [{"name": "detector_list", "type": "array", "items": "string",
+                                                                 "doc": "scanning detectors; [] means the microscope's default_detector"}]},
+        }
+
     def beam_current_fields(self) -> dict:
         """The beam current as get_parameters reports it: beam_current_pa, beam_current_source, and
         beam_current_age_s (measured) or beam_current_reason (assumed)."""
@@ -283,7 +312,7 @@ class ElectronMicroscope(Instrument):
             fields["beam_current_reason"] = current.get("reason") or "this microscope does not measure its beam current"
         return fields
 
-    @command
+    @command(risk="high", role="other")
     def Disconnect(self) -> None:
         """Disconnect from microscope hardware gracefully."""
         self.set_state(DevState.OFF)
@@ -293,6 +322,7 @@ class ElectronMicroscope(Instrument):
         dtype_in=str,
         dtype_out=str,
         doc_in=":param detector_name: Spectrum detector name, e.g. 'eds'.",
+        risk="high", role="acquire.spectrum", routine=True,
     )
     @hardware_call()
     def acquire_spectrum(self, detector_name: str) -> str:
@@ -313,6 +343,7 @@ class ElectronMicroscope(Instrument):
         dtype_out=str,
         doc_in=":param detector_list: Scanning detector names, e.g. ['haadf']. "
                "An empty list uses the microscope's default_detector.",
+        risk="high", role="acquire.image", routine=True,
     )
     @hardware_call()
     def acquire_scanned_image(self, detector_list: list[str]) -> str:
@@ -328,7 +359,7 @@ class ElectronMicroscope(Instrument):
         region = list(check_scan(scan.imsize, scan.dwell_time, list(scan.scan_region)))  # refused here, before the instrument
         return self._acquire_scanned_image(scan.imsize, scan.dwell_time, detector_list, region, scan.output_format)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.other", routine=True)
     @hardware_call()
     def acquire_scanned_data_advanced(self) -> str:
         """Trigger an advanced 4D scanned data acquisition with the Ceta camera."""
@@ -336,7 +367,7 @@ class ElectronMicroscope(Instrument):
         region = list(check_scan(scan.imsize, scan.dwell_time, list(scan.scan_region)))  # refused here, before the instrument
         return self._acquire_scanned_data_advanced(scan.imsize, scan.dwell_time, 'BM-Ceta', region)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.image")
     @hardware_call()
     def acquire_camera_image(self) -> str:
         """Acquire a camera image using settings from the camera device."""
@@ -350,7 +381,7 @@ class ElectronMicroscope(Instrument):
             camera.output_format,
         )
 
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"x_m": ..., "y_m": ...} for the dose at one stage point, or {} for the exposure count only.')
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"x_m": ..., "y_m": ...} for the dose at one stage point, or {} for the exposure count only.', risk="low", role="setting.read")
     def get_dose(self, request: str) -> str:
         """Electron dose already put on the loaded sample, from the dose ledger: exposures counted (scanned frames and
         parked-beam spectra), and at a stage point the exposures that covered it and their summed dose in e/A^2;
@@ -365,7 +396,7 @@ class ElectronMicroscope(Instrument):
         x_m, y_m = (float(point[0]), float(point[1])) if point[0] is not None else (None, None)
         return json.dumps({**dose_at(sample["sample_load_id"], x_m, y_m), "sample_id": sample.get("sample_id")})
 
-    @command(dtype_in=int, dtype_out=DevEncoded, doc_in=':param index: Index of a cached image.')
+    @command(dtype_in=int, dtype_out=DevEncoded, doc_in=':param index: Index of a cached image.', risk="low", role="data.read")
     def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
         """Retrieve cached image by index."""
         if not hasattr(self, '_cached_images'):
@@ -379,7 +410,7 @@ class ElectronMicroscope(Instrument):
         meta = {'shape': list(img_data.shape), 'dtype': str(img_data.dtype)}
         return json.dumps(meta), img_data.tobytes()
 
-    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param position: [x, y] beam position as fractions (0-1) of the field of view; [0.5, 0.5] is the centre.')
+    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param position: [x, y] beam position as fractions (0-1) of the field of view; [0.5, 0.5] is the centre.', risk="high", role="beam.place", routine=True)
     @hardware_call()
     def place_beam(self, position: list[float]) -> None:
         """Set resting beam position, [0:1]."""
@@ -392,7 +423,7 @@ class ElectronMicroscope(Instrument):
             )
         self._place_beam(position)
 
-    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.')
+    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.', risk="high", role="beam.place", routine=True)
     @hardware_call()
     def place_beam_list(self, positions: list[float]) -> None:
         """Place beam at multiple positions sequentially."""
@@ -404,62 +435,63 @@ class ElectronMicroscope(Instrument):
             y = float(positions[i + 1])
             self._place_beam([x, y])
 
-    @command(dtype_in=str, doc_in=":param state: 'open' or 'close'.")
+    @command(dtype_in=str, doc_in=":param state: 'open' or 'close'.", risk="high", role="setting.set")
     @hardware_call()
     def set_column_valves(self, state: str) -> None:
         """Open or close the column valves."""
         self._set_column_valves(state)
 
-    @command()
+    @command(risk="low", role="beam.blank", stop=True)
     @hardware_call(serialized=False)  # never waits for a running command: blanking is the safe state
     def blank_beam(self) -> None:
         """Blank beam."""
         self._blank_beam()
 
-    @command()
+    @command(risk="high", role="beam.unblank", routine=True)
     @hardware_call()
     def unblank_beam(self) -> None:
         """Unblank beam."""
         self._unblank_beam()
 
-    @command(dtype_in=DevDouble, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).')
+    @command(dtype_in=DevDouble, doc_in=':param defocus: Defocus in metres (e.g. 2e-8 for 20 nm).', risk="low", role="optics.focus")
     @hardware_call()
     def set_defocus(self, defocus: float) -> None:
         """Set the defocus in meters."""
         self._set_defocus(check_defocus(defocus, self.max_defocus))
 
-    @command(dtype_out=DevDouble)
+    @command(dtype_out=DevDouble, risk="low", role="setting.read")
     @hardware_call()
     def get_defocus(self) -> float:
         """Read the defocus in meters."""
         return self._get_defocus()
 
-    @command(dtype_in=DevDouble, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).')
+    @command(dtype_in=DevDouble, doc_in=':param fov: Field of view in metres (e.g. 2e-7 for 200 nm).', risk="low", role="optics.fov")
     @hardware_call()
     def set_fov(self, fov: float) -> None:
         """Set the field of view for the next acquisition, in meters."""
         self._set_fov(check_fov(fov, self.min_fov, self.max_fov))
 
-    @command(dtype_out=DevDouble)
+    @command(dtype_out=DevDouble, risk="low", role="setting.read")
     @hardware_call()
     def get_fov(self) -> float:
         """Read the field of view for the next acquisition, in meters."""
         return self._get_fov()
     
-    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] image shift in metres.')
+    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] image shift in metres.', risk="high", role="setting.set", routine=True)
     @hardware_call()
     def set_image_shift(self, shift: list[float]) -> None:
         """Set the image shift to [x_shift, y_shift] in meters."""
         self._set_image_shift(shift)
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_image_shift(self) -> list[float]:
-        """Get the image shiftas [x, y] in m."""
+        """Get the image shift as [x, y] in m."""
         return self._get_image_shift()
 
     @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
-             doc_in=':param position: [x, y] stage position in metres for the centre of the next image.')
+             doc_in=':param position: [x, y] stage position in metres for the centre of the next image.',
+             risk="high", role="other", routine=True)
     @hardware_call()
     def aim_image_shift(self, position: list[float]) -> list[float]:
         """Centre the next image on stage position [x, y] (metres) with the image shift alone; the stage does not move.
@@ -471,7 +503,8 @@ class ElectronMicroscope(Instrument):
         return shift
     
     @command(dtype_in=DevVarFloatArray, dtype_out=DevVarFloatArray,
-             doc_in=':param position: [x, y] stage position in metres to park the beam on (inside the current field of view).')
+             doc_in=':param position: [x, y] stage position in metres to park the beam on (inside the current field of view).',
+             risk="high", role="beam.place", routine=True)
     @hardware_call()
     def place_beam_at(self, position: list[float]) -> list[float]:
         """Park the beam on stage position [x, y] (metres; a find_features x_m, y_m) for a spectrum, without moving the stage.
@@ -493,85 +526,86 @@ class ElectronMicroscope(Instrument):
         self._place_beam(fraction)
         return fraction
 
-    @command(dtype_in=DevVarFloatArray, doc_in=":param stigmator: [a, b] objective stigmator in metres of A1.")
+    @command(dtype_in=DevVarFloatArray, doc_in=":param stigmator: [a, b] objective stigmator in metres of A1.", risk="high", role="setting.set", routine=True)
     @hardware_call()
     def set_stigmator(self, stigmator: list[float]) -> None:
         """Set the objective stigmator: the two A1 components it adds to the column, in metres."""
         self._set_stigmator(check_stigmator(stigmator, self.max_stigmator))
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_stigmator(self) -> list[float]:
         """Read the objective stigmator [a, b] in metres of A1; the column's own astigmatism is not included."""
         return [float(v) for v in self._get_stigmator()]
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_beam_tilt(self) -> list[float]:
         """Get the current beam tilt as [alpha, beta] in radian."""
         return self._get_beam_tilt()
 
-    @command(dtype_in=DevVarFloatArray, doc_in=':param tilt: [x, y] beam tilt in radians.')
+    @command(dtype_in=DevVarFloatArray, doc_in=':param tilt: [x, y] beam tilt in radians.', risk="high", role="setting.set", routine=True)
     @hardware_call()
     def set_beam_tilt(self, tilt: list[float]) -> None:
         """Set the beam tilt to [x_tilt, y_tilt] in radian."""
         self._set_beam_tilt(tilt)
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_diffraction_shift(self) -> list[float]:
-        """Get the current  diffraction shift as [alpha, beta] in radian."""
+        """Get the current diffraction shift as [alpha, beta] in radian."""
         return self._get_diffraction_shift()
     
-    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift.')
+    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift.', risk="high", role="setting.set")
     @hardware_call()
     def set_diffraction_shift(self, shift: list[float]) -> None:
         """Set the diffraction shift to [x_shift, y_shift] in radian."""
         self._set_diffraction_shift(shift)
 
-    @command(dtype_out=DevString)
+    @command(dtype_out=DevString, risk="low", role="setting.read")
     @hardware_call()
     def get_parameters(self) -> str:
-        """ Get all status parameters"""
+        """Get all status parameters, as JSON."""
         return self._get_parameters()
 
-    @command(dtype_in=DevString, doc_in=":param position: 'inserted' or 'retracted'.")
+    @command(dtype_in=DevString, doc_in=":param position: 'inserted' or 'retracted'.", risk="high", role="setting.set")
     @hardware_call()
-    def set_screen(self, position: str)->None:
+    def set_screen(self, position: str) -> None:
+        """Insert or retract the fluorescent screen."""
         self._set_screen(position)
 
-    @command()
+    @command(risk="high", role="other")
     @hardware_call()
     def calibrate_screen_current(self) -> None:
-        """Set the screen current in pA."""
+        """Measure the beam current on the screen, so dose estimates use a measured current."""
         self._calibrate_screen_current()
 
 
-    @command(dtype_in=DevFloat, doc_in=':param current: Screen current in picoamperes (pA).')
+    @command(dtype_in=DevFloat, doc_in=':param current: Screen current in picoamperes (pA).', risk="high", role="setting.set")
     @hardware_call()
     def set_screen_current(self, current: float) -> None:
         """Set the screen current in pA."""
         self._set_screen_current(current)
 
-    @command(dtype_out=DevFloat)
+    @command(dtype_out=DevFloat, risk="low", role="setting.read")
     @hardware_call()
     def get_screen_current(self) -> float:
         """Get the screen current in pA."""
         return self._get_screen_current()
 
-    @command(dtype_out=DevVarFloatArray)
+    @command(dtype_out=DevVarFloatArray, risk="low", role="stage.read")
     @hardware_call()
     def get_stage(self) -> list[float]:
         """Get the current stage position as [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         return self._get_stage()
    
-    @command(dtype_in=DevVarFloatArray, doc_in=':param position: [x, y, z, alpha, beta]; x, y, z in metres, alpha and beta in degrees.')
+    @command(dtype_in=DevVarFloatArray, doc_in=':param position: [x, y, z, alpha, beta]; x, y, z in metres, alpha and beta in degrees.', risk="high", role="stage.move", routine=True)
     @hardware_call()
     def move_stage(self, position: list[float]) -> None:
         """Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         self._move_stage(position)
 
-    @command()
+    @command(risk="high", role="optics.focus", routine=True)
     @hardware_call()
     def auto_focus(self) -> None:
         """Run the microscope's autofocus routine."""

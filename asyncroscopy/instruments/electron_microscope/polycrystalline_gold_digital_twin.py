@@ -11,8 +11,9 @@ import pyTEMlib.probe_tools as probe_tools
 from ase.build import bulk
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-from tango.server import command, device_property
+from tango.server import device_property
 
+from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
@@ -251,13 +252,15 @@ class PolycrystallineGoldDigitalTwin(ElectronMicroscopeTwin):
         attrs = [metadata.copy() for _image in images]
         return save_acquisition(self, self._detector_proxies.get("data"), "stem_image", detector_list, images, dataset_attrs=attrs, file_attrs=metadata, output_format=output_format)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_volume_metadata(self) -> str:
+        """The rendered sample's metadata as JSON: grains, atom count, defocus and corrector aberrations."""
         metadata = {**self._sample_metadata, "last_rendered_atom_count": self._last_rendered_atom_count, "raw_potential_cache_hits": self._raw_potential_cache_hits, "defocus_m": self._get_defocus(), "corrector_aberrations": self._corrector_coefficients()}
         return json.dumps(metadata)
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_region_parameters(self) -> str:
+        """The sample's regions (grain orientation, thickness, ...) as a JSON list."""
         return json.dumps([asdict(parameter) for parameter in self._region_parameters])
 
 

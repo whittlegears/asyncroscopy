@@ -19,6 +19,7 @@ from abc import abstractmethod
 import tango
 
 from asyncroscopy.instruments.instrument import Instrument
+from asyncroscopy.utils.commands import command
 
 class SPMMode(enum.IntEnum):
     CONTACT_AFM = 0
@@ -168,7 +169,7 @@ class SPMMicroscope(Instrument):
     # Commands — instrument-global
     # ------------------------------------------------------------------
 
-    @tango.server.command(dtype_out=str)
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_microscope_state(self) -> str:
         """Aggregate instrument-global state and sub-device states as JSON."""
         devices = {}
@@ -185,7 +186,8 @@ class SPMMicroscope(Instrument):
         return json.dumps(state)
     
 
-    @tango.server.command(dtype_out=str) #the only direct function
+    # The only command it answers itself; the rest delegate to sub-devices.
+    @command(dtype_out=str, risk="low", role="setting.read")
     def get_meter_values(self) -> str:
         """Read current meter values (Sum, Deflection, Lateral, Z) as JSON."""
         return json.dumps(self._hw_get_meter_values())
@@ -193,52 +195,52 @@ class SPMMicroscope(Instrument):
     # ------------------------------------------------------------------
     # Commands — delegators to sub-devices
     # ------------------------------------------------------------------
-    @tango.server.command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.other")
     def acquire_scan(self) -> str:
         """Acquire a scan using SCAN device settings; returns a DATA/Tiled uid."""
         return self._get_proxy('scan').acquire_scan()
     
-    @tango.server.command(dtype_out=str)
+    @command(dtype_out=str, risk="high", role="acquire.spectrum")
     def acquire_spectrum(self) -> str:
         """Acquire a spectrum using SPECTROSCOPY device settings; returns a DATA/Tiled uid."""
         return self._get_proxy('spectroscopy').acquire_spectrum()
     
-    @tango.server.command(dtype_out=tango.DevBoolean)
+    @command(dtype_out=tango.DevBoolean, risk="high", role="probe.approach")
     def approach(self) -> bool:
         """Approach the tip to the surface; returns True if approached."""
         proxy = self._get_proxy('approach')
         proxy.approach()
         return proxy.approached
     
-    @tango.server.command(dtype_out=tango.DevBoolean)
+    @command(dtype_out=tango.DevBoolean, risk="low", role="probe.retract", stop=True)
     def retract(self) -> bool:
         """Retract the tip from the surface; returns True if still approached."""
         proxy = self._get_proxy('approach')
         proxy.retract()
         return proxy.approached
 
-    @tango.server.command(dtype_out=tango.DevBoolean)
+    @command(dtype_out=tango.DevBoolean, risk="high", role="other")
     def feedback_on(self) -> bool:
         """Engage the Z feedback loop; returns True if feedback loop is active."""
         proxy = self._get_proxy('feedback')
         proxy.feedback_on()
         return proxy.feedback_on_bool
     
-    @tango.server.command(dtype_out=tango.DevBoolean)
+    @command(dtype_out=tango.DevBoolean, risk="high", role="other")
     def feedback_off(self) -> bool:
         """Disengage the Z feedback loop; returns True if feedback loop is still active."""
         proxy = self._get_proxy('feedback')
         proxy.feedback_off()
         return proxy.feedback_on_bool 
     
-    @tango.server.command(dtype_in=tango.DevDouble, dtype_out=tango.DevDouble)
+    @command(dtype_in=tango.DevDouble, dtype_out=tango.DevDouble, risk="high", role="setting.set")
     def set_setpoint(self, setpoint: float) -> float:
         """Set the feedback setpoint; returns the value read back as float."""
         proxy = self._get_proxy('feedback')
         proxy.setpoint = setpoint
         return proxy.setpoint
     
-    @tango.server.command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray)
+    @command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray, risk="high", role="stage.move")
     def move_stage(self, position: list[float]) -> list[float]:
         """Move the stage to an absolute position.
 
@@ -252,7 +254,7 @@ class SPMMicroscope(Instrument):
         proxy.move_stage(position)
         return [proxy.stage_x_m, proxy.stage_y_m]
     
-    @tango.server.command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray)
+    @command(dtype_in=tango.DevVarDoubleArray, dtype_out=tango.DevVarDoubleArray, risk="high", role="other")
     def move_probe(self, position: list[float]) -> list[float]:
         """Move the probe to an absolute position; returns the final position [x, y] in meters."""
         proxy = self._get_proxy('scan')

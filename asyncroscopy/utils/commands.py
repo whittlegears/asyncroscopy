@@ -79,7 +79,7 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
         # take the name from the Python signature when doc_in does not give one.
         params = [p for p in inspect.signature(func).parameters.values() if p.name != "self"]
         doc_in = options.get("doc_in") or ""
-        if params and ":param " not in doc_in:
+        if params and options.get("dtype_in") is not None and ":param " not in doc_in:
             options["doc_in"] = f":param {params[0].name}: {doc_in}".rstrip()
         wrapped = tango_command(func, **options)
         if declared:

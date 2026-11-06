@@ -6,6 +6,8 @@ from abc import abstractmethod, ABCMeta
 import tango
 import tango.server
 
+from asyncroscopy.utils.commands import action_hints_attribute, command
+
 class CombinedMeta(tango.server.DeviceMeta, ABCMeta):
     """Combines Tango DeviceMeta and ABCMeta to allow abstract methods in Devices."""
     pass
@@ -43,6 +45,9 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         access=tango.AttrWriteType.READ,
         doc="Instrument modality, for example 'STEM', 'SPM', 'TEM', or 'OPTIC'.",
     )
+
+    # What each command is (risk, role, stop, routine), as its @command declares it, for the MCP server.
+    action_hints = action_hints_attribute()
 
     clock_s = tango.server.attribute(
         label="Instrument clock",
@@ -100,7 +105,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def Connect(self) -> None:
         """
         Explicitly (re)connect to microscope hardware. Useful after a fault.
@@ -111,7 +116,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         if error:
             tango.Except.throw_exception("ConnectFailed", f"Connect failed: {error}", "Connect()")
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def Disconnect(self) -> None:
         """Disconnect from microscope hardware gracefully."""
         self.set_state(tango.server.DevState.OFF)

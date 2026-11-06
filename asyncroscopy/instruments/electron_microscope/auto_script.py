@@ -25,8 +25,9 @@ from pathlib import Path
 import numpy as np
 import tango
 from tango import AttrWriteType, DevState
-from tango.server import attribute, command, device_property
+from tango.server import attribute, device_property
 
+from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope, hardware_call, unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
 
@@ -293,7 +294,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # Commands pertaining to setting children attributes, e.g. stage position, scan parameters, EDS settings, etc. --> iuser accesses it in a jupyter notebook using the device proxy
     # ------------------------------------------------------------------
 
-    @command(dtype_out=tango.DevVarFloatArray)
+    @command(dtype_out=tango.DevVarFloatArray, risk="high", role="other")
     @hardware_call()
     def register_stage(self) -> np.ndarray:
         """Read the live stage position from the instrument: [x, y, z, alpha, beta], x/y/z in metres, tilts in degrees.

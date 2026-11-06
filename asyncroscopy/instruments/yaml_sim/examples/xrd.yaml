@@ -54,11 +54,12 @@ commands:
     sets: {tube_power_w: power_w}
     duration_s: 0.5
     returns: {tube_power_w: tube_power_w, state: "on"}
-    role: beam.unblank   # for role-based controllers (asyncroscopy.core.names.ROLES); xray_off is beam.blank by rule
+    role: beam.unblank   # for role-based controllers (asyncroscopy.core.names.ROLES); the role also makes it high risk
   xray_off:
     doc: Switch the X-ray tube off. Always allowed.
     sets: {tube_power_w: 0}
     returns: {tube_power_w: 0, state: "off"}
+    role: beam.blank     # a stop: low risk, never held, and the emergency stop calls it
   get_status:
     doc: Tube power, scan range and sample, as JSON.
     returns:

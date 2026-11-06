@@ -50,11 +50,13 @@ commands:
     sets: {tip_engaged: true}
     duration_s: 2
     returns: {tip_engaged: tip_engaged}
+    role: probe.approach
   retract_tip:
     doc: Lift the tip off the surface. Always allowed.
     sets: {tip_engaged: false}
     duration_s: 0.5
     returns: {tip_engaged: tip_engaged}
+    role: probe.retract  # a stop: low risk, never held, and the emergency stop calls it
   move_xy:
     doc: Move the coarse stage to (x_m, y_m). Refused while the tip is engaged; retract it first.
     requires: ["not tip_engaged"]
@@ -64,6 +66,7 @@ commands:
     sets: {stage_x_m: x_m, stage_y_m: y_m}
     duration_s: 1
     returns: {stage_m: [stage_x_m, stage_y_m]}
+    role: stage.move
   get_status:
     doc: Tip state, setpoint, scan size and rate, and stage position as JSON.
     returns:
