@@ -25,14 +25,15 @@ dependencies = [
     # committed, so these keep a fresh clone from picking up a breaking release.
     "numpy>=2.3.5,<3",
     "pytango==10.1.2",
-    "pytest>=9.0.2",
-    "ruff>=0.15.2",
     "scifireaders>=0.12.4,<0.13",
     "ase>=3.27.0",
     "pyTEMlib>=0.2024.1.0",
     "sidpy>=0.12.8,<0.13",
     "fastmcp>=0.1.0,<5",
     "anyio>=4.0.0",
+    # Imported directly by the core: contract validation and the data tools' Tiled error handling.
+    "jsonschema>=4.0",
+    "httpx>=0.27",
     # AutoScript (local wheels)
     "autoscript-core",
     "autoscript-tem-microscope-client",
@@ -43,7 +44,6 @@ dependencies = [
     # PyJEM / JEOL (local wheel)
     "pyjem",
     "aicspylibczi>=3.3.1",
-    "jupyter-book>=2.0.0",
     "tiled[all]>=0.2.9,<0.3",
     "pyyaml>=6.0.3",
     "pyqt5>=5.15.11,<5.16; sys_platform != 'darwin' or platform_machine != 'arm64'",
@@ -80,9 +80,12 @@ ollama = [
     "langchain_ollama"
 ]
 
-# LangGraph Studio (`uv run langgraph dev`) and other developer tools:
+# Tests, lint, the docs build, LangGraph Studio (`uv run langgraph dev`) and other developer tools:
 #     uv sync --extra agent --extra ollama --extra dev
 dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.15.2",
+    "jupyter-book>=2.0.0",
     "langgraph-cli[inmem]",
 ]
 
