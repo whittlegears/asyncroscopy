@@ -21,9 +21,10 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
     ElectronMicroscopeTwin,
 )
+from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
 
 
-class DigitalTwinTilt(ElectronMicroscopeTwin):
+class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
     """Silicon FIB-lamella twin with an imperfect, displaced tilt axis."""
 
     acquisition_save_directory = device_property(
@@ -181,17 +182,7 @@ class DigitalTwinTilt(ElectronMicroscopeTwin):
             "z_min": -0.5 * thickness * 10.0,
             "z_max": 0.5 * thickness * 10.0,
         }
-        self._sample_atoms_base = bulk(
-            "Si",
-            "diamond",
-            a=float(self.silicon_lattice_parameter_angstrom),
-            cubic=True,
-        )
-        self._sample_atoms_view = self._sample_atoms_base.copy()
-        self._particle_records_base = []
-        self._particle_records_view = []
         self._all_sample_elements = ["Si"]
-        self._cached_pose_key = None
 
     def _rng(self, event: str, index: int | None = None) -> np.random.Generator:
         event_code = sum((position + 1) * ord(character) for position, character in enumerate(event))
@@ -270,7 +261,6 @@ class DigitalTwinTilt(ElectronMicroscopeTwin):
                 size=2,
             )
         self._stage_position = actual
-        self._cached_pose_key = None
 
     def _sync_stage_from_proxy(self) -> None:
         stage = self._detector_proxies.get("stage")

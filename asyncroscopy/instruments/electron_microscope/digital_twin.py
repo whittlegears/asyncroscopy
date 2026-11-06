@@ -299,10 +299,6 @@ class DigitalTwin(ElectronMicroscopeTwin):
         self._last_written_stage: np.ndarray | None = None
         self._stage_sigma_published = False
         self._stage_position = self._stage.true.copy()
-        # The atom-renderer state of the base class is unused here.
-        self._particle_records_base = []
-        self._particle_records_view = []
-        self._all_sample_elements = sorted(set(self._specimen.element_symbols))
         self._world_bounds_ang = {
             "x_min": x_min / ANGSTROM,
             "x_max": x_max / ANGSTROM,
@@ -311,9 +307,6 @@ class DigitalTwin(ElectronMicroscopeTwin):
             "z_min": -float(self.sample_size_z) / ANGSTROM / 2,
             "z_max": float(self.sample_size_z) / ANGSTROM / 2,
         }
-
-    def _update_view_cache(self, force: bool = False) -> None:
-        """The particle renderer works in sample coordinates; there is no rotated atom copy to refresh."""
 
     def _blank_beam(self) -> None:
         """A blanked beam gives no signal and no dose, as on the instrument."""
@@ -739,10 +732,9 @@ class DigitalTwin(ElectronMicroscopeTwin):
         half = self._fov / ANGSTROM / 2
         metadata["stage_position"] = self._stage.reported.tolist()
         metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
-        # The seed regenerates the sample and the count is part of the answer: export_ground_truth
-        # (operator only) has both; an agent must find particles by imaging.
+        # The seed regenerates the sample: export_ground_truth (operator only) has it; an agent must find
+        # particles by imaging.
         metadata.pop("sample_seed", None)
-        metadata.pop("particle_count", None)
         return metadata
 
     def _get_parameters(self) -> str:
