@@ -57,7 +57,7 @@ from asyncroscopy.evaluate import (
 )
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
-from asyncroscopy.instruments.electron_microscope.tuner import Tuner
+from asyncroscopy.jobs.tuning.tuner import Tuner
 from asyncroscopy.mcp.tool_log import TraceWriter
 from asyncroscopy.trace.stream import read_trace
 

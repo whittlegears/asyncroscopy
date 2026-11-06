@@ -21,7 +21,7 @@ import yaml
 
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
-from asyncroscopy.instruments.electron_microscope.tuner import TuneContext, TuneFailed, Tuner
+from asyncroscopy.jobs.tuning.tuner import TuneContext, TuneFailed, Tuner
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, DryRunRefused, RecordingProxy
 from asyncroscopy.mcp.binding import bind_host, is_loopback_host, is_remote_host

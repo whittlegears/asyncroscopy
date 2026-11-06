@@ -61,7 +61,7 @@ devices:
   # measured beam current, as for the Mapper; autofocus_frames is a placeholder to calibrate.
   tuner:
     class_name: Tuner
-    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default

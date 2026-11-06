@@ -48,7 +48,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import Digit
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
 from asyncroscopy.jobs.mapping.mapper import Mapper
-from asyncroscopy.instruments.electron_microscope.tuner import Tuner
+from asyncroscopy.jobs.tuning.tuner import Tuner
 from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter

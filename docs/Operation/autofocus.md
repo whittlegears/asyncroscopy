@@ -1,6 +1,6 @@
 # Autofocus and stigmation (the Tuner job)
 
-The `Tuner` device (`asyncroscopy/instruments/electron_microscope/tuner.py`) runs autofocus and astigmatism correction as one background job with the same envelope as the Mapper: `reserve`, `start`, `job_status`, `abort`, `results`, `release`. An agent calls it in one go:
+The `Tuner` device (`asyncroscopy/jobs/tuning/tuner.py`) runs autofocus and astigmatism correction as one background job with the same envelope as the Mapper: `reserve`, `start`, `job_status`, `abort`, `results`, `release`. An agent calls it in one go:
 
 ```json
 run_job {"device": "Tuner", "plan": {"corrections": ["focus", "stigmation"], "strategy": "image_metric", "dose_budget_e_per_a2": 5000}}
@@ -47,7 +47,7 @@ On the twin, the column has a hidden focus error that `get_defocus` does not rep
 A strategy is one class. It never calls Tango; it tunes through the `TuneContext` it is given, which enforces every rule above.
 
 ```python
-from asyncroscopy.instruments.electron_microscope.tuner import Strategy, register_strategy
+from asyncroscopy.jobs.tuning.tuner import Strategy, register_strategy
 
 @register_strategy
 class HillClimb(Strategy):

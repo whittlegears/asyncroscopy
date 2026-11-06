@@ -117,13 +117,13 @@ def test_the_stack_yaml_plugins_list_reaches_every_device_through_the_env_var(tm
 def test_a_tuner_strategy_in_a_team_file_is_found_through_the_env_var(tmp_path):
     team = tmp_path / "team_strategy.py"
     team.write_text(textwrap.dedent("""
-        from asyncroscopy.instruments.electron_microscope.tuner import Strategy, register_strategy
+        from asyncroscopy.jobs.tuning.tuner import Strategy, register_strategy
 
         @register_strategy
         class TeamFocus(Strategy):
             name = "team_focus"
     """), encoding="utf-8")
-    code = "from asyncroscopy.instruments.electron_microscope.tuner import strategies; print('team_focus' in strategies())"
+    code = "from asyncroscopy.jobs.tuning.tuner import strategies; print('team_focus' in strategies())"
     assert _fresh_python(code, None).stdout.strip() == "False"
     found = _fresh_python(code, str(team))
     assert found.stdout.strip() == "True", found.stderr

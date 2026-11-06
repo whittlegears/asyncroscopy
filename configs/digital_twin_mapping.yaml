@@ -104,7 +104,7 @@ devices:
   # The twin's hidden focus error is set with its focus_offset_m / astigmatism_offset_*_m properties.
   tuner:
     class_name: Tuner
-    module_name: asyncroscopy.instruments.electron_microscope.tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
     properties:
       microscope_device_address: asyncroscopy/instrument/default
       scan_device_address: asyncroscopy/scan/default
