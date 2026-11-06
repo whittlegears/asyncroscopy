@@ -10,7 +10,8 @@ from fastmcp.exceptions import ToolError
 from dataclasses import replace
 
 from asyncroscopy.contracts import validate
-from asyncroscopy.mcp.components.jobs import resume_note, with_grant
+from asyncroscopy.agents.guidance import render_reply
+from asyncroscopy.mcp.components.jobs import resume_with, with_grant
 from asyncroscopy.mcp.descriptors import describe_native
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.policy import operator_only, risk_of
@@ -779,13 +780,15 @@ class TestWaitForJob:
         server.add_device("Mapper", Job(), envelope=True)
         status = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=0)
         assert status["state"] == "running" and status["progress"] == 0.4
-        assert "wait_for_job again" in status["note"]
+        assert status["next_actions"] == [{"tool": "wait_for_job", "args": {"job_id": "j1"}}]
+        assert "wait_for_job again" in render_reply("wait_for_job", {"job_id": "j1"}, status)["note"]
 
     def test_paused_jobs_are_waited_through_and_explained(self, monkeypatch):
+        from asyncroscopy.agents.guidance import WAIT_NOTES
+        from asyncroscopy.core.names import RUNNING_JOB_STATES
         from asyncroscopy.jobs.job_device import RUNNING_STATES
-        from asyncroscopy.mcp.components.jobs import WAIT_NOTES
 
-        assert set(WAIT_NOTES) == RUNNING_STATES
+        assert set(WAIT_NOTES) == RUNNING_STATES == RUNNING_JOB_STATES
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
 
@@ -795,7 +798,9 @@ class TestWaitForJob:
 
         server.add_device("Mapper", Job(), envelope=True)
         status = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=0)
-        assert "beam_current 2 < 10" in status["note"] and "resumes by itself" in status["note"]
+        assert status["suspended"]["reason"] == "beam_current 2 < 10" and status["next_actions"][0]["tool"] == "wait_for_job"
+        note = render_reply("wait_for_job", {"job_id": "j1"}, status)["note"]
+        assert "beam_current 2 < 10" in note and "resumes by itself" in note
 
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -871,7 +876,9 @@ class TestRunJob:
         server, calls = self.mapper_server(server_factory)
         reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
         assert reply["job_id"] == "j-r1" and reply["estimate"] == {"steps": 9} and reply["reservation_id"] == "r1"
-        assert reply["state"] == "running" and 'call wait_for_job with {"job_id": "j-r1"} now' in reply["note"] and "every phase" in reply["note"]
+        assert reply["state"] == "running" and reply["next_actions"] == [{"tool": "wait_for_job", "args": {"job_id": "j-r1"}}]
+        note = render_reply("run_job", {"device": "Mapper"}, reply)["note"]
+        assert 'call wait_for_job with {"job_id": "j-r1"} now' in note and "every phase" in note
         assert [c[0] for c in calls] == ["reserve", "start"]
 
     def test_wait_false_returns_at_once_with_the_job_id(self, server_factory, monkeypatch):
@@ -880,13 +887,18 @@ class TestRunJob:
         began = time.monotonic()
         reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7}, wait=False)
         assert time.monotonic() - began < 5.0
-        assert reply["job_id"] == "j-r1" and reply["state"] == "running" and "Mapper_abort" in reply["note"]
+        assert reply["job_id"] == "j-r1" and reply["state"] == "running"
+        assert [a["tool"] for a in reply["next_actions"]] == ["wait_for_job", "Mapper_abort"]
+        assert "Mapper_abort stops it" in render_reply("run_job", {"wait": False}, reply)["note"]
 
     def test_a_short_job_comes_back_finished_with_its_results(self, server_factory):
         server, calls = self.mapper_server(server_factory)
         server.devices["Mapper"].proxy.finished = True
         reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7})
-        assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9} and "nothing needs running" in reply["note"]
+        assert reply["state"] == "done" and reply["result_keys"] == {"map": "map_r1_map"} and reply["summary"] == {"tiles": 9}
+        assert reply["next_actions"] == [] and reply["warnings"] == [{"code": "finished"}]
+        rendered = render_reply("run_job", {}, reply)
+        assert "nothing needs running" in rendered["note"] and "warnings" not in rendered and "next_actions" not in rendered
 
     def test_a_refused_plan_comes_back_without_a_start(self, server_factory):
         server, calls = self.mapper_server(server_factory)
@@ -1083,12 +1095,13 @@ class TestRunJob:
 
 class TestRunJobResume:
     def test_an_abort_reply_says_how_to_resume(self):
-        reply = json.loads(resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
-        assert reply["to_resume"].startswith('run_job with {"device": "Mapper", "resume": "r1"}')
-        aborting = json.loads(resume_note("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborting"})))
-        assert aborting["to_resume"].startswith("once wait_for_job says aborted")
+        reply = json.loads(resume_with("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborted"})))
+        assert reply["resume_with"] == {"tool": "run_job", "args": {"device": "Mapper", "resume": "r1"}}
+        assert render_reply("Mapper_abort", {}, reply)["to_resume"].startswith('run_job with {"device": "Mapper", "resume": "r1"}')
+        aborting = json.loads(resume_with("Mapper", json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "aborting"})))
+        assert render_reply("Mapper_abort", {}, aborting)["to_resume"].startswith("once wait_for_job says aborted")
         done = json.dumps({"job_id": "j1", "reservation_id": "r1", "state": "done"})
-        assert resume_note("Mapper", done) == done
+        assert resume_with("Mapper", done) == done
 
     def test_resume_starts_the_aborted_reservation_without_a_new_one(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)

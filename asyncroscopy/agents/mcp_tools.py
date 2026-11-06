@@ -18,6 +18,8 @@ from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain_core.tools import StructuredTool, ToolException
 
+from asyncroscopy.agents.guidance import render
+
 if TYPE_CHECKING:
     from mcp.types import Tool
 
@@ -101,7 +103,11 @@ class McpServer:
         server, name = self, spec.name
 
         async def run(**kwargs) -> str:
-            return await server.call_text(name, kwargs)
+            # The server replies with facts (state, next_actions, ...); the model reads them as sentences.
+            result = await server.call(name, kwargs)
+            if result.is_error:
+                raise ToolException(render(name, kwargs, result_text(result), error=True))
+            return render(name, kwargs, result_text(result))
 
         schema = dict(getattr(spec, "input_schema", None) or getattr(spec, "inputSchema", None) or {"type": "object", "properties": {}})
         schema.setdefault("type", "object")

@@ -10,6 +10,7 @@ data tool.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
@@ -201,12 +202,16 @@ class DataTools:
 
 
 def beam_blanked(key: str, command_name: str, device: str, arguments: dict | None) -> ToolError:
-    """The error for an acquisition taken with the beam blanked: the retake comes first and the key last
-    (a small model given the key first viewed and reported the noise)."""
-    unblank = f"{device}_unblank_beam" if device else "the beam unblank command"
-    return ToolError(f"Not acquired: the beam is blanked. Next call {unblank}, then {device + '_' if device else ''}{command_name} "
-                     f"again with the same arguments, and use the key that call returns. (The noise-only file {key} was "
-                     f"saved; do not view or report it.)")
+    """The error for an acquisition taken with the beam blanked, as JSON: the calls that retake it (unblank, then
+    the same acquisition again) and the noise-only file that was saved, which is not a result."""
+    unblank = f"{device}_unblank_beam" if device else "unblank_beam"
+    retake = f"{device}_{command_name}" if device else command_name
+    return ToolError(json.dumps({
+        "error": {"code": "beam_blanked", "message": "Not acquired: the beam is blanked."},
+        "state": "not_acquired",
+        "next_actions": [{"tool": unblank, "args": {}}, {"tool": retake, "args": dict(arguments or {})}],
+        "warnings": [{"code": "noise_only_file", "key": key}],
+    }, default=str))
 
 
 class PreviewInterceptor(Interceptor):
