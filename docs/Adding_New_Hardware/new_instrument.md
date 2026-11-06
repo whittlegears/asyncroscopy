@@ -2,7 +2,8 @@
 
 This guide puts a new instrument under agent control. It works through a simulated nanoindenter that ships with the repository. The same steps apply to an SPM, a diffractometer or a pipetting robot. The finished example is:
 
-- `asyncroscopy/instruments/nano_indenter/sim_indenter.py`, the instrument: one Tango device.
+- `asyncroscopy/instruments/nano_indenter/nano_indenter.py`, the instrument's base device: its commands and limits.
+- `asyncroscopy/instruments/nano_indenter/sim_indenter.py`, a backend of it: simulated physics behind the same commands.
 - `asyncroscopy/instruments/nano_indenter/indent_grid.py`, a long experiment on it: a job device.
 - `configs/sim_indenter.yaml`, the launcher config.
 - `tests/test_new_instrument_example.py`, which runs all of it in-process. If the test passes, this guide is accurate.
@@ -13,7 +14,7 @@ Run the test first to see the whole thing work:
 uv run pytest tests/test_new_instrument_example.py -q
 ```
 
-The STEM devices (`instruments/electron_microscope/`) subclass the `Instrument` base in `instruments/instrument.py`, which adds a DATA device link and a test mode. A new instrument doesn't need it; the example is a plain Tango `Device`. The older `SPMMicroscope` and `Opentrons` devices predate these conventions, so copy the indenter rather than them.
+Every instrument follows the same shape: an abstract base device for the kind of instrument, a subclass of `Instrument` (`instruments/instrument.py`, which adds a DATA device link, a test mode and `clock_s`), and one subclass per backend. The base owns the public commands (the agent's tools) and the checks every backend must apply; a backend implements only `_x` methods. The STEM devices do this (`ElectronMicroscope`, with `AutoScriptMicroscope`, `JeolMicroscope` and the twins), and so does the indenter (`NanoIndenter`, with `SimIndenter`). The older `SPMMicroscope` and `Opentrons` devices predate these conventions, so copy the indenter rather than them.
 
 ## 0. No Python: a simulated instrument from one YAML file
 
@@ -66,29 +67,44 @@ In the launcher config, `class_name` names the tools (`XRDTwin_xray_on`, ...), `
 
 ## 1. The instrument device
 
-An instrument is a Tango `Device` with one command per action. The MCP server turns every command into an agent tool. Declare commands with `asyncroscopy.utils.commands.command` instead of `tango.server.command`: it carries the docstring to the agent as the tool's description. Tango itself does not, and plain `tango.server.command` gives the agent ":return: (not documented)". Write each docstring for a reader who has only that line:
+An instrument is a Tango device with one command per action. The MCP server turns every command into an agent tool. Write it as a base and a backend. The base subclasses `Instrument`, declares the commands and checks their arguments, then calls an abstract `_x` method; the backend implements those methods. Declare commands with `asyncroscopy.utils.commands.command` instead of `tango.server.command`: it carries the docstring to the agent as the tool's description. Tango itself does not, and plain `tango.server.command` gives the agent ":return: (not documented)". Write each docstring for a reader who has only that line:
 
 ```python
-from tango.server import Device, device_property
+# nano_indenter.py: the base
+from abc import abstractmethod
 
+from tango.server import device_property
+
+from asyncroscopy.instruments.instrument import Instrument
 from asyncroscopy.utils.commands import command
 
 
-class SimIndenter(Device):
+class NanoIndenter(Instrument):
     max_load_n = device_property(dtype=float, default_value=0.5, doc="Largest peak load the head allows, in newtons.")
 
-    @command(dtype_out=[float])
-    def get_position(self) -> list[float]:
-        """Stage position [x, y] in metres."""
-
-    @command(dtype_in=float, dtype_out=str, doc_in="Peak load in newtons.")
+    @command(dtype_in=float, dtype_out=str, doc_in=":param load_n: Peak load in newtons.")
     def indent(self, load_n: float) -> str:
         """Make one indent at the current position. Returns JSON with hardness (GPa) and contact depth (m)."""
+        if not 0 < load_n <= float(self.max_load_n):
+            raise ValueError(f"load must be in (0, {self.max_load_n}] N")  # every backend refuses the same loads
+        return json.dumps(self._indent(load_n))
+
+    @abstractmethod
+    def _indent(self, load_n: float) -> dict:
+        """One indent, to a load already checked."""
+
+
+# sim_indenter.py: a backend
+class SimIndenter(NanoIndenter):
+    def _indent(self, load_n: float) -> dict:
+        ...  # simulated physics here; a real backend calls the instrument's API
 
 
 if __name__ == "__main__":
     SimIndenter.run_server()  # the launcher starts each device as `python -m <module> <instance>`
 ```
+
+`Instrument` also asks a backend for `read_instrument_type`, `_init_device_attributes`, `_connect` and `_disconnect`, and gives every device `Connect` and `Disconnect` commands. The class name of the backend names the tools (`SimIndenter_indent`), so a second backend of the same base offers the agent the same commands under its own name.
 
 Conventions the rest of the stack relies on:
 
@@ -97,7 +113,7 @@ Conventions the rest of the stack relies on:
 - **Name stop commands plainly.** A safe stop is always allowed: an agent never waits for approval to make the instrument safe. It is a name with exactly one stop verb (`abort`, `stop`, `halt`, `pause`, `estop`, `retract`, `withdraw`, `disengage`, or `off` as the last word; `emergency` may qualify it) where every other word is something that verb may stop. Stop and retreat verbs take hardware: `beam`, `emission`, `lamp`, `light`, `laser`, `shutter`, `gun`, `filament`, `hv`, `tip`, `probe`, `stage`, `x`, `y`, `z`, `xy`, `xyz`, `motor(s)`, `indenter`, `head`, `objective`, `robot`, `xray`, `source`, `all`, `now` (`retract` and `withdraw` only `tip`, `probe`, `head`, `z`, `indenter`, `objective` or `needle`, named; a bare `retract` or `withdraw` is low only on a device that also has an `approach`, `engage` or `indent` command, since a syringe pump's `withdraw` aspirates; `disengage` only `tip`, `probe` or `head`, named); `abort`/`stop`/`halt`/`pause`/`estop` may also take a motion or job (`approach`, `move`, `motion`, `movement`, `scan`, `scanning`, `acquisition`, `acquire`, `job`, `run`, `travel`, `focus`, `autofocus`, `live`, `indent`, `imaging`, `exposure`, `protocol`). `off` needs one of these before it, so a bare `Off` is held; it switches off only a source of energy (`beam`, `emission`, `lamp`, `light`, `led`, `illumination`, `laser`, `gun`, `filament`, `hv`, `xray`, `source`), so `stage_off` is held. The pairs close + shutter, blank + beam and safe + state also count. This is an allow-list: anything else is held, so `brake_off`, `vacuum_off`, `retract_approach`, `stop_retract`, `close_valve` and `estop_ack` are held. `asyncroscopy/safety/policy.py` has the exact lists. `server.list_tool_risks()` (see `asyncroscopy.testing`) shows how each of your commands is classed, and the MCP server prints a `[safety]` line at start-up for any stop-like command it still holds; mark such a stop low with `mcp.safety.risk`, as `"Class.command"` or the tool name (`"OptiScope_park_stage": "low"`). It also prints a line for an override that matches no command; `server.risk_warnings` holds the same lines for a test to check. `stop_scan`, `AbortScan`, `abort_approach`, `retract_tip` and `shutter_close` qualify; a bare `Off`, `disengage_motor` (they de-energise an axis) and `retract_shutter` (it opens the beam path) do not.
 - **Return within a second; run anything longer as a job.** Tango runs one command per device at a time, so while a 6 s scan command is running, even a safe stop sent to that device waits for it (and the MCP server gives up after 30 s while the hardware keeps going). A command that takes longer than about a second should be a job on a `JobDevice` (section 2), or start its work in a thread, return at once, and report progress through a `get_*` command.
 - **Refuse unsafe arguments in the device** (`raise ValueError(...)`), not in the agent. The limit then applies to notebooks, the GUI and every agent. Expose the limits (the example's `get_limits`) so a job device can check a whole plan before it starts.
-- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/instruments/jobs/mapping/mapper.py` does this for every tile. The MCP server attaches a PNG preview, read back through the DATA device, to any command whose name starts with `acquire` and whose result is a data key (a file name ending in `.h5`, `.hdf5`, `.hdf`, `.nxs`, `.tif` or `.tiff`; with `output_format=".tiff"` and several detectors the result is a JSON list of keys, which gets no preview). A preview never fails the command: for `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` the result says why there is none (for example, no reachable DATA device), for other commands it is just left out. The key of an `acquire*` result is recorded in the trace.
+- **Return JSON strings for structured results**, and Tiled keys for large data. Never return arrays to an agent. To make a key, write the data with `asyncroscopy.data.data_writer.save_acquisition`, passing the DATA device's proxy as `data_server`: it registers the file, and the return value is the key. `asyncroscopy/jobs/mapping/mapper.py` does this for every tile. The MCP server attaches a PNG preview, read back through the DATA device, to any command whose name starts with `acquire` and whose result is a data key (a file name ending in `.h5`, `.hdf5`, `.hdf`, `.nxs`, `.tif` or `.tiff`; with `output_format=".tiff"` and several detectors the result is a JSON list of keys, which gets no preview). A preview never fails the command: for `acquire_camera_image`, `acquire_scanned_image` and `acquire_spectrum` the result says why there is none (for example, no reachable DATA device), for other commands it is just left out. The key of an `acquire*` result is recorded in the trace.
 - **Write attributes that say how to read your data.** Agents look at stored data with `view_data` (a PNG or text, never raw arrays), which picks a view from the data's shape and attributes. A 1-D dataset with `axis_offset`, `axis_scale`, `axis_label` and `axis_units` (or `energy_offset_ev` and `energy_dispersion_ev`) is plotted against that axis with its peaks listed; a 2-D one with `pixel_size_m` is shown as an image with its field of view; 3-D and 4-D data show one frame (`index` picks it). The same PNG is attached to `acquire*` results (see above), and with it a short text summary (statistics, peaks), so an agent that cannot see images still learns what was taken. If your data needs its own drawing (a diffractogram in 2θ, a force curve), register a kind in a module you write and list it under `mcp.data_views` in your MCP YAML. The repository ships no such module; this one is the whole file, here saved as `asyncroscopy/instruments/x_ray_diffractometer/views.py` (any module the MCP server's Python can import works):
 
   ```python
@@ -285,7 +301,7 @@ No Tango database or ports are needed.
 
 ## Map any instrument
 
-The `Mapper` job device (`asyncroscopy/instruments/jobs/mapping/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
+The `Mapper` job device (`asyncroscopy/jobs/mapping/mapper.py`; the name and the `Mapper_*` tools are kept for every instrument) tiles a stage box, stitches the tiles into a zoomable map on the pyTEMlib analysis server, scores it and revisits the best regions. Only an **instrument profile** knows the instrument. Everything else is shared: the plan (area, grid and overlap, `size_m` around the stage, revisit-only plans), the stage-limit and dry-run checks, `clock_s` stamping and resume, the run file, the budget check and the stitch, score and revisit phases. The analysis side needs nothing from the instrument beyond image tiles with a pixel size and a stage position each, so any profile's maps stitch. Choose the profile with the Mapper's `instrument_profile` device property:
 
 | Profile | Instrument | Budgets (plan `budgets`) |
 | :-- | :-- | :-- |
@@ -389,6 +405,6 @@ Declare `plan_fields` (fields beyond the generic ones; anything else is refused 
 
 ## Digital twin first
 
-Validate a workflow against a simulator before running it on hardware. Make the simulator a sibling class with the same commands, like `SimIndenter`; the agent, the job device and the tests then run unchanged against either one. For realistic motion, reuse the twin's instrument-neutral models in `asyncroscopy/instruments/electron_microscope/twin/`: `stage_model.py` (commanded vs true vs reported position, backlash, settling), `clock.py` (simulated time that can run faster than real time) and `rng.py` (seeded noise per event). They import without the electron-optics code. The stage model has five axes `[x, y, z, alpha, beta]`; for an XY or XYZ stage, pass zeros for the rest. `asyncroscopy/instruments/electron_microscope/digital_twin.py` is the full-scale example.
+Validate a workflow against a simulator before running it on hardware. Make the simulator a backend of the same base, like `SimIndenter`; the agent, the job device and the tests then run unchanged against either one. For realistic motion, reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (commanded vs true vs reported position, backlash, settling), `clock.py` (simulated time that can run faster than real time), `rng.py` (seeded noise per event) and `dose.py` (where a beam has been). They import without any instrument code. The stage model has five axes `[x, y, z, alpha, beta]`; for an XY or XYZ stage, pass zeros for the rest. `asyncroscopy/instruments/electron_microscope/digital_twin.py` is the full-scale example.
 
-**Check that the twin and the driver behave alike, not only that they share command names.** `tests/test_parity.py` runs the same checks on the electron-microscope twin and on `AutoScriptMicroscope` over a recorded fake AutoScript client (`tests/fake_autoscript.py`, which logs every call that would reach the instrument and refuses out-of-range values as the AutoScript server does): the same accepted arguments, the same refused values (refused before anything reaches the instrument), and the same return shapes and `get_parameters` keys. Value checks both backends share live in `asyncroscopy/instruments/electron_microscope/limits.py`. A command one side lacks is listed and asserted (`TWIN_LACKS`), never skipped. For a new driver, write the fake from the vendor API the driver uses, then add the driver as a third backend.
+**Check that the twin and the driver behave alike, not only that they share command names.** `tests/test_parity.py` runs the same checks on the electron-microscope twin and on `AutoScriptMicroscope` over a recorded fake AutoScript client (`tests/fake_autoscript.py`, which logs every call that would reach the instrument and refuses out-of-range values as the AutoScript server does): the same accepted arguments, the same refused values (refused before anything reaches the instrument), and the same return shapes and `get_parameters` keys. The value checks both backends share live in the `ElectronMicroscope` base, which applies them before a backend sees the value. A command one side lacks is listed and asserted (`TWIN_LACKS`), never skipped. For a new driver, write the fake from the vendor API the driver uses, then add the driver as a third backend.
