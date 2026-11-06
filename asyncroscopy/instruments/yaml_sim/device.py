@@ -59,7 +59,7 @@ from asyncroscopy.instruments.yaml_sim.spec import (
     resolve_job_plan,
 )
 from asyncroscopy.jobs.job_device import RUNNING_STATES, JobDevice
-from asyncroscopy.mcp.roles import ACTION_HINTS
+from asyncroscopy.core.names import ACTION_HINTS
 from asyncroscopy.utils.commands import command
 
 PROJECT_DIR = Path(__file__).resolve().parents[3]

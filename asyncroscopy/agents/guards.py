@@ -42,15 +42,15 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
-from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY
+from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
+from asyncroscopy.agents.goals import MAP_KEY
 
 CHARS_PER_TOKEN = 3.5
 OUTPUT_RESERVE_TOKENS = 1500  # left for the model's answer and tool call
 LATEST_REPLY_CHARS = 6000
 DIGEST_CHARS = 160
 OLD_TEXT_CHARS = 600
-ACTIVE = {"reserved", "queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}
-KEY = re.compile(f"{DATA_KEY.pattern}|{MAP_KEY.pattern}")
+KEY = re.compile(f"{DATA_KEY_IN_TEXT.pattern}|{MAP_KEY.pattern}")
 
 
 def context_chars(num_ctx: int) -> int:
@@ -268,7 +268,7 @@ class JobWaitMiddleware(AgentMiddleware):
         estimate = (status.get("estimate") or {}).get("duration_s") if isinstance(status.get("estimate"), dict) else None
         if isinstance(estimate, (int, float)):
             self.estimates[status["job_id"]] = float(estimate)
-        return (status, status["job_id"]) if status.get("state") in ACTIVE else None
+        return (status, status["job_id"]) if status.get("state") in ACTIVE_JOB_STATES else None
 
     def _wait_request(self, request, job_id: str):
         call = {**request.tool_call, "name": "wait_for_job", "args": {"job_id": job_id}}
@@ -276,7 +276,7 @@ class JobWaitMiddleware(AgentMiddleware):
 
     def _final(self, request, first: dict, status: dict, waited: float, checks: int, reason: str = "") -> ToolMessage:
         merged = {**first, **status, "waited_s": round(waited, 1), "checks": checks}
-        if status.get("state") in ACTIVE:
+        if status.get("state") in ACTIVE_JOB_STATES:
             merged["note"] = reason or (f"still {status.get('state')} after waiting {waited:.0f} s; the job goes on. "
                                         "Tell the user it is running (with its job_id), or call wait_for_job again later.")
         elif status.get("state") != "done":
@@ -309,7 +309,7 @@ class JobWaitMiddleware(AgentMiddleware):
         first, job_id = followed
         status, began, checks = first, time.monotonic(), 1
         cap = self._cap(job_id)
-        while status.get("state") in ACTIVE and time.monotonic() - began < cap and not self._stopped():
+        while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
             reply = await handler(self._wait_request(request, job_id))
             checks += 1
             parsed = _json(_text(reply)) if isinstance(reply, ToolMessage) else None
@@ -319,7 +319,7 @@ class JobWaitMiddleware(AgentMiddleware):
             status = parsed
             if self.on_progress:
                 self.on_progress(job_id, status, time.monotonic() - began)
-            if status.get("state") in ACTIVE and not status.get("note"):
+            if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
                 await asyncio.sleep(1.0)  # the server returned before its own wait ended: do not spin
         return self._final(request, first, status, time.monotonic() - began, checks)
 
@@ -334,7 +334,7 @@ class JobWaitMiddleware(AgentMiddleware):
         first, job_id = followed
         status, began, checks = first, time.monotonic(), 1
         cap = self._cap(job_id)
-        while status.get("state") in ACTIVE and time.monotonic() - began < cap and not self._stopped():
+        while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
             reply = handler(self._wait_request(request, job_id))
             checks += 1
             parsed = _json(_text(reply)) if isinstance(reply, ToolMessage) else None
@@ -344,7 +344,7 @@ class JobWaitMiddleware(AgentMiddleware):
             status = parsed
             if self.on_progress:
                 self.on_progress(job_id, status, time.monotonic() - began)
-            if status.get("state") in ACTIVE and not status.get("note"):
+            if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
                 time.sleep(1.0)
         return self._final(request, first, status, time.monotonic() - began, checks)
 

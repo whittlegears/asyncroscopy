@@ -38,7 +38,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from asyncroscopy.agents.goals import DATA_KEY, HEX_ID, MAP_KEY, Call, Goal
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+from asyncroscopy.agents.goals import HEX_ID, MAP_KEY, Call, Goal
 from asyncroscopy.agents.memory import Memory, _slug
 from asyncroscopy.skills.registry import content_words, read_front_matter
 
@@ -85,7 +86,7 @@ def _general(value: Any) -> Any:
                 return _general(json.loads(value))
             except ValueError:
                 pass
-        if DATA_KEY.fullmatch(value) or MAP_KEY.fullmatch(value):
+        if DATA_KEY_IN_TEXT.fullmatch(value) or MAP_KEY.fullmatch(value):
             return "<key from an earlier step>"
         if HEX_ID.fullmatch(value):
             return "<id from an earlier step>"
@@ -116,7 +117,7 @@ def lint(text: str, tools: list[str], offered: set[str] | None = None, learned: 
         if any(not _negated(text, m.start()) for m in pattern.finditer(text)):
             problems.append(why)
     body = text.split("---", 2)[2] if text.startswith("---") else text
-    if learned and (DATA_KEY.search(body) or MAP_KEY.search(body) or HEX_ID.search(body)):
+    if learned and (DATA_KEY_IN_TEXT.search(body) or MAP_KEY.search(body) or HEX_ID.search(body)):
         problems.append("hard-codes a data key or job id")
     if offered is not None:
         extra = sorted(t for t in set(tools) if not any(fnmatch.fnmatchcase(o, t) for o in offered))

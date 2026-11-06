@@ -40,6 +40,8 @@ import re
 from fnmatch import fnmatchcase
 from typing import Iterable
 
+from asyncroscopy.core.names import ENVELOPE_VERBS
+
 # A safe stop is recognised by an allow-list (anything else is high, like any unknown name):
 # exactly one stop verb, and every other word one of the objects that verb may take.
 STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
@@ -66,7 +68,6 @@ STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), fro
 # "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
 MODIFIERS = frozenset({"emergency"})
 
-ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release", "renew_lease")
 
 DEFAULT_RISK: list[tuple[str, str]] = [

@@ -41,7 +41,8 @@ from langchain.agents.middleware.types import ModelCallResult, ModelRequest, Mod
 from langchain_core.messages import BaseMessage, SystemMessage
 from langgraph.runtime import Runtime
 
-from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, NEW_MAP
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+from asyncroscopy.agents.goals import MAP_KEY, NEW_MAP
 from asyncroscopy.agents.guards import REPEAT_NOTE, context_chars, is_request, fit_messages, looping, stop_message, tool_rounds, tools_chars
 from asyncroscopy.agents.skill_runs import RUN_TOOLS
 from asyncroscopy.skills import select_skills, skills_text
@@ -123,7 +124,7 @@ def skills_for(messages: Sequence[BaseMessage], agent_tools: set[str], endpoint_
             add("recover_from_errors", f"{name} failed")
         if MAP_KEY.search(text) and ASKS_FOR_REGIONS.search(request):
             add("explore_regions", f"a stitched map came back from {name} and the request asks for regions")
-        if DATA_KEY.search(text):
+        if DATA_KEY_IN_TEXT.search(text):
             add("inspect_data", f"a data key came back from {name}")
     return applied
 

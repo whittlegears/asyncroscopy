@@ -25,7 +25,8 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
-from asyncroscopy.mcp.action_space import DEFAULT_URL, actions_with, structured
+from asyncroscopy.core.names import DEFAULT_MCP_URL
+from asyncroscopy.mcp.action_space import actions_with, structured
 
 if TYPE_CHECKING:
     from fastmcp import Client
@@ -139,7 +140,7 @@ async def _main(url: str, offset_m: float) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Move, acquire and read back on any instrument, by canonical role.")
-    parser.add_argument("--url", default=DEFAULT_URL)
+    parser.add_argument("--url", default=DEFAULT_MCP_URL)
     parser.add_argument("--offset-m", type=float, default=1e-7, help="stage move in x and y, metres (default 1e-7)")
     args = parser.parse_args(argv)
     report = asyncio.run(_main(args.url, args.offset_m))

@@ -3,7 +3,7 @@
 Each process appends its own JSONL file (``outputs/trace/jobs.jsonl``, ``mcp_agent.jsonl``,
 ``approvals.jsonl``, pyTEMlib's ``analysis.jsonl``, ...). Every line a TraceWriter writes
 carries the file's ``seq`` and the Unix time it was ``written`` (see
-``asyncroscopy.mcp.tool_log``). This module merges the files by ``written`` (``ts`` for lines
+``asyncroscopy.trace.writer``). This module merges the files by ``written`` (``ts`` for lines
 that have none), file name and ``seq``:
 
 - ``read_trace(sources, run=...)``: everything written so far, in order (retrospective);

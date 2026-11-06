@@ -35,7 +35,7 @@ import threading
 import time
 from pathlib import Path
 
-from asyncroscopy.mcp.tool_log import file_lock
+from asyncroscopy.core.fileio import file_lock
 
 LOG_ENV = "ASYNCROSCOPY_INTEGRITY_LOG"
 DEFAULT_LOG = "outputs/integrity/manifest.jsonl"

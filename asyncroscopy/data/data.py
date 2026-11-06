@@ -39,7 +39,8 @@ from urllib.parse import unquote, urlparse
 
 from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
-from asyncroscopy.mcp.binding import WILDCARD_HOSTS
+from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
+from asyncroscopy.core.net import WILDCARD_HOSTS
 
 import h5py
 import psutil
@@ -52,7 +53,6 @@ DEFAULT_TILED_URI = "http://127.0.0.1:9091"
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # Suffixes Tiled 0.2 registers from a file (tiled.mimetypes plus the stdlib's image/tiff); Tiled skips others silently.
-REGISTRABLE_SUFFIXES = (".h5", ".hdf5", ".hdf", ".nxs", ".tif", ".tiff")
 # register_path answers within about REGISTER_WAIT_SECONDS plus a 2 s check that Tiled
 # answers, well inside the 12 s the instrument devices give DATA. A registration that
 # takes longer carries on in the background, and reconcile catches it if it fails.

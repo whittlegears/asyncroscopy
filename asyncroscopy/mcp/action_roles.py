@@ -2,7 +2,7 @@
 
 Two instruments name the same action differently (a STEM's ``move_stage``, an AFM file's
 ``move_xy``). Each tool in an endpoint's action space (``asyncroscopy.mcp.action_space``) carries
-one role from ROLES, so a controller written against roles runs on both. A tool's role comes from,
+one role from ``asyncroscopy.core.names.ROLES``, so a controller written against roles runs on both. A tool's role comes from,
 in order:
 
 1. an annotation: a device's ``action_hints`` attribute (a YAML instrument's ``role:`` key);
@@ -15,40 +15,8 @@ tools apart that the existing roles lump together.
 
 from __future__ import annotations
 
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
-
-# The Tango attribute through which any device annotates its commands, as JSON
-# {command: {"role": ..., "args": [{"name", "type", "units", "min", "max", "enum", "axis", "elements"}], "returns": {...}}}.
-# A YAML instrument has one (from its file); a Python device may add one.
-ACTION_HINTS = "action_hints"
-
-# role -> what a tool with that role does (shown in the action space and the docs).
-ROLES: dict[str, str] = {
-    "stage.move": "move the sample stage (all axes, or one)",
-    "stage.read": "read the stage position",
-    "beam.blank": "stop the probe beam (electrons, laser, X-rays) reaching the sample",
-    "beam.unblank": "let the probe beam reach the sample",
-    "beam.place": "park the beam on one point of the field of view",
-    "optics.focus": "set the focus or defocus, or run an autofocus",
-    "optics.fov": "set the field of view (scan size, magnification)",
-    "acquire.image": "acquire a 2-D image; returns a data key",
-    "acquire.spectrum": "acquire a 1-D spectrum or curve; returns a data key",
-    "acquire.other": "acquire anything else (a value, a 4-D dataset)",
-    "probe.approach": "bring a probe (tip, indenter) onto the sample",
-    "probe.retract": "lift a probe off the sample",
-    "job.run": "run a whole job in one call (reserve, start, wait)",
-    "job.reserve": "check a job plan and hold the device",
-    "job.start": "start a reserved job",
-    "job.status": "read a job's state, or wait for it",
-    "job.abort": "stop a running job, leaving the instrument safe",
-    "job.results": "read a finished job's results",
-    "job.release": "free a reserved job device",
-    "safe_stop": "stop or switch off something (always low risk)",
-    "setting.read": "read a setting or the instrument's status",
-    "setting.set": "change a setting",
-    "data.read": "read stored data (by key)",
-    "other": "anything the rules do not place",
-}
+from asyncroscopy.core.names import ENVELOPE_VERBS
+from asyncroscopy.safety.policy import OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
 
 # Native tools of the MCP server (asyncroscopy.mcp.mcp_server), which have no device behind them.
 NATIVE_ROLES: dict[str, str] = {
@@ -66,13 +34,6 @@ _IMAGE = frozenset({"image", "images", "topography", "camera", "frame", "microgr
 _SPECTRUM = frozenset({"spectrum", "spectra", "curve", "diffractogram", "pattern", "profile", "eels", "eds", "edx"})
 _FOV = frozenset({"fov", "magnification", "mag", "zoom"})
 _FOCUS = frozenset({"focus", "defocus", "autofocus"})
-
-
-def check_role(role: str, where: str = "role") -> str:
-    """``role`` if it is in the vocabulary; otherwise ValueError naming the roles there are."""
-    if role not in ROLES:
-        raise ValueError(f"{where}: {role!r} is not a role; roles: {', '.join(ROLES)}")
-    return role
 
 
 def role_for(dev_class: str, command: str, *, envelope: bool = False, probe: bool = False) -> str:

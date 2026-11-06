@@ -31,7 +31,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         sets: {tube_power_w: power_w}    # settings to change; values are expressions
         returns: "X-rays on"             # a string, a number, or a mapping (sent as JSON)
         duration_s: 0.5                  # optional simulated time (at most 25 s per call)
-        role: beam.unblank               # optional canonical role (asyncroscopy.mcp.roles), for role-based controllers
+        role: beam.unblank               # optional canonical role (asyncroscopy.core.names.ROLES), for role-based controllers
       move_xy:
         doc: Move the stage.
         inputs:                          # several arguments: the tool takes them by name
@@ -106,7 +106,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from asyncroscopy.mcp.roles import check_role
+from asyncroscopy.core.names import check_role
 
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -343,7 +343,7 @@ class Command:
     returns: Any = None
     returns_trees: Any = None
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
-    role: str | None = None  # a canonical role (asyncroscopy.mcp.roles); None: the rules decide
+    role: str | None = None  # a canonical role (asyncroscopy.core.names.ROLES); None: the rules decide
 
 
 @dataclass

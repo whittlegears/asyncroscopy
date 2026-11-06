@@ -13,6 +13,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Annotated, Sequence, TypedDict
 
+from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_MCP_URL
+
 try:
     from langchain.agents import create_agent
     from langchain.chat_models import init_chat_model
@@ -21,14 +23,12 @@ try:
 
     from langgraph.graph import END, START, StateGraph
 
-    from asyncroscopy.agents.config import CALLER_HEADER
     from asyncroscopy.agents.mcp_tools import McpServer
 except ImportError:
     print("Missing dependencies! Please run:")
     print("uv sync --extra agent --extra ollama")
     sys.exit(1)
 
-DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_MAX_STEPS = 10
 # Ollama's default context silently truncates long tool lists; always set it.

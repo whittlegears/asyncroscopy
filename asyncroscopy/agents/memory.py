@@ -54,10 +54,11 @@ def _atomic_write(path: Path, text: str) -> None:
 
 def redact(text: str) -> str:
     """Text with data keys, map keys and request/job ids replaced by placeholders."""
-    from asyncroscopy.agents.goals import DATA_KEY, HEX_ID, MAP_KEY
+    from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+    from asyncroscopy.agents.goals import HEX_ID, MAP_KEY
 
     text = MAP_KEY.sub("<an earlier map>", text)
-    text = DATA_KEY.sub("<an earlier key>", text)
+    text = DATA_KEY_IN_TEXT.sub("<an earlier key>", text)
     return HEX_ID.sub("<an id>", text)
 
 

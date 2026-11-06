@@ -39,7 +39,7 @@ import time
 from pathlib import Path
 
 from asyncroscopy.data.integrity import LOCK_WAIT_S, chain_append
-from asyncroscopy.mcp.tool_log import file_lock
+from asyncroscopy.core.fileio import file_lock
 from asyncroscopy.routines.dose import ELECTRON_CHARGE, frame_dose
 
 LEDGER_ENV = "ASYNCROSCOPY_DOSE_LEDGER"

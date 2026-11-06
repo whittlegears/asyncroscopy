@@ -397,7 +397,7 @@ def test_run_mcp_refuses_a_non_local_hardware_endpoint_without_auth(tmp_path, mo
     assert run_mcp.remote_auth_problem(opened, simulated=twin) is None
     one_ip = run_mcp.load_config(_mcp_config(tmp_path, "http_host: 10.46.217.5\n  allow_remote_bind: true"))
     assert run_mcp.remote_auth_problem(one_ip, simulated=hardware)
-    # A LAN address without allow_remote_bind binds 127.0.0.1 on hardware (asyncroscopy.mcp.binding): local, so it may start.
+    # A LAN address without allow_remote_bind binds 127.0.0.1 on hardware (asyncroscopy.core.net): local, so it may start.
     one_ip_local = run_mcp.load_config(_mcp_config(tmp_path, "http_host: 10.46.217.5"))
     assert run_mcp.remote_auth_problem(one_ip_local, simulated=hardware) is None
     # 0.0.0.0 without allow_remote_bind binds 127.0.0.1 on hardware: local, so it may start.

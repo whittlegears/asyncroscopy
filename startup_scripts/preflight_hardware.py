@@ -47,7 +47,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.mcp.binding import WILDCARD_HOSTS, is_loopback_host
+from asyncroscopy.core.net import WILDCARD_HOSTS, is_loopback_host
 from asyncroscopy.safety.policy import is_read_only
 
 DEFAULT_YAML = PROJECT_DIR / "configs" / "Spectra300.yaml"

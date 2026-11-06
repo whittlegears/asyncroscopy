@@ -18,7 +18,8 @@ from asyncroscopy.instruments.yaml_sim.spec import SpecError, action_hints, load
 from asyncroscopy.mcp import action_space
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
-from asyncroscopy.mcp.roles import ROLES, role_for
+from asyncroscopy.core.names import ROLES
+from asyncroscopy.mcp.action_roles import role_for
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
 

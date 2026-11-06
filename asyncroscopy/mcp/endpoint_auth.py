@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from asyncroscopy.mcp.binding import is_loopback_host
+from asyncroscopy.core.net import is_loopback_host
 
 if TYPE_CHECKING:
     from fastmcp.server.auth import AccessToken
@@ -162,7 +162,7 @@ def stamp_who(dev_class: str, command_name: str, call_args: tuple, subject: str 
 
 
 def is_loopback(host: str) -> bool:
-    return is_loopback_host(host)  # one rule for every bind check (asyncroscopy.mcp.binding)
+    return is_loopback_host(host)  # one rule for every bind check (asyncroscopy.core.net)
 
 def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | dict | None) -> str | None:
     """Why a server must not start: real hardware (simulated: false, or not known) reachable from other

@@ -7,7 +7,7 @@ import pytest
 import tango
 
 from asyncroscopy.mcp.mcp_server import MCPServer, describe_error
-from asyncroscopy.mcp.tool_log import ToolCallLog, read_tool_log
+from asyncroscopy.trace.writer import ToolCallLog, read_tool_log
 
 CMD_INFO = type(
     "CommandInfo",

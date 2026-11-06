@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 import httpx
 
-from asyncroscopy.mcp.binding import is_loopback_host
+from asyncroscopy.core.net import is_loopback_host
 
 TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=15.0, pool=3.0)
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
