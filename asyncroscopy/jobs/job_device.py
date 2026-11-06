@@ -64,7 +64,7 @@ from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION, load as load_schema
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
-from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.writer import TraceWriter
 from asyncroscopy.safety.policy import check_overrides
 from asyncroscopy.trace.clock import InstrumentClock
 

@@ -38,17 +38,17 @@ from fastmcp.utilities.types import Image as MCPImage
 from mcp.types import TextContent
 
 from asyncroscopy.data import tiled_client, views
-from asyncroscopy.data.data import REGISTRABLE_SUFFIXES
+from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, is_data_key
 from asyncroscopy.data.data_reader import numpy_to_python
-from asyncroscopy.mcp.tool_log import ToolCallLog, TraceWriter
+from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 from asyncroscopy.mcp import endpoint_auth
-from asyncroscopy.mcp.binding import bind_host, is_remote_host
+from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace import stream as trace_stream
 from pathlib import Path
 from fnmatch import fnmatchcase
 
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, looks_like_stop, operator_only, risk_of
+from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, looks_like_stop, operator_only, risk_of
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
 # The no-argument commands stop_all switches a source off with, compared without case and underscores.
@@ -56,8 +56,6 @@ ENDPOINT_ROLES = ("agent", "operator", "monitor")
 ENERGY_STOPS = frozenset({"blankbeam", "closeshutter", "laseroff", "lampoff", "lightoff", "ledoff", "illuminationoff", "xrayoff", "shutterclose"})
 # How long each stop_all phase waits for every device to answer before it reports the ones that did not.
 STOP_ALL_WAIT_S = 20.0
-CALLER_HEADER = "x-asyncroscopy-caller"
-RUN_HEADER = "x-asyncroscopy-run"  # one agent run (agents send it with every call; see run_job)
 
 def _without_param_name(desc: str) -> str:
     """A parameter's description without its ":param name:" prefix, which only names it."""
@@ -71,7 +69,6 @@ def _without_param_name(desc: str) -> str:
 # PREVIEW_COMMANDS the result says why there is none; other commands just return.
 PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}
 PREVIEW_TEXT_CHARS = 1500  # the summary sent with an acquisition's preview (a spectrum's peak table fits)
-DATA_KEY = re.compile(r"^[\w.\-/]+(" + "|".join(re.escape(s) for s in REGISTRABLE_SUFFIXES) + r")$", re.IGNORECASE)
 # Data tools answer within this, so a slow or stuck Tiled cannot hang the agent.
 DATA_TOOL_DEADLINE_S = 20.0
 PREVIEW_DEADLINE_S = 10.0
@@ -449,7 +446,7 @@ class MCPServer:
         client-side output-schema validation. For PREVIEW_COMMANDS a failed preview
         is reported in a text block, so a Tiled outage is visible, not silent.
         """
-        if not isinstance(result, str) or not command_name.startswith("acquire") or not DATA_KEY.match(result.strip()):
+        if not isinstance(result, str) or not command_name.startswith("acquire") or not is_data_key(result):
             return result
 
         try:
@@ -828,7 +825,7 @@ class MCPServer:
         try:
             from fastmcp.server.dependencies import get_http_headers
 
-            return get_http_headers().get(CALLER_HEADER) or None
+            return get_http_headers().get(CALLER_HEADER.lower()) or None
         except Exception:
             return None
     # ------------------------------------------------------------------ end auth
@@ -1209,7 +1206,7 @@ class MCPServer:
         try:
             from fastmcp.server.dependencies import get_http_headers
 
-            return get_http_headers().get(RUN_HEADER) or ""
+            return get_http_headers().get(RUN_HEADER.lower()) or ""
         except Exception:
             return ""
 

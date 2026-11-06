@@ -5,7 +5,7 @@ The MCP server (``asyncroscopy.mcp.mcp_server``) offers it as the native tool ``
 
 - ``actions``: every tool, with its arguments (type, units, range, choices, and the stage ``axis``
   or array ``elements`` where known), a one-line purpose, its risk as the approval gate sees it,
-  whether it ``act``s or only ``observe``s, and a canonical ``role`` (``asyncroscopy.mcp.roles``);
+  whether it ``act``s or only ``observe``s, and a canonical ``role`` (``asyncroscopy.mcp.action_roles``);
 - ``state``: what can be read, through a tool (``get_*``, ``State``) or as a Tango attribute, with units;
 - ``jobs``: each job device's plan schema and example plan;
 - ``instruments``: each device's kind (stem, probe, envelope).
@@ -30,14 +30,15 @@ import re
 import sys
 from typing import TYPE_CHECKING, Any
 
-from asyncroscopy.mcp.roles import ACTION_HINTS, NATIVE_ROLES, ROLES, check_role, role_for
-from asyncroscopy.safety.policy import ENVELOPE_VERBS, NATIVE_HIGH, is_read_only
+from asyncroscopy.core.names import ACTION_HINTS, ROLES, check_role
+from asyncroscopy.mcp.action_roles import NATIVE_ROLES, role_for
+from asyncroscopy.core.names import DEFAULT_MCP_URL, ENVELOPE_VERBS
+from asyncroscopy.safety.policy import NATIVE_HIGH, is_read_only
 
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 SCHEMA_VERSION = "1.0.0"
-DEFAULT_URL = "http://127.0.0.1:8000/mcp"
 # Attributes that describe a device to the MCP server rather than the instrument's state.
 META_ATTRIBUTES = frozenset({"state", "status", "job_kind", "plan_example", "plan_schema", ACTION_HINTS})
 NATIVE_ACTS = frozenset(NATIVE_HIGH)  # every other native tool only reads
@@ -360,7 +361,7 @@ async def fetch(url: str) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print an MCP endpoint's action space: tools by canonical role, state and jobs.")
-    parser.add_argument("--url", default=DEFAULT_URL, help=f"MCP endpoint (default {DEFAULT_URL})")
+    parser.add_argument("--url", default=DEFAULT_MCP_URL, help=f"MCP endpoint (default {DEFAULT_MCP_URL})")
     parser.add_argument("--json", action="store_true", help="print the JSON document instead of a table")
     args = parser.parse_args(argv)
     try:

@@ -137,7 +137,7 @@ def remote_auth_problem(config: Config, simulated: Callable[[str, int, str | Non
     if simulated is None:
         from asyncroscopy.mcp.mcp_server import stack_simulated as simulated
     is_simulated = bool(simulated(config.tango_host, config.tango_port, mcp.approvals_device_address or None))
-    from asyncroscopy.mcp.binding import bind_host
+    from asyncroscopy.core.net import bind_host
 
     bound, _note = bind_host(mcp.http_host, mcp.allow_remote_bind, is_simulated)
     return remote_without_auth(bound, is_simulated, mcp.auth)

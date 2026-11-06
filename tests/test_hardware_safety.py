@@ -24,7 +24,7 @@ from asyncroscopy.instruments.electron_microscope.electron_microscope import Ele
 from asyncroscopy.instruments.electron_microscope.tuner import TuneContext, TuneFailed, Tuner
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, DryRunRefused, RecordingProxy
-from asyncroscopy.mcp.binding import bind_host, is_loopback_host, is_remote_host
+from asyncroscopy.core.net import bind_host, is_loopback_host, is_remote_host
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, usable_beam_current
 from asyncroscopy.safety.policy import is_read_only
 from startup_scripts import run_servers

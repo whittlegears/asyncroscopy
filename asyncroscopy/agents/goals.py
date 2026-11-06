@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from asyncroscopy.agents.skill_runs import skill_run_calls
+from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT, ENVELOPE_VERBS
 from asyncroscopy.safety.policy import tool_risk
 from asyncroscopy.skills.registry import read_only_request
 
@@ -67,7 +68,6 @@ if TYPE_CHECKING:
     from asyncroscopy.agents.mcp_tools import McpServer
 
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
-DATA_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:h5|hdf5|hdf|nxs|tiff?)\b")
 # A stitched map key ends in _map and carries its run id (so tool names such as assemble_map do not match).
 # A stitched map: <run>_map (stitched before map versions), <run>_map_<YYYYmmddTHHMMSS>_<hex4> (a re-stitch before
 # versions), or a version <run>_map_<YYYYmmddTHHMMSSmmm>Z_<hex4> (pyTEMlib keeps every version).
@@ -77,8 +77,7 @@ HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
 CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
 # A goal file's no_unrequested with neither allow nor categories: running (and stopping) the job it asks for.
 DEFAULT_CATEGORIES = ["job"]
-ENVELOPE = ("job_status", "reserve", "start", "results", "abort", "release")  # longest-first matters for job_status
-ACTIVE = {"reserved", "queued", "running", "aborting", "paused_awaiting_approval", "paused_suspended"}
+ENVELOPE = tuple(sorted(ENVELOPE_VERBS, key=len, reverse=True))  # longest-first matters for job_status
 
 # Inferring a goal from a sentence: only what the words say plainly. Unsure means fewer criteria, never
 # wrong ones: a criterion the request did not ask for would make the retry push actions nobody wanted.
@@ -380,7 +379,7 @@ class Facts:
                 facts.high_risk.append(call.name)
             if call.error:
                 continue
-            facts.seen_keys.update(DATA_KEY.findall(call.result))
+            facts.seen_keys.update(DATA_KEY_IN_TEXT.findall(call.result))
             facts.seen_keys.update(MAP_KEY.findall(call.result))
             payload = _json(call.result)
             if (call.name.endswith("_reserve") or call.name == "run_job") and isinstance(payload, dict):
@@ -399,7 +398,7 @@ class Facts:
                 continue
             if payload is None or isinstance(payload, str):
                 text = payload if isinstance(payload, str) else call.result
-                facts.data_keys.update(DATA_KEY.findall(text))
+                facts.data_keys.update(DATA_KEY_IN_TEXT.findall(text))
                 facts.map_keys.update(MAP_KEY.findall(text))
                 continue
             for node in _walk(payload):
@@ -415,14 +414,14 @@ class Facts:
                         continue
                     if key == "map" or MAP_KEY.fullmatch(value):
                         facts.map_keys.add(value)
-                    elif DATA_KEY.fullmatch(value) and key in {"run", "key", "result", "spectrum_key", "image_key"}:
+                    elif DATA_KEY_IN_TEXT.fullmatch(value) and key in {"run", "key", "result", "spectrum_key", "image_key"}:
                         facts.data_keys.add(value)
         facts.seen_keys |= facts.data_keys | facts.map_keys
         return facts
 
     def active_jobs(self) -> dict[str, dict]:
         """Jobs this run started that have not reached done, failed or aborted (as last reported)."""
-        return {j: v for j, v in self.jobs.items() if v["state"] in ACTIVE}
+        return {j: v for j, v in self.jobs.items() if v["state"] in ACTIVE_JOB_STATES}
 
     def produced(self) -> list[str]:
         return sorted(self.map_keys | self.data_keys)
@@ -590,7 +589,7 @@ class GoalChecker:
         return True, "no unrequested instrument actions"
 
     async def _check_grounded_answer(self, c: dict, facts: Facts, answer: str):
-        named = set(DATA_KEY.findall(answer)) | set(MAP_KEY.findall(answer))
+        named = set(DATA_KEY_IN_TEXT.findall(answer)) | set(MAP_KEY.findall(answer))
         invented = sorted(k for k in named if k not in facts.seen_keys)
         if invented:
             return False, f"the answer names keys no server returned in this run: {invented[:5]}"

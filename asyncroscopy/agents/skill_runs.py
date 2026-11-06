@@ -38,6 +38,7 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, StructuredTool
 
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from asyncroscopy.agents import goals  # goals reads skill runs back, so its names are looked up at call time
 from asyncroscopy.skills.registry import Skill, list_skills
 
@@ -58,7 +59,7 @@ def _reply(text: str) -> Any:
         return json.loads(text)
     except (TypeError, ValueError):
         first, _, rest = text.partition("\n")
-        return first.strip() if rest and goals.DATA_KEY.fullmatch(first.strip()) else text
+        return first.strip() if rest and DATA_KEY_IN_TEXT.fullmatch(first.strip()) else text
 
 
 def _failed(text: str) -> bool:

@@ -43,7 +43,7 @@ GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is thr
 async def task_events(graph: str, request: str) -> AsyncIterator[dict]:
     """Write task_start now and task_end (with duration_s and whether it succeeded) when the block ends.
     The block sets ``outcome["ok"]`` (and ``outcome["error"]``); an exception counts as a failure."""
-    from asyncroscopy.mcp.tool_log import TraceWriter
+    from asyncroscopy.trace.writer import TraceWriter
 
     path = os.environ.get(TASK_TRACE_ENV, DEFAULT_TASK_TRACE)
     writer = TraceWriter(path, source="agent", writer=f"agent@{os.getpid()}") if path else None

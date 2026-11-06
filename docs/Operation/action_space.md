@@ -76,7 +76,7 @@ The vocabulary is short on purpose. Add a role only when a controller must tell 
 | `data.read` | reads stored data by key (`view_data`, `list_data`) |
 | `other` | does anything else |
 
-The vocabulary and the rules are in `asyncroscopy/mcp/roles.py`.
+The vocabulary is in `asyncroscopy/core/names.py` and the rules in `asyncroscopy/mcp/action_roles.py`.
 
 ## How a tool gets its role
 
@@ -107,7 +107,7 @@ Most YAML commands need no annotation, because the file already says more than t
 
 `raman.yaml` and `xrd.yaml` annotate `laser_on` and `xray_on`, which the rules would leave as `other`.
 
-A Python device annotates its commands by adding a read-only string attribute named `action_hints` that returns the same JSON. Name the attribute with `asyncroscopy.mcp.roles.ACTION_HINTS`. When your command names already follow the rules (`move_stage`, `get_stage`, `acquire_image`, `retract_tip`), you only need the attribute for units, ranges, axes, or a role the rules miss.
+A Python device annotates its commands by adding a read-only string attribute named `action_hints` that returns the same JSON. Name the attribute with `asyncroscopy.core.names.ACTION_HINTS`. When your command names already follow the rules (`move_stage`, `get_stage`, `acquire_image`, `retract_tip`), you only need the attribute for units, ranges, axes, or a role the rules miss.
 
 A job device publishes its plan's schema by setting `PLAN_SCHEMA` to the name of a schema in `asyncroscopy/contracts`. The Mapper sets it to `"map_plan"`. The `plan_schema` attribute then serves the schema. A device that gives no schema still has its `plan_example`.
 

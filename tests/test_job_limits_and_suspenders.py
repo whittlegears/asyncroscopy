@@ -10,7 +10,7 @@ import pytest
 from asyncroscopy.contracts import validate
 from asyncroscopy.jobs import JobDevice
 from asyncroscopy.jobs.job_device import parse_suspenders, suspender_problem
-from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.writer import TraceWriter
 
 
 class FakeDevice:

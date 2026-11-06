@@ -24,7 +24,7 @@ import tango
 
 from asyncroscopy.contracts import load
 from asyncroscopy.mcp.mcp_server import MCPServer
-from asyncroscopy.mcp.tool_log import TraceWriter, read_tool_log
+from asyncroscopy.trace.writer import TraceWriter, read_tool_log
 from asyncroscopy.trace.stream import TraceStream, follow_trace, read_trace, trace_since
 from asyncroscopy.trace import tail
 
@@ -162,7 +162,7 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
 # ----------------------------------------------------------------------
 WRITER = """
 import sys, time
-from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.writer import TraceWriter
 w = TraceWriter(sys.argv[1], "script", writer=sys.argv[2])
 for i in range(int(sys.argv[3])):
     w.record("tick", True, time.time(), run="multi", step=i)

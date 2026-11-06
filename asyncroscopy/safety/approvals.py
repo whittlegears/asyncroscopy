@@ -36,7 +36,7 @@ from typing import Any
 from tango import DevState
 from tango.server import Device, command, device_property
 
-from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.writer import TraceWriter
 from asyncroscopy.safety.policy import AUTO_DEFAULT, auto_allows, auto_allows_start
 
 MODES = ("auto", "approve")

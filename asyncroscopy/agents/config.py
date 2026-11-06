@@ -13,12 +13,10 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 
+from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER
+
 from .mcp_tools import TOKEN_ENV, McpServer, bearer_header
 
-DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
-DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
-CALLER_HEADER = "X-Asyncroscopy-Caller"
-RUN_HEADER = "X-Asyncroscopy-Run"  # one agent run: run_job finds a held start again by caller and run
 
 log = logging.getLogger(__name__)
 

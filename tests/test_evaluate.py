@@ -34,7 +34,7 @@ from asyncroscopy.evaluate import (
     write_table,
 )
 from asyncroscopy.evaluate.__main__ import main as cli_main
-from asyncroscopy.mcp.tool_log import TraceWriter
+from asyncroscopy.trace.writer import TraceWriter
 
 PIXEL = 4e-10
 SIZE = 128

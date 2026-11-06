@@ -58,7 +58,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from asyncroscopy.agents.goals import DATA_KEY, MAP_KEY, Facts, action_category, trace_from_messages
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+from asyncroscopy.agents.goals import MAP_KEY, Facts, action_category, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
 
 ENV = "ASYNCROSCOPY_CLAIM_CHECK"
@@ -352,11 +353,11 @@ def _acquired_at_claims(answer: str, settings: _Settings, request: str = "") -> 
 
 def _failed_acquisition_claims(answer: str, calls) -> list[Claim]:
     """A key given as a result that only a failed acquisition named (saved with the beam blanked: noise, not the sample)."""
-    made = {k for c in calls if c.ok and action_category(c.name) in ("acquire", "job") for k in DATA_KEY.findall(c.result)}
-    failed = {k: c.result for c in calls if c.error and action_category(c.name) == "acquire" for k in DATA_KEY.findall(c.result) if k not in made}
+    made = {k for c in calls if c.ok and action_category(c.name) in ("acquire", "job") for k in DATA_KEY_IN_TEXT.findall(c.result)}
+    failed = {k: c.result for c in calls if c.error and action_category(c.name) == "acquire" for k in DATA_KEY_IN_TEXT.findall(c.result) if k not in made}
     claims = []
     for sentence in _sentences(answer):
-        for key in dict.fromkeys(DATA_KEY.findall(sentence)):
+        for key in dict.fromkeys(DATA_KEY_IN_TEXT.findall(sentence)):
             if key in failed and not NEGATION.search(sentence):
                 # The reason's first sentence only, and no blind "acquire again": a model that had already retaken the
                 # image took one more when told to, and still listed this key.
@@ -413,7 +414,7 @@ def _placement_claims(answer: str, calls) -> list[Claim]:
         m = PLACED.search(sentence)
         if not m or _negated(sentence, m):
             continue
-        keys = [k for k in DATA_KEY.findall(sentence) if k in placements]
+        keys = [k for k in DATA_KEY_IN_TEXT.findall(sentence) if k in placements]
         refused = [k for k in keys if placements[k] == "unplaced"]
         if refused:
             claims.append(Claim("placement", sentence[:160], f"place_image said unplaced for {', '.join(refused)}; report its reason instead"))
@@ -450,7 +451,7 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     values = [abs(v) for points in found.values() for point in points for v in point if v]
     if not values:
         return []
-    text = MAP_KEY.sub(" ", DATA_KEY.sub(" ", answer))
+    text = MAP_KEY.sub(" ", DATA_KEY_IN_TEXT.sub(" ", answer))
     # A table headed "x (nm)" leaves its numbers without a unit: they are read in the units its headers name. Only
     # headers: "x_m" and "spectrum" end in unit letters, and read as units they made tile numbers into positions.
     headed = {_scale(m["header"] or m["phrase"]) for m in HEADER_UNIT.finditer(text)} - {None}
@@ -479,8 +480,8 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims: list[Claim] = []
     # Keys: any key a reply, a request or the prompt gave the model may be named (an error reply too).
     given = " ".join(_text(m) for m in messages if getattr(m, "type", "") in ("tool", "human")) + " " + context
-    known = facts.seen_keys | set(DATA_KEY.findall(given)) | set(MAP_KEY.findall(given))
-    named = list(dict.fromkeys(DATA_KEY.findall(answer) + MAP_KEY.findall(answer)))
+    known = facts.seen_keys | set(DATA_KEY_IN_TEXT.findall(given)) | set(MAP_KEY.findall(given))
+    named = list(dict.fromkeys(DATA_KEY_IN_TEXT.findall(answer) + MAP_KEY.findall(answer)))
     for key in named:
         if key not in known:
             claims.append(Claim("key", key, "no tool returned this key in this run"))
