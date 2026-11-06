@@ -32,6 +32,7 @@ class Discovery:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
         self.analysis_url = cfg.analysis_url
+        self.agent_profile = cfg.agent_profile  # whose tool selection endpoint_info reports; None: the default profile
 
     def natives(self) -> list:
         return [self.endpoint_info, self.action_space, self.find_tools, self.call_tool]
@@ -42,7 +43,7 @@ class Discovery:
         analysis server, agent_tools: globs of the tools (here and on the analysis server) to give a model, and
         auto: for each high-risk tool an agent may call, how auto mode treats it before any is switched on
         ("routine" runs, "held" waits for a person, "job" runs when every command the job drives runs)."""
-        from asyncroscopy.mcp.agent_tools import agent_tool_patterns
+        from asyncroscopy.mcp.agent_tools import agent_tool_patterns, tool_lists
 
         server = self.server
         tools = server.descriptors
@@ -53,8 +54,8 @@ class Discovery:
             "stem_devices": sorted(p for p, d in server.devices.items() if d.stem),
             "job_limits": server.jobs.job_limits,
             "risks": {name: t.risk for name, t in sorted(tools.items())},
-            # The general agent's own selection (asyncroscopy.mcp.agent_tools), so other harnesses match it.
-            "agent_tools": agent_tool_patterns(server.tool_names(), bool(self.analysis_url)),
+            # The general agent's own selection (asyncroscopy.mcp.agent_tools, from the agent profile), so other harnesses match it.
+            "agent_tools": agent_tool_patterns(server.tool_names(), bool(self.analysis_url), lists=tool_lists(self.agent_profile)),
             "auto": {
                 name: AUTO[decide(t, endpoint_role="agent", mode="auto")]
                 for name, t in sorted(tools.items()) if t.risk == "high" and not t.operator_only

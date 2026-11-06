@@ -13,8 +13,8 @@ from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
-from asyncroscopy.agents.run import run_goal_text, run_named_graph
-from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, DEFAULT_MODEL, Agent, AgentSwarm
+from asyncroscopy.agents.run import GraphName, run_goal_text, run_named_graph
+from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, Agent, AgentSwarm
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -36,7 +36,7 @@ class AgentMCPServer:
         self,
         name: str,
         mcp_urls: list[str],
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         model_provider: str = "ollama",
         max_steps: int = DEFAULT_MAX_STEPS,
         startup_agents: list[Agent] | None = None,
@@ -102,7 +102,7 @@ class AgentMCPServer:
             print("  - set_max_steps(max_steps: int) -> int")
             print(f"\nInheriting tools from MCP servers: {', '.join(self.mcp_urls)}")
 
-    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: str = "", goal: bool = False) -> str:
+    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: GraphName = "", goal: bool = False) -> str:
         """
         Ask the agents to carry out a request and return the response.
 
@@ -179,7 +179,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--http-host", required=True)
     parser.add_argument("--http-port", type=int, required=True)
     parser.add_argument("--mcp-urls-json", default=json.dumps([DEFAULT_MCP_URL]))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=None, help="Model name; default: the default agent profile's model.")
     parser.add_argument("--model-provider", default="ollama")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--startup-agents-json", default="[]")

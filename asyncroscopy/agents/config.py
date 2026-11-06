@@ -15,7 +15,10 @@ from langchain_core.tools import StructuredTool
 
 from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER
 
+from asyncroscopy.mcp.agent_tools import ToolLists
+
 from .mcp_tools import TOKEN_ENV, McpServer, bearer_header
+from .profile import load_profile
 
 
 log = logging.getLogger(__name__)
@@ -23,9 +26,13 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AgentConfig:
-    model: str = "qwen3:8b"
-    model_provider: str = "ollama"
-    num_ctx: int = 8192
+    # The agent profile (asyncroscopy/agents/profiles): what is tuned to one model. model, model_provider,
+    # num_ctx and middleware left as None take its values.
+    profile: str = "default"
+    model: str | None = None
+    model_provider: str | None = None
+    num_ctx: int | None = None
+    middleware: list[str] | None = None
     temperature: float = 0.0
     mcp_url: str = DEFAULT_MCP_URL
     # None: the analysis server the instrument endpoint is configured with (endpoint_info), so
@@ -47,13 +54,25 @@ class AgentConfig:
     deadline: float | None = None
     _info: dict | None = field(default=None, repr=False, compare=False)
 
+    def __post_init__(self) -> None:
+        chosen = load_profile(self.profile)
+        self.model = self.model or chosen.model
+        self.model_provider = self.model_provider or chosen.model_provider
+        self.num_ctx = int(self.num_ctx or chosen.num_ctx)
+        self.middleware = list(chosen.middleware if self.middleware is None else self.middleware)
+
+    def tool_lists(self) -> ToolLists:
+        """The profile's tool selection (asyncroscopy.mcp.agent_tools)."""
+        return load_profile(self.profile).tools
+
     @classmethod
     def from_env(cls, **overrides: Any) -> AgentConfig:
         env = os.environ
         config = cls(
-            model=env.get("ASYNCROSCOPY_MODEL", cls.model),
-            model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER", cls.model_provider),
-            num_ctx=int(env.get("ASYNCROSCOPY_NUM_CTX", cls.num_ctx)),
+            profile=overrides.pop("profile", None) or env.get("ASYNCROSCOPY_AGENT_PROFILE", "default"),
+            model=env.get("ASYNCROSCOPY_MODEL") or None,
+            model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER") or None,
+            num_ctx=int(env["ASYNCROSCOPY_NUM_CTX"]) if env.get("ASYNCROSCOPY_NUM_CTX") else None,
             mcp_url=env.get("ASYNCROSCOPY_MCP_URL", DEFAULT_MCP_URL),
             analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
             caller=env.get("ASYNCROSCOPY_CALLER", cls.caller),

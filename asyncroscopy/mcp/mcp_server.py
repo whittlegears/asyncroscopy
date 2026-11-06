@@ -23,7 +23,6 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Annotated, Any, Callable
 
-import tango
 from fastmcp import FastMCP
 from fastmcp.server.server import Transport
 from fastmcp.tools import Tool, tool
@@ -37,7 +36,7 @@ from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth
 from asyncroscopy.mcp.components import data_tools, discovery, estop, gate, jobs, skills_tools, trace_tools
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
-from asyncroscopy.mcp.interceptors import Call, Interceptor, describe_error, run_call
+from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
 from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, load_auto_routine, looks_like_stop, operator_only
 from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
@@ -82,6 +81,7 @@ class ServerConfig:
     trace_follow: list[str] = field(default_factory=list)
     verbose: bool = True
     auth: Any = None
+    agent_profile: str | None = None  # agent profile file whose tool selection endpoint_info reports
 
     def high_overrides(self) -> dict[str, str]:
         """The mcp.safety.risk patterns that mark commands high: what a job's dry run must record, not pass through."""
@@ -111,6 +111,7 @@ class MCPServer:
         clock_device: str | None = None,
         trace_follow: list[str] | None = None,
         auto_routine: dict[str, list[str]] | None = None,
+        agent_profile: str | None = None,
     ) -> None:
         """
         Args:
@@ -139,6 +140,8 @@ class MCPServer:
             auto_routine: High-risk commands auto mode runs without a person, as {device kind ("stem", "probe",
                 "envelope"): [command globs], "tools": [tool-name or Class.command globs]}. None: the packaged
                 profile (asyncroscopy/safety/profiles/auto_routine.yaml).
+            agent_profile: Agent profile YAML whose tool selection endpoint_info.agent_tools reports. None: the
+                packaged default (asyncroscopy/agents/profiles/default.yaml).
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -151,7 +154,7 @@ class MCPServer:
             approvals_device_address=approvals_device_address or None, risk_overrides=check_overrides(risk_overrides),
             auto_routine=load_auto_routine() if auto_routine is None else dict(auto_routine), analysis_url=analysis_url or None,
             job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
-            verbose=verbose, auth=auth,
+            verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
         # ``database`` replaces the Tango database lookup (asyncroscopy.testing passes a device list).
         self.database = database if database is not None else Database(tango_host, tango_port)
@@ -660,6 +663,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--approvals-device-address", default="", help="Approvals device; empty disables the approval mode.")
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--auto-routine-json", default="", help='{"stem": [command globs], "tools": [tool globs]}: what auto mode runs; empty: the packaged profile.')
+    parser.add_argument("--agent-profile", default="", help="Agent profile YAML whose tool selection endpoint_info reports; empty: the default.")
     parser.add_argument("--trace", default="", help="Instrument Trace JSONL file; off when empty.")
     parser.add_argument("--clock-device", default="", help="Instrument whose clock_s stamps trace events; empty: this computer's time.")
     parser.add_argument("--trace-follow-json", default="[]", help="Trace files, directories or globs trace_since reads (operator); default: the --trace file's directory.")
@@ -731,7 +735,7 @@ def main(argv: list[str] | None = None) -> int:
         approvals_device_address=args.approvals_device_address or None, risk_overrides=json.loads(args.risk_json),
         trace_path=args.trace or None, analysis_url=args.analysis_url or None, job_limits=json.loads(args.job_limits_json),
         auth=auth, clock_device=args.clock_device or None, trace_follow=json.loads(args.trace_follow_json) or None,
-        auto_routine=json.loads(args.auto_routine_json) if args.auto_routine_json else None,
+        auto_routine=json.loads(args.auto_routine_json) if args.auto_routine_json else None, agent_profile=args.agent_profile or None,
     )
     if args.transport == "streamable-http":
         print(f"Starting {args.name} at http://{args.http_host}:{args.http_port}/mcp for Tango DB {args.tango_host}:{args.tango_port}", flush=True)

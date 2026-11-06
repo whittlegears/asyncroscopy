@@ -17,11 +17,9 @@ import os
 from langchain.agents import create_agent
 from langgraph.graph.state import CompiledStateGraph
 
-from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.config import AgentConfig
-from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware
 from asyncroscopy.agents.memory import Memory
-from asyncroscopy.agents.skill_middleware import SkillMiddleware
+from asyncroscopy.agents.middleware import build_middleware
 from asyncroscopy.agents.skill_runs import SkillRuns
 # Which tools the model sees: one rule set, shared with the endpoint's endpoint_info.agent_tools.
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model, is_stem_endpoint
@@ -80,8 +78,9 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
     stem = is_stem_endpoint(own)
     # load_skill stays in, so the middleware can show it while a matched skill does not fit.
-    patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen)
-    tools = [t for t in every if for_model(t.name, patterns)]
+    lists = agent_config.tool_lists()
+    patterns = agent_tool_patterns(own, bool((await agent_config.info()).get("analysis_url")), chosen, lists)
+    tools = [t for t in every if for_model(t.name, patterns, lists)]
     runs = SkillRuns(tools, list_skills(offered))  # usable on this endpoint, as the middleware chooses them
     if runs.offered():
         tools += runs.as_tools()
@@ -95,8 +94,6 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     extra = (SEARCH_RULE if {"find_tools", "call_tool"} <= names else "") + (STEM_RULES if stem else "")
     prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
-    skills = SkillMiddleware(prompt, names, offered, memory=memory.notes_for, num_ctx=agent_config.num_ctx)
-    waits = JobWaitMiddleware(tools, deadline=agent_config.deadline)  # a job of any length is one tool round
-    # Last, so it wraps the model call itself: a final answer is checked against the run's tool calls.
-    claims = ClaimCheckMiddleware(names, enabled=configurable.get("claim_check"))
-    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=[skills, waits, EmptyReplyMiddleware(), claims])
+    middleware = build_middleware(agent_config.middleware, prompt=prompt, tool_names=names, offered=offered, tools=tools, memory=memory.notes_for,
+                                  num_ctx=agent_config.num_ctx, deadline=agent_config.deadline, claim_check=configurable.get("claim_check"))
+    return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=middleware)

@@ -24,12 +24,12 @@ try:
     from langgraph.graph import END, START, StateGraph
 
     from asyncroscopy.agents.mcp_tools import McpServer
+    from asyncroscopy.agents.profile import load_profile
 except ImportError:
     print("Missing dependencies! Please run:")
     print("uv sync --extra agent --extra ollama")
     sys.exit(1)
 
-DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_MAX_STEPS = 10
 # Ollama's default context silently truncates long tool lists; always set it.
 DEFAULT_NUM_CTX = 8192
@@ -59,7 +59,7 @@ class AgentSwarm:
 
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         model_provider: str = "ollama",
         max_steps: int = DEFAULT_MAX_STEPS,
         startup_agents: list[Agent] | None = None,
@@ -69,7 +69,7 @@ class AgentSwarm:
     ) -> None:
         """
         Args:
-            model (str): Model name, interpreted by ``model_provider``. Defaults to DEFAULT_MODEL.
+            model (str): Model name, interpreted by ``model_provider``. None: the default agent profile's model.
             model_provider (str): Provider for ``init_chat_model`` when
                 ``use_init_chat_model`` is set; "ollama" otherwise. Defaults to "ollama".
             max_steps (int): LangGraph recursion limit for a single query. Defaults to 10.
@@ -78,7 +78,7 @@ class AgentSwarm:
                 ``init_chat_model`` (OpenAI, Anthropic, ...) instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
         """
-        self.model = model
+        self.model = model or load_profile().model
         self.model_provider = model_provider
         self.max_steps = int(max_steps)
         self.use_init_chat_model = use_init_chat_model

@@ -120,11 +120,14 @@ def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_too
 
 
 def test_the_stem_twins_curated_set_is_unchanged(endpoint):
-    from asyncroscopy.mcp.agent_tools import DEFAULT_TOOLS, is_stem_endpoint
+    from asyncroscopy.agents.profile import load_profile
+    from asyncroscopy.mcp.agent_tools import is_stem_endpoint
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
     assert is_stem_endpoint(server.tool_names())
-    assert server.discovery.endpoint_info()["agent_tools"] == DEFAULT_TOOLS + ["load_skill"]
+    tools = load_profile("default").tools  # the curated lists are the default agent profile's data
+    assert server.discovery.endpoint_info()["agent_tools"] == [*tools.stem, *tools.generic, "load_skill"]
+    assert "*_move_stage" in tools.stem and "run_job" in tools.generic
 
 
 def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(tmp_path, monkeypatch):

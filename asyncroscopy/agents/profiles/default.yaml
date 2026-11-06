@@ -1,0 +1,32 @@
+# The default agent profile: everything that is tuned to one model rather than to the instrument.
+# Measured on qwen3:8b with an 8192-token context (benchmarks/results/). Copy this file to make
+# another profile (ASYNCROSCOPY_AGENT_PROFILE=<name or path>); the instrument stack never reads it,
+# except that the MCP server reports the tool selection below as endpoint_info.agent_tools.
+
+model: qwen3:8b
+model_provider: ollama
+num_ctx: 8192
+
+# The agent graphs' middleware, outermost first (asyncroscopy.agents.middleware):
+# skills: puts matching skills and memory notes in the system prompt for each model call;
+# job_wait: waits out a running job inside one tool round; empty_reply: retries a reply with
+# neither text nor a tool call; claim_check: checks a final answer against the run's tool calls.
+middleware: [skills, job_wait, empty_reply, claim_check]
+
+# Which tools a tool-using model is given (asyncroscopy.mcp.agent_tools).
+tools:
+  # Tools every instrument endpoint and the pyTEMlib analysis server offer. Left out, from the trial
+  # traces (benchmarks/results/tool_usage_analysis.md): calls that always come as a pair or are always
+  # made first. run_job is reserve+start, wait_for_job also waits on analysis jobs and returns results,
+  # and the skills are put in the prompt. find_tools and call_tool reach every other tool of the endpoint.
+  generic: [find_tools, call_tool, approval_status, run_job, wait_for_job, list_devices, list_data, view_data,
+            assemble_map, score_map, map_info, get_region, list_pois, add_poi, list_scorers,
+            annotate, list_annotations, edit_annotation, to_stage, to_pixel, place_image, find_features]
+  # A curated STEM set: a 4-8 B model loses track with all ~80 microscope tools.
+  stem: ["*_get_stage", "*_get_sample", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
+         "*_set_fov", "*_get_fov", "*_aim_image_shift", "*_set_image_shift", "*_get_image_shift", "*_set_defocus", "*_place_beam",
+         "*_place_beam_at", "*_blank_beam", "*_unblank_beam", "Mapper*_abort"]
+  # Only when the instrument endpoint has no mcp.analysis_url does an agent need the analysis server's own waits.
+  analysis_waits: [analysis_job_status, analysis_job_results]
+  # For agent programs, not models: action_space is far too long for a small model's context.
+  not_for_models: [list_skills, endpoint_info, action_space]
