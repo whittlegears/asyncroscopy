@@ -387,9 +387,8 @@ def test_run_job_tuner_goes_through_the_approval_gate(fresh, tuner_proxy, approv
         "test", "localhost", 1234, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role="agent", approvals_device_address="asyncroscopy/approvals/default", trace_path=str(tmp_path / "trace.jsonl"),
     )
-    server._approvals = lambda: approvals_proxy
-    server._envelope_prefixes = {"Tuner"}
-    server._devices = {"Tuner": tuner_proxy}
+    server.gate.approvals = lambda: approvals_proxy
+    server.add_device("Tuner", tuner_proxy, envelope=True)
     server.tools = {"Tuner": {
         verb: server._create_wrapper(getattr(tuner_proxy, verb), JSON_REQUEST, verb, "Tuner", tool_prefix="Tuner") for verb in ("reserve", "start")
     }}
@@ -397,11 +396,11 @@ def test_run_job_tuner_goes_through_the_approval_gate(fresh, tuner_proxy, approv
     approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
     try:
         with pytest.raises(ToolError, match="APPROVAL REQUIRED") as held:
-            server.run_job("Tuner", plan)
+            server.jobs.run_job("Tuner", plan)
         assert json.loads(twin.get_parameters())["beam_blanked"] is True and abs(device._focus_truth()["c1_m"]) > 80e-9  # nothing ran
         request_id = str(held.value).split("request_id=")[1].split(")")[0]
         approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
-        reply = server.run_job("Tuner", plan)
+        reply = server.jobs.run_job("Tuner", plan)
         status = wait(tuner_proxy, reply["job_id"])
         assert status["state"] == "done", status
         assert abs(device._focus_truth()["c1_m"]) < 5e-9
@@ -420,14 +419,12 @@ def test_a_dry_run_tune_is_refused_at_reserve_by_name(tuner_proxy):
 
 
 def test_auto_mode_starts_a_tune_only_when_it_drives_nothing_held(fresh, tuner_proxy, approvals_proxy, monkeypatch, tmp_path):
-    from asyncroscopy.safety.policy import risk_of
-
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer(
         "test", "localhost", 1234, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role="agent", approvals_device_address="asyncroscopy/approvals/default", trace_path=str(tmp_path / "trace.jsonl"),
     )
-    server._approvals = lambda: approvals_proxy
+    server.gate.approvals = lambda: approvals_proxy
 
     class Named:
         def __init__(self, name):
@@ -436,22 +433,22 @@ def test_auto_mode_starts_a_tune_only_when_it_drives_nothing_held(fresh, tuner_p
         def dev_name(self):
             return self.name
 
-    server._envelope_prefixes = {"Tuner"}
-    server._stem_prefixes = {"DigitalTwin"}
-    server._devices = {"Tuner": tuner_proxy, "DigitalTwin": Named("asyncroscopy/digitaltwin/tuner"), "Corrector": Named("asyncroscopy/corrector/tuner")}
+    server.add_device("Tuner", tuner_proxy, envelope=True)
+    server.add_device("DigitalTwin", Named("asyncroscopy/digitaltwin/tuner"), stem=True)
+    server.add_device("Corrector", Named("asyncroscopy/corrector/tuner"))
     for prefix, commands in (("DigitalTwin", ("blank_beam", "unblank_beam", "set_fov", "set_defocus", "set_stigmator", "acquire_scanned_image", "auto_focus")),
                              ("Corrector", ("measure_c1a1", "correct_aberration"))):
-        for command in commands:
-            server.tool_risks[f"{prefix}_{command}"] = risk_of(prefix, command, stem=prefix == "DigitalTwin")
+        for command in commands:  # what discovery decides for each command the tune drives
+            server._create_wrapper(lambda arg: None, JSON_REQUEST, command, prefix)
     server.tools = {"Tuner": {
         verb: server._create_wrapper(getattr(tuner_proxy, verb), JSON_REQUEST, verb, "Tuner", tool_prefix="Tuner") for verb in ("reserve", "start")
     }}
-    reply = server.run_job("Tuner", {"strategy": "optistem", "dose_budget_e_per_a2": 1000.0})
+    reply = server.jobs.run_job("Tuner", {"strategy": "optistem", "dose_budget_e_per_a2": 1000.0})
     assert wait(tuner_proxy, reply["job_id"])["state"] == "done"
     call(tuner_proxy, "release", {"reservation_id": reply["reservation_id"]})
     with pytest.raises(ToolError, match="Corrector_correct_aberration"):
-        server.run_job("Tuner", {"strategy": "corrector", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 3000.0})
+        server.jobs.run_job("Tuner", {"strategy": "corrector", "corrections": ["focus", "stigmation"], "dose_budget_e_per_a2": 3000.0})
 
     request_id = next(p["request_id"] for p in json.loads(approvals_proxy.list_pending()) if p["action"] == "Tuner_start")
     approvals_proxy.deny(json.dumps({"request_id": request_id, "who": "test"}))
-    assert server.approval_status(request_id)["state"] == "denied"  # frees the held reservation
+    assert server.gate.approval_status(request_id)["state"] == "denied"  # frees the held reservation

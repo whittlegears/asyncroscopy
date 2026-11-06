@@ -50,7 +50,7 @@ with instrument_context(devices):
         "startup_warnings": [line for line in printed.getvalue().splitlines() if line.startswith("[safety]")],
         "second_context": second_context,
         "indent_doc": tools.get("SimIndenter_indent", "")[:40],
-        "envelope": "IndentGrid" in server._envelope_prefixes,
+        "envelope": server.devices["IndentGrid"].envelope,
         "retract_doc": tools.get("SimIndenter_retract", ""),
         "move_doc": tools.get("SimIndenter_move_xy", ""),
         "risks": {n: server.list_tool_risks()[n] for n in ("SimIndenter_indent", "SimIndenter_retract", "IndentGrid_reserve", "IndentGrid_start")},

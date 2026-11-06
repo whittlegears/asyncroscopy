@@ -48,13 +48,13 @@ with instrument_context(devices):
     outcome["set_stage_retracted"] = attempt(afm["set_stage_x_m"], 1e-4)
     outcome["stage_after_set"] = proxy.stage_x_m
     # The job's steps drive the simulator directly, so a dry run could record nothing: it is refused, nothing moves.
-    outcome["dry_run"] = server.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
+    outcome["dry_run"] = server.jobs.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
     outcome["stage_after_dry_run"] = proxy.stage_x_m
-    ran = server.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
+    ran = server.jobs.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
     deadline = time.monotonic() + 90
     status = ran
     while status.get("state") not in {"done", "failed", "aborted"} and time.monotonic() < deadline:
-        status = server.wait_for_job(ran["job_id"], max_wait_s=5)
+        status = server.jobs.wait_for_job(ran["job_id"], max_wait_s=5)
     outcome["job_state"] = status.get("state")
     outcome["job_error"] = status.get("last_error")
     keys = status.get("summary", {}).get("keys", {}).get("acquire_force_curve", [])

@@ -6,7 +6,8 @@ import time
 import pytest
 import tango
 
-from asyncroscopy.mcp.mcp_server import MCPServer, describe_error
+from asyncroscopy.mcp.interceptors import describe_error
+from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.trace.writer import ToolCallLog, read_tool_log
 
 CMD_INFO = type(
@@ -101,7 +102,7 @@ def test_devfailed_is_summarised_to_one_line():
 
 
 def test_identical_failures_far_apart_are_not_a_loop(monkeypatch, tmp_path):
-    import asyncroscopy.mcp.mcp_server as server_module
+    import asyncroscopy.mcp.components.trace_tools as server_module
 
     def move(position):
         raise ValueError("stage fault")

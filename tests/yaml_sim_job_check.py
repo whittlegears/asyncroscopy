@@ -33,7 +33,7 @@ def wait(server: Any, job_id: str, limit_s: float = 60.0) -> dict:
     deadline = time.monotonic() + limit_s
     status = {}
     while time.monotonic() < deadline:
-        status = server.wait_for_job(job_id, max_wait_s=5)
+        status = server.jobs.wait_for_job(job_id, max_wait_s=5)
         if status.get("state") not in {"queued", "running", "aborting"}:
             break
     return status
@@ -47,13 +47,13 @@ with instrument_context(devices):
     outcome["risks"] = {name: risks[name] for name in ("RamanTwin_reserve", "RamanTwin_start", "RamanTwin_abort", "RamanTwin_laser_off", "RamanTwin_move_xy", "RamanTwin_set_grating")}
     outcome["move_doc"] = server.list_tool_descriptions().get("RamanTwin_move_xy", "")
     outcome["plan_example"] = json.loads(proxy.plan_example)
-    outcome["refused_without_laser"] = server.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 1e-4, "points": 3}}})
+    outcome["refused_without_laser"] = server.jobs.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 1e-4, "points": 3}}})
     outcome["move_two_inputs"] = attempt(raman["move_xy"], {"x_m": 1e-4, "y_m": -1e-4})
     outcome["move_missing"] = attempt(raman["move_xy"], {"x_m": 1e-4})
     outcome["grating_choice"] = attempt(raman["set_grating"], "1200")
     raman["laser_on"](5.0)
-    outcome["out_of_limits"] = server.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 0.01, "points": 3}}})
-    ran = server.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 3}}, "settings": {"exposure_s": 0.05}})
+    outcome["out_of_limits"] = server.jobs.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 0.01, "points": 3}}})
+    ran = server.jobs.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 3}}, "settings": {"exposure_s": 0.05}})
     outcome["estimate"] = ran.get("estimate")
     done = wait(server, ran["job_id"]) if ran.get("state") != "done" else ran
     outcome["done_state"] = done.get("state")
@@ -62,7 +62,7 @@ with instrument_context(devices):
     with h5py.File(keys[-1], "r") as h5:
         outcome["last_point"] = {"point": json.loads(h5.attrs["point"]), "units": h5["spectrum"].attrs["units"], "axis_units": h5["spectrum"].attrs["axis_units"]}
     attempt(raman["release"], {"reservation_id": ran["reservation_id"]})
-    long = server.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 1e-4, "points": 20}}, "settings": {"exposure_s": 1.0}})
+    long = server.jobs.run_job("RamanTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 1e-4, "points": 20}}, "settings": {"exposure_s": 1.0}})
     outcome["busy_set"] = attempt(raman["set_exposure_s"], 2.0)
     outcome["busy_acquire"] = attempt(raman["acquire_raman_spectrum"])
     outcome["status_while_running"] = attempt(raman["get_status"])

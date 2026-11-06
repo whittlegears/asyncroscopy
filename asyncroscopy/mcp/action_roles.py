@@ -5,7 +5,8 @@ Two instruments name the same action differently (a STEM's ``move_stage``, an AF
 one role from ``asyncroscopy.core.names.ROLES``, so a controller written against roles runs on both. A tool's role comes from,
 in order:
 
-1. an annotation: a device's ``action_hints`` attribute (a YAML instrument's ``role:`` key);
+1. an annotation: a device's ``action_hints`` attribute (a YAML instrument's ``role:`` key, or a Python
+   device's ``asyncroscopy.utils.commands.command(role=...)``);
 2. the rules in ``role_for`` below, on the command's words (the safety policy's word lists);
 3. ``other``.
 
@@ -18,14 +19,9 @@ from __future__ import annotations
 from asyncroscopy.core.names import ENVELOPE_VERBS
 from asyncroscopy.safety.policy import OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
 
-# Native tools of the MCP server (asyncroscopy.mcp.mcp_server), which have no device behind them.
-NATIVE_ROLES: dict[str, str] = {
-    "run_job": "job.run",
-    "wait_for_job": "job.status",
-    "list_data": "data.read",
-    "view_data": "data.read",
-}
-
+# What switching off stops the beam reaching the sample, without the hours a gun, filament, high tension
+# or emission source takes to come back: their "off" is a safe stop, not a beam blank (stop_all never calls it).
+_BEAM_OFF = OFF_OBJECTS - {"gun", "filament", "hv", "emission", "source"}
 _JOB_ROLES = {"reserve": "job.reserve", "start": "job.start", "job_status": "job.status", "abort": "job.abort",
               "results": "job.results", "release": "job.release", "get_reservation": "job.status"}
 _STAGE = frozenset({"stage", "xy", "xyz", "position", "xy_m"})
@@ -50,7 +46,7 @@ def role_for(dev_class: str, command: str, *, envelope: bool = False, probe: boo
     if "unblank" in w:
         return "beam.unblank"
     if is_safe_stop(command, probe=probe):
-        if "blank" in w or (words and words[-1] == "off" and w & OFF_OBJECTS):
+        if "blank" in w or {"close", "shutter"} <= w or (words and words[-1] == "off" and w & _BEAM_OFF):
             return "beam.blank"
         if w & RETREAT_VERBS:
             return "probe.retract"

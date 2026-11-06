@@ -12,8 +12,8 @@ With ``mcp.auth`` set:
   JWKS), expiry, issuer and audience are checked, and ``exp`` and ``sub`` must be present;
 * the token's ``sub`` is the caller recorded in the trace and in approval requests, and the
   ``who`` of an approve, deny or set_mode; ``X-Asyncroscopy-Caller`` is ignored;
-* the token's scopes give it roles, and each tool needs one, taken from the risk policy
-  (``asyncroscopy.safety.policy``), not from a second list:
+* the token's scopes give it roles, and each tool needs one, taken from the tool's descriptor
+  (``asyncroscopy.safety.decide.required_role``), not from a second list:
 
   ========= ==================================================================
   role      tools
@@ -137,16 +137,6 @@ class AuthSettings:
         return {role for role, scopes in self.roles.items() if values & set(scopes)}
 
 
-def required_role(tool_name: str, tool_risks: dict[str, str], risk_keys: dict[str, str]) -> str:
-    """The role a tool needs, from the risk policy: operator-only -> approve, high -> operate, else read."""
-    from asyncroscopy.safety.policy import operator_only, tool_risk
-
-    key = risk_keys.get(tool_name)
-    if key and operator_only(*key.split(".", 1)):
-        return "approve"
-    return "operate" if tool_risk(tool_name, tool_risks) == "high" else "read"
-
-
 def stamp_who(dev_class: str, command_name: str, call_args: tuple, subject: str | None) -> tuple:
     """An approve, deny, set_mode or set_auto_allowed of an Approvals device records the token's subject as ``who``."""
     if dev_class.lower() != "approvals" or command_name not in DECIDING_COMMANDS or not call_args or not subject:
@@ -217,6 +207,8 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
     from fastmcp.exceptions import ToolError
     from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
+    from asyncroscopy.safety.decide import required_role
+
     class RoleGate(Middleware):
         """Refuses a tool call whose token lacks the tool's role, and lists only the tools a token may call.
 
@@ -229,7 +221,7 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
             return token, (settings.roles_of(token.claims) if token is not None else set())
 
         def _needs(self, name: str) -> str:
-            return required_role(name, server.tool_risks, server._risk_keys)
+            return required_role(server.descriptors.get(name))
 
         async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> Any:
             token, roles = self._roles()
@@ -253,7 +245,7 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
 
     def may_call(name: str) -> bool:
         token = current_token()
-        return token is not None and required_role(name, server.tool_risks, server._risk_keys) in settings.roles_of(token.claims)
+        return token is not None and required_role(server.descriptors.get(name)) in settings.roles_of(token.claims)
 
     server.mcp.auth = _verifier(settings)
     server.mcp.add_middleware(RoleGate())

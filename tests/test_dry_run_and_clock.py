@@ -22,6 +22,9 @@ from fastmcp.exceptions import ToolError
 from asyncroscopy.instruments.electron_microscope.mapper import DRY_RUN_SKIPPED, Mapper
 from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER, RecordingProxy
 from asyncroscopy.core.net import bind_host
+from dataclasses import replace
+
+from asyncroscopy.mcp.descriptors import describe_native
 from asyncroscopy.mcp.mcp_server import MCPServer, stack_simulated
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -131,13 +134,14 @@ def test_a_dry_run_map_moves_nothing_and_traces_every_checked_move(mapper_proxy,
 def test_a_dry_run_is_approved_like_a_real_start(monkeypatch, mapper_proxy, approvals_proxy):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, approvals_device_address="asyncroscopy/approvals/default")
-    monkeypatch.setattr(server, "_approvals", lambda: approvals_proxy)
+    monkeypatch.setattr(server.gate, "approvals", lambda: approvals_proxy)
     reserved = call(mapper_proxy, "reserve", {"plan": {**DRY_PLAN, "dry_run": True}})
     request = json.dumps({"reservation_id": reserved["reservation_id"]})
     approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "test"}))
     try:
         with pytest.raises(ToolError, match="APPROVAL REQUIRED"):
-            server._gate("Mapper_start", "high", {"request": request}, "agent", describe=lambda: "Reserved plan: " + mapper_proxy.get_reservation(request))
+            start = replace(describe_native("Mapper_start"), risk="high")
+            server.gate.check(start, {"request": request}, "agent", None, describe=lambda: "Reserved plan: " + mapper_proxy.get_reservation(request))
         pending = [p for p in json.loads(approvals_proxy.list_pending()) if p["action"] == "Mapper_start"]
         assert pending and '"dry_run": true' in pending[-1]["reason"]  # the operator sees it is a rehearsal
         for p in pending:

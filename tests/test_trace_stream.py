@@ -113,8 +113,7 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
         "test", "localhost", 1234, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role="agent", trace_path=str(mcp_trace), clock_device=tango_ctx.get_device_access("asyncroscopy/digitaltwin/mapping"),
     )
-    server._envelope_prefixes = {"Mapper"}
-    server._devices = {"Mapper": mapper_proxy}
+    server.add_device("Mapper", mapper_proxy, envelope=True)
     server.tools = {"Mapper": {
         verb: server._create_wrapper(getattr(mapper_proxy, verb), JSON_REQUEST, verb, "Mapper", tool_prefix="Mapper") for verb in ("reserve", "start")
     }}
@@ -122,7 +121,7 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
 
     sub = Subscriber(sources, run=run)  # attached before the map starts; it follows from the first line
     try:
-        reply = server.run_job("Mapper", MAP_PLAN, wait=False)
+        reply = server.jobs.run_job("Mapper", MAP_PLAN, wait=False)
         assert reply.get("estimate", {}).get("tiles") == 4, reply
         deadline = time.monotonic() + 120
         while (state := json.loads(mapper_proxy.job_status(json.dumps({"job_id": reply["job_id"]})))["state"]) not in ("done", "failed", "aborted"):
