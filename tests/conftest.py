@@ -41,6 +41,7 @@ from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.detectors.eds import EDS
 from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
 from asyncroscopy.instruments.electron_microscope.hardware.TestStage import TestStage
+from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin import DigitalTwinSTAGE
 from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
@@ -218,10 +219,14 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     "holder": "low_tilt",
                 }},
                 {"name": "asyncroscopy/stage/parity", "properties": {}},
-                {"name": "asyncroscopy/stage/drift", "properties": {}},
                 {"name": "asyncroscopy/stage/livedrift", "properties": {}},
                 *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": {}} for source in SPECIMEN_TWINS),
             ],
+        },
+        {
+            # The twin's own STAGE device: the drift twin reports its stage model's error to it (test_twin_configs.py).
+            "class": DigitalTwinSTAGE,
+            "devices": [{"name": "asyncroscopy/stage/drift", "properties": {}}],
         },
         {
             "class": DigitalTwinCorrector,

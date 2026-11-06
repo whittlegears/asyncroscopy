@@ -75,11 +75,9 @@ devices:
       eds_device_address: asyncroscopy/eds/default
       data_device_address: asyncroscopy/data/default
       stage_device_address: asyncroscopy/stage/default
-      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart);
-      # stage_sigma_m: how far a tile really lands from the reported position (the twin's 150 nm stage noise and
-      # up to 250 nm backlash together, about 290 nm, not its 10 nm readback noise); tests/test_twin_configs.py checks it.
+      # Finished maps are stitched on the pyTEMlib analysis server (start it as in the quickstart). The stitch's
+      # stage error comes from the twin's STAGE device (position_sigma_m, from the twin's stage model).
       analysis_url: http://127.0.0.1:8003/mcp
-      stage_sigma_m: 2.9e-7
       max_drift_m_per_s: 5.0e-11
   # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
   # The twin's hidden focus error is set with its focus_offset_m / astigmatism_offset_*_m properties.
@@ -96,8 +94,8 @@ devices:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
   stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

@@ -48,6 +48,8 @@ from .pipeline import DRY_RUN_SKIPPED, Pipeline
 from .profile import PROFILES, SUMMARY_KEYS_SHOWN, InstrumentProfile, MapContext, MapSettings, Setting
 from .run_file import RunFile, job_trace_events
 
+DEFAULT_STAGE_SIGMA_M = 5e-8  # a typical TEM goniometer read back by encoders, when neither the Mapper nor the STAGE says
+
 
 
 class Mapper(JobDevice):
@@ -74,9 +76,10 @@ class Mapper(JobDevice):
     analysis_url = device_property(dtype=str, default_value="", doc="Analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
     stage_sigma_m = device_property(
         dtype=float,
-        default_value=5e-8,
-        doc="1-sigma error of the stage positions the instrument reports (readout, not where it was told to go); bounds the stitching search. "
-        "50 nm suits a typical TEM goniometer read back by encoders; set it from your stage's specification.",
+        default_value=0.0,
+        doc="1-sigma distance between where the stage lands and where it reports; bounds the stitching search. 0 (the default): "
+        "the STAGE device's position_sigma_m (a twin's STAGE reports its stage model's), else 50 nm, which suits a typical TEM "
+        "goniometer read back by encoders.",
     )
     max_drift_m_per_s = device_property(dtype=float, default_value=5e-11, doc="Most the sample drifts relative to the stage (m/s); bounds the stitching search and the fitted drift. 0: no drift model.")
 
@@ -99,6 +102,19 @@ class Mapper(JobDevice):
                 self.warn_stream(f"profile settings not read from the database ({exc.args[0].desc.strip()[:200]}); using defaults")
         return {name: setting.parse(list(stored.get(name, []))) for name, setting in declared.items()}
 
+    def _stage_sigma_m(self) -> float:
+        """stage_sigma_m when set; else the STAGE device's position_sigma_m when it knows it; else DEFAULT_STAGE_SIGMA_M."""
+        if float(self.stage_sigma_m) > 0:
+            return float(self.stage_sigma_m)
+        if self.stage_device_address:
+            try:
+                reported = float(self.proxy(self.stage_device_address, timeout_s=3.0).read_attribute("position_sigma_m").value)
+            except (tango.DevFailed, AttributeError, TypeError, ValueError):
+                reported = 0.0
+            if reported > 0:
+                return reported
+        return DEFAULT_STAGE_SIGMA_M
+
     def profile(self) -> InstrumentProfile:
         """The instrument profile named by ``instrument_profile`` (``stem`` when blank), made once."""
         name = self.instrument_profile or "stem"
@@ -107,7 +123,6 @@ class Mapper(JobDevice):
             settings = MapSettings(
                 microscope_device_address=self.microscope_device_address,
                 stage_device_address=self.stage_device_address,
-                stage_sigma_m=float(self.stage_sigma_m),
                 max_drift_m_per_s=float(self.max_drift_m_per_s),
                 stage_timeout_s=float(self.stage_timeout_s),
                 simulated=self._stack_simulated(),
@@ -119,8 +134,7 @@ class Mapper(JobDevice):
     def pipeline(self) -> Pipeline:
         """The analysis phases, over one session to ``analysis_url``."""
         if self._pipeline_ is None or self._pipeline_.url != self.analysis_url:
-            settings = self.profile().ctx.settings
-            self._pipeline_ = Pipeline(self.analysis_url, settings.stage_sigma_m, settings.max_drift_m_per_s, self.aborting, self._lock, self._save, self.warn_stream)
+            self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream)
         return self._pipeline_
 
     # ------------------------------------------------------------------
@@ -144,7 +158,7 @@ class Mapper(JobDevice):
         env = plans.PlanEnvironment(
             max_tiles=int(self.max_tiles),
             estimate_move_s=float(self.estimate_move_s),
-            stage_sigma_m=profile.ctx.settings.stage_sigma_m,
+            stage_sigma_m=self._stage_sigma_m(),
             analysis=self.pipeline().call if self.analysis_url else None,
         )
         resolved = plans.resolve(plan, profile, env)
@@ -374,7 +388,7 @@ class Mapper(JobDevice):
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired}
         if job.get("dry_run"):
             # The commands above were recorded, not sent: there is no image to read or store.
-            live_drift.measure(job, tile, None, acquired, None, profile.ctx.settings)
+            live_drift.measure(job, tile, None, acquired, None, float(self.max_drift_m_per_s))
             record["acquisition"] = DRY_RUN_SKIPPED
             if correction is not None:
                 record["drift"] = correction
@@ -382,7 +396,7 @@ class Mapper(JobDevice):
         run = self._run(job)
         images = profile.ctx.read_acquisition(image_key)
         if correction is not None:
-            correction.update(live_drift.measure(job, tile, images, acquired, run, profile.ctx.settings) or {})
+            correction.update(live_drift.measure(job, tile, images, acquired, run, float(self.max_drift_m_per_s)) or {})
         if spectrum is None and spectrum_key is not None:
             spectrum = profile.ctx.read_acquisition(spectrum_key)
         record["key"] = image_key
