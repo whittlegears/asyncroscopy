@@ -4,6 +4,7 @@ import pytest
 
 import numpy as np
 
+from asyncroscopy.agents.guidance import render_reply
 from asyncroscopy.analysis_server.frames import FrameError, frame_of, pixel_of, register, stage_of
 
 from tests.analysis_synthetic import gaussian_spots
@@ -96,7 +97,10 @@ def test_to_stage_names_the_sample_load_so_a_move_can_be_checked_first():
 
     loaded = Store({"img.h5": Node(children={"image": Node(children={"HAADF": Node(IMAGE, shape=(101, 201))})})}, {"sample_id": "grid 12", "sample_load_id": "abc"})
     placed = reply(loaded)
-    assert placed["sample_load_id"] == "abc" and placed["sample_id"] == "grid 12" and "get_sample" in placed["note"]
+    assert placed["sample_load_id"] == "abc" and placed["sample_id"] == "grid 12"
+    # Before moving there, the instrument's sample record must show the same load.
+    assert placed["next_actions"] == [{"server": "instrument", "command": "get_sample", "args": {}, "expect": {"sample_load_id": "abc"}}]
+    assert "get_sample" in render_reply("to_stage", {}, placed)["note"]
     unknown = reply(store_with(IMAGE))
     assert "sample_load_id" not in unknown and "does not record which sample load" in unknown["note"]
 
@@ -155,7 +159,9 @@ def test_find_features_on_an_image_taken_with_the_beam_blanked_says_so():
     tools = {}
     register(type("M", (), {"tool": lambda self: (lambda f: tools.setdefault(f.__name__, f))})(), store)
     reply = tools["find_features"]("dark.h5", n=3)
-    assert reply["features"] == [] and "beam blanked" in reply["hint"]
+    assert reply["features"] == [] and reply["warnings"] == [{"code": "beam_blanked", "beam_current_pa": 0}]
+    assert reply["next_actions"] == [{"server": "instrument", "command": "unblank_beam", "args": {}}]
+    assert "beam blanked" in render_reply("find_features", {}, reply)["hint"]
 
 
 def test_to_stage_refuses_a_pixel_outside_the_image_and_says_nanometres_are_already_a_stage_position():

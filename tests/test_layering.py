@@ -41,3 +41,12 @@ def test_core_imports_nothing_from_asyncroscopy():
     assert done.returncode == 0, done.stderr[-2000:]
     loaded = [m for m in json.loads(done.stdout.strip().splitlines()[-1]) if not m.startswith("asyncroscopy.core")]
     assert loaded == []
+
+
+def test_the_analysis_server_uses_only_the_lower_layers():
+    """asyncroscopy.analysis_server stores, schedules and serves pyTEMlib's algorithms with core, contracts and trace;
+    it never loads the instrument endpoint, the agents or the device layer."""
+    probe = PROBE.replace('("asyncroscopy.mcp", "asyncroscopy.agents")', '("asyncroscopy.mcp", "asyncroscopy.agents", "asyncroscopy.instruments", "asyncroscopy.jobs")')
+    done = subprocess.run([sys.executable, "-c", probe, "asyncroscopy.analysis_server"], cwd=ROOT, capture_output=True, text=True, timeout=300)
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert json.loads(done.stdout.strip().splitlines()[-1]) == []

@@ -25,10 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Literal
 
-if os.name == "nt":
-    import msvcrt
-else:
-    import fcntl
+from asyncroscopy.core.fileio import file_lock
 
 SHAPES = {
     "pin": ("x", "y"),
@@ -42,6 +39,7 @@ MAX_KIND_CHARS = 40
 MAX_LINKS = 20
 MAX_NOTES_PER_DATASET = 5000
 MAX_NAME_CHARS = 80
+LOCK_WAIT_S = 30.0  # longest an operation waits for another process holding the event file's lock
 
 
 class AnnotationError(ValueError):
@@ -113,26 +111,9 @@ class AnnotationStore:
         """This process's lock, then the file lock, then the events other processes appended."""
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path.with_name(self.path.name + ".lock"), "a+b") as lock:
-                lock.seek(0)
-                if os.name == "nt":
-                    while True:
-                        try:
-                            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
-                            break
-                        except OSError:
-                            time.sleep(0.05)
-                else:
-                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-                try:
-                    self._catch_up()
-                    yield
-                finally:
-                    lock.seek(0)
-                    if os.name == "nt":
-                        msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
-                    else:
-                        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+            with open(self.path.with_name(self.path.name + ".lock"), "a+b") as lock, file_lock(lock, time.monotonic() + LOCK_WAIT_S):
+                self._catch_up()
+                yield
 
     def _catch_up(self) -> None:
         """Read the complete lines appended since the last read. A last line without its newline (a write cut
@@ -261,16 +242,6 @@ class AnnotationStore:
             return [dict(e) for e in self._events[note_id]]
 
 
-def _caller() -> tuple[str | None, str | None]:
-    try:
-        from fastmcp.server.dependencies import get_http_headers
-
-        headers = {k.lower(): v for k, v in (get_http_headers(include_all=True) or {}).items()}
-    except Exception:
-        return None, None
-    return headers.get("x-asyncroscopy-caller") or None, headers.get("x-asyncroscopy-run") or None
-
-
 def _error(exc: AnnotationError) -> dict:
     return {"error": {"code": exc.code, "message": str(exc)}}
 
@@ -280,7 +251,9 @@ def register(mcp, store: AnnotationStore, dataset_key: Callable[[str], str | Non
     or None when there is no such dataset; ``sample_of(key)`` the sample_id and sample_load_id it recorded."""
 
     def who(reported_by: str | None) -> tuple[str | None, str | None]:
-        caller, run = _caller()
+        from .server import caller_and_run
+
+        caller, run = caller_and_run()
         return caller or (reported_by.strip() if isinstance(reported_by, str) and reported_by.strip() else None), run
 
     @mcp.tool()

@@ -1,0 +1,106 @@
+"""Build the analysis MCP server: pyTEMlib's basic tools, the map tools, pixel/stage frames, and optionally
+notes, placements and a per-call tool log."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_headers
+from fastmcp.server.middleware import Middleware, MiddlewareContext
+
+from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
+from asyncroscopy.trace.writer import ToolCallLog
+
+from .jobs import DEFAULT_MAX_WORKERS
+from .map_store import MapStore
+from .map_tools import DEFAULT_MAX_CANVAS_PIXELS, MapTools
+
+
+def caller_and_run() -> tuple[str | None, str | None]:
+    """The calling agent and its run, from the X-Asyncroscopy-Caller and X-Asyncroscopy-Run headers agents send;
+    (None, None) outside an HTTP request."""
+    try:
+        headers = {k.lower(): v for k, v in (get_http_headers(include_all=True) or {}).items()}
+    except Exception:
+        return None, None
+    return headers.get(CALLER_HEADER.lower()) or None, headers.get(RUN_HEADER.lower()) or None
+
+
+class ToolLog(Middleware):
+    """One line per tool call in a ``ToolCallLog``: tool, arguments, the calling agent and run, outcome.
+
+    The asyncroscopy instrument endpoint keeps the same kind of log, so an analysis call (score_map with
+    odd arguments, a stitch that failed) can be read back in the merged trace and matched to the agent
+    run that made it. Lines carry ``source: analysis``.
+    """
+
+    def __init__(self, path: str | Path):
+        self.log = ToolCallLog(path)
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        caller, run = caller_and_run()
+        params = context.message
+        started, began = time.time(), time.perf_counter()
+        try:
+            result = await call_next(context)
+        except Exception as exc:
+            self.log.record(params.name, dict(params.arguments or {}), started, time.perf_counter() - began, error=exc,
+                            source="analysis", caller=caller, run=run)
+            raise
+        text = " ".join(getattr(block, "text", "") for block in (getattr(result, "content", None) or []))
+        self.log.record(params.name, dict(params.arguments or {}), started, time.perf_counter() - began, result=text,
+                        source="analysis", caller=caller, run=run)
+        return result
+
+
+def create_server(
+    tiled_uri: str | None = None,
+    api_key: str | None = None,
+    name: str = "asyncroscopy-analysis",
+    include_basic: bool = True,
+    local_roots: list | None = None,
+    max_canvas_pixels: int = DEFAULT_MAX_CANVAS_PIXELS,
+    trace_path: str | Path | None = None,
+    annotations_path: str | Path | None = None,
+    placements_path: str | Path | None = None,
+    max_jobs: int = DEFAULT_MAX_WORKERS,
+) -> tuple[FastMCP, MapTools]:
+    """Build a new MCP server; returns (FastMCP app, MapTools) so callers can also use the tools directly.
+
+    ``local_roots``: directories whose HDF5 files may be used as local runs and maps (None: no local
+    files, only Tiled keys). ``max_canvas_pixels``: largest level-0 map ``assemble_map`` will stitch.
+    ``trace_path``: a JSON-lines file that gets one line per tool call. ``annotations_path``: the
+    JSON-lines event file of the notes people and agents put on datasets (annotate, list_annotations,
+    ...); without it the note tools are not offered. ``placements_path``: the JSON-lines log of finer
+    images placed on coarser ones (place_image, list_placements); without it those tools are not
+    offered. ``max_jobs``: stitching and scoring jobs run at once; more wait as "queued".
+
+    Nothing is written anywhere this call is not given: the command line (``python -m
+    asyncroscopy.analysis_server``) puts the files under the outputs folder of
+    ``asyncroscopy.settings``. Every call returns a fresh FastMCP instance, so calling it twice never
+    registers a tool twice. The basic tools are upstream pyTEMlib's ``pyTEMlib.mcp_server``, mounted
+    unchanged.
+    """
+    mcp = FastMCP(name)
+    if trace_path:
+        mcp.add_middleware(ToolLog(trace_path))
+    if include_basic:
+        from pyTEMlib import mcp_server as basic_tools
+
+        mcp.mount(basic_tools.mcp)
+    tools = MapTools(MapStore(tiled_uri, api_key, local_roots=local_roots), max_canvas_pixels=max_canvas_pixels, max_jobs=max_jobs)
+    tools.register(mcp)
+    from .frames import register as register_frames
+
+    register_frames(mcp, tools.store)
+    if annotations_path:
+        from .annotation_store import AnnotationStore, register as register_notes
+
+        register_notes(mcp, AnnotationStore(annotations_path), tools.store.dataset_key, tools.store.sample_of)
+    if placements_path:
+        from .placement_tools import PlacementLog, register as register_placements
+
+        register_placements(mcp, tools.store, PlacementLog(placements_path))
+    return mcp, tools

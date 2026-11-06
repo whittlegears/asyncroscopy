@@ -10,7 +10,8 @@ from fastmcp import Client
 
 jsonschema = pytest.importorskip("jsonschema")  # the job replies are validated against the envelope schema
 
-from asyncroscopy.analysis_server import ENVELOPE_SCHEMA_PATH, create_server
+from asyncroscopy.analysis_server import create_server
+from asyncroscopy.contracts import load as load_schema
 from pyTEMlib.image_tools import BaselineScorer
 from tests.analysis_synthetic import PIXEL, TILE, make_tiles
 
@@ -72,7 +73,7 @@ def client_factory():
 
 
 def envelope(name):
-    schema = json.loads(ENVELOPE_SCHEMA_PATH.read_text())
+    schema = load_schema("envelope")
     return {"$ref": f"#/$defs/{name}", "$defs": schema["$defs"]}
 
 
@@ -214,12 +215,9 @@ def test_assemble_check_reads_no_images(client, run_file, monkeypatch):
     assert tiles["total"] == 9 and tiles["tiles"][0]["shape"] == [TILE, TILE]
 
 
-def test_server_object_exported_and_create_server_repeatable():
-    import asyncroscopy.analysis_server as package
-    from asyncroscopy.analysis_server import mcp
+def test_create_server_is_repeatable_and_mounts_pytemlibs_tools():
     from pyTEMlib import mcp_server as basic_tools
 
-    assert mcp is package.default_server()[0]
     first, first_tools = create_server()
     second, _ = create_server()
     assert first is not second
@@ -337,14 +335,23 @@ def test_cli_defaults_keep_the_asyncroscopy_launch_command(monkeypatch, tmp_path
         seen["args"], seen["kwargs"] = args, kwargs
         raise SystemExit(0)
 
+    outputs = tmp_path / "out"
+    monkeypatch.setenv("ASYNCROSCOPY_OUTPUTS", str(outputs))
+    monkeypatch.delenv("ASYNCROSCOPY_TILED_API_KEY", raising=False)
+    monkeypatch.delenv("TILED_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "create_server", fake_create_server)
+    files = {"trace_path": str(outputs / "trace" / "analysis.jsonl"), "annotations_path": str(outputs / "annotations" / "notes.jsonl"),
+             "placements_path": str(outputs / "placements" / "placements.jsonl")}
     with pytest.raises(SystemExit):
         cli.main(["--tiled", "http://localhost:9091", "--api-key", "secret", "--port", "8003"])
     assert seen["args"] == ("http://localhost:9091", "secret")
-    assert seen["kwargs"] == {"local_roots": None, "max_canvas_pixels": 400_000_000_000, "trace_path": "outputs/trace/analysis.jsonl", "annotations_path": "outputs/annotations/notes.jsonl", "placements_path": "outputs/placements/placements.jsonl"}
+    assert seen["kwargs"] == {"local_roots": [str(tmp_path)], "max_canvas_pixels": 400_000_000_000, "max_jobs": 2, **files}
+    monkeypatch.setenv("ASYNCROSCOPY_TILED_API_KEY", "from-env")
     with pytest.raises(SystemExit):
-        cli.main(["--local-root", str(tmp_path), "--local-root", "data", "--max-canvas-megapixels", "50"])
-    assert seen["kwargs"] == {"local_roots": [str(tmp_path), "data"], "max_canvas_pixels": 50_000_000, "trace_path": "outputs/trace/analysis.jsonl", "annotations_path": "outputs/annotations/notes.jsonl", "placements_path": "outputs/placements/placements.jsonl"}
+        cli.main(["--local-root", str(tmp_path), "--local-root", "data", "--max-canvas-megapixels", "50", "--max-jobs", "3", "--trace", ""])
+    assert seen["args"] == (None, "from-env")
+    assert seen["kwargs"] == {"local_roots": [str(tmp_path), "data"], "max_canvas_pixels": 50_000_000, "max_jobs": 3, **files, "trace_path": None}
 
 
 def test_status_can_wait_for_the_job(client, run_file):
@@ -354,7 +361,9 @@ def test_status_can_wait_for_the_job(client, run_file):
     assert status["state"] == "done", status
     jsonschema.validate(status, envelope("status_response"))
     unknown = call(c, "analysis_job_status", job_id="nope", wait_s=1)
-    assert unknown["error"]["code"] == "unknown_job" and "Mapper_start" in unknown["error"]["message"]
+    # A job id this server does not know may be an instrument job: the instrument's wait_for_job waits on both.
+    assert unknown["error"]["code"] == "unknown_job"
+    assert unknown["next_actions"] == [{"server": "instrument", "tool": "wait_for_job", "args": {"job_id": "nope"}}]
 
 
 def test_map_info_names_the_runs_stitched_map_and_counts_tiles(client, run_file):
@@ -413,8 +422,10 @@ def test_every_tool_call_is_traced_with_its_arguments_and_outcome(tmp_path, run_
     call(c, "list_scorers")
     lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     assert [r["tool"] for r in lines] == ["list_pois", "list_scorers"]
-    assert '"kind": "candidate"' in lines[0]["arguments"] and lines[0]["ok"] is False and lines[0]["error"]
-    assert lines[1]["ok"] is True and lines[1]["source"] == "analysis" and "caller" in lines[1] and "run" in lines[1]
+    assert lines[0]["arguments"] == {"map": "no_such_map", "kind": "candidate"} and lines[0]["ok"] is False and lines[0]["error"]
+    assert lines[1]["ok"] is True and lines[1]["source"] == "analysis" and lines[1]["result"]
+    # Lines are numbered like every asyncroscopy trace file, so the merged trace reads them in order.
+    assert [r["seq"] for r in lines] == [1, 2] and all("written" in r and "duration_s" in r for r in lines)
     loop.run_until_complete(c.__aexit__(None, None, None))
 
 

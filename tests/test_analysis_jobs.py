@@ -28,3 +28,38 @@ def test_finished_jobs_are_forgotten_after_a_while(monkeypatch):
     monkeypatch.setattr(jobs, "KEEP_FINISHED_S", -1.0)
     r.reserve({"task": "stitch", "run": "run_c.h5"})
     assert r.status(started["job_id"])["error"]["code"] == "unknown_job"
+
+
+def test_jobs_beyond_the_worker_pool_wait_queued_and_a_queued_job_can_be_aborted():
+    import threading
+
+    release = threading.Event()
+    r = JobRunner(max_workers=1)
+    r.register("hold", lambda plan: {"steps": 1}, lambda plan, progress: (release.wait(10), {"result_keys": {}})[1])
+    first = r.start(r.reserve({"task": "hold"})["reservation_id"])
+    second = r.start(r.reserve({"task": "hold"})["reservation_id"])
+    third = r.start(r.reserve({"task": "hold"})["reservation_id"])
+    try:
+        assert second["state"] == "queued" and r.status(second["job_id"])["state"] == "queued"
+        assert r.abort(third["job_id"])["state"] == "aborted"  # never ran
+    finally:
+        release.set()
+    assert r.wait(first["job_id"], timeout=10)["state"] == "done"
+    assert r.wait(second["job_id"], timeout=10)["state"] == "done"
+    assert r.status(third["job_id"])["state"] == "aborted"
+    assert r.max_workers == 1 and r._pool._max_workers == 1  # one thread, however many jobs were started
+
+
+def test_an_unknown_job_and_a_busy_resource_name_the_next_call_instead_of_prose():
+    from asyncroscopy.agents.guidance import render_reply
+
+    r = runner()
+    unknown = r.status("a1b2c3")
+    assert unknown["error"] == {"code": "unknown_job", "message": "no analysis job 'a1b2c3'"}
+    assert unknown["next_actions"] == [{"server": "instrument", "tool": "wait_for_job", "args": {"job_id": "a1b2c3"}}]
+    assert "Mapper_job_status" in render_reply("analysis_job_status", {}, unknown)["note"]
+    held = r.reserve({"task": "stitch", "run": "run_d.h5"})
+    busy = r.reserve({"task": "stitch", "run": "run_d.h5"})
+    assert busy["error"]["code"] == "busy" and busy["reservation_id"] == held["reservation_id"]
+    assert busy["next_actions"] == [{"tool": "analysis_job_status", "args": {"job_id": held["reservation_id"]}}]
+    assert "instead of starting another" in render_reply("assemble_map", {}, busy)["note"]

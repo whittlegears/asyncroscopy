@@ -33,17 +33,24 @@ its map. The store is built for a million points: EDS points are kept in a
 grid of spatial cells (each with its count), so a query for a stage box reads
 only the cells it touches and a count reads no points; the few other points
 (scored regions, high magnification images, notes) are kept together as
-"highlights". Adding points costs the points added; replacing them builds a
-new layer and switches to it in one metadata update, and the replaced layer is
-kept and listed in the store's ``layers``. Maps stitched before point stores
-existed kept their points inside the map; those are read from there until the
-run's store is made, which copies them in once (``migrated_from``).
+"highlights". Points are appended in batches; a local batch is one string
+dataset of JSON, so its size has no limit (an HDF5 attribute's is 64 KB).
+Adding points costs the points added. Replacing the highlights (a scorer's
+tagged regions scored again) writes a new highlights group and switches to it
+in one metadata update, without touching the EDS cells; replacing every point
+builds a new layer the same way. Replaced groups and layers are kept and
+listed in the store's ``replaced_highlights`` and ``layers``. Maps stitched
+before point stores existed kept their points inside the map; those are read
+from there until the run's store is made, which copies them in once
+(``migrated_from``).
+
+Each map, point store and local file has its own lock (``_Locks``), so work on
+one map never waits for another.
 
 The same functions work against a Tiled server (keys) or the filesystem
 (paths). Local paths are accepted only under the store's ``local_roots``
-(default: the working directory), so a client cannot read, or write a map
-next to, an arbitrary HDF5 file on the host. This module never imports
-asyncroscopy.
+(none unless given), so a client cannot read, or write a map next to, an
+arbitrary HDF5 file on the host.
 """
 
 from __future__ import annotations
@@ -156,10 +163,33 @@ class LocalPathRefused(ValueError):
     """A local file path outside the store's ``local_roots``."""
 
 
-# Serialises changes to a map's points of interest within this process, and every open of a
-# local map file: HDF5 refuses a file opened for writing in one thread while another has it
-# open. Several server processes changing the same map's points are not covered.
-_POI_LOCK = threading.RLock()
+class _Locks:
+    """One re-entrant lock per local file or Tiled key, made on first use.
+
+    A map's (or point store's) lock serialises changes to its points of interest within this
+    process, and every open of a local map file: HDF5 refuses a file opened for writing in one
+    thread while another has it open. Work on different maps never waits on each other.
+    Several server processes changing the same map's points are not covered.
+    """
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[str, threading.RLock] = {}
+
+    def __call__(self, name: str) -> threading.RLock:
+        with self._guard:
+            lock = self._locks.get(name)
+            if lock is None:
+                lock = self._locks[name] = threading.RLock()
+            return lock
+
+
+# Local files are locked by resolved path in every store of the process (two stores may open one file).
+_FILE_LOCKS = _Locks()
+
+
+def _file_lock(path: str | os.PathLike) -> threading.RLock:
+    return _FILE_LOCKS(str(Path(path).resolve()))
 
 
 def _decode(value: Any) -> Any:
@@ -175,6 +205,15 @@ def _decode(value: Any) -> Any:
     if isinstance(value, np.generic):
         return value.item()
     return value
+
+
+def _batch_points(item) -> list[dict]:
+    """The points of one stored batch: a string dataset of JSON, or (stores written before) a group whose
+    ``pois`` attribute holds the JSON."""
+    if isinstance(item, h5py.Dataset):
+        value = item[()]
+        return json.loads(value.decode("utf-8") if isinstance(value, bytes) else value)
+    return json.loads(item.attrs["pois"])
 
 
 def _layout1_info(run: str, plan: dict, names: list[str], shapes: list, attrs_list: list[dict]) -> RunInfo:
@@ -328,7 +367,7 @@ class _LocalMapWriter:
         return str(self.tmp)
 
     def swap(self) -> str:
-        with _POI_LOCK:
+        with _file_lock(self.path):
             os.replace(self.tmp, self.path)
         return str(self.path)
 
@@ -406,13 +445,20 @@ class MapStore:
 
     def __init__(self, tiled_uri: str | None = None, api_key: str | None = None, local_roots: list[str | os.PathLike] | None = None):
         """``local_roots``: directories whose HDF5 files (and subdirectories') may be read and written as
-        local paths; default the current working directory. Pass ``[]`` to accept no local paths."""
+        local paths; None or ``[]`` accepts no local paths. ``api_key``: the Tiled API key (the command line
+        reads it from the environment when it is not given)."""
         self.tiled_uri = tiled_uri
-        self.api_key = api_key or os.environ.get("ASYNCROSCOPY_TILED_API_KEY") or os.environ.get("TILED_API_KEY")
-        self.local_roots = [Path(r).resolve() for r in ([Path.cwd()] if local_roots is None else local_roots)]
+        self.api_key = api_key
+        self.local_roots = [Path(r).resolve() for r in (local_roots or [])]
         self._client = None
+        self._tiled_locks = _Locks()
 
     # -------------------------------------------------------------- helpers
+    def _lock(self, key: str) -> threading.RLock:
+        """The lock of one map, point store or local file (see ``_Locks``)."""
+        if str(key).lower().endswith((".h5", ".hdf5", ".tmp")):
+            return _file_lock(key)
+        return self._tiled_locks(str(key))
     @property
     def client(self):
         if self._client is None:
@@ -484,7 +530,7 @@ class MapStore:
                 if path.name != f"{name}.h5" and not path.name.startswith(f"{name}_"):
                     continue
                 try:
-                    with _POI_LOCK, h5py.File(path, "r") as h5:
+                    with _file_lock(path), h5py.File(path, "r") as h5:
                         meta = json.loads(h5.attrs["metadata"])
                 except (OSError, KeyError, ValueError):
                     continue
@@ -596,8 +642,9 @@ class MapStore:
                 ) from exc
             raise
         try:
-            with _POI_LOCK:
-                key, store = self._ensure_store(run, self.is_local(run), self._grid("", metadata), previous)
+            local = self.is_local(run)
+            with self._lock(self.points_key(run, local)):
+                key, store = self._ensure_store(run, local, self._grid("", metadata), previous)
                 if eds_points:
                     self._add_to(key, store, list(eds_points), dedupe=True)
         except Exception:
@@ -621,7 +668,7 @@ class MapStore:
     def _own_sample(self, key: str) -> dict:
         try:
             if self._local(key):
-                with _POI_LOCK, h5py.File(key, "r") as h5:
+                with self._lock(key), h5py.File(key, "r") as h5:
                     meta = {k: h5.attrs[k] for k in h5.attrs}
             else:
                 meta = dict(self.client[key].metadata)
@@ -634,7 +681,7 @@ class MapStore:
 
     def map_metadata(self, map_key: str) -> dict:
         if self.is_local(map_key) or map_key.endswith(".tmp"):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
                 meta = json.loads(h5.attrs["metadata"]) if "metadata" in h5.attrs else {}
         else:
             meta = dict(self.client[map_key].metadata)
@@ -677,15 +724,15 @@ class MapStore:
         if key.endswith(".h5"):
             if not Path(key).exists():
                 return {}
-            with _POI_LOCK, h5py.File(key, "r") as h5:
+            with self._lock(key), h5py.File(key, "r") as h5:
                 return json.loads(h5.attrs["metadata"]) if "metadata" in h5.attrs else {}
         if key not in self.client:
             return {}
         return {k: _decode(v) for k, v in dict(self.client[key].metadata).items()}
 
     def _write_store_meta(self, key: str, meta: dict) -> None:
-        if key.endswith(".h5"):
-            with h5py.File(key, "a") as h5:
+        if self._local(key):
+            with self._lock(key), h5py.File(key, "a") as h5:
                 h5.attrs["metadata"] = json.dumps(meta)
         else:
             _replace_metadata(self.client[key], meta)
@@ -708,19 +755,18 @@ class MapStore:
 
     def _ensure_points(self, map_key: str, legacy: str | None = "") -> tuple[str, dict]:
         """The run's point store for this map, made on first use (see ``_ensure_store``; ``legacy`` defaults to this
-        map). A map with no run keeps its own points."""
-        with _POI_LOCK:
-            meta = self.map_metadata(map_key)
-            if not meta.get("run"):
-                return map_key, meta
-            return self._ensure_store(str(meta["run"]), self._local(map_key), self._grid(map_key, meta), map_key if legacy == "" else legacy)
+        map). A map with no run keeps its own points. Call with the lock of ``_points_target(map_key)`` held."""
+        meta = self.map_metadata(map_key)
+        if not meta.get("run"):
+            return map_key, meta
+        return self._ensure_store(str(meta["run"]), self._local(map_key), self._grid(map_key, meta), map_key if legacy == "" else legacy)
 
     def _ensure_store(self, run: str, local: bool, grid: dict, legacy: str | None) -> tuple[str, dict]:
         """``run``'s point store, made on first use with ``grid``. A new store copies in the points ``legacy`` kept
         inside itself before point stores existed, into a fresh layer, and is marked ready only when the copy is
         complete: until then readers keep reading the legacy map, and the next call copies again."""
-        with _POI_LOCK:
-            key = self.points_key(run, local)
+        key = self.points_key(run, local)
+        with self._lock(key):
             found = self._store_meta(key)
             self._check_store_run(key, found, run)
             if found.get("ready"):
@@ -751,13 +797,13 @@ class MapStore:
 
     def read_level(self, map_key: str, level: int, rows: slice = slice(None), cols: slice = slice(None)) -> np.ndarray:
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
                 return h5[f"level_{level}"][rows, cols]
         return np.asarray(self.client[map_key][f"level_{level}"][rows, cols])
 
     def level_shape(self, map_key: str, level: int) -> tuple[int, int]:
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
                 return tuple(h5[f"level_{level}"].shape)
         return tuple(self.client[map_key][f"level_{level}"].shape)
 
@@ -784,6 +830,24 @@ class MapStore:
     def _layer_name(self, meta: dict) -> str:
         return meta.get("poi_layer", "poi")
 
+    @staticmethod
+    def _highlights_name(meta: dict) -> str:
+        """The current highlights group of the layer: ``highlights`` until ``update_highlights`` replaced it."""
+        return str(meta.get("highlights") or HIGHLIGHTS)
+
+    def _group_of(self, grid: dict, meta: dict, poi: dict) -> str:
+        """The group a point is kept in: its spatial cell for an EDS point, else the highlights."""
+        if poi.get("kind") in CELL_KINDS:
+            return f"c_{'_'.join(map(str, self._cell_of(grid, poi['x_m'], poi['y_m'])))}"
+        return self._highlights_name(meta)
+
+    def _points_target(self, map_key: str) -> str:
+        """The key a map's points are kept under (its run's point store, or the map itself when it has no run), so
+        a change can take that key's lock before it reads them."""
+        meta = self.map_metadata(map_key)
+        run = meta.get("run")
+        return self.points_key(str(run), self._local(map_key)) if run else map_key
+
     def list_pois(self, map_key: str, kind: str | None = None, box_m: list[float] | None = None, limit: int | None = None) -> list[dict]:
         """Points of interest, optionally of one ``kind`` and inside a stage box [x_min, x_max, y_min, y_max].
 
@@ -802,7 +866,7 @@ class MapStore:
             i1, j1 = self._cell_of(grid, x1, y1)
             cells = {(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)}
         if kind is None or kind not in CELL_KINDS:
-            out += self._read_group(map_key, meta, HIGHLIGHTS)
+            out += self._read_group(map_key, meta, self._highlights_name(meta))
         if kind is None or kind in CELL_KINDS:
             for name in self._cell_names(map_key, meta) if cells is None else [f"c_{i}_{j}" for i, j in sorted(cells)]:
                 out += self._read_group(map_key, meta, name)
@@ -818,7 +882,7 @@ class MapStore:
     def poi_kinds(self, map_key: str) -> list[str]:
         """The kinds of point the map holds, from its highlights and stored cell counts (no cell is read)."""
         key, meta = self._points_at(map_key)
-        found = {str(p.get("kind")) for p in (_decode(meta.get("pois", [])) or []) + self._read_group(key, meta, HIGHLIGHTS)}
+        found = {str(p.get("kind")) for p in (_decode(meta.get("pois", [])) or []) + self._read_group(key, meta, self._highlights_name(meta))}
         if any(n > 0 for n in self.poi_counts(map_key)["cells"].values()):
             found |= CELL_KINDS
         return sorted(found)
@@ -827,25 +891,15 @@ class MapStore:
         """Points per cell and in total, from stored counts (no point is read): {"total", "highlights", "cells": {"i_j": n}, "grid"}."""
         map_key, meta = self._points_at(map_key)
         layer = self._layer_name(meta)
-        cells: dict[str, int] = {}
-        highlights = 0
+        current = self._highlights_name(meta)
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
-                if layer in h5:
-                    for name, group in h5[layer].items():
-                        if name == HIGHLIGHTS:
-                            highlights = int(group.attrs.get("count", 0))
-                        else:
-                            cells[name[2:]] = int(group.attrs.get("count", 0))
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
+                children = {name: int(group.attrs.get("count", 0)) for name, group in h5[layer].items()} if layer in h5 else {}
         else:
             node = self.client[map_key]
-            if layer in node:
-                for name, child in node[layer].items():
-                    count = int(_decode(child.metadata.get("count", 0)) or 0)
-                    if name == HIGHLIGHTS:
-                        highlights = count
-                    else:
-                        cells[name[2:]] = count
+            children = {name: int(_decode(child.metadata.get("count", 0)) or 0) for name, child in node[layer].items()} if layer in node else {}
+        highlights = children.get(current, 0)
+        cells = {name[2:]: count for name, count in children.items() if name.startswith("c_")}
         legacy = len(_decode(meta.get("pois", [])) or [])
         return {"total": legacy + highlights + sum(cells.values()), "highlights": legacy + highlights, "cells": cells, "grid": self._grid(map_key, meta)}
 
@@ -855,18 +909,19 @@ class MapStore:
     def _cell_names(self, map_key: str, meta: dict) -> list[str]:
         layer = self._layer_name(meta)
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
-                return sorted(n for n in h5[layer] if n != HIGHLIGHTS) if layer in h5 else []
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
+                return sorted(n for n in h5[layer] if n.startswith("c_")) if layer in h5 else []
         node = self.client[map_key]
-        return sorted(n for n in node[layer]) if layer in node else []
+        return sorted(n for n in node[layer] if n.startswith("c_")) if layer in node else []
 
     def _read_group(self, map_key: str, meta: dict, name: str) -> list[dict]:
         layer = self._layer_name(meta)
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
                 if layer not in h5 or name not in h5[layer]:
                     return []
-                return [p for batch in sorted(h5[layer][name]) for p in json.loads(h5[layer][name][batch].attrs["pois"])]
+                group = h5[layer][name]
+                return [p for batch in sorted(group) for p in _batch_points(group[batch])]
         node = self.client[map_key]
         if layer not in node or name not in node[layer]:
             return []
@@ -881,38 +936,42 @@ class MapStore:
         new = list(new)
         if not new:
             return new
-        with _POI_LOCK:
+        with self._lock(self._points_target(map_key)):
             map_key, meta = self._ensure_points(map_key)
             return self._add_to(map_key, meta, new, dedupe)
 
     def _add_to(self, map_key: str, meta: dict, new: list[dict], dedupe: bool) -> list[dict]:
+        """Append ``new`` to the points kept at ``map_key``; call with its lock held."""
         grid = self._grid(map_key, meta)
+        current = self._highlights_name(meta)
         groups: dict[str, list[dict]] = {}
         for p in new:
-            name = f"c_{'_'.join(map(str, self._cell_of(grid, p['x_m'], p['y_m'])))}" if p.get("kind") in CELL_KINDS else HIGHLIGHTS
-            groups.setdefault(name, []).append(p)
+            groups.setdefault(self._group_of(grid, meta, p), []).append(p)
         stored: list[dict] = []
-        with _POI_LOCK:
-            seen: set = set()
-            if dedupe:  # a point whose position moved may now fall in another cell: look for its id in all of them
-                cells = any(name != HIGHLIGHTS for name in groups)
-                names = ([HIGHLIGHTS] if HIGHLIGHTS in groups else []) + (self._cell_names(map_key, meta) if cells else [])
-                seen = {p.get("id") for name in names for p in self._read_group(map_key, meta, name)}
-            for name, points in groups.items():
-                if dedupe:
-                    points = [p for p in points if p.get("id") not in seen]
-                if points:
-                    self._append(map_key, meta, name, points)
-                    stored += points
+        seen: set = set()
+        if dedupe:  # a point whose position moved may now fall in another cell: look for its id in all of them
+            cells = any(name != current for name in groups)
+            names = ([current] if current in groups else []) + (self._cell_names(map_key, meta) if cells else [])
+            seen = {p.get("id") for name in names for p in self._read_group(map_key, meta, name)}
+        for name, points in groups.items():
+            if dedupe:
+                points = [p for p in points if p.get("id") not in seen]
+            if points:
+                self._append(map_key, meta, name, points)
+                stored += points
         return stored
 
     def _append(self, map_key: str, meta: dict, name: str, points: list[dict]) -> None:
+        """One batch of points in group ``name`` of the current layer (both made when missing). A local batch is
+        a UTF-8 string dataset holding the points as JSON, so a batch of any size fits (an HDF5 attribute holds
+        at most 64 KB)."""
         layer = self._layer_name(meta)
         batch = f"b_{time.time_ns():020d}_{uuid.uuid4().hex[:6]}"
         if self._local(map_key):
-            with h5py.File(map_key, "a") as h5:
+            with self._lock(map_key), h5py.File(map_key, "a") as h5:
                 group = h5.require_group(layer).require_group(name)
-                group.create_group(batch).attrs["pois"] = json.dumps(points)
+                if points:
+                    group.create_dataset(batch, data=json.dumps(points), dtype=h5py.string_dtype("utf-8"))
                 group.attrs["count"] = int(group.attrs.get("count", 0)) + len(points)
             return
         node = self.client[map_key]
@@ -921,44 +980,78 @@ class MapStore:
         layer_node = node[layer]
         if name not in layer_node:
             layer_node.create_container(name, metadata={"count": 0})
+        if not points:
+            return
         group = layer_node[name]
         group.create_container(batch, metadata={"pois": points})
         _replace_metadata(group, {"count": int(_decode(group.metadata.get("count", 0)) or 0) + len(points)})
 
     def update_pois(self, map_key: str, change: Callable[[list[dict]], list[dict]]) -> list[dict]:
-        """Replace the run's points with ``change(current)``.
+        """Replace every one of the run's points with ``change(current)``.
 
-        A new layer is built beside the current one and the store's metadata is switched to it in
-        one update, so readers see either all the old points or all the new ones. The old layer is
-        kept and listed in the store's ``layers`` with the time it was replaced.
+        This reads and rewrites every point, EDS cells included; to change only the highlights (scored
+        regions, notes) use ``update_highlights``. A new layer is built beside the current one and the
+        store's metadata is switched to it in one update, so readers see either all the old points or all
+        the new ones. The old layer is kept and listed in the store's ``layers`` with the time it was replaced.
         """
-        with _POI_LOCK:
+        with self._lock(self._points_target(map_key)):
             map_key, meta = self._ensure_points(map_key)
             pois = change(self._list_in(map_key, meta))
             old = self._layer_name(meta)
             replaced = [{"layer": old, "replaced_at": time.time()}] if self._has_layer(map_key, old) else []
             staged = {**meta, "poi_layer": f"poi_{uuid.uuid4().hex[:8]}", "layers": list(_decode(meta.get("layers")) or []) + replaced}
-            staged.pop("pois", None)
+            for key in ("pois", "highlights", "replaced_highlights"):  # the new layer's highlights are its "highlights" group
+                staged.pop(key, None)
             self.add_pois_to_layer(map_key, staged, pois)
-            if self._local(map_key):
-                with h5py.File(map_key, "a") as h5:
-                    h5.attrs["metadata"] = json.dumps(staged)
-            else:
-                _replace_metadata(self.client[map_key], staged)
+            self._write_store_meta(map_key, staged)
         return pois
+
+    def update_highlights(self, map_key: str, change: Callable[[list[dict]], list[dict]]) -> list[dict]:
+        """Replace the run's highlights (every point that is not an EDS point) with ``change(current)``; the EDS
+        cells are neither read nor rewritten. Returns the new highlights.
+
+        The new highlights are written to a new group of the current layer and the store's metadata is
+        switched to it in one update, so readers see the old highlights or the new ones, never a mix. The
+        replaced group is kept and listed in ``replaced_highlights``.
+        """
+        with self._lock(self._points_target(map_key)):
+            map_key, meta = self._ensure_points(map_key)
+            if _decode(meta.get("pois")):  # a map from before point layers keeps its points inline: rewrite them all
+                kept = self.update_pois(map_key, lambda current: [p for p in current if p.get("kind") in CELL_KINDS]
+                                        + list(change([p for p in current if p.get("kind") not in CELL_KINDS])))
+                return [p for p in kept if p.get("kind") not in CELL_KINDS]
+            old = self._highlights_name(meta)
+            new = list(change(self._read_group(map_key, meta, old)))
+            wrong = sorted({str(p.get("kind")) for p in new if p.get("kind") in CELL_KINDS})
+            if wrong:
+                raise ValueError(f"update_highlights cannot add points of kind {wrong}: they are kept in the spatial cells")
+            name = f"{HIGHLIGHTS}_{uuid.uuid4().hex[:8]}"
+            self._append(map_key, meta, name, new)
+            replaced = list(_decode(meta.get("replaced_highlights")) or [])
+            if self._has_group(map_key, meta, old):
+                replaced.append({"group": old, "replaced_at": time.time()})
+            self._write_store_meta(map_key, {**meta, "highlights": name, "replaced_highlights": replaced})
+        return new
 
     def _has_layer(self, map_key: str, layer: str) -> bool:
         if self._local(map_key):
-            with _POI_LOCK, h5py.File(map_key, "r") as h5:
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
                 return layer in h5
         return layer in self.client[map_key]
+
+    def _has_group(self, map_key: str, meta: dict, name: str) -> bool:
+        layer = self._layer_name(meta)
+        if self._local(map_key):
+            with self._lock(map_key), h5py.File(map_key, "r") as h5:
+                return layer in h5 and name in h5[layer]
+        node = self.client[map_key]
+        return layer in node and name in node[layer]
 
     def add_pois_to_layer(self, map_key: str, meta: dict, pois: list[dict]) -> None:
         grid = self._grid(map_key, meta)
         groups: dict[str, list[dict]] = {}
         for p in pois:
-            name = f"c_{'_'.join(map(str, self._cell_of(grid, p['x_m'], p['y_m'])))}" if p.get("kind") in CELL_KINDS else HIGHLIGHTS
-            groups.setdefault(name, []).append(p)
+            groups.setdefault(self._group_of(grid, meta, p), []).append(p)
         if not groups and not self._local(map_key):
             node = self.client[map_key]
             node.create_container(meta["poi_layer"], metadata={"kind": "poi_layer", "grid": grid})
