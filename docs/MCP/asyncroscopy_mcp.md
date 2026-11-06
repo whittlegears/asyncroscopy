@@ -35,11 +35,31 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 1. Connects to the Tango database.
 2. Lists exported devices.
 3. Skips blocked Tango classes.
-4. Queries each device's commands.
+4. Queries each device's commands and reads its `action_hints` declarations.
 5. Skips blocked commands.
-6. Registers the remaining commands as FastMCP tools.
-7. Registers native helper tools such as `list_devices`, `list_data` and
-   `view_data`.
+6. Builds one `ToolDescriptor` per command (`asyncroscopy/mcp/descriptors.py`): role, risk,
+   acts or observes, operator-only, routine in auto mode, stop. The MCP config's
+   `safety.risk` comes first, then what the device declares, then the name rules; the
+   commands that fell back to the rules are printed as `[safety]` lines.
+7. Registers the remaining commands as FastMCP tools. A call runs through an ordered list
+   of interceptors: the preview, logging and the trace, the job checks, the approval gate,
+   job stamping, and the token subject.
+8. Registers the native tools of its components (`asyncroscopy/mcp/components/`).
+
+The approval decision is one function, `asyncroscopy.safety.decide.decide`, used by the gate,
+`find_tools`, `endpoint_info` and the Approvals device. The commands auto mode runs without a
+person come from `asyncroscopy/safety/profiles/auto_routine.yaml` (by device kind) or
+`mcp.safety.auto_routine`, or a device's `routine` declaration.
+
+## Replies carry facts
+
+Tool replies say what is true and what to call next; they do not carry instructions for a
+model. A job still running when a wait ends has `next_actions`
+(`[{"tool": "wait_for_job", "args": {"job_id": ...}}]`); a finished job has
+`warnings: [{"code": "finished"}]`; an aborted job has `resume_with` (the `run_job` call that
+continues it); an acquisition taken with the beam blanked fails with a JSON error (code
+`beam_blanked`) whose `next_actions` retake it. The agent graphs turn these into sentences
+for a small model (`asyncroscopy/agents/guidance.py`); other clients read the fields.
 
 ## Jobs, waits and skills: one tool per step
 
@@ -81,7 +101,8 @@ tool for each step of a job:
   and the goal checker and benchmarks read the risks. `agent_tools` lists the
   tool-name globs to give a model (for this endpoint and its analysis server),
   computed by the same rules the general agent uses
-  (`asyncroscopy/mcp/agent_tools.py`): the curated STEM set on a STEM, else
+  (`asyncroscopy/mcp/agent_tools.py`, with the lists of the agent profile
+  `asyncroscopy/agents/profiles/default.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
   every tool but State/Status; never `endpoint_info` or `list_skills`. Other
   harnesses (SciAgentGUI) give the model only these.
 - `action_space()`: for agent programs, not given to models: every tool with
@@ -103,7 +124,8 @@ administration, `Approvals.request_status` and `list_pending`, and
 `Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
 (`configs/mcp_operator.yaml`) keeps them. The Approvals commands that decide
 or file requests are never offered on an agent endpoint whatever the config
-says (`OPERATOR_ONLY` in `asyncroscopy/safety/policy.py`).
+says: the Approvals device declares them operator-only, and `OPERATOR_ONLY` in
+`asyncroscopy/safety/policy.py` lists them too.
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
