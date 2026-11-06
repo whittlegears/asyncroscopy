@@ -38,10 +38,14 @@ Before you trust a workflow that passes on the twin, know where the twin is simp
 - **Stage z, alpha and beta don't change the image.** They are tracked, recorded in ground truth and checked against the STAGE limits, but focus responds only to `set_defocus` and the specimen height gradient (`height_gradient_x/y`). A z-based autofocus will see a flat focus metric on the twin.
 - **The support film never ends.** Far from the particles the twin shows clean carbon. There are no grid bars, holes or sample edges, so nothing tells an agent it has left the sample.
 - **Particles are analytic ellipsoids**, not real specimen structure. Contrast is a mass-thickness model, not multislice.
-- **Inputs are limited to plausible values.** `set_fov` outside `min_fov`..`max_fov` (1 nm to 100 um), `|defocus|` above `max_defocus` (10 um), non-finite numbers and stage moves outside the STAGE limits are refused with an error. Your instrument's limits may differ, so set these properties to match it.
+- **Inputs are limited to plausible values.** `set_fov` outside `min_fov`..`max_fov` (1 nm to 100 um), `|defocus|` above `max_defocus` (10 um), a stigmator component above `max_stigmator` (1 um), non-finite numbers and stage moves outside the STAGE limits are refused with an error. The `ElectronMicroscope` base checks these for every backend, so AutoScript refuses the same values. Your instrument's limits may differ, so set these properties to match it.
 - **`scan_region` is `[left, top, width, height]`** in fractions of the field, as on the SCAN device and in AutoScript.
 
 Rendering time on a laptop (GTX-class CPU, no GPU needed): about 30 ms for a 512x512 survey tile, about 0.7 s for the first 512x512 atomic-resolution tile of a particle and 0.1 s after that. `tests/test_twin_render_perf.py` checks this.
+
+## The stage device
+
+Every twin config runs `DigitalTwinSTAGE` (`hardware/stage_digital_twin.py`) as its STAGE device. The twin microscope writes the reported position to it, as a stage controller would, and the STAGE checks every move against its travel limits. The twin also works out how far its stage lands from where it reports (the landing noise, the backlash on a reversal and the readback noise together) and writes it to the STAGE as `position_sigma_m`. A Mapper whose `stage_sigma_m` is left at 0 reads it there, so the stitch searches the right window without a hand-derived number. The stage model itself (bias, backlash, settling, drift, `stage_moving`) runs in the twin microscope, on its simulated clock, because each pixel is rendered from the true position at its own time.
 
 ## Ground truth
 
@@ -57,7 +61,7 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 | :-- | :-- |
 | Specimen | `specimen` (a mapping such as `{source: recorded, path: ..., pixel_size_m: ...}`), or `specimen_source`, `specimen_path`, `specimen_pixel_size_m`, `specimen_labels_path`; see [specimens.md](Operation/specimens.md) |
 | Sample | `sample_seed`, `sample_size_xy`, `sample_particle_count`, `particle_radius_mean`, `particle_radius_std`, `particle_aspect_ratio`, `particle_elements` (comma list of Au, Pt, Pd, Ag, Cu, Ni, Fe, Si, C), `support_thickness`, `height_gradient_x/y` |
-| Optics | `acceleration_voltage`, `convergence_angle_mrad`, `beam_current_pa`, `haadf_z_exponent`, `haadf_scattering_scale`, `atomic_pixel_threshold` |
+| Optics | `acceleration_voltage`, `convergence_angle_mrad`, `probe_current_pa` (reported as the measured `beam_current_pa`), `haadf_z_exponent`, `haadf_scattering_scale`, `atomic_pixel_threshold` |
 | Detector | `detector_gain`, `detector_offset`, `detector_read_noise`, `detector_gain_drift` (fraction), `detector_offset_drift` (counts) |
 | Scan | `scan_flyback_time`, `scan_line_jitter_px`, `scan_rotation_deg`, `scan_shear`, `scan_flyback_compression`, `fov_scale_error` |
 | Stage | `stage_move_noise_std`, `stage_bias_x/y`, `stage_reported_noise_std`, `stage_backlash_x/y`, `stage_speed`, `stage_move_overhead`, `stage_settle_drift`, `stage_settle_tau` |
@@ -65,15 +69,17 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 | EDS | `eds_fwhm_mn_ka`, `eds_solid_angle`, `eds_dead_time`, `eds_channels`, `eds_energy_max` |
 | Dose | `dose_tracking`, `contamination_max`, `contamination_dose`, `damage_critical_dose` |
 
-Where the mapping config's values come from is noted in the file. Values marked unverified are placeholders: run the scripts in `asyncroscopy/calibration/` on your instrument and paste the YAML they print.
+Where the mapping config's values come from is noted in the file. `digital_twin_crystal.yaml`, `digital_twin_recorded.yaml` and `digital_twin_large_map.yaml` start from it with `extends: digital_twin_mapping.yaml` and set only what differs; `null` removes a property or device the base sets. Values marked unverified are placeholders: run the scripts in `asyncroscopy/calibration/` on your instrument and paste the YAML they print.
+
+Each acquisition's record is appended to `<acquisition_save_directory>/ground_truth/<device>_acquisitions.jsonl` as it is taken, so a long session holds none of them in memory; `export_ground_truth` reads the file back.
 
 ## Key commands
 
 - `move_stage([x, y, z, alpha, beta])` (x/y/z metres, alpha/beta degrees), `get_stage()` (reported position)
-- `set_fov(fov)`, `get_fov()`, `set_defocus(defocus)`, `get_defocus()`
+- `set_fov(fov)`, `get_fov()`, `set_defocus(defocus)`, `get_defocus()`, `set_stigmator([a, b])`, `get_stigmator()` (metres of A1)
 - `acquire_scanned_image(["haadf", "bf"])`: one scan, one image per detector; honours the SCAN device's `scan_region`
 - `place_beam([x, y])` (fractions of the field of view), `acquire_spectrum("eds")`
-- `get_parameters()`: status JSON including simulated time
+- `get_parameters()`: status JSON including simulated time; the attributes `beam_current_pa`, `beam_current_source` and `stage_moving` say the same for a client that reads attributes
 - `export_ground_truth()`: see above
 
 ## Specialised twins
@@ -85,4 +91,4 @@ Where the mapping config's values come from is noted in the file. Values marked 
 - `DigitalTwinParticles`: voxel-backed oriented particles.
 - `PolycrystallineGoldDigitalTwin`: polycrystalline gold driven by the corrector twin.
 
-To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer. For a different kind of instrument, start from the simulated nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) and reuse the instrument-neutral models: `stage_model.py` (five axes; pass zeros for the ones you lack), `clock.py` and `rng.py` in `asyncroscopy/instruments/electron_microscope/twin/` have no Tango or electron-optics dependency and import in a fraction of a second.
+To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.

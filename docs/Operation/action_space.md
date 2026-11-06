@@ -30,7 +30,7 @@ In Python, `asyncroscopy.mcp.action_space.build(server)` makes the document for 
 Units and ranges come from, in order of preference:
 
 1. the device's own `action_hints` attribute (a YAML instrument has one, built from its file);
-2. for an electron microscope, `limits.action_hints` in `asyncroscopy/instruments/electron_microscope/limits.py`, the same ranges `check_fov` and `check_defocus` enforce, at the device's `min_fov`, `max_fov` and `max_defocus` properties;
+2. for an electron microscope, `limits.action_hints` in `asyncroscopy/instruments/electron_microscope/limits.py`, the same ranges the `ElectronMicroscope` base enforces (`check_fov`, `check_defocus`), at the device's `min_fov`, `max_fov` and `max_defocus` properties;
 3. the tool's input schema, from the Tango command's types;
 4. a unit named in the command's doc, such as "in metres" or "(pA)".
 
