@@ -51,6 +51,11 @@ MAX_GROUPS = 40  # entries listed per level of a container
 MAX_DEPTH = 3
 MAX_PEAKS = 8
 PEAK_SIGMA = 5.0  # a peak's counts within its FWHM must stand this many sigmas above the background
+# Below WINDOW_RISE_EV an EDS peak must also stand RISE_SIGMA above a smooth curve fitted with it over
+# +-RISE_HALF_WIDTHS line widths: the detector window bends the continuum into a broad rise near 0.6 keV.
+WINDOW_RISE_EV = 1200.0
+RISE_HALF_WIDTHS = 3.0
+RISE_SIGMA = 3.0
 MAX_STRINGS = 50
 SI_ESCAPE_EV = 1740.0
 # Silicon-drift EDS detector resolution, as the twin models it (twin/eds_model.py).
@@ -636,10 +641,44 @@ def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, xray: bool, step: int =
         if xray:
             note = _artefact(position, [row[0] for row in rows], _line_tolerance(position, axis, step))
         rows.append((position, peak.net, peak.significance, peak.index, note))
-    if xray:  # every peak is known before any is named, so a line can be checked against its element's other lines
-        positions, top = [row[0] for row in rows], float(np.nanmax(x)) if x.size else math.inf
+    if xray:
+        indices = [row[3] for row in rows]
+        rows = [
+            (e, net, sig, i, WINDOW_RISE_NOTE if not note and e < WINDOW_RISE_EV and _line_sigma(y, fwhm, i, indices) <= RISE_SIGMA else note)
+            for e, net, sig, i, note in rows
+        ]
+        # Every peak is known before any is named, so a line can be checked against its element's other lines.
+        positions = [row[0] for row in rows if row[4] != WINDOW_RISE_NOTE]
+        top = float(np.nanmax(x)) if x.size else math.inf
         rows = [(e, net, sig, i, note or xray_candidates(e, _line_tolerance(e, axis, step), positions, top)) for e, net, sig, i, note in rows]
     return sorted(rows, key=lambda row: row[1], reverse=True)
+
+
+WINDOW_RISE_NOTE = "unidentified: a broad rise of the continuum (the detector window), not an X-ray line"
+
+
+def _line_sigma(values: np.ndarray, fwhm_channels: Any, index: int, others: list[int]) -> float:
+    """How many sigmas a line-width peak at ``index`` stands above a smooth (quadratic) curve fitted with it.
+
+    The detector window bends the low-energy continuum into a rise near 0.6 keV that the running background takes
+    for a peak, which then read as O or F (qwen runs 2026-11-03; 93 of 288 twin spectra without O or F). A quadratic
+    takes that rise; a carbon K peak on it keeps its line-width shape. Other peaks in the window are fitted with it.
+    """
+    y = np.nan_to_num(np.asarray(values, dtype=np.float64))
+    width = np.broadcast_to(np.asarray(fwhm_channels, dtype=np.float64), y.shape)
+    reach = max(2, int(round(RISE_HALF_WIDTHS * float(width[index]))))
+    lo, hi = max(0, index - reach), min(y.size, index + reach + 1)
+    x = np.arange(lo, hi, dtype=np.float64)
+    u = (x - index) / reach
+    centres = [index] + [j for j in others if lo <= j < hi and j != index]
+    columns = [np.ones_like(u), u, u * u] + [np.exp(-0.5 * ((x - j) / (max(float(width[j]), 1.0) / 2.355)) ** 2) for j in centres]
+    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson: variance = counts
+    design = np.stack(columns, axis=1) * weight[:, None]
+    if design.shape[0] <= design.shape[1]:
+        return math.inf  # too few channels to tell: keep the peak
+    coefficients, *_ = np.linalg.lstsq(design, y[lo:hi] * weight, rcond=None)
+    variance = float(np.linalg.pinv(design.T @ design)[3, 3])
+    return float(coefficients[3]) / math.sqrt(max(variance, 1e-300))
 
 
 def _line_tolerance(energy_ev: float, axis: Axis, step: int) -> float:
@@ -726,6 +765,9 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
                 # A small model given only per-peak candidates did not conclude; the ranking says which elements the
                 # peaks point to, strongest first, and stays a reading of the peaks (a light element can still hide).
                 lines.append(f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}")
+            else:  # only a window rise, escape, sum or unidentified peaks: say so, or the data rows get read as lines
+                lines.append(f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
+                             "a longer exposure is needed to rule elements out")
         if rows:
             lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
