@@ -9,6 +9,7 @@ from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, ElectronMicroscopeTwin
+from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
 
 FOV_NM = 500.0
 FOV_M = FOV_NM * 1e-9
@@ -24,7 +25,7 @@ EDGE_LATTICE_CHANGE_FRACTION = 0.25
 AMORPHOUS_EDGE_WIDTH_PX = 5.0
 
 
-class DigitalTwinDiffraction(ElectronMicroscopeTwin):
+class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
     """Digital twin that pairs a HAADF nanoparticle overview with local diffraction."""
 
     acquisition_save_directory = device_property(
@@ -64,6 +65,7 @@ class DigitalTwinDiffraction(ElectronMicroscopeTwin):
         self._fov = FOV_M
 
     def _update_view_cache(self, force: bool = False) -> None:
+        """The particle map is fixed in sample coordinates (the stage only selects where to look): nothing to move."""
         self._cached_pose_key = tuple(np.round(self._stage_position, 12))
 
     def _generate_sample(self, seed: int) -> None:
@@ -190,8 +192,6 @@ class DigitalTwinDiffraction(ElectronMicroscopeTwin):
         self._lattice_parameter_map = lattice_parameter_map
         self._particle_records_base = particle_records
         self._particle_records_view = particle_records
-        self._sample_atoms_base = bulk('Au', 'fcc', a=4.08, cubic=True)
-        self._sample_atoms_view = self._sample_atoms_base.copy()
         self._cached_pose_key = None
 
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list) -> np.ndarray:
