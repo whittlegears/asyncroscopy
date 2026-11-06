@@ -7,6 +7,13 @@ reports progress, ``abort`` stops within one step, ``results`` returns what was
 produced and ``release`` frees the device. State is saved after every step,
 so a restarted device resumes a job and skips the steps already done.
 
+A job is kept as three files in ``state_directory``: the plan (``<device>__<id>.plan.json``: the plan,
+its resolution, estimate and limits), written once at reserve (again only by ``revise``, before the job
+starts); a small progress record (``<device>__<id>.json``: state, done ranges, result keys, the hooks'
+own progress) rewritten after every step; and the step results, appended one line per step
+(``.steps.jsonl``). At Init only the jobs that are active or can be resumed are loaded; a finished one
+(done or released) is opened from its files when it is asked for by id.
+
 Subclasses implement ``resolve_plan`` and ``run_step`` (and optionally
 ``on_start``, ``on_stop``, ``on_finish``, ``on_suspend`` and ``step_targets``).
 One reservation is active per device at a time: the device stands for one
@@ -81,6 +88,9 @@ def lease_seconds(device: object) -> float:
 SUSPENDER_KEYS = {"attr", "min", "max", "equals", "resume_after_s", "label"}
 VIOLATIONS_SHOWN = 20  # violations listed in a refusal; the total is always given
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
+FINISHED_STATES = {"done", "released"}  # left on disk at Init and opened when asked for by id
+# What reserve (or revise, before a start) fixes: written once to the job's plan file, never with its progress.
+PLAN_KEYS = frozenset({"plan_id", "device", "plan", "resolved_plan", "steps", "step_count", "estimate", "limits", "dry_run", "risk_overrides", "created", "trace_offset"})
 SUMMARY_STEPS = 50  # step records results returns by default; the rest are in the job's .steps.jsonl
 # Step records kept in memory (the newest); all of them stay in the job's .steps.jsonl. Bounds memory
 # for jobs of millions of steps; a device whose summary needs every record keeps its jobs below this.
@@ -372,6 +382,7 @@ class JobDevice(Device):
         self._generation += 1  # a worker from an earlier generation no longer writes state files
         self._lock = threading.RLock()
         self._jobs: dict[str, dict] = {}
+        self._unloaded: dict[str, Path] = {}  # finished jobs not read yet: reservation id -> progress file
         self._job_index: dict[str, str] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._abort: dict[str, threading.Event] = {}
@@ -388,12 +399,23 @@ class JobDevice(Device):
         self.set_state(DevState.ON)
 
     def _reload(self) -> None:
-        """Pick up jobs from a previous run of this device; interrupted ones become resumable."""
+        """Pick up jobs from a previous run of this device; interrupted ones become resumable, finished ones stay on disk."""
         for path in sorted(self._state_dir.glob(f"{self._name.replace('/', '_')}__*.json")):
+            if path.name.endswith(".plan.json"):
+                continue
             try:
-                job = json.loads(path.read_text(encoding="utf-8"))
+                progress = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 self.warn_stream(f"Skipping job state file {path}: {exc}")
+                continue
+            reservation_id = progress["reservation_id"]
+            for job_id in progress.get("job_ids", []):
+                self._job_index[job_id] = reservation_id
+            if progress.get("state") in FINISHED_STATES:
+                self._unloaded[reservation_id] = path
+                continue
+            job = self._open(reservation_id, progress)
+            if job is None:
                 continue
             job.pop("pause_requested", None)
             if job.get("state") in RUNNING_STATES:
@@ -403,12 +425,36 @@ class JobDevice(Device):
                 # Never started; whoever reserved it is gone. Keeping it would leave the device busy.
                 job["state"] = "released"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted before this reservation was started; reserve again."}
-            job["done_ranges"] = done_ranges_from(job)
-            job.pop("done", None)
-            job["step_results"] = self._read_steps(job["reservation_id"])
-            self._jobs[job["reservation_id"]] = job
-            for job_id in job.get("job_ids", []):
-                self._job_index[job_id] = job["reservation_id"]
+            self._jobs[reservation_id] = job
+
+    def _open(self, reservation_id: str, progress: dict | None = None) -> dict | None:
+        """A job from its files: the plan, the progress record and the last step results; None if they cannot be read."""
+        try:
+            if progress is None:
+                progress = json.loads(self._path(reservation_id).read_text(encoding="utf-8"))
+            plan_path = self._plan_path(reservation_id)
+            if plan_path.exists():
+                job = {**json.loads(plan_path.read_text(encoding="utf-8")), **progress}
+            else:  # a job saved whole, before plans had a file of their own: its plan is written out now
+                job = dict(progress)
+                self._save_plan(job)
+        except (OSError, json.JSONDecodeError, KeyError) as exc:
+            self.warn_stream(f"Skipping job {reservation_id}: {exc}")
+            return None
+        job["done_ranges"] = done_ranges_from(job)
+        job.pop("done", None)
+        job["step_results"] = self._read_steps(reservation_id)
+        return job
+
+    def _job(self, reservation_id: str) -> dict | None:
+        """The job with this reservation id, opened from disk if it finished before this device started; None if unknown."""
+        job = self._jobs.get(reservation_id)
+        if job is None and reservation_id in self._unloaded:
+            job = self._open(reservation_id)
+            if job is not None:
+                self._jobs[reservation_id] = job
+                del self._unloaded[reservation_id]
+        return job
 
     def delete_device(self) -> None:
         """Stop every worker before the device goes away (Init, restart, shutdown).
@@ -431,6 +477,9 @@ class JobDevice(Device):
     def _path(self, reservation_id: str) -> Path:
         return self._state_dir / f"{self._name.replace('/', '_')}__{reservation_id}.json"
 
+    def _plan_path(self, reservation_id: str) -> Path:
+        return self._path(reservation_id).with_suffix(".plan.json")
+
     def _steps_path(self, reservation_id: str) -> Path:
         return self._path(reservation_id).with_suffix(".steps.jsonl")
 
@@ -438,20 +487,29 @@ class JobDevice(Device):
         return read_last_steps(self._steps_path(reservation_id), KEPT_STEP_RESULTS)
 
     def _save(self, job: dict) -> None:
-        """Write the job's small state file. Step results go to an append-only file instead,
-        so saving after each of thousands of steps does not rewrite all earlier results."""
-        tmp = self._path(job["reservation_id"]).with_suffix(".tmp")
+        """Write the job's small progress record. The plan has its own file (_save_plan), written once, and
+        step results go to an append-only file, so saving after each of thousands of steps rewrites neither."""
+        path = self._path(job["reservation_id"])
+        tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._snapshot(job), default=_json_default), encoding="utf-8")
-        tmp.replace(self._path(job["reservation_id"]))
+        tmp.replace(path)
+
+    def _save_plan(self, job: dict) -> None:
+        """Write the job's plan file: what reserve (or revise) fixed."""
+        path = self._plan_path(job["reservation_id"])
+        tmp = path.with_suffix(".tmp")
+        fixed = {"reservation_id": job["reservation_id"], **{k: v for k, v in job.items() if k in PLAN_KEYS}}
+        tmp.write_text(json.dumps(fixed, default=_json_default), encoding="utf-8")
+        tmp.replace(path)
 
     def _snapshot(self, job: dict) -> dict:
-        """A deep copy of the job without its step results, taken under the lock. Hooks (live drift, the
-        Mapper's pipeline) change parts of the job outside the lock; a copy taken while one does can fail
+        """A deep copy of the job's progress (without its plan and step results), taken under the lock. Hooks (live
+        drift, the Mapper's pipeline) change parts of the job outside the lock; a copy taken while one does can fail
         with "changed size during iteration", so it is tried again rather than losing the save."""
         with self._lock:
             for attempt in range(5):
                 try:
-                    return copy.deepcopy({k: v for k, v in job.items() if k != "step_results"})
+                    return copy.deepcopy({k: v for k, v in job.items() if k != "step_results" and k not in PLAN_KEYS})
                 except RuntimeError:
                     if attempt == 4:
                         raise
@@ -486,13 +544,11 @@ class JobDevice(Device):
         return None
 
     def _by_job_id(self, job_id: str) -> dict:
-        reservation = self._job_index.get(job_id)
-        if reservation is None:
-            # Accept a reservation id too: callers often only kept that.
-            if job_id in self._jobs:
-                return self._jobs[job_id]
+        # Accept a reservation id too: callers often only kept that.
+        job = self._job(self._job_index.get(job_id, job_id))
+        if job is None:
             raise JobError("unknown_job", f"no job {job_id!r}")
-        return self._jobs[reservation]
+        return job
 
     @classmethod
     def _plan_caused(cls, exc: Exception, request: str) -> bool:
@@ -576,7 +632,13 @@ class JobDevice(Device):
                 # Where this job's events start in the shared trace file, so reading them back costs this job, not the history.
                 "trace_offset": self._trace.path.stat().st_size if self._trace.path.exists() else 0,
             }
-            self._save(job)  # if this fails, nothing is reserved
+            try:
+                self._save_plan(job)
+                self._save(job)
+            except OSError:  # nothing is reserved: no half-written job is left for a restart to find
+                for path in (self._plan_path(reservation_id), self._path(reservation_id)):
+                    path.unlink(missing_ok=True)
+                raise
             self._jobs[reservation_id] = job
         self._trace.record(f"{type(self).__name__}.reserve", True, time.time(), caller=job["caller"], plan_id=job["plan_id"], run_id=reservation_id, arguments=body["plan"], **self._dry(job))
         return self._reply(
@@ -632,7 +694,7 @@ class JobDevice(Device):
             raise JobError("bad_request", "missing 'plan'")
         reservation_id = body["reservation_id"]
         with self._lock:
-            job = self._jobs.get(reservation_id)
+            job = self._job(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
             if job["state"] != "reserved":
@@ -648,6 +710,7 @@ class JobDevice(Device):
                 plan=plan, plan_id=uuid.uuid4().hex[:12], resolved_plan={k: v for k, v in resolved.items() if k not in {"steps", "step_count"}},
                 **shape, estimate=resolved.get("estimate", {"steps": step_count(shape)}), limits=limits, dry_run=dry_run,
             )
+            self._save_plan(job)
             self._save(job)
         self._trace.record(f"{type(self).__name__}.revise", True, time.time(), caller=body.get("caller"), plan_id=job["plan_id"], run_id=reservation_id,
                            arguments={"plan": plan, "replaces_plan_id": previous}, **self._dry(job))
@@ -717,7 +780,7 @@ class JobDevice(Device):
     def _get_reservation(self, request: str) -> str:
         reservation_id = self._parse(request, "reservation_id")["reservation_id"]
         with self._lock:
-            job = self._jobs.get(reservation_id)
+            job = self._job(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
             # dry_run comes first: the operator approving the start must see whether anything will move.
@@ -731,7 +794,7 @@ class JobDevice(Device):
     def _start(self, request: str) -> str:
         body = self._parse(request, "reservation_id")
         with self._lock:
-            job = self._jobs.get(body["reservation_id"])
+            job = self._job(body["reservation_id"])
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {body['reservation_id']!r}")
             if "dry_run" in body and bool(body["dry_run"]) != bool(job.get("dry_run")):
@@ -1182,7 +1245,7 @@ class JobDevice(Device):
     def _release(self, request: str) -> str:
         reservation_id = self._parse(request, "reservation_id")["reservation_id"]
         with self._lock:
-            job = self._jobs.get(reservation_id)
+            job = self._job(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
             if job["state"] in RUNNING_STATES:
