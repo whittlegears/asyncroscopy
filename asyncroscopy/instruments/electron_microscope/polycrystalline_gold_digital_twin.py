@@ -14,7 +14,12 @@ from scipy.spatial.transform import Rotation
 from tango.server import command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin_base import AtomisticDigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
+
+# The share of the probe's electrons the annular detector counts, which sets the shot noise of an image
+# (more electrons, less noise). An HAADF detector collects a few per cent of the beam; 1 % is this twin's choice.
+HAADF_COLLECTED_FRACTION = 0.01
 
 
 @dataclass(frozen=True)
@@ -28,7 +33,7 @@ class GrainParameters:
     composition: dict[str, float]
 
 
-class PolycrystallineGoldDigitalTwin(AtomisticDigitalTwin):
+class PolycrystallineGoldDigitalTwin(ElectronMicroscopeTwin):
     """Atomistic FCC Au grains rendered through a digital-twin corrector probe."""
 
     volume_size_xy_nm = device_property(dtype=float, default_value=200.0)
@@ -222,7 +227,7 @@ class PolycrystallineGoldDigitalTwin(AtomisticDigitalTwin):
         image = np.absolute(image)[edge_crop:-edge_crop, edge_crop:-edge_crop]
 
         scan_time = dwell_time * imsize * imsize
-        counts = scan_time * (float(self.probe_current_pa) * 1e-12) / 1.602e-19 / 100.0
+        counts = scan_time * (float(self.probe_current_pa) * 1e-12) / ELECTRON_CHARGE * HAADF_COLLECTED_FRACTION
         pose_seed = abs(hash((int(self.sample_seed), int(imsize), round(fov_angstrom, 6), tuple(np.round(self._stage_position, 12))))) % (2**32)
         rng = np.random.default_rng(pose_seed)
         image -= image.min()

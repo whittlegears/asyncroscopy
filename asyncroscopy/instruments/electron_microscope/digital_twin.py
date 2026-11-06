@@ -22,30 +22,31 @@ from tango.server import command, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
-    AtomisticDigitalTwin,
+    ElectronMicroscopeTwin,
 )
 from asyncroscopy.instruments.electron_microscope.electron_microscope import check_defocus, check_scan
 from asyncroscopy.instruments.electron_microscope.twin import (
-    DoseMap,
     EdsParams,
-    EventRng,
     SampleParams,
     ScanParams,
-    SimClock,
-    StageModel,
-    StageParams,
     pixel_sample_coordinates,
     point_spectrum,
 )
+from asyncroscopy.sim.dose import DoseMap
+from asyncroscopy.sim.rng import EventRng
+from asyncroscopy.sim.clock import SimClock
+from asyncroscopy.sim.stage_model import StageModel
+from asyncroscopy.sim.stage_model import StageParams
 from asyncroscopy.instruments.electron_microscope.twin.detector import (
     DetectorDrift,
     DetectorParams,
     count,
     electrons_per_pixel,
 )
-from asyncroscopy.instruments.electron_microscope.twin.dose import DoseParams
+from asyncroscopy.sim.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import (
     DETECTOR_SCALE,
@@ -75,7 +76,7 @@ def _limit(value) -> float | None:
         return None
 
 
-class DigitalTwin(AtomisticDigitalTwin):
+class DigitalTwin(ElectronMicroscopeTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
     # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
@@ -650,7 +651,7 @@ class DigitalTwin(AtomisticDigitalTwin):
             self._eds_params,
             self._rng.for_event("eds", index),
         )
-        electrons = self._beam_current_pa() * 1e-12 * real_time / 1.602176634e-19
+        electrons = self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE
         self._dose.add_point(float(xy[0]), float(xy[1]), electrons, 1e-20)
         self._clock.advance(real_time)
         self._acquisitions.append(

@@ -14,10 +14,11 @@ from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
-from asyncroscopy.instruments.electron_microscope.digital_twin_base import AtomisticDigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
 
-class DigitalTwinParticles(AtomisticDigitalTwin):
+class DigitalTwinParticles(ElectronMicroscopeTwin):
     """
     Detector-specific settings (dwell time, resolution) are stored in
     dedicated detector devices and read via DeviceProxy at acquisition time.
@@ -269,7 +270,7 @@ class DigitalTwinParticles(AtomisticDigitalTwin):
 
         # ── Noise chain (unchanged) ───────────────────────────────────────────────
         scan_time   = dwell_time * size * size
-        counts      = scan_time * (beam_current * 1e-12) / 1.602e-19
+        counts      = scan_time * (beam_current * 1e-12) / ELECTRON_CHARGE
         noisy_image = poisson_noise(image, counts=counts)
         blur_noise  = lowfreq_noise(noisy_image, noise_level=0.1, freq_scale=0.1)
         noisy_image += blur_noise * blur_noise_level

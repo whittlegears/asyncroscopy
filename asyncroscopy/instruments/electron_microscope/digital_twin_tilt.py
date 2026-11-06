@@ -19,11 +19,11 @@ from asyncroscopy.data.data_writer import (
 )
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
-    AtomisticDigitalTwin,
+    ElectronMicroscopeTwin,
 )
 
 
-class DigitalTwinTilt(AtomisticDigitalTwin):
+class DigitalTwinTilt(ElectronMicroscopeTwin):
     """Silicon FIB-lamella twin with an imperfect, displaced tilt axis."""
 
     acquisition_save_directory = device_property(

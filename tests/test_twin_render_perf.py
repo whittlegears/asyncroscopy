@@ -15,12 +15,12 @@ import numpy as np
 import pytest
 
 from asyncroscopy.instruments.electron_microscope.twin import (
-    EventRng,
     SampleModel,
     SampleParams,
     ScanParams,
     pixel_sample_coordinates,
 )
+from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import (
     Renderer,

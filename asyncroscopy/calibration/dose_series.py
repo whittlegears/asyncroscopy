@@ -13,8 +13,8 @@ import numpy as np
 
 from asyncroscopy.calibration._common import acquire, connect, parse_args, print_yaml
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-ELECTRON_CHARGE = 1.602176634e-19
 
 
 def main() -> None:

@@ -4,23 +4,22 @@ import numpy as np
 import pytest
 
 from asyncroscopy.instruments.electron_microscope.twin import (
-    DoseMap,
     EdsParams,
-    EventRng,
     SampleModel,
     SampleParams,
     ScanParams,
-    SimClock,
-    StageModel,
-    StageParams,
     pixel_sample_coordinates,
     point_spectrum,
 )
+from asyncroscopy.sim.dose import DoseMap
+from asyncroscopy.sim.rng import EventRng
+from asyncroscopy.sim.clock import SimClock
+from asyncroscopy.sim.stage_model import StageModel, StageParams
 from asyncroscopy.instruments.electron_microscope.twin.detector import (
     DetectorParams,
     count,
 )
-from asyncroscopy.instruments.electron_microscope.twin.dose import DoseParams
+from asyncroscopy.sim.dose import DoseParams
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import (
     Renderer,

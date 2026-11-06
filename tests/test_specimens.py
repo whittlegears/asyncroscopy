@@ -27,7 +27,8 @@ import pytest
 import tango
 
 import asyncroscopy.instruments.electron_microscope.digital_twin as digital_twin_module
-from asyncroscopy.instruments.electron_microscope.twin import EventRng, SampleParams
+from asyncroscopy.instruments.electron_microscope.twin import SampleParams
+from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import Renderer, RenderParams
 from asyncroscopy.instruments.electron_microscope.twin.specimen import (

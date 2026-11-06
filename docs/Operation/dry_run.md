@@ -82,4 +82,4 @@ When `simulated` is false:
 
 ## One time source
 
-Every instrument device has a `clock_s` attribute. On a twin it is the simulated clock that drift, moves and frames run on (`twin/clock.py`); on hardware it is Unix time. The Mapper times each tile at the middle of its frame on `clock_s`. Those times are the run file's `acquired_s`, which pyTEMlib's stitch fits drift against. A revisit extrapolates the fitted drift to `clock_s` now. So drift fitting and revisits hold at any `time_scale`, including 0. Step trace events and revisit records carry `clock_s`.
+Every instrument device has a `clock_s` attribute. On a twin it is the simulated clock that drift, moves and frames run on (`asyncroscopy/sim/clock.py`); on hardware it is Unix time. The Mapper times each tile at the middle of its frame on `clock_s`. Those times are the run file's `acquired_s`, which pyTEMlib's stitch fits drift against. A revisit extrapolates the fitted drift to `clock_s` now. So drift fitting and revisits hold at any `time_scale`, including 0. Step trace events and revisit records carry `clock_s`.
