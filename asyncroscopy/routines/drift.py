@@ -150,12 +150,12 @@ def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expec
     """Where ``image`` sits relative to ``previous`` (x, y in metres, and the overlap's NCC), searched within ``bound_m`` of ``expected_xy_m``.
 
     The same bounded, masked normalised cross-correlation the stitch uses (pyTEMlib's
-    ``image_tools.mosaic.bounded_shift``), so the live tracker and the stitch measure
+    ``image_tools.image_mosaic.bounded_shift``), so the live tracker and the stitch measure
     tiles alike. Images are [row, column] with rows along +y and columns along +x.
     None when there is no confident peak inside the bound (a featureless overlap, or a
     drift bigger than the bound).
     """
-    from pyTEMlib.image_tools.mosaic import bounded_shift
+    from pyTEMlib.image_tools.image_mosaic import bounded_shift
 
     a = np.asarray(previous, dtype=np.float64)
     b = np.asarray(image, dtype=np.float64)

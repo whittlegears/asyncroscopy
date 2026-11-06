@@ -1,11 +1,10 @@
 """The Mapper's pipeline: tiles, then stitch (with EDS points of interest), score and revisit, as one job.
 
-The analysis server is pyTEMlib's real MapTools (jobs, stitching, scoring,
+The analysis server is the analysis server's real MapTools (jobs, stitching, scoring,
 POI layer), called in this process instead of over HTTP; the twin, Mapper and
 DATA are the in-process Tango devices from conftest.
 """
 
-import importlib.util
 import json
 import time
 from pathlib import Path
@@ -17,7 +16,6 @@ from asyncroscopy.jobs.mapping.pipeline import REVISIT_EDGE_SHIFT, Pipeline
 
 pytestmark = [
     pytest.mark.slow,
-    pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools"),
 ]
 
 PLAN = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.0e-7, "overlap": 0.25, "imsize": 64, "dwell_s": 2e-6}
@@ -28,11 +26,11 @@ def call(proxy, verb, payload):
 
 
 class InProcessAnalysis:
-    """pyTEMlib's map tools behind the same calls the Mapper makes to the analysis server."""
+    """the analysis server's map tools behind the same calls the Mapper makes to the analysis server."""
 
     def __init__(self, roots):
-        from pyTEMlib.mcp_server.map_store import MapStore
-        from pyTEMlib.mcp_server.map_tools import MapTools
+        from asyncroscopy.analysis_server.map_store import MapStore
+        from asyncroscopy.analysis_server.map_tools import MapTools
 
         self.tools = MapTools(MapStore(local_roots=roots))
         self.calls = []
@@ -101,7 +99,7 @@ def test_a_map_job_stitches_scores_and_revisits_with_every_spectrum_on_the_map(m
     servers = []
 
     def server(mapper, tool, arguments):
-        if not servers:  # pyTEMlib may read local run files only under its roots: the run's folder
+        if not servers:  # the analysis server may read local run files only under its roots: the run's folder
             servers.append(InProcessAnalysis([Path(arguments["run"]).parent]))
         return servers[0](mapper, tool, arguments)
 

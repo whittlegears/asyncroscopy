@@ -1,7 +1,7 @@
 """One Mapper, many instruments: the instrument profiles (asyncroscopy/jobs/mapping/profile.py).
 
 * an AFM (the YAML twin's afm.yaml, profile ``yaml``) maps a few tiles that stitch, score and
-  revisit on pyTEMlib's map tools, called in this process, with the tip lifted for every move;
+  revisit on the analysis server's map tools, called in this process, with the tip lifted for every move;
 * plans over budget are refused at reserve before anything moves: dose on the STEM, time and
   tip force on the AFM;
 * the mapping twin driven as an SEM (profile ``sem``: the beam commands, no EDS);
@@ -10,7 +10,6 @@
 The devices are the session's in-process Tango devices from conftest.
 """
 
-import importlib.util
 import json
 import time
 from pathlib import Path
@@ -26,7 +25,6 @@ from asyncroscopy.instruments.yaml_sim.spec import SimInstrument, load_spec, map
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, MapContext, MapSettings, Setting, get_profile, register_profile
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
-needs_map_tools = pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools")
 # 2 x 2 tiles of 1 um (128 px of 7.8 nm) over a 1.6 um square: neighbours overlap by 40 %.
 AFM_PLAN = {"size_m": [1.6e-6, 1.6e-6], "centre_m": [0.0, 0.0], "fov_m": 1e-6, "overlap": 0.25}
 
@@ -83,7 +81,7 @@ def analysis(monkeypatch):
     servers = []
 
     def fake(self, tool, arguments):
-        if not servers:  # pyTEMlib may read local run files only under its roots: the run's folder
+        if not servers:  # the analysis server may read local run files only under its roots: the run's folder
             servers.append(InProcessAnalysis([Path(arguments["run"]).parent]))
         return servers[0](self, tool, arguments)
 
@@ -92,7 +90,6 @@ def analysis(monkeypatch):
     return servers
 
 
-@needs_map_tools
 def test_an_afm_maps_stitches_and_revisits_with_the_tip_lifted_for_every_move(afm_mapper_proxy, afm_twin_proxy, afm_log, analysis):
     plan = {**AFM_PLAN, "settings": {"setpoint_v": 0.4}, "find_regions": 1, "revisit": {"fov_m": 5e-7}, "budgets": {"tip_force_nn": 10, "time_s": 600}}
     reserved, results = run_job(afm_mapper_proxy, plan)

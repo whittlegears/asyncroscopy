@@ -252,7 +252,6 @@ def test_twins_report_their_simulated_clock_and_hardware_its_own(tango_ctx):
 
 
 @pytest.mark.slow
-@pytest.mark.skipif(importlib.util.find_spec("pyTEMlib.mcp_server.map_tools") is None, reason="needs the pyTEMlib fork with map tools")
 def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
     from tests.test_map_pipeline import InProcessAnalysis
 
