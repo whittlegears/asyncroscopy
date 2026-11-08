@@ -16,7 +16,6 @@ simulated backend (simulated.py) saves HDF5.
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import tango
@@ -129,7 +128,3 @@ class SPMProfile(InstrumentProfile):
         finally:
             self.instrument().retract()
             self._set_frame(float(plan["fov_m"]), int(plan["imsize"]), float(plan["scan_rate_hz"]))
-
-    # The tile's mid-frame time, as the stitch and revisits expect it, is on this instrument's clock_s.
-    def clock_s(self) -> float:
-        return float(self.ctx.clock_s() if self.ctx is not None else time.time())

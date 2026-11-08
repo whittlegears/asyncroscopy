@@ -104,6 +104,7 @@ segment = [
 stem = "asyncroscopy.instruments.electron_microscope.map_profile:STEMProfile"
 sem = "asyncroscopy.instruments.scanning_electron_microscope.map_profile:SEMProfile"
 yaml = "asyncroscopy.instruments.yaml_sim.map_profile:YamlProfile"
+spm = "asyncroscopy.instruments.scanning_probe_microscope.map_profile:SPMProfile"
 
 [tool.setuptools]
 package-dir = { "" = "." }

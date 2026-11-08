@@ -12,7 +12,6 @@ import tango
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
-from asyncroscopy.data.record import sample_of
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_approach import SPM_APPROACH
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_feedback import SPM_FEEDBACK
 from asyncroscopy.instruments.scanning_probe_microscope.hardware.spm_scan import SPM_SCAN
@@ -121,9 +120,9 @@ class SimulatedSPMScan(SPM_SCAN):
     def init_device(self) -> None:
         self._params = {"x_scan_center_m": 0.0, "y_scan_center_m": 0.0, "scan_size_m": 1e-6, "scan_size_px": 64, "scan_angle_deg": 0.0, "scan_rate_hz": 1.0}
         self._probe = [0.0, 0.0]
-        self._surface = height_field(int(self.sample_seed))
-        self._detector_proxies = {"sample": tango.DeviceProxy(self.sample_device_address)} if self.sample_device_address else {}
         super().init_device()
+        self._surface = height_field(int(self.sample_seed))  # device properties are read in the base's init_device
+        self._detector_proxies = {"sample": tango.DeviceProxy(self.sample_device_address)} if self.sample_device_address else {}
 
     def _hw_read_scan_params(self) -> dict:
         return dict(self._params)
@@ -160,5 +159,3 @@ class SimulatedSPMScan(SPM_SCAN):
     def _hw_move_probe(self, x: float, y: float) -> None:
         self._probe = [float(x), float(y)]
 
-
-__all__ = ["SimulatedSPM", "SimulatedSPMApproach", "SimulatedSPMFeedback", "SimulatedSPMScan", "SimulatedSPMStage", "sample_of"]

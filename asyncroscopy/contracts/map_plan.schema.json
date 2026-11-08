@@ -56,6 +56,11 @@
       "maximum": 4096,
       "default": 512
     },
+    "scan_rate_hz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "SPM profile: lines per second of each frame."
+    },
     "dwell_s": {
       "type": "number",
       "exclusiveMinimum": 0,
@@ -191,6 +196,10 @@
           "minimum": 16,
           "maximum": 8192,
           "description": "Pixels per side of each revisit image (default: the tiles')."
+        },
+        "scan_rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
         },
         "dwell_s": {
           "type": "number",
