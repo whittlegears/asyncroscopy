@@ -9,6 +9,8 @@ from pathlib import Path
 from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+from fastmcp.server.transforms import GetToolNext, Transform
+from mcp.types import ToolAnnotations
 
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
 from asyncroscopy.trace.writer import ToolCallLog
@@ -53,6 +55,42 @@ class ToolLog(Middleware):
         self.log.record(params.name, dict(params.arguments or {}), started, time.perf_counter() - began, result=text,
                         source="analysis", caller=caller, run=run)
         return result
+
+
+# Tools that only read: they change no data, file or job. Clients that gate tool calls (SciAgentGUI's
+# approval mode) read MCP's readOnlyHint and run these without asking; every other tool is left
+# unmarked, which MCP reads as "may change things". The basic tools are upstream pyTEMlib's, which
+# marks none, so they are named here too. A test fails when a tool is in neither set.
+READ_ONLY = frozenset({
+    "get_pytemlib_status", "calculate_electron_wavelength", "list_supported_file_formats", "open_tem_file",
+    "list_loaded_datasets", "get_dataset_info", "calculate_probe_size", "get_element_info",
+    "analyze_diffraction_pattern", "create_visualization_script", "get_available_tools",
+    "analysis_job_status", "analysis_job_results", "map_info", "list_maps", "get_region", "list_pois",
+    "list_scorers", "list_tiles", "to_stage", "find_features", "to_pixel", "list_placements",
+    "list_annotations", "annotation_history",
+})
+WRITES = frozenset({
+    "assemble_map", "score_map", "analysis_job_abort", "add_poi", "jobs_envelope", "place_image",
+    "annotate", "edit_annotation", "delete_annotation", "restore_annotation",
+})
+
+
+class MarkReadOnly(Transform):
+    """Lists the tools named in ``names`` with MCP's readOnlyHint set."""
+
+    def __init__(self, names: frozenset[str]):
+        self.names = names
+
+    def mark(self, tool):
+        if tool is None or tool.name not in self.names:
+            return tool
+        return tool.model_copy(update={"annotations": ToolAnnotations(read_only_hint=True)})
+
+    async def list_tools(self, tools):
+        return [self.mark(tool) for tool in tools]
+
+    async def get_tool(self, name: str, call_next: GetToolNext, *, version=None):
+        return self.mark(await call_next(name, version=version))
 
 
 def create_server(
@@ -103,4 +141,5 @@ def create_server(
         from .placement_tools import PlacementLog, register as register_placements
 
         register_placements(mcp, tools.store, PlacementLog(placements_path))
+    mcp.add_transform(MarkReadOnly(READ_ONLY))
     return mcp, tools

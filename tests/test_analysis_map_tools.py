@@ -241,6 +241,28 @@ def test_create_server_is_repeatable_and_mounts_pytemlibs_tools():
         other_tools.register(first)
 
 
+def test_every_tool_says_whether_it_only_reads_and_marked_tools_still_run(tmp_path):
+    from asyncroscopy.analysis_server.server import READ_ONLY, WRITES
+
+    mcp, _ = create_server(local_roots=[tmp_path], annotations_path=str(tmp_path / "n.jsonl"), placements_path=str(tmp_path / "p.jsonl"))
+
+    async def listed_and_called():
+        async with Client(mcp) as c:
+            return await c.list_tools(), await c.call_tool("list_scorers", {})
+
+    loop = asyncio.new_event_loop()
+    try:
+        listed, scorers = loop.run_until_complete(listed_and_called())
+    finally:
+        loop.close()
+    names = {t.name for t in listed}
+    assert not READ_ONLY & WRITES
+    assert names == READ_ONLY | WRITES, f"say whether these only read: {sorted(names ^ (READ_ONLY | WRITES))}"
+    for t in listed:
+        assert bool(t.annotations and t.annotations.read_only_hint) == (t.name in READ_ONLY), t.name
+    assert not scorers.is_error
+
+
 def test_restitching_keeps_points_of_interest(client, run_file):
     c, tools = client
     map_key = finish(c, tools, call(c, "assemble_map", run=run_file)["job_id"])["result_keys"]["map"]
