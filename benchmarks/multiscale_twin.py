@@ -106,7 +106,7 @@ def run(args: argparse.Namespace) -> dict:
     started = time.perf_counter()
     with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as save_dir:
         properties = mosaic_twin.twin_properties(args.config, Path(save_dir), args.sample_size, args.particles)
-        with instrument_context([{"class": DigitalTwin, "devices": [{"name": DEVICE, "properties": properties}]}], startup_timeout_s=120.0) as ctx:
+        with instrument_context(mosaic_twin.twin_and_stage(DigitalTwin, DEVICE, properties, args.config), startup_timeout_s=120.0) as ctx:
             tango.DeviceProxy(ctx.get_device_access(DEVICE)).ping()
             device = tango.Util.instance().get_device_by_name(DEVICE)
             device._blanked = False

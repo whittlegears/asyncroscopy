@@ -31,6 +31,7 @@ import tempfile
 import time
 from pathlib import Path
 from types import ModuleType
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -79,6 +80,23 @@ def twin_properties(config_path: Path, save_dir: Path, sample_size_m: float | No
     properties["time_scale"] = ["0.0"]
     properties["acquisition_save_directory"] = [prop_path(save_dir)]
     return properties
+
+
+def twin_and_stage(twin_class: Any, device: str, properties: dict, config_path: Path, settings: Iterable[str] = ()) -> list[dict]:
+    """The twin and the DigitalTwinSTAGE that runs its stage model, with the configuration's stage properties.
+    ``settings`` are "name=value" overrides, for whichever of the two has that property."""
+    from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin import DigitalTwinSTAGE
+
+    stage_device = device.replace("/digitaltwin/", "/stage/")
+    stage_config = next((d for d in _run_servers().load_config(config_path).support_devices if d.key == "stage"), None)
+    stage_properties = dict(stage_config.properties) if stage_config else {}
+    for setting in settings:
+        name, _, value = setting.partition("=")
+        (stage_properties if hasattr(DigitalTwinSTAGE, name.strip()) else properties)[name.strip()] = [value.strip()]
+    return [
+        {"class": DigitalTwinSTAGE, "devices": [{"name": stage_device, "properties": stage_properties}]},
+        {"class": twin_class, "devices": [{"name": device, "properties": {**properties, "stage_device_address": [stage_device]}}]},
+    ]
 
 
 def mapper_stage_sigma(config_path: Path) -> float:
@@ -220,12 +238,10 @@ def run(args: argparse.Namespace) -> dict:
     with tempfile.TemporaryDirectory(dir=ROOT / "outputs") as save_dir:
         span = (args.grid - 1) * step + args.fov
         properties = twin_properties(args.config, Path(save_dir), args.sample_size or None, args.particles or None)
-        for setting in args.set:
-            name, _, value = setting.partition("=")
-            properties[name.strip()] = [value.strip()]
+        devices = twin_and_stage(DigitalTwin, DEVICE, properties, args.config, args.set)
         if span > float(properties["sample_size_xy"][0]):
             raise SystemExit(f"the grid spans {span * 1e6:.1f} um, more than the {float(properties['sample_size_xy'][0]) * 1e6:.1f} um sample; pass --sample-size")
-        with instrument_context([{"class": DigitalTwin, "devices": [{"name": DEVICE, "properties": properties}]}], startup_timeout_s=120.0) as ctx:
+        with instrument_context(devices, startup_timeout_s=120.0) as ctx:
             tango.DeviceProxy(ctx.get_device_access(DEVICE)).ping()
             device = tango.Util.instance().get_device_by_name(DEVICE)
             device._blanked = False
