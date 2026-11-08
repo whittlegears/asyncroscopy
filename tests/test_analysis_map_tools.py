@@ -482,3 +482,32 @@ def test_a_registered_scorer_is_listed_and_used_by_score_map(client, run_file):
         assert len(added) == 2 and {p["source"] for p in added} == {"scorer:brightest"} and {p["scorer_version"] for p in added} == {"0.1.0"}
     finally:
         SCORERS.unregister("brightest")
+
+
+def test_a_map_tool_given_a_made_up_key_answers_with_the_newest_keys(tmp_path):
+    class Keys(list):
+        def tail(self, n):
+            return self[-n:]
+
+    class Tiled(dict):
+        def keys(self):
+            return Keys(super().keys())
+
+    mcp, tools = create_server(local_roots=[tmp_path], include_basic=False)
+    tools.store._client = Tiled({f"map_{i}_map": None for i in range(3)})
+
+    async def calls():
+        async with Client(mcp) as c:
+            return (await c.call_tool("map_info", {"map": "new_map"}, raise_on_error=False),
+                    await c.call_tool("list_pois", {"map": "new_map"}, raise_on_error=False),
+                    await c.call_tool("get_region", {"map": "new_map", "box_m": [0, 1, 0, 1], "level": 0}, raise_on_error=False))
+
+    loop = asyncio.new_event_loop()
+    try:
+        replies = loop.run_until_complete(calls())
+    finally:
+        loop.close()
+    for reply in replies:
+        error = json.loads(reply.content[0].text)["error"]
+        assert not reply.is_error and error["code"] == "unknown_dataset" and "'new_map'" in error["message"]
+        assert error["newest_keys"] == ["map_2_map", "map_1_map", "map_0_map"]

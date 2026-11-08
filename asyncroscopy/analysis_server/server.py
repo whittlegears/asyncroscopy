@@ -3,6 +3,7 @@ notes, placements and a per-call tool log."""
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -10,11 +11,13 @@ from fastmcp import FastMCP
 from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.transforms import GetToolNext, Transform
+from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
 
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
 from asyncroscopy.trace.writer import ToolCallLog
 
+from .frames import unknown_key
 from .jobs import DEFAULT_MAX_WORKERS
 from .map_store import MapStore
 from .map_tools import DEFAULT_MAX_CANVAS_PIXELS, MapTools
@@ -55,6 +58,38 @@ class ToolLog(Middleware):
         self.log.record(params.name, dict(params.arguments or {}), started, time.perf_counter() - began, result=text,
                         source="analysis", caller=caller, run=run)
         return result
+
+
+
+def missing_key(exc: BaseException) -> str | None:
+    """The key of the KeyError behind a tool's error (FastMCP wraps it in a ToolError), or None."""
+    seen = exc
+    while seen is not None:
+        if isinstance(seen, KeyError) and seen.args and isinstance(seen.args[0], str):
+            return seen.args[0]
+        seen = seen.__cause__ or seen.__context__
+    return None
+
+
+class UnknownKeyReply(Middleware):
+    """A tool given a key the store does not have answers with the newest keys to copy, not a bare KeyError.
+
+    qwen3:8b asked list_pois and map_info about "new_map"; both failed with "Error calling tool 'list_pois':
+    'new_map'", and it told the user the map did not exist without naming one that does. Only a missing key
+    that is one of the call's own arguments is answered this way; any other error is raised as it was."""
+
+    def __init__(self, store):
+        self.store = store
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        try:
+            return await call_next(context)
+        except Exception as exc:
+            missing = missing_key(exc)
+            if missing is None or missing not in [v for v in (context.message.arguments or {}).values() if isinstance(v, str)]:
+                raise
+            reply = unknown_key(self.store, missing, "map or dataset")
+            return ToolResult(content=json.dumps(reply), structured_content=reply)
 
 
 # Tools that only read: they change no data, file or job. Clients that gate tool calls (SciAgentGUI's
@@ -129,6 +164,7 @@ def create_server(
 
         mcp.mount(basic_tools.mcp)
     tools = MapTools(MapStore(tiled_uri, api_key, local_roots=local_roots), max_canvas_pixels=max_canvas_pixels, max_jobs=max_jobs)
+    mcp.add_middleware(UnknownKeyReply(tools.store))
     tools.register(mcp)
     from .frames import register as register_frames
 
