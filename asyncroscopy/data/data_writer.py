@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Iterable
 from typing import Any
 from xml.etree import ElementTree as ET
 
@@ -120,6 +121,61 @@ def save_acquisition(
     _seal(device, path, instrument_id)
     key = data_server.register_path(str(path)) if data_server is not None else str(path)
     _ledger(device, attrs_list[0] or {}, sample, key, instrument_id)
+    return key
+
+
+def save_acquisition_stream(
+    device: Any,
+    data_server: Any,
+    acquisition_type: str,
+    detector: str,
+    dataset_name: str,
+    rows: Iterable[np.ndarray],
+    row_count: int,
+    dataset_attrs: dict,
+    spot_attrs: list[dict],
+) -> str:
+    """Save an acquisition too large to hold while it is taken, one row at a time, and return its DATA/Tiled key.
+
+    The dataset is [row_count, *row.shape], created from the first row. ``rows`` may fill in ``dataset_attrs`` and
+    ``spot_attrs`` (one dict per parked beam position, for the dose ledger) as it runs: both are read once it is done.
+    If ``rows`` raises, the partial file is removed.
+    """
+    instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
+    sample = current_sample(sample_of(device))
+    path = acquisition_filename(device, acquisition_type, detector, data_server)
+    try:
+        with h5py.File(path, "w", track_order=True) as h5:
+            for key, value in record_fields(instrument_id, acquisition_type, sample).items():
+                h5.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
+            dset = None
+            for index, row in enumerate(rows):
+                row = np.asarray(row)
+                if dset is None:
+                    dset = h5.create_dataset(dataset_name, shape=(row_count, *row.shape), dtype=row.dtype, chunks=(1, *row.shape))
+                dset[index] = row
+                h5.flush()
+            if dset is None:
+                raise ValueError("save_acquisition_stream called with no rows")
+            for key, value in {"acquisition_type": acquisition_type, "detector": detector, **dataset_attrs}.items():
+                dset.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    _seal(device, path, instrument_id)
+    key = data_server.register_path(str(path)) if data_server is not None else str(path)
+    for attrs in spot_attrs:
+        _ledger(device, attrs, sample, key, instrument_id)
+    return key
+
+
+def record_vendor_file(device: Any, path: Path, frame_attrs: dict) -> str:
+    """A file the vendor software wrote in a format Tiled does not serve (a Velox .emd): sealed and in the dose ledger
+    as one frame (``frame_attrs``); its local path is its key."""
+    instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
+    key = str(path)
+    _seal(device, Path(path), instrument_id)
+    _ledger(device, frame_attrs, current_sample(sample_of(device)), key, instrument_id)
     return key
 
 

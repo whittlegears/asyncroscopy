@@ -22,7 +22,7 @@ file (run_file.py), the budget check, and the stitch, score and revisit phases o
 
 A profile sees the Mapper only through a ``MapContext``: ``proxy`` (use it for every call to the
 instrument: a dry run swaps in a recorder), ``instrument``, ``aborting``, ``clock_s``,
-``wait_for_stage``, ``read_acquisition`` and ``settings``.
+``wait_for_stage``, ``read_acquisition``, ``read_rows``, ``spectrum_row``, ``spectrum_image_key`` and ``settings``.
 
 A profile is a small class registered by name::
 
@@ -45,13 +45,13 @@ docs/Adding_New_Hardware/new_instrument.md ("Map any instrument") walks through 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 import tango
 
-from asyncroscopy.data.data_reader import read_acquisition
+from asyncroscopy.data.data_reader import read_acquisition, read_rows
 from asyncroscopy.registry import Registry
 
 # Plan fields every profile takes (the area, the grid, the pipeline, budgets and settings).
@@ -128,11 +128,13 @@ class MapContext:
         proxy: Callable[..., Any],
         aborting: Callable[[dict], bool],
         data_address: str = "",
+        spectrum_store: Any = None,
     ) -> None:
         self.settings = settings
         self._proxy = proxy
         self._aborting = aborting
         self._data_address = data_address
+        self._spectrum_store = spectrum_store
 
     def proxy(self, address: str, timeout_s: float | None = None) -> tango.DeviceProxy:
         """A proxy to ``address`` (a recorder in a dry run)."""
@@ -153,6 +155,18 @@ class MapContext:
     def read_acquisition(self, key: str) -> dict:
         """One acquisition's arrays by name, {name: (array, attrs)}, read through DATA."""
         return read_acquisition(key, self.data())
+
+    def read_rows(self, key: str, name: str) -> Iterator[tuple[Any, dict]]:
+        """One dataset of one acquisition, one (row, attrs) at a time: a large cube is never held whole."""
+        return read_rows(key, name, self.data())
+
+    def spectrum_row(self, job: dict, tile: dict, points: int, row: int, spectra: Any, attrs: dict) -> None:
+        """Stream one row of a tile's spectrum image into the run file."""
+        self._spectrum_store.store_spectrum_row(job, tile, points, row, spectra, attrs)
+
+    def spectrum_image_key(self, job: dict, tile: dict, key: str) -> None:
+        """Record in the run file that a tile's spectrum image is the vendor file ``key``."""
+        self._spectrum_store.store_spectrum_image_key(job, tile, key)
 
     def clock_s(self) -> float:
         """The instrument's clock_s (simulated time on a twin); this computer's time if it reports none."""

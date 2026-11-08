@@ -4,8 +4,9 @@ The file is ``maps/map_<run>.h5``, named ``.h5.partial`` while tiles are being t
 register it half-written. It uses layout 2 (see asyncroscopy.analysis_server.map_store): ``tiles`` is one chunked
 array [n, rows, cols] with per-tile arrays ``written``, ``stage_reported_m``, ``commanded_xy_m``,
 ``acquired_s``, ``row_col`` and ``source_keys``; further detectors go in ``channels/<DETECTOR>``;
-``spectra`` [n, channels] and ``spectrum_keys`` [n] hold EDS point spectra, or ``spectrum_image`` a coarse
-spectrum image per tile. Nothing in it depends on the vendor or on whether the instrument was a twin.
+``spectra`` [n, channels] and ``spectrum_keys`` [n] hold EDS point spectra, ``spectrum_image`` a coarse
+spectrum image per tile, written row by row as it is taken, or ``spectrum_image_keys`` [n] the file of a vendor format
+that cannot be read as a cube. Nothing in it depends on the vendor or on whether the instrument was a twin.
 ``acquired_s`` is the instrument's ``clock_s`` (simulated time on a twin), the clock the drift fit and
 revisits use.
 
@@ -138,6 +139,26 @@ class RunFile:
                 h5.create_dataset(name, shape=(n, *value.shape), dtype=np.float64, fillvalue=np.nan)
             h5[name][k] = value
         h5["written"][k] = True
+        h5.flush()
+
+    def write_spectrum_image_row(self, n: int, k: int, points: int, row: int, spectra: np.ndarray, attrs: dict) -> None:
+        """One row of tile ``k``'s spectrum image (dataset [n, points, points, channels], made at the first row and chunked
+        by row), flushed, so a cube is never held in memory. The tile counts as written only once ``write_tile`` has run."""
+        h5 = self._require_open()
+        spectra = np.asarray(spectra)
+        if "spectrum_image" not in h5:
+            dset = h5.create_dataset("spectrum_image", shape=(n, points, *spectra.shape), dtype=spectra.dtype, chunks=(1, 1, *spectra.shape))
+            dset.attrs.update({key: (json.dumps(v) if isinstance(v, (list, dict)) else v) for key, v in attrs.items() if v is not None})
+            h5.create_dataset("spectrum_keys", shape=(n,), dtype=h5py.string_dtype())
+        h5["spectrum_image"][k, row] = spectra
+        h5.flush()
+
+    def write_spectrum_image_key(self, n: int, k: int, key: str) -> None:
+        """Tile ``k``'s spectrum image is a vendor file (``key``) that is not read as a cube; the run names it."""
+        h5 = self._require_open()
+        if "spectrum_image_keys" not in h5:
+            h5.create_dataset("spectrum_image_keys", shape=(n,), dtype=h5py.string_dtype())
+        h5["spectrum_image_keys"][k] = key
         h5.flush()
 
     def write_trace(self, events: list[str], trace_file: str, offset: int, dropped: int) -> None:

@@ -40,6 +40,7 @@ DETECTOR_ADDRESSES = {
 # The limit properties' defaults: what the base enforces when a deployment sets none.
 DEFAULT_MAX_DEFOCUS = 1e-5
 DEFAULT_MAX_STIGMATOR = 1e-6
+DEFAULT_MAX_SPECTRUM_IMAGE_POINTS = 64
 
 
 def check_defocus(defocus: float, max_defocus: float) -> float:
@@ -100,6 +101,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
     # Limits checked before any backend sees a value; action_hints tells clients the same ranges.
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
+    max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")
 
     stem_mode = attribute(
         label="STEM Mode",
@@ -162,6 +164,19 @@ class ElectronMicroscope(ScanningBeamInstrument):
                 'acquire_spectrum()',
             )
         return self._acquire_spectrum(detector_name, proxy.exposure_time)
+
+    @command(dtype_in=int, dtype_out=str, doc_in=":param points: Beam positions per side of the field (2 to the max_spectrum_image_points property).", risk="high", role="acquire.other", routine=True)
+    @hardware_call()
+    def acquire_spectrum_image(self, points: int) -> str:
+        """Acquire an EDS spectrum image of points x points positions, at the EDS device's exposure per position, and
+        return its DATA/Tiled key. A backend that cannot raises UnsupportedCommand."""
+        points = int(points)
+        if not 2 <= points <= int(self.max_spectrum_image_points):
+            raise ValueError(f"points must be between 2 and {int(self.max_spectrum_image_points)}, got {points}")
+        proxy = self._detector_proxies.get("eds")
+        if proxy is None:
+            tango.Except.throw_exception('UnknownDetector', f"No spectrum detector named 'eds'. Configured detector devices: {sorted(self._detector_proxies.keys())}.", 'acquire_spectrum_image()')
+        return self._acquire_spectrum_image(points, proxy.exposure_time)
 
     @command(dtype_out=str, risk="high", role="acquire.other", routine=True)
     @hardware_call()
@@ -300,6 +315,10 @@ class ElectronMicroscope(ScanningBeamInstrument):
             'This microscope does not support camera image acquisition.',
             '_acquire_camera_image()',
         )
+
+    def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
+        """Vendor-specific EDS spectrum image; the base backend has none."""
+        unsupported(self, "acquire_spectrum_image")
 
     def _acquire_scanned_data_advanced(self, imsize: int, dwell_time: float, detector: str, scan_region: list[float]) -> str:
         """Vendor-specific advanced 4D scanned data acquisition trigger."""
