@@ -126,7 +126,7 @@ def test_policy_sees_a_job_device_and_a_raw_instrument():
 def test_job_replies_keep_numpy_values_as_numbers():
     import numpy as np
 
-    from asyncroscopy.jobs.job_device import _json_default
+    from asyncroscopy.jobs.job_device.files import _json_default
     assert json.loads(json.dumps({"i": np.int64(2), "xy": np.array([0.5, 1.5])}, default=_json_default)) == {"i": 2, "xy": [0.5, 1.5]}
 
 
