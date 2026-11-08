@@ -253,7 +253,7 @@ def test_twins_report_their_simulated_clock_and_hardware_its_own(tango_ctx):
 
 @pytest.mark.slow
 def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
-    from tests.test_map_pipeline import InProcessAnalysis
+    from tests.test_map_pipeline import InProcessAnalysis, ToolService
 
     twin = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/drift"))
     mapper = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/drift"))
@@ -271,7 +271,7 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
         return reply
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Pipeline, "call", lambda self, tool, arguments: server(self, tool, arguments))
+    monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(server, self))
 
     revisit_fov = 5e-8
     plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.0e-7, "overlap": 0.25, "imsize": 128, "dwell_s": 2e-5,

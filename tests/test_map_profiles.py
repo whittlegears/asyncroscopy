@@ -76,7 +76,7 @@ def afm_log(monkeypatch, afm_twin_proxy):
 
 @pytest.fixture
 def analysis(monkeypatch):
-    from tests.test_map_pipeline import InProcessAnalysis
+    from tests.test_map_pipeline import InProcessAnalysis, ToolService
 
     servers = []
 
@@ -86,7 +86,7 @@ def analysis(monkeypatch):
         return servers[0](self, tool, arguments)
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Pipeline, "call", fake)
+    monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(fake, self))
     return servers
 
 
