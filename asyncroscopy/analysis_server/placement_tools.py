@@ -30,7 +30,7 @@ from pyTEMlib.image_tools import register_to_parent
 
 from asyncroscopy.core.fileio import SequencedAppender
 
-from .frames import FrameError, frame_of, image_dataset, image_node, pixel_of, stage_of
+from .frames import FrameError, frame_of, image_dataset, image_node, pixel_of, stage_of, unknown_key
 
 DEFAULT_WINDOW_M = 4e-7  # the stage's error on a typical instrument: a stage-aimed child is searched this far
 EDGE_PX = 4  # parent pixels read beyond the window, so the correlation has room at the window's edge
@@ -130,7 +130,10 @@ def register(mcp, store, log: PlacementLog) -> None:
         """
         try:
             return place(store, log, image, parent, centre_xy_m, window_m, rotation_deg)
-        except (FrameError, KeyError) as exc:
+        except KeyError as exc:
+            missing = exc.args[0] if exc.args and exc.args[0] in (image, parent) else image
+            return unknown_key(store, missing, "image" if missing == image else "map or image")
+        except FrameError as exc:
             return {"error": {"code": "cannot_place", "message": str(exc)}}
 
     @mcp.tool()

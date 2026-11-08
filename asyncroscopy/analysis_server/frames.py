@@ -64,6 +64,22 @@ def image_dataset(data, pixel_size_m: float, experiment: dict | None = None, tit
     return dataset
 
 
+NEWEST_KEYS = 8
+
+
+def unknown_key(store, key: str, what: str) -> dict[str, Any]:
+    """The refusal for a key the store does not have, with the newest keys it does have to copy from.
+
+    Small agents passed words in place of keys (place_image on "new_map", find_features on "stitched_map_key"):
+    a bare "no image" gave them nothing to correct the call with."""
+    try:
+        newest = list(store.client.keys().tail(NEWEST_KEYS))
+    except Exception:
+        newest = []
+    message = f"no {what} {key!r}: pass a key exactly as a tool returned it"
+    return {"error": {"code": "unknown_dataset", "message": message, **({"newest_keys": newest[::-1]} if newest else {})}}
+
+
 def image_node(store, key: str):
     """The 2-D array of an acquisition: the key itself, or the first array under its ``image`` group."""
     node = store.client[key]
@@ -157,7 +173,7 @@ def register(mcp, store) -> None:
         try:
             frame = frame_of(store, dataset)
         except KeyError:
-            return {"error": {"code": "unknown_dataset", "message": f"no map or image {dataset!r}"}}
+            return unknown_key(store, dataset, "map or image")
         except FrameError as exc:
             return {"error": {"code": "no_frame", "message": str(exc)}}
         rows, cols = frame["shape"]
@@ -191,7 +207,7 @@ def register(mcp, store) -> None:
         try:
             frame = frame_of(store, image)
         except KeyError:
-            return {"error": {"code": "unknown_dataset", "message": f"no image {image!r}"}}
+            return unknown_key(store, image, "image")
         except FrameError as exc:
             return {"error": {"code": "no_frame", "message": str(exc)}}
         if frame["kind"] != "image":
@@ -218,7 +234,7 @@ def register(mcp, store) -> None:
         try:
             frame = frame_of(store, dataset)
         except KeyError:
-            return {"error": {"code": "unknown_dataset", "message": f"no map or image {dataset!r}"}}
+            return unknown_key(store, dataset, "map or image")
         except FrameError as exc:
             return {"error": {"code": "no_frame", "message": str(exc)}}
         row, col = pixel_of(frame, x_m, y_m)
