@@ -33,7 +33,7 @@ DEFAULT_TOOLS = STEM_TOOLS + GENERIC_TOOLS
 ANALYSIS_WAITS = ["analysis_job_status", "analysis_job_results"]
 # For agent programs: skills come to the agent in its prompt, and endpoint_info is not a model's business;
 # action_space is a long document a controller program reads once, far too big for a small model's context.
-NOT_FOR_MODELS = ("list_skills", "endpoint_info", "action_space")
+NOT_FOR_MODELS = ("list_skills", "skills_for", "endpoint_info", "action_space")
 
 
 def is_stem_endpoint(names: Iterable[str]) -> bool:

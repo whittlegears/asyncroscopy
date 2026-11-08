@@ -952,6 +952,22 @@ class MCPServer:
         return read_front_matter(skill.path)[1]
 
     @tool()
+    def skills_for(self, request: str, agent_tools: list[str] | None = None) -> dict[str, Any]:
+        """For agent programs, not models: the skills matching a request, written out for a system prompt,
+        chosen as asyncroscopy's own agents choose them (keywords, name and description; a read-only request
+        gets no skill that acts). agent_tools: the tools the caller gives its model (default: this endpoint's
+        agent_tools); a skill none of whose tools the model holds is not chosen. Returns names (best first),
+        text (their instructions, within the prompt budget) and cut (names too long to fit: load_skill them)."""
+        from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model
+        from asyncroscopy.skills.registry import select_skills, skills_text
+
+        own = self._all_tool_names()
+        held = set(agent_tools) if agent_tools else {n for n in own if for_model(n, agent_tool_patterns(own, bool(self.analysis_url)))}
+        names = [s.name for s in select_skills(request, held, own | held)]
+        text, cut = skills_text(names, own | held)
+        return {"names": names, "text": text, "cut": cut}
+
+    @tool()
     def endpoint_info(self) -> dict[str, Any]:
         """For agent programs, not models: each tool's risk as the approval gate sees it, the job devices, the
         analysis server, agent_tools: globs of the tools (here and on the analysis server) to give a model, and
@@ -1735,7 +1751,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.endpoint_info, self.action_space,
+        native_tools = [self.list_data, self.view_data, self.list_devices, self.list_skills, self.load_skill, self.skills_for, self.endpoint_info, self.action_space,
                         self.find_tools, self.call_tool]
         if self.endpoint_role != "monitor":
             native_tools.append(self.stop_all)

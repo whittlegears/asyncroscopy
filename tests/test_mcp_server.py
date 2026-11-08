@@ -587,7 +587,21 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+
+    def test_skills_for_writes_out_the_skills_a_request_matches(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        tools = {"run_job", "wait_for_job", "load_skill", "Mapper_reserve", "Mapper_start", "Scope_acquire_scanned_image", "Scope_blank_beam", "Scope_get_stage"}
+        monkeypatch.setattr(server, "_all_tool_names", lambda: tools)
+
+        mapping = server.skills_for("map a sample completely down to the angstrom")
+        assert mapping["names"][0] == "mapping"
+        assert "size_m" in mapping["text"]
+        assert mapping["cut"] == []
+
+        assert server.skills_for("map it", agent_tools=["Scope_get_stage"])["names"] == []
+        assert "mapping" not in server.skills_for("what is the latest stored image?")["names"]
 
 
 class TestMCPCommandTimeout:
