@@ -54,8 +54,10 @@ from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
 from asyncroscopy.instruments.yaml_sim.device import device_class as yaml_device_class
+from asyncroscopy.instruments.yaml_sim.job import job_class as yaml_job_class
 
 AFM_YAML = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"
+STEP_YAML = Path(__file__).resolve().parent / "data" / "step_twin.yaml"
 
 
 from tests.test_agent import setup_llm_stubs
@@ -530,7 +532,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
             ],
         },
         {
-            # The AFM example as a plain YAML device (no job envelope of its own), with no simulated waits.
+            # The AFM example as a YAML instrument (its job device is left out here), with no simulated waits.
             "class": yaml_device_class("AFMTwin"),
             "devices": [
                 {
@@ -539,6 +541,36 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "yaml_path": prop_path(AFM_YAML),
                         "output_directory": prop_path(job_dir / "afm" / "acquisitions"),
                         "time_scale": 0.0,
+                    },
+                },
+            ],
+        },
+        {
+            # The step protocol between a YAML instrument and its job device (tests/test_yaml_step_protocol.py):
+            # one simulated second is 20 ms, so a 40 s step takes 0.8 s; the second instrument's hold lapses fast.
+            "class": yaml_device_class("StepTwin"),
+            "devices": [
+                {
+                    "name": "asyncroscopy/steptwin/default",
+                    "properties": {"yaml_path": prop_path(STEP_YAML), "output_directory": prop_path(job_dir / "step" / "acquisitions"), "time_scale": 0.02},
+                },
+                {
+                    "name": "asyncroscopy/steptwin/lapsing",
+                    "properties": {"yaml_path": prop_path(STEP_YAML), "output_directory": prop_path(job_dir / "step" / "acquisitions"), "time_scale": 0.02, "hold_lease_s": 0.4},
+                },
+            ],
+        },
+        {
+            "class": yaml_job_class("StepTwinJob"),
+            "devices": [
+                {
+                    "name": "asyncroscopy/steptwinjob/default",
+                    "properties": {
+                        "yaml_path": prop_path(STEP_YAML),
+                        "instrument_device_address": "asyncroscopy/steptwin/default",
+                        "state_directory": prop_path(job_dir / "step" / "state"),
+                        "trace_path": prop_path(job_dir / "step" / "trace.jsonl"),
+                        "simulated": True,
                     },
                 },
             ],
