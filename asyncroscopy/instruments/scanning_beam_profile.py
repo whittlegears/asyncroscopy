@@ -25,6 +25,7 @@ from typing import Any
 
 import tango
 
+from asyncroscopy.jobs.mapping.plan import stated_dose
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, Setting
 from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, check_current_at_start
 from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M, frame_dose
@@ -71,8 +72,11 @@ class ScanningBeamProfile(InstrumentProfile):
         if '"zoom"' in request:
             return None  # the Mapper's zoom example
         example = dict(self.plan_example)
-        if "dose" in request.lower():  # a caller who mentioned dose sees where a dose limit goes
-            example["dose_budget_e_per_a2"] = 50.0
+        # A caller who gave a dose limit sees where it goes, with its own number. A fixed 50 here was copied by
+        # qwen3:8b into plans whose user set no limit, and every plan after that was refused as over it.
+        stated = stated_dose(request)
+        if stated is not None:
+            example["dose_budget_e_per_a2"] = stated
         return example
 
     # -- beam current ----------------------------------------------------
@@ -168,7 +172,9 @@ class ScanningBeamProfile(InstrumentProfile):
         spectra_dose = self._spectra_dose(p, current, fov, exposures)
         max_dose = tile_dose + revisit_dose + spectra_dose
         parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-        advice = "widen revisit fov_m, lower dwell_s or eds_exposure_s" if "per_tile" in self.plan_fields else "widen revisit fov_m or lower dwell_s"
+        # Only the remedies for what adds dose here: told to "widen revisit fov_m" for a plan with no revisit, qwen3:8b added one.
+        remedies = ["lower dwell_s or overlap"] + (["lower eds_exposure_s"] if spectra_dose else []) + (["widen revisit fov_m"] if revisit else [])
+        advice = ", ".join(remedies) + "; the budget is the user's: give dose_budget_e_per_a2 only when they set a limit"
         extra = {
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,

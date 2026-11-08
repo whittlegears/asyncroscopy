@@ -160,6 +160,21 @@ def test_node_for_key_names_keys_that_start_with_a_stem(monkeypatch):
     assert "stem_image_1_HAADF.tiff" in message and "stem_image_1_BF.tiff" in message and "other.h5" not in message
 
 
+def test_node_for_key_reads_a_key_registered_between_the_lookup_and_the_listing(monkeypatch):
+    class Registering(Root):
+        looked = False
+
+        def __getitem__(self, key):
+            if not self.looked:
+                self.looked = True
+                self["tile.h5"] = "tile"
+                raise KeyError(key)
+            return super().__getitem__(key)
+
+    monkeypatch.setattr(tiled_client, "connect", lambda uri: Registering())
+    assert tiled_client.node_for_key("tile.h5", "http://tiled.example") == "tile"
+
+
 def test_node_for_key_turns_a_dropped_connection_into_tiled_unavailable(monkeypatch):
     class Dropping:
         def __getitem__(self, key):

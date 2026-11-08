@@ -588,7 +588,36 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+
+    def test_skills_for_writes_out_the_skills_a_request_matches(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        tools = {"run_job", "wait_for_job", "load_skill", "Mapper_reserve", "Mapper_start", "Scope_acquire_scanned_image", "Scope_blank_beam", "Scope_get_stage"}
+        monkeypatch.setattr(server, "tool_names", lambda: tools)
+
+        mapping = server.skills.skills_for("map a sample completely down to the angstrom")
+        assert mapping["names"][0] == "mapping"
+        assert "size_m" in mapping["text"]
+        assert mapping["cut"] == []
+
+        assert server.skills.skills_for("map it", agent_tools=["Scope_get_stage"])["names"] == []
+        assert "mapping" not in server.skills.skills_for("what is the latest stored image?")["names"]
+
+    def test_skills_for_defaults_to_the_tools_endpoint_info_gives_a_model(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        tools = {"run_job", "load_skill", "skills_for", "list_skills", "Mapper_reserve", "Scope_acquire_scanned_image", "Scope_State"}
+        monkeypatch.setattr(server, "tool_names", lambda: tools)
+        held: list[set[str]] = []
+        monkeypatch.setattr("asyncroscopy.skills.registry.select_skills", lambda request, agent_tools, endpoint_tools: held.append(set(agent_tools)) or [])
+
+        server.skills.skills_for("map it")  # no device is declared a STEM: every tool but State and the agent-program ones
+        assert held[-1] == {"run_job", "load_skill", "Mapper_reserve", "Scope_acquire_scanned_image"}
+
+        server.add_device("Scope", stem=True)  # decided by what discovery found, not by what the tools are called
+        server.skills.skills_for("map it")
+        assert held[-1] == {"run_job", "load_skill", "Scope_acquire_scanned_image"}
 
 
 class TestMCPCommandTimeout:

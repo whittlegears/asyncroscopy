@@ -44,6 +44,24 @@ FIELD_SYNONYMS = {
     "size": "size_m", "box": "box_m", "centre": "centre_m", "center_m": "centre_m", "center": "centre_m",
     "dwell": "dwell_s", "dwell_time": "dwell_s", "image_size": "imsize", "pixels": "imsize", "regions": "find_regions",
 }
+
+
+def stated_dose(request: str) -> float | None:
+    """The dose limit a refused request gave, under dose_budget_e_per_a2 or one of its FIELD_SYNONYMS; None if it gave none."""
+    try:
+        sent = json.loads(request)
+    except (TypeError, ValueError):
+        return None
+    plan = sent.get("plan", sent) if isinstance(sent, dict) else None
+    if not isinstance(plan, dict):
+        return None
+    for name, value in plan.items():
+        if (name == "dose_budget_e_per_a2" or FIELD_SYNONYMS.get(name) == "dose_budget_e_per_a2") \
+                and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return None
+
+
 REVISIT_ONLY_KEYS = ("map", "top_k", "points")  # fields of a revisit plan ({"revisit": {...}}) that do not exist at the top level
 ZOOM_PLAN_FIELDS = frozenset({"zoom", "dry_run", "label", "budgets"})  # plus the profile's budget and image fields
 

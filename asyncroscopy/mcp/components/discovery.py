@@ -37,6 +37,14 @@ class Discovery:
     def natives(self) -> list:
         return [self.endpoint_info, self.action_space, self.find_tools, self.call_tool]
 
+    def agent_tool_globs(self) -> list[str]:
+        """The globs of the tools a model is given here (the agent profile's selection), by what the discovered devices are, not their names."""
+        from asyncroscopy.mcp.agent_tools import agent_tool_patterns, tool_lists
+
+        devices = self.server.devices.values()
+        return agent_tool_patterns(self.server.tool_names(), bool(self.analysis_url), lists=tool_lists(self.agent_profile),
+                                   stem=any(d.stem for d in devices), maps=any(d.envelope and d.dev_class == "Mapper" for d in devices))
+
     @tool()
     def endpoint_info(self) -> dict[str, Any]:
         """For agent programs, not models: each tool's risk as the approval gate sees it and what it is (tools: its
@@ -44,8 +52,6 @@ class Discovery:
         analysis server, agent_tools: globs of the tools (here and on the analysis server) to give a model, and
         auto: for each high-risk tool an agent may call, how auto mode treats it before any is switched on
         ("routine" runs, "held" waits for a person, "job" runs when every command the job drives runs)."""
-        from asyncroscopy.mcp.agent_tools import agent_tool_patterns, tool_lists
-
         server = self.server
         tools = server.descriptors
         return {
@@ -61,9 +67,7 @@ class Discovery:
             "tools": {name: {"device": t.device, "command": t.command, "role": t.action_role, "risk": t.risk, "acts": t.acts}
                       for name, t in sorted(tools.items())},
             # The general agent's own selection (asyncroscopy.mcp.agent_tools, from the agent profile), so other harnesses match it.
-            "agent_tools": agent_tool_patterns(server.tool_names(), bool(self.analysis_url), lists=tool_lists(self.agent_profile),
-                                               stem=any(d.stem for d in server.devices.values()),
-                                               maps=any(d.envelope and d.dev_class == "Mapper" for d in server.devices.values())),
+            "agent_tools": self.agent_tool_globs(),
             "auto": {
                 name: AUTO[decide(t, endpoint_role="agent", mode="auto")]
                 for name, t in sorted(tools.items()) if t.risk == "high" and not t.operator_only

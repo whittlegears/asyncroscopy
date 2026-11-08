@@ -1,4 +1,4 @@
-"""Skills this endpoint offers: list_skills and load_skill (asyncroscopy.skills.registry)."""
+"""Skills this endpoint offers: list_skills, load_skill and skills_for (asyncroscopy.skills.registry)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ class SkillsTools:
         self.server = server
 
     def natives(self) -> list:
-        return [self.list_skills, self.load_skill]
+        return [self.list_skills, self.load_skill, self.skills_for]
 
     def description_of(self, name: str) -> str | None:
         """load_skill's description names the skills offered here, so a model need not call list_skills first."""
@@ -52,6 +52,27 @@ class SkillsTools:
         if not skill.available:
             raise ToolError(f"skill {name!r} cannot be used: {skill.problem}")
         return read_front_matter(skill.path)[1]
+
+    @tool()
+    def skills_for(self, request: str, agent_tools: list[str] | None = None) -> dict[str, Any]:
+        """For agent programs, not models: the skills matching a request, written out for a system prompt,
+        chosen as asyncroscopy's own agents choose them (keywords, name and description; a read-only request
+        gets no skill that acts). agent_tools: the tools the caller gives its model (default: this endpoint's
+        agent_tools); a skill none of whose tools the model holds is not chosen. Returns names (best first),
+        text (their instructions, within the prompt budget) and cut (names too long to fit: load_skill them)."""
+        from asyncroscopy.mcp.agent_tools import for_model, tool_lists
+        from asyncroscopy.skills.registry import select_skills, skills_text
+
+        discovery = self.server.discovery
+        own = self.server.tool_names()
+        if agent_tools:
+            held = set(agent_tools)
+        else:
+            globs, lists = discovery.agent_tool_globs(), tool_lists(discovery.agent_profile)
+            held = {name for name in own if for_model(name, globs, lists)}
+        names = [s.name for s in select_skills(request, held, own | held)]
+        text, cut = skills_text(names, own | held)
+        return {"names": names, "text": text, "cut": cut}
 
 
 def register(server: MCPServer, cfg: ServerConfig) -> SkillsTools:

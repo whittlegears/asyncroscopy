@@ -40,11 +40,21 @@ def test_an_unknown_field_is_named_with_the_field_meant_and_the_allowed_list(map
     assert "Allowed fields: " in message and "dose_budget_e_per_a2" in message.split("Allowed fields: ")[1]
 
 
-def test_the_example_plan_shows_the_dose_budget_when_the_request_mentions_dose(mapper_proxy):
+def test_the_example_plan_carries_the_callers_own_dose_limit_and_never_invents_one(mapper_proxy):
     with_dose = json.loads(refusal(mapper_proxy, {**PLAN, "max_dose_e_per_a2": 20.0}).split("Example plan: ", 1)[1])
-    assert with_dose["dose_budget_e_per_a2"] > 0
+    assert with_dose["dose_budget_e_per_a2"] == 20.0
+    named = json.loads(refusal(mapper_proxy, {**PLAN, "label": "low dose", "colour": "red"}).split("Example plan: ", 1)[1])
+    assert "dose_budget_e_per_a2" not in named
     without = json.loads(refusal(mapper_proxy, {**PLAN, "colour": "red"}).split("Example plan: ", 1)[1])
     assert "dose_budget_e_per_a2" not in without
+
+
+def test_a_dose_refusal_names_only_the_remedies_for_what_adds_dose(mapper_proxy, analysis):
+    tiles = refusal(mapper_proxy, {**PLAN, "dose_budget_e_per_a2": 1e-6})
+    assert "lower dwell_s or overlap" in tiles and "revisit" not in tiles and "eds_exposure_s" not in tiles
+    assert "give dose_budget_e_per_a2 only when they set a limit" in tiles
+    revisit = refusal(mapper_proxy, {**PLAN, "find_regions": 1, "revisit": {"fov_m": 3e-8}, "dose_budget_e_per_a2": 1e-6})
+    assert "widen revisit fov_m" in revisit
 
 
 def test_a_plan_off_the_stage_is_refused_at_reserve_with_the_limit(mapper_proxy):
