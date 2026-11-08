@@ -2,6 +2,8 @@ import json
 import os
 import signal
 import subprocess
+import sys
+import time
 from types import SimpleNamespace
 
 from asyncroscopy.utils import process_manager
@@ -141,6 +143,7 @@ def test_cleanup_stale_state_on_enter(tmp_path, monkeypatch):
     time_vals = [100.0, 102.0, 100.0, 102.0]
     monkeypatch.setattr(process_manager.time, "time", lambda: time_vals.pop(0) if time_vals else 200.0)
     monkeypatch.setattr(process_manager.time, "sleep", lambda x: None)
+    monkeypatch.setattr(ProcessManager, "_is_recorded_process", staticmethod(lambda pid, recorded_at: True))
 
     manager = ProcessManager(name="test_run", state_dir=tmp_path)
     with manager:
@@ -186,6 +189,29 @@ def _fake_killers(monkeypatch):
     monkeypatch.setattr(process_manager.subprocess, "run", fake_run)
     monkeypatch.setattr(ProcessManager, "_kill_stale_pid", lambda self, pid: killed.append(pid))
     return killed
+
+
+def test_a_reused_process_id_in_a_stale_state_file_is_left_alone(tmp_path, monkeypatch):
+    """A crash leaves PIDs on disk and the OS hands them to other programs: only a process older than the file was recorded."""
+    killed = []
+    monkeypatch.setattr(ProcessManager, "_kill_stale_pid", lambda self, pid: killed.append(pid))
+    bystander = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        state_file = tmp_path / "test_run.json"
+        state_file.write_text(json.dumps([bystander.pid, 2**22 - 2]), encoding="utf-8")
+        os.utime(state_file, (time.time() - 3600, time.time() - 3600))  # recorded an hour before the bystander started
+        with ProcessManager(name="test_run", state_dir=tmp_path):
+            assert not state_file.exists()
+        assert killed == []
+
+        state_file.write_text(json.dumps([bystander.pid]), encoding="utf-8")
+        os.utime(state_file, (time.time() + 60, time.time() + 60))  # recorded after it started: this launcher's own orphan
+        with ProcessManager(name="test_run", state_dir=tmp_path):
+            pass
+        assert killed == [bystander.pid]
+    finally:
+        bystander.kill()
+        bystander.wait()
 
 
 def test_stop_processes_on_port_kills_only_listeners(tmp_path, monkeypatch):

@@ -463,13 +463,29 @@ class ProcessManager:
                 stale_pids = json.load(f)
 
             if isinstance(stale_pids, list):
+                recorded_at = self.state_file.stat().st_mtime
                 for pid in stale_pids:
-                    if isinstance(pid, int):
+                    if isinstance(pid, int) and self._is_recorded_process(pid, recorded_at):
                         self._kill_stale_pid(pid)
         except (json.JSONDecodeError, IOError):
             pass
         finally:
             self._remove_state_file()
+
+    @staticmethod
+    def _is_recorded_process(pid: int, recorded_at: float) -> bool:
+        """Whether ``pid`` can still be the process the state file recorded at ``recorded_at``.
+
+        The operating system reuses process ids, so a state file left by a crash can name a process that has
+        nothing to do with this launcher: another stack, or any other program. A process started after the file
+        was last written cannot be one it recorded. Without psutil nothing can be told apart, so nothing is stopped.
+        """
+        if psutil is None:
+            return False
+        try:
+            return psutil.Process(pid).create_time() <= recorded_at + 1.0
+        except (psutil.Error, OSError):
+            return False
 
     def _kill_stale_pid(self, pid: int):
         """Best-effort termination of orphan process IDs from a previous crash.
