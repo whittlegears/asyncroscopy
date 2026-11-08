@@ -16,7 +16,7 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 | Piece | Where | What it does |
 | :-- | :-- | :-- |
 | `Mapper` | `asyncroscopy/jobs/mapping/mapper.py` | One background job per map, for any instrument: serpentine tile grid inside a stage box, budgets checked at reserve, abort with the instrument made safe, resume after a restart, then stitch, score and revisit. |
-| Instrument profiles | `asyncroscopy/jobs/mapping/profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
+| Instrument profiles | `asyncroscopy/jobs/mapping/profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `spm` (an SPMMicroscope, the tip lifted for every move), `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
 | Routines | `asyncroscopy/routines/grid.py`, `dose.py`, `drift.py` | The pure arithmetic: tile grids, electron dose, the stitch's drift at a time, live drift trackers. |
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with the analysis server's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
 | Approval mode | `asyncroscopy/safety/` | `auto` or `approve`; see [approval_mode.md](approval_mode.md). |
@@ -35,6 +35,8 @@ A plan is JSON checked against `asyncroscopy/contracts/map_plan.schema.json`. Le
 
 `per_tile` is `[]` (images only), `["eds_point"]` (one spectrum at each tile centre) or `["eds_map"]` (a coarse spectrum image of every tile: much slower, only when asked for by name). `reserve` refuses a plan whose overlapping tiles, EDS spectra and revisit image together would exceed `dose_budget_e_per_a2` and returns a time and dose estimate.
 
+An `eds_map` tile uses the microscope's own `acquire_spectrum_image` when one exists and the image will take at most `max_native_spectrum_image_s` (120 s by default; the Mapper's property), and places the beam point by point otherwise; the cube goes into the run file's `spectrum_image` a row at a time.
+
 The fields after `overlap` are the STEM profile's. Another instrument's Mapper (its `instrument_profile`) takes the generic fields (`box_m` or `size_m` and `centre_m`, `fov_m`, `overlap`, `order`, `stitch`, `find_regions`, `revisit`, `budgets`, `drift`, `label`) plus its own, and refuses a field it does not use by name. An AFM (the YAML twin's `afm.yaml`) maps with:
 
 ```json
@@ -48,7 +50,7 @@ The fields after `overlap` are the STEM profile's. Another instrument's Mapper (
 
 ### Dose budget and beam current
 
-- The estimate's `max_dose_e_per_a2` counts the frames where tiles overlap, a revisit image, and the EDS spectra. A spectrum's parked-beam dose is counted over a square of side `eds_dose_spread_m` (a setting of the Mapper's STEM profile, set under its `properties:`, 10 nm by default); an `eds_map` grid can put several spectra in one square. `eds_dose_e_per_a2` gives the EDS share.
+- The estimate's `max_dose_e_per_a2` counts the frames where tiles overlap, a revisit image, and the EDS spectra. A spectrum's parked-beam dose is counted over a square of side `EDS_DOSE_SPREAD_M` (10 nm, the one definition in `asyncroscopy/routines/dose.py`); an `eds_map` grid can put several spectra in one square. `eds_dose_e_per_a2` gives the EDS share.
 - The current comes from the microscope's `get_parameters` (the same as its `beam_current_pa`, `beam_current_source` and `beam_current_age_s` attributes): `beam_current_pa` with `beam_current_source` `measured` or `default` (then `beam_current_reason` says why). A microscope that has not measured it reports its own `default_beam_current_pa`. The twin reports its configured `probe_current_pa` as measured. The Spectra 300 (AutoScript) reports `default` until the screen current is measured: insert the screen, call `get_screen_current`, then retract it.
 - On a stack that is not simulated, `reserve` refuses a plan with a dose budget when the current is `default`, or measured too long ago (`max_beam_current_age_s`). Only the Mapper's `simulated` property (run_servers' top-level `simulated:`) makes a stack simulated; what the microscope reports does not.
 - `start` checks the current again, and so does every resume: the approval may come long after the reserve. A plan with a dose budget fails at start, before anything is set, when the current can no longer be used or is more than 5 % above the one the budget was checked with. Reserve again after measuring it.

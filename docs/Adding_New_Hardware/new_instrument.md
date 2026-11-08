@@ -14,7 +14,7 @@ Run the test first to see the whole thing work:
 uv run pytest tests/test_new_instrument_example.py -q
 ```
 
-Every instrument follows the same shape: an abstract base device for the kind of instrument, a subclass of `Instrument` (`instruments/instrument.py`, which adds a DATA device link, a test mode and `clock_s`), and one subclass per backend. The base owns the public commands (the agent's tools) and the checks every backend must apply; a backend implements only `_x` methods. The STEM devices do this (`ElectronMicroscope`, with `AutoScriptMicroscope`, `JeolMicroscope` and the twins), and so does the indenter (`NanoIndenter`, with `SimIndenter`). The older `SPMMicroscope` and `Opentrons` devices predate these conventions, so copy the indenter rather than them.
+Every instrument follows the same shape: an abstract base device for the kind of instrument, a subclass of `Instrument` (`instruments/instrument.py`, which adds a DATA device link, a test mode and `clock_s`), and one subclass per backend. The base owns the public commands (the agent's tools) and the checks every backend must apply; a backend implements only `_x` methods. A scanning-beam instrument starts from `ScanningBeamInstrument` (`instruments/scanning_beam.py`: the beam, field of view, image shift, stage, beam current, limits and command lock). The STEM devices do this (`ElectronMicroscope`, with `AutoScriptMicroscope`, `JeolMicroscope` and the twins), so does the SEM (`ScanningElectronMicroscope`, with `DigitalTwinSEM`), and so does the indenter (`NanoIndenter`, with `SimIndenter`). The older `SPMMicroscope` and `Opentrons` devices predate these conventions, so copy the indenter rather than them.
 
 ## 0. No Python: a simulated instrument from one YAML file
 
@@ -318,10 +318,11 @@ The `Mapper` job device (`asyncroscopy/jobs/mapping/mapper.py`; the name and the
 | Profile | Instrument | Budgets (plan `budgets`) |
 | :-- | :-- | :-- |
 | `stem` (default) | scanned images, optional EDS per tile (`per_tile`) | `dose_e_per_a2` (or the plan's `dose_budget_e_per_a2`), `time_s` |
-| `sem` | any microscope device offering `move_stage`, `get_stage`, `set_fov`, `acquire_scanned_image`, `blank_beam`, `unblank_beam`, plus a SCAN device; no EDS | `dose_e_per_a2`, `time_s` |
+| `sem` | a `ScanningElectronMicroscope` (`instruments/scanning_electron_microscope/`, its `instrument_type` is checked at reserve) plus a SCAN device; no EDS | `dose_e_per_a2`, `time_s` |
+| `spm` | an `SPMMicroscope`: retract before each move, approach after it, one frame per tile through its SCAN device | `time_s` |
 | `yaml` | a YAML instrument with an image acquisition and stage x/y settings | `time_s` and the file's `map.budgets` |
 
-The `stem` and `sem` profiles also need a **SCAN device**: their `setup` writes the plan's `imsize`, `dwell_s` (as `dwell_time`) and a full-frame `scan_region` to it, not to the microscope. It is the Mapper's `scan_device_address` property (default `asyncroscopy/scan/default`), so an SEM stack needs a `scan:` device in its launcher config (`asyncroscopy/instruments/electron_microscope/hardware/scan.py` and the `scan:` entry in `configs/DigitalTwin.yaml` show one), or a device of your own with writable `imsize`, `dwell_time` and `scan_region` attributes. Reserve does not check it: without one the job fails when it starts, in `setup`.
+The `stem` and `sem` profiles also need a **SCAN device**: their `setup` writes the plan's `imsize`, `dwell_s` (as `dwell_time`) and a full-frame `scan_region` to it (a plan without `detectors` uses the instrument's `default_detector`, and live drift tracking reads its `image_shift_limit_m`), not to the microscope. It is the Mapper's `scan_device_address` property (default `asyncroscopy/scan/default`), so an SEM stack needs a `scan:` device in its launcher config (`asyncroscopy/instruments/electron_microscope/hardware/scan.py` and the `scan:` entry in `configs/DigitalTwin.yaml` show one), or a device of your own with writable `imsize`, `dwell_time` and `scan_region` attributes. Reserve does not check it: without one the job fails when it starts, in `setup`.
 
 Every profile can budget `time_s` (the estimated duration). A plan over any budget it gives is refused at `reserve`, before anything moves, with the cost and how to lower it; a budget the profile does not know is refused by name.
 

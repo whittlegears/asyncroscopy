@@ -1,0 +1,33 @@
+# A simulated SEM mapping the same kind of sample as digital_twin_mapping.yaml.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_sem.yaml
+#
+# Everything not set here is digital_twin_mapping.yaml's (extends: merges it in; null removes a device or a property).
+# The stage model, scan distortions, DATA, Tiled and the Mapper are the mapping twin's; the instrument is an SEM.
+
+extends: digital_twin_mapping.yaml
+
+instrument:
+  class_name: DigitalTwinSEM
+  file: asyncroscopy/instruments/scanning_electron_microscope/digital_twin.py
+  description: "Simulated SEM: 2 um sample, stage error, drift, scan distortion, dose"
+  properties:
+    acceleration_voltage: 15000
+    # STEM-only properties of the file this extends.
+    convergence_angle_mrad: null
+    eds_fwhm_mn_ka: null
+    eds_solid_angle: null
+    eds_dead_time: null
+    contamination_max: null
+    contamination_dose: null
+    damage_critical_dose: null
+
+devices:
+  camera: null
+  eds: null
+  corrector: null
+  tuner: null
+  mapper:
+    properties:
+      instrument_profile: sem
+      eds_device_address: null

@@ -16,6 +16,7 @@ import pytest
 from asyncroscopy.jobs.mapping import pipeline as pipeline_module
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from asyncroscopy.jobs.mapping.pipeline import Pipeline
+from tests.test_map_pipeline import ToolService
 from asyncroscopy.routines.drift import drift_at
 
 from test_map_pipeline import PLAN, InProcessAnalysis, call
@@ -49,7 +50,7 @@ class Analysis:
 def analysis(monkeypatch):
     holder = Analysis()
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Pipeline, "call", lambda self, tool, arguments: holder(self, tool, arguments))
+    monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(holder, self))
     monkeypatch.setattr(pipeline_module, "ANALYSIS_BACKOFF_S", (0.05, 0.05))
     return holder
 

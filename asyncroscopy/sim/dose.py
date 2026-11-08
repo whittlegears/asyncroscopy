@@ -22,6 +22,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M
+
 ANGSTROM2_PER_M2 = 1e20
 CELLS_PER_FIELD = 8  # a frame's dose is kept in cells about an eighth of its field...
 MIN_PIXELS_PER_CELL = 4  # ...but at least this many pixels wide, so a small frame's cells are not mostly empty
@@ -35,7 +37,7 @@ class DoseParams:
     enabled: bool = False
     cell_m: float = 20e-9  # the reference cell; finer frames use cells half as large, coarser ones twice, again and again
     min_cell_m: float = 0.5e-9
-    spot_spread_m: float = 1e-8  # a parked beam's dose is counted over a square this wide (match the Mapper's eds_dose_spread_m)
+    spot_spread_m: float = EDS_DOSE_SPREAD_M  # a parked beam's dose is counted over a square this wide
     contamination_angstrom_max: float = 0.0
     contamination_dose_e_per_a2: float = 1e4
     damage_critical_dose_e_per_a2: float = 0.0

@@ -16,6 +16,8 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: TestStage
     module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage

@@ -135,6 +135,9 @@ class RecordingMicroscope:
         self.calls: list[str] = []
         self.parameters, self.device = parameters, device
 
+    def read_attribute(self, name):
+        return type("Value", (), {"value": {"instrument_type": "TEM", "default_detector": "haadf"}[name]})()
+
     def get_parameters(self):
         self.calls.append("get_parameters")
         return EM.get_parameters(self.device) if self.device is not None else json.dumps(self.parameters)

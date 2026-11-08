@@ -54,7 +54,7 @@ def load_image(microscope: tango.DeviceProxy, key: str) -> np.ndarray:
 
 
 def acquire(microscope: tango.DeviceProxy) -> np.ndarray:
-    return load_image(microscope, microscope.acquire_scanned_image(["haadf"]))
+    return load_image(microscope, microscope.acquire_scanned_image([]))
 
 
 def shift_m(reference: np.ndarray, image: np.ndarray, pixel_m: float) -> np.ndarray:

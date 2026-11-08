@@ -173,6 +173,10 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
 * `instruments/` and `jobs/` are the devices. Each base class declares what its commands are
   (`asyncroscopy.utils.commands.command(risk=, role=, stop=, routine=, operator_only=)`) and serves
   the declarations as its `action_hints` attribute; vendor backends and twins inherit them.
+* The scanning-beam instruments share `instruments/scanning_beam.py` (`ScanningBeamInstrument`, with its twin mixin and map
+  profile beside it); `ElectronMicroscope` and `ScanningElectronMicroscope` add what is their own. `instruments/common/sample.py`
+  is the SAMPLE device (which sample is loaded, and its dose). The Mapper's analysis goes through
+  `jobs/mapping/stitch_service.py`, so `jobs/` needs no MCP client (`stitch_mcp.py` is loaded on first use).
 * `mcp/` serves the devices: `mcp_server.py` (discovery, wrapping, interceptors), `descriptors.py`,
   and `components/` for the native tools. It learns what an instrument is only from the devices
   it discovers (their declarations), never by importing `instruments/`.

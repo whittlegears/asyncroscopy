@@ -6,6 +6,7 @@ asyncroscopy.data.views; this module is for code that needs the values.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,36 @@ def numpy_to_python(obj: Any) -> Any:
         conv = [numpy_to_python(v) for v in obj]
         return tuple(conv) if isinstance(obj, tuple) else conv
     return obj
+
+
+def read_rows(key: str, name: str, data_proxy: Any = None) -> Iterator[tuple[np.ndarray, dict[str, Any]]]:
+    """Dataset ``name`` of one acquisition, one (row, attrs) at a time, so a large cube is never held whole.
+
+    ``key`` is as for ``read_acquisition``. Raises KeyError when the acquisition has no such dataset.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(key)
+    if path.suffix.lower() in {".h5", ".hdf5"} and path.exists():
+        import h5py
+
+        with h5py.File(path, "r") as h5:
+            if name not in h5:
+                raise KeyError(f"{key} has no dataset {name!r}")
+            dataset = h5[name]
+            attrs = dict(dataset.attrs)
+            for row in range(dataset.shape[0]):
+                yield dataset[row], attrs
+        return
+    if data_proxy is None:
+        raise FileNotFoundError(f"{key!r} is not a local file and no DATA device was given to resolve it")
+    from asyncroscopy.data import tiled_client
+
+    node = tiled_client.node_for_key(key, json.loads(data_proxy.get_config())["uri"])[name]
+    attrs = numpy_to_python(dict(getattr(node, "metadata", {}) or {}))
+    for row in range(node.shape[0]):
+        yield np.asarray(node[row]), attrs
 
 
 def read_acquisition(key: str, data_proxy: Any = None) -> dict[str, tuple[np.ndarray, dict[str, Any]]]:

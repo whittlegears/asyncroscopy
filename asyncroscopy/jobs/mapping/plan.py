@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import difflib
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -28,6 +27,7 @@ from asyncroscopy.routines.grid import EDGE_TOLERANCE_M, compact_grid, grid_axes
 
 from . import live_drift
 from .profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Cost, InstrumentProfile
+from .stitch_service import StitchService
 
 # pyTEMlib's stitcher searches each overlap only up to this share of its width; neighbours the stage puts further
 # apart than that cannot be matched and are left unplaced (docs/designs/multiscale_maps.md, P2 findings).
@@ -57,7 +57,7 @@ class PlanEnvironment:
     max_tiles: int
     estimate_move_s: float
     stage_sigma_m: float
-    analysis: Callable[[str, dict], dict] | None = None
+    analysis: StitchService | None = None
 
 
 # ----------------------------------------------------------------------
@@ -248,7 +248,7 @@ def _resolve_revisit_only(plan: dict, profile: InstrumentProfile, env: PlanEnvir
     else:
         if env.analysis is None:
             raise ValueError("revisiting an existing map's regions needs a Mapper with an analysis_url")
-        info = env.analysis("map_info", {"map": revisit["map"]})
+        info = env.analysis.map_info(map=revisit["map"])
         box = p.get("box_m") or list(info["stage_box_m"])
         count = int(revisit.get("top_k", 3))
     x_min, x_max, y_min, y_max = (float(v) for v in box)
@@ -287,7 +287,7 @@ def _resolve_zoom_only(plan: dict, profile: InstrumentProfile, env: PlanEnvironm
     if not profile.image_shift_limit_m:
         raise ValueError(f"zooming aims each image by image shift, which the {profile.name!r} instrument profile cannot set")
     zoom = dict(plan["zoom"])
-    frame = env.analysis("find_features", {"image": zoom["parent"], "n": 0})
+    frame = env.analysis.find_features(image=zoom["parent"], n=0)
     if "error" in frame:
         raise ValueError(f"cannot zoom from {zoom['parent']!r}: {frame['error'].get('message', frame['error'])}")
     parent_fov = float(frame["pixel_size_m"]) * float(max(frame["shape"]))

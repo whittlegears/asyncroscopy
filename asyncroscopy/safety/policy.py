@@ -93,7 +93,7 @@ STEM_LOW = frozenset({"set_fov", "set_defocus"})
 # Never offered on the agent endpoint, whatever the config says: Tango's own admin commands, which no
 # device declares (restarting a device resets its state, the approval mode among it). Everything else
 # a device keeps from agents it declares itself: command(operator_only=True) (the Approvals device's
-# approve, deny, set_mode, ...; a twin's export_ground_truth; a stage's set_holder and load_sample; a
+# approve, deny, set_mode, ...; a twin's export_ground_truth; a stage's set_holder; the SAMPLE device's load_sample; a
 # job device's revise; the DATA device's configure and Tiled server commands).
 OPERATOR_ONLY: list[str] = [
     "*.init",

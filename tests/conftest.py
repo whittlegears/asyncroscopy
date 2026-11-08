@@ -45,6 +45,8 @@ from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin im
 from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import DigitalTwinDiffraction
+from asyncroscopy.instruments.scanning_electron_microscope.digital_twin import DigitalTwinSEM
+from asyncroscopy.instruments.scanning_probe_microscope.simulated import SimulatedSPM, SimulatedSPMApproach, SimulatedSPMFeedback, SimulatedSPMScan, SimulatedSPMStage
 from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.electron_microscope.polycrystalline_gold_digital_twin import PolycrystallineGoldDigitalTwin
@@ -52,6 +54,7 @@ from asyncroscopy.instruments.electron_microscope.twin.specimen import register_
 from asyncroscopy.instruments.electron_microscope.twin.specimen_particles import ParticleWorld
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
+from asyncroscopy.instruments.common.sample import SAMPLE
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from asyncroscopy.jobs.tuning.tuner import Tuner
 from asyncroscopy.safety.approvals import Approvals
@@ -221,6 +224,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 {"name": "asyncroscopy/scan/drift", "properties": {}},
                 {"name": "asyncroscopy/scan/livedrift", "properties": {}},
                 {"name": "asyncroscopy/scan/tuner", "properties": {}},
+                {"name": "asyncroscopy/scan/sem", "properties": {}},
                 *({"name": f"asyncroscopy/scan/specimen_{source}", "properties": {}} for source in SPECIMEN_TWINS),
             ],
         },
@@ -264,9 +268,17 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 {"name": "asyncroscopy/stage/dose", "properties": {}},
                 {"name": "asyncroscopy/stage/specimen_golden", "properties": on_the_stage(SPECIMEN_GOLDEN_PROPERTIES)},
                 {"name": "asyncroscopy/stage/tuner", "properties": {}},
+                {"name": "asyncroscopy/stage/sem", "properties": {"stage_move_noise_std": 2e-9, "stage_reported_noise_std": 5e-10}},
                 # tests/test_atomistic_specimens.py: one twin of each kind, moved only by those tests.
                 *({"name": f"asyncroscopy/stage/atomistic_{kind}", "properties": {}} for kind in ("tilt", "particles", "diffraction", "polycrystal")),
                 *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": on_the_stage(MAPPING_TWIN_PROPERTIES)} for source in SPECIMEN_TWINS),
+            ],
+        },
+        {
+            "class": SAMPLE,
+            "devices": [
+                {"name": "asyncroscopy/sample/mapping", "properties": {"sample_file": prop_path(job_dir / "sample" / "mapping.json")}},
+                {"name": "asyncroscopy/sample/sem", "properties": {"sample_file": prop_path(job_dir / "sample" / "sem.json")}},
             ],
         },
         {
@@ -312,6 +324,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/mapping",
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/mapping",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         **on_the_microscope(MAPPING_TWIN_PROPERTIES),
                     },
@@ -360,7 +373,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 },
                 {
                     # Ideal stage and scan with dose tracking, for tests/test_dose_aware.py: its DoseMap cell
-                    # (2 um / 200 = 10 nm) matches the dose Mapper's eds_dose_spread_m.
+                    # (2 um / 200 = 10 nm) matches EDS_DOSE_SPREAD_M.
                     "name": "asyncroscopy/digitaltwin/dose",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
@@ -416,6 +429,67 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 },
             ],
         },
+        # A simulated SPM, its sub-devices talking over Tango, for tests/test_spm_mapping.py.
+        {
+            "class": SimulatedSPMApproach,
+            "devices": [{"name": "asyncroscopy/approach/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMFeedback,
+            "devices": [{"name": "asyncroscopy/feedback/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMStage,
+            "devices": [{"name": "asyncroscopy/stage/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMScan,
+            "devices": [
+                {
+                    "name": "asyncroscopy/scan/spm",
+                    "properties": {
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                        "approach_device_address": "asyncroscopy/approach/spm",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                    },
+                },
+            ],
+        },
+        {
+            "class": SimulatedSPM,
+            "devices": [
+                {
+                    "name": "asyncroscopy/spm/default",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/spm",
+                        "feedback_device_address": "asyncroscopy/feedback/spm",
+                        "approach_device_address": "asyncroscopy/approach/spm",
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                    },
+                },
+            ],
+        },
+        {
+            "class": DigitalTwinSEM,
+            "devices": [
+                {
+                    "name": "asyncroscopy/sem/default",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/sem",
+                        "stage_device_address": "asyncroscopy/stage/sem",
+                        "sample_device_address": "asyncroscopy/sample/sem",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                        "sample_seed": 2024,
+                        "sample_size_xy": 4e-7,
+                        "sample_particle_count": 40,
+                        "particle_radius_mean": 8e-9,
+                        "particle_radius_std": 3e-9,
+                        "dose_tracking": True,
+                    },
+                },
+            ],
+        },
         {
             "class": Tuner,
             "devices": [
@@ -453,6 +527,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/mapping",
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/mapping",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
                         "output_directory": prop_path(job_dir / "maps"),
                         "state_directory": prop_path(job_dir / "state"),
                         "trace_path": prop_path(job_dir / "trace" / "jobs.jsonl"),
@@ -467,6 +542,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/mapping",
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/mapping",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
                         "output_directory": prop_path(job_dir / "lease" / "maps"),
                         "state_directory": prop_path(job_dir / "lease" / "state"),
                         "trace_path": prop_path(job_dir / "lease" / "trace.jsonl"),
@@ -486,7 +562,6 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "state_directory": prop_path(job_dir / "dose" / "state"),
                         "trace_path": prop_path(job_dir / "dose" / "trace" / "jobs.jsonl"),
                         "estimate_move_s": 1.0,
-                        "eds_dose_spread_m": 1e-8,
                     },
                 },
                 *(
@@ -538,17 +613,36 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     },
                 },
                 {
-                    # The mapping twin driven as an SEM: the beam commands only, no EDS (test_map_profiles.py).
+                    # The simulated SEM: the scanning-beam commands only, no EDS (test_map_profiles.py).
                     "name": "asyncroscopy/mapper/sem",
                     "properties": {
                         "instrument_profile": "sem",
-                        "microscope_device_address": "asyncroscopy/digitaltwin/mapping",
-                        "scan_device_address": "asyncroscopy/scan/mapping",
-                        "stage_device_address": "asyncroscopy/stage/mapping",
+                        "microscope_device_address": "asyncroscopy/sem/default",
+                        "scan_device_address": "asyncroscopy/scan/sem",
+                        "stage_device_address": "asyncroscopy/stage/sem",
+                        "sample_device_address": "asyncroscopy/sample/sem",
                         "output_directory": prop_path(job_dir / "sem" / "maps"),
                         "state_directory": prop_path(job_dir / "sem" / "state"),
                         "trace_path": prop_path(job_dir / "sem" / "trace.jsonl"),
                         "estimate_move_s": 1.0,
+                        "simulated": True,
+                    },
+                },
+                {
+                    # The simulated SPM: retract, move, approach, scan (test_spm_mapping.py).
+                    "name": "asyncroscopy/mapper/spm",
+                    "properties": {
+                        "instrument_profile": "spm",
+                        "microscope_device_address": "asyncroscopy/spm/default",
+                        "scan_device_address": "asyncroscopy/scan/spm",
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
+                        "output_directory": prop_path(job_dir / "spm" / "maps"),
+                        "state_directory": prop_path(job_dir / "spm" / "state"),
+                        "trace_path": prop_path(job_dir / "spm" / "trace.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "stage_sigma_m": 5e-9,
+                        "max_drift_m_per_s": 0.0,
                         "simulated": True,
                     },
                 },
@@ -946,6 +1040,16 @@ def mapper_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/default"))
     proxy.set_timeout_millis(60_000)
     return proxy
+
+
+@pytest.fixture(scope="session")
+def mapping_sample_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/sample/mapping"))
+
+
+@pytest.fixture(scope="session")
+def sem_twin_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/sem/default"))
 
 
 @pytest.fixture(scope="session")

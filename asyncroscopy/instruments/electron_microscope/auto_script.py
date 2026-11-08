@@ -28,8 +28,9 @@ from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
 from asyncroscopy.utils.commands import command
-from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope, hardware_call, unsupported
-from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
+from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+from asyncroscopy.instruments.scanning_beam import hardware_call, unsupported
+from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
 
 # AutoScript imports — only available on the microscope PC.
 # Wrapped in try/except so the device can still be imported and tested
@@ -39,7 +40,7 @@ try:
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
     from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem, ExposureTimeType
     from autoscript_tem_microscope_client.structures import Region, Rectangle
-    from autoscript_tem_microscope_client.structures import StemAcquisitionSettings, EdsAcquisitionSettings, RunOptiStemSettings, CameraAcquisitionSettings
+    from autoscript_tem_microscope_client.structures import StemAcquisitionSettings, EdsAcquisitionSettings, EdsSpectrumImageSettings, RunOptiStemSettings, CameraAcquisitionSettings
     from autoscript_tem_microscope_client.structures import RunObjectiveAutoStigmatorSettings
 
     _AUTOSCRIPT_AVAILABLE = True
@@ -489,6 +490,21 @@ class AutoScriptMicroscope(ElectronMicroscope):
             spectrum = self._microscope.analysis.eds.acquire_spectrum(settings)
         data_server = self._detector_proxies.get("data")
         return save_acquisition(self, data_server, "spectrum", detector_name, spectrum, dataset_name="spectrum")
+
+    def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
+        """The client's own spectrum image. It comes as a Velox .emd file of X-ray events, kept as it is: its key is the
+        file's path, and it is in the dose ledger as one frame of ``points`` lines at this dwell, over the whole field."""
+        settings = EdsSpectrumImageSettings()
+        settings.eds_detector = EdsDetectorType.SUPER_X
+        settings.dispersion = 5
+        settings.shaping_time = 3e-6
+        settings.dwell_time = float(exposure_time)
+        settings.size = int(points)
+        with self._beam_restored():
+            spectrum_image = self._microscope.analysis.eds.acquire_spectrum_image(settings)
+        path = acquisition_filename(self, "spectrum_image", "eds", self._detector_proxies.get("data"), extension="emd")
+        spectrum_image.save(str(path))
+        return record_vendor_file(self, path, self._frame_attrs(points, float(exposure_time), [0.0, 0.0, 1.0, 1.0]))
 
     def _place_beam(self, position) -> None:
         """
