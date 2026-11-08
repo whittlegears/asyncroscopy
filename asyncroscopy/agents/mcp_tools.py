@@ -10,7 +10,6 @@ restarts.
 from __future__ import annotations
 
 import json
-import os
 from typing import TYPE_CHECKING, Any
 
 from fastmcp import Client
@@ -18,13 +17,11 @@ from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 from langchain_core.tools import StructuredTool, ToolException
 
+from asyncroscopy import settings
 from asyncroscopy.agents.guidance import render
 
 if TYPE_CHECKING:
     from mcp.types import Tool
-
-# A bearer token for endpoints that verify tokens (the MCP config's mcp.auth; docs/Operation/remote_access.md).
-TOKEN_ENV = "ASYNCROSCOPY_MCP_TOKEN"
 
 
 def bearer_header(token: str | None) -> dict[str, str]:
@@ -60,7 +57,7 @@ class McpServer:
         self.url = url
         self.headers = dict(headers or {})
         if not any(k.lower() == "authorization" for k in self.headers):  # e.g. the swarm, which builds its own headers
-            self.headers.update(bearer_header(os.environ.get(TOKEN_ENV)))
+            self.headers.update(bearer_header(settings.get().mcp_token))
         self.timeout_s = timeout_s
         self.ledger = ledger
 

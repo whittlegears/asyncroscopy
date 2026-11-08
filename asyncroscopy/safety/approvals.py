@@ -22,13 +22,17 @@ starts in ``approve`` and ``set_mode(auto)`` fails with the reason.
 Every mode change, request and decision is written to the Instrument Trace.
 The mode is also saved to ``mode_file`` (written atomically: a crash mid-write leaves the old
 file) and restored on restart, so a crashed or re-initialised device does not silently fall back
-to ``auto``.
+to ``auto``. Requests and grants are journalled beside it (``<mode file stem>_journal.jsonl``, one line per
+change, compacted on start and when it has grown) and reloaded at Init, expiring by the time they were
+made, so a restart neither forgets what an agent is waiting on nor makes a used grant usable again. Using
+a grant is recorded before the call is allowed: if that cannot be written, the call is refused.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 import uuid
@@ -46,6 +50,7 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 
 MODES = ("auto", "approve")
 PRUNE_AFTER_S = 86400.0
+COMPACT_AFTER_LINES = 2000  # journal lines written before it is rewritten down to what is still held
 AUTO_ON_HARDWARE = (
     "auto mode is refused: this stack is not simulated (run_servers config simulated: false), so every high-risk "
     "agent call must wait for a person. Rehearse unattended runs on a twin, or as a dry run (plan dry_run: true)."
@@ -108,6 +113,8 @@ class Approvals(Device):
         self._grants: dict[str, dict] = {}
         self._trace = TraceWriter(self.trace_path, source="approvals", writer=self.get_name(), defaults={"simulated": bool(self.simulated)})
         self._mode = "approve"
+        self._journal_lines = 0
+        self._restore_journal()
         self._auto_allowed: list[str] = self._restore_switches()
         mode = str(self.default_mode).strip().lower()
         if mode not in MODES:
@@ -152,16 +159,83 @@ class Approvals(Device):
         switches = self._auto_allowed if auto_allowed is None else auto_allowed
         write_atomic(self.mode_file, json.dumps({"mode": mode, "who": who, "at": time.time(), "auto_allowed": switches}))
 
+    def _journal_path(self) -> Path:
+        mode_file = Path(self.mode_file)
+        return mode_file.with_name(f"{mode_file.stem}_journal.jsonl")
+
+    def _journal(self, requests: list[dict] = (), grants: list[dict] = ()) -> None:
+        """Append the current form of these records (raises OSError). The last line for a record wins when it is reloaded."""
+        lines = [json.dumps({"request": r}, default=str) for r in requests] + [json.dumps({"grant": g}, default=str) for g in grants]
+        if not lines:
+            return
+        path = self._journal_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._journal_lines += len(lines)
+        if self._journal_lines > COMPACT_AFTER_LINES:
+            self._compact_journal()
+
+    def _record(self, requests: list[dict] = (), grants: list[dict] = ()) -> bool:
+        """Journal these records; a disk that cannot be written is reported in the trace, and must not stop the device holding calls."""
+        try:
+            self._journal(requests, grants)
+            return True
+        except OSError as exc:
+            self._trace.record("Approvals.journal", False, time.time(), error=f"{type(exc).__name__}: {exc}")
+            return False
+
+    def _compact_journal(self) -> None:
+        records = [json.dumps({"request": r}, default=str) for r in self._requests.values()] + [json.dumps({"grant": g}, default=str) for g in self._grants.values()]
+        write_atomic(self._journal_path(), "".join(line + "\n" for line in records))
+        self._journal_lines = len(records)
+
+    def _restore_journal(self) -> None:
+        """Requests and grants from before this start; a line cut short by a crash is skipped."""
+        path = self._journal_path()
+        try:
+            with open(path, encoding="utf-8") as handle:
+                lines = handle.readlines()
+        except OSError:
+            return
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if isinstance(row.get("request"), dict) and row["request"].get("request_id"):
+                self._requests[row["request"]["request_id"]] = row["request"]
+            elif isinstance(row.get("grant"), dict) and row["grant"].get("grant_id"):
+                self._grants[row["grant"]["grant_id"]] = row["grant"]
+        with self._lock:
+            self._expire()
+            pending = sum(r["state"] == "pending" for r in self._requests.values())
+            grants = sum(not g["used"] for g in self._grants.values())
+            try:
+                self._compact_journal()
+            except OSError as exc:
+                self._trace.record("Approvals.journal", False, time.time(), error=f"{type(exc).__name__}: {exc}")
+        self._trace.record("Approvals.restored", True, time.time(), arguments={"pending_requests": pending, "unused_grants": grants})
+
     def _expire(self) -> None:
         now = time.time()
+        expired_requests: list[dict] = []
+        expired_grants: list[dict] = []
         for request in self._requests.values():
             if request["state"] == "pending" and now - request["created"] > float(self.request_timeout_s):
                 request["state"] = "expired"
+                expired_requests.append(request)
                 self._trace.record("Approvals.expire", True, now, request_id=request["request_id"], arguments=request["action"], run=request.get("run"))
         for grant in self._grants.values():
             if not grant["used"] and now - grant["created"] > float(self.grant_ttl_s):
                 grant["used"] = True
                 grant["expired"] = True
+                expired_grants.append(grant)
+        self._record(expired_requests, expired_grants)
         # Forget settled requests and used grants after a day (the trace keeps the record),
         # so a long session or a retrying agent cannot grow these without bound.
         for table, settled in ((self._requests, lambda r: r["state"] != "pending"), (self._grants, lambda g: g["used"])):
@@ -262,6 +336,7 @@ class Approvals(Device):
                 "state": "pending",
                 "created": time.time(),
             }
+            self._record([self._requests[request_id]])
         self._trace.record("Approvals.request", True, time.time(), request_id=request_id, caller=body.get("caller"), run=body.get("run"), arguments={"action": action, "arguments": body.get("arguments")}, mode=self._mode)
         return json.dumps({"request_id": request_id, "state": "pending"})
 
@@ -298,6 +373,7 @@ class Approvals(Device):
                 "who": body.get("who"), "caller": req.get("caller"), "run": req.get("run"), "created": time.time(), "used": False,
             }
             req.update(state="approved", grant_id=grant_id, decided_by=body.get("who"))
+            self._record([req], [self._grants[grant_id]])
         self._trace.record("Approvals.approve", True, time.time(), request_id=req["request_id"], grant_id=grant_id, caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "grant_id": grant_id, "state": "approved"})
 
@@ -311,6 +387,7 @@ class Approvals(Device):
             if req is None or req["state"] != "pending":
                 raise ValueError(f"request {body.get('request_id')!r} is not pending")
             req.update(state="denied", decided_by=body.get("who"), reason=body.get("reason") or req.get("reason"))
+            self._record([req])
         self._trace.record("Approvals.deny", True, time.time(), request_id=req["request_id"], caller=body.get("who"), arguments=req["action"], run=req.get("run"))
         return json.dumps({"request_id": req["request_id"], "state": "denied"})
 
@@ -343,6 +420,12 @@ class Approvals(Device):
                 if grant["fingerprint"] == key and not grant["used"] and _who(grant) == _who(body):
                     grant["used"] = True
                     grant["used_at"] = time.time()
+                    try:
+                        self._journal(grants=[grant])
+                    except OSError as exc:  # unrecorded, a restart would make this one-shot approval usable again
+                        grant["used"] = False
+                        grant.pop("used_at", None)
+                        return json.dumps({"allowed": False, "held_in_auto": f"the approval's use could not be recorded ({exc}); nothing ran"})
                     return json.dumps({"allowed": True, "grant_id": grant["grant_id"], "approved_by": grant["who"], "request_id": grant["request_id"]})
         return json.dumps({"allowed": False, **({"held_in_auto": reason} if reason else {})})
 
@@ -353,15 +436,20 @@ class Approvals(Device):
         reason = str(body.get("reason") or "revoked")
         with self._lock:
             grants = [g["grant_id"] for g in self._grants.values() if not g["used"]]
+            changed_requests, changed_grants = [], []
             for grant in self._grants.values():
                 if not grant["used"]:
                     grant.update(used=True, revoked=True)
+                    changed_grants.append(grant)
                     request = self._requests.get(grant.get("request_id"))
                     if request is not None and request["state"] == "approved":
                         request.update(state="revoked", reason=reason)
+                        changed_requests.append(request)
             pending = [r["request_id"] for r in self._requests.values() if r["state"] == "pending"]
             for request_id in pending:
                 self._requests[request_id].update(state="denied", decided_by=body.get("who"), reason=reason)
+                changed_requests.append(self._requests[request_id])
+            self._record(changed_requests, changed_grants)
         self._trace.record("Approvals.revoke_grants", True, time.time(), caller=body.get("who"), arguments={"grants": grants, "requests": pending, "reason": reason}, mode=self._mode)
         return json.dumps({"revoked_grants": grants, "denied_requests": pending})
 

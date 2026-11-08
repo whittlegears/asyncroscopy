@@ -54,7 +54,7 @@ def main():
     parser.add_argument("--strip-px", type=int, default=mosaic.STRIP_PX)
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
-    map_store.CACHE_BYTES = int(args.cache_mb * 2**20)
+    map_store.runs.CACHE_BYTES = int(args.cache_mb * 2**20)
     mosaic.STRIP_PX = args.strip_px
     real_read = map_store.TileSource._read
 
@@ -73,9 +73,9 @@ def main():
             t0 = time.time()
             placement = mosaic.register_tiles(data.tiles, stage_sigma_m=0.05 * 64 * bench.PIXEL, max_drift_m_per_s=0.06 * bench.PIXEL)
             elapsed = time.time() - t0
-            chunks = -(-len(run) // map_store.CHUNK_TILES)
+            chunks = -(-len(run) // map_store.runs.CHUNK_TILES)
             row = {
-                "tiles": len(run), "chunk_tiles": map_store.CHUNK_TILES, "chunks": chunks, "cache_mb": args.cache_mb,
+                "tiles": len(run), "chunk_tiles": map_store.runs.CHUNK_TILES, "chunks": chunks, "cache_mb": args.cache_mb,
                 "run_mb": round(len(run) * 64 * 64 * 2 / 2**20, 1), "strip_px": args.strip_px,
                 "chunk_reads": data.source.reads, "reads_per_chunk": round(data.source.reads / chunks, 2),
                 "read_wait_s": round(data.source.reads * args.read_latency_ms / 1000, 1), "register_s": round(elapsed, 1),

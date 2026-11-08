@@ -32,7 +32,6 @@ import asyncio
 import importlib.metadata
 import json
 import math
-import os
 import socket
 import sys
 from collections.abc import Callable
@@ -47,6 +46,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+from asyncroscopy import settings
 from asyncroscopy.core.net import WILDCARD_HOSTS, is_loopback_host
 from asyncroscopy.safety.policy import is_read_only
 
@@ -214,7 +214,7 @@ def _local(host: str) -> str:
 def _mcp_headers() -> dict[str, str]:
     """The caller name for the trace, and a bearer token when the endpoint verifies tokens (ASYNCROSCOPY_MCP_TOKEN)."""
     headers = {"X-Asyncroscopy-Caller": "preflight_hardware"}
-    token = os.environ.get("ASYNCROSCOPY_MCP_TOKEN", "").strip()
+    token = (settings.get().mcp_token or "").strip()
     if token:
         headers["Authorization"] = token if token.lower().startswith("bearer ") else f"Bearer {token}"
     return headers
@@ -225,7 +225,7 @@ def check_config(config: Any, report: Report) -> None:
         report.add("FAIL", "config: simulated: false", f"{config.path.name} says simulated: true; this pre-flight is for hardware")
     else:
         report.add("PASS", "config: simulated: false", config.path.name)
-    key = os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "")
+    key = settings.get().tiled_api_key or ""
     if not key or key == "secret":
         report.add("FAIL", "config: ASYNCROSCOPY_TILED_API_KEY", "unset or the default 'secret': set the lab key in this shell and in every other process")
     else:
@@ -375,7 +375,8 @@ def check_ceos(config: Any, probes: Probes, report: Report) -> None:
 
 def check_tiled(config: Any, probes: Probes, report: Report) -> None:
     uri = f"http://{_local(config.tiled.host)}:{config.tiled.port}"
-    key = os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret")
+    key = settings.get().tiled_api_key
+    key = "secret" if key is None else key
     try:
         status, body = probes.http_get(f"{uri}/api/v1/", {"Accept": "application/json"})
         about = json.loads(body) if status == 200 else {}

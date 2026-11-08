@@ -21,8 +21,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from asyncroscopy.evaluate.core import Evaluator, _instances, _safe
-from asyncroscopy.evaluate.run import RunData, as_run_data
+from benchmarks.evaluate.core import Evaluator, _instances, _safe
+from benchmarks.evaluate.run import RunData, as_run_data
 
 
 def trace_features(data: RunData) -> dict[str, Any]:

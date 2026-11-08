@@ -184,8 +184,8 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
 * `analysis_server/` is the analysis MCP server (`python -m asyncroscopy.analysis_server`): it stores,
   schedules and serves pyTEMlib's `image_tools` (stitching, scoring, placement) with only `core`,
   `contracts` and `trace` below it, never `mcp`, `agents`, `instruments` or `jobs`.
-* `settings.py` resolves where servers write (`ASYNCROSCOPY_OUTPUTS`); library code takes explicit
-  paths and only entry points read it.
+* `settings.py` is the one place an `ASYNCROSCOPY_*` variable or output path is read (table in
+  `docs/Operation/settings.md`); `settings.get()` reads the environment at call time, so nothing is read at import.
 
 `tests/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
 loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`, if `mcp` loads anything from

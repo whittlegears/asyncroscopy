@@ -1,10 +1,10 @@
 """
 Command-line bench for field-of-view scorers.
 
-    python -m asyncroscopy.evaluate.scoring.bench --scorer baseline
-    python -m asyncroscopy.evaluate.scoring.bench --scorer random
-    python -m asyncroscopy.evaluate.scoring.bench --scorer baseline_v2
-    python -m asyncroscopy.evaluate.scoring.bench --scorer my_package.scorers:MyScorer --seeds 0 1 2 --out results.jsonl
+    python -m benchmarks.evaluate.scoring.bench --scorer baseline
+    python -m benchmarks.evaluate.scoring.bench --scorer random
+    python -m benchmarks.evaluate.scoring.bench --scorer baseline_v2
+    python -m benchmarks.evaluate.scoring.bench --scorer my_package.scorers:MyScorer --seeds 0 1 2 --out results.jsonl
 
 ``--scorer`` takes a name (``baseline``, ``baseline_v2`` or the reference ``random``) or ``module:attribute`` naming a
 scorer class or instance, so a new scorer can be benched before it is
@@ -37,7 +37,7 @@ def load_scorer(spec: str):
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m asyncroscopy.evaluate.scoring.bench", description=__doc__.split("\n\n")[0].strip())
+    parser = argparse.ArgumentParser(prog="python -m benchmarks.evaluate.scoring.bench", description=__doc__.split("\n\n")[0].strip())
     parser.add_argument("--scorer", default="baseline", help="baseline, baseline_v2, random, or module:attribute")
     parser.add_argument("--seeds", type=int, nargs="+", default=list(DEFAULT_SEEDS))
     parser.add_argument("--k", type=int, default=DEFAULT_K)

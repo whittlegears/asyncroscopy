@@ -164,7 +164,7 @@ class TestDataDevice:
         data_proxy.port = CLOSED_PORT
         data_proxy.save_path = str(tmp_path)
         monkeypatch.setattr(DATA, "_tiled_alive", fake_alive)
-        monkeypatch.setattr(data_module, "TILED_LOG_DIR", tmp_path / "logs")
+        monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
 
         returned = json.loads(data_proxy.start_tiled_server())
@@ -186,7 +186,7 @@ class TestDataDevice:
         kwargs = popen_calls[0]["kwargs"]
         assert kwargs["stderr"] == subprocess.STDOUT
         assert Path(kwargs["stdout"].name) == Path(returned["tiled_log"])
-        assert Path(returned["tiled_log"]).parent == tmp_path / "logs"
+        assert Path(returned["tiled_log"]).parent == tmp_path / "tiled"
 
         assert len(run_commands) == 1
         assert run_commands[0][:6] == ["python", "-m", "tiled", "catalog", "init", "--if-not-exists"]
@@ -255,7 +255,7 @@ class TestDataDevice:
         data_proxy.save_path = str(tmp_path / "acq")
         popen_calls, run_commands = [], []
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
-        monkeypatch.setattr(data_module, "TILED_LOG_DIR", tmp_path / "logs")
+        monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
         leftover = LeftoverTiled(monkeypatch, ["python", "-m", "tiled", "serve", "catalog", "c.db", "--read", "acq"], str(tmp_path))
         monkeypatch.setattr(DATA, "_tiled_alive", lambda self: (not leftover.terminated) or bool(popen_calls))
 
@@ -293,7 +293,7 @@ class TestDataDevice:
 
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
         monkeypatch.setattr(DATA, "_tiled_alive", fake_alive)
-        monkeypatch.setattr(data_module, "TILED_LOG_DIR", tmp_path / "logs")
+        monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
         # The Windows drive path below is fed only to exercise the
         # drive-path -> sqlite-URI branch; neutralize the mkdir side effect so
         # the test does not depend on the path being creatable (a non-admin user
@@ -542,7 +542,7 @@ class TestDataDevice:
 
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
         monkeypatch.setattr(DATA, "_tiled_alive", fake_alive)
-        monkeypatch.setattr(data_module, "TILED_LOG_DIR", tmp_path / "logs")
+        monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
 
         first_path = tmp_path / "first"
         second_path = tmp_path / "second"

@@ -1,4 +1,4 @@
-"""asyncroscopy.evaluate: evaluators separate from the twin and the agents (no Tango, no stack).
+"""benchmarks.evaluate: evaluators separate from the twin and the agents (no Tango, no stack).
 
 Runs are built by hand: trace events like the ones the MCP server and the jobs write, and
 images served by a loader, with a ground truth shaped like the twin's export_ground_truth().
@@ -14,7 +14,7 @@ from contextlib import redirect_stdout
 import numpy as np
 import pytest
 
-from asyncroscopy.evaluate import (
+from benchmarks.evaluate import (
     EVALUATORS,
     Evaluator,
     RunData,
@@ -33,7 +33,7 @@ from asyncroscopy.evaluate import (
     stale_after_s,
     write_table,
 )
-from asyncroscopy.evaluate.__main__ import main as cli_main
+from benchmarks.evaluate.__main__ import main as cli_main
 from asyncroscopy.trace.writer import TraceWriter
 
 PIXEL = 4e-10

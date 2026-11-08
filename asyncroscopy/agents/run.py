@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Literal
 
 from langchain_core.messages import HumanMessage
 
+from asyncroscopy import settings
 from asyncroscopy.core.names import AGENT_GRAPHS
 
 from .config import AgentConfig
@@ -38,8 +39,6 @@ GRAPHS = AGENT_GRAPHS
 GraphName = Literal["", *GRAPHS]
 # Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark
 # can put the time a task took beside the instrument, model and approval time inside it.
-TASK_TRACE_ENV = "ASYNCROSCOPY_TASK_TRACE"
-DEFAULT_TASK_TRACE = "outputs/trace/agent_tasks.jsonl"
 GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is three graph steps with the skill middleware)
 
 
@@ -49,7 +48,7 @@ async def task_events(graph: str, request: str) -> AsyncIterator[dict]:
     The block sets ``outcome["ok"]`` (and ``outcome["error"]``); an exception counts as a failure."""
     from asyncroscopy.trace.writer import TraceWriter
 
-    path = os.environ.get(TASK_TRACE_ENV, DEFAULT_TASK_TRACE)
+    path = settings.get().task_trace
     writer = TraceWriter(path, source="agent", writer=f"agent@{os.getpid()}") if path else None
     task_id, started = uuid.uuid4().hex[:12], time.time()
     outcome: dict = {"ok": False, "error": None}

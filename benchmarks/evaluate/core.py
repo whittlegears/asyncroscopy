@@ -10,7 +10,7 @@ Instrument Trace events and the data they reference (``RunData``) and returns
 
 Evaluators are kept apart from the twin, the agents and each other (organisers' principle 3),
 so resolution, damage, information and time can be explored as separate objectives and
-combined only where a team chooses to (``asyncroscopy.evaluate.composite``).
+combined only where a team chooses to (``benchmarks.evaluate.composite``).
 
 A new evaluator is a small class registered with ``@register_evaluator`` or installed with the
 ``asyncroscopy.evaluators`` entry point::
@@ -73,7 +73,7 @@ class Evaluator:
         """Options and their defaults: the class attributes listed in ``option_names``."""
         return {key: getattr(cls, key) for key in getattr(cls, "option_names", ())}
 
-    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:  # noqa: F821 (RunData: asyncroscopy.evaluate.run)
+    def score_event(self, event: dict, data: RunData) -> dict[str, Score]:  # noqa: F821 (RunData: benchmarks.evaluate.run)
         return {}
 
     def score_run(self, data: RunData) -> dict[str, Score]:  # noqa: F821
@@ -136,7 +136,7 @@ def _safe(call, name: str) -> dict[str, dict]:
 
 def score_run(data: RunData | str | list, names: str | Iterable[str | Evaluator] | None = None) -> dict[str, dict[str, dict]]:  # noqa: F821
     """{evaluator: {objective: {value, units, reason}}} for a whole run (``data``: a RunData, or a run id)."""
-    from asyncroscopy.evaluate.run import as_run_data
+    from benchmarks.evaluate.run import as_run_data
 
     data = as_run_data(data)
     return {e.name: _safe(lambda e=e: e.score_run(data), e.name) for e in _instances(names)}
@@ -144,7 +144,7 @@ def score_run(data: RunData | str | list, names: str | Iterable[str | Evaluator]
 
 def score_event(event: dict, data: RunData | str | list, names: str | Iterable[str | Evaluator] | None = None) -> dict[str, dict[str, dict]]:  # noqa: F821
     """{evaluator: {objective: ...}} for one event of ``data``; evaluators with nothing to say are left out."""
-    from asyncroscopy.evaluate.run import as_run_data
+    from benchmarks.evaluate.run import as_run_data
 
     data = as_run_data(data)
     out = {}

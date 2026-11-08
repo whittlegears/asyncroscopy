@@ -38,12 +38,12 @@ class TraceTools:
     @tool()
     def trace_since(
         self, cursor: str = "", run: str | None = None, caller: str | None = None, device: str | None = None,
-        job: str | None = None, limit: int = 200, from_end: bool = False,
+        job: str | None = None, limit: int = 200, from_end: bool = True,
     ) -> dict[str, Any]:
         """Instrument Trace events written since `cursor`, in order, from every trace file of the stack (operator
         endpoint only). Returns {"events": [...], "cursor": "...", "more": bool}: pass the cursor back to get the next
-        events, none twice. An empty cursor starts at the first event (from_end: at the current end). Filters: run (the
-        agent run id), caller, device (Tango name or tool prefix, e.g. Mapper), job (job_id or reservation id)."""
+        events, none twice. An empty cursor starts at the current end (from_end: false, at the first event). Filters: run
+        (the agent run id), caller, device (Tango name or tool prefix, e.g. Mapper), job (job_id or reservation id)."""
         if not self.follow:
             raise ToolError("this endpoint has no trace to follow (set mcp.trace or mcp.trace_follow)")
         try:

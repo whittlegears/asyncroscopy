@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +20,7 @@ import pytest
 import tango
 import yaml
 
+from asyncroscopy import settings
 from asyncroscopy.instruments.electron_microscope import digital_twin_diffraction, digital_twin_particles, digital_twin_tilt, polycrystalline_gold_digital_twin
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.electron_microscope.twin import elements, sample_model
@@ -29,7 +29,7 @@ from asyncroscopy.sim.rng import EventRng
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDEN = Path(__file__).resolve().parent / "data" / "atomistic_specimens_golden.json"
-WRITE_GOLDEN = os.environ.get("ASYNCROSCOPY_WRITE_GOLDEN") == "1"
+WRITE_GOLDEN = settings.get().write_golden
 
 
 def context(fov_m: float = 2e-8) -> SpecimenContext:

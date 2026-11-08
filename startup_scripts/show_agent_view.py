@@ -20,13 +20,13 @@ import argparse
 import asyncio
 import fnmatch
 import json
-import os
 import sys
 from typing import Any
 
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
+from asyncroscopy import settings
 
 
 def payload(result: CallToolResult) -> Any:
@@ -62,7 +62,7 @@ async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="http://127.0.0.1:8000/mcp", help="The agent endpoint (default: %(default)s).")
     parser.add_argument("--json", action="store_true", help="Print the rows as JSON instead of a table.")
-    parser.add_argument("--token", default=os.environ.get("ASYNCROSCOPY_MCP_TOKEN", ""), help="Bearer token for an endpoint with mcp.auth (default: $ASYNCROSCOPY_MCP_TOKEN).")
+    parser.add_argument("--token", default=settings.get().mcp_token or "", help="Bearer token for an endpoint with mcp.auth (default: $ASYNCROSCOPY_MCP_TOKEN).")
     args = parser.parse_args(argv)
     headers = {"X-Asyncroscopy-Caller": "show_agent_view", **({"Authorization": f"Bearer {args.token}"} if args.token else {})}
     client = Client(StreamableHttpTransport(args.url, headers=headers))

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -26,6 +25,7 @@ import numpy as np
 import pytest
 import tango
 
+from asyncroscopy import settings
 import asyncroscopy.instruments.electron_microscope.digital_twin as digital_twin_module
 from asyncroscopy.instruments.electron_microscope.twin import SampleParams
 from asyncroscopy.sim.rng import EventRng
@@ -48,7 +48,7 @@ EXAMPLE_LABELS = ROOT / "configs" / "specimens" / "recorded_example_labels.json"
 EXAMPLE_PIXEL = 1.5625e-9
 GOLDEN = Path(__file__).resolve().parent / "data" / "specimen_procedural_golden.npz"
 # ASYNCROSCOPY_WRITE_GOLDEN=1 rewrites the golden file instead of checking it (only ever on purpose).
-WRITE_GOLDEN = os.environ.get("ASYNCROSCOPY_WRITE_GOLDEN") == "1"
+WRITE_GOLDEN = settings.get().write_golden
 TRUTH_KEYS = ("sample_seed", "sample_bounds_m", "particles", "moves", "acquisitions", "simulated_time_s", "dose", "focus")
 
 
