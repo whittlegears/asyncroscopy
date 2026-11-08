@@ -31,6 +31,9 @@ deferred read        the request asks what the data contain, the answer leaves v
                      them to the user, and no tool read any data (view_data, get_region)
 missing positions    the request asks for coordinates / positions / where things are, a
                      reply gave points' x_m, y_m, and the answer states none of them
+field name           the answer names a reply's field (``result_keys.map``) where its value belongs
+stitched map         "the stitched map is available", "the map key is ...": a job's stitch failed
+                     (``stitch_error``) and no later reply gave a map; unless negated
 ==================== =================================================================
 
 Negated and hedged sentences ("could not", "was not", "previously acquired")
@@ -108,6 +111,13 @@ HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phra
 # "at the current position" asks for nothing: only a plural, "position of", or "where ... is" asks where.
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
+FIELD_NAME = re.compile(r"\bresult_keys\.\w+")
+STITCHED = re.compile(
+    r"\bstitched\s+(?:map|image|mosaic)\s+(?:is|was)\s+(?:now\s+)?(?:available|ready|done|complete|saved)\b|\bmap\s+key\s+is\b"
+    r"|\bstitch(?:ing)?\s+(?:succeeded|completed|worked|finished)\b|\bwas\s+stitched\b",
+    re.I,
+)
+
 PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
@@ -126,7 +136,7 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 
 @dataclass
 class Claim:
-    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions
+    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch
     text: str  # what the answer says
     why: str  # why no tool call supports it
 
@@ -427,6 +437,34 @@ def _placement_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
+def _field_name_claims(answer: str) -> list[Claim]:
+    """The answer names a reply's field instead of its value (qwen3:8b: "The map key is `result_keys.map`")."""
+    return [Claim("field_name", name, "this is the name of a field in a reply, not a key: give the value the reply holds there, or say there is none")
+            for name in dict.fromkeys(FIELD_NAME.findall(answer))]
+
+
+def _stitch_claims(answer: str, calls) -> list[Claim]:
+    """A stitched map claimed when the job's stitch failed and no later call made one (a 2704-tile map whose stitch
+    timed out was reported as "the stitched map is available")."""
+    error = None
+    for call in calls:
+        if call.error:
+            continue
+        for node in _walk(_json(call.result)):
+            if node.get("stitch_error"):
+                error = str(node["stitch_error"])
+            if isinstance(node.get("result_keys"), dict) and node["result_keys"].get("map"):
+                error = None
+    if error is None:
+        return []
+    claims = []
+    for sentence in _sentences(answer):
+        m = STITCHED.search(sentence)
+        if m and not _negated(sentence, m):
+            claims.append(Claim("stitch", sentence[:160], f"the stitch failed ({error[:200]}): say so, and give the run key the reply names"))
+    return claims
+
+
 def _unfinished_claims(answer: str) -> list[Claim]:
     """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
     tail = _sentences(answer)[-2:]
@@ -498,6 +536,8 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims += _acquired_at_claims(answer, settings, _request(messages))
     claims += _action_claims(answer, calls, catalog)
     claims += _placement_claims(answer, calls)
+    claims += _field_name_claims(answer)
+    claims += _stitch_claims(answer, calls)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):

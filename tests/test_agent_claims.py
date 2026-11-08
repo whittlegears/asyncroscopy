@@ -287,6 +287,21 @@ def test_an_answer_that_announces_its_next_step_instead_of_taking_it_is_flagged(
         assert [c for c in check_answer(run.messages, fine, TOOLS) if c.kind == "unfinished"] == [], fine
 
 
+def test_a_stitched_map_claimed_after_the_stitch_failed_and_a_field_name_given_as_a_key_are_flagged():
+    run = Calls("map a sample completely down to the angstrom")
+    error = "analysis job 66f0dde66b22 made no progress for 600 s. The tiles are in map_5f4a6c860573.h5"
+    run.call("run_job", {"request": "{}"}, {"job_id": "79e2e0ecd289", "state": "done", "result_keys": {"run": "map_5f4a6c860573.h5"},
+                                            "summary": {"steps_done": 2705, "stitch_error": error}})
+    answer = ("The map key is `result_keys.map`, and the stitched map is available for inspection. "
+              "The map stitching encountered an error, but the tiles are safe in `result_keys.run`.")
+    claims = check_answer(run.messages, answer)
+    assert kinds(claims) == ["field_name", "field_name", "stitch"] and "66f0dde66b22" in claims[2].why
+    honest = "The 2704 tiles are in `map_5f4a6c860573.h5`; the stitched map is not available because the stitch made no progress."
+    assert check_answer(run.messages, honest) == []
+    run.call("analysis_job_results", {"job_id": "a1"}, {"state": "done", "result_keys": {"map": "map_5f4a6c860573"}})
+    assert check_answer(run.messages, "The stitched map is available.") == []
+
+
 def test_a_placement_claimed_when_place_image_refused_it_is_flagged():
     run = Calls("Zoom into a particle down to atomic columns, placing each image.")
     run.call("place_image", {"image": IMAGES[1], "parent": IMAGES[0]}, {"child": IMAGES[1], "status": "placed", "score": 0.99})

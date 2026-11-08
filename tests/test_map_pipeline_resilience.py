@@ -135,14 +135,33 @@ def test_an_analysis_server_that_forgets_the_job_ends_the_stitch_with_a_clear_er
     assert time.time() - t0 < 60
 
 
-def test_a_stitch_that_never_finishes_fails_at_its_deadline(mapper_proxy, analysis, monkeypatch):
-    monkeypatch.setattr(pipeline_module, "STITCH_DEADLINE_S", (2.0, 0.0))
+def test_a_stitch_whose_progress_stops_fails_after_the_stall_limit(mapper_proxy, analysis, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "STITCH_STALL_S", 2.0)
     analysis.before["analysis_job_status"] = lambda arguments: (time.sleep(0.2), {"schema_version": "1.1.0", "job_id": arguments["job_id"], "state": "running", "progress": {"done": 1, "total": 1000}})[1]
     reserved, started = start(mapper_proxy, PLAN)
     assert wait(mapper_proxy, started["job_id"])["state"] == "done"
     summary = call(mapper_proxy, "results", {"job_id": started["job_id"]})["summary"]
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
-    assert "did not finish within 2 s" in summary["stitch_error"]
+    assert "made no progress for 2 s" in summary["stitch_error"]
+
+
+def test_a_stitch_still_making_progress_is_waited_for_past_the_stall_limit(mapper_proxy, analysis, monkeypatch):
+    monkeypatch.setattr(pipeline_module, "STITCH_STALL_S", 2.0)
+    polls = iter(range(1, 9))
+
+    def advancing(arguments):
+        step = next(polls, None)
+        if step is None:
+            return None  # then the real status
+        time.sleep(0.5)
+        return {"schema_version": "1.1.0", "job_id": arguments["job_id"], "state": "running", "progress": {"done": step, "total": 1000}}
+
+    analysis.before["analysis_job_status"] = advancing
+    reserved, started = start(mapper_proxy, PLAN)
+    assert wait(mapper_proxy, started["job_id"])["state"] == "done"
+    results = call(mapper_proxy, "results", {"job_id": started["job_id"]})
+    call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
+    assert results["summary"].get("stitch_error") is None and results["result_keys"]["map"]
 
 
 def test_resuming_mid_stitch_waits_for_the_same_stitch_and_mid_revisit_links_without_a_second_image(mapper_proxy, mapping_twin_proxy, analysis):

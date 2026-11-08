@@ -37,8 +37,8 @@ from .stitch_service import STITCH_SERVICES, StitchService
 
 ANALYSIS_WAIT_S = 5.0  # longest one wait on an analysis job; abort is checked between waits
 ANALYSIS_BACKOFF_S = (1.0, 2.0, 5.0, 10.0, 20.0)  # after a failed call to the analysis server
-STITCH_DEADLINE_S = (600.0, 0.05)  # base, plus per tile: the longest a stitch may take before it counts as failed
-SCORE_DEADLINE_S = 900.0
+STITCH_STALL_S = 600.0  # the longest a stitch may go without progress before it counts as failed
+SCORE_STALL_S = 900.0
 REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
 ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
@@ -123,9 +123,13 @@ class Pipeline:
             self._save(job)
         return started["job_id"]
 
-    def _await(self, job: dict, job_id: str, deadline_s: float) -> dict | None:
-        """Results of an analysis job; None if this job was aborted; AnalysisFailed if it failed, vanished or took too long."""
-        deadline = time.monotonic() + deadline_s
+    def _await(self, job: dict, job_id: str, stall_s: float) -> dict | None:
+        """Results of an analysis job; None if this job was aborted; AnalysisFailed if it failed, vanished or stalled.
+
+        Only a job whose progress stops moving for stall_s fails: a fixed total gave up on a 2704-tile stitch
+        at 78 % that finished minutes later."""
+        deadline = time.monotonic() + stall_s
+        done = None
         failures = 0
         while True:
             if self._aborting(job):
@@ -135,7 +139,7 @@ class Pipeline:
                     self._warn(f"could not abort analysis job {job_id}: {exc}")
                 return None
             if time.monotonic() > deadline:
-                raise AnalysisFailed(f"analysis job {job_id} did not finish within {deadline_s:.0f} s")
+                raise AnalysisFailed(f"analysis job {job_id} made no progress for {stall_s:.0f} s")
             try:
                 status = self.service().analysis_job_status(job_id=job_id, wait_s=ANALYSIS_WAIT_S)
                 failures = 0
@@ -150,6 +154,9 @@ class Pipeline:
                 raise AnalysisFailed(f"the analysis server no longer knows job {job_id} ({(status.get('error') or {}).get('message', status)}); it may have restarted")
             if status["state"] in {"done", "failed", "aborted", "released"}:
                 break
+            progress = (status.get("progress") or {}).get("done")
+            if progress != done:
+                done, deadline = progress, time.monotonic() + stall_s
         if status["state"] != "done":
             raise AnalysisFailed(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
         return self.service().analysis_job_results(job_id=job_id)
@@ -157,10 +164,9 @@ class Pipeline:
     # -- phases ----------------------------------------------------------
     def stitch(self, job: dict, run: str, tiles: int) -> dict | None:
         pipeline = self.state(job)
-        deadline = STITCH_DEADLINE_S[0] + STITCH_DEADLINE_S[1] * tiles
         try:
             arguments = self.stitch_arguments(job, run)
-            results = self._await(job, self._submit(job, "stitch_job", lambda: self.service().assemble_map(**arguments)), deadline)
+            results = self._await(job, self._submit(job, "stitch_job", lambda: self.service().assemble_map(**arguments)), STITCH_STALL_S)
         except AnalysisFailed as exc:  # the tiles are safe, the job goes on
             if str(exc) == "aborted":
                 return None
@@ -201,7 +207,7 @@ class Pipeline:
         # The job's tag makes scoring idempotent: a retry replaces the regions it added before.
         arguments = {"map": pipeline["map"], "top_k": n, "tag": job["reservation_id"]}
         try:
-            results = self._await(job, self._submit(job, "score_job", lambda: self.service().score_map(**arguments)), SCORE_DEADLINE_S)
+            results = self._await(job, self._submit(job, "score_job", lambda: self.service().score_map(**arguments)), SCORE_STALL_S)
         except AnalysisFailed as exc:
             if str(exc) == "aborted":
                 return None
