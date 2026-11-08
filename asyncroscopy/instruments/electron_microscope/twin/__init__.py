@@ -19,6 +19,8 @@ _EXPORTS = {
     "ScanParams": ".scan_distortion",
     "Specimen": ".specimen",
     "SpecimenContext": ".specimen",
+    "ViewRequest": ".specimen",
+    "FieldView": ".specimen",
     "build_specimen": ".specimen",
     "register_specimen": ".specimen",
     "specimen_sources": ".specimen",

@@ -13,6 +13,14 @@ coordinates (metres, rows along +y, columns along +x):
 * ``support_texture``: how the support film's thickness varies (None: a uniform film);
 * ``in_box`` / ``feature_centers``: the features the dose map may damage.
 
+A twin that renders per view (the atomistic twins: a tilted lamella, a stage that
+moves a world under the beam) asks instead through ``view(ViewRequest)``: what
+is in this one field, as ASE atoms, per-pixel maps or structured records. A
+parked beam for a multislice calculation asks ``atoms_at``, and ``set_field``
+rebuilds a specimen whose world spans the field of view. A source declares in
+``render_modes`` which twin renderers can use it; ``projected`` is
+``DigitalTwin``'s projected-weight renderer.
+
 ``ground_truth`` is for evaluators only (export_ground_truth, scorers); the
 instrument never reads it. A support film (``support_element``,
 ``support_thickness_m``) belongs to the specimen; contamination belongs to
@@ -31,7 +39,9 @@ profiles::
 and chosen with the twin's ``specimen`` device property. Built in:
 ``procedural`` (the seeded particle table, the default), ``recorded`` (an
 image file) and ``crystal`` (a polycrystalline film built from ASE unit
-cells); others install with the ``asyncroscopy.specimens`` entry point.
+cells) for ``DigitalTwin``, and ``silicon_lamella``, ``polycrystal``,
+``particles`` and ``nanoparticle_map`` for the atomistic twins; others install
+with the ``asyncroscopy.specimens`` entry point.
 docs/Operation/specimens.md explains the coupling and walks through a source.
 """
 
@@ -51,15 +61,40 @@ from asyncroscopy.registry import Registry
 from asyncroscopy.sim.rng import EventRng
 
 if TYPE_CHECKING:
+    from ase import Atoms
+
     from .sample_model import SampleParams
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+@dataclass(frozen=True)
+class ViewRequest:
+    """One look at a specimen. ``stage`` is [x, y, z (m), alpha, beta (deg)]; ``fov_angstrom`` is the field the view covers."""
+
+    stage: np.ndarray
+    fov_angstrom: float = 0.0
+    imsize: int = 0  # pixels across, when the view is for an image
+    edge_crop: int = 0  # pixels of padding around that image
+    local_nm: tuple[np.ndarray, np.ndarray] | None = None  # the specimen-frame point each pixel sees, when the instrument worked it out
+    rotation: np.ndarray | None = None  # the stage's tilt as a 3x3 rotation matrix, when the source needs it
+
+
+@dataclass
+class FieldView:
+    """What a specimen shows in one view: atoms, per-pixel maps and/or structured records, as the source provides."""
+
+    atoms: "Atoms | None" = None
+    maps: dict[str, np.ndarray] = field(default_factory=dict)
+    records: list[dict] = field(default_factory=list)
+    info: dict = field(default_factory=dict)
 
 
 class Specimen:
     """A sample the twin can image. Subclasses fill in the geometry; the defaults are an empty specimen."""
 
     source = ""  # registry name; the twin's ``specimen`` property selects it
+    render_modes: tuple[str, ...] = ("projected",)  # the twin renderers that can image it (each twin has a render_mode)
     support_element = "C"
     support_thickness_m = 0.0
     height_gradient: tuple[float, float] = (0.0, 0.0)
@@ -108,6 +143,29 @@ class Specimen:
         """The elements the specimen may contain (EDS and status reports)."""
         return ()
 
+    # ------------------------------------------------------------------
+    # What a per-view (atomistic) twin reads
+    # ------------------------------------------------------------------
+    def view(self, request: ViewRequest) -> FieldView:
+        """What the specimen shows in this field: atoms in the field, per-pixel maps and/or records."""
+        raise NotImplementedError(f"specimen source {self.source!r} has no per-view rendering (render modes: {self.render_modes})")
+
+    def atoms_at(self, x_nm: float, y_nm: float, request: ViewRequest, seed: int, thermal_scale: float = 1.0) -> "Atoms | None":
+        """The atoms under a parked beam at a specimen point, for a multislice calculation; None over vacuum.
+        ``seed`` is the frozen-phonon seed; ``thermal_scale`` multiplies the thermal displacement."""
+        return None
+
+    def set_field(self, fov_m: float) -> None:
+        """Tell a specimen whose world spans the field of view that the field changed."""
+
+    def regions(self) -> list:
+        """The specimen's named regions (grains, ...), for reports."""
+        return []
+
+    def particle_records(self) -> list[dict]:
+        """{"center": [x, y, z] (angstrom), "radius" (angstrom), "btype", "composition"} of each particle, for the atomistic twins' EDS."""
+        return []
+
     def warnings(self) -> list[str]:
         """Problems worth a warning at start-up (the twin logs them)."""
         return []
@@ -126,11 +184,12 @@ class Specimen:
 
 @dataclass
 class SpecimenContext:
-    """What a source may take from the twin: its seed and the flat sample properties as defaults."""
+    """What a source may take from the twin: its seed, the flat sample properties and the field of view as defaults."""
 
     rng: EventRng
     sample: "SampleParams | None" = None  # the twin's flat sample properties; None: the SampleParams defaults
     base_dir: Path = field(default_factory=Path.cwd)
+    fov_m: float | None = None  # the field of view, for a specimen whose world spans it
 
     def resolve(self, path: str | Path) -> Path:
         """A data path as written in a config: absolute, or relative to the working directory or the repository."""
@@ -156,6 +215,10 @@ SPECIMENS: Registry[type[Specimen]] = Registry(
         "procedural": "asyncroscopy.instruments.electron_microscope.twin.sample_model",
         "recorded": "asyncroscopy.instruments.electron_microscope.twin.specimen_recorded",
         "crystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_crystal",
+        "silicon_lamella": "asyncroscopy.instruments.electron_microscope.twin.specimen_silicon_lamella",
+        "polycrystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_polycrystal",
+        "particles": "asyncroscopy.instruments.electron_microscope.twin.specimen_particles",
+        "nanoparticle_map": "asyncroscopy.instruments.electron_microscope.twin.specimen_nanoparticle_map",
     },
     kind="specimen source",
     key="source",

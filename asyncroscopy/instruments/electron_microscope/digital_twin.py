@@ -54,8 +54,8 @@ from asyncroscopy.instruments.electron_microscope.twin.render import (
     Renderer,
     RenderParams,
 )
-from asyncroscopy.instruments.electron_microscope.twin.sample_model import ELEMENTS
-from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
+from asyncroscopy.instruments.electron_microscope.twin.elements import ELEMENTS
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext
 from asyncroscopy.instruments.electron_microscope.twin.scan_distortion import frame_time
 
 __all__ = ["DEFAULT_ACQUISITION_DIR", "DigitalTwin"]
@@ -72,8 +72,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
 
     # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
     # are the procedural source's settings and the other sources' defaults (seed, size, support, height).
-    specimen = _prop(str, "", "Specimen as a mapping (JSON or YAML), e.g. {source: recorded, path: ..., pixel_size_m: ...}; overrides the specimen_* properties.")
-    specimen_source = _prop(str, "procedural", "Specimen source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.")
+    # specimen and specimen_source are the base class's; specimen_source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.
     specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
     specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
     specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
@@ -157,12 +156,10 @@ class DigitalTwin(ElectronMicroscopeTwin):
 
     def _specimen_options(self) -> dict:
         """The specimen_* flat properties, overridden by the ``specimen`` mapping."""
-        mapping = parse_specimen(str(self.specimen or ""))
-        options: dict = {"source": str(mapping.get("source") or self.specimen_source or "procedural").strip()}
+        options = super()._specimen_options()
         if options["source"] == "recorded":  # the flat shorthands are the recorded source's options
             path, pixel, labels = str(self.specimen_path or "").strip(), float(self.specimen_pixel_size_m or 0.0), str(self.specimen_labels_path or "").strip()
-            options.update({k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v})
-        options.update(mapping)
+            options = {**{k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v}, **options}
         return options
 
     def _generate_sample(self, seed: int) -> None:
@@ -179,8 +176,8 @@ class DigitalTwin(ElectronMicroscopeTwin):
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
         # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
         # is the instrument, which only asks the specimen for weights, densities, heights and features.
-        self._specimen = build_specimen(
-            self._specimen_options(),
+        self._load_specimen(
+            seed,
             SpecimenContext(
                 rng=self._rng,
                 sample=SampleParams(

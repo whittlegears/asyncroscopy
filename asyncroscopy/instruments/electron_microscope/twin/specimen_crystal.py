@@ -24,7 +24,8 @@ import numpy as np
 from ase.build import bulk
 from scipy.spatial import cKDTree
 
-from .sample_model import ELEMENTS, thermal_smear
+from .elements import ELEMENTS
+from .sample_model import thermal_smear
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10
