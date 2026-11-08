@@ -30,6 +30,8 @@ devices:
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
   scan:      { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: AutoScriptSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript

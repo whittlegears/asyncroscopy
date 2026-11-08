@@ -16,8 +16,9 @@ method nobody listed can never reach the instrument by accident:
   ``DRY_RUN_PLACEHOLDER`` (``None`` for the DeviceProxy writes);
 * any other DeviceProxy method (one on neither list) is refused with
   ``DryRunRefused``: an unknown method is assumed to write;
-* the job device's safe commands (``JobDevice.safe_commands``: blanking the beam for a
-  Mapper on an electron microscope, retracting the tip for a probe) really run:
+* commands the device itself declares as stops (``stop=True`` on its ``@command``, served
+  in ``action_hints``: blanking a beam, retracting a tip) really run, and so do any the
+  job device adds (``JobDevice.safe_commands``, for a device that declares nothing):
   making the instrument safer is never rehearsed.
 
 Each call that is not a plain read goes to ``recorder(address, name, kind, args,
@@ -27,9 +28,11 @@ performed)``; the job device writes it to the Instrument Trace with
 
 from __future__ import annotations
 
+import json
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any, Callable
 
+from asyncroscopy.core.names import ACTION_HINTS
 from asyncroscopy.safety.policy import check_overrides, is_read_only
 
 if TYPE_CHECKING:
@@ -98,6 +101,7 @@ class RecordingProxy:
         object.__setattr__(self, "_recorder", recorder)
         object.__setattr__(self, "_risk_overrides", risk_overrides)
         object.__setattr__(self, "_commands", None)
+        object.__setattr__(self, "_stops", None)
         object.__setattr__(self, "_dev_class", None)
 
     def _command_names(self) -> set[str] | None:
@@ -127,11 +131,22 @@ class RecordingProxy:
             object.__setattr__(self, "_dev_class", dev_class if isinstance(dev_class, str) else "")
         return self._dev_class
 
+    def _declared_stops(self) -> frozenset[str]:
+        """The commands this device declares as stops; none when it serves no declarations."""
+        if self._stops is None:
+            try:
+                hints = json.loads(self._proxy.read_attribute(ACTION_HINTS).value)
+                stops = frozenset(str(name).lower() for name, hint in hints.items() if isinstance(hint, dict) and hint.get("stop") is True)
+            except Exception:  # no such attribute, or a stand-in: only the job device's own list applies
+                stops = frozenset()
+            object.__setattr__(self, "_stops", stops)
+        return self._stops
+
     def _call(self, name: str, args: tuple) -> Any:
         """One command: read -> pass through; a safe command -> run and record; anything else -> record only."""
         if is_read_command(name, self._class(), self._risk_overrides):
             return getattr(self._proxy, name)(*args)
-        performed = name.lower() in self._safe
+        performed = name.lower() in self._safe or name.lower() in self._declared_stops()
         self._recorder(self._address, name, "command", list(args), performed)
         if performed:
             return getattr(self._proxy, name)(*args)

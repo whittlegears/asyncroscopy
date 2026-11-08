@@ -342,7 +342,7 @@ def test_dry_run_refuses_unknown_proxy_methods_and_reads_by_policy():
     assert not is_read_only("X", "blank_beam") and not is_read_only("X", "set_defocus")  # low risk is not read-only
     strict = RecordingProxy(fake, "a/b/c", lambda *call: recorded.append(call), risk_overrides=overrides)
     assert strict.get_tip() == DRY_RUN_PLACEHOLDER and strict.get_stage() == "get_stage"
-    assert fake.calls == ["get_stage", "get_stage"]
+    assert [c for c in fake.calls if c != "read_attribute"] == ["get_stage", "get_stage"]
     assert [c[1] for c in recorded] == ["move_stage", "get_tip"]
 
 

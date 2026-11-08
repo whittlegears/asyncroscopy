@@ -3,9 +3,9 @@
 * ``id``: permanent, issued once when the file is first written (a resumed map keeps it);
 * ``instrument_id``: the Tango device that wrote it;
 * ``kind``: what it is (``stem_image``, ``eds_spectrum``, ``map_run``, ...);
-* ``sample_id`` and ``sample_load_id``: what the STAGE device's ``load_sample`` last recorded. A new
+* ``sample_id`` and ``sample_load_id``: what the SAMPLE device's ``load_sample`` last recorded. A new
   load gets a new ``sample_load_id``, so a position read from an older dataset or note can be told
-  apart from one taken on the sample in the holder now. Both are null when no STAGE device answers;
+  apart from one taken on the sample in the holder now. Both are null when no SAMPLE device answers;
   ``sample_error`` then says why;
 * ``code_version``: this package's version and, in a git checkout, its commit;
 * ``created``: when it was written (Unix seconds).
@@ -44,19 +44,19 @@ def code_version() -> str:
     return f"{text}+g{commit}{'.dirty' if dirty else ''}" if commit else text
 
 
-def current_sample(stage: Any) -> dict:
-    """{"sample_id", "sample_load_id"} from a STAGE device proxy, or nulls with "sample_error" saying why."""
-    if stage is None:
-        return {"sample_id": None, "sample_load_id": None, "sample_error": "no STAGE device is configured for this instrument"}
+def current_sample(device: Any) -> dict:
+    """{"sample_id", "sample_load_id"} from a SAMPLE device proxy, or nulls with "sample_error" saying why."""
+    if device is None:
+        return {"sample_id": None, "sample_load_id": None, "sample_error": "no SAMPLE device is configured for this instrument"}
     try:
-        sample = json.loads(stage.get_sample())
+        sample = json.loads(device.get_sample())
     except Exception as exc:
-        return {"sample_id": None, "sample_load_id": None, "sample_error": f"the STAGE device did not say which sample is loaded: {str(exc).splitlines()[0][:200]}"}
+        return {"sample_id": None, "sample_load_id": None, "sample_error": f"the SAMPLE device did not say which sample is loaded: {str(exc).splitlines()[0][:200]}"}
     found = {"sample_id": sample.get("sample_id"), "sample_load_id": sample.get("sample_load_id")}
     if sample.get("error"):
         found["sample_error"] = str(sample["error"])[:300]
     elif found["sample_load_id"] is None:
-        found["sample_error"] = "no sample load is recorded: an operator calls the STAGE device's load_sample when a sample goes in"
+        found["sample_error"] = "no sample load is recorded: an operator calls the SAMPLE device's load_sample when a sample goes in"
     return found
 
 
@@ -74,7 +74,7 @@ def record_fields(instrument_id: str, kind: str, sample: dict) -> dict:
     return {key: value for key, value in fields.items() if value is not None}
 
 
-def stage_of(device: Any) -> Any:
-    """The STAGE proxy a microscope device already holds (twin and hardware devices keep it with their detectors)."""
+def sample_of(device: Any) -> Any:
+    """The SAMPLE proxy a microscope device already holds (twin and hardware devices keep it with their detectors)."""
     proxies = getattr(device, "_detector_proxies", None)
-    return proxies.get("stage") if isinstance(proxies, dict) else None
+    return proxies.get("sample") if isinstance(proxies, dict) else None

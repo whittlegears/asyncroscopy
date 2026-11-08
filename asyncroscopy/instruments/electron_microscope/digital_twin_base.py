@@ -217,7 +217,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
     ) -> str:
         """A single-shot camera image: a twin without a camera model images with its scan (a HAADF image), so
         acquire_camera_image returns a usable image instead of the base ElectronMicroscope's "unsupported"."""
-        return self._acquire_scanned_image(int(imsize), float(exposure_time), ["haadf"], [0.0, 0.0, 1.0, 1.0], output_format)
+        return self._acquire_scanned_image(int(imsize), float(exposure_time), [str(self.default_scan_detector)], [0.0, 0.0, 1.0, 1.0], output_format)
 
     def _place_beam(self, position) -> None:
         """Place the electron beam at the specified [x, y] coordinates."""

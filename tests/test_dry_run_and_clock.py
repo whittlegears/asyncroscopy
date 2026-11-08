@@ -73,6 +73,19 @@ class TestRecordingProxy:
         def __getattr__(self, name):
             return lambda *args: self.calls.append((name, args)) or name
 
+    def test_a_command_the_device_declares_as_a_stop_really_runs(self):
+        class Declaring(self.Fake):
+            def read_attribute(self, name):
+                return type("Value", (), {"value": json.dumps({"retract": {"stop": True, "risk": "low"}, "approach": {"risk": "high"}})})()
+
+            def get_command_list(self):
+                return ["retract", "approach"]
+
+        fake, recorded = Declaring(), []
+        proxy = RecordingProxy(fake, "asyncroscopy/spm/default", lambda *call: recorded.append(call))
+        assert proxy.retract() == "retract" and proxy.approach() == DRY_RUN_PLACEHOLDER
+        assert [(c[1], c[4]) for c in recorded] == [("retract", True), ("approach", False)]
+
     def test_reads_pass_writes_are_recorded_and_blanking_runs(self):
         fake, recorded = self.Fake(), []
         proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call), safe_commands=frozenset({"blank_beam"}))
@@ -84,7 +97,7 @@ class TestRecordingProxy:
         proxy.imsize = 64
         proxy.write_attribute("dwell_time", 1e-6)
         assert proxy.blank_beam() == "blank_beam"  # the one write that really runs
-        assert [c[0] for c in fake.calls] == ["get_stage", "read_attribute", "blank_beam"]
+        assert [c[0] for c in fake.calls if c != ("read_attribute", "action_hints")] == ["get_stage", "read_attribute", "blank_beam"]
         assert [(c[1], c[4]) for c in recorded] == [
             ("move_stage", False), ("acquire_scanned_image", False), ("write_attribute", False), ("write_attribute", False), ("blank_beam", True),
         ]
@@ -253,7 +266,7 @@ def test_twins_report_their_simulated_clock_and_hardware_its_own(tango_ctx):
 
 @pytest.mark.slow
 def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
-    from tests.test_map_pipeline import InProcessAnalysis
+    from tests.test_map_pipeline import InProcessAnalysis, ToolService
 
     twin = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/drift"))
     mapper = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/mapper/drift"))
@@ -271,7 +284,7 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
         return reply
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Pipeline, "call", lambda self, tool, arguments: server(self, tool, arguments))
+    monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(server, self))
 
     revisit_fov = 5e-8
     plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.0e-7, "overlap": 0.25, "imsize": 128, "dwell_s": 2e-5,

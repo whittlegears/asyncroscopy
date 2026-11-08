@@ -6,7 +6,7 @@ view, overlap and, for the instrument, its own fields (a STEM's detectors and pe
 AFM's setpoint). The worker visits tiles in serpentine order (to limit backlash) and never leaves the box.
 
 The Mapper is instrument-agnostic: what differs between a STEM, an SEM and an AFM is an instrument profile
-(profile.py), chosen with the ``instrument_profile`` device property: ``stem`` (the default), ``sem``,
+(profile.py), chosen with the ``instrument_profile`` device property: ``stem`` (the default), ``sem``, ``spm``,
 ``yaml`` (any YAML twin with an image acquisition) or one registered by a plug-in. The profile acquires
 each tile, makes the instrument safe between tiles and whenever the job stops (blanks the beam, retracts
 the tip), prepares before a move and recovers after it, and says what a plan costs. ``reserve`` refuses a
@@ -62,18 +62,20 @@ class Mapper(JobDevice):
     instrument_profile = device_property(
         dtype=str,
         default_value="stem",
-        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/mapping/profile.py): stem (the default), sem, yaml "
+        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/mapping/profile.py): stem (the default), sem, spm, yaml "
         "(a YAML twin with an image acquisition), or a profile registered by a plug-in. A profile may read more of this "
         "Mapper's properties (its own settings, e.g. a STEM's scan_device_address).",
     )
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Instrument to drive (a microscope, or any device the instrument profile drives).")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device; when set, the run file is registered with Tiled.")
-    stage_device_address = device_property(dtype=str, default_value="asyncroscopy/stage/default", doc="STAGE device whose x/y limits every plan is checked against at reserve, and which says which sample is loaded; blank: not checked (the instrument still refuses moves outside them).")
+    stage_device_address = device_property(dtype=str, default_value="asyncroscopy/stage/default", doc="STAGE device whose x/y limits every plan is checked against at reserve; blank: not checked (the instrument still refuses moves outside them).")
+    sample_device_address = device_property(dtype=str, default_value="asyncroscopy/sample/default", doc="SAMPLE device that says which sample is loaded; every run file records it and a resume onto another load is refused. Blank: not recorded.")
     output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written when there is no DATA device; with one, they go in its save path (which Tiled serves) under maps/.")
     max_tiles = device_property(dtype=int, default_value=4_000_000, doc="Refuse plans with more tiles than this (a 2000 x 2000 grid by default).")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     stage_timeout_s = device_property(dtype=float, default_value=600.0, doc="Longest one stage move may report stage_moving before the job fails (instrument made safe; resumable).")
     analysis_url = device_property(dtype=str, default_value="", doc="Analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
+    stitch_service = device_property(dtype=str, default_value="mcp", doc="Which StitchService does the analysis at analysis_url (asyncroscopy/jobs/mapping/stitch_service.py): mcp (the analysis MCP server), or one registered by a plug-in.")
     stage_sigma_m = device_property(
         dtype=float,
         default_value=0.0,
@@ -128,16 +130,16 @@ class Mapper(JobDevice):
                 simulated=self._stack_simulated(),
                 profile=self._profile_settings(cls.settings),
             )
-            self._map_profile = cls(MapContext(settings, self.proxy, self.aborting, self.data_device_address))
+            self._map_profile = cls(MapContext(settings, self.proxy, self.aborting, self.data_device_address, spectrum_store=self))
         return self._map_profile
 
     def safe_commands(self, job: dict) -> frozenset:
         return self.profile().safe_commands(job["resolved_plan"])
 
     def pipeline(self) -> Pipeline:
-        """The analysis phases, over one session to ``analysis_url``."""
+        """The analysis phases, over the ``stitch_service`` backend at ``analysis_url``."""
         if self._pipeline_ is None or self._pipeline_.url != self.analysis_url:
-            self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream)
+            self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream, backend=self.stitch_service)
         return self._pipeline_
 
     # ------------------------------------------------------------------
@@ -162,7 +164,7 @@ class Mapper(JobDevice):
             max_tiles=int(self.max_tiles),
             estimate_move_s=float(self.estimate_move_s),
             stage_sigma_m=self._stage_sigma_m(),
-            analysis=self.pipeline().call if self.analysis_url else None,
+            analysis=self.pipeline().service() if self.analysis_url else None,
         )
         resolved = plans.resolve(plan, profile, env)
         self._check_needs(profile, resolved)
@@ -323,13 +325,13 @@ class Mapper(JobDevice):
             self._open_run_file(job, sample)
 
     def _sample_now(self) -> dict:
-        """Which sample is loaded (record.current_sample), from the profile's STAGE device; nulls and why when it cannot say."""
-        address = self.profile().sample_stage()
+        """Which sample is loaded (record.current_sample), from the SAMPLE device; nulls and why when it cannot say."""
+        address = self.sample_device_address
         try:
-            stage = self.proxy(address, timeout_s=3.0) if address else None
+            sample = self.proxy(address, timeout_s=3.0) if address else None
         except Exception as exc:
             return {"sample_id": None, "sample_load_id": None, "sample_error": f"no proxy to {address}: {str(exc).splitlines()[0][:200]}"}
-        return current_sample(stage)
+        return current_sample(sample)
 
     def _refuse_another_load(self, job: dict, sample: dict) -> None:
         """A resume onto another sample load would put the new load's features at the old load's positions."""
@@ -338,7 +340,7 @@ class Mapper(JobDevice):
             return
         if sample.get("sample_load_id") is None:
             raise RuntimeError(f"could not tell which sample is loaded ({sample.get('sample_error')}), so this map (load {recorded}) "
-                               "was not resumed; resume it when the STAGE device answers")
+                               "was not resumed; resume it when the SAMPLE device answers")
         if sample["sample_load_id"] != recorded:
             raise RuntimeError(f"the sample was reloaded since this map started (load {recorded}, now {sample['sample_load_id']}); "
                                "its tiles would not line up: reserve a new map instead of resuming")
@@ -400,7 +402,7 @@ class Mapper(JobDevice):
         images = profile.ctx.read_acquisition(image_key)
         if correction is not None:
             correction.update(live_drift.measure(job, tile, images, acquired, run, float(self.max_drift_m_per_s)) or {})
-        if spectrum is None and spectrum_key is not None:
+        if spectrum is None and spectrum_key is not None and not acquired_tile.get("spectrum_stored"):
             spectrum = profile.ctx.read_acquisition(spectrum_key)
         record["key"] = image_key
         if spectrum_key is not None:
@@ -409,6 +411,14 @@ class Mapper(JobDevice):
             record["drift"] = correction
         run.write_tile(plans.tile_count(plan), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key, live_drift.tile_arrays(job, correction))
         return record
+
+    def store_spectrum_row(self, job: dict, tile: dict, points: int, row: int, spectra: Any, attrs: dict) -> None:
+        """A row of tile's spectrum image, straight into the run file (a profile calls it through its MapContext)."""
+        self._run(job).write_spectrum_image_row(plans.tile_count(job["resolved_plan"]), tile["index"], points, row, spectra, attrs)
+
+    def store_spectrum_image_key(self, job: dict, tile: dict, key: str) -> None:
+        """A tile's spectrum image is a vendor file the run file names."""
+        self._run(job).write_spectrum_image_key(plans.tile_count(job["resolved_plan"]), tile["index"], key)
 
     def _trace_drift_correction(self, job: dict, ok: bool, arguments: dict, clock_s: float, error: str | None = None) -> None:
         """One live drift correction into the Instrument Trace (Mapper.drift_correction)."""
