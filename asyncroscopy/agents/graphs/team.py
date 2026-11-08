@@ -66,7 +66,7 @@ ROLES = {
 SHARED = ["wait_for_job", "approval_status", "load_skill"]
 # Never given to a specialist: covered by run_job / wait_for_job, skills come to the agent, and the operator side of approvals is the operator's.
 HIDDEN = [
-    "*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", "list_skills", "endpoint_info",
+    "*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", "list_skills", "skills_for", "endpoint_info",
     "Approvals_*", "*_State", "*_Status", "*_Init",
 ]
 MAX_STEPS = 6
