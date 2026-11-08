@@ -263,7 +263,7 @@ def test_a_plan_that_already_finished_in_this_request_is_not_run_again():
 
 
 def test_a_dose_limit_the_user_never_stated_is_taken_out_of_the_plan_and_the_reply_says_so():
-    from asyncroscopy.agents.guards import UserLimitMiddleware
+    from asyncroscopy.agents.guards import UserWordsMiddleware
 
     sent = []
 
@@ -274,9 +274,9 @@ def test_a_dose_limit_the_user_never_stated_is_taken_out_of_the_plan_and_the_rep
     def call(words, plan):
         request = FakeToolRequest("run_job", {"device": "Mapper", "plan": plan})
         request.state = {"messages": [HumanMessage(words)]}
-        return json.loads(UserLimitMiddleware().wrap_tool_call(request, handler).content)
+        return json.loads(UserWordsMiddleware().wrap_tool_call(request, handler).content)
 
-    invented = call("map a sample completely down to the angstrom", {"fov_m": 5.12e-8, "dose_budget_e_per_a2": 100})
+    invented = call("map a 600 nm square down to the angstrom", {"fov_m": 5.12e-8, "dose_budget_e_per_a2": 100})
     assert sent[-1]["plan"] == {"fov_m": 5.12e-8}
     assert "dose_budget_e_per_a2 100" in invented["note"] and invented["state"] == "done"
 
@@ -285,3 +285,37 @@ def test_a_dose_limit_the_user_never_stated_is_taken_out_of_the_plan_and_the_rep
 
     stated = call("map it, at most 50 e/Å² anywhere", {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50})
     assert sent[-1]["plan"] == {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50} and "note" not in stated
+
+
+def test_a_whole_sample_request_gets_the_sample_bounds_to_copy_and_only_they_pass():
+    from asyncroscopy.agents.guards import UserWordsMiddleware
+
+    bounds = {"x_min": -30000.0, "x_max": 30000.0, "y_min": -20000.0, "y_max": 20000.0}
+    sent = []
+
+    def handler(request):
+        name = request.tool_call["name"]
+        if name == "DigitalTwin_get_parameters":
+            return ToolMessage(json.dumps({"world_bounds_angstrom": bounds}), tool_call_id="b", name=name)
+        sent.append(request.tool_call["args"]["plan"])
+        return ToolMessage(json.dumps({"job_id": "j1", "state": "done"}), tool_call_id="call-1", name="run_job")
+
+    guard = UserWordsMiddleware([SimpleNamespace(name="DigitalTwin_get_parameters")])
+
+    def call(words, plan):
+        request = FakeToolRequest("run_job", {"device": "Mapper", "plan": plan})
+        request.state = {"messages": [HumanMessage(words)]}
+        return guard.wrap_tool_call(request, handler)
+
+    words = "map a sample completely down to the angstrom"
+    for plan in ({"fov_m": 5.12e-8, "size_m": [6e-8, 6e-8]}, {"fov_m": 5.12e-8, "box_m": [0, 1e-6, 0, 1e-6]}):
+        refused = call(words, plan)
+        assert refused.status == "error" and "[-3e-06, 3e-06, -2e-06, 2e-06]" in json.loads(refused.content)["error"]["message"]
+    assert not sent
+    whole = {"fov_m": 5.12e-8, "box_m": [-3e-6, 3e-6, -2e-6, 2e-6]}
+    assert call(words, whole).status != "error" and sent == [whole]
+    assert call("map a 500 nm square around here", {"size_m": [5e-7, 5e-7]}).status != "error"
+    blind = UserWordsMiddleware()
+    request = FakeToolRequest("run_job", {"plan": {"size_m": [6e-8, 6e-8]}})
+    request.state = {"messages": [HumanMessage(words)]}
+    assert "get_parameters" in json.loads(blind.wrap_tool_call(request, handler).content)["error"]["message"]

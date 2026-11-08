@@ -7,7 +7,7 @@ from typing import Any
 
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
-from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware, UserLimitMiddleware
+from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware, UserWordsMiddleware
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
 
 
@@ -20,8 +20,8 @@ def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str],
     makers: dict[str, Callable[[], Any]] = {
         # Skills that match the request and the progress, and memory notes, in the system prompt.
         "skills": lambda: SkillMiddleware(prompt, tool_names, offered, memory=memory, num_ctx=num_ctx),
-        # A dose limit the user never stated is taken out of a run_job plan.
-        "user_limits": UserLimitMiddleware,
+        # A run_job map plan held to the user's words: no dose limit they never stated, the whole sample when asked.
+        "user_words": lambda: UserWordsMiddleware(tools),
         # A job of any length is one tool round.
         "job_wait": lambda: JobWaitMiddleware(tools, deadline=deadline),
         "empty_reply": EmptyReplyMiddleware,

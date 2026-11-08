@@ -410,7 +410,7 @@ class EmptyReplyMiddleware(AgentMiddleware):
         return self._settle(request, ask, await handler(again))
 
 
-# ---------------------------------------------------------------------- limits only the user sets
+# ---------------------------------------------------------------------- a map plan held to the user's words
 USER_LIMITS = ("dose_budget_e_per_a2",)
 NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 DROPPED = ("{fields} left out of the plan: the user set no such limit (their words hold no {values}). "
@@ -439,19 +439,84 @@ def without_unstated_limits(args: dict, words: str) -> tuple[dict, list[str]]:
     return {**args, "plan": json.dumps(kept) if isinstance(plan, str) else kept}, [f"{f} {parsed[f]}" for f in dropped]
 
 
-class UserLimitMiddleware(AgentMiddleware):
-    """Takes a dose limit the user never stated out of a ``run_job`` plan, and says so in the reply.
+WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|complete) sample\b|\bsample (?:completely|entirely)\b|\ball of the sample\b", re.IGNORECASE)
+NOT_WHOLE = ("not the whole sample: the user asked for all of it, and this plan maps only a box around the stage. Read the "
+             "sample's bounds first (the microscope's get_parameters: world_bounds_angstrom, x 1e-10 for metres) and give "
+             '"box_m": [x_min, x_max, y_min, y_max] in metres instead of size_m.')
+WRONG_BOX = ('not the whole sample: the user asked for all of it, and {tool} gives its bounds as "box_m": {box} (metres). '
+             "Use exactly that box_m, with no size_m or centre_m.")
 
-    qwen3:8b put "dose_budget_e_per_a2": 100 into "map a sample completely down to the angstrom", the plan was
-    refused for going over it, and the model asked the user to lower a limit the user never set."""
 
-    def _checked(self, request):
+def _plan(args: dict) -> dict | None:
+    plan = args.get("plan")
+    parsed = _json(plan) if isinstance(plan, str) else plan
+    return parsed if isinstance(parsed, dict) else None
+
+
+def sample_box(reply: str) -> list[float] | None:
+    """The sample's bounds [x_min, x_max, y_min, y_max] in metres from a get_parameters reply (world_bounds_angstrom)."""
+    parsed = _json(reply)
+    bounds = parsed.get("world_bounds_angstrom") if isinstance(parsed, dict) else None
+    try:
+        return [float(bounds[k]) * 1e-10 for k in ("x_min", "x_max", "y_min", "y_max")]
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
+def whole_sample_refusal(plan: dict, box: list[float] | None, tool: str) -> str | None:
+    """Why a plan does not map the whole sample whose bounds are ``box`` (None: the instrument gave none), or None."""
+    given = plan.get("box_m")
+    if box is None:
+        return None if given else NOT_WHOLE
+    span = max(box[1] - box[0], box[3] - box[2])
+    if isinstance(given, list) and len(given) == 4 and all(isinstance(v, (int, float)) and abs(v - b) <= 1e-3 * span for v, b in zip(given, box)):
+        return None
+    return WRONG_BOX.format(tool=tool, box=json.dumps([float(f"{v:.6g}") for v in box]))
+
+
+class UserWordsMiddleware(AgentMiddleware):
+    """Holds a ``run_job`` map plan to what the user said: a dose limit they never stated is taken out (the reply
+    says so), and when they asked for the whole sample a plan that does not map the sample's bounds is refused
+    before it reaches the server, with the bounds to copy (read from the microscope's get_parameters).
+
+    qwen3:8b, asked to "map a sample completely down to the angstrom", put "dose_budget_e_per_a2": 100 in the plan
+    and asked the user to lower a limit they never set; with that gone, it mapped a 60 nm box, grew it only until
+    the server stopped refusing it, and answered that the sample was mapped completely; told to read the bounds,
+    it wrote [0, 1e-06, 0, 1e-06] instead of reading them."""
+
+    def __init__(self, tools: Iterable[BaseTool] = ()) -> None:
+        super().__init__()
+        self.parameters_tool = next((t for t in tools if getattr(t, "name", "").endswith("_get_parameters")), None)
+
+    @staticmethod
+    def _words(request) -> str:
+        messages = list((getattr(request, "state", None) or {}).get("messages", []))
+        return " ".join(_text(m) for m in messages if is_request(m))
+
+    def _bounds_request(self, request):
+        if self.parameters_tool is None:
+            return None
+        call = {**request.tool_call, "name": self.parameters_tool.name, "args": {}, "id": f"{request.tool_call.get('id')}-bounds"}
+        return request.override(tool=self.parameters_tool, tool_call=call)
+
+    def _refusal(self, request, plan: dict, reply) -> ToolMessage | None:
+        box = sample_box(_text(reply)) if isinstance(reply, ToolMessage) else None
+        why = whole_sample_refusal(plan, box, self.parameters_tool.name if self.parameters_tool else "the microscope")
+        if why is None:
+            return None
+        return ToolMessage(json.dumps({"error": {"code": "not_the_whole_sample", "message": why}}),
+                           tool_call_id=request.tool_call.get("id"), name="run_job", status="error")
+
+    def _whole_sample_plan(self, request) -> dict | None:
+        call = request.tool_call
+        plan = _plan(call.get("args") or {}) if call.get("name") == "run_job" else None
+        return plan if plan is not None and WHOLE_SAMPLE.search(self._words(request)) else None
+
+    def _without_limits(self, request):
         call = request.tool_call
         if call.get("name") != "run_job":
             return request, []
-        messages = list((getattr(request, "state", None) or {}).get("messages", []))
-        words = " ".join(_text(m) for m in messages if is_request(m))
-        args, dropped = without_unstated_limits(call.get("args") or {}, words)
+        args, dropped = without_unstated_limits(call.get("args") or {}, self._words(request))
         return (request.override(tool_call={**call, "args": args}) if dropped else request), dropped
 
     @staticmethod
@@ -464,9 +529,21 @@ class UserLimitMiddleware(AgentMiddleware):
         return result.model_copy(update={"content": content})
 
     def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
-        checked, dropped = self._checked(request)
+        plan = self._whole_sample_plan(request)
+        if plan is not None:
+            bounds = self._bounds_request(request)
+            refusal = self._refusal(request, plan, handler(bounds) if bounds is not None else None)
+            if refusal is not None:
+                return refusal
+        checked, dropped = self._without_limits(request)
         return self._noted(handler(checked), dropped)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
-        checked, dropped = self._checked(request)
+        plan = self._whole_sample_plan(request)
+        if plan is not None:
+            bounds = self._bounds_request(request)
+            refusal = self._refusal(request, plan, await handler(bounds) if bounds is not None else None)
+            if refusal is not None:
+                return refusal
+        checked, dropped = self._without_limits(request)
         return self._noted(await handler(checked), dropped)
