@@ -70,6 +70,15 @@ def by_tool(space):
     return {a["tool"]: a for a in space["actions"]}
 
 
+def test_the_sample_device_shows_as_the_state_and_tool_the_gui_needs(serve):
+    # SciAgentGUI finds a sample control by a state entry named "sample" and a load_sample tool on the same device.
+    space = action_space.build(serve("asyncroscopy/sample/mapping", role="operator"))
+    sample = next(s for s in space["state"] if s.get("name") == "sample")
+    assert sample["tool"] == "SAMPLE_get_sample" and sample["device"] == "SAMPLE"
+    assert by_tool(space)["SAMPLE_load_sample"]["device"] == "SAMPLE" and by_tool(space)["SAMPLE_load_sample"]["risk"] == "high"
+    assert "SAMPLE_load_sample" not in by_tool(action_space.build(serve("asyncroscopy/sample/mapping")))
+
+
 # ---------------------------------------------------------------------- the document
 def test_stem_and_afm_name_the_stage_move_differently_and_share_its_role(serve):
     stem = action_space.build(serve("asyncroscopy/digitaltwin/default"))

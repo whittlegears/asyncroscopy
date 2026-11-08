@@ -63,6 +63,7 @@ TWIN_STACK = {
     "Tuner": "asyncroscopy/tuner/default",
     "Approvals": "asyncroscopy/approvals/default",
     "DigitalTwinSTAGE": "asyncroscopy/stage/drift",
+    "SAMPLE": "asyncroscopy/sample/mapping",
     "DigitalTwinCorrector": "asyncroscopy/corrector/default",
 }
 

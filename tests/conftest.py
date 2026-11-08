@@ -373,7 +373,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 },
                 {
                     # Ideal stage and scan with dose tracking, for tests/test_dose_aware.py: its DoseMap cell
-                    # (2 um / 200 = 10 nm) matches the dose Mapper's eds_dose_spread_m.
+                    # (2 um / 200 = 10 nm) matches EDS_DOSE_SPREAD_M.
                     "name": "asyncroscopy/digitaltwin/dose",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",

@@ -23,5 +23,5 @@ A point given in stage coordinates needs no map pixels: do not call `to_pixel` o
 3. For a spectrum instead: `run_skill` with `{"skill": "spectrum_at_point", "inputs": {"x_m": x_m, "y_m": y_m}}`, then
    `wait_for_skill` with its `run_id`: it moves there, takes the spectrum and reads its elements.
 4. Answer with the stage position the point was taken at (from the job's summary, or the numbers you sent to
-   `move_stage`) and the new data's key. If the sample was reloaded since the map (`<Stage>_get_sample` gives a
+   `move_stage`) and the new data's key. If the sample was reloaded since the map (`SAMPLE_get_sample` gives a
    different `sample_load_id` from the map's), say that the point may no longer be there.

@@ -137,7 +137,7 @@ def test_a_healthy_stack_passes_and_only_reads(stack):
     # The MCP endpoints were not running: skipped, not failed.
     assert [r for r, name, _ in report.rows if name.startswith("mcp ")] == ["SKIP", "SKIP"]
     # Every configured device was asked for its State.
-    assert sum(1 for _cls, name in stack.log if name == "State") == 11
+    assert sum(1 for _cls, name in stack.log if name == "State") == 12
 
     sent = [(cls, name) for cls, name in stack.log if name != "set_timeout_millis" and not name.startswith("read:")]
     assert sent and all(is_read_only(cls, name) for cls, name in sent), sent

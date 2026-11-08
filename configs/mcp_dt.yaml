@@ -62,7 +62,7 @@ mcp:
   job_limits:
     max_duration_s: 14400
     # The highest dose a plan may put on any spot. EDS point spectra count: a parked 50 pA beam gives about
-    # 30 000 e/A^2 per second of exposure on its 10 nm spot (Mapper eds_dose_spread_m), so a 1 s EDS map
+    # 30 000 e/A^2 per second of exposure on its 10 nm spot (EDS_DOSE_SPREAD_M), so a 1 s EDS map
     # needs this much headroom. A plan's own dose_budget_e_per_a2 (what a user asks for) is still enforced.
     max_dose_e_per_a2: 50000
   # Agent endpoint: operator-only commands (Approvals.approve/deny/set_mode,

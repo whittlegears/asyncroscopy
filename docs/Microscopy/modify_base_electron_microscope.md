@@ -36,8 +36,9 @@ implements only `_helper` methods:
   A1) and the `stage_moving` attribute call `_set_stigmator`, `_get_stigmator`
   and `_stage_moving`. A backend without them inherits a clear
   `UnsupportedCommand` error (JEOL, the specialised twins).
-- **Detector proxies.** `_connect_detector_proxies` builds a proxy for every
-  address in `DETECTOR_ADDRESSES`; `_proxy_timeout_ms(name)` sets each one's
+- **Detector proxies.** `_connect_detector_proxies` (on `ScanningBeamInstrument`,
+  `asyncroscopy/instruments/scanning_beam.py`, with the beam, field of view, image shift, stage,
+  beam current and limits) builds a proxy for every address in `DETECTOR_ADDRESSES`; `_proxy_timeout_ms(name)` sets each one's
   timeout (AutoScript lengthens the stage's).
 - **The command lock.** Every public command that reaches the instrument is
   decorated with `@hardware_call()`: it runs under the device's command lock, after

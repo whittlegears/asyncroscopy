@@ -73,6 +73,19 @@ class TestRecordingProxy:
         def __getattr__(self, name):
             return lambda *args: self.calls.append((name, args)) or name
 
+    def test_a_command_the_device_declares_as_a_stop_really_runs(self):
+        class Declaring(self.Fake):
+            def read_attribute(self, name):
+                return type("Value", (), {"value": json.dumps({"retract": {"stop": True, "risk": "low"}, "approach": {"risk": "high"}})})()
+
+            def get_command_list(self):
+                return ["retract", "approach"]
+
+        fake, recorded = Declaring(), []
+        proxy = RecordingProxy(fake, "asyncroscopy/spm/default", lambda *call: recorded.append(call))
+        assert proxy.retract() == "retract" and proxy.approach() == DRY_RUN_PLACEHOLDER
+        assert [(c[1], c[4]) for c in recorded] == [("retract", True), ("approach", False)]
+
     def test_reads_pass_writes_are_recorded_and_blanking_runs(self):
         fake, recorded = self.Fake(), []
         proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call), safe_commands=frozenset({"blank_beam"}))
