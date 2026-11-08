@@ -260,3 +260,28 @@ def test_a_plan_that_already_finished_in_this_request_is_not_run_again():
     later = FakeToolRequest("run_job", {"device": "Mapper", "plan": plan})
     later.state = {"messages": [*history, HumanMessage("Do the same map again.")]}  # a new request may ask for a second map
     assert json.loads(asyncio.run(middleware.awrap_tool_call(later, handler)).content)["job_id"] == "j2"
+
+
+def test_a_dose_limit_the_user_never_stated_is_taken_out_of_the_plan_and_the_reply_says_so():
+    from asyncroscopy.agents.guards import UserLimitMiddleware
+
+    sent = []
+
+    def handler(request):
+        sent.append(request.tool_call["args"])
+        return ToolMessage(json.dumps({"job_id": "j1", "state": "done"}), tool_call_id="call-1", name="run_job")
+
+    def call(words, plan):
+        request = FakeToolRequest("run_job", {"device": "Mapper", "plan": plan})
+        request.state = {"messages": [HumanMessage(words)]}
+        return json.loads(UserLimitMiddleware().wrap_tool_call(request, handler).content)
+
+    invented = call("map a sample completely down to the angstrom", {"fov_m": 5.12e-8, "dose_budget_e_per_a2": 100})
+    assert sent[-1]["plan"] == {"fov_m": 5.12e-8}
+    assert "dose_budget_e_per_a2 100" in invented["note"] and invented["state"] == "done"
+
+    as_text = call("map it", json.dumps({"dose_budget_e_per_a2": 100.0, "size_m": [6e-7, 6e-7]}))
+    assert json.loads(sent[-1]["plan"]) == {"size_m": [6e-7, 6e-7]} and "note" in as_text
+
+    stated = call("map it, at most 50 e/Å² anywhere", {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50})
+    assert sent[-1]["plan"] == {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50} and "note" not in stated

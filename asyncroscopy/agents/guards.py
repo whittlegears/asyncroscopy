@@ -408,3 +408,65 @@ class EmptyReplyMiddleware(AgentMiddleware):
             return response
         ask, again = self._again(request)
         return self._settle(request, ask, await handler(again))
+
+
+# ---------------------------------------------------------------------- limits only the user sets
+USER_LIMITS = ("dose_budget_e_per_a2",)
+NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+DROPPED = ("{fields} left out of the plan: the user set no such limit (their words hold no {values}). "
+           "Give a limit only when the user states one.")
+
+
+def _stated(value: Any, words: str) -> bool:
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return False
+    return any(abs(float(n) - target) <= 1e-9 * max(1.0, abs(target)) for n in NUMBER.findall(words))
+
+
+def without_unstated_limits(args: dict, words: str) -> tuple[dict, list[str]]:
+    """``run_job`` arguments with each limit in USER_LIMITS the user's words do not state taken out of the plan,
+    and the fields taken out. A plan given as a JSON string stays a string."""
+    plan = args.get("plan")
+    parsed = _json(plan) if isinstance(plan, str) else plan
+    if not isinstance(parsed, dict):
+        return args, []
+    dropped = [f for f in USER_LIMITS if f in parsed and not _stated(parsed[f], words)]
+    if not dropped:
+        return args, []
+    kept = {k: v for k, v in parsed.items() if k not in dropped}
+    return {**args, "plan": json.dumps(kept) if isinstance(plan, str) else kept}, [f"{f} {parsed[f]}" for f in dropped]
+
+
+class UserLimitMiddleware(AgentMiddleware):
+    """Takes a dose limit the user never stated out of a ``run_job`` plan, and says so in the reply.
+
+    qwen3:8b put "dose_budget_e_per_a2": 100 into "map a sample completely down to the angstrom", the plan was
+    refused for going over it, and the model asked the user to lower a limit the user never set."""
+
+    def _checked(self, request):
+        call = request.tool_call
+        if call.get("name") != "run_job":
+            return request, []
+        messages = list((getattr(request, "state", None) or {}).get("messages", []))
+        words = " ".join(_text(m) for m in messages if is_request(m))
+        args, dropped = without_unstated_limits(call.get("args") or {}, words)
+        return (request.override(tool_call={**call, "args": args}) if dropped else request), dropped
+
+    @staticmethod
+    def _noted(result, dropped: list[str]):
+        if not dropped or not isinstance(result, ToolMessage):
+            return result
+        note = DROPPED.format(fields=", ".join(dropped), values=" or ".join(d.split(" ", 1)[1] for d in dropped))
+        parsed = _json(_text(result))
+        content = json.dumps({**parsed, "note": note}, default=str) if isinstance(parsed, dict) else f"{_text(result)}\n{note}"
+        return result.model_copy(update={"content": content})
+
+    def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
+        checked, dropped = self._checked(request)
+        return self._noted(handler(checked), dropped)
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
+        checked, dropped = self._checked(request)
+        return self._noted(await handler(checked), dropped)
