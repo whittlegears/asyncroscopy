@@ -9,7 +9,9 @@ instrument:
   properties:
     sample_seed: 12345
     sample_particle_count: 40
-    world_imsize: 128
+    specimen:
+      source: particles
+      world_imsize: 128
 
 devices:
   data:

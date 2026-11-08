@@ -44,8 +44,12 @@ from asyncroscopy.instruments.electron_microscope.hardware.TestStage import Test
 from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin import DigitalTwinSTAGE
 from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import DigitalTwinDiffraction
 from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
+from asyncroscopy.instruments.electron_microscope.polycrystalline_gold_digital_twin import PolycrystallineGoldDigitalTwin
+from asyncroscopy.instruments.electron_microscope.twin.specimen import register_specimen
+from asyncroscopy.instruments.electron_microscope.twin.specimen_particles import ParticleWorld
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
 from asyncroscopy.jobs.mapping.mapper import Mapper
@@ -54,6 +58,19 @@ from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
 from asyncroscopy.instruments.yaml_sim.device import device_class as yaml_device_class
+
+
+
+@register_specimen
+class SmallParticleWorld(ParticleWorld):
+    """The particle twin's specimen with a small voxel world: a property value in this test database cannot carry a
+    {source: ..., world_imsize: ...} mapping (it cuts values at ":"), so the size comes from a source of its own."""
+
+    source = "particles_small"
+
+    def __init__(self, seed, fov_m, world_imsize=48, **kwargs):
+        super().__init__(seed, fov_m, world_imsize=world_imsize, **kwargs)
+
 
 AFM_YAML = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"
 
@@ -245,6 +262,8 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 {"name": "asyncroscopy/stage/dose", "properties": {}},
                 {"name": "asyncroscopy/stage/specimen_golden", "properties": on_the_stage(SPECIMEN_GOLDEN_PROPERTIES)},
                 {"name": "asyncroscopy/stage/tuner", "properties": {}},
+                # tests/test_atomistic_specimens.py: one twin of each kind, moved only by those tests.
+                *({"name": f"asyncroscopy/stage/atomistic_{kind}", "properties": {}} for kind in ("tilt", "particles", "diffraction", "polycrystal")),
                 *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": on_the_stage(MAPPING_TWIN_PROPERTIES)} for source in SPECIMEN_TWINS),
             ],
         },
@@ -596,6 +615,10 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
             "class": DigitalTwinParticles,
             "devices": [
                 {
+                    "name": "asyncroscopy/atomistic/particles",
+                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), "stage_device_address": "asyncroscopy/stage/atomistic_particles", "sample_seed": 99, "sample_particle_count": 8, "specimen_source": "particles_small"},
+                },
+                {
                     "name": "asyncroscopy/digitaltwinparticles/default",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
@@ -603,14 +626,36 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "stage_device_address": "asyncroscopy/stage/default",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         "sample_particle_count": 8,
-                        "world_imsize": 48,
+                        "specimen_source": "particles_small",
                     },
+                }
+            ],
+        },
+        {
+            "class": DigitalTwinDiffraction,
+            "devices": [
+                {
+                    "name": "asyncroscopy/atomistic/diffraction",
+                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), "stage_device_address": "asyncroscopy/stage/atomistic_diffraction", "sample_seed": 321, "map_size": 256, "overview_image_size": 128, "diffraction_image_size": 16},
+                }
+            ],
+        },
+        {
+            "class": PolycrystallineGoldDigitalTwin,
+            "devices": [
+                {
+                    "name": "asyncroscopy/atomistic/polycrystal",
+                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), "stage_device_address": "asyncroscopy/stage/atomistic_polycrystal", "corrector_device_address": "asyncroscopy/corrector/default", "sample_seed": 20260811},
                 }
             ],
         },
         {
             "class": DigitalTwinTilt,
             "devices": [
+                {
+                    "name": "asyncroscopy/atomistic/tilt",
+                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), "stage_device_address": "asyncroscopy/stage/atomistic_tilt", "diffraction_image_size": 16},
+                },
                 {
                     "name": "asyncroscopy/digitaltwintilt/default",
                     "properties": {
@@ -645,7 +690,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
 
     # Keep one in-process context for the whole session. Starting multiple
     # in-process Tango contexts in one interpreter can segfault in PyTango.
-    ctx = MultiDeviceTestContext(devices_info, process=False)
+    ctx = MultiDeviceTestContext(devices_info, process=False, timeout=60)
     with ctx:
         data = tango.DeviceProxy(ctx.get_device_access("asyncroscopy/data/default"))
         data.save_path = str(data_save_dir)

@@ -9,13 +9,15 @@ instrument:
   properties:
     corrector_device_address: asyncroscopy/corrector/default
     sample_seed: 20260811
-    volume_size_xy_nm: 200
-    volume_thickness_nm: 10
-    grain_size_angstrom: 10
-    empty_grain_fraction: 0.15
-    lattice_constant_angstrom: 4.08
-    zone_axis_max_index: 2
-    zone_axis_max_deviation_deg: 2.0
+    specimen:
+      source: polycrystal
+      volume_size_xy_nm: 200
+      volume_thickness_nm: 10
+      grain_size_angstrom: 10
+      empty_grain_fraction: 0.15
+      lattice_constant_angstrom: 4.08
+      zone_axis_max_index: 2
+      zone_axis_max_deviation_deg: 2.0
     acceleration_voltage_ev: 200000
     convergence_angle_mrad: 30
     probe_current_pa: 100

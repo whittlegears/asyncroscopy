@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import h5py
@@ -16,32 +17,13 @@ def twin_for_path(tmp_path: Path, randomness_scale: float = 0.0) -> DigitalTwinT
     twin._detector_proxies = {}
     properties = {
         "sample_seed": 731,
-        "lamella_width_nm": 620.0,
-        "lamella_height_nm": 360.0,
-        "lamella_thickness_nm": 80.0,
-        "gridbar_width_nm": 220.0,
-        "layer_period_nm": 45.0,
         "overview_fov_nm": 1100.0,
         "diffraction_image_size": 16,
         "diffraction_max_angle_mrad": 60.0,
         "convergence_angle_mrad": 8.0,
-        "silicon_lattice_parameter_angstrom": 5.431,
-        "lattice_parameter_gradient_x_percent": 2.0,
-        "lattice_parameter_gradient_y_percent": 0.5,
-        "crystal_rotation_deg": 1.5,
-        "crystal_rotation_gradient_x_deg": 4.0,
-        "crystal_rotation_gradient_y_deg": -2.0,
-        "crystal_tilt_x_mrad": 3.0,
-        "crystal_tilt_y_mrad": -2.0,
-        "crystal_tilt_gradient_x_mrad": 10.0,
-        "crystal_tilt_gradient_y_mrad": -7.0,
         "electron_energy_ev": 200_000.0,
         "potential_sampling_angstrom": 0.08,
         "potential_slice_thickness_angstrom": 1.0,
-        "multislice_supercell_xy": 4,
-        "multislice_supercell_z": 8,
-        "multislice_vacuum_angstrom": 2.0,
-        "frozen_phonon_sigma_angstrom": 0.03,
         "rotation_center_x_nm": -55.0,
         "rotation_center_y_nm": 35.0,
         "rotation_center_z_nm": 125.0,
@@ -59,6 +41,8 @@ def twin_for_path(tmp_path: Path, randomness_scale: float = 0.0) -> DigitalTwinT
         "autofocus_residual_std_nm": 2.0,
         "haadf_poisson_counts": 180.0,
         "acquisition_save_directory": str(tmp_path),
+        "specimen": "",
+        "specimen_source": "silicon_lamella",
     }
     for name, value in properties.items():
         setattr(twin, name, value)
@@ -78,8 +62,8 @@ def test_sample_is_layered_lamella_attached_to_opaque_gridbar(tmp_path: Path):
     assert image[gridbar].mean() > image[lamella].mean()
     layer_means = []
     for layer in range(6):
-        lower = -0.5 * twin.lamella_height_nm + layer * twin.layer_period_nm
-        selection = lamella & (local_y >= lower) & (local_y < lower + twin.layer_period_nm)
+        lower = -0.5 * twin._specimen.params.lamella_height_nm + layer * twin._specimen.params.layer_period_nm
+        selection = lamella & (local_y >= lower) & (local_y < lower + twin._specimen.params.layer_period_nm)
         layer_means.append(float(image[selection].mean()))
     assert np.ptp(layer_means) > 0.07
 
@@ -125,9 +109,9 @@ def test_tilt_randomness_is_repeatable_and_has_master_disable(tmp_path: Path):
 def test_local_ase_cells_encode_continuous_lattice_and_orientation_fields(tmp_path: Path):
     twin = twin_for_path(tmp_path)
 
-    left = twin._silicon_atoms(-0.5 * twin.lamella_width_nm, 0.0, 1)
+    left = twin._silicon_atoms(-0.5 * twin._specimen.params.lamella_width_nm, 0.0, 1)
     center = twin._silicon_atoms(0.0, 0.0, 2)
-    right = twin._silicon_atoms(0.5 * twin.lamella_width_nm, 0.0, 3)
+    right = twin._silicon_atoms(0.5 * twin._specimen.params.lamella_width_nm, 0.0, 3)
 
     assert left.info["lattice_parameter_angstrom"] < center.info[
         "lattice_parameter_angstrom"
@@ -152,12 +136,11 @@ def test_local_ase_cells_encode_continuous_lattice_and_orientation_fields(tmp_pa
 def test_real_abtem_multislice_returns_diffraction_pattern(tmp_path: Path):
     pytest.importorskip("abtem", exc_type=ImportError)
     twin = twin_for_path(tmp_path)
-    twin.multislice_supercell_xy = 2
-    twin.multislice_supercell_z = 2
+    twin._specimen.params = replace(twin._specimen.params, multislice_supercell_xy=2, multislice_supercell_z=2)
     twin.potential_sampling_angstrom = 0.15
     twin.potential_slice_thickness_angstrom = 2.0
     atoms = twin._silicon_atoms(0.0, 0.0, 1)
-    strained_atoms = twin._silicon_atoms(0.5 * twin.lamella_width_nm, 0.0, 2)
+    strained_atoms = twin._silicon_atoms(0.5 * twin._specimen.params.lamella_width_nm, 0.0, 2)
 
     pattern = twin._simulate_diffraction_from_atoms(atoms, 24)
     strained_pattern = twin._simulate_diffraction_from_atoms(strained_atoms, 24)
@@ -225,7 +208,7 @@ def test_camera_diffraction_uses_local_silicon_ase_model(
 
 def test_gridbar_is_not_electron_transparent(tmp_path: Path):
     twin = twin_for_path(tmp_path)
-    gridbar_x_nm = -0.5 * twin.lamella_width_nm - 0.5 * twin.gridbar_width_nm
+    gridbar_x_nm = -0.5 * twin._specimen.params.lamella_width_nm - 0.5 * twin._specimen.params.gridbar_width_nm
     twin._place_beam([0.5 + gridbar_x_nm / twin.overview_fov_nm, 0.5])
 
     material, _local_x, _local_y = twin._beam_material()

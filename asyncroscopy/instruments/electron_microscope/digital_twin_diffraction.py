@@ -4,39 +4,28 @@ from __future__ import annotations
 
 import numpy as np
 from ase import Atoms
-from ase.build import bulk
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, ElectronMicroscopeTwin
 from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
+from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
+from asyncroscopy.instruments.electron_microscope.twin.specimen_nanoparticle_map import FOV_M, FOV_NM
 
-FOV_NM = 500.0
-FOV_M = FOV_NM * 1e-9
-DEFAULT_MAP_SIZE = 1024
 DEFAULT_OVERVIEW_IMAGE_SIZE = 1024
 DIFFRACTION_MAX_ANGLE_MRAD = 80.0
-TARGET_COVERAGE = 0.22
 VACUUM_LATERAL_SIZE_ANGSTROM = 40.0
-ROUND_CENTER_LATTICE_MEAN_ANGSTROM = 4.078
-OVAL_CENTER_LATTICE_MEAN_ANGSTROM = 4.678
-CENTER_LATTICE_STD_ANGSTROM = 0.015
-EDGE_LATTICE_CHANGE_FRACTION = 0.25
-AMORPHOUS_EDGE_WIDTH_PX = 5.0
 
 
 class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
-    """Digital twin that pairs a HAADF nanoparticle overview with local diffraction."""
+    """Digital twin that pairs a HAADF nanoparticle overview (the ``nanoparticle_map`` specimen) with local diffraction."""
 
+    render_mode = "diffraction_map"
+    specimen_source = device_property(dtype=str, default_value="nanoparticle_map", doc="Specimen source (nanoparticle_map, or a plug-in in the diffraction_map render mode).")
     acquisition_save_directory = device_property(
         dtype=str,
         default_value=DEFAULT_ACQUISITION_DIR,
         doc='Directory where simulated acquisitions are saved before the Tiled server serves them.',
-    )
-    map_size = device_property(
-        dtype=int,
-        default_value=DEFAULT_MAP_SIZE,
-        doc='Internal pixel size for the fixed 500 nm nanoparticle field.',
     )
     diffraction_image_size = device_property(
         dtype=int,
@@ -64,151 +53,14 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         self._manufacturer = 'UTKTeam Diffraction Twin'
         self._fov = FOV_M
 
-    def _update_view_cache(self, force: bool = False) -> None:
-        """The particle map is fixed in sample coordinates (the stage only selects where to look): nothing to move."""
-        self._cached_pose_key = tuple(np.round(self._stage_position, 12))
-
     def _generate_sample(self, seed: int) -> None:
-        rng = np.random.default_rng(int(seed))
-        size = max(128, int(self.map_size))
         self._fov = FOV_M
-        self._world_bounds_ang = {
-            'x_min': -FOV_NM * 5.0,
-            'x_max': FOV_NM * 5.0,
-            'y_min': -FOV_NM * 5.0,
-            'y_max': FOV_NM * 5.0,
-            'z_min': -50.0,
-            'z_max': 50.0,
-        }
-
-        particle_id = np.zeros((size, size), dtype=np.int16)
-        haadf = np.zeros((size, size), dtype=np.float32)
-        rattle = np.zeros((size, size), dtype=np.float32)
-        lattice_parameter_map = np.zeros((size, size), dtype=np.float32)
-        particle_records = []
-        yy, xx = np.mgrid[:size, :size]
-        coverage = 0.0
-        attempts = 0
-        kind_counts = {'round': 0, 'oval': 0}
-
-        while coverage < TARGET_COVERAGE and attempts < 4000:
-            attempts += 1
-            if kind_counts['round'] == kind_counts['oval']:
-                kind = 'round' if rng.random() < 0.5 else 'oval'
-            else:
-                kind = 'round' if kind_counts['round'] < kind_counts['oval'] else 'oval'
-            radius = float(rng.uniform(18.0, 34.0))
-            if kind == 'round':
-                axis_x = radius * float(rng.uniform(0.97, 1.03))
-                axis_y = radius * float(rng.uniform(0.97, 1.03))
-                center_lattice_parameter = float(
-                    rng.normal(ROUND_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM)
-                )
-                edge_lattice_change = -EDGE_LATTICE_CHANGE_FRACTION
-            else:
-                axis_x = radius * float(rng.uniform(1.25, 1.65))
-                axis_y = radius * float(rng.uniform(0.75, 0.95))
-                center_lattice_parameter = float(
-                    rng.normal(OVAL_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM)
-                )
-                edge_lattice_change = EDGE_LATTICE_CHANGE_FRACTION
-
-            margin = int(max(axis_x, axis_y) * 1.2 + 4)
-            if margin * 2 >= size:
-                continue
-            cx = float(rng.uniform(margin, size - margin))
-            cy = float(rng.uniform(margin, size - margin))
-            angle = float(rng.uniform(0.0, 2.0 * np.pi))
-            x0 = max(0, int(np.floor(cx - margin)))
-            x1 = min(size, int(np.ceil(cx + margin + 1)))
-            y0 = max(0, int(np.floor(cy - margin)))
-            y1 = min(size, int(np.ceil(cy + margin + 1)))
-            cos_a = np.cos(angle)
-            sin_a = np.sin(angle)
-            dx = xx[y0:y1, x0:x1] - cx
-            dy = yy[y0:y1, x0:x1] - cy
-            xr = dx * cos_a + dy * sin_a
-            yr = -dx * sin_a + dy * cos_a
-            theta = np.arctan2(yr / max(axis_y, 1e-6), xr / max(axis_x, 1e-6))
-            blob_scale = 0.35 if kind == 'round' else 1.0
-            blob = 1.0 + 0.09 * blob_scale * np.sin(3.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
-            blob += 0.07 * blob_scale * np.sin(5.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
-            normalized_radius = np.sqrt((xr / axis_x) ** 2 + (yr / axis_y) ** 2) / blob
-            mask = normalized_radius <= 1.0
-            particle_view = particle_id[y0:y1, x0:x1]
-            if np.any(mask & (particle_view > 0)):
-                continue
-            particle_pixels = int(np.count_nonzero(mask))
-            if particle_pixels / mask.size < 0.002:
-                continue
-
-            record_id = len(particle_records) + 1
-            distance_to_edge_px = (1.0 - normalized_radius) * min(axis_x, axis_y)
-            edge_rattle = np.clip(1.0 - distance_to_edge_px / AMORPHOUS_EDGE_WIDTH_PX, 0.0, 1.0) ** 0.6
-            edge_rattle = (edge_rattle * mask).astype(np.float32)
-            local_lattice_parameter = self._local_lattice_parameter(
-                center_lattice_parameter,
-                edge_lattice_change,
-                normalized_radius,
-            )
-            local_intensity = float(rng.uniform(0.72, 1.0))
-            texture = rng.normal(0.0, 0.035, size=mask.shape).astype(np.float32)
-            rattle_view = rattle[y0:y1, x0:x1]
-            lattice_view = lattice_parameter_map[y0:y1, x0:x1]
-            haadf_view = haadf[y0:y1, x0:x1]
-            particle_view[mask] = record_id
-            rattle_view[mask] = edge_rattle[mask]
-            lattice_view[mask] = local_lattice_parameter[mask]
-            haadf_view[mask] = local_intensity - 0.18 * edge_rattle[mask] + texture[mask]
-            particle_records.append(
-                {
-                    'id': record_id,
-                    'kind': kind,
-                    'pixel_count': particle_pixels,
-                    'center_nm': [
-                        float((cx / (size - 1) - 0.5) * FOV_NM),
-                        float((cy / (size - 1) - 0.5) * FOV_NM),
-                    ],
-                    'axes_nm': [
-                        float(axis_x / size * FOV_NM),
-                        float(axis_y / size * FOV_NM),
-                    ],
-                    'angle_rad': angle,
-                    'rotation_degrees': float(np.degrees(angle)),
-                    'center_lattice_parameter': center_lattice_parameter,
-                    'lattice_parameter': center_lattice_parameter,
-                    'edge_lattice_change_fraction': edge_lattice_change,
-                }
-            )
-            kind_counts[kind] += 1
-            coverage = np.count_nonzero(particle_id) / particle_id.size
-
-        haadf += rng.normal(0.015, 0.01, size=(size, size)).astype(np.float32)
-        haadf -= float(haadf.min())
-        max_val = float(haadf.max())
-        self._nanoparticle_map = np.clip(haadf / max_val if max_val > 0.0 else haadf, 0.0, 1.0)
-        self._particle_id_map = particle_id
-        self._rattle_map = rattle
-        self._lattice_parameter_map = lattice_parameter_map
-        self._particle_records_base = particle_records
-        self._particle_records_view = particle_records
-        self._cached_pose_key = None
+        self._load_specimen(seed)
 
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list) -> np.ndarray:
         self._sync_stage_from_proxy()
         self._imsize = imsize
-        source = self._nanoparticle_map
-        source_size = source.shape[0]
-        stage_nm = self._stage_position[:2] * 1e9
-        axis = (np.arange(int(imsize)) + 0.5) / int(imsize) - 0.5
-        x_nm = axis * FOV_NM + stage_nm[0]
-        y_nm = axis * FOV_NM + stage_nm[1]
-        xi = np.rint((x_nm / FOV_NM + 0.5) * (source_size - 1)).astype(int)
-        yi = np.rint((y_nm / FOV_NM + 0.5) * (source_size - 1)).astype(int)
-        image = np.zeros((int(imsize), int(imsize)), dtype=np.float32)
-        valid_x = (xi >= 0) & (xi < source_size)
-        valid_y = (yi >= 0) & (yi < source_size)
-        image[np.ix_(valid_y, valid_x)] = source[np.ix_(yi[valid_y], xi[valid_x])]
+        image = self._specimen.view(ViewRequest(stage=self._stage_position, imsize=int(imsize))).maps["haadf"]
         seed = int(abs(hash((int(self.sample_seed), tuple(np.round(self._stage_position, 10)), int(imsize)))) % (2**32))
         rng = np.random.default_rng(seed)
         counts = max(1.0, float(self.haadf_poisson_counts))
@@ -216,54 +68,19 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         image += rng.normal(0.0, 0.008, size=image.shape).astype(np.float32)
         return np.clip(image, 0.0, 1.0)
 
-    def _beam_particle(self) -> tuple[dict | None, float]:
+    def _beam_atoms(self):
+        """The atoms under the parked beam, or None over vacuum; their info describes the particle."""
         self._sync_stage_from_proxy()
         px, py = self.read_beam_pos()
-        size = self._particle_id_map.shape[0]
         stage_nm = self._stage_position[:2] * 1e9
         x_nm = (float(px) - 0.5) * FOV_NM + stage_nm[0]
         y_nm = (float(py) - 0.5) * FOV_NM + stage_nm[1]
-        ix = int(round((x_nm / FOV_NM + 0.5) * (size - 1)))
-        iy = int(round((y_nm / FOV_NM + 0.5) * (size - 1)))
-        if ix < 0 or ix >= size or iy < 0 or iy >= size:
-            return None, 0.0
-        particle_id = int(self._particle_id_map[iy, ix])
-        if particle_id <= 0:
-            return None, 0.0
-        particle = self._particle_records_base[particle_id - 1].copy()
-        center_lattice_parameter = float(particle['center_lattice_parameter'])
-        local_lattice_parameter = float(self._lattice_parameter_map[iy, ix])
-        particle['lattice_parameter'] = local_lattice_parameter
-        particle['lattice_strain_fraction'] = local_lattice_parameter / center_lattice_parameter - 1.0
-        return particle, float(self._rattle_map[iy, ix])
-
-    def _simulate_abtem_diffraction(self, particle: dict, rattle_value: float, imsize: int) -> np.ndarray:
-        atoms = self._particle_atoms(particle, rattle_value)
-        return self._simulate_diffraction_from_atoms(atoms, imsize)
+        seed = self._particle_seed(int(self.sample_seed), self._stage_position, self.read_beam_pos())
+        return self._specimen.atoms_at(x_nm, y_nm, ViewRequest(stage=self._stage_position), seed)
 
     @staticmethod
     def _particle_seed(sample_seed: int, stage_position: np.ndarray, beam_position: list[float]) -> int:
         return int(abs(hash((int(sample_seed), tuple(np.round(stage_position, 10)), tuple(np.round(beam_position, 6))))) % (2**32))
-
-    def _particle_atoms(self, particle: dict, rattle_value: float):
-        # A conventional cubic FCC cell puts the beam along the <100> zone-axis family.
-        atoms = bulk('Au', 'fcc', a=float(particle['lattice_parameter']), cubic=True).repeat((4, 4, 4))
-        atoms.center(vacuum=2.0)
-        atoms.rotate(float(particle['rotation_degrees']), 'z', center='COP')
-        if rattle_value > 0.0:
-            seed = self._particle_seed(int(self.sample_seed), self._stage_position, self.read_beam_pos())
-            atoms.rattle(stdev=self._rattle_stdev(rattle_value), seed=seed)
-        return atoms
-
-    @staticmethod
-    def _rattle_stdev(rattle_value: float) -> float:
-        return 0.03 + 0.7 * float(rattle_value)
-
-    @staticmethod
-    def _local_lattice_parameter(center_value: float, edge_change: float, normalized_radius):
-        radial_fraction = np.clip(normalized_radius, 0.0, 1.0)
-        smooth_radial_fraction = radial_fraction**2 * (3.0 - 2.0 * radial_fraction)
-        return center_value * (1.0 + edge_change * smooth_radial_fraction)
 
     def _vacuum_diffraction(self, imsize: int) -> np.ndarray:
         cell = [VACUUM_LATERAL_SIZE_ANGSTROM, VACUUM_LATERAL_SIZE_ANGSTROM, 10.0]
@@ -311,9 +128,10 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         frame_combining: int = 1,
         output_format: str = '.h5',
     ) -> str:
-        particle, rattle_value = self._beam_particle()
+        atoms = self._beam_atoms()
+        rattle_value = float(atoms.info["rattle_value"]) if atoms is not None else 0.0
         image_size = int(imsize or self.diffraction_image_size)
-        diffraction = self._vacuum_diffraction(image_size) if particle is None else self._simulate_abtem_diffraction(particle, rattle_value, image_size)
+        diffraction = self._vacuum_diffraction(image_size) if atoms is None else self._simulate_diffraction_from_atoms(atoms, image_size)
         data_server = self._detector_proxies.get('data')
         attrs = {
             'pixel_size_mrad': float(2.0 * DIFFRACTION_MAX_ANGLE_MRAD / image_size),
@@ -326,11 +144,12 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             'readout_area': str(readout_area),
             'frame_combining': int(frame_combining),
         }
-        if particle is not None:
+        if atoms is not None:
+            particle = atoms.info
             attrs.update(
                 {
-                    'particle_id': int(particle['id']),
-                    'particle_kind': str(particle['kind']),
+                    'particle_id': int(particle['particle_id']),
+                    'particle_kind': str(particle['particle_kind']),
                     'particle_lattice_parameter_angstrom': float(particle['lattice_parameter']),
                     'particle_center_lattice_parameter_angstrom': float(particle['center_lattice_parameter']),
                     'particle_lattice_strain_fraction': float(particle['lattice_strain_fraction']),
@@ -366,8 +185,8 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             'pixel_size_m': float(FOV_M / image_size),
             'fov_nm': float(FOV_NM),
             'fov_m': float(FOV_M),
-            'map_size_px': int(self.map_size),
-            'sample_pixel_size_nm': float(FOV_NM / int(self.map_size)),
+            'map_size_px': self._specimen.map_size,
+            'sample_pixel_size_nm': float(FOV_NM / self._specimen.map_size),
         }
         images = [self._render_stem_image(image_size, float(dwell_time), [detector]) for detector in detector_list]
         return save_acquisition(self, data_server, 'stem_image', detector_list, images, dataset_attrs=attrs, output_format=output_format)

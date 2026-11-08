@@ -6,8 +6,6 @@
 Still open:
 
 - The YAML sim split into a `YamlInstrument` and a separate `YamlJob`. It needs an instrument-side step protocol, and it renames job tools such as `RamanTwin_reserve`.
-- The twin stage dynamics (backlash, settle) still run inside the twin microscope rather than `DigitalTwinSTAGE`.
-- The atomistic twins' samples are not yet `Specimen` plug-ins.
 - asyncroscopy points pyTEMlib at the local `../pyTEMlib-sidpy` until that branch is pushed and pinned by rev.
 
 ## Why
