@@ -28,7 +28,8 @@ from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
 from asyncroscopy.utils.commands import command
-from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope, hardware_call, unsupported
+from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+from asyncroscopy.instruments.scanning_beam import hardware_call, unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
 
 # AutoScript imports — only available on the microscope PC.
