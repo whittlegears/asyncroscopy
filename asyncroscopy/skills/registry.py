@@ -34,7 +34,6 @@ offered the STEM mapping skill.
 from __future__ import annotations
 
 import fnmatch
-import os
 import re
 from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
@@ -42,6 +41,7 @@ from pathlib import Path
 
 import yaml
 
+from asyncroscopy import settings
 from asyncroscopy.contracts import ENVELOPE_VERSION
 
 HERE = Path(__file__).resolve().parent
@@ -137,13 +137,12 @@ def _parse(path: Path) -> Skill:
 
 
 def skill_dirs() -> list[Path]:
-    extra = [Path(p) for p in os.environ.get("ASYNCROSCOPY_SKILLS_PATH", "").split(os.pathsep) if p]
-    return [HERE, *extra]
+    return [HERE, *settings.get().skills_path]
 
 
 def learned_dir() -> Path:
     """Where agents' learned skills are kept: ``<$ASYNCROSCOPY_AGENT_MEMORY or outputs/agent_memory>/skills``."""
-    return Path(os.environ.get("ASYNCROSCOPY_AGENT_MEMORY") or "outputs/agent_memory") / "skills"
+    return settings.get().agent_memory / "skills"
 
 
 def list_skills(tool_names: set[str] | None = None) -> list[Skill]:

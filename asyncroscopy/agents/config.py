@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import logging
-import os
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,11 +13,12 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool
 
 from asyncroscopy.agents.catalog import ToolCatalog
+from asyncroscopy import settings
 from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER
 
 from asyncroscopy.mcp.agent_tools import ToolLists
 
-from .mcp_tools import TOKEN_ENV, McpServer, bearer_header
+from .mcp_tools import McpServer, bearer_header
 from .profile import load_profile
 
 
@@ -68,16 +68,16 @@ class AgentConfig:
 
     @classmethod
     def from_env(cls, **overrides: Any) -> AgentConfig:
-        env = os.environ
+        env = settings.get()
         config = cls(
-            profile=overrides.pop("profile", None) or env.get("ASYNCROSCOPY_AGENT_PROFILE", "default"),
-            model=env.get("ASYNCROSCOPY_MODEL") or None,
-            model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER") or None,
-            num_ctx=int(env["ASYNCROSCOPY_NUM_CTX"]) if env.get("ASYNCROSCOPY_NUM_CTX") else None,
-            mcp_url=env.get("ASYNCROSCOPY_MCP_URL", DEFAULT_MCP_URL),
-            analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
-            caller=env.get("ASYNCROSCOPY_CALLER", cls.caller),
-            token=env.get(TOKEN_ENV) or None,
+            profile=overrides.pop("profile", None) or env.agent_profile,
+            model=env.model,
+            model_provider=env.model_provider,
+            num_ctx=env.num_ctx,
+            mcp_url=env.mcp_url or DEFAULT_MCP_URL,
+            analysis_url=env.analysis_url,
+            caller=env.caller or cls.caller,
+            token=env.mcp_token,
         )
         for key, value in overrides.items():
             if value is not None:

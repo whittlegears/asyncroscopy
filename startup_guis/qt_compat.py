@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import os
+from asyncroscopy import settings
 
 # Default to PyQt6 for modern systems. Set ASYNCROSCOPY_QT_API=pyqt5 on older
 # Windows 10 machines where Qt6 cannot load because the OS build is too old.
-QT_API_ENV = os.environ.get('ASYNCROSCOPY_QT_API', '').lower()
+QT_API_ENV = settings.get().qt_api
 
 try:
     if QT_API_ENV == 'pyqt5':

@@ -48,7 +48,6 @@ check off.
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -58,12 +57,12 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from asyncroscopy import settings
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.goals import MAP_KEY, Facts, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
 
-ENV = "ASYNCROSCOPY_CLAIM_CHECK"
 READERS = ("view_data", "get_region")
 
 NEGATION = re.compile(r"\b(?:not|never|no|unable|failed|cannot|couldn't|didn't|wasn't|weren't|haven't|hasn't|without|could|would|will|can|should|may|might|previously|earlier|already|existing|stored|old)\b|n't\b", re.I)
@@ -136,7 +135,7 @@ class Claim:
 
 
 def enabled_from_env() -> bool:
-    return os.environ.get(ENV, "1").strip().lower() not in ("0", "false", "no", "off")
+    return settings.get().claim_check
 
 
 def is_correction(message: BaseMessage) -> bool:

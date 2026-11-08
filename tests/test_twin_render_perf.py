@@ -7,13 +7,13 @@ benchmarks/results/twin_render.json instead, so regressions are visible.
 """
 
 import json
-import os
 import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
+from asyncroscopy import settings
 from asyncroscopy.instruments.electron_microscope.twin import (
     SampleModel,
     SampleParams,
@@ -45,7 +45,7 @@ def test_render_time_budget(tmp_path):
         start = time.perf_counter()
         renderer.render(xs, ys, fov / 512, "HAADF", ab, 100.0)
         timings[name] = time.perf_counter() - start
-    results = RESULTS if os.environ.get("ASYNCROSCOPY_WRITE_BENCHMARKS") == "1" else tmp_path / RESULTS.name
+    results = RESULTS if settings.get().write_benchmarks else tmp_path / RESULTS.name
     results.parent.mkdir(parents=True, exist_ok=True)
     results.write_text(json.dumps({k: round(v, 4) for k, v in timings.items()}, indent=2))
     assert timings["survey_1um_512"] < 5.0  # loose: shared CI runners are slow; the numbers above are the record

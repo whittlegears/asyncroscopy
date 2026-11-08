@@ -14,7 +14,7 @@ class Thing:
 
 
 def _registry(builtins=None):
-    return Registry("asyncroscopy.test_no_such_group", builtins, kind="thing", plugins=Plugins("ASYNCROSCOPY_TEST_NO_PLUGINS"))
+    return Registry("asyncroscopy.test_no_such_group", builtins, kind="thing", plugins=Plugins(lambda: ""))
 
 
 def test_register_get_and_unregister():
