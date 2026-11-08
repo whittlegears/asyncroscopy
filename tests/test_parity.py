@@ -37,7 +37,7 @@ from asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript impo
 from tests.fake_autoscript import FakeAutoScriptClient
 
 REFUSED = (ValueError, TypeError, tango.DevFailed, ApplicationServerException)
-SOFTWARE_LIMITS = {"min_fov": 1e-9, "max_fov": 1e-4, "max_defocus": 1e-5}  # the twin's defaults; AutoScript's must match
+SOFTWARE_LIMITS = {"min_fov": 1e-9, "max_fov": 1e-4, "max_defocus": 1e-5, "max_image_shift": 1e-6}  # the twin's defaults; AutoScript's must match
 
 
 def _autoscript_class():
