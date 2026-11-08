@@ -266,15 +266,19 @@ class ScanningBeamProfile(InstrumentProfile):
         try:
             image_key = microscope.acquire_scanned_image([d.lower() for d in plan["detectors"]])
             acquired = (frame_start + self.ctx.clock_s()) / 2.0  # the middle of the frame
-            extras = self._tile_extras(job, plan, microscope)
+            extras = self._tile_extras(job, plan, tile, microscope)
         finally:
             microscope.blank_beam()
         if extras is None:
             return None  # aborted part way through the spectrum image; a resume redoes this tile
-        return {"image_key": image_key, "acquired": acquired, **extras}
+        return {"image_key": image_key, "acquired": acquired, **self._store_extras(job, plan, tile, extras)}
 
-    def _tile_extras(self, job: dict, plan: dict, microscope) -> dict | None:
+    def _tile_extras(self, job: dict, plan: dict, tile: dict, microscope) -> dict | None:
         return {}
+
+    def _store_extras(self, job: dict, plan: dict, tile: dict, extras: dict) -> dict:
+        """Anything slow to store, done with the beam already blanked again."""
+        return extras
 
     def acquire_revisit(self, job: dict, revisit: dict) -> str:
         plan = job["resolved_plan"]

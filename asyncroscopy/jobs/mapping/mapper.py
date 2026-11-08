@@ -130,7 +130,7 @@ class Mapper(JobDevice):
                 simulated=self._stack_simulated(),
                 profile=self._profile_settings(cls.settings),
             )
-            self._map_profile = cls(MapContext(settings, self.proxy, self.aborting, self.data_device_address))
+            self._map_profile = cls(MapContext(settings, self.proxy, self.aborting, self.data_device_address, spectrum_store=self))
         return self._map_profile
 
     def safe_commands(self, job: dict) -> frozenset:
@@ -402,7 +402,7 @@ class Mapper(JobDevice):
         images = profile.ctx.read_acquisition(image_key)
         if correction is not None:
             correction.update(live_drift.measure(job, tile, images, acquired, run, float(self.max_drift_m_per_s)) or {})
-        if spectrum is None and spectrum_key is not None:
+        if spectrum is None and spectrum_key is not None and not acquired_tile.get("spectrum_stored"):
             spectrum = profile.ctx.read_acquisition(spectrum_key)
         record["key"] = image_key
         if spectrum_key is not None:
@@ -411,6 +411,14 @@ class Mapper(JobDevice):
             record["drift"] = correction
         run.write_tile(plans.tile_count(plan), tile, plan, reported, acquired, image_key, images, spectrum, spectrum_key, live_drift.tile_arrays(job, correction))
         return record
+
+    def store_spectrum_row(self, job: dict, tile: dict, points: int, row: int, spectra: Any, attrs: dict) -> None:
+        """A row of tile's spectrum image, straight into the run file (a profile calls it through its MapContext)."""
+        self._run(job).write_spectrum_image_row(plans.tile_count(job["resolved_plan"]), tile["index"], points, row, spectra, attrs)
+
+    def store_spectrum_image_key(self, job: dict, tile: dict, key: str) -> None:
+        """A tile's spectrum image is a vendor file the run file names."""
+        self._run(job).write_spectrum_image_key(plans.tile_count(job["resolved_plan"]), tile["index"], key)
 
     def _trace_drift_correction(self, job: dict, ok: bool, arguments: dict, clock_s: float, error: str | None = None) -> None:
         """One live drift correction into the Instrument Trace (Mapper.drift_correction)."""

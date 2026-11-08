@@ -20,7 +20,7 @@ import tango
 from tango.server import device_property
 
 from asyncroscopy.utils.commands import command
-from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.data.data_writer import save_acquisition, save_acquisition_stream
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 from asyncroscopy.instruments.scanning_beam_twin import ANGSTROM, ScanningBeamTwin
@@ -458,6 +458,50 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
                 "acquisition_index": index,
             },
         )
+
+    def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
+        """A points x points spectrum image without leaving the device, streamed to its file row by row."""
+        self._refuse_while_moving()
+        real_time = float(exposure_time)
+        self._fetch_stage(real_time * points * points)
+        self._acq_index += 1
+        index = self._acq_index
+        t0 = self._clock.now()
+        fractions = (np.arange(points) + 0.5) / points
+        attrs: dict = {}
+        spots: list[dict] = []
+
+        def rows():
+            for r, fy in enumerate(fractions):
+                row = []
+                for c, fx in enumerate(fractions):
+                    self._beam_pos_x, self._beam_pos_y = float(fx), float(fy)
+                    t = self._clock.now()
+                    xy = self._beam_sample_xy(t + real_time / 2.0)
+                    energies, counts, live_time = point_spectrum(
+                        self._areal_density(xy), self._beam_current_pa(), real_time, self._eds_params, self._rng.for_event("eds_image", index * points * points + r * points + c),
+                    )
+                    self._dose.add_point(float(xy[0]), float(xy[1]), self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE, 1e-20)
+                    self._clock.advance(real_time)
+                    row.append(counts)
+                    spots.append({
+                        "stage_reported_m": self._stage.reported.tolist(), "fov_m": float(self._fov), "beam_position": [float(fx), float(fy)],
+                        "real_time_s": real_time, "beam_current_pa": self._beam_current_pa(), "axes": "rows=+y, columns=+x",
+                    })
+                    if "energy_offset_ev" not in attrs:
+                        attrs.update(energy_offset_ev=float(energies[0]), energy_dispersion_ev=float(energies[1] - energies[0]), live_time_s=float(live_time))
+                yield np.stack(row)
+
+        attrs_fixed = {
+            "units": "counts", "energy_axis": "channel i is at energy_offset_ev + i * energy_dispersion_ev", "real_time_s": real_time,
+            "fov_m": float(self._fov), "beam_current_pa": self._beam_current_pa(), "axes": "rows=+y, columns=+x",
+            "spectrum_image_axes": "rows=+y, columns=+x, channels", "stage_reported_m": self._stage.reported.tolist(), "acquisition_index": index,
+        }
+        attrs.update(attrs_fixed)
+        key = save_acquisition_stream(self, self._detector_proxies.get("data"), "spectrum_image", "eds", "spectrum_image", rows(), points, attrs, spots)
+        self._record_acquisition({"index": index, "kind": "spectrum_image", "t_start_s": t0, "t_end_s": self._clock.now(), "points": points,
+                                  "reported_m": self._stage.reported.tolist(), "true_m": self._stage.true.tolist()})
+        return key
 
     # ------------------------------------------------------------------
     # Status and ground truth

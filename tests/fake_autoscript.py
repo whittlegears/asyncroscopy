@@ -396,6 +396,17 @@ class _Eds(_Node):
         _open_blanker(self._optics)
         return FakeAdornedImage(np.zeros(2048, dtype=np.uint32))
 
+    def acquire_spectrum_image(self, settings: Any) -> _FakeSpectrumImage:
+        self._rec("acquire_spectrum_image", "call", {"dwell_time": settings.dwell_time, "size": settings.size})
+        _open_blanker(self._optics)
+        return _FakeSpectrumImage()
+
+
+class _FakeSpectrumImage:
+    def save(self, path: str) -> None:
+        with open(path, "wb") as handle:
+            handle.write(b"velox emd bytes")
+
 
 class _Screen(_Node):
     def __init__(self, record: _Recorder, path: str, monochromator: _Monochromator) -> None:
