@@ -159,6 +159,9 @@ class MCPServer:
         )
         # ``database`` replaces the Tango database lookup (asyncroscopy.testing passes a device list).
         self.database = database if database is not None else Database(tango_host, tango_port)
+        # Which stack this endpoint serves: every endpoint of one stack names the same Tango database,
+        # so a client groups the agent, operator and monitor endpoints of an instrument by it.
+        self.stack_id = f"tango://{tango_host}:{tango_port}"
         self.mcp = FastMCP(name)
         self.auth = None  # set at the end of __init__
         self.blocked_functions = {key: list(value) for key, value in blocked_functions.items()}
