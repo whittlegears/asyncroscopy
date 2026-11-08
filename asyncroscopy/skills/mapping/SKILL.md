@@ -1,7 +1,7 @@
 ---
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
-version: 1.6.2
+version: 1.6.3
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
@@ -22,17 +22,17 @@ Turn the request into a plan. Lengths are metres (1 um = 1e-6, 1 nm = 1e-9).
 
 | Request says | Plan |
 | :-- | :-- |
-| "the sample", "whole sample" | `box_m` = sample bounds from `<Microscope>_get_parameters` (`world_bounds_angstrom` x 1e-10) |
-| "a 500 nm square around here / the current position" | `"size_m": [5e-7, 5e-7]` (the Mapper centres it on the stage; do not compute a box) |
+| "the sample", "whole sample", "a sample completely" | `box_m` = sample bounds from `<Microscope>_get_parameters` (`world_bounds_angstrom` x 1e-10) |
+| "a 500 nm square around here / the current position" | `"size_m": [5e-7, 5e-7]` (centred on the stage) |
 | "a 500 nm square around a point (x, y)" | `"size_m": [5e-7, 5e-7], "centre_m": [x, y]` |
-| nothing about EDS, spectra or composition | no `per_tile` at all: images only |
+| nothing about EDS, spectra or composition | no `per_tile`: images only |
 | "with EDS", "and a spectrum at each image" | `"per_tile": ["eds_point"]` (one spectrum at each tile centre) |
 | "spectrum image", "EDS map" of every tile | `"per_tile": ["eds_map"]`. Only when asked by name: it multiplies time and dose. |
 | nothing about size | `"fov_m": 2e-7`, `"overlap": 0.15` (a sparse sample stitches better with `"overlap": 0.25`) |
 | "find the N most interesting regions" | `"find_regions": N` |
 | "... and image them closer / at high magnification" | also `"revisit": {"fov_m": <a few times smaller than fov_m>}` |
 | "at most N e/Å²", "a dose limit of N", "N electrons per square angstrom" | `"dose_budget_e_per_a2": N` if stated |
-| "down to the angstrom" | pixel p: `"fov_m"` = 512 p (1 Å: `5.12e-8`); not dose |
+| "down to the angstrom" | `"fov_m": 5.12e-8` (512 px of 1 Å); not size or dose |
 
 Another instrument (an AFM)? Follow the Mapper's example plan; settings go in `settings`, limits (`time_s`, ...) in `budgets`.
 
