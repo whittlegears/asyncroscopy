@@ -53,7 +53,7 @@ def test_tools_are_split_by_role_and_redundant_or_operator_only_tools_are_hidden
     assert role_of("XRDTwin_acquire_diffractogram") == "operator"  # a YAML-defined instrument lands in a role too
     assert role_of("XRDTwin_set_start_deg") is None and role_of("DigitalTwin_set_image_shift") is None  # STEM: curated
     assert role_of("XRDTwin_set_start_deg", stem=False) == "operator"  # any other instrument: every device command
-    assert role_of("XRDTwin_State", stem=False) is None and role_of("XRDTwin_reserve", stem=False) is None
+    assert role_of("XRDTwin_State", stem=False) is None and role_of("XRDTwinJob_reserve", stem=False) is None
     assert role_of("made_up_tool", stem=False) is None  # not a device command the endpoint offers: nobody's
 
 
