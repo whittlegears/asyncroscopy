@@ -16,7 +16,7 @@ The instrument never looks inside the sample. It asks the specimen four question
 | :-- | :-- | :-- |
 | Renderer (`twin/render.py`) | the projected Z^n-weighted mass thickness, `sum(Z^n * atoms/A^3 * thickness/A)`, on a regular grid at the frame's pixel size, at `level` "survey" or "atomic" | `projected_weight(x_min, y_min, n, pixel_m, level, z_exponent, damage)` |
 | EDS (`twin/eds_model.py`) | atoms per square angstrom of each element under the beam | `areal_density(x, y)` |
-| Focus (renderer, autofocus, Tuner truth) | the specimen height, which adds to the defocus | `height_at(x, y)` |
+| Focus (renderer, autofocus, and the true focus that the Tuner, the autofocus job device, is checked against) | the specimen height, which adds to the defocus | `height_at(x, y)` |
 | Dose map (`asyncroscopy/sim/dose.py`) | which features are in the frame and where they are, so it can fade them past the critical dose | `in_box(...)`, `feature_centers` |
 | Renderer and EDS | the support film's element and thickness | `support_element`, `support_thickness_m` |
 | Dose map and status | the sample's extent | `bounds` |
@@ -61,7 +61,6 @@ Without either, the twin uses `procedural`, exactly as before. The flat `sample_
 | `configs/digital_twin_mapping.yaml` | `procedural`: 400 particles over 2 um |
 | `configs/digital_twin_recorded.yaml` | `recorded`: a 400 nm HAADF image with labels |
 | `configs/digital_twin_crystal.yaml` | `crystal`: a 2 um polycrystalline Au film |
-
 | `configs/digital_twin_tilt.yaml` | `silicon_lamella`, on the tilt twin |
 | `configs/digital_twin_particles.yaml` | `particles`, on the particle twin |
 | `configs/polycrystalline_gold.yaml` | `polycrystal`, on the gold twin |
@@ -234,7 +233,7 @@ class CrossGrating(Specimen):
 
 `tests/test_specimens.py` runs this block from this page, so the example stays correct. The twin finds the source in one of two ways:
 
-- the module defining it is imported before the twin starts;
+- name its file or module in the stack YAML's top-level `plugins:` list, or in `ASYNCROSCOPY_PLUGINS` (the launcher runs each device in its own process, so importing it anywhere else does nothing);
 - a package installs it with the `asyncroscopy.specimens` entry point:
 
 ```toml

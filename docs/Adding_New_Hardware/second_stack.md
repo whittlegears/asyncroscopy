@@ -54,7 +54,7 @@ as before.
 
 | Client | Setting |
 |---|---|
-| Agents (`python -m asyncroscopy.agents.run`, LangGraph Studio) | `ASYNCROSCOPY_MCP_URL=http://127.0.0.1:8100/mcp`, and `ASYNCROSCOPY_ANALYSIS_URL` when the stack has its own analysis server (it defaults to 8003, the twin's) |
+| Agents (`python -m asyncroscopy.agents.run`, LangGraph Studio) | `ASYNCROSCOPY_MCP_URL=http://127.0.0.1:8100/mcp`, and `ASYNCROSCOPY_ANALYSIS_URL` only to override the endpoint's `mcp.analysis_url` |
 | `startup_scripts/check_stack.py`, `check_gui_contract.py` | `--agent http://127.0.0.1:8100/mcp --operator http://127.0.0.1:8101/mcp` (and `--tiled http://localhost:9191` for the GUI check; `--analysis` for map analysis) |
 | Workflow benchmarks | declare the stack (its `config`, and `mcp`, `operator` and `tiled` addresses 8100, 8101, 9191) under `stacks:` in your workflow file; see `benchmarks/README.md` |
 | Scripts that read data from Tiled directly | `ASYNCROSCOPY_TILED_URI=http://localhost:9191` |

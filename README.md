@@ -12,7 +12,7 @@
 **New here? Follow [docs/Operation/quickstart.md](docs/Operation/quickstart.md).** It is the tested path (installing uv, the exact `uv sync` and test commands, Windows fixes) from clone to a running digital twin, MCP endpoints, analysis server and a local-model agent mapping a sample. In short:
 
 ```bash
-git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # on Windows, avoid deeply nested folders
+git clone --depth 1 --branch feature/agentic-mapping https://github.com/whittlegears/asyncroscopy.git   # on Windows, avoid deeply nested folders
 cd asyncroscopy
 uv sync --extra agent --extra ollama   # Windows: uv not found, or "Missing expected target directory"? see quickstart sections 1-2
 uv run pytest -q -m "not slow"
@@ -42,7 +42,7 @@ On a real instrument use its config instead, for example `configs/Spectra300.yam
 | Long jobs (map acquisition) as reserve / start / job_status / abort / results / release | `Mapper` device, [asyncroscopy/contracts](asyncroscopy/contracts/README.md) |
 | An approval mode (`auto` / `approve`) that holds risky agent calls for an operator, and an Instrument Trace of every call | [docs/Operation/approval_mode.md](docs/Operation/approval_mode.md) |
 | Stitching, zoomable maps in Tiled, region scoring and points of interest | analysis MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
-| LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
+| LangGraph agents (`mapping`, `general`, `team`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
 | Calibrating the twin to your instrument | `asyncroscopy/calibration` |
 
 Start only the segmentation Tango device against an existing Tango/DATA/Tiled stack:
@@ -79,14 +79,20 @@ uv run startup_guis/mcp_gui.py
 asyncroscopy/
 ├── APIservers/        # Vendor API bridges (Gatan EELS server)
 ├── agents/            # LangGraph agents (mapping graph, general agent) and the CLI
+├── analysis_server/   # Analysis MCP server: stitching, scoring, placement
 ├── calibration/       # Dose, drift and stage-repeatability measurement series
 ├── contracts/         # JSON schemas for plans and job envelopes
+├── core/              # Plumbing: file locks, bind rules, shared names
 ├── data/              # Data management device (Tiled)
-├── instruments/       # Hardware device implementations, the digital twin, the Mapper
-├── jobs/              # JobDevice: reserve/start/abort for long-running work
+├── evaluate/          # Evaluators (docs/Operation/evaluators.md)
+├── instruments/       # Hardware device implementations and the digital twins
+├── jobs/              # JobDevice and the Mapper (jobs/mapping)
 ├── mcp/               # FastMCP server for AI agents
+├── routines/          # Beam, dose, drift, focus and grid routines
 ├── safety/            # Risk policy and the Approvals device
+├── sim/               # Instrument-free stage, clock, RNG and dose models
 ├── skills/            # Skill loader and bundled skills (mapping/SKILL.md)
+├── trace/             # Tool log and Instrument Trace
 ├── utils/             # The command decorator and shared helpers
 └── testing.py         # instrument_context and TestMCPServer for your own tests
 ```
@@ -125,7 +131,7 @@ uv sync --extra agent --extra ollama --extra dev
 
 ```bash
 uv run pytest -q -m "not slow"   # about 1,200 tests: 5-7 min on a laptop; device shutdown logs can follow for a minute more
-uv run pytest -q                 # everything, including timing tests: about a minute and a half
+uv run pytest -q                 # everything, including the two timing tests
 ```
 
 See the [quickstart](docs/Operation/quickstart.md) for what to expect.
