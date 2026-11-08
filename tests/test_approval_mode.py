@@ -262,6 +262,45 @@ class TestApprovalsDevice:
         assert first["allowed"] and first["approved_by"] == "operator"
         assert not json.loads(approvals_proxy.check(json.dumps(mine)))["allowed"]
 
+    def test_a_restart_keeps_a_pending_request_and_a_grant(self, approvals_proxy):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        waiting = {"action": "DigitalTwin_move_stage", "arguments": {"position": [7, 0, 0, 0, 0]}, "caller": "agent-r"}
+        granted = {"action": "DigitalTwin_move_stage", "arguments": {"position": [8, 0, 0, 0, 0]}, "caller": "agent-r"}
+        pending_id = json.loads(approvals_proxy.request(json.dumps(waiting)))["request_id"]
+        granted_id = json.loads(approvals_proxy.request(json.dumps(granted)))["request_id"]
+        approvals_proxy.approve(json.dumps({"request_id": granted_id, "who": "operator"}))
+        approvals_proxy.Init()  # what a crash and restart, or an Init, would do
+        assert json.loads(approvals_proxy.request_status(pending_id))["state"] == "pending"  # an agent polling it still gets an answer
+        assert pending_id in [r["request_id"] for r in json.loads(approvals_proxy.list_pending())]
+        first = json.loads(approvals_proxy.check(json.dumps(granted)))
+        assert first["allowed"] and first["request_id"] == granted_id
+        approvals_proxy.Init()
+        assert not json.loads(approvals_proxy.check(json.dumps(granted)))["allowed"]  # used before the restart: stays used
+        approvals_proxy.approve(json.dumps({"request_id": pending_id, "who": "operator"}))  # and the waiting one can still be answered
+        assert json.loads(approvals_proxy.check(json.dumps(waiting)))["allowed"]
+
+    def test_a_request_expires_across_a_restart_by_the_time_it_was_made(self, approvals_proxy, job_dir):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        request_id = json.loads(approvals_proxy.request(json.dumps({"action": "DigitalTwin_move_stage", "arguments": {"position": [9, 0, 0, 0, 0]}, "caller": "agent-x"})))["request_id"]
+        journal = job_dir / "approvals_mode_journal.jsonl"
+        lines = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        old = next(row["request"] for row in reversed(lines) if row.get("request", {}).get("request_id") == request_id)
+        old = {**old, "created": old["created"] - 3 * 3600}  # past request_timeout_s while the device was down
+        with open(journal, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"request": old}) + "\n")
+        approvals_proxy.Init()
+        assert json.loads(approvals_proxy.request_status(request_id))["state"] == "expired"
+
+    def test_an_estop_before_a_restart_stays_in_force_after_it(self, approvals_proxy):
+        approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
+        call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [10, 0, 0, 0, 0]}, "caller": "agent-e"}
+        request_id = json.loads(approvals_proxy.request(json.dumps(call)))["request_id"]
+        approvals_proxy.approve(json.dumps({"request_id": request_id, "who": "operator"}))
+        approvals_proxy.revoke_grants(json.dumps({"who": "operator", "reason": "e-stop"}))
+        approvals_proxy.Init()
+        assert not json.loads(approvals_proxy.check(json.dumps(call)))["allowed"]
+        assert json.loads(approvals_proxy.request_status(request_id))["state"] == "revoked"
+
     def test_a_grant_covers_only_the_caller_and_run_that_asked(self, approvals_proxy):
         approvals_proxy.set_mode(json.dumps({"mode": "approve", "who": "operator"}))
         call = {"action": "DigitalTwin_move_stage", "arguments": {"position": [4, 4, 0, 0, 0]}}
