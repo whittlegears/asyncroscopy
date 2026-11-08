@@ -18,9 +18,16 @@ from urllib.request import Request, urlopen
 
 import httpx
 
+try:
+    import httpx2
+except ImportError:
+    httpx2 = None
+
 from asyncroscopy.core.net import is_loopback_host
 
-TIMEOUT = httpx.Timeout(connect=3.0, read=15.0, write=15.0, pool=3.0)
+# Seconds; turned into a Timeout of whichever HTTP library the installed Tiled client uses
+# (httpx up to tiled 0.2.20, httpx2 from 0.2.21), since each library only accepts its own.
+TIMEOUT_S = {"connect": 3.0, "read": 15.0, "write": 15.0, "pool": 3.0}
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
 DEFAULT_URI = "http://127.0.0.1:9091"
@@ -104,7 +111,16 @@ def about(uri: str, timeout_s: float = 2.0) -> dict | None:
 
 # Failures that mean Tiled cannot be reached. Not OSError in general: FileExistsError,
 # FileNotFoundError and TimeoutError are OSErrors too, and mean something else.
-CONNECTION_ERRORS = (httpx.TransportError, ConnectionError)
+CONNECTION_ERRORS = tuple(
+    error for error in (httpx.TransportError, getattr(httpx2, "TransportError", None), ConnectionError) if error is not None
+)
+
+
+def tiled_timeout() -> Any:
+    """TIMEOUT_S as a Timeout of the HTTP library the installed Tiled client sends requests with."""
+    from tiled.client import context
+
+    return context.httpx.Timeout(**TIMEOUT_S)
 
 
 def unavailable(uri: str, exc: BaseException) -> TiledUnavailable:
@@ -135,7 +151,7 @@ def connect(uri: str) -> Any:
         if delay:
             time.sleep(delay)
         try:
-            client = from_uri(uri, api_key=api_key(), timeout=TIMEOUT)
+            client = from_uri(uri, api_key=api_key(), timeout=tiled_timeout())
         except CONNECTION_ERRORS as exc:
             last = exc
             continue
