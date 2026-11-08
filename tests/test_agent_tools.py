@@ -104,8 +104,8 @@ def test_another_instrument_gets_its_own_tools_but_not_state_or_analysis(endpoin
 # An AFM YAML twin mapped through the yaml profile: the Mapper must not make it look like a STEM.
 AFM_MAPPED = {
     "AFMTwin": ["approach_tip", "retract_tip", "move_xy", "get_status", "acquire_topography", "acquire_force_curve",
-                "get_setpoint_v", "set_setpoint_v", "get_map_profile", "reserve", "start", "abort", "job_status", "results",
-                "release", "State", "Status"],
+                "get_setpoint_v", "set_setpoint_v", "get_map_profile", "State", "Status"],
+    "AFMTwinJob": ["reserve", "start", "abort", "job_status", "results", "release", "State"],
     "Mapper": ["reserve", "start", "job_status", "results", "release", "abort", "get_reservation", "State"],
 }
 
@@ -115,7 +115,7 @@ def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_too
     info = server.discovery.endpoint_info()
     assert info["stem_devices"] == [] and info["map_devices"] == ["Mapper"]
     picked, _ = general_agent_tools(server, monkeypatch, tmp_path)
-    for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"):
+    for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwinJob_abort", "Mapper_abort"):
         assert tool in picked, tool
     assert "assemble_map" in picked and "score_map" in picked  # its maps are stitched and scored too
     assert "AFMTwin_State" not in picked and "analysis_job_status" not in picked
@@ -141,4 +141,4 @@ def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(endpoint, tmp
     config = EndpointConfig(names, endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp").discovery.endpoint_info())
     roles = asyncio.run(TeamGraph(config).tools_by_role())
     operator = {t.name for t in roles["operator"]}
-    assert {"AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwin_abort", "Mapper_abort"} <= operator
+    assert {"AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwinJob_abort", "Mapper_abort"} <= operator
