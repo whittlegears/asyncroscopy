@@ -23,17 +23,20 @@ def catalog(devices: dict[str, type | str], natives: list[str] = NATIVES) -> Too
     """The catalog of an endpoint with ``devices`` ({tool prefix: Tango device class, or a YAML example file name
     such as "raman.yaml"}) and the server's native tools."""
     tools = [ToolInfo(n, None, None, d.action_role, d.risk, d.acts) for n in natives for d in [describe_native(n)]]
+    entries: list[tuple[str, dict, list[str]]] = []
     for prefix, source in devices.items():
         if isinstance(source, str):
-            hints = action_hints(load_spec(EXAMPLES / source))
-            names = list(hints) + ["State", "Status"]
-            if "jobs" in (EXAMPLES / source).read_text(encoding="utf-8"):
-                from asyncroscopy.jobs.job_device import JobDevice
+            from asyncroscopy.instruments.yaml_sim.device import YamlInstrument
+            from asyncroscopy.jobs.job_device import JobDevice
 
-                hints = {**declared_hints(JobDevice), **hints}
-                names += _commands(JobDevice)
+            spec = load_spec(EXAMPLES / source)
+            hints = {name: hint for name, hint in declared_hints(YamlInstrument).items() if not hint.get("operator_only")} | action_hints(spec)
+            entries.append((prefix, hints, list(hints) + ["State", "Status"]))
+            if spec.jobs:  # the file's jobs are a device of their own, as run_servers starts them
+                entries.append((f"{prefix}Job", declared_hints(JobDevice), _commands(JobDevice)))
         else:
-            hints, names = declared_hints(source), _commands(source)
+            entries.append((prefix, declared_hints(source), _commands(source)))
+    for prefix, hints, names in entries:
         device = DeviceInfo(prefix, prefix, stem=is_stem_device(names), probe=is_probe_device(names), envelope=is_envelope_device(names), hints=hints)
         for command in dict.fromkeys(names):
             d = describe_command(device, command, overrides={}, routine=None, warnings=[])

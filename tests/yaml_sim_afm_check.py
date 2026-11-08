@@ -20,13 +20,16 @@ import tango
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asyncroscopy.instruments.yaml_sim.device import device_class  # noqa: E402
+from asyncroscopy.instruments.yaml_sim.job import job_class  # noqa: E402
 from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path  # noqa: E402
 
 work = Path(tempfile.mkdtemp(dir=sys.argv[1]))
 example = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"
-devices = [{"class": device_class("AFMTwin", jobs=True), "devices": [{"name": "asyncroscopy/instrument/default", "properties": {
-    "yaml_path": prop_path(example), "output_directory": prop_path(work),
-    "state_directory": prop_path(work / "jobs"), "trace_path": prop_path(work / "trace.jsonl")}}]}]
+devices = [
+    {"class": device_class("AFMTwin"), "devices": [{"name": "asyncroscopy/instrument/default", "properties": {"yaml_path": prop_path(example), "output_directory": prop_path(work)}}]},
+    {"class": job_class("AFMTwinJob"), "devices": [{"name": "asyncroscopy/job/default", "properties": {
+        "yaml_path": prop_path(example), "state_directory": prop_path(work / "jobs"), "trace_path": prop_path(work / "trace.jsonl")}}]},
+]
 outcome = {}
 
 
@@ -47,10 +50,10 @@ with instrument_context(devices):
     afm["retract_tip"]()
     outcome["set_stage_retracted"] = attempt(afm["set_stage_x_m"], 1e-4)
     outcome["stage_after_set"] = proxy.stage_x_m
-    # The job's steps drive the simulator directly, so a dry run could record nothing: it is refused, nothing moves.
-    outcome["dry_run"] = server.jobs.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
+    # A dry run cannot rehearse this job's steps (they wait on step_status replies): it is refused, nothing moves.
+    outcome["dry_run"] = server.jobs.run_job("AFMTwinJob", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
     outcome["stage_after_dry_run"] = proxy.stage_x_m
-    ran = server.jobs.run_job("AFMTwin", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
+    ran = server.jobs.run_job("AFMTwinJob", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})
     deadline = time.monotonic() + 90
     status = ran
     while status.get("state") not in {"done", "failed", "aborted"} and time.monotonic() < deadline:

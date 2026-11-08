@@ -2,10 +2,10 @@
 #
 # Start it with configs/yaml_sim_raman.yaml (on its own, or beside the STEM twin:
 # docs/Adding_New_Hardware/second_stack.md). Because it has a jobs: section the
-# device also has the job envelope, so the MCP server offers, among others:
+# launcher also starts its job device, RamanTwinJob, so the MCP server offers, among others:
 #   RamanTwin_laser_on   RamanTwin_laser_off (a safe stop: never held)
 #   RamanTwin_move_xy    RamanTwin_acquire_raman_spectrum
-#   run_job(device="RamanTwin", plan=...) for line scans and maps, then wait_for_job
+#   run_job(device="RamanTwinJob", plan=...) for line scans and maps, then wait_for_job
 # Check a file before starting it:
 #   uv run python -m asyncroscopy.instruments.yaml_sim.spec asyncroscopy/instruments/yaml_sim/examples/raman.yaml
 

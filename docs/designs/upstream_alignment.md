@@ -5,7 +5,6 @@
 
 Still open:
 
-- The YAML sim split into a `YamlInstrument` and a separate `YamlJob`. It needs an instrument-side step protocol, and it renames job tools such as `RamanTwin_reserve`.
 - The twin stage dynamics (backlash, settle) still run inside the twin microscope rather than `DigitalTwinSTAGE`.
 - The atomistic twins' samples are not yet `Specimen` plug-ins.
 - asyncroscopy points pyTEMlib at the local `../pyTEMlib-sidpy` until that branch is pushed and pinned by rev.
@@ -110,7 +109,7 @@ asyncroscopy/
 3. Move `tuner.py` to `jobs/tuning/`. Rename the strategy `optistem` to `vendor_autofocus`. `CORRECTOR` gets typed `measure`/`correct` commands, so the Tuner never parses CEOS JSON-RPC.
 4. Put limits (`min_fov`, `max_fov`, `max_defocus`), beam current, stigmator, `stage_moving` and the command lock on the `ElectronMicroscope` base. Vendors implement only `_x` methods. Remove the import-time monkey-patching in `auto_script.py`.
 5. Twins: add a thin `ElectronMicroscopeTwin` base, a `hardware/stage_digital_twin.py` that owns the twin stage model, and samples as `Specimen` plug-ins in place of hard-coded twin classes. Shared simulation primitives move to `asyncroscopy/sim/`.
-6. Add the missing bases: `NanoIndenter` (and fix the "worked example"), and `YamlInstrument(Instrument)` with a separate `YamlJob(JobDevice)`.
+6. Add the missing bases: `NanoIndenter` (and fix the "worked example"), and `YamlInstrument(Instrument)` with a separate `YamlJob(JobDevice)`. The job drives the instrument through a step protocol (`hold`, `release_hold`, `start_step`, `step_status`, `stop_step`) that agents do not see, so steps of up to an hour stay stoppable within 0.2 s while no Tango call is long.
 7. Scalability: cache one proxy per address, split job state into a plan written once and a small progress record, keep one open HDF5 writer per run, and append ground-truth records to a file instead of memory.
 8. One `ELECTRON_CHARGE`. One beam-current default. Role addresses are injected by the launcher, not repeated in every config.
 

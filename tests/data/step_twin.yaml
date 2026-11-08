@@ -1,0 +1,31 @@
+# A tiny YAML instrument for tests/test_yaml_step_protocol.py: an exposure that can run for an hour,
+# a command that takes a while, and a job with an on_stop command.
+description: A counter with a beam, for testing how a job drives a YAML instrument.
+settings:
+  exposure_s: {default: 1.0, min: 0.001, max: 3600.0, units: s, doc: Counting time.}
+  stage_x_m: {default: 0.0, min: -1.0, max: 1.0, units: m, doc: Stage position.}
+  beam_on: {default: false, type: bool, settable: false, doc: Whether the beam is on.}
+commands:
+  open_beam:
+    doc: Open the beam.
+    sets: {beam_on: true}
+  close_beam:
+    doc: Close the beam.
+    sets: {beam_on: false}
+    role: beam.blank
+  warm_up:
+    doc: Warm the source up.
+    duration_s: 20
+acquisitions:
+  acquire_counts:
+    doc: Count for the exposure.
+    kind: value
+    duration_s: exposure_s
+    values: {counts: "exposure_s * 100"}
+jobs:
+  counts_along_x:
+    doc: Counts along a line.
+    axes: [stage_x_m]
+    settings: [exposure_s]
+    acquire: [acquire_counts]
+    on_stop: [close_beam]
