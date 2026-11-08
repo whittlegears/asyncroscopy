@@ -98,7 +98,9 @@ class ElectronBeamProfile(InstrumentProfile):
         spectra_dose = self._spectra_dose(p, current, fov, exposures)
         max_dose = tile_dose + revisit_dose + spectra_dose
         parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-        advice = "widen revisit fov_m, lower dwell_s or eds_exposure_s" if "per_tile" in self.plan_fields else "widen revisit fov_m or lower dwell_s"
+        # Only the remedies for what adds dose here: told to "widen revisit fov_m" for a plan with no revisit, qwen3:8b added one.
+        remedies = ["lower dwell_s or overlap"] + (["lower eds_exposure_s"] if spectra_dose else []) + (["widen revisit fov_m"] if revisit else [])
+        advice = ", ".join(remedies) + "; the budget is the user's: give dose_budget_e_per_a2 only when they set a limit"
         extra = {
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,

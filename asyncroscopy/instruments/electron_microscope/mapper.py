@@ -155,6 +155,22 @@ FIELD_SYNONYMS = {
 }
 
 
+def stated_dose(request: str) -> float | None:
+    """The dose limit a refused request gave, under dose_budget_e_per_a2 or one of its FIELD_SYNONYMS; None if it gave none."""
+    try:
+        sent = json.loads(request)
+    except (TypeError, ValueError):
+        return None
+    plan = sent.get("plan", sent) if isinstance(sent, dict) else None
+    if not isinstance(plan, dict):
+        return None
+    for name, value in plan.items():
+        if (name == "dose_budget_e_per_a2" or FIELD_SYNONYMS.get(name) == "dose_budget_e_per_a2") \
+                and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return float(value)
+    return None
+
+
 REVISIT_ONLY_KEYS = ("map", "top_k", "points")  # fields of a revisit plan ({"revisit": {...}}) that do not exist at the top level
 
 
@@ -471,8 +487,11 @@ class Mapper(JobDevice):
         if '"zoom"' in request:
             return dict(ZOOM_EXAMPLE)
         example = dict(self.PLAN_EXAMPLE)
-        if "dose" in request.lower():  # a caller who mentioned dose sees where a dose limit goes
-            example["dose_budget_e_per_a2"] = 50.0
+        # A caller who gave a dose limit sees where it goes, with its own number. A fixed 50 here was copied by
+        # qwen3:8b into plans whose user set no limit, and every plan after that was refused as over it.
+        stated = stated_dose(request)
+        if stated is not None:
+            example["dose_budget_e_per_a2"] = stated
         return example
 
     def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
