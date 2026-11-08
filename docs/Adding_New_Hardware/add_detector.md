@@ -8,7 +8,7 @@ Detectors are Tango devices in `asyncroscopy/instruments/electron_microscope/det
    newdet_device_address = device_property(dtype=str, doc="Tango device address for the NEWDET settings device.")
    ```
    The launcher fills `<key>_device_address` automatically for every device in the config, so a config entry `newdet:` gives this property its value.
-3. Add it to the base's `DETECTOR_ADDRESSES`, which `_connect_detector_proxies()` connects for every backend. See step 4 in [modify_auto_script_microscope.md](../Microscopy/modify_auto_script_microscope.md).
+3. Add it to the modality's `DETECTOR_ADDRESSES` (`ScanningBeamInstrument.proxy_addresses` is what connects them), which `_connect_detector_proxies()` connects for every backend. See step 4 in [modify_auto_script_microscope.md](../Microscopy/modify_auto_script_microscope.md).
    ```python
    DETECTOR_ADDRESSES = {..., "newdet": "newdet_device_address"}
    ```

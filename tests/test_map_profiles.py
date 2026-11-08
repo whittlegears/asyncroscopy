@@ -11,6 +11,8 @@ The devices are the session's in-process Tango devices from conftest.
 """
 
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -158,6 +160,18 @@ def test_the_simulated_sem_maps_and_stitches_without_eds(sem_mapper_proxy, sem_t
         assert h5["tiles"].attrs["detector"] == "SE" and "spectra" not in h5
         assert float(np.ptp(h5["tiles"][0])) > 0
     assert json.loads(sem_twin_proxy.get_parameters())["beam_blanked"] is True
+
+
+def test_the_sem_config_maps_end_to_end(tmp_path):
+    # A fresh interpreter: PyTango allows one in-process test context each, and this suite has one.
+    check = Path(__file__).with_name("sem_config_check.py")
+    done = subprocess.run([sys.executable, str(check), str(tmp_path)], capture_output=True, text=True, timeout=300)
+    assert done.returncode == 0, done.stderr[-2000:]
+    outcome = json.loads(next(line for line in done.stdout.splitlines() if line.startswith("SEM_OUTCOME "))[len("SEM_OUTCOME "):])
+    assert outcome["instrument_type"] == "SEM" and outcome["profile"] == "sem" and outcome["state"] == "done", outcome
+    assert outcome["tiles"][0] == 4 and outcome["detector"] == "SE" and outcome["blanked"] is True
+    assert outcome["sample_load_id"] == outcome["get_sample_load_id"] and outcome["sample_load_id"]
+    assert not {"eds", "camera", "corrector", "tuner"} & set(outcome["devices"]) and "sample" in outcome["devices"]
 
 
 def test_the_sem_profile_refuses_a_stem_and_a_stem_detector_on_the_sem(monkeypatch, sem_mapper_proxy):

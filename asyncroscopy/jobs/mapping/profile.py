@@ -35,7 +35,8 @@ A profile is a small class registered by name::
 
 and chosen with the Mapper's ``instrument_profile`` device property. This package's own profiles are
 registered by the modality that owns them, through the ``asyncroscopy.map_profiles`` entry point
-(pyproject.toml): ``stem`` (the default) and ``sem`` in instruments/electron_microscope/map_profile.py,
+(pyproject.toml): ``stem`` (the default) in instruments/electron_microscope/map_profile.py, ``sem`` in
+instruments/scanning_electron_microscope/map_profile.py, ``spm`` in instruments/scanning_probe_microscope/map_profile.py,
 and ``yaml`` (any YAML twin with an image acquisition) in instruments/yaml_sim/map_profile.py. A device
 process finds your own profile when ``ASYNCROSCOPY_PLUGINS`` (or the stack YAML's ``plugins:``) names its
 module or file (asyncroscopy/plugins.py); installed packages use the same entry point.

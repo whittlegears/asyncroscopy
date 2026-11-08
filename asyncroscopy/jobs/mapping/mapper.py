@@ -6,7 +6,7 @@ view, overlap and, for the instrument, its own fields (a STEM's detectors and pe
 AFM's setpoint). The worker visits tiles in serpentine order (to limit backlash) and never leaves the box.
 
 The Mapper is instrument-agnostic: what differs between a STEM, an SEM and an AFM is an instrument profile
-(profile.py), chosen with the ``instrument_profile`` device property: ``stem`` (the default), ``sem``,
+(profile.py), chosen with the ``instrument_profile`` device property: ``stem`` (the default), ``sem``, ``spm``,
 ``yaml`` (any YAML twin with an image acquisition) or one registered by a plug-in. The profile acquires
 each tile, makes the instrument safe between tiles and whenever the job stops (blanks the beam, retracts
 the tip), prepares before a move and recovers after it, and says what a plan costs. ``reserve`` refuses a
@@ -62,7 +62,7 @@ class Mapper(JobDevice):
     instrument_profile = device_property(
         dtype=str,
         default_value="stem",
-        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/mapping/profile.py): stem (the default), sem, yaml "
+        doc="What kind of instrument this Mapper drives (asyncroscopy/jobs/mapping/profile.py): stem (the default), sem, spm, yaml "
         "(a YAML twin with an image acquisition), or a profile registered by a plug-in. A profile may read more of this "
         "Mapper's properties (its own settings, e.g. a STEM's scan_device_address).",
     )

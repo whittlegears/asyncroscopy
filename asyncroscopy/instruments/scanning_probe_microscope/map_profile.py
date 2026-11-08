@@ -10,16 +10,19 @@ Its Mapper setting is ``scan_device_address``; the stage is read from the Mapper
 budget is the Mapper's ``time_s``: a setpoint's meaning depends on the SPM mode, so no force budget is invented here.
 A plan cannot ask for live drift tracking, because an SPM has no image shift.
 
-The Mapper reads each frame back as an acquisition, so the backend's scan must return one a reader understands. The
-simulated backend (simulated.py) saves HDF5.
+The Mapper reads each frame back as an acquisition, so the backend's scan must return one a reader understands (HDF5,
+or a key DATA serves); anything else ends the tile with an error that says so. The simulated backend (simulated.py)
+saves HDF5. The Jupiter backend does not yet: its scan returns the path of Asylum's .ibw file.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import tango
 
+from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
 from asyncroscopy.jobs.mapping.profile import InstrumentProfile, Setting, register_profile
 
 # One frame takes about lines / rate seconds; twice that and a minute more for a slow start (as the Jupiter backend allows).
@@ -116,6 +119,8 @@ class SPMProfile(InstrumentProfile):
         started = self.ctx.clock_s()
         try:
             key = self._scan(int(plan["imsize"]), float(plan["scan_rate_hz"])).acquire_scan()
+            if not job.get("dry_run") and Path(key).suffix.lower() not in REGISTRABLE_SUFFIXES:
+                raise RuntimeError(f"the scan returned {key!r}, a file the Mapper cannot read back: the SCAN device must save its frames as an acquisition (HDF5 or a DATA key)")
             return {"image_key": key, "acquired": (started + self.ctx.clock_s()) / 2.0}
         finally:
             self.instrument().retract()
