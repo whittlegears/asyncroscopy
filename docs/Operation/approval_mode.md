@@ -100,6 +100,10 @@ A job device with `lease_s` set aborts a running job (and puts the instrument in
 
 SciAgentGUI shows these under the Stop button: Pause, Continue, Abort, and Edit plan for a reservation that has not started.
 
+## Restarts
+
+Pending requests and grants are kept in a journal beside the mode file (`<mode file stem>_journal.jsonl`) and reloaded when the device starts, so a restart does not lose what an agent is waiting on. They expire by the time they were made, as they would have without the restart. A grant that was used, revoked by the e-stop or expired stays that way. Using a grant is written to the journal before the call runs: if that cannot be written, the call is refused.
+
 ## The monitor endpoint
 
 `configs/mcp_monitor.yaml` (port 8002) runs an endpoint with `endpoint_role: monitor`. It offers only pure reads (`get_*`, `list_*`, `State`, `Status`, `job_status`, `results`) and the data tools: nothing that acts, not even `stop_all`, and no command your deployment marks high. `trace_since` stays on the operator endpoint. Point a status panel or a question-answering agent at it so it can watch the instrument while the worker agent runs.

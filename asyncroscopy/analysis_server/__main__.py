@@ -16,7 +16,7 @@ from .map_tools import DEFAULT_MAX_CANVAS_PIXELS
 from .server import create_server
 
 
-def parser(settings: Settings) -> argparse.ArgumentParser:
+def parser(env: settings.Settings) -> argparse.ArgumentParser:
     out = argparse.ArgumentParser(prog="python -m asyncroscopy.analysis_server", description="asyncroscopy analysis MCP server: map, scoring, placement and note tools.")
     out.add_argument("--tiled", default="", help="Tiled server URI; without it, tools take local file paths.")
     out.add_argument("--api-key", default=None, help="Tiled API key (default: $ASYNCROSCOPY_TILED_API_KEY or $TILED_API_KEY).")
@@ -33,15 +33,15 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
     )
     out.add_argument("--max-jobs", type=int, default=DEFAULT_MAX_WORKERS, help="Stitching and scoring jobs run at once; more wait queued (default: %(default)s).")
     out.add_argument(
-        "--trace", default=str(settings.output("trace", "analysis.jsonl")),
+        "--trace", default=str(env.output("trace", "analysis.jsonl")),
         help="JSON-lines file with one line per tool call: tool, arguments, calling agent and run, outcome (empty: none; default: %(default)s).",
     )
     out.add_argument(
-        "--annotations", default=str(settings.output("annotations", "notes.jsonl")),
+        "--annotations", default=str(env.output("annotations", "notes.jsonl")),
         help="JSON-lines event file of the notes people and agents put on datasets (empty: no note tools; default: %(default)s).",
     )
     out.add_argument(
-        "--placements", default=str(settings.output("placements", "placements.jsonl")),
+        "--placements", default=str(env.output("placements", "placements.jsonl")),
         help="JSON-lines log of finer images placed on coarser ones (empty: no placement tools; default: %(default)s).",
     )
     return out
