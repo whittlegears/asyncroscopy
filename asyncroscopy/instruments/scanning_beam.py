@@ -260,14 +260,14 @@ class ScanningBeamInstrument(Instrument):
         dtype_in=DevVarStringArray,
         dtype_out=str,
         doc_in=":param detector_list: Scanning detector names, e.g. ['haadf'] on a STEM or ['se'] on an SEM. "
-               "When the request names no detector, pass ['haadf'] on a STEM or ['se'] on an SEM; [] takes the microscope's usual one.",
+               "An empty list uses ['haadf'] on a STEM and ['se'] on an SEM.",
         risk="high", role="acquire.image", routine=True,
     )
     @hardware_call()
     def acquire_scanned_image(self, detector_list: list[str]) -> str:
         """
         Acquire an image with scanning detectors and return its DATA/Tiled key.
-        When the request names no detector, pass ['haadf'] on a STEM or ['se'] on an SEM; [] takes the microscope's usual one.
+        The default detector list is ['haadf'] on a STEM and ['se'] on an SEM.
         """
         # Tango's wire protocol has no concept of "omitted", so remote callers (e.g. the
         # MCP/LLM bridge) send an empty list for "no detector named".

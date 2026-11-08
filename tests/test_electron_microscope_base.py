@@ -86,3 +86,13 @@ def test_blank_beam_never_waits_for_a_command_holding_the_lock(autoscript):
         worker.join()
     waited.join(5.0)
     assert not waited.is_alive()
+
+
+@pytest.mark.parametrize("name", ["scan", "haadf"])
+def test_only_a_spectrum_detector_takes_a_spectrum_and_the_refusal_names_the_right_tool(auto_script_proxy, name):
+    """A sub-device such as the scan controller is not a spectrum detector, and an imaging detector belongs to another tool."""
+    with pytest.raises(tango.DevFailed) as refused:
+        auto_script_proxy.acquire_spectrum(name)
+    message = refused.value.args[0].desc
+    assert f"No spectrum detector named '{name}'" in message and "acquire_scanned_image" in message
+    assert "'scan'" not in message.split("Spectrum detectors here:")[1]

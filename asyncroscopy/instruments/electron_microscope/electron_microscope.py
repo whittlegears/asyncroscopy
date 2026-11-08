@@ -38,6 +38,7 @@ DETECTOR_ADDRESSES = {
     "corrector": "corrector_device_address",
 }
 # The limit properties' defaults: what the base enforces when a deployment sets none.
+SPECTRUM_DETECTORS = ("eds", "eels")
 DEFAULT_MAX_DEFOCUS = 1e-5
 DEFAULT_MAX_STIGMATOR = 1e-6
 DEFAULT_MAX_SPECTRUM_IMAGE_POINTS = 64
@@ -145,6 +146,9 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "set_screen_current": {"args": [{"name": "current", "type": "number", "units": "pA"}]},
         }
 
+    def _spectrum_detector_names(self) -> list[str]:
+        return [name for name in SPECTRUM_DETECTORS if name in self._detector_proxies]
+
     @command(
         dtype_in=str,
         dtype_out=str,
@@ -155,12 +159,12 @@ class ElectronMicroscope(ScanningBeamInstrument):
     def acquire_spectrum(self, detector_name: str) -> str:
         """Acquire a single spectrum and return its DATA/Tiled unique id."""
         detector_name = detector_name.lower().strip()
-        proxy = self._detector_proxies.get(detector_name)
+        proxy = self._detector_proxies.get(detector_name) if detector_name in SPECTRUM_DETECTORS else None
         if proxy is None:
             tango.Except.throw_exception(
                 'UnknownDetector',
-                f"No spectrum detector named '{detector_name}'. "
-                f"Configured detector devices: {sorted(self._detector_proxies.keys())}.",
+                f"No spectrum detector named '{detector_name}'. Spectrum detectors here: {self._spectrum_detector_names()}. "
+                "For a scanned image (haadf, bf, adf, se) use acquire_scanned_image.",
                 'acquire_spectrum()',
             )
         return self._acquire_spectrum(detector_name, proxy.exposure_time)
@@ -175,7 +179,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             raise ValueError(f"points must be between 2 and {int(self.max_spectrum_image_points)}, got {points}")
         proxy = self._detector_proxies.get("eds")
         if proxy is None:
-            tango.Except.throw_exception('UnknownDetector', f"No spectrum detector named 'eds'. Configured detector devices: {sorted(self._detector_proxies.keys())}.", 'acquire_spectrum_image()')
+            tango.Except.throw_exception('UnknownDetector', f"No spectrum detector named 'eds'. Spectrum detectors here: {self._spectrum_detector_names()}.", 'acquire_spectrum_image()')
         return self._acquire_spectrum_image(points, proxy.exposure_time)
 
     @command(dtype_out=str, risk="high", role="acquire.other", routine=True)
