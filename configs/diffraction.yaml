@@ -6,6 +6,9 @@ instrument:
   file: asyncroscopy/instruments/electron_microscope/digital_twin_diffraction.py
   description: Thermo Fisher Spectra 300 TEM
   timeout_seconds: 120
+  properties:
+    specimen:
+      source: nanoparticle_map
 devices:
   camera:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.camera

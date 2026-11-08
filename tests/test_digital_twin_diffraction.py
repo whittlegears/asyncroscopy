@@ -1,15 +1,19 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
 import pytest
 
-from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import (
+from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import DigitalTwinDiffraction
+from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
+from asyncroscopy.instruments.electron_microscope.twin.specimen_nanoparticle_map import (
     EDGE_LATTICE_CHANGE_FRACTION,
+    FOV_M,
     OVAL_CENTER_LATTICE_MEAN_ANGSTROM,
     ROUND_CENTER_LATTICE_MEAN_ANGSTROM,
-    DigitalTwinDiffraction,
-    FOV_M,
+    local_lattice_parameter,
+    rattle_stdev,
 )
 
 
@@ -22,7 +26,8 @@ def twin_for_path(tmp_path: Path) -> DigitalTwinDiffraction:
     twin._beam_pos_y = 0.5
     twin._fov = FOV_M
     twin.sample_seed = 12345
-    twin.map_size = 256
+    twin.specimen = '{"source": "nanoparticle_map", "map_size": 256}'
+    twin.specimen_source = "nanoparticle_map"
     twin.overview_image_size = 64
     twin.diffraction_image_size = 64
     twin.convergence_angle_mrad = 5.0
@@ -36,20 +41,20 @@ def test_diffraction_twin_generates_dense_nanoparticle_field(tmp_path: Path):
 
     twin._generate_sample(seed=12345)
 
-    coverage = np.count_nonzero(twin._particle_id_map) / twin._particle_id_map.size
-    kinds = {record['kind'] for record in twin._particle_records_base}
+    coverage = np.count_nonzero(twin._specimen.particle_id_map) / twin._specimen.particle_id_map.size
+    kinds = {record['kind'] for record in twin._specimen.records}
     round_ratios = []
-    for record in twin._particle_records_base:
+    for record in twin._specimen.records:
         if record['kind'] != 'round':
             continue
         axis_x, axis_y = record['axes_nm']
         round_ratios.append(max(axis_x, axis_y) / min(axis_x, axis_y))
     assert 0.20 <= coverage <= 0.26
-    assert len(twin._particle_records_base) >= 8
+    assert len(twin._specimen.records) >= 8
     assert kinds == {'round', 'oval'}
     assert max(round_ratios) <= 1.08
-    assert all('rotation_degrees' in record for record in twin._particle_records_base)
-    assert sum(record['pixel_count'] for record in twin._particle_records_base) == np.count_nonzero(twin._particle_id_map)
+    assert all('rotation_degrees' in record for record in twin._specimen.records)
+    assert sum(record['pixel_count'] for record in twin._specimen.records) == np.count_nonzero(twin._specimen.particle_id_map)
     assert twin._get_fov() == FOV_M
 
 
@@ -57,14 +62,14 @@ def test_lattice_parameter_varies_smoothly_from_particle_center_to_edge(tmp_path
     twin = twin_for_path(tmp_path)
     twin._generate_sample(seed=12345)
 
-    records_by_kind = {record['kind']: record for record in twin._particle_records_base}
+    records_by_kind = {record['kind']: record for record in twin._specimen.records}
     for kind, expected_mean in (
         ('round', ROUND_CENTER_LATTICE_MEAN_ANGSTROM),
         ('oval', OVAL_CENTER_LATTICE_MEAN_ANGSTROM),
     ):
         record = records_by_kind[kind]
         center_lattice = record['center_lattice_parameter']
-        local_values = twin._lattice_parameter_map[twin._particle_id_map == record['id']]
+        local_values = twin._specimen.lattice_parameter_map[twin._specimen.particle_id_map == record['id']]
 
         assert abs(center_lattice - expected_mean) < 5 * 0.015
         if kind == 'round':
@@ -79,8 +84,8 @@ def test_lattice_parameter_varies_smoothly_from_particle_center_to_edge(tmp_path
 
 def test_lattice_parameter_profile_has_smooth_monotonic_endpoints():
     radius = np.linspace(0.0, 1.0, 101)
-    round_profile = DigitalTwinDiffraction._local_lattice_parameter(4.078, -0.25, radius)
-    oval_profile = DigitalTwinDiffraction._local_lattice_parameter(4.678, 0.25, radius)
+    round_profile = local_lattice_parameter(4.078, -0.25, radius)
+    oval_profile = local_lattice_parameter(4.678, 0.25, radius)
 
     assert round_profile[0] == 4.078
     assert round_profile[-1] == 4.078 * 0.75
@@ -93,38 +98,39 @@ def test_lattice_parameter_profile_has_smooth_monotonic_endpoints():
 def test_beam_particle_uses_local_lattice_parameter(tmp_path: Path):
     twin = twin_for_path(tmp_path)
     twin._generate_sample(seed=12345)
-    record = next(record for record in twin._particle_records_base if record['kind'] == 'round')
-    particle_mask = twin._particle_id_map == record['id']
+    record = next(record for record in twin._specimen.records if record['kind'] == 'round')
+    particle_mask = twin._specimen.particle_id_map == record['id']
     edge_y, edge_x = np.unravel_index(
-        np.argmin(np.where(particle_mask, twin._lattice_parameter_map, np.inf)),
+        np.argmin(np.where(particle_mask, twin._specimen.lattice_parameter_map, np.inf)),
         particle_mask.shape,
     )
     twin._beam_pos_x = edge_x / (particle_mask.shape[1] - 1)
     twin._beam_pos_y = edge_y / (particle_mask.shape[0] - 1)
 
-    particle, rattle_value = twin._beam_particle()
+    particle = twin._beam_atoms().info
 
     assert particle['center_lattice_parameter'] == record['center_lattice_parameter']
-    assert particle['lattice_parameter'] == twin._lattice_parameter_map[edge_y, edge_x]
+    assert particle['lattice_parameter'] == twin._specimen.lattice_parameter_map[edge_y, edge_x]
     assert particle['lattice_strain_fraction'] < -0.22
-    assert rattle_value > 0.0
+    assert particle['rattle_value'] > 0.0
 
 
 def test_particle_camera_acquisition_saves_local_lattice_metadata(monkeypatch, tmp_path: Path):
     twin = twin_for_path(tmp_path)
     particle = {
-        'id': 7,
-        'kind': 'oval',
+        'particle_id': 7,
+        'particle_kind': 'oval',
         'lattice_parameter': 5.80,
         'center_lattice_parameter': 4.678,
         'lattice_strain_fraction': 5.80 / 4.678 - 1.0,
         'rotation_degrees': 23.0,
+        'rattle_value': 0.75,
     }
-    monkeypatch.setattr(twin, '_beam_particle', lambda: (particle, 0.75))
+    monkeypatch.setattr(twin, '_beam_atoms', lambda: SimpleNamespace(info=particle))
     monkeypatch.setattr(
         twin,
-        '_simulate_abtem_diffraction',
-        lambda particle, rattle_value, imsize: np.ones((imsize, imsize), dtype=np.float32),
+        '_simulate_diffraction_from_atoms',
+        lambda atoms, imsize: np.ones((imsize, imsize), dtype=np.float32),
     )
 
     saved_path = Path(
@@ -152,9 +158,10 @@ def test_off_particle_camera_acquisition_saves_vacuum_diffraction(tmp_path: Path
     pytest.importorskip('abtem', exc_type=ImportError)
 
     twin = twin_for_path(tmp_path)
-    twin._particle_id_map = np.zeros((64, 64), dtype=np.int16)
-    twin._rattle_map = np.zeros((64, 64), dtype=np.float32)
-    twin._particle_records_base = []
+    twin._generate_sample(seed=12345)
+    twin._specimen.particle_id_map = np.zeros((64, 64), dtype=np.int16)
+    twin._specimen.rattle_map = np.zeros((64, 64), dtype=np.float32)
+    twin._specimen.records = []
 
     saved_path = Path(twin._acquire_camera_image(32, 0.1, 'BM-Ceta', 'Full'))
 
@@ -169,45 +176,22 @@ def test_off_particle_camera_acquisition_saves_vacuum_diffraction(tmp_path: Path
         assert h5['image'].attrs['rattle_value'] == 0.0
 
 
-def test_particle_atoms_include_rotation_and_rattle(monkeypatch, tmp_path: Path):
+def test_particle_atoms_include_rotation_and_rattle(tmp_path: Path):
     twin = twin_for_path(tmp_path)
-    twin._stage_position = np.zeros(5, dtype=np.float64)
+    twin._generate_sample(seed=12345)
+    specimen = twin._specimen
+    row, column = np.argwhere(specimen.rattle_map > 0.0)[0]
+    size = specimen.particle_id_map.shape[0]
+    x_nm, y_nm = (column / (size - 1) - 0.5) * 500.0, (row / (size - 1) - 0.5) * 500.0
+    record = specimen.records[int(specimen.particle_id_map[row, column]) - 1]
 
-    from asyncroscopy.instruments.electron_microscope import digital_twin_diffraction as diff
+    rattled = specimen.atoms_at(x_nm, y_nm, ViewRequest(stage=np.zeros(5)), seed=1)
+    again = specimen.atoms_at(x_nm, y_nm, ViewRequest(stage=np.zeros(5)), seed=2)
 
-    class FakeAtoms:
-        def __init__(self):
-            self.calls = []
-
-        def repeat(self, value):
-            self.calls.append(('repeat', value))
-            return self
-
-        def center(self, vacuum=None):
-            self.calls.append(('center', vacuum))
-
-        def rotate(self, angle, axis, center=None):
-            self.calls.append(('rotate', angle, axis, center))
-
-        def rattle(self, stdev, seed=None):
-            self.calls.append(('rattle', stdev, seed))
-
-    fake_atoms = FakeAtoms()
-    bulk_calls = []
-
-    def fake_bulk(*args, **kwargs):
-        bulk_calls.append((args, kwargs))
-        return fake_atoms
-
-    monkeypatch.setattr(diff, 'bulk', fake_bulk)
-
-    particle = {'lattice_parameter': 4.08, 'rotation_degrees': 37.0}
-    atoms = twin._particle_atoms(particle, rattle_value=0.5)
-
-    assert atoms is fake_atoms
-    assert bulk_calls[0][1]['cubic'] is True
-    assert ('rotate', 37.0, 'z', 'COP') in fake_atoms.calls
-    assert any(call[0] == 'rattle' and call[1] == twin._rattle_stdev(0.5) for call in fake_atoms.calls)
+    assert rattled.info['rotation_degrees'] == record['rotation_degrees']
+    assert rattled.info['particle_id'] == record['id']
+    assert rattle_stdev(float(specimen.rattle_map[row, column])) > 0.03
+    assert not np.allclose(rattled.get_positions(), again.get_positions())  # the frozen-phonon seed moves the atoms
 
 
 def test_scanned_image_stage_sync_uses_map_cache(tmp_path: Path):
