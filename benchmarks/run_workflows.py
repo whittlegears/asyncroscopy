@@ -478,6 +478,7 @@ def _floats(text: str | None) -> list[float] | None:
 def data_truth(keys: list[str]) -> dict:
     """Peaks and candidate elements of each 1-D dataset among ``keys``, read with the data layer."""
     from asyncroscopy.data import tiled_client, views
+    from asyncroscopy.data.kinds import eds
 
     uri = STACK["tiled"]
     spectra, strongest = {}, None
@@ -495,16 +496,16 @@ def data_truth(keys: list[str]) -> dict:
             continue
         line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
         positions = line_axis.offset + line_axis.scale * np.arange(len(values), dtype=np.float64)
-        xray = line_axis.units == "eV" and views.is_xray(ds)
+        xray = line_axis.units == "eV" and eds.is_xray(ds)
         # view_data's own peak function (same widths, same strongest-first order), so truth and what the agent read agree.
-        rows = views.line_peaks(positions, values, line_axis, xray)
+        rows = eds.line_peaks(positions, values, line_axis) if xray else views.line_peaks(positions, values, line_axis)
         strongest = rows[0][0] if rows else float(positions[int(np.argmax(values))])
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
             entry["peaks_ev"] = [round(row[0], 1) for row in rows]
-            likely = views.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
+            likely = eds.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
             entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
-            entry["could_be"] = sorted({el for row in rows for el in views.note_elements(row[4])})
+            entry["could_be"] = sorted({el for row in rows for el in eds.note_elements(row[4])})
         spectra[key] = entry
     errors = {k: v["error"] for k, v in spectra.items() if "error" in v}
     return {"spectra": {k: v for k, v in spectra.items() if "error" not in v}, "spectrum_errors": errors, "strongest_peak": strongest}
