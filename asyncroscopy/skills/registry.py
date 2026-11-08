@@ -21,7 +21,8 @@ agent whose matched skill did not fit, and for MCP clients.
 Skills come from this package's folders and from any directory listed in
 ``$ASYNCROSCOPY_SKILLS_PATH`` (``os.pathsep``-separated), so a lab can keep
 its own skills outside the repository; an outside skill replaces a packaged
-one with the same name. Skills agents learned from past runs
+one with the same name. Each folder and file is read once and read again only when
+its modified time or size changes. Skills agents learned from past runs
 (``<agent memory>/skills``, see ``asyncroscopy.agents.learning``) are added
 only once an operator has promoted them, never replace a packaged or lab
 skill of the same name, and are usable only by an agent offered every tool
@@ -33,6 +34,7 @@ offered the STEM mapping skill.
 
 from __future__ import annotations
 
+import copy
 import fnmatch
 import re
 from dataclasses import dataclass, field
@@ -45,6 +47,10 @@ from asyncroscopy import settings
 from asyncroscopy.contracts import ENVELOPE_VERSION
 
 HERE = Path(__file__).resolve().parent
+# What has been read, by what the file system says about the file: nothing is read twice while it is unchanged.
+_front_matter: dict[Path, tuple[tuple[int, int], dict, str]] = {}
+_parsed: dict[Path, tuple[tuple[int, int] | None, object]] = {}
+_listings: dict[Path, tuple[object, list, list[Path]]] = {}
 
 
 @dataclass
@@ -89,8 +95,21 @@ def _installed_version() -> str | None:
         return None
 
 
+def _stamp(path: Path) -> tuple[int, int] | None:
+    """(mtime in ns, size) of a file, or None when it cannot be read: what tells a cached parse is still good."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
 def read_front_matter(path: Path) -> tuple[dict, str]:
-    """(front matter, Markdown body) of a SKILL.md; ValueError if it has no front matter."""
+    """(front matter, Markdown body) of a SKILL.md; ValueError if it has no front matter. The parse is kept until the file changes."""
+    stamp = _stamp(path)
+    cached = _front_matter.get(path)
+    if cached is not None and stamp is not None and cached[0] == stamp:
+        return copy.deepcopy(cached[1]), cached[2]
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         raise ValueError(f"{path} has no front matter")
@@ -98,7 +117,41 @@ def read_front_matter(path: Path) -> tuple[dict, str]:
     meta = yaml.safe_load(front) or {}
     if not isinstance(meta, dict):
         raise ValueError(f"{path} front matter is not a mapping")
-    return meta, re.sub(r"<!--.*?-->", "", body, flags=re.S).strip()  # notes to the skill's author never reach a prompt
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S).strip()  # notes to the skill's author never reach a prompt
+    if stamp is not None:
+        _front_matter[path] = (stamp, copy.deepcopy(meta), body)
+    return meta, body
+
+
+def _skill_files(base: Path) -> list[Path]:
+    """Every ``*/SKILL.md`` under ``base``. The folder is listed again only when its modified time, or that of one of
+    its sub-folders (where a SKILL.md being added or removed shows), has changed."""
+    stamp = _stamp(base)
+    cached = _listings.get(base)
+    if cached is not None and cached[0] == stamp and all(_stamp(d) == s for d, s in cached[1]):
+        return cached[2]
+    folders = [p for p in sorted(base.iterdir()) if p.is_dir()]
+    found = [p / "SKILL.md" for p in folders if (p / "SKILL.md").is_file()]
+    _listings[base] = (stamp, [(d, _stamp(d)) for d in folders], found)
+    return found
+
+
+def _cached_skill(path: Path) -> Skill:
+    """A copy of the parsed skill at ``path`` (callers set ``problem`` and ``learned`` on theirs), parsed once per file version.
+    A file that cannot be parsed raises as it did when first read."""
+    stamp = _stamp(path)
+    cached = _parsed.get(path)
+    if cached is None or cached[0] != stamp or stamp is None:
+        try:
+            result: Skill | Exception = _parse(path)
+        except (ValueError, yaml.YAMLError) as exc:
+            result = exc
+        cached = (stamp, result)
+        if stamp is not None:
+            _parsed[path] = cached
+    if isinstance(cached[1], Exception):
+        raise cached[1]
+    return copy.deepcopy(cached[1])
 
 
 def _parse(path: Path) -> Skill:
@@ -151,17 +204,17 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
     for base in skill_dirs():
         if not base.is_dir():
             continue
-        for path in sorted(base.glob("*/SKILL.md")):
+        for path in _skill_files(base):
             try:
-                skill = _parse(path)
+                skill = _cached_skill(path)
             except (ValueError, yaml.YAMLError) as exc:
                 skill = Skill(name=path.parent.name, description="(unreadable skill file)", path=path, problem=str(exc))
             skills[skill.name] = skill  # later folders (a lab's own) replace same-named packaged skills
     learned = learned_dir()
     if learned.is_dir():
-        for path in sorted(learned.glob("*/SKILL.md")):
+        for path in _skill_files(learned):
             try:
-                skill = _parse(path)
+                skill = _cached_skill(path)
             except (ValueError, yaml.YAMLError):
                 continue
             if skill.status == "promoted" and skill.name not in skills:  # drafts are never offered; shipped skills win
