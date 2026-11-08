@@ -73,11 +73,11 @@ Troubleshooting while the twin should keep running.
 
 ## Check it
 
-With the Raman stack up, the agent endpoint offers `RamanTwin_*` tools plus
-`run_job`, `wait_for_job`, `list_data` and `view_data`. A first session:
+With the Raman stack up, the agent endpoint offers `RamanTwin_*` tools for the
+instrument, `RamanTwinJob_*` tools for its job device, and `run_job`, `wait_for_job`, `list_data` and `view_data`. A first session:
 
 1. `RamanTwin_laser_on` with `power_mw: 5`.
 2. `RamanTwin_move_xy` with `x_m: 1e-4, y_m: 0` (the graphene flake is at x > 0).
 3. `RamanTwin_acquire_raman_spectrum` returns a key; `view_data(key, format="text")` lists the Si band at 521 cm-1 and graphene's G (1582) and 2D (2690) bands.
-4. `run_job(device="RamanTwin", plan={"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 21}}, "settings": {"exposure_s": 1}})`, then `wait_for_job` until it is done; its summary lists one spectrum key per point.
+4. `run_job(device="RamanTwinJob", plan={"axes": {"stage_x_m": {"start": -1e-4, "stop": 1e-4, "points": 21}}, "settings": {"exposure_s": 1}})`, then `wait_for_job` until it is done; its summary lists one spectrum key per point.
 5. `RamanTwin_laser_off`.
