@@ -15,7 +15,7 @@ import yaml
 
 from asyncroscopy.mcp.agent_tools import PROFILES, ToolLists, tool_lists
 
-MIDDLEWARE = ("skills", "user_limits", "job_wait", "empty_reply", "claim_check")
+MIDDLEWARE = ("skills", "user_words", "job_wait", "empty_reply", "claim_check")
 
 
 @dataclass(frozen=True)
