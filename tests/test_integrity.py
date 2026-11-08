@@ -9,8 +9,8 @@ from asyncroscopy.data import integrity
 
 @pytest.fixture
 def manifest(tmp_path, monkeypatch):
-    monkeypatch.setenv(integrity.LOG_ENV, str(tmp_path / "integrity" / "manifest.jsonl"))
-    monkeypatch.setenv(integrity.KEY_ENV, "11" * 32)
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_LOG", str(tmp_path / "integrity" / "manifest.jsonl"))
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_KEY", "11" * 32)
     monkeypatch.setenv("ASYNCROSCOPY_DOSE_LEDGER", str(tmp_path / "dose" / "ledger.jsonl"))
     integrity._index_cache.clear()
     return tmp_path / "integrity" / "manifest.jsonl"
@@ -112,15 +112,15 @@ def test_a_line_cut_short_is_reported_and_the_next_seal_still_appends(tmp_path, 
 
 def test_a_different_key_cannot_verify_the_chain(tmp_path, manifest, monkeypatch):
     _three(tmp_path)
-    monkeypatch.setenv(integrity.KEY_ENV, "22" * 32)
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_KEY", "22" * 32)
     problems = integrity.verify_chain(manifest)["problems"]
     assert len(problems) == 3 and all("changed after it was written" in p for p in problems)
 
 
 def test_the_key_file_is_made_once(tmp_path, monkeypatch):
-    monkeypatch.delenv(integrity.KEY_ENV, raising=False)
+    monkeypatch.delenv("ASYNCROSCOPY_INTEGRITY_KEY", raising=False)
     key_file = tmp_path / "key"
-    monkeypatch.setenv(integrity.KEY_FILE_ENV, str(key_file))
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_KEY_FILE", str(key_file))
     first = integrity._key()
     assert len(first) == 32 and integrity._key() == first
 
@@ -244,10 +244,10 @@ def test_an_unreadable_key_keeps_the_dose_unsealed_and_verify_says_so(tmp_path, 
     ledger = tmp_path / "ledger.jsonl"
     monkeypatch.setenv(dose_ledger.LEDGER_ENV, str(ledger))
     dose_ledger.record_frame(_ledger_frame(0.0), "L", "sealed", "i")
-    monkeypatch.setenv(integrity.KEY_ENV, "not hex")
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_KEY", "not hex")
     assert dose_ledger.record_frame(_ledger_frame(0.0), "L", "unsealed", "i")
     assert dose_ledger.dose_at("L", 0.0, 0.0)["exposures_here"] == 2
-    monkeypatch.setenv(integrity.KEY_ENV, "11" * 32)
+    monkeypatch.setenv("ASYNCROSCOPY_INTEGRITY_KEY", "11" * 32)
     assert any("line 2 has no seal" in p for p in integrity.verify(logs=(ledger,))["log_problems"])
 
 
@@ -278,3 +278,51 @@ def test_the_verify_command_seals_what_the_analysis_server_wrote(tmp_path, manif
     stitched.write_bytes(b"other bytes")
     assert verify_integrity.main(["--seal", str(stitched)]) == 1
     assert "NOT SEALED" in capsys.readouterr().out
+
+
+def test_a_manifest_rotates_and_its_chain_and_seals_carry_across_the_parts(tmp_path, manifest, monkeypatch):
+    from asyncroscopy.core.fileio import rotated_paths
+
+    monkeypatch.setenv("ASYNCROSCOPY_LOG_ROTATE_BYTES", "600")
+    files = []
+    for i in range(12):
+        path = tmp_path / f"f{i}.bin"
+        path.write_bytes(bytes([i]) * 64)
+        integrity.seal(path, f"k{i}")
+        files.append(path)
+    assert len(rotated_paths(integrity.manifest_path())) >= 2
+    report = integrity.verify()
+    assert report["ok"] and report["checked"] == 12
+    assert integrity.check_file(files[0])["key"] == "k0"  # sealed in the oldest part
+    files[1].write_bytes(b"changed")
+    with pytest.raises(integrity.IntegrityError):
+        integrity.check_file(files[1])
+
+
+def test_removing_a_rotated_part_breaks_the_chain(tmp_path, manifest, monkeypatch):
+    from asyncroscopy.core.fileio import rotated_paths
+
+    monkeypatch.setenv("ASYNCROSCOPY_LOG_ROTATE_BYTES", "600")
+    for i in range(12):
+        path = tmp_path / f"f{i}.bin"
+        path.write_bytes(bytes([i]))
+        integrity.seal(path)
+    rotated_paths(integrity.manifest_path())[0].unlink()
+    assert any("does not follow" in p for p in integrity.verify_chain(integrity.manifest_path())["problems"])
+
+
+def test_the_index_reads_only_what_was_appended(tmp_path, manifest, monkeypatch):
+    calls = []
+    real = integrity._read_all
+    monkeypatch.setattr(integrity, "_read_all", lambda log: (calls.append(log), real(log))[1])
+    for i in range(5):
+        path = tmp_path / f"f{i}.bin"
+        path.write_bytes(bytes([i]))
+        integrity.seal(path)
+        assert integrity.check_file(path) is not None
+    assert len(calls) == 1  # the first look read the manifest whole; each seal after only added its own line
+    log = integrity.manifest_path()
+    lines = log.read_text(encoding="utf-8").splitlines()
+    log.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")  # a shortened manifest is read again
+    integrity._index()
+    assert len(calls) == 2 and str((tmp_path / "f4.bin").resolve()) not in integrity._index()

@@ -14,7 +14,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO, Any, Iterator
+from typing import IO, Any, Callable, Iterator
 
 LOCK_TIMEOUT_S = 5.0  # longest one attempt waits for another process's append
 LOCK_ATTEMPTS = 3  # attempts before an append gives up and raises
@@ -92,11 +92,54 @@ def write_atomic(path: str | Path, text: str) -> None:
         raise
 
 
+def rotated_paths(path: str | Path) -> list[Path]:
+    """The rotated files of a log (``<name>.1``, ``<name>.2``, ...), oldest first."""
+    path = Path(path)
+    prefix = path.name + "."
+    found = []
+    try:
+        names = os.listdir(path.parent)
+    except OSError:
+        return []
+    for name in names:
+        if name.startswith(prefix) and name[len(prefix):].isdigit():
+            found.append((int(name[len(prefix):]), name))
+    return [path.with_name(name) for _, name in sorted(found)]
+
+
+def rotate(path: str | Path, keep: int = 0) -> Path | None:
+    """Rename ``path`` to the next free ``<name>.<n>`` and delete the oldest rotated files beyond ``keep`` (0: keep all).
+
+    The caller holds the file's lock. Returns the new name, or None when the file could not be renamed (on
+    Windows, while another process has it open): the file stays where it is and the next append tries again.
+    Numbers only ever rise, so a rotated file is never renamed again and a reader can follow it by name.
+    """
+    path = Path(path)
+    rotated = rotated_paths(path)
+    number = int(rotated[-1].name.rsplit(".", 1)[1]) + 1 if rotated else 1
+    target = path.with_name(f"{path.name}.{number}")
+    try:
+        os.rename(path, target)
+    except OSError:
+        return None
+    if keep > 0:
+        for old in rotated[: max(0, len(rotated) + 1 - keep)]:
+            try:
+                os.unlink(old)
+            except OSError:  # open in a reader: goes on a later rotation
+                pass
+    return target
+
+
 def _last_seq_in(path: Path) -> tuple[int, float]:
-    """(highest seq, latest written) already in ``path``: how a log without a .seq sidecar is continued."""
+    """(highest seq, latest written) already in ``path``, or in its newest rotated file when ``path`` is new:
+    how a log without a .seq sidecar is continued."""
     seq, written = 0, 0.0
-    if not path.exists():
-        return seq, written
+    if not path.exists() or path.stat().st_size == 0:
+        rotated = rotated_paths(path)
+        if not rotated:
+            return seq, written
+        path = rotated[-1]
     with path.open("rb") as handle:
         for raw in handle:
             try:
@@ -120,16 +163,40 @@ class SequencedAppender:
     the merging reader orders the lines of several files by it. The file is opened for each
     line and closed again, so it can be renamed (rotated) between lines, on Windows too.
 
+    ``rotate_bytes``: above 0, a line that would take the file past this size first renames the file
+    to ``<name>.<n>`` (``rotate``), under the same lock, so ``seq`` carries on in the new file.
+    ``keep``: rotated files kept (0: all). ``may_rotate``: asked before rotating; False waits for a
+    later append (a job device reading its own events back by offset). It runs under the lock, so
+    it must not wait on anything that may itself be appending.
+
     A line is never written without its ``seq``: when the lock cannot be had after
     ``LOCK_ATTEMPTS`` tries the append raises TimeoutError and writes nothing.
     """
 
-    def __init__(self, path: str | Path, lock_timeout_s: float = LOCK_TIMEOUT_S, attempts: int = LOCK_ATTEMPTS) -> None:
+    def __init__(
+        self, path: str | Path, lock_timeout_s: float = LOCK_TIMEOUT_S, attempts: int = LOCK_ATTEMPTS,
+        rotate_bytes: int = 0, keep: int = 0, may_rotate: Callable[[], bool] | None = None,
+    ) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock_timeout_s = lock_timeout_s
         self.attempts = max(1, int(attempts))
+        self.rotate_bytes = int(rotate_bytes)
+        self.keep = int(keep)
+        self.may_rotate = may_rotate
         self._lock = threading.Lock()
+
+    def _rotate_for(self, incoming: int) -> None:
+        if self.rotate_bytes <= 0:
+            return
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size == 0 or size + incoming <= self.rotate_bytes:
+            return
+        if self.may_rotate is None or self.may_rotate():
+            rotate(self.path, self.keep)
 
     def append(self, row: dict[str, Any]) -> dict[str, Any]:
         """Number ``row``, append it as one line and return it.
@@ -149,8 +216,10 @@ class SequencedAppender:
                             last_seq, last_written = _last_seq_in(self.path)
                         row["seq"] = last_seq + 1
                         row["written"] = max(time.time(), last_written)
+                        line = json.dumps(row) + "\n"
+                        self._rotate_for(len(line.encode("utf-8")))
                         with self.path.open("a", encoding="utf-8") as handle:
-                            handle.write(json.dumps(row) + "\n")
+                            handle.write(line)
                         counter.seek(0)
                         counter.truncate()
                         counter.write(f"{row['seq']} {row['written']!r}".encode("ascii"))

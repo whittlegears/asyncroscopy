@@ -29,18 +29,28 @@ import json
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-DEFAULT_SOURCES = ("outputs/trace",)
+from asyncroscopy import settings
+
 GRACE_S = 0.5  # a live event is held this long after it was written, so a slower writer's line cannot be overtaken
 POLL_S = 0.2
 HEAD_BYTES = 64  # a file's first bytes: its identity where the file system reports no inode
 RETIRED_KEPT = 64
 CURSOR_PREFIX = "tc1."
 SIDECAR_SUFFIXES = (".seq", ".lock")
+RESCAN_S = 2.0  # how often a trace_since stream looks for new files
+CACHED_STREAMS = 16  # trace_since streams kept between polls, least recently used dropped first
+_streams: OrderedDict[tuple, "TraceStream"] = OrderedDict()
+_streams_lock = threading.Lock()
+
+
+def default_sources() -> list[str]:
+    """Where a stack's trace files are unless told otherwise: ``<outputs>/trace``."""
+    return [str(settings.get().trace_dir)]
 
 
 def _expand(sources: Iterable[str | os.PathLike]) -> list[Path]:
@@ -119,6 +129,8 @@ class TraceStream:
     cursor: a ``cursor()`` from an earlier stream: carry on right after its last event.
     from_end: start at the current end of every file (only what is written from now on).
     grace_s: how long a live event is held after it was written (see the module docstring).
+    rescan_s: the sources are globbed again at most this often (0: every poll); the files already found
+        are checked on every poll. A stream polled for a long time (``trace_since``) sets this.
     """
 
     def __init__(
@@ -133,9 +145,10 @@ class TraceStream:
         cursor: str | None = None,
         from_end: bool = False,
         grace_s: float = GRACE_S,
+        rescan_s: float = 0.0,
     ) -> None:
         if sources is None:
-            sources = DEFAULT_SOURCES
+            sources = default_sources()
         elif isinstance(sources, (str, os.PathLike)):
             sources = [sources]
         self.sources = [str(s) for s in sources]
@@ -143,6 +156,8 @@ class TraceStream:
         self.device = {d.lower() for d in _as_set(device)} if device is not None else None
         self.since = since
         self.grace_s = grace_s
+        self.rescan_s = rescan_s
+        self._expanded_at = float("-inf")
         self._files: dict[str, _File] = {}
         self._retired: list[int] = []  # inodes of rotated files already read: never followed again under a new name
         if cursor:
@@ -221,17 +236,28 @@ class TraceStream:
         """Inodes this follower reads (or has finished reading) under some name, other than ``but``'s."""
         return {f.ino for f in self._files.values() if f.ino and f is not but} | set(self._retired)
 
-    def _scan(self) -> None:
+    def _find_new_files(self) -> None:
+        self._expanded_at = time.monotonic()
         tracked = self._tracked_inos()
         for path in _expand(self.sources):
             if str(path) in self._files:
                 continue
             st = _stat(path)
-            if st is not None and st.st_ino and st.st_ino in tracked:
-                continue  # a rotated file, renamed to a name the sources match: read under its first name
+            # A rotated file, renamed to a name the sources match: read under its first name. Only a rotated
+            # name can be one: the inode of a deleted rotated file may be reused by a new, unread live log.
+            if st is not None and st.st_ino and st.st_ino in tracked and _logical(path) != path.name:
+                continue
             self._files[str(path)] = _File(path)
-        for f in self._files.values():
+
+    def _scan(self) -> None:
+        if time.monotonic() - self._expanded_at >= self.rescan_s:  # stat-ing the files known is cheap; globbing every source is not
+            self._find_new_files()
+        for f in list(self._files.values()):
             self._scan_file(f)
+        if self._expanded_at == float("-inf"):  # a file was rotated (see _drain_rotated): look for what else rotated since
+            self._find_new_files()
+            for f in list(self._files.values()):
+                self._scan_file(f)
 
     def _scan_file(self, f: _File) -> None:
         for _ in range(3):  # a rotation between stat and open is seen at open, and retried
@@ -242,7 +268,7 @@ class TraceStream:
                     self._drain_rotated(f)
                     if st is None:
                         return
-                    if st.st_ino and st.st_ino in self._tracked_inos(but=f):
+                    if st.st_ino and st.st_ino in self._tracked_inos(but=f) and _logical(f.path) != f.path.name:
                         # A file already read under another name was rotated onto this one (jobs.jsonl.1 -> .2,
                         # jobs.jsonl -> .1): its owner reads what is left of it; this name takes it as read.
                         f.ino, f.head, f.read_off, f.known = st.st_ino, self._head(f.path), st.st_size, True
@@ -259,6 +285,7 @@ class TraceStream:
 
     def _drain_rotated(self, f: _File) -> None:
         """The file was renamed (or removed): read what was left of it, then follow the new one from its start."""
+        self._expanded_at = float("-inf")  # the files rotated since the last poll may not all be known yet
         old = self._find_rotated(f)
         if old is not None:
             self._read(f, old, f.ino, rotated=True)
@@ -378,13 +405,32 @@ def follow_trace(sources: Iterable[str | os.PathLike] | str | os.PathLike | None
     return TraceStream(sources, **filters).follow(timeout=timeout, poll_s=poll_s, stop=stop)
 
 
-def trace_since(sources: Iterable[str | os.PathLike] | str | os.PathLike | None, cursor: str = "", limit: int = 200, from_end: bool = False, grace_s: float = GRACE_S, **filters: Any) -> dict[str, Any]:
+def _hashable(value: Any) -> Any:
+    if isinstance(value, (list, set, tuple)):
+        return tuple(sorted(str(v) for v in value))
+    return value
+
+
+def trace_since(sources: Iterable[str | os.PathLike] | str | os.PathLike | None, cursor: str = "", limit: int = 200, from_end: bool = True, grace_s: float = GRACE_S, **filters: Any) -> dict[str, Any]:
     """One poll for a client that keeps only a cursor (the GUI): {"events": [...], "cursor": next, "more": bool}.
 
-    An empty cursor starts at the first line (``from_end``: at the current end). Pass the returned
-    cursor to the next call to get the events written since, with none twice and none missed.
+    An empty cursor starts at the current end, so an operator's first poll reads no history
+    (``from_end=False``: at the first line). Pass the returned cursor to the next call to get the events
+    written since, with none twice and none missed.
+
+    The stream behind a cursor is kept between polls (one for each cursor handed out, the least recently
+    used dropped first), so a poll reads only what is new and the sources are not globbed each time. A cursor
+    with no stream here (another process, a restart, a repeated poll) is rebuilt from what the cursor says.
     """
-    stream = TraceStream(sources, cursor=cursor or None, from_end=from_end and not cursor, grace_s=grace_s, **filters)
-    events = stream.poll(limit=limit)
-    more = len(events) >= limit
-    return {"events": events, "cursor": stream.cursor(), "more": more}
+    sources = [sources] if isinstance(sources, (str, os.PathLike)) else default_sources() if sources is None else [str(s) for s in sources]
+    query = (tuple(str(s) for s in sources), grace_s, tuple(sorted((k, _hashable(v)) for k, v in filters.items())))
+    with _streams_lock:
+        stream = _streams.pop((*query, cursor), None) if cursor else None
+        if stream is None:
+            stream = TraceStream(sources, cursor=cursor or None, from_end=from_end and not cursor, grace_s=grace_s, rescan_s=RESCAN_S, **filters)
+        events = stream.poll(limit=limit)
+        after = stream.cursor()
+        _streams[(*query, after)] = stream
+        while len(_streams) > CACHED_STREAMS:
+            _streams.popitem(last=False)
+    return {"events": events, "cursor": after, "more": len(events) >= limit}
