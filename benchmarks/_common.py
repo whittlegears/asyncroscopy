@@ -77,7 +77,8 @@ def read_trace(since: float, callers: Iterable[str] | None = None, directory: Pa
     """Instrument Trace events (every outputs/trace/*.jsonl) at or after ``since``, oldest first,
     from ``callers`` when given (an event's caller, or for an approval decision the request's caller)."""
     events = []
-    for path in sorted(Path(directory).glob("*.jsonl")):
+    rotated = [p for p in Path(directory).glob("*.jsonl.*") if p.suffix.lstrip(".").isdigit()]
+    for path in sorted([*Path(directory).glob("*.jsonl"), *rotated]):
         lines = path.read_text(encoding="utf-8").splitlines()
         for number, line in enumerate(lines, 1):
             if not line.strip():
