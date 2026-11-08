@@ -75,6 +75,7 @@ class Mapper(JobDevice):
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
     stage_timeout_s = device_property(dtype=float, default_value=600.0, doc="Longest one stage move may report stage_moving before the job fails (instrument made safe; resumable).")
     analysis_url = device_property(dtype=str, default_value="", doc="Analysis MCP server (e.g. http://127.0.0.1:8003/mcp) that stitches and scores finished maps; blank: no stitching.")
+    stitch_service = device_property(dtype=str, default_value="mcp", doc="Which StitchService does the analysis at analysis_url (asyncroscopy/jobs/mapping/stitch_service.py): mcp (the analysis MCP server), or one registered by a plug-in.")
     stage_sigma_m = device_property(
         dtype=float,
         default_value=0.0,
@@ -136,9 +137,9 @@ class Mapper(JobDevice):
         return self.profile().safe_commands(job["resolved_plan"])
 
     def pipeline(self) -> Pipeline:
-        """The analysis phases, over one session to ``analysis_url``."""
+        """The analysis phases, over the ``stitch_service`` backend at ``analysis_url``."""
         if self._pipeline_ is None or self._pipeline_.url != self.analysis_url:
-            self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream)
+            self._pipeline_ = Pipeline(self.analysis_url, float(self.max_drift_m_per_s), self.aborting, self._lock, self._save, self.warn_stream, backend=self.stitch_service)
         return self._pipeline_
 
     # ------------------------------------------------------------------
@@ -163,7 +164,7 @@ class Mapper(JobDevice):
             max_tiles=int(self.max_tiles),
             estimate_move_s=float(self.estimate_move_s),
             stage_sigma_m=self._stage_sigma_m(),
-            analysis=self.pipeline().call if self.analysis_url else None,
+            analysis=self.pipeline().service() if self.analysis_url else None,
         )
         resolved = plans.resolve(plan, profile, env)
         self._check_needs(profile, resolved)

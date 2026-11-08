@@ -25,6 +25,19 @@ def call(proxy, verb, payload):
     return json.loads(getattr(proxy, verb)(json.dumps(payload)))
 
 
+class ToolService:
+    """A StitchService whose every operation goes to ``handler(pipeline, tool, arguments)``: the tests' stand-in backend."""
+
+    def __init__(self, handler, pipeline=None):
+        self.handler, self.pipeline = handler, pipeline
+
+    def __getattr__(self, tool):
+        return lambda **arguments: self.handler(self.pipeline, tool, arguments)
+
+    def close(self):
+        pass
+
+
 class InProcessAnalysis:
     """the analysis server's map tools behind the same calls the Mapper makes to the analysis server."""
 
@@ -85,7 +98,7 @@ def analysis(monkeypatch, tmp_path_factory):
         return holder["server"](self, tool, arguments)
 
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
-    monkeypatch.setattr(Pipeline, "call", fake)
+    monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(fake, self))
     return holder
 
 
