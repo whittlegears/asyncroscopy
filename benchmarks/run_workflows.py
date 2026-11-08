@@ -52,8 +52,8 @@ from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_a
 from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
-from asyncroscopy.evaluate import RunData
-from asyncroscopy.evaluate import score_run as evaluator_scores
+from benchmarks.evaluate import RunData
+from benchmarks.evaluate import score_run as evaluator_scores
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -88,7 +88,7 @@ TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner + specialists + repor
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
-# Evaluators (asyncroscopy.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
+# Evaluators (benchmarks.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
 # The default reads no data; information, resolution and dose read the run's images from Tiled (set by --evaluators).
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
@@ -952,7 +952,7 @@ if __name__ == "__main__":
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")
     parser.add_argument("--evaluators", default=",".join(EVALUATORS),
-                        help="asyncroscopy.evaluate evaluators scored on each run's trace (extra columns, never pass/fail); "
+                        help="benchmarks.evaluate evaluators scored on each run's trace (extra columns, never pass/fail); "
                         "information, resolution and dose read the run's images from Tiled.")
     parser.add_argument("--score-columns", default=",".join(SCORE_COLUMNS), help="evaluator.objective medians added to the Markdown table.")
     sys.exit(asyncio.run(main(parser.parse_args())))

@@ -12,8 +12,8 @@ import math
 
 import numpy as np
 
-from asyncroscopy.evaluate.core import Evaluator, Score, register_evaluator
-from asyncroscopy.evaluate.run import Image, RunData, event_result, match_particles
+from benchmarks.evaluate.core import Evaluator, Score, register_evaluator
+from benchmarks.evaluate.run import Image, RunData, event_result, match_particles
 
 
 def _proxy_scorer():

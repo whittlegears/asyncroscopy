@@ -11,9 +11,9 @@ fact was reported (a refusal, a peak position, the elements in a spectrum).
 | `run_workflows.py` | ~40 realistic workflows (images, EDS, focus, maps of several sizes up to thousands of tiles, the mapping design's CUJ 2 and CUJ 3, stitching accuracy against the twin's ground truth, navigating a large map by zoom, abort and resume, approval mode, refusals, recovery, data questions, multi-step goals, and a YAML-described diffractometer), each with fact-based checks |
 | `run_mapping_trials.py` | Repeated mapping requests (map, map with EDS, map and explore) for pass rates and out-of-box moves |
 | `run_tool_json.py` | Whether a model writes valid JSON tool arguments |
-| `tune_vs_acquire.py` | How long to tune before acquiring: the Tuner with budgets from none to large, then a map until a fixed instrument time is used up, scored by `asyncroscopy.evaluate` (no LLM, no stack; see `docs/Operation/evaluators.md`) |
+| `tune_vs_acquire.py` | How long to tune before acquiring: the Tuner with budgets from none to large, then a map until a fixed instrument time is used up, scored by `benchmarks.evaluate` (no LLM, no stack; see `docs/Operation/evaluators.md`) |
 
-Every workflow row also carries `scores`: the `asyncroscopy.evaluate` evaluators run on that row's
+Every workflow row also carries `scores`: the `benchmarks.evaluate` evaluators run on that row's
 trace (`--evaluators`, default `time`, which reads no data; `information`, `resolution` and `dose`
 read the run's images from the stack's Tiled). They are extra columns (`--score-columns`) and never
 change a row's pass or fail.

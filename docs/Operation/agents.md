@@ -131,6 +131,18 @@ Once per run the sections that share the most words with the request are added t
 
 Nothing an agent writes here is reviewed before another run reads it, so it is kept small and checked: a lesson is one short line with keys and ids taken out, refused if it advises getting around approvals or safety, never added twice; `LESSONS.md` keeps the newest 100 and `experiments/` the newest 200 pages.
 
+## Skill runs are agent-side macros
+
+A skill's `run:` list runs in the agent's own process (`asyncroscopy/agents/skill_runs.py`), as if the model had made each call itself. It is not a job: it has no reservation, `job_status`, `abort` or pause, nothing keeps it going if the agent stops, and `stop_all` does not reach it. Every step is an ordinary tool call, so each one passes the endpoint's safety policy and approval gate and is written to the trace under the agent's name. A step the gate holds stops the run.
+
+It stays on the agent's side because a job device would have to make those calls for the agent:
+
+- The steps are MCP tools (`view_data`, `find_features`, `list_pois`, an acquisition with its saved key and summary), and only the endpoints that serve them can run them. A device would have to call its own MCP server, against the rule that devices sit below it.
+- With `mcp.auth`, the endpoint takes the caller from the token. The device's token would replace the agent's, so the trace would name the device, and a grant, which is issued to one caller and run, could not match. An agent could also reach tools its own token does not allow.
+- Starting such a job would need its own approval on top of each step's.
+
+For work that must survive the agent, or stop with `abort`, write a job device (`asyncroscopy/jobs/job_device`), as the Mapper is.
+
 ## Learned skills
 
 After a goal run the checker found **met**, the run's successful calls are turned into a draft skill: the steps in order (repeated waits collapsed) with their arguments, data keys and job ids replaced by placeholders, `tools:` limited to the tools actually used, and provenance (runs, dates, model, success count) in its front matter. One short model call names it and writes its description and keywords. The same tool sequence succeeding again raises the success count of the existing draft instead of making a new one. A run that was not met adds a lesson to `LESSONS.md` instead.

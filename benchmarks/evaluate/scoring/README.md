@@ -23,7 +23,7 @@ gradient) is still selectable as `baseline_v2`, for comparison only.
 
 ## What the evaluation measures (and what it does not)
 
-`asyncroscopy.evaluate.scoring.labelled_maps` scores a scorer against labelled maps: maps where
+`benchmarks.evaluate.scoring.labelled_maps` scores a scorer against labelled maps: maps where
 the particle positions are known and some regions were deliberately spoiled.
 Each synthetic map (`synthetic-fov-2`) is a 10 x 10 grid of 96-pixel regions:
 
@@ -111,10 +111,10 @@ windows.
 ## Benchmark your own scorer
 
 ```
-python -m asyncroscopy.evaluate.scoring.bench --scorer baseline
-python -m asyncroscopy.evaluate.scoring.bench --scorer random
-python -m asyncroscopy.evaluate.scoring.bench --scorer baseline_v2
-python -m asyncroscopy.evaluate.scoring.bench --scorer my_scorers:BlobScorer --out reward_eval.jsonl
+python -m benchmarks.evaluate.scoring.bench --scorer baseline
+python -m benchmarks.evaluate.scoring.bench --scorer random
+python -m benchmarks.evaluate.scoring.bench --scorer baseline_v2
+python -m benchmarks.evaluate.scoring.bench --scorer my_scorers:BlobScorer --out reward_eval.jsonl
 ```
 
 `--scorer` takes `baseline`, `baseline_v2`, `random` or `module:attribute`. The bench prints

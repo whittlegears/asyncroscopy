@@ -13,9 +13,9 @@ import pytest
 
 from pyTEMlib.image_tools import BaselineScorer
 
-from asyncroscopy.evaluate.scoring.baseline_v2 import BaselineScorerV2
-from asyncroscopy.evaluate.scoring.bench import main as bench
-from asyncroscopy.evaluate.scoring.labelled_maps import (
+from benchmarks.evaluate.scoring.baseline_v2 import BaselineScorerV2
+from benchmarks.evaluate.scoring.bench import main as bench
+from benchmarks.evaluate.scoring.labelled_maps import (
     DEFAULT_THRESHOLD, FEATURE_KINDS, HELDOUT_SEEDS, TUNING_SEEDS, LabelledMap, _render_particles, _signal_per_nm,
     defocus, evaluate, make_labelled_map, render_cell,
 )
