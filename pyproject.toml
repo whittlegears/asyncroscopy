@@ -127,8 +127,7 @@ pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
 # The stitcher, field-of-view scorer and image placement (pyTEMlib.image_tools) live in a
 # pyTEMlib fork branch (whittlegears/pyTEMlib, branch refactor/sidpy-tools) until they are
 # merged upstream (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
-# That branch is not pushed yet, so this points at its worktree beside this one; once it is
-# pushed, pin it here to a commit (git + rev) so every fresh `uv sync` gets the same code.
+# Pinned to a commit so every fresh `uv sync` gets the same code.
 pytemlib = { git = "https://github.com/whittlegears/pyTEMlib.git", rev = "9fe12302fe86ed7056a0aa5fc563aaf05273d224" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
