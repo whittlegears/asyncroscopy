@@ -1,6 +1,6 @@
 """A team's own reward: a weighted sum of other evaluators' objectives.
 
-    from asyncroscopy.evaluate import composite, register_evaluator
+    from benchmarks.evaluate import composite, register_evaluator
 
     register_evaluator(composite("careful", {
         "information.features_found": 1.0,
@@ -10,7 +10,7 @@
 
 Weights carry the trade-off between objectives that conflict (more information costs dose
 and time); choosing them is the team's decision, and learning them from operator traces is a
-research problem in itself (``asyncroscopy.evaluate.features``). An objective that could not be
+research problem in itself (``benchmarks.evaluate.features``). An objective that could not be
 computed for a run (no images, no clock) is left out of the sum and named in the reason, so a
 missing objective is never read as zero by accident; ``strict=True`` makes the reward null instead.
 """
@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from asyncroscopy.evaluate.core import Evaluator, Score, get_evaluator
-from asyncroscopy.evaluate.run import RunData
+from benchmarks.evaluate.core import Evaluator, Score, get_evaluator
+from benchmarks.evaluate.run import RunData
 
 
 class WeightedObjective(Evaluator):

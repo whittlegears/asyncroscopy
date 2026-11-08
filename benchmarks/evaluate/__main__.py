@@ -1,11 +1,11 @@
 """Score one run from the Instrument Trace.
 
-    python -m asyncroscopy.evaluate --run 669e81c5855d
-    python -m asyncroscopy.evaluate --run 669e81c5855d --evaluators dose,time --json scores.json
-    python -m asyncroscopy.evaluate --run wf-map-general-1 --trace-dir outputs/trace --tiled-uri http://127.0.0.1:9091
-    python -m asyncroscopy.evaluate --run 669e81c5855d --weights information.features_found=1,dose.over_threshold_fraction=-100
-    python -m asyncroscopy.evaluate --run 669e81c5855d --features            # the flat row for learning a reward
-    python -m asyncroscopy.evaluate --list
+    python -m benchmarks.evaluate --run 669e81c5855d
+    python -m benchmarks.evaluate --run 669e81c5855d --evaluators dose,time --json scores.json
+    python -m benchmarks.evaluate --run wf-map-general-1 --trace-dir outputs/trace --tiled-uri http://127.0.0.1:9091
+    python -m benchmarks.evaluate --run 669e81c5855d --weights information.features_found=1,dose.over_threshold_fraction=-100
+    python -m benchmarks.evaluate --run 669e81c5855d --features            # the flat row for learning a reward
+    python -m benchmarks.evaluate --list
 
 ``--run`` matches the agent run first, then the caller, then a job or reservation id. Prints a
 table; ``--json -`` prints JSON instead, ``--json FILE`` writes it.
@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 
-from asyncroscopy.evaluate import (
+from benchmarks.evaluate import (
     composite,
     evaluators,
     features,
@@ -25,7 +25,7 @@ from asyncroscopy.evaluate import (
     register_evaluator,
     score_run,
 )
-from asyncroscopy.evaluate.run import DEFAULT_TRACE_DIR
+from benchmarks.evaluate.run import DEFAULT_TRACE_DIR
 
 
 def _weights(text: str) -> dict[str, float]:
@@ -47,7 +47,7 @@ def _fmt(value) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m asyncroscopy.evaluate", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(prog="python -m benchmarks.evaluate", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run", help="Agent run id (X-Asyncroscopy-Run), caller, or job/reservation id.")
     parser.add_argument("--evaluators", default=None, help="Comma-separated evaluator names (default: information,resolution,dose,time).")
     parser.add_argument("--trace-dir", action="append", default=None, help=f"Trace directory, file or glob (repeatable; default {DEFAULT_TRACE_DIR}).")

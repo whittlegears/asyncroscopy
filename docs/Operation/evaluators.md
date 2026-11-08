@@ -1,16 +1,16 @@
 # Evaluators: scoring operations and runs
 
-`asyncroscopy.evaluate` scores what a run did. It reads the run's Instrument Trace and the data the trace points to, and returns `{objective: value}` with units and a short reason. It does not drive the instrument, and it does not know which agent, graph or person made the run.
+`benchmarks.evaluate` scores what a run did. It reads the run's Instrument Trace and the data the trace points to, and returns `{objective: value}` with units and a short reason. It does not drive the instrument, and it does not know which agent, graph or person made the run.
 
 Evaluators are kept apart from the twin and from the agents (the hackathon organisers' principle 3). Resolution, dose, information and time are different objectives, and they often disagree. Separate evaluators let a team look at each objective on its own, then combine them only when it decides to. Learning the reward itself from traces is left open, as a research problem, but the inputs are ready for it (see [Features for learning a reward](#features-for-learning-a-reward)).
 
 ```bash
-uv run python -m asyncroscopy.evaluate --list
-uv run python -m asyncroscopy.evaluate --run 669e81c5855d                                  # the table
-uv run python -m asyncroscopy.evaluate --run 669e81c5855d --tiled-uri http://127.0.0.1:9091   # read the images from Tiled
-uv run python -m asyncroscopy.evaluate --run 669e81c5855d --evaluators dose,time --json scores.json
-uv run python -m asyncroscopy.evaluate --run 669e81c5855d --weights information.features_found=1,dose.over_threshold_fraction=-100
-uv run python -m asyncroscopy.evaluate --run 669e81c5855d --features                       # the flat row
+uv run python -m benchmarks.evaluate --list
+uv run python -m benchmarks.evaluate --run 669e81c5855d                                  # the table
+uv run python -m benchmarks.evaluate --run 669e81c5855d --tiled-uri http://127.0.0.1:9091   # read the images from Tiled
+uv run python -m benchmarks.evaluate --run 669e81c5855d --evaluators dose,time --json scores.json
+uv run python -m benchmarks.evaluate --run 669e81c5855d --weights information.features_found=1,dose.over_threshold_fraction=-100
+uv run python -m benchmarks.evaluate --run 669e81c5855d --features                       # the flat row
 ```
 
 `--run` matches the agent run (`X-Asyncroscopy-Run`, the trace's `run`) first, then the `caller`, then a job or reservation id. `--trace-dir` defaults to `outputs/trace`. Data keys are read as local HDF5 files, or from Tiled when `--tiled-uri` is given. A key that cannot be read is listed under `unreadable_keys`, and the evaluators score what they can.
@@ -18,7 +18,7 @@ uv run python -m asyncroscopy.evaluate --run 669e81c5855d --features            
 From Python:
 
 ```python
-from asyncroscopy.evaluate import load_run, score_run, score_event, features
+from benchmarks.evaluate import load_run, score_run, score_event, features
 
 data = load_run("669e81c5855d", "outputs/trace", tiled_uri="http://127.0.0.1:9091")
 score_run(data)                          # {"information": {...}, "resolution": {...}, "dose": {...}, "time": {...}}
@@ -51,7 +51,7 @@ Per unit of time means per `clock_s` of the run, unless the caller gives `durati
 An evaluator is one class. Register it with `@register_evaluator`, or from another package through the `asyncroscopy.evaluators` entry point:
 
 ```python
-from asyncroscopy.evaluate import Evaluator, Score, register_evaluator
+from benchmarks.evaluate import Evaluator, Score, register_evaluator
 
 @register_evaluator
 class Revisits(Evaluator):
@@ -89,7 +89,7 @@ class Revisits(Evaluator):
 revisits = "my_package.evaluators:Revisits"
 ```
 
-Then run `python -m asyncroscopy.evaluate --run <id> --evaluators revisits,dose`. When the score changes meaning, bump `version`, so that scores from different versions are not mixed. `tests/test_evaluate.py` contains a shorter example that also checks a failing evaluator.
+Then run `python -m benchmarks.evaluate --run <id> --evaluators revisits,dose`. When the score changes meaning, bump `version`, so that scores from different versions are not mixed. `tests/test_evaluate.py` contains a shorter example that also checks a failing evaluator.
 
 ## Objectives that conflict, and a team's own reward
 
@@ -102,7 +102,7 @@ The objectives pull against each other:
 A team writes its trade-off as weights:
 
 ```python
-from asyncroscopy.evaluate import composite, register_evaluator
+from benchmarks.evaluate import composite, register_evaluator
 
 register_evaluator(composite("careful", {
     "information.features_found": 1.0,
@@ -168,10 +168,10 @@ Optima are in bold. Read the table as follows:
 - **Drift makes tuning go stale.** At 0.3 nm/s, the focus leaves the 20 nm window about 50 s after tuning, so `s` gets only 603 particles in focus instead of 1133. At 2 nm/s, the focus drifts 10 to 100 nm while the Tuner is still running, and no frame is in focus whatever the budget. One tune before the map is then the wrong plan; the map has to re-tune as it goes, which this bench does not try. For counting particles, the fast-drift optimum moves from `focus_only` to `s` (766 against 713), because a better start keeps the error under the detection limit for longer. That difference is close to the spread between the two repeats (683 and 743 for `focus_only`).
 - **The twin is generous.** Every Tuner run succeeded, and even `xs` brought a 250 nm error down to 39 nm. On a real column, with noisier sharpness metrics, the small budgets would fail more often (`peak_at_edge`, `sharpness_fell`). They would cost their time and leave the focus where it was.
 
-The policy helper `asyncroscopy.evaluate.policy` writes the stopping rule as pure functions. It does not drive the Tuner; an agent or a job can call it:
+The policy helper `benchmarks.evaluate.policy` writes the stopping rule as pure functions. It does not drive the Tuner; an agent or a job can call it:
 
 ```python
-from asyncroscopy.evaluate import keep_tuning, stale_after_s
+from benchmarks.evaluate import keep_tuning, stale_after_s
 
 stale = stale_after_s(depth_of_field_m=20e-9, focus_drift_m_per_s=2e-9, residual_m=5e-9)   # 7.5 s
 decision = keep_tuning(rate_now_per_s=0.5, rate_tuned_per_s=12.0, step_s=13.0, remaining_s=110.0, stale_after=stale)
