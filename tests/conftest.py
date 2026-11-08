@@ -46,6 +46,7 @@ from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twi
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 from asyncroscopy.instruments.electron_microscope.digital_twin_diffraction import DigitalTwinDiffraction
 from asyncroscopy.instruments.scanning_electron_microscope.digital_twin import DigitalTwinSEM
+from asyncroscopy.instruments.scanning_probe_microscope.simulated import SimulatedSPM, SimulatedSPMApproach, SimulatedSPMFeedback, SimulatedSPMScan, SimulatedSPMStage
 from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.electron_microscope.polycrystalline_gold_digital_twin import PolycrystallineGoldDigitalTwin
@@ -428,6 +429,47 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 },
             ],
         },
+        # A simulated SPM, its sub-devices talking over Tango, for tests/test_spm_mapping.py.
+        {
+            "class": SimulatedSPMApproach,
+            "devices": [{"name": "asyncroscopy/approach/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMFeedback,
+            "devices": [{"name": "asyncroscopy/feedback/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMStage,
+            "devices": [{"name": "asyncroscopy/stage/spm", "properties": {}}],
+        },
+        {
+            "class": SimulatedSPMScan,
+            "devices": [
+                {
+                    "name": "asyncroscopy/scan/spm",
+                    "properties": {
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                        "approach_device_address": "asyncroscopy/approach/spm",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
+                        "acquisition_save_directory": prop_path(data_save_dir),
+                    },
+                },
+            ],
+        },
+        {
+            "class": SimulatedSPM,
+            "devices": [
+                {
+                    "name": "asyncroscopy/spm/default",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/spm",
+                        "feedback_device_address": "asyncroscopy/feedback/spm",
+                        "approach_device_address": "asyncroscopy/approach/spm",
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                    },
+                },
+            ],
+        },
         {
             "class": DigitalTwinSEM,
             "devices": [
@@ -583,6 +625,24 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "state_directory": prop_path(job_dir / "sem" / "state"),
                         "trace_path": prop_path(job_dir / "sem" / "trace.jsonl"),
                         "estimate_move_s": 1.0,
+                        "simulated": True,
+                    },
+                },
+                {
+                    # The simulated SPM: retract, move, approach, scan (test_spm_mapping.py).
+                    "name": "asyncroscopy/mapper/spm",
+                    "properties": {
+                        "instrument_profile": "spm",
+                        "microscope_device_address": "asyncroscopy/spm/default",
+                        "scan_device_address": "asyncroscopy/scan/spm",
+                        "stage_device_address": "asyncroscopy/stage/spm",
+                        "sample_device_address": "asyncroscopy/sample/mapping",
+                        "output_directory": prop_path(job_dir / "spm" / "maps"),
+                        "state_directory": prop_path(job_dir / "spm" / "state"),
+                        "trace_path": prop_path(job_dir / "spm" / "trace.jsonl"),
+                        "estimate_move_s": 1.0,
+                        "stage_sigma_m": 5e-9,
+                        "max_drift_m_per_s": 0.0,
                         "simulated": True,
                     },
                 },
