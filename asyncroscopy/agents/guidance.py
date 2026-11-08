@@ -42,6 +42,15 @@ SAMPLE_LOAD_NOTE = "before moving there, check the instrument's get_sample gives
 BEAM_BLANKED_HINT = "this image was taken with the beam blanked (beam_current_pa 0), so it shows only noise: unblank_beam and take it again"
 
 
+def stage_placed(summary: dict) -> tuple[int, int] | None:
+    """(tiles that matched no neighbour, tiles) when most of a stitched map's tiles sit where the stage reported them."""
+    stitching = summary.get("stitching") if isinstance(summary.get("stitching"), dict) else {}
+    fallback, tiles = stitching.get("fallback_tiles"), stitching.get("tiles")
+    if isinstance(fallback, int) and isinstance(tiles, int) and tiles and fallback * 2 > tiles:
+        return fallback, tiles
+    return None
+
+
 def _codes(reply: dict) -> dict[str, dict]:
     return {w["code"]: w for w in reply.get("warnings") or [] if isinstance(w, dict) and w.get("code")}
 
@@ -65,10 +74,9 @@ def render_reply(tool: str, args: dict, reply: dict) -> dict:
     if "finished" in codes:
         summary = reply.get("summary") if isinstance(reply.get("summary"), dict) else {}
         out["note"] = STITCH_FAILED_NOTE.format(error=summary["stitch_error"]) if summary.get("stitch_error") else DONE_NOTE
-        stitching = summary.get("stitching") if isinstance(summary.get("stitching"), dict) else {}
-        fallback, tiles = stitching.get("fallback_tiles"), stitching.get("tiles")
-        if isinstance(fallback, int) and isinstance(tiles, int) and tiles and fallback * 2 > tiles:
-            out["placement"] = STAGE_PLACED_NOTE.format(fallback=fallback, tiles=tiles)
+        placed = stage_placed(summary)
+        if placed:
+            out["placement"] = STAGE_PLACED_NOTE.format(fallback=placed[0], tiles=placed[1])
     elif "results_unreadable" in codes:
         out["note"] = f"done, but its results could not be read: {codes['results_unreadable'].get('detail', '')}"
     elif any(a.get("tool") == "wait_for_job" for a in actions) and state in WAIT_NOTES:

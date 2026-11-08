@@ -34,6 +34,9 @@ missing positions    the request asks for coordinates / positions / where things
 field name           the answer names a reply's field (``result_keys.map``) where its value belongs
 stitched map         "the stitched map is available", "the map key is ...": a job's stitch failed
                      (``stitch_error``) and no later reply gave a map; unless negated
+map quality          "good quality", "seamless", "well stitched": most of the map's tiles matched no
+                     neighbour and sit where the stage reported them; unless negated. When the
+                     request asks how good the map is, an answer that never says so is flagged too
 ==================== =================================================================
 
 Negated and hedged sentences ("could not", "was not", "previously acquired")
@@ -65,6 +68,7 @@ from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.goals import MAP_KEY, Facts, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
+from asyncroscopy.agents.guidance import stage_placed
 
 READERS = ("view_data", "get_region")
 
@@ -111,10 +115,18 @@ HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phra
 # "at the current position" asks for nothing: only a plural, "position of", or "where ... is" asks where.
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
+QUALITY_QUESTION = re.compile(r"\bhow\s+(?:good|well)\b|\bquality\b|\bseams?\b", re.I)
+STAGE_PLACED = re.compile(r"\bstage\s+(?:reported|position|placed|put)|\brough\b|\bmatched\s+no\b|\bno\s+(?:image\s+)?match|\bunmatched\b|\bmisalign", re.I)
 FIELD_NAME = re.compile(r"\bresult_keys\.\w+")
 STITCHED = re.compile(
     r"\bstitched\s+(?:map|image|mosaic)\s+(?:is|was)\s+(?:now\s+)?(?:available|ready|done|complete|saved)\b|\bmap\s+key\s+is\b"
     r"|\bstitch(?:ing)?\s+(?:succeeded|completed|worked|finished)\b|\bwas\s+stitched\b",
+    re.I,
+)
+
+GOOD_MAP = re.compile(
+    r"\b(?:good|high|excellent|great)\s+(?:quality|stitch(?:ing)?)\b|\bseamless(?:ly)?\b|\b(?:well|accurately|cleanly|correctly)[- ]stitched\b"
+    r"|\baligned\s+(?:well|correctly|accurately)\b",
     re.I,
 )
 
@@ -136,7 +148,7 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 
 @dataclass
 class Claim:
-    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch
+    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch, map_quality
     text: str  # what the answer says
     why: str  # why no tool call supports it
 
@@ -465,6 +477,29 @@ def _stitch_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
+def _map_quality_claims(answer: str, request: str, calls) -> list[Claim]:
+    """A map called good or seamless when most of its tiles matched no neighbour (qwen3:8b called a map whose 100 tiles
+    all sat where the stage reported them "of good quality", from its pixel statistics); and, when the request asks
+    how good the map is, an answer that leaves that out (corrected, it listed the key and tile size instead)."""
+    placed = None
+    for call in calls:
+        if not call.error:
+            for node in _walk(_json(call.result)):
+                placed = stage_placed(node) or placed
+    if placed is None:
+        return []
+    why = (f"{placed[0]} of {placed[1]} tiles matched no neighbour and sit where the stage reported them: "
+           "say the map is a rough layout whose seams can be off by the stage's error")
+    claims = []
+    for sentence in _sentences(answer):
+        m = GOOD_MAP.search(sentence)
+        if m and not _negated(sentence, m):
+            claims.append(Claim("map_quality", sentence[:160], why))
+    if not claims and QUALITY_QUESTION.search(request) and not STAGE_PLACED.search(answer):
+        claims.append(Claim("map_quality", request[:160], why))
+    return claims
+
+
 def _unfinished_claims(answer: str) -> list[Claim]:
     """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
     tail = _sentences(answer)[-2:]
@@ -538,6 +573,7 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims += _placement_claims(answer, calls)
     claims += _field_name_claims(answer)
     claims += _stitch_claims(answer, calls)
+    claims += _map_quality_claims(answer, _request(messages), calls)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):

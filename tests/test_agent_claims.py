@@ -302,6 +302,22 @@ def test_a_stitched_map_claimed_after_the_stitch_failed_and_a_field_name_given_a
     assert check_answer(run.messages, "The stitched map is available.") == []
 
 
+def test_a_map_called_good_when_its_tiles_sit_where_the_stage_put_them_is_flagged():
+    run = Calls("map a 400 nm square and tell me how good the stitched map is")
+    run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "result_keys": {"map": "map_f7_map"},
+                                            "summary": {"stitching": {"tiles": 100, "matches_used": 0, "fallback_tiles": 100}}})
+    claims = check_answer(run.messages, "The map is considered to be of good quality, with no saturated pixels.")
+    assert kinds(claims) == ["map_quality"] and "100 of 100" in claims[0].why
+    assert check_answer(run.messages, "The map is not seamless: every tile sits where the stage reported it.") == []
+    silent = check_answer(run.messages, "Here's how good the stitched map is: the map key is `map_f7_map` and the tiles are 51.2 nm.")
+    assert kinds(silent) == ["map_quality"]
+    assert check_answer(run.messages, "It is a rough layout: no tile matched a neighbour.") == []
+    matched = Calls("map a 400 nm square")
+    matched.call("run_job", {"request": "{}"}, {"job_id": "j2", "state": "done", "result_keys": {"map": "map_f8_map"},
+                                                "summary": {"stitching": {"tiles": 100, "matches_used": 180, "fallback_tiles": 4}}})
+    assert check_answer(matched.messages, "The map is of good quality.") == []
+
+
 def test_a_placement_claimed_when_place_image_refused_it_is_flagged():
     run = Calls("Zoom into a particle down to atomic columns, placing each image.")
     run.call("place_image", {"image": IMAGES[1], "parent": IMAGES[0]}, {"child": IMAGES[1], "status": "placed", "score": 0.99})
