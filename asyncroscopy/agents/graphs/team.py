@@ -27,7 +27,6 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
-import os
 import re
 from typing import TypedDict
 
@@ -36,6 +35,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from asyncroscopy import settings
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
@@ -138,7 +138,7 @@ def heuristic_plan(request: str, roles: set[str]) -> list[dict]:
 
 class TeamGraph:
     def __init__(self, config: AgentConfig | None = None, memory: Memory | None = None) -> None:
-        self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "team"))
+        self.config = config or AgentConfig.from_env(caller=settings.get().caller or "team")
         self.memory = memory or Memory.from_env()
         self.team = load_profile(self.config.profile).team
         self.catalog = ToolCatalog.unknown()  # what the endpoint's tools are (endpoint_info), read with the tools

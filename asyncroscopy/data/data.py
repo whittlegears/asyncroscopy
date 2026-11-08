@@ -37,6 +37,7 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlparse
 
+from asyncroscopy import settings
 from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
 from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
@@ -63,7 +64,6 @@ REGISTER_TIMEOUT_SECONDS = 20
 RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone: they may still be being written
 FUTURE_MTIME_SLACK_SECONDS = 60.0  # a file "modified" further in the future than this has a wrong clock, not a writer
 CATALOG_INIT_TIMEOUT_SECONDS = 60
-TILED_LOG_DIR = Path(os.environ.get("ASYNCROSCOPY_LOG_DIR", "outputs/logs")) / "tiled"
 TILED_LOGS_KEPT = 5
 LOG_TAIL_BYTES = 64 * 1024
 SUPERVISE_INTERVAL_SECONDS = 5.0
@@ -93,8 +93,9 @@ class DATA(Device):
         self._tiled_lock = getattr(self, "_tiled_lock", None) or threading.RLock()
         self._register_lock = getattr(self, "_register_lock", None) or threading.Lock()
         if not hasattr(self, "_host"):  # values set through configure() survive Init
-            self._host, self._port = self._parse_uri(os.environ.get("ASYNCROSCOPY_TILED_URI", DEFAULT_TILED_URI))
-            self._save_path = os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", DEFAULT_ACQUISITION_DIR)
+            env = settings.get()
+            self._host, self._port = self._parse_uri(env.tiled_uri or DEFAULT_TILED_URI)
+            self._save_path = env.acquisition_dir or DEFAULT_ACQUISITION_DIR
         self._api_key = tiled_client.api_key()
         self._tiled_process = None
         self._tiled_serve_path = None
@@ -493,7 +494,7 @@ class DATA(Device):
     def _public_uri(self) -> str:
         """The Tiled address get_config gives clients (MCP servers, SciAgentGUI): ASYNCROSCOPY_TILED_PUBLIC_URI
         when set, for a Tiled that binds 0.0.0.0 in a container and is reached by a service name; else _uri()."""
-        return os.environ.get("ASYNCROSCOPY_TILED_PUBLIC_URI", "").strip().rstrip("/") or self._uri()
+        return settings.get().tiled_public_uri or self._uri()
 
     def _tiled_alive(self) -> bool:
         """True when a Tiled server (not just any HTTP server) answers at the configured address."""
@@ -732,15 +733,19 @@ def _ensure_directory(path: str | Path) -> None:
         Path(path).expanduser().mkdir(parents=True, exist_ok=True)
 
 
+def _tiled_log_dir() -> Path:
+    return settings.get().log_dir / "tiled"
+
+
 def _new_log_file(port: int) -> Path:
     """A fresh log file for a Tiled server; only the newest few for this port are kept."""
-    TILED_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    for old in sorted(TILED_LOG_DIR.glob(f"tiled_{port}_*.log"))[: -(TILED_LOGS_KEPT - 1)]:
+    _tiled_log_dir().mkdir(parents=True, exist_ok=True)
+    for old in sorted(_tiled_log_dir().glob(f"tiled_{port}_*.log"))[: -(TILED_LOGS_KEPT - 1)]:
         try:
             old.unlink()
         except OSError:
             pass
-    return TILED_LOG_DIR / f"tiled_{port}_{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.log"
+    return _tiled_log_dir() / f"tiled_{port}_{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.log"
 
 
 def _quiet_log_config() -> Path | None:
@@ -753,9 +758,9 @@ def _quiet_log_config() -> Path | None:
     for formatter in config.get("formatters", {}).values():
         formatter["use_colors"] = False
     config.setdefault("loggers", {}).setdefault("uvicorn.access", {})["level"] = "WARNING"
-    path = TILED_LOG_DIR / "tiled_logging.json"
+    path = _tiled_log_dir() / "tiled_logging.json"
     try:
-        TILED_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _tiled_log_dir().mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(config, indent=1), encoding="utf-8")
     except OSError:
         return None

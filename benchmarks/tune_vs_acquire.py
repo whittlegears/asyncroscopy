@@ -5,7 +5,7 @@ and two-fold astigmatism, and optionally a focus that drifts. The trial first ru
 (the real job device, strategy image_metric, focus and stigmation) with a search budget from
 none to large, on a sacrificial field next to the map; then it spends whatever time is left
 acquiring a fixed map, tile after tile, until T is used up. The evaluators of
-``asyncroscopy.evaluate`` then score the trial from its Instrument Trace and data:
+``benchmarks.evaluate`` then score the trial from its Instrument Trace and data:
 ``information`` (unique ground-truth particles found), ``resolution`` (the focus error behind
 every frame), ``dose`` and ``time``. The curve is information against tuning budget; its
 optimum moves with the starting error and with drift (with fast drift, tuning goes stale).
@@ -48,7 +48,7 @@ sys.path.insert(0, str(HERE.parent))
 import numpy as np
 import tango
 
-from asyncroscopy.evaluate import (
+from benchmarks.evaluate import (
     RunData,
     get_evaluator,
     keep_tuning,
@@ -315,7 +315,7 @@ def summarise(rows: list[dict], budget_s: float) -> dict:
         for objective in OBJECTIVES:
             best = max(curve, key=lambda p: (p[objective] or 0.0, -(p["tune_s"] or 0.0)))
             optima[objective] = {"budget": best["budget"], "value": best[objective], "tune_s": best["tune_s"]}
-        # The stopping rule (asyncroscopy.evaluate.policy.keep_tuning), fed the rates this bench measured:
+        # The stopping rule (benchmarks.evaluate.policy.keep_tuning), fed the rates this bench measured:
         # would it have told an agent to tune with each budget instead of acquiring at once, and was that right?
         # The rule's rates come from these same trials, so this checks the rule's arithmetic and its staleness
         # term, not its ability to predict.

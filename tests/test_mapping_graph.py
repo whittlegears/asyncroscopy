@@ -84,7 +84,7 @@ def run(graph_obj, state):
 
 @pytest.fixture(autouse=True)
 def fast_polls(monkeypatch):
-    monkeypatch.setattr(mapping, "POLL_S", 0.0)
+    monkeypatch.setenv("ASYNCROSCOPY_POLL_S", "0")
 
 
 def make(hold=False, approval="approved", stitched=True):

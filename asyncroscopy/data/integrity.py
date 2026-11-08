@@ -33,19 +33,17 @@ import os
 import secrets
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
-from asyncroscopy.core.fileio import file_lock
+from asyncroscopy import settings
+from asyncroscopy.core.fileio import file_lock, rotate, rotated_paths
 
-LOG_ENV = "ASYNCROSCOPY_INTEGRITY_LOG"
-DEFAULT_LOG = "outputs/integrity/manifest.jsonl"
-KEY_ENV = "ASYNCROSCOPY_INTEGRITY_KEY"
-KEY_FILE_ENV = "ASYNCROSCOPY_INTEGRITY_KEY_FILE"
-DEFAULT_KEY_FILE = "outputs/integrity/key"
 LOCK_WAIT_S = 5.0  # well inside a Tango client's timeout
 CHUNK = 1 << 20
+TAIL_BYTES = 64  # the bytes before the end of what was indexed: an append leaves them as they were
 _guard = threading.Lock()
-_index_cache: dict[str, tuple[tuple[int, float], dict[str, dict]]] = {}
+_index_lock = threading.Lock()
 
 
 class IntegrityError(RuntimeError):
@@ -53,13 +51,28 @@ class IntegrityError(RuntimeError):
 
 
 def manifest_path() -> Path:
-    return Path(os.environ.get(LOG_ENV) or DEFAULT_LOG)
+    return settings.get().integrity_log
+
+
+@dataclass
+class _Indexed:
+    """The manifest as read so far: the latest entry per path, and where reading stopped."""
+
+    entries: dict[str, dict]
+    ino: int = 0
+    offset: int = 0  # bytes of the live file read, up to the end of its last complete line
+    mtime_ns: int = 0
+    tail: bytes = b""
+
+
+_index_cache: dict[str, _Indexed] = {}
 
 
 def _key() -> bytes:
-    if os.environ.get(KEY_ENV):
-        return bytes.fromhex(os.environ[KEY_ENV])
-    path = Path(os.environ.get(KEY_FILE_ENV) or DEFAULT_KEY_FILE)
+    env = settings.get()
+    if env.integrity_key:
+        return bytes.fromhex(env.integrity_key)
+    path = env.integrity_key_file
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -87,6 +100,11 @@ def sha256_of(path: Path, limit: int | None = None) -> str:
             digest.update(block)
             left -= len(block)
     return digest.hexdigest()
+
+
+def _segments(log: Path) -> list[Path]:
+    """The files of a chained log in order: its rotated parts (``<name>.1``, ...), oldest first, then the live file."""
+    return [*rotated_paths(log), *([log] if log.exists() else [])]
 
 
 def _last_line(path: Path) -> str:
@@ -130,8 +148,11 @@ def _legacy_lines(log: Path) -> tuple[int, str]:
     return count, digest.hexdigest()
 
 
-def chain_append(log: Path, record: dict) -> dict:
+def chain_append(log: Path, record: dict, rotate_bytes: int = 0) -> dict:
     """Append ``record`` to the chained log ``log`` with its seq, the previous entry's mac and its own mac.
+
+    ``rotate_bytes``: above 0, a full log is renamed ``<name>.<n>`` first and the chain carries on in the new file;
+    ``verify_chain`` walks the parts in order. Parts are never deleted: a removed one breaks the chain.
 
     The first sealed line of a log that already holds unsealed lines (written before it was chained) records
     how many there are and the SHA-256 of their bytes, so those lines cannot later be edited, added to or
@@ -141,12 +162,16 @@ def chain_append(log: Path, record: dict) -> dict:
     with _guard, open(log.with_name(log.name + ".lock"), "a+b") as lock, file_lock(lock, time.monotonic() + LOCK_WAIT_S):
         cut = False
         try:
-            last = json.loads(_last_line(log) or "{}")
+            if rotate_bytes > 0 and log.exists() and log.stat().st_size >= rotate_bytes:
+                rotate(log)
+            parts = _segments(log)
+            newest = parts[-1] if parts else log
+            last = json.loads(_last_line(newest) or "{}")
         except ValueError:  # a last line cut short by a crash: the chain reports it, the next entry follows it
             last, cut = {}, True
         if not isinstance(last, dict):
             last, cut = {}, True
-        seq = int(last.get("seq", 0)) + 1 if not cut else _line_count(log) + 1
+        seq = int(last.get("seq", 0)) + 1 if not cut else sum(_line_count(p) for p in _segments(log)) + 1
         entry = {**record, "seq": seq, "prev": last.get("mac", "")}
         if (cut or "mac" not in last) and log.exists() and log.stat().st_size:
             count, digest = _legacy_lines(log)
@@ -159,7 +184,7 @@ def chain_append(log: Path, record: dict) -> dict:
 
 
 def verify_chain(log: Path) -> dict:
-    """{"entries", "problems": [...], "head"}: every line's mac and its link to the line before.
+    """{"entries", "problems": [...], "head"}: every line's mac and its link to the line before, across rotated parts.
 
     Lines at the start of a log written before it was chained are counted as "unsealed_before_chain". They are
     accepted only when the first sealed line recorded that many lines with the same SHA-256, or when no line
@@ -167,34 +192,36 @@ def verify_chain(log: Path) -> dict:
     problems: list[str] = []
     entries, previous = 0, ""
     legacy, legacy_digest = 0, hashlib.sha256()
-    if not log.exists():
+    parts = _segments(log)
+    if not parts:
         return {"entries": 0, "problems": [], "head": ""}
     key = _key()
-    with open(log, "rb") as handle:
-        for number, raw in enumerate(handle, 1):
-            try:
-                entry = json.loads(raw)
-            except ValueError:
-                entry = None
-            mac = entry.pop("mac", None) if isinstance(entry, dict) else None
-            if mac is None:
-                if entries == 0:
-                    legacy += 1
-                    legacy_digest.update(raw.rstrip(b"\r\n") + b"\n")
-                elif entry is None:
-                    problems.append(f"{log.name} line {number} is not a record (cut short or edited)")
-                    previous = ""
-                else:
-                    problems.append(f"{log.name} line {number} has no seal")
-                continue
-            if entries == 0 and legacy and (entry.get("legacy_lines") != legacy or entry.get("legacy_sha256") != legacy_digest.hexdigest()):
-                problems.append(f"{log.name}: the {legacy} line(s) before line {number} are not the unsealed lines its first seal recorded (lines were edited, added or stripped of their seals)")
-            entries += 1
-            if not hmac.compare_digest(mac, _mac(key, entry)):
-                problems.append(f"{log.name} line {number} was changed after it was written (its seal does not match)")
-            elif entry.get("prev", "") != previous:
-                problems.append(f"{log.name} line {number} does not follow the line before it (a line was removed, inserted or moved)")
-            previous = mac
+    for part in parts:
+        with open(part, "rb") as handle:
+            for number, raw in enumerate(handle, 1):
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    entry = None
+                mac = entry.pop("mac", None) if isinstance(entry, dict) else None
+                if mac is None:
+                    if entries == 0:
+                        legacy += 1
+                        legacy_digest.update(raw.rstrip(b"\r\n") + b"\n")
+                    elif entry is None:
+                        problems.append(f"{part.name} line {number} is not a record (cut short or edited)")
+                        previous = ""
+                    else:
+                        problems.append(f"{part.name} line {number} has no seal")
+                    continue
+                if entries == 0 and legacy and (entry.get("legacy_lines") != legacy or entry.get("legacy_sha256") != legacy_digest.hexdigest()):
+                    problems.append(f"{part.name}: the {legacy} line(s) before line {number} are not the unsealed lines its first seal recorded (lines were edited, added or stripped of their seals)")
+                entries += 1
+                if not hmac.compare_digest(mac, _mac(key, entry)):
+                    problems.append(f"{part.name} line {number} was changed after it was written (its seal does not match)")
+                elif entry.get("prev", "") != previous:
+                    problems.append(f"{part.name} line {number} does not follow the line before it (a line was removed, inserted or moved)")
+                previous = mac
     report = {"entries": entries, "problems": problems, "head": previous}
     if legacy:
         report["unsealed_before_chain"] = legacy
@@ -215,7 +242,7 @@ def seal(path: str | Path, key: str = "", writer: str = "") -> dict:
     return chain_append(manifest_path(), {
         "path": str(resolved), "key": key or str(path), "sha256": digest, "size": size,
         "writer": writer[:120], "at": time.time(),
-    })
+    }, settings.get().log_rotate_bytes)
 
 
 def seal_log(path: str | Path, key: str = "", writer: str = "") -> dict:
@@ -234,30 +261,74 @@ def seal_log(path: str | Path, key: str = "", writer: str = "") -> dict:
     return chain_append(manifest_path(), {
         "path": str(resolved), "key": key or str(path), "sha256": hashlib.sha256(data[:size]).hexdigest(), "size": size,
         "lines": data[:size].count(b"\n"),"writer": writer[:120], "at": time.time(),
-    })
+    }, settings.get().log_rotate_bytes)
+
+
+def _take(entries: dict[str, dict], lines: bytes) -> None:
+    """Add the manifest entries in ``lines`` (complete lines) to ``entries``; a later entry for a path replaces an earlier one."""
+    for line in lines.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
+            entries[entry["path"]] = entry
+
+
+def _read_all(log: Path) -> _Indexed:
+    entries: dict[str, dict] = {}
+    done = _Indexed(entries)
+    for part in rotated_paths(log):
+        _take(entries, part.read_bytes())
+    if log.exists():
+        with open(log, "rb") as handle:
+            stat = os.fstat(handle.fileno())
+            data = handle.read()
+        done.ino, done.mtime_ns = stat.st_ino, stat.st_mtime_ns
+        done.offset = data.rfind(b"\n") + 1
+        done.tail = data[max(0, done.offset - TAIL_BYTES): done.offset]
+        _take(entries, data[: done.offset])
+    return done
+
+
+def _read_new(log: Path, seen: _Indexed, stat: os.stat_result) -> bool:
+    """Add the lines appended since ``seen`` was read; False when the file is not ``seen`` with lines added."""
+    with open(log, "rb") as handle:
+        handle.seek(max(0, seen.offset - len(seen.tail)))
+        if handle.read(len(seen.tail)) != seen.tail:
+            return False
+        data = handle.read()
+    end = data.rfind(b"\n") + 1
+    seen.ino = stat.st_ino
+    if end:
+        _take(seen.entries, data[:end])
+        seen.tail = (seen.tail + data[:end])[-TAIL_BYTES:]
+        seen.offset += end
+    seen.mtime_ns = stat.st_mtime_ns
+    return True
 
 
 def _index() -> dict[str, dict]:
-    """The latest manifest entry per resolved path, re-read only when the manifest has changed."""
+    """The latest manifest entry per resolved path. Only lines appended since the last call are read; the whole
+    manifest (all its rotated parts) is read again only when the file was rotated, shortened or rewritten."""
     log = manifest_path()
-    if not log.exists():
-        return {}
-    stat = log.stat()
-    stamp = (stat.st_size, stat.st_mtime)
-    cached = _index_cache.get(str(log))
-    if cached and cached[0] == stamp:
-        return cached[1]
-    index: dict[str, dict] = {}
-    with open(log, encoding="utf-8") as handle:
-        for line in handle:
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(entry, dict) and isinstance(entry.get("path"), str):
-                index[entry["path"]] = entry
-    _index_cache[str(log)] = (stamp, index)
-    return index
+    with _index_lock:
+        seen = _index_cache.get(str(log))
+        try:
+            stat = log.stat()
+        except OSError:  # no manifest, or the moment between a rotation and the next line
+            if seen is None or not rotated_paths(log):
+                seen = _read_all(log)
+                _index_cache[str(log)] = seen
+            return seen.entries
+        if seen is not None and seen.ino in (stat.st_ino, 0):  # 0: the manifest did not exist when last read
+            if stat.st_size == seen.offset and stat.st_mtime_ns == seen.mtime_ns:
+                return seen.entries
+            if stat.st_size >= seen.offset and _read_new(log, seen, stat):
+                return seen.entries
+        seen = _read_all(log)
+        _index_cache[str(log)] = seen
+        return seen.entries
 
 
 def check_file(path: str | Path) -> dict | None:
@@ -292,7 +363,7 @@ def verify(paths: list[str] | None = None, logs: tuple[Path, ...] = ()) -> dict:
         heads[str(log)] = checked["head"]
         if checked.get("unsealed_before_chain"):
             before_chain[str(log)] = checked["unsealed_before_chain"]
-    index = _index()
+    index = dict(_index())  # a copy: another thread may add entries while the files are checked
     wanted = index if paths is None else {str(Path(p).resolve()): index.get(str(Path(p).resolve())) for p in paths}
     changed, missing, unsealed = [], [], []
     for resolved, entry in wanted.items():

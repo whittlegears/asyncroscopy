@@ -62,7 +62,7 @@ with instrument_context(devices):
 
 `class_name` (here `AFMTwin`) names the tools; the job device, for a file with `jobs:`, is a class of its own named `AFMTwinJob` (tools such as `AFMTwinJob_reserve`). For the stack itself, copy `configs/yaml_sim_raman.yaml` with its two MCP configs (`configs/mcp_raman.yaml`, `configs/mcp_raman_operator.yaml`): they run beside the twin on their own ports and need no analysis server.
 
-Values in `sets`, `returns`, `requires`, `duration_s` and an acquisition's numbers may be expressions over the settings and the command's input: arithmetic, comparisons, `and`/`or`/`not`, `x if c else y`, and `abs`, `min`, `max`, `sqrt`, `exp`, `log`, `sin`, `cos`, `radians`, `degrees`. The full format is in the docstring of `asyncroscopy/instruments/yaml_sim/spec.py`. Unknown keys, impossible bounds and expressions naming unknown settings are refused when the file is loaded. Check a file before starting it:
+Values in `sets`, `returns`, `requires`, `duration_s` and an acquisition's numbers may be expressions over the settings and the command's input: arithmetic, comparisons, `and`/`or`/`not`, `x if c else y`, and `abs`, `min`, `max`, `sqrt`, `exp`, `log`, `sin`, `cos`, `radians`, `degrees`. The full format is in the docstring of `asyncroscopy/instruments/yaml_sim/spec/__init__.py`. Unknown keys, impossible bounds and expressions naming unknown settings are refused when the file is loaded. Check a file before starting it:
 
 ```bash
 uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml

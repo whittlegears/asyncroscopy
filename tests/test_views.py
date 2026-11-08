@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 from asyncroscopy.data import views
+from asyncroscopy.data.kinds import eds
 from asyncroscopy.data.views import Axis, ViewOptions, line_kind, register_kind
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -142,23 +143,23 @@ def test_the_detector_windows_continuum_rise_is_not_read_as_oxygen_but_real_line
 
     energies, counts, _live = point_spectrum({"C": 10.0}, 100.0, 3.0, EdsParams(), np.random.default_rng(6))
     axis = Axis(float(energies[0]), float(energies[1] - energies[0]), "Energy", "eV")
-    rows = views.line_peaks(energies, counts, axis, True)
-    named = set().union(*(views.note_elements(row[4]) for row in rows))
+    rows = eds.line_peaks(energies, counts, axis)
+    named = set().union(*(eds.note_elements(row[4]) for row in rows))
     assert "C" in named and not named & {"O", "F"}
-    assert any(row[4] == views.WINDOW_RISE_NOTE for row in rows)
+    assert any(row[4] == eds.WINDOW_RISE_NOTE for row in rows)
 
     # A spectrum whose only peak is the rise says no element was found (qwen once read the data rows as peaks).
     attrs = {"energy_offset_ev": float(energies[0]), "energy_dispersion_ev": float(energies[1] - energies[0]), "detector": "eds"}
     rise_only = counts.copy()
     rise_only[energies < 400.0] = np.random.default_rng(2).poisson(2.0, int((energies < 400.0).sum()))
-    assert [row[4] for row in views.line_peaks(energies, rise_only, axis, True)] == [views.WINDOW_RISE_NOTE]
+    assert [row[4] for row in eds.line_peaks(energies, rise_only, axis)] == [eds.WINDOW_RISE_NOTE]
     text = views.view(Recorded(counts.shape, attrs, values=rise_only), "rise.h5", "text")[0]["text"]
     assert "no X-ray line of any element detected" in text and "consistent with these peaks" not in text
 
-    oxygen = counts + np.random.default_rng(1).poisson(900.0 * np.exp(-0.5 * ((energies - 525.0) / (views.eds_fwhm_ev(525.0) / 2.355)) ** 2) / 5.0)
-    rows = views.line_peaks(energies, oxygen, axis, True)
-    assert "O" in set().union(*(views.note_elements(row[4]) for row in rows))
-    assert not any(row[4] == views.WINDOW_RISE_NOTE for row in rows)
+    oxygen = counts + np.random.default_rng(1).poisson(900.0 * np.exp(-0.5 * ((energies - 525.0) / (eds.eds_fwhm_ev(525.0) / 2.355)) ** 2) / 5.0)
+    rows = eds.line_peaks(energies, oxygen, axis)
+    assert "O" in set().union(*(eds.note_elements(row[4]) for row in rows))
+    assert not any(row[4] == eds.WINDOW_RISE_NOTE for row in rows)
 
 
 def test_spectrum_csv_is_binned_by_summing_and_capped():
@@ -271,7 +272,7 @@ def test_noise_has_no_peaks_and_a_real_peak_on_noise_is_found():
     rng = np.random.default_rng(1)
     attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
     energy = np.arange(2048) * 10.0
-    eds_width = views.eds_fwhm_ev(energy) / 10.0
+    eds_width = eds.eds_fwhm_ev(energy) / 10.0
     false_peaks = 0
     for seed in range(20):
         for mean in (2.0, 200.0):
@@ -287,8 +288,8 @@ def test_noise_has_no_peaks_and_a_real_peak_on_noise_is_found():
 
 def test_a_weak_peak_is_found_from_its_summed_counts():
     energy = np.arange(2048) * 10.0
-    width = views.eds_fwhm_ev(energy) / 10.0
-    sigma_ch = float(views.eds_fwhm_ev(8040.0)) / 2.355 / 10.0
+    width = eds.eds_fwhm_ev(energy) / 10.0
+    sigma_ch = float(eds.eds_fwhm_ev(8040.0)) / 2.355 / 10.0
     line = np.exp(-0.5 * ((np.arange(2048) - 804) / sigma_ch) ** 2) / (sigma_ch * np.sqrt(2 * np.pi))
     for net_counts, needed in ((80.0, 20), (60.0, 14)):  # on 2 counts per channel; one channel never stands 5 sigma out
         found = 0
@@ -436,13 +437,13 @@ def test_data_taken_with_the_beam_blanked_says_so_instead_of_asking_for_a_longer
 def test_likely_elements_rank_the_elements_that_explain_the_most_peak_signal():
     rows = [(9702, 2127, 34.25, 0, "Au L3-M5, W L2-M4, Ta L3-N5"), (11500, 980, 33.96, 0, "Au L2-M4, Au L3-N5"),
             (2134, 173, 12.83, 0, "Pt M4-N6, Zr L2-M4, Au M5-N7"), (590, 105, 8.15, 0, "Cr L2-M4, Ba M5-N3")]
-    assert views.likely_elements(rows).startswith("Au ")
-    assert views.likely_elements([]) == "" and views.likely_elements([(500, 10, 5.0, 0, "")]) == ""
-    assert views.likely_elements([(300, 30, 6.0, 0, "Ca L3-M1, Ag L3-M5")]) == "Ag 50%, Ca 50%"
+    assert eds.likely_elements(rows).startswith("Au ")
+    assert eds.likely_elements([]) == "" and eds.likely_elements([(500, 10, 5.0, 0, "")]) == ""
+    assert eds.likely_elements([(300, 30, 6.0, 0, "Ca L3-M1, Ag L3-M5")]) == "Ag 50%, Ca 50%"
     palladium = [(2838, 90, 9.0, 0, "Pd L3-M5, Pd L3-M4"), (2990, 40, 4.0, 0, "Pd L2-M4"), (3172, 30, 3.0, 0, "Cd L3-M5, Pd L2-N4"),
                  (3290, 20, 2.0, 0, "In L3-M5, Pd L1-M3")]
-    assert views.likely_elements(palladium) == "Pd 100%"
-    assert views.likely_elements(palladium + [(4651, 30, 5.0, 0, "La L3-M5")]) == "Pd 78%, La 22%"
+    assert eds.likely_elements(palladium) == "Pd 100%"
+    assert eds.likely_elements(palladium + [(4651, 30, 5.0, 0, "La L3-M5")]) == "Pd 78%, La 22%"
     attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
     signal = np.random.default_rng(2).poisson(gaussian_spectrum([6404.0])).astype(np.float64)
     summary, _ = views.view(Recorded((2048,), attrs, values=signal), "fe.h5", "text")

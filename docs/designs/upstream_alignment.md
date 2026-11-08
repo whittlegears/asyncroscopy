@@ -73,7 +73,7 @@ asyncroscopy/
     nano_indenter/            NanoIndenter base + simulated subclass
     yaml_sim/
   jobs/
-    job_device.py             the job envelope base (reserve/start/status/abort/results)
+    job_device/               the job envelope base (reserve/start/status/abort/results)
     recording_proxy.py
     mapping/                  mapper.py, plan.py, run_file.py, pipeline.py, profile.py (InstrumentProfile + MapContext), live_drift.py
     tuning/                   tuner.py + strategies

@@ -28,7 +28,6 @@ import asyncio
 import importlib
 import inspect
 import json
-import os
 import re
 import subprocess
 import sys
@@ -50,10 +49,11 @@ from _common import (
 )
 from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
+from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
-from asyncroscopy.evaluate import RunData
-from asyncroscopy.evaluate import score_run as evaluator_scores
+from benchmarks.evaluate import RunData
+from benchmarks.evaluate import score_run as evaluator_scores
 
 if TYPE_CHECKING:
     from langchain_core.messages import BaseMessage
@@ -88,7 +88,7 @@ TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner + specialists + repor
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
-# Evaluators (asyncroscopy.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
+# Evaluators (benchmarks.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
 # The default reads no data; information, resolution and dose read the run's images from Tiled (set by --evaluators).
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
@@ -478,6 +478,7 @@ def _floats(text: str | None) -> list[float] | None:
 def data_truth(keys: list[str]) -> dict:
     """Peaks and candidate elements of each 1-D dataset among ``keys``, read with the data layer."""
     from asyncroscopy.data import tiled_client, views
+    from asyncroscopy.data.kinds import eds
 
     uri = STACK["tiled"]
     spectra, strongest = {}, None
@@ -495,16 +496,16 @@ def data_truth(keys: list[str]) -> dict:
             continue
         line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
         positions = line_axis.offset + line_axis.scale * np.arange(len(values), dtype=np.float64)
-        xray = line_axis.units == "eV" and views.is_xray(ds)
+        xray = line_axis.units == "eV" and eds.is_xray(ds)
         # view_data's own peak function (same widths, same strongest-first order), so truth and what the agent read agree.
-        rows = views.line_peaks(positions, values, line_axis, xray)
+        rows = eds.line_peaks(positions, values, line_axis) if xray else views.line_peaks(positions, values, line_axis)
         strongest = rows[0][0] if rows else float(positions[int(np.argmax(values))])
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
             entry["peaks_ev"] = [round(row[0], 1) for row in rows]
-            likely = views.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
+            likely = eds.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
             entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
-            entry["could_be"] = sorted({el for row in rows for el in views.note_elements(row[4])})
+            entry["could_be"] = sorted({el for row in rows for el in eds.note_elements(row[4])})
         spectra[key] = entry
     errors = {k: v["error"] for k, v in spectra.items() if "error" in v}
     return {"spectra": {k: v for k, v in spectra.items() if "error" not in v}, "spectrum_errors": errors, "strongest_peak": strongest}
@@ -871,9 +872,10 @@ async def main(args: argparse.Namespace) -> int:
         return 2
     STACK.update(stacks[args.stack])
     # Environment overrides win over the stack file (configs/mcp_*_operator.yaml comments use them).
-    for field, variable in (("operator", "ASYNCROSCOPY_OPERATOR_URL"), ("tiled", "ASYNCROSCOPY_TILED_URI")):
-        if os.environ.get(variable):
-            STACK[field] = os.environ[variable]
+    env = settings.get()
+    for field, value in (("operator", env.operator_url), ("tiled", env.tiled_uri)):
+        if value:
+            STACK[field] = value
     on_stack = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack]
     unknown = sorted(set(args.only or ()) - {wf["name"] for wf in on_stack})
     if unknown:
@@ -893,7 +895,7 @@ async def main(args: argparse.Namespace) -> int:
         print(f"{len(workflows)} workflows on stack {args.stack}; runners here: {sorted(available)}")
         return 0
     config = AgentConfig.from_env(model=args.model, caller="workflows")
-    if not os.environ.get("ASYNCROSCOPY_MCP_URL"):
+    if not env.mcp_url:
         config.mcp_url = STACK["mcp"]
     live = Live(config)
     await live.discover()
@@ -946,11 +948,11 @@ if __name__ == "__main__":
     parser.add_argument("--stack", default="twin", help="Which stack is running: a name from benchmarks/stacks.yaml (twin, large, xrd) or a workflow file's stacks:.")
     parser.add_argument("--graph", default=None, help="An extra runner: module:function returning a chat graph, run as 'custom'.")
     parser.add_argument("--n", type=int, default=1, help="Runs per workflow and runner.")
-    parser.add_argument("--model", default=os.environ.get("ASYNCROSCOPY_MODEL", "qwen3:8b"))
+    parser.add_argument("--model", default=settings.get().model or "qwen3:8b")
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")
     parser.add_argument("--evaluators", default=",".join(EVALUATORS),
-                        help="asyncroscopy.evaluate evaluators scored on each run's trace (extra columns, never pass/fail); "
+                        help="benchmarks.evaluate evaluators scored on each run's trace (extra columns, never pass/fail); "
                         "information, resolution and dose read the run's images from Tiled.")
     parser.add_argument("--score-columns", default=",".join(SCORE_COLUMNS), help="evaluator.objective medians added to the Markdown table.")
     sys.exit(asyncio.run(main(parser.parse_args())))

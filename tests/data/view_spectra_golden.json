@@ -1,0 +1,522 @@
+{
+ "composition": {
+  "png": {
+   "dataset": "",
+   "dtype": "float64",
+   "key": "composition",
+   "kind": "composition",
+   "read": "read [0:3]",
+   "shape": [
+    3
+   ],
+   "text": "composition: composition, shape [3], float64\nread [0:3]\nFe: 0.61\nCr: 0.27\nNi: 0.12"
+  },
+  "summarize": {
+   "dataset": "",
+   "dtype": "float64",
+   "key": "composition",
+   "kind": "composition",
+   "shape": [
+    3
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "float64",
+   "key": "composition",
+   "kind": "composition",
+   "read": "read [0:3]",
+   "shape": [
+    3
+   ],
+   "text": "composition: composition, shape [3], float64\nread [0:3]\nFe: 0.61\nCr: 0.27\nNi: 0.12"
+  }
+ },
+ "eds_carbon_on_the_rise": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_carbon_on_the_rise",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_carbon_on_the_rise: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 1.445e+04; min 0, max 336, mean 7.054, std 19.27, p1 0, median 2, p99 82.53\nelements most consistent with these peaks (the share of the peak signal each one explains): C 68%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n290,1259,35.09,\"C K-L2\"\n600,309.6,16.15,\"possible sum peak (2 x 290 eV)\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_carbon_on_the_rise",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_carbon_on_the_rise",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_carbon_on_the_rise: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 1.445e+04; min 0, max 336, mean 7.054, std 19.27, p1 0, median 2, p99 82.53\nelements most consistent with these peaks (the share of the peak signal each one explains): C 68%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n290,1259,35.09,\"C K-L2\"\n600,309.6,16.15,\"possible sum peak (2 x 290 eV)\"\ndata (sums of 11 channels):\nenergy eV,value\n50,298\n160,279\n270,2059\n380,611\n490,799\n600,915\n710,822\n820,521\n930,331\n1040,249\n1150,206\n1260,225\n1370,224\n1480,185\n1590,190\n1700,164\n1810,181\n1920,165\n2030,136\n2140,146\n2250,176\n2360,155\n2470,135\n2580,143\n2690,130\n2800,142\n2910,133\n3020,135\n3130,135\n3240,120\n3350,125\n3460,126\n3570,95\n3680,112\n3790,81\n3900,97\n4010,85\n4120,92\n4230,100\n4340,103\n4450,77\n4560,82\n4670,86\n4780,88\n4890,91\n5000,86\n5110,85\n5220,69\n5330,73\n5440,71\n5550,73\n5660,76\n5770,80\n5880,59\n5990,56\n6100,55\n6210,71\n6320,61\n6430,49\n6540,40\n6650,48\n6760,45\n6870,52\n6980,44\n7090,50\n7200,47\n7310,40\n7420,38\n7530,43\n7640,39\n7750,42\n7860,36\n7970,24\n8080,44\n8190,49\n8300,39\n8410,31\n8520,28\n8630,27\n8740,21\n8850,31\n8960,32\n9070,29\n9180,30\n9290,26\n9400,20\n9510,23\n9620,34\n9730,27\n9840,20\n9950,26\n1.006e+04,29\n1.017e+04,23\n1.028e+04,18\n1.039e+04,16\n1.05e+04,27\n1.061e+04,23\n1.072e+04,19\n1.083e+04,11\n1.094e+04,19\n1.105e+04,13\n1.116e+04,16\n1.127e+04,16\n1.138e+04,14\n1.149e+04,18\n1.16e+04,12\n1.171e+04,13\n1.182e+04,19\n1.193e+04,13\n1.204e+04,16\n1.215e+04,9\n1.226e+04,11\n1.237e+04,13\n1.248e+04,11\n1.259e+04,11\n1.27e+04,19\n1.281e+04,23\n1.292e+04,6\n1.303e+04,7\n1.314e+04,8\n1.325e+04,16\n1.336e+04,11\n1.347e+04,16\n1.358e+04,8\n1.369e+04,10\n1.38e+04,14\n1.391e+04,6\n1.402e+04,7\n1.413e+04,5\n1.424e+04,12\n1.435e+04,7\n1.446e+04,7\n1.457e+04,6\n1.468e+04,10\n1.479e+04,8\n1.49e+04,10\n1.501e+04,3\n1.512e+04,6\n1.523e+04,9\n1.534e+04,2\n1.545e+04,7\n1.556e+04,5\n1.567e+04,8\n1.578e+04,10\n1.589e+04,10\n1.6e+04,8\n1.611e+04,8\n1.622e+04,6\n1.633e+04,3\n1.644e+04,5\n1.655e+04,5\n1.666e+04,6\n1.677e+04,6\n1.688e+04,5\n1.699e+04,8\n1.71e+04,2\n1.721e+04,3\n1.732e+04,6\n1.743e+04,5\n1.754e+04,2\n1.765e+04,3\n1.776e+04,5\n1.787e+04,3\n1.798e+04,3\n1.809e+04,1\n1.82e+04,5\n1.831e+04,3\n1.842e+04,3\n1.853e+04,1\n1.864e+04,4\n1.875e+04,1\n1.886e+04,1\n1.897e+04,0\n1.908e+04,0\n1.919e+04,7\n1.93e+04,2\n1.941e+04,3\n1.952e+04,4\n1.963e+04,2\n1.974e+04,2\n1.985e+04,2\n1.996e+04,1\n2.007e+04,3\n2.018e+04,0\n2.029e+04,4\n2.04e+04,0"
+  }
+ },
+ "eds_copper_escape_and_sum": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_copper_escape_and_sum",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_copper_escape_and_sum: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 4.456e+04; min 0, max 1809, mean 21.76, std 133.5, p1 0, median 3, p99 429.4\nelements most consistent with these peaks (the share of the peak signal each one explains): Cu 51%, Tb 25%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n8050,2.185e+04,34.5,\"Cu K-L3, Cu K-L2, Tb L2-N4\"\n930,1127,35.79,\"Cu L3-M4, Cu L3-M5, Cu L2-M4\"\n6310,1079,34.5,\"Tb L2-M1, Tb L3-M5\"\n1.609e+04,969.6,33.62,\"possible sum peak (2 x 8050 eV)\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_copper_escape_and_sum",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_copper_escape_and_sum",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_copper_escape_and_sum: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 4.456e+04; min 0, max 1809, mean 21.76, std 133.5, p1 0, median 3, p99 429.4\nelements most consistent with these peaks (the share of the peak signal each one explains): Cu 51%, Tb 25%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n8050,2.185e+04,34.5,\"Cu K-L3, Cu K-L2, Tb L2-N4\"\n930,1127,35.79,\"Cu L3-M4, Cu L3-M5, Cu L2-M4\"\n6310,1079,34.5,\"Tb L2-M1, Tb L3-M5\"\n1.609e+04,969.6,33.62,\"possible sum peak (2 x 8050 eV)\"\ndata (sums of 11 channels):\nenergy eV,value\n50,319\n160,330\n270,312\n380,292\n490,273\n600,261\n710,248\n820,290\n930,1627\n1040,277\n1150,232\n1260,235\n1370,253\n1480,236\n1590,217\n1700,238\n1810,209\n1920,186\n2030,195\n2140,205\n2250,200\n2360,182\n2470,156\n2580,173\n2690,166\n2800,177\n2910,169\n3020,164\n3130,172\n3240,136\n3350,150\n3460,149\n3570,163\n3680,125\n3790,127\n3900,145\n4010,107\n4120,111\n4230,87\n4340,112\n4450,118\n4560,84\n4670,102\n4780,94\n4890,94\n5000,82\n5110,88\n5220,79\n5330,85\n5440,78\n5550,87\n5660,83\n5770,74\n5880,61\n5990,83\n6100,77\n6210,349\n6320,954\n6430,210\n6540,66\n6650,50\n6760,56\n6870,58\n6980,58\n7090,66\n7200,65\n7310,56\n7420,47\n7530,55\n7640,57\n7750,44\n7860,604\n7970,1.019e+04\n8080,1.573e+04\n8190,2249\n8300,71\n8410,41\n8520,34\n8630,36\n8740,31\n8850,44\n8960,37\n9070,48\n9180,27\n9290,37\n9400,30\n9510,28\n9620,32\n9730,38\n9840,33\n9950,29\n1.006e+04,30\n1.017e+04,33\n1.028e+04,17\n1.039e+04,32\n1.05e+04,23\n1.061e+04,25\n1.072e+04,25\n1.083e+04,23\n1.094e+04,16\n1.105e+04,24\n1.116e+04,14\n1.127e+04,18\n1.138e+04,19\n1.149e+04,22\n1.16e+04,29\n1.171e+04,11\n1.182e+04,18\n1.193e+04,14\n1.204e+04,11\n1.215e+04,24\n1.226e+04,21\n1.237e+04,16\n1.248e+04,10\n1.259e+04,11\n1.27e+04,13\n1.281e+04,12\n1.292e+04,18\n1.303e+04,9\n1.314e+04,13\n1.325e+04,12\n1.336e+04,16\n1.347e+04,11\n1.358e+04,9\n1.369e+04,15\n1.38e+04,12\n1.391e+04,16\n1.402e+04,11\n1.413e+04,9\n1.424e+04,11\n1.435e+04,10\n1.446e+04,11\n1.457e+04,3\n1.468e+04,11\n1.479e+04,14\n1.49e+04,11\n1.501e+04,8\n1.512e+04,6\n1.523e+04,10\n1.534e+04,6\n1.545e+04,4\n1.556e+04,2\n1.567e+04,5\n1.578e+04,4\n1.589e+04,66\n1.6e+04,386\n1.611e+04,569\n1.622e+04,261\n1.633e+04,28\n1.644e+04,6\n1.655e+04,4\n1.666e+04,3\n1.677e+04,4\n1.688e+04,10\n1.699e+04,5\n1.71e+04,7\n1.721e+04,3\n1.732e+04,7\n1.743e+04,7\n1.754e+04,4\n1.765e+04,4\n1.776e+04,2\n1.787e+04,4\n1.798e+04,1\n1.809e+04,3\n1.82e+04,4\n1.831e+04,4\n1.842e+04,3\n1.853e+04,1\n1.864e+04,5\n1.875e+04,2\n1.886e+04,1\n1.897e+04,4\n1.908e+04,4\n1.919e+04,2\n1.93e+04,4\n1.941e+04,0\n1.952e+04,7\n1.963e+04,3\n1.974e+04,2\n1.985e+04,1\n1.996e+04,1\n2.007e+04,4\n2.018e+04,1\n2.029e+04,3\n2.04e+04,5"
+  }
+ },
+ "eds_cropped": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_cropped",
+   "kind": "spectrum",
+   "read": "read [500:801]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_cropped: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [500:801]\n2048 channels; energy 5000 to 8000 eV (10 eV per value shown)\ntotal 2.368e+04; min 3, max 1242, mean 78.65, std 214.1, p1 4, median 15, p99 1130\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n6410,1.389e+04,34,\"Fe K-L3, Fe K-L2\"\n7060,1881,34,\"Fe K-M2, Fe K-M3\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_cropped",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_cropped",
+   "kind": "spectrum",
+   "read": "read [500:801]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_cropped: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [500:801]\n2048 channels; energy 5000 to 8000 eV (10 eV per value shown)\ntotal 2.368e+04; min 3, max 1242, mean 78.65, std 214.1, p1 4, median 15, p99 1130\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n6410,1.389e+04,34,\"Fe K-L3, Fe K-L2\"\n7060,1881,34,\"Fe K-M2, Fe K-M3\"\ndata (sums of 2 channels):\nenergy eV,value\n5005,32\n5025,24\n5045,48\n5065,45\n5085,39\n5105,39\n5125,27\n5145,28\n5165,30\n5185,34\n5205,28\n5225,37\n5245,36\n5265,32\n5285,38\n5305,40\n5325,36\n5345,18\n5365,29\n5385,43\n5405,26\n5425,26\n5445,30\n5465,29\n5485,34\n5505,29\n5525,31\n5545,50\n5565,32\n5585,30\n5605,32\n5625,29\n5645,19\n5665,27\n5685,30\n5705,42\n5725,39\n5745,27\n5765,35\n5785,28\n5805,26\n5825,37\n5845,33\n5865,26\n5885,32\n5905,18\n5925,17\n5945,21\n5965,28\n5985,30\n6005,32\n6025,26\n6045,24\n6065,25\n6085,24\n6105,33\n6125,28\n6145,16\n6165,30\n6185,28\n6205,38\n6225,46\n6245,97\n6265,161\n6285,303\n6305,557\n6325,968\n6345,1381\n6365,1874\n6385,2294\n6405,2470\n6425,2253\n6445,1976\n6465,1380\n6485,948\n6505,571\n6525,291\n6545,129\n6565,67\n6585,46\n6605,36\n6625,43\n6645,27\n6665,15\n6685,28\n6705,34\n6725,26\n6745,18\n6765,18\n6785,17\n6805,15\n6825,15\n6845,18\n6865,26\n6885,27\n6905,41\n6925,61\n6945,73\n6965,132\n6985,197\n7005,251\n7025,299\n7045,362\n7065,358\n7085,326\n7105,260\n7125,190\n7145,155\n7165,86\n7185,52\n7205,39\n7225,34\n7245,37\n7265,18\n7285,11\n7305,14\n7325,18\n7345,16\n7365,20\n7385,23\n7405,19\n7425,17\n7445,27\n7465,17\n7485,24\n7505,21\n7525,12\n7545,22\n7565,17\n7585,20\n7605,21\n7625,14\n7645,15\n7665,19\n7685,22\n7705,17\n7725,13\n7745,20\n7765,24\n7785,16\n7805,15\n7825,11\n7845,17\n7865,15\n7885,18\n7905,26\n7925,13\n7945,14\n7965,14\n7985,20"
+  }
+ },
+ "eds_gold": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_gold",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_gold: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 3.041e+04; min 0, max 951, mean 14.85, std 56.32, p1 0, median 4, p99 197.5\nelements most consistent with these peaks (the share of the peak signal each one explains): Au 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n2120,6492,35.45,\"Au M5-N6, Au M5-N7\"\n9710,3201,34.2,\"Au L3-M5\"\n1.144e+04,1604,33.91,\"Au L2-M4\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_gold",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_gold",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_gold: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 3.041e+04; min 0, max 951, mean 14.85, std 56.32, p1 0, median 4, p99 197.5\nelements most consistent with these peaks (the share of the peak signal each one explains): Au 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n2120,6492,35.45,\"Au M5-N6, Au M5-N7\"\n9710,3201,34.2,\"Au L3-M5\"\n1.144e+04,1604,33.91,\"Au L2-M4\"\ndata (sums of 11 channels):\nenergy eV,value\n50,425\n160,427\n270,425\n380,413\n490,393\n600,378\n710,362\n820,347\n930,344\n1040,328\n1150,317\n1260,329\n1370,311\n1480,299\n1590,293\n1700,292\n1810,265\n1920,269\n2030,1625\n2140,6983\n2250,416\n2360,243\n2470,263\n2580,229\n2690,227\n2800,200\n2910,216\n3020,216\n3130,227\n3240,200\n3350,218\n3460,164\n3570,175\n3680,167\n3790,176\n3900,171\n4010,157\n4120,152\n4230,139\n4340,159\n4450,154\n4560,130\n4670,136\n4780,127\n4890,131\n5000,124\n5110,140\n5220,127\n5330,106\n5440,114\n5550,130\n5660,106\n5770,98\n5880,102\n5990,92\n6100,104\n6210,85\n6320,89\n6430,88\n6540,66\n6650,80\n6760,69\n6870,79\n6980,82\n7090,64\n7200,74\n7310,67\n7420,60\n7530,74\n7640,76\n7750,68\n7860,65\n7970,52\n8080,68\n8190,54\n8300,51\n8410,51\n8520,53\n8630,52\n8740,45\n8850,56\n8960,44\n9070,52\n9180,44\n9290,33\n9400,48\n9510,117\n9620,1193\n9730,2319\n9840,653\n9950,61\n1.006e+04,31\n1.017e+04,53\n1.028e+04,28\n1.039e+04,41\n1.05e+04,23\n1.061e+04,30\n1.072e+04,31\n1.083e+04,32\n1.094e+04,24\n1.105e+04,26\n1.116e+04,26\n1.127e+04,152\n1.138e+04,897\n1.149e+04,910\n1.16e+04,191\n1.171e+04,29\n1.182e+04,18\n1.193e+04,29\n1.204e+04,21\n1.215e+04,33\n1.226e+04,29\n1.237e+04,26\n1.248e+04,19\n1.259e+04,17\n1.27e+04,20\n1.281e+04,18\n1.292e+04,13\n1.303e+04,24\n1.314e+04,18\n1.325e+04,23\n1.336e+04,22\n1.347e+04,14\n1.358e+04,15\n1.369e+04,24\n1.38e+04,15\n1.391e+04,10\n1.402e+04,18\n1.413e+04,9\n1.424e+04,10\n1.435e+04,18\n1.446e+04,10\n1.457e+04,6\n1.468e+04,12\n1.479e+04,17\n1.49e+04,9\n1.501e+04,11\n1.512e+04,11\n1.523e+04,10\n1.534e+04,10\n1.545e+04,7\n1.556e+04,7\n1.567e+04,8\n1.578e+04,6\n1.589e+04,7\n1.6e+04,5\n1.611e+04,8\n1.622e+04,5\n1.633e+04,10\n1.644e+04,4\n1.655e+04,5\n1.666e+04,9\n1.677e+04,7\n1.688e+04,4\n1.699e+04,7\n1.71e+04,6\n1.721e+04,9\n1.732e+04,5\n1.743e+04,13\n1.754e+04,7\n1.765e+04,7\n1.776e+04,4\n1.787e+04,3\n1.798e+04,2\n1.809e+04,3\n1.82e+04,7\n1.831e+04,1\n1.842e+04,9\n1.853e+04,7\n1.864e+04,2\n1.875e+04,2\n1.886e+04,3\n1.897e+04,4\n1.908e+04,3\n1.919e+04,6\n1.93e+04,3\n1.941e+04,1\n1.952e+04,1\n1.963e+04,4\n1.974e+04,5\n1.985e+04,2\n1.996e+04,3\n2.007e+04,1\n2.018e+04,3\n2.029e+04,4\n2.04e+04,2"
+  }
+ },
+ "eds_iron": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_iron",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_iron: spectrum, shape [2048], uint32\nacquisition_type: spectrum\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 4.431e+04; min 0, max 1266, mean 21.64, std 85.83, p1 0, median 5, p99 226.7\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n6400,1.371e+04,34.5,\"Fe K-L3, Fe K-L2\"\n7060,1940,34.5,\"Fe K-M2, Fe K-M3\"\n710,623.2,26.24,\"Fe L3-M4, Fe L3-M5, Fe L2-M4\""
+  },
+  "summarize": {
+   "acquisition_type": "spectrum",
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_iron",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_iron",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_iron: spectrum, shape [2048], uint32\nacquisition_type: spectrum\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 4.431e+04; min 0, max 1266, mean 21.64, std 85.83, p1 0, median 5, p99 226.7\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n6400,1.371e+04,34.5,\"Fe K-L3, Fe K-L2\"\n7060,1940,34.5,\"Fe K-M2, Fe K-M3\"\n710,623.2,26.24,\"Fe L3-M4, Fe L3-M5, Fe L2-M4\"\ndata (sums of 11 channels):\nenergy eV,value\n50,679\n160,634\n270,621\n380,571\n490,587\n600,581\n710,1281\n820,553\n930,513\n1040,513\n1150,497\n1260,511\n1370,438\n1480,459\n1590,429\n1700,394\n1810,442\n1920,413\n2030,405\n2140,430\n2250,364\n2360,385\n2470,367\n2580,339\n2690,345\n2800,330\n2910,310\n3020,325\n3130,303\n3240,297\n3350,303\n3460,283\n3570,261\n3680,270\n3790,266\n3900,228\n4010,225\n4120,226\n4230,245\n4340,252\n4450,215\n4560,201\n4670,195\n4780,203\n4890,209\n5000,188\n5110,191\n5220,169\n5330,201\n5440,152\n5550,151\n5660,151\n5770,164\n5880,158\n5990,141\n6100,152\n6210,271\n6320,5210\n6430,1.068e+04\n6540,1418\n6650,145\n6760,107\n6870,156\n6980,993\n7090,1569\n7200,306\n7310,103\n7420,110\n7530,85\n7640,101\n7750,82\n7860,93\n7970,92\n8080,78\n8190,89\n8300,79\n8410,61\n8520,80\n8630,70\n8740,85\n8850,65\n8960,78\n9070,65\n9180,67\n9290,59\n9400,73\n9510,49\n9620,64\n9730,52\n9840,51\n9950,54\n1.006e+04,63\n1.017e+04,40\n1.028e+04,47\n1.039e+04,48\n1.05e+04,36\n1.061e+04,64\n1.072e+04,33\n1.083e+04,50\n1.094e+04,48\n1.105e+04,45\n1.116e+04,45\n1.127e+04,48\n1.138e+04,44\n1.149e+04,43\n1.16e+04,27\n1.171e+04,42\n1.182e+04,23\n1.193e+04,39\n1.204e+04,26\n1.215e+04,33\n1.226e+04,36\n1.237e+04,31\n1.248e+04,42\n1.259e+04,37\n1.27e+04,32\n1.281e+04,20\n1.292e+04,30\n1.303e+04,27\n1.314e+04,22\n1.325e+04,29\n1.336e+04,25\n1.347e+04,25\n1.358e+04,16\n1.369e+04,21\n1.38e+04,29\n1.391e+04,20\n1.402e+04,17\n1.413e+04,20\n1.424e+04,34\n1.435e+04,14\n1.446e+04,24\n1.457e+04,22\n1.468e+04,12\n1.479e+04,8\n1.49e+04,12\n1.501e+04,14\n1.512e+04,11\n1.523e+04,15\n1.534e+04,14\n1.545e+04,16\n1.556e+04,10\n1.567e+04,9\n1.578e+04,10\n1.589e+04,10\n1.6e+04,19\n1.611e+04,12\n1.622e+04,10\n1.633e+04,6\n1.644e+04,10\n1.655e+04,10\n1.666e+04,4\n1.677e+04,6\n1.688e+04,10\n1.699e+04,14\n1.71e+04,10\n1.721e+04,13\n1.732e+04,12\n1.743e+04,3\n1.754e+04,5\n1.765e+04,11\n1.776e+04,12\n1.787e+04,8\n1.798e+04,6\n1.809e+04,4\n1.82e+04,6\n1.831e+04,9\n1.842e+04,8\n1.853e+04,7\n1.864e+04,2\n1.875e+04,1\n1.886e+04,9\n1.897e+04,5\n1.908e+04,6\n1.919e+04,6\n1.93e+04,3\n1.941e+04,7\n1.952e+04,5\n1.963e+04,6\n1.974e+04,2\n1.985e+04,2\n1.996e+04,3\n2.007e+04,6\n2.018e+04,6\n2.029e+04,11\n2.04e+04,3"
+  }
+ },
+ "eds_no_counts": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_no_counts",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_no_counts: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 0; min 0, max 0, mean 0, std 0, p1 0, median 0, p99 0\n0 counts: no electrons reached the detector, so a longer exposure will not help. The beam was probably blanked (unblank_beam, then acquire again) or the detector retracted"
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_no_counts",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_no_counts",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_no_counts: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 0; min 0, max 0, mean 0, std 0, p1 0, median 0, p99 0\n0 counts: no electrons reached the detector, so a longer exposure will not help. The beam was probably blanked (unblank_beam, then acquire again) or the detector retracted\ndata (sums of 11 channels):\nenergy eV,value\n50,0\n160,0\n270,0\n380,0\n490,0\n600,0\n710,0\n820,0\n930,0\n1040,0\n1150,0\n1260,0\n1370,0\n1480,0\n1590,0\n1700,0\n1810,0\n1920,0\n2030,0\n2140,0\n2250,0\n2360,0\n2470,0\n2580,0\n2690,0\n2800,0\n2910,0\n3020,0\n3130,0\n3240,0\n3350,0\n3460,0\n3570,0\n3680,0\n3790,0\n3900,0\n4010,0\n4120,0\n4230,0\n4340,0\n4450,0\n4560,0\n4670,0\n4780,0\n4890,0\n5000,0\n5110,0\n5220,0\n5330,0\n5440,0\n5550,0\n5660,0\n5770,0\n5880,0\n5990,0\n6100,0\n6210,0\n6320,0\n6430,0\n6540,0\n6650,0\n6760,0\n6870,0\n6980,0\n7090,0\n7200,0\n7310,0\n7420,0\n7530,0\n7640,0\n7750,0\n7860,0\n7970,0\n8080,0\n8190,0\n8300,0\n8410,0\n8520,0\n8630,0\n8740,0\n8850,0\n8960,0\n9070,0\n9180,0\n9290,0\n9400,0\n9510,0\n9620,0\n9730,0\n9840,0\n9950,0\n1.006e+04,0\n1.017e+04,0\n1.028e+04,0\n1.039e+04,0\n1.05e+04,0\n1.061e+04,0\n1.072e+04,0\n1.083e+04,0\n1.094e+04,0\n1.105e+04,0\n1.116e+04,0\n1.127e+04,0\n1.138e+04,0\n1.149e+04,0\n1.16e+04,0\n1.171e+04,0\n1.182e+04,0\n1.193e+04,0\n1.204e+04,0\n1.215e+04,0\n1.226e+04,0\n1.237e+04,0\n1.248e+04,0\n1.259e+04,0\n1.27e+04,0\n1.281e+04,0\n1.292e+04,0\n1.303e+04,0\n1.314e+04,0\n1.325e+04,0\n1.336e+04,0\n1.347e+04,0\n1.358e+04,0\n1.369e+04,0\n1.38e+04,0\n1.391e+04,0\n1.402e+04,0\n1.413e+04,0\n1.424e+04,0\n1.435e+04,0\n1.446e+04,0\n1.457e+04,0\n1.468e+04,0\n1.479e+04,0\n1.49e+04,0\n1.501e+04,0\n1.512e+04,0\n1.523e+04,0\n1.534e+04,0\n1.545e+04,0\n1.556e+04,0\n1.567e+04,0\n1.578e+04,0\n1.589e+04,0\n1.6e+04,0\n1.611e+04,0\n1.622e+04,0\n1.633e+04,0\n1.644e+04,0\n1.655e+04,0\n1.666e+04,0\n1.677e+04,0\n1.688e+04,0\n1.699e+04,0\n1.71e+04,0\n1.721e+04,0\n1.732e+04,0\n1.743e+04,0\n1.754e+04,0\n1.765e+04,0\n1.776e+04,0\n1.787e+04,0\n1.798e+04,0\n1.809e+04,0\n1.82e+04,0\n1.831e+04,0\n1.842e+04,0\n1.853e+04,0\n1.864e+04,0\n1.875e+04,0\n1.886e+04,0\n1.897e+04,0\n1.908e+04,0\n1.919e+04,0\n1.93e+04,0\n1.941e+04,0\n1.952e+04,0\n1.963e+04,0\n1.974e+04,0\n1.985e+04,0\n1.996e+04,0\n2.007e+04,0\n2.018e+04,0\n2.029e+04,0\n2.04e+04,0"
+  }
+ },
+ "eds_noise_only": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_noise_only",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_noise_only: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 133; min 0, max 4, mean 0.06494, std 0.2745, p1 0, median 0, p99 1\nno peaks detected above noise at this exposure (total 133 counts); a longer exposure is needed to rule elements out"
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_noise_only",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_noise_only",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_noise_only: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 133; min 0, max 4, mean 0.06494, std 0.2745, p1 0, median 0, p99 1\nno peaks detected above noise at this exposure (total 133 counts); a longer exposure is needed to rule elements out\ndata (sums of 11 channels):\nenergy eV,value\n50,3\n160,3\n270,3\n380,3\n490,4\n600,3\n710,3\n820,6\n930,4\n1040,3\n1150,4\n1260,1\n1370,3\n1480,1\n1590,2\n1700,2\n1810,1\n1920,5\n2030,4\n2140,0\n2250,2\n2360,2\n2470,2\n2580,6\n2690,0\n2800,2\n2910,0\n3020,2\n3130,2\n3240,3\n3350,1\n3460,2\n3570,0\n3680,1\n3790,2\n3900,1\n4010,1\n4120,2\n4230,0\n4340,1\n4450,0\n4560,2\n4670,1\n4780,0\n4890,0\n5000,1\n5110,1\n5220,3\n5330,2\n5440,4\n5550,1\n5660,1\n5770,0\n5880,0\n5990,0\n6100,1\n6210,1\n6320,1\n6430,1\n6540,0\n6650,0\n6760,1\n6870,0\n6980,0\n7090,2\n7200,0\n7310,2\n7420,0\n7530,1\n7640,0\n7750,2\n7860,0\n7970,0\n8080,1\n8190,1\n8300,0\n8410,0\n8520,1\n8630,0\n8740,1\n8850,0\n8960,1\n9070,0\n9180,0\n9290,0\n9400,0\n9510,0\n9620,1\n9730,0\n9840,1\n9950,0\n1.006e+04,1\n1.017e+04,1\n1.028e+04,0\n1.039e+04,0\n1.05e+04,0\n1.061e+04,0\n1.072e+04,0\n1.083e+04,0\n1.094e+04,0\n1.105e+04,0\n1.116e+04,0\n1.127e+04,0\n1.138e+04,0\n1.149e+04,0\n1.16e+04,0\n1.171e+04,0\n1.182e+04,0\n1.193e+04,1\n1.204e+04,1\n1.215e+04,0\n1.226e+04,0\n1.237e+04,0\n1.248e+04,0\n1.259e+04,0\n1.27e+04,0\n1.281e+04,0\n1.292e+04,0\n1.303e+04,0\n1.314e+04,0\n1.325e+04,0\n1.336e+04,0\n1.347e+04,0\n1.358e+04,0\n1.369e+04,1\n1.38e+04,0\n1.391e+04,0\n1.402e+04,0\n1.413e+04,1\n1.424e+04,0\n1.435e+04,0\n1.446e+04,0\n1.457e+04,0\n1.468e+04,0\n1.479e+04,0\n1.49e+04,0\n1.501e+04,0\n1.512e+04,0\n1.523e+04,0\n1.534e+04,0\n1.545e+04,0\n1.556e+04,0\n1.567e+04,0\n1.578e+04,0\n1.589e+04,0\n1.6e+04,0\n1.611e+04,0\n1.622e+04,0\n1.633e+04,0\n1.644e+04,0\n1.655e+04,0\n1.666e+04,1\n1.677e+04,0\n1.688e+04,0\n1.699e+04,0\n1.71e+04,0\n1.721e+04,0\n1.732e+04,0\n1.743e+04,0\n1.754e+04,0\n1.765e+04,0\n1.776e+04,0\n1.787e+04,0\n1.798e+04,0\n1.809e+04,0\n1.82e+04,0\n1.831e+04,0\n1.842e+04,0\n1.853e+04,0\n1.864e+04,0\n1.875e+04,0\n1.886e+04,0\n1.897e+04,0\n1.908e+04,0\n1.919e+04,0\n1.93e+04,0\n1.941e+04,0\n1.952e+04,0\n1.963e+04,1\n1.974e+04,0\n1.985e+04,0\n1.996e+04,0\n2.007e+04,0\n2.018e+04,0\n2.029e+04,0\n2.04e+04,0"
+  }
+ },
+ "eds_platinum_minor_lines": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_platinum_minor_lines",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_platinum_minor_lines: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 2.227e+04; min 0, max 714, mean 10.87, std 46.44, p1 0, median 2, p99 233.9\nelements most consistent with these peaks (the share of the peak signal each one explains): Pt 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n2050,4972,35.45,\"Pt M5-N7, Pt M5-N6, P K-L2\"\n9440,3930,34.2,\"Pt L3-M5, Pt L3-M4\"\n1.107e+04,1845,33.91,\"Pt L2-M4\"\n8270,506.6,34.2,\"Pt L3-M1\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_platinum_minor_lines",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_platinum_minor_lines",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_platinum_minor_lines: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 2.227e+04; min 0, max 714, mean 10.87, std 46.44, p1 0, median 2, p99 233.9\nelements most consistent with these peaks (the share of the peak signal each one explains): Pt 100%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n2050,4972,35.45,\"Pt M5-N7, Pt M5-N6, P K-L2\"\n9440,3930,34.2,\"Pt L3-M5, Pt L3-M4\"\n1.107e+04,1845,33.91,\"Pt L2-M4\"\n8270,506.6,34.2,\"Pt L3-M1\"\ndata (sums of 11 channels):\nenergy eV,value\n50,202\n160,202\n270,193\n380,198\n490,214\n600,206\n710,190\n820,182\n930,165\n1040,186\n1150,160\n1260,161\n1370,153\n1480,142\n1590,154\n1700,128\n1810,162\n1920,256\n2030,5315\n2140,1177\n2250,127\n2360,105\n2470,122\n2580,137\n2690,112\n2800,97\n2910,100\n3020,97\n3130,109\n3240,104\n3350,96\n3460,92\n3570,87\n3680,67\n3790,73\n3900,90\n4010,83\n4120,76\n4230,85\n4340,66\n4450,87\n4560,64\n4670,68\n4780,65\n4890,66\n5000,70\n5110,68\n5220,50\n5330,54\n5440,65\n5550,47\n5660,43\n5770,48\n5880,59\n5990,54\n6100,46\n6210,61\n6320,46\n6430,45\n6540,55\n6650,35\n6760,47\n6870,46\n6980,40\n7090,39\n7200,33\n7310,33\n7420,41\n7530,30\n7640,33\n7750,28\n7860,39\n7970,29\n8080,50\n8190,245\n8300,388\n8410,76\n8520,30\n8630,26\n8740,28\n8850,19\n8960,16\n9070,20\n9180,27\n9290,377\n9400,2516\n9510,2003\n9620,211\n9730,23\n9840,13\n9950,20\n1.006e+04,24\n1.017e+04,21\n1.028e+04,20\n1.039e+04,18\n1.05e+04,14\n1.061e+04,15\n1.072e+04,19\n1.083e+04,27\n1.094e+04,348\n1.105e+04,1234\n1.116e+04,692\n1.127e+04,52\n1.138e+04,11\n1.149e+04,5\n1.16e+04,13\n1.171e+04,12\n1.182e+04,7\n1.193e+04,11\n1.204e+04,9\n1.215e+04,11\n1.226e+04,11\n1.237e+04,12\n1.248e+04,8\n1.259e+04,10\n1.27e+04,13\n1.281e+04,7\n1.292e+04,5\n1.303e+04,5\n1.314e+04,8\n1.325e+04,12\n1.336e+04,7\n1.347e+04,6\n1.358e+04,9\n1.369e+04,11\n1.38e+04,8\n1.391e+04,3\n1.402e+04,3\n1.413e+04,8\n1.424e+04,7\n1.435e+04,3\n1.446e+04,6\n1.457e+04,5\n1.468e+04,7\n1.479e+04,2\n1.49e+04,6\n1.501e+04,2\n1.512e+04,4\n1.523e+04,2\n1.534e+04,6\n1.545e+04,5\n1.556e+04,8\n1.567e+04,5\n1.578e+04,3\n1.589e+04,2\n1.6e+04,0\n1.611e+04,2\n1.622e+04,3\n1.633e+04,3\n1.644e+04,4\n1.655e+04,3\n1.666e+04,3\n1.677e+04,4\n1.688e+04,3\n1.699e+04,5\n1.71e+04,1\n1.721e+04,5\n1.732e+04,4\n1.743e+04,3\n1.754e+04,1\n1.765e+04,7\n1.776e+04,3\n1.787e+04,3\n1.798e+04,1\n1.809e+04,2\n1.82e+04,1\n1.831e+04,0\n1.842e+04,1\n1.853e+04,1\n1.864e+04,2\n1.875e+04,3\n1.886e+04,1\n1.897e+04,1\n1.908e+04,1\n1.919e+04,6\n1.93e+04,1\n1.941e+04,3\n1.952e+04,1\n1.963e+04,0\n1.974e+04,5\n1.985e+04,1\n1.996e+04,2\n2.007e+04,2\n2.018e+04,2\n2.029e+04,1\n2.04e+04,0"
+  }
+ },
+ "eds_window_rise_only": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_window_rise_only",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_window_rise_only: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 1.258e+04; min 0, max 95, mean 6.142, std 12.09, p1 0, median 2, p99 73.53\nno X-ray line of any element detected above noise at this exposure (total 1.258e+04 counts); a longer exposure is needed to rule elements out\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n610,370.7,19.9,\"unidentified: a broad rise of the continuum (the detector window), not an X-ray line\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint32",
+   "key": "eds_window_rise_only",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eds_window_rise_only",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eds_window_rise_only: spectrum, shape [2048], uint32\ndetector: eds\nunits: counts\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 1.258e+04; min 0, max 95, mean 6.142, std 12.09, p1 0, median 2, p99 73.53\nno X-ray line of any element detected above noise at this exposure (total 1.258e+04 counts); a longer exposure is needed to rule elements out\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n610,370.7,19.9,\"unidentified: a broad rise of the continuum (the detector window), not an X-ray line\"\ndata (sums of 11 channels):\nenergy eV,value\n50,273\n160,318\n270,345\n380,547\n490,769\n600,908\n710,808\n820,560\n930,371\n1040,254\n1150,225\n1260,237\n1370,174\n1480,178\n1590,183\n1700,181\n1810,169\n1920,144\n2030,143\n2140,169\n2250,153\n2360,165\n2470,148\n2580,135\n2690,167\n2800,152\n2910,149\n3020,121\n3130,118\n3240,120\n3350,121\n3460,130\n3570,92\n3680,130\n3790,110\n3900,96\n4010,91\n4120,102\n4230,97\n4340,97\n4450,93\n4560,81\n4670,90\n4780,84\n4890,71\n5000,89\n5110,70\n5220,70\n5330,75\n5440,66\n5550,69\n5660,60\n5770,66\n5880,44\n5990,55\n6100,53\n6210,52\n6320,61\n6430,60\n6540,52\n6650,51\n6760,56\n6870,54\n6980,53\n7090,53\n7200,35\n7310,40\n7420,34\n7530,50\n7640,36\n7750,34\n7860,44\n7970,35\n8080,34\n8190,35\n8300,26\n8410,18\n8520,27\n8630,40\n8740,23\n8850,34\n8960,21\n9070,18\n9180,26\n9290,33\n9400,26\n9510,18\n9620,24\n9730,21\n9840,22\n9950,20\n1.006e+04,22\n1.017e+04,17\n1.028e+04,22\n1.039e+04,24\n1.05e+04,25\n1.061e+04,15\n1.072e+04,10\n1.083e+04,18\n1.094e+04,20\n1.105e+04,18\n1.116e+04,10\n1.127e+04,20\n1.138e+04,10\n1.149e+04,8\n1.16e+04,14\n1.171e+04,14\n1.182e+04,12\n1.193e+04,17\n1.204e+04,17\n1.215e+04,6\n1.226e+04,14\n1.237e+04,6\n1.248e+04,14\n1.259e+04,8\n1.27e+04,15\n1.281e+04,12\n1.292e+04,6\n1.303e+04,10\n1.314e+04,12\n1.325e+04,8\n1.336e+04,8\n1.347e+04,7\n1.358e+04,12\n1.369e+04,9\n1.38e+04,13\n1.391e+04,5\n1.402e+04,12\n1.413e+04,7\n1.424e+04,6\n1.435e+04,5\n1.446e+04,7\n1.457e+04,7\n1.468e+04,6\n1.479e+04,13\n1.49e+04,6\n1.501e+04,4\n1.512e+04,2\n1.523e+04,2\n1.534e+04,6\n1.545e+04,5\n1.556e+04,6\n1.567e+04,9\n1.578e+04,2\n1.589e+04,3\n1.6e+04,5\n1.611e+04,9\n1.622e+04,3\n1.633e+04,7\n1.644e+04,4\n1.655e+04,4\n1.666e+04,4\n1.677e+04,4\n1.688e+04,1\n1.699e+04,5\n1.71e+04,3\n1.721e+04,6\n1.732e+04,6\n1.743e+04,6\n1.754e+04,4\n1.765e+04,2\n1.776e+04,4\n1.787e+04,2\n1.798e+04,4\n1.809e+04,5\n1.82e+04,3\n1.831e+04,2\n1.842e+04,7\n1.853e+04,2\n1.864e+04,2\n1.875e+04,3\n1.886e+04,6\n1.897e+04,0\n1.908e+04,3\n1.919e+04,2\n1.93e+04,4\n1.941e+04,0\n1.952e+04,4\n1.963e+04,1\n1.974e+04,0\n1.985e+04,3\n1.996e+04,1\n2.007e+04,4\n2.018e+04,3\n2.029e+04,1\n2.04e+04,1"
+  }
+ },
+ "eels": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eels",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eels: spectrum, shape [2048], uint32\ndetector: eels\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 3.584e+04; min 0, max 568, mean 17.5, std 34.75, p1 0, median 6, p99 101.7\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n280,2042,32.77,\n530,821.5,29.29,"
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eels",
+   "dtype": "uint32",
+   "key": "eels",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "eels",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "eels: spectrum, shape [2048], uint32\ndetector: eels\nread [0:2048]\n2048 channels; energy 0 to 2.047e+04 eV (10 eV per value shown)\ntotal 3.584e+04; min 0, max 568, mean 17.5, std 34.75, p1 0, median 6, p99 101.7\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n280,2042,32.77,\n530,821.5,29.29,\ndata (sums of 11 channels):\nenergy eV,value\n50,803\n160,801\n270,3625\n380,901\n490,1679\n600,1094\n710,715\n820,708\n930,714\n1040,675\n1150,672\n1260,676\n1370,647\n1480,613\n1590,592\n1700,564\n1810,559\n1920,484\n2030,540\n2140,492\n2250,501\n2360,517\n2470,491\n2580,470\n2690,449\n2800,423\n2910,432\n3020,413\n3130,408\n3240,369\n3350,368\n3460,373\n3570,354\n3680,337\n3790,341\n3900,334\n4010,326\n4120,287\n4230,289\n4340,295\n4450,278\n4560,262\n4670,273\n4780,268\n4890,263\n5000,246\n5110,259\n5220,242\n5330,220\n5440,216\n5550,227\n5660,205\n5770,215\n5880,170\n5990,189\n6100,188\n6210,190\n6320,162\n6430,194\n6540,187\n6650,150\n6760,168\n6870,158\n6980,183\n7090,130\n7200,148\n7310,132\n7420,136\n7530,139\n7640,126\n7750,117\n7860,131\n7970,117\n8080,118\n8190,142\n8300,103\n8410,105\n8520,117\n8630,114\n8740,110\n8850,96\n8960,94\n9070,90\n9180,93\n9290,86\n9400,103\n9510,78\n9620,79\n9730,69\n9840,81\n9950,89\n1.006e+04,68\n1.017e+04,56\n1.028e+04,73\n1.039e+04,60\n1.05e+04,64\n1.061e+04,62\n1.072e+04,71\n1.083e+04,45\n1.094e+04,55\n1.105e+04,54\n1.116e+04,60\n1.127e+04,49\n1.138e+04,53\n1.149e+04,57\n1.16e+04,60\n1.171e+04,49\n1.182e+04,37\n1.193e+04,45\n1.204e+04,36\n1.215e+04,34\n1.226e+04,41\n1.237e+04,37\n1.248e+04,39\n1.259e+04,29\n1.27e+04,42\n1.281e+04,31\n1.292e+04,25\n1.303e+04,32\n1.314e+04,38\n1.325e+04,29\n1.336e+04,33\n1.347e+04,41\n1.358e+04,23\n1.369e+04,35\n1.38e+04,36\n1.391e+04,31\n1.402e+04,30\n1.413e+04,35\n1.424e+04,25\n1.435e+04,23\n1.446e+04,21\n1.457e+04,26\n1.468e+04,21\n1.479e+04,30\n1.49e+04,27\n1.501e+04,26\n1.512e+04,21\n1.523e+04,27\n1.534e+04,19\n1.545e+04,19\n1.556e+04,13\n1.567e+04,22\n1.578e+04,20\n1.589e+04,16\n1.6e+04,17\n1.611e+04,16\n1.622e+04,11\n1.633e+04,15\n1.644e+04,7\n1.655e+04,18\n1.666e+04,14\n1.677e+04,11\n1.688e+04,20\n1.699e+04,10\n1.71e+04,15\n1.721e+04,14\n1.732e+04,17\n1.743e+04,14\n1.754e+04,7\n1.765e+04,11\n1.776e+04,16\n1.787e+04,10\n1.798e+04,10\n1.809e+04,8\n1.82e+04,7\n1.831e+04,11\n1.842e+04,11\n1.853e+04,4\n1.864e+04,6\n1.875e+04,11\n1.886e+04,5\n1.897e+04,8\n1.908e+04,4\n1.919e+04,8\n1.93e+04,10\n1.941e+04,4\n1.952e+04,4\n1.963e+04,11\n1.974e+04,4\n1.985e+04,6\n1.996e+04,6\n2.007e+04,8\n2.018e+04,4\n2.029e+04,5\n2.04e+04,9"
+  }
+ },
+ "profile": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "profile",
+   "kind": "profile",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "profile: profile, shape [2048], uint32\nread [0:2048]\n2048 channels; channel 0 to 2047 (1 per value shown)\ntotal 9178; min 0, max 437, mean 4.481, std 27.3, p1 0, median 1, p99 48.12\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nchannel,net,sigma,note\n500,1817,32.77,"
+  },
+  "summarize": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "profile",
+   "kind": "profile",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "profile",
+   "kind": "profile",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "profile: profile, shape [2048], uint32\nread [0:2048]\n2048 channels; channel 0 to 2047 (1 per value shown)\ntotal 9178; min 0, max 437, mean 4.481, std 27.3, p1 0, median 1, p99 48.12\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nchannel,net,sigma,note\n500,1817,32.77,\ndata (sums of 11 channels):\nchannel,value\n5,94\n16,108\n27,88\n38,120\n49,97\n60,103\n71,73\n82,86\n93,89\n104,93\n115,71\n126,75\n137,97\n148,87\n159,75\n170,53\n181,75\n192,59\n203,63\n214,72\n225,52\n236,48\n247,72\n258,57\n269,49\n280,56\n291,39\n302,58\n313,67\n324,50\n335,48\n346,48\n357,46\n368,43\n379,54\n390,46\n401,44\n412,34\n423,39\n434,45\n445,34\n456,40\n467,37\n478,39\n489,747\n500,3796\n511,755\n522,37\n533,32\n544,29\n555,22\n566,27\n577,27\n588,26\n599,17\n610,23\n621,24\n632,20\n643,22\n654,23\n665,25\n676,26\n687,26\n698,17\n709,10\n720,11\n731,16\n742,12\n753,19\n764,23\n775,10\n786,16\n797,14\n808,9\n819,11\n830,18\n841,16\n852,16\n863,16\n874,11\n885,15\n896,11\n907,11\n918,10\n929,13\n940,11\n951,6\n962,7\n973,10\n984,8\n995,10\n1006,16\n1017,12\n1028,10\n1039,10\n1050,2\n1061,5\n1072,4\n1083,10\n1094,10\n1105,9\n1116,6\n1127,9\n1138,2\n1149,3\n1160,12\n1171,4\n1182,2\n1193,4\n1204,5\n1215,7\n1226,4\n1237,4\n1248,6\n1259,5\n1270,4\n1281,2\n1292,4\n1303,3\n1314,4\n1325,4\n1336,5\n1347,2\n1358,2\n1369,3\n1380,3\n1391,2\n1402,4\n1413,5\n1424,2\n1435,2\n1446,2\n1457,1\n1468,2\n1479,2\n1490,1\n1501,5\n1512,1\n1523,8\n1534,4\n1545,1\n1556,1\n1567,0\n1578,2\n1589,3\n1600,2\n1611,3\n1622,3\n1633,3\n1644,0\n1655,1\n1666,2\n1677,1\n1688,1\n1699,3\n1710,0\n1721,1\n1732,0\n1743,2\n1754,1\n1765,2\n1776,1\n1787,1\n1798,0\n1809,2\n1820,3\n1831,1\n1842,0\n1853,1\n1864,1\n1875,0\n1886,3\n1897,1\n1908,1\n1919,1\n1930,0\n1941,3\n1952,1\n1963,0\n1974,1\n1985,1\n1996,1\n2007,0\n2018,1\n2029,0\n2040,0"
+  }
+ },
+ "raman": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "raman",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "raman: spectrum, shape [2048], uint32\nread [0:2048]\n2048 channels; Raman shift 0 to 2.047e+04 cm-1 (10 cm-1 per value shown)\ntotal 1.419e+04; min 0, max 818, mean 6.931, std 45.51, p1 0, median 1, p99 98.77\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nRaman shift cm-1,net,sigma,note\n1330,3614,32.77,\n520,1258,32.77,"
+  },
+  "summarize": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "raman",
+   "kind": "spectrum",
+   "shape": [
+    2048
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint32",
+   "key": "raman",
+   "kind": "spectrum",
+   "read": "read [0:2048]",
+   "shape": [
+    2048
+   ],
+   "text": "raman: spectrum, shape [2048], uint32\nread [0:2048]\n2048 channels; Raman shift 0 to 2.047e+04 cm-1 (10 cm-1 per value shown)\ntotal 1.419e+04; min 0, max 818, mean 6.931, std 45.51, p1 0, median 1, p99 98.77\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nRaman shift cm-1,net,sigma,note\n1330,3614,32.77,\n520,1258,32.77,\ndata (sums of 11 channels):\nRaman shift cm-1,value\n50,164\n160,141\n270,174\n380,168\n490,1764\n600,442\n710,148\n820,130\n930,120\n1040,133\n1150,124\n1260,1977\n1370,4652\n1480,127\n1590,110\n1700,87\n1810,103\n1920,94\n2030,114\n2140,93\n2250,98\n2360,89\n2470,89\n2580,66\n2690,71\n2800,92\n2910,82\n3020,80\n3130,77\n3240,74\n3350,83\n3460,61\n3570,61\n3680,59\n3790,67\n3900,51\n4010,48\n4120,62\n4230,63\n4340,53\n4450,63\n4560,64\n4670,39\n4780,52\n4890,47\n5000,40\n5110,53\n5220,37\n5330,29\n5440,42\n5550,46\n5660,45\n5770,32\n5880,35\n5990,43\n6100,36\n6210,34\n6320,27\n6430,31\n6540,37\n6650,26\n6760,30\n6870,23\n6980,28\n7090,31\n7200,19\n7310,24\n7420,18\n7530,30\n7640,21\n7750,27\n7860,27\n7970,30\n8080,18\n8190,26\n8300,17\n8410,20\n8520,19\n8630,27\n8740,17\n8850,14\n8960,17\n9070,14\n9180,16\n9290,16\n9400,11\n9510,16\n9620,14\n9730,19\n9840,14\n9950,8\n1.006e+04,15\n1.017e+04,7\n1.028e+04,9\n1.039e+04,15\n1.05e+04,11\n1.061e+04,12\n1.072e+04,9\n1.083e+04,8\n1.094e+04,12\n1.105e+04,7\n1.116e+04,7\n1.127e+04,8\n1.138e+04,10\n1.149e+04,6\n1.16e+04,7\n1.171e+04,6\n1.182e+04,10\n1.193e+04,8\n1.204e+04,9\n1.215e+04,2\n1.226e+04,7\n1.237e+04,8\n1.248e+04,10\n1.259e+04,5\n1.27e+04,8\n1.281e+04,4\n1.292e+04,6\n1.303e+04,5\n1.314e+04,8\n1.325e+04,5\n1.336e+04,6\n1.347e+04,5\n1.358e+04,10\n1.369e+04,5\n1.38e+04,10\n1.391e+04,5\n1.402e+04,9\n1.413e+04,2\n1.424e+04,4\n1.435e+04,3\n1.446e+04,4\n1.457e+04,5\n1.468e+04,2\n1.479e+04,5\n1.49e+04,5\n1.501e+04,7\n1.512e+04,4\n1.523e+04,8\n1.534e+04,7\n1.545e+04,2\n1.556e+04,3\n1.567e+04,5\n1.578e+04,3\n1.589e+04,4\n1.6e+04,3\n1.611e+04,5\n1.622e+04,1\n1.633e+04,2\n1.644e+04,1\n1.655e+04,3\n1.666e+04,1\n1.677e+04,6\n1.688e+04,3\n1.699e+04,0\n1.71e+04,1\n1.721e+04,3\n1.732e+04,3\n1.743e+04,2\n1.754e+04,3\n1.765e+04,0\n1.776e+04,2\n1.787e+04,3\n1.798e+04,4\n1.809e+04,2\n1.82e+04,1\n1.831e+04,4\n1.842e+04,1\n1.853e+04,0\n1.864e+04,3\n1.875e+04,1\n1.886e+04,0\n1.897e+04,0\n1.908e+04,1\n1.919e+04,0\n1.93e+04,1\n1.941e+04,0\n1.952e+04,0\n1.963e+04,0\n1.974e+04,1\n1.985e+04,1\n1.996e+04,0\n2.007e+04,2\n2.018e+04,0\n2.029e+04,2\n2.04e+04,0"
+  }
+ },
+ "spectrum_image": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint16",
+   "key": "spectrum_image",
+   "kind": "spectrum_image",
+   "read": "read [0:3, 0:4, 0:256]",
+   "shape": [
+    3,
+    4,
+    256
+   ],
+   "text": "spectrum_image: spectrum_image, shape [3, 4, 256], uint16\ndetector: eds\nunits: counts\nread [0:3, 0:4, 0:256]\nspectrum image 3 x 4 positions x 256 channels, uint16\nenergy 0 to 2550 eV\nindex [row, col] shows the spectrum at one position; region [row0, row1, col0, col1] sums part of it\npeaks of the summed spectrum:\nenergy,net,sigma\n700,3908,34.3"
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint16",
+   "key": "spectrum_image",
+   "kind": "spectrum_image",
+   "shape": [
+    3,
+    4,
+    256
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint16",
+   "key": "spectrum_image",
+   "kind": "spectrum_image",
+   "read": "read [0:3, 0:4, 0:256]",
+   "shape": [
+    3,
+    4,
+    256
+   ],
+   "text": "spectrum_image: spectrum_image, shape [3, 4, 256], uint16\ndetector: eds\nunits: counts\nread [0:3, 0:4, 0:256]\nspectrum image 3 x 4 positions x 256 channels, uint16\nenergy 0 to 2550 eV\nindex [row, col] shows the spectrum at one position; region [row0, row1, col0, col1] sums part of it\npeaks of the summed spectrum:\nenergy,net,sigma\n700,3908,34.3"
+  }
+ },
+ "spectrum_image_position": {
+  "png": {
+   "dataset": "",
+   "dtype": "uint16",
+   "key": "spectrum_image_position",
+   "kind": "spectrum_image",
+   "read": "read [0:256]",
+   "shape": [
+    3,
+    4,
+    256
+   ],
+   "text": "spectrum_image_position: spectrum_image, shape [3, 4, 256], uint16\ndetector: eds\nunits: counts\nread [0:256]\n256 channels; energy 0 to 2550 eV (10 eV per value shown)\ntotal 587; min 0, max 66, mean 2.293, std 8.224, p1 0, median 1, p99 51.6\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 50%, Te 50%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n700,325,34.3,\"Te M2-N1, Fe L3-M4, Fe L3-M5\""
+  },
+  "summarize": {
+   "dataset": "",
+   "detector": "eds",
+   "dtype": "uint16",
+   "key": "spectrum_image_position",
+   "kind": "spectrum_image",
+   "shape": [
+    3,
+    4,
+    256
+   ]
+  },
+  "text": {
+   "dataset": "",
+   "dtype": "uint16",
+   "key": "spectrum_image_position",
+   "kind": "spectrum_image",
+   "read": "read [0:256]",
+   "shape": [
+    3,
+    4,
+    256
+   ],
+   "text": "spectrum_image_position: spectrum_image, shape [3, 4, 256], uint16\ndetector: eds\nunits: counts\nread [0:256]\nspectrum at position [1, 2]:\n256 channels; energy 0 to 2550 eV (10 eV per value shown)\ntotal 587; min 0, max 66, mean 2.293, std 8.224, p1 0, median 1, p99 51.6\nelements most consistent with these peaks (the share of the peak signal each one explains): Fe 50%, Te 50%\npeaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):\nenergy eV,net,sigma,note\n700,325,34.3,\"Te M2-N1, Fe L3-M4, Fe L3-M5\"\ndata (sums of 2 channels):\nenergy eV,value\n5,3\n25,1\n45,2\n65,1\n85,2\n105,2\n125,1\n145,1\n165,1\n185,0\n205,3\n225,1\n245,0\n265,1\n285,2\n305,2\n325,1\n345,0\n365,2\n385,0\n405,1\n425,2\n445,0\n465,4\n485,2\n505,3\n525,1\n545,1\n565,2\n585,3\n605,0\n625,3\n645,17\n665,37\n685,103\n705,122\n725,83\n745,42\n765,11\n785,4\n805,1\n825,1\n845,0\n865,1\n885,1\n905,2\n925,1\n945,3\n965,0\n985,2\n1005,3\n1025,0\n1045,0\n1065,1\n1085,0\n1105,2\n1125,5\n1145,1\n1165,2\n1185,3\n1205,0\n1225,2\n1245,1\n1265,3\n1285,2\n1305,0\n1325,4\n1345,2\n1365,2\n1385,2\n1405,2\n1425,3\n1445,2\n1465,1\n1485,2\n1505,1\n1525,0\n1545,3\n1565,0\n1585,2\n1605,1\n1625,1\n1645,0\n1665,1\n1685,1\n1705,0\n1725,2\n1745,2\n1765,2\n1785,2\n1805,1\n1825,1\n1845,2\n1865,0\n1885,2\n1905,1\n1925,2\n1945,1\n1965,0\n1985,0\n2005,0\n2025,2\n2045,0\n2065,1\n2085,2\n2105,1\n2125,1\n2145,2\n2165,2\n2185,2\n2205,1\n2225,2\n2245,1\n2265,2\n2285,2\n2305,0\n2325,0\n2345,2\n2365,2\n2385,1\n2405,0\n2425,2\n2445,3\n2465,1\n2485,0\n2505,2\n2525,1\n2545,0"
+  }
+ }
+}

@@ -19,7 +19,7 @@ import sys
 import time
 from datetime import datetime
 
-from asyncroscopy.trace.stream import DEFAULT_SOURCES, TraceStream
+from asyncroscopy.trace.stream import TraceStream, default_sources
 
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -55,7 +55,7 @@ def line(event: dict) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m asyncroscopy.trace.tail", description=__doc__.split("\n\n")[0])
-    parser.add_argument("sources", nargs="*", help=f"Trace files, directories or globs (default: {' '.join(DEFAULT_SOURCES)}).")
+    parser.add_argument("sources", nargs="*", help=f"Trace files, directories or globs (default: {' '.join(default_sources())}).")
     parser.add_argument("--run", action="append", help="Only this agent run (X-Asyncroscopy-Run); repeatable.")
     parser.add_argument("--caller", action="append", help="Only this caller; repeatable.")
     parser.add_argument("--device", action="append", help="Only this device: a Tango name or a tool prefix such as Mapper; repeatable.")

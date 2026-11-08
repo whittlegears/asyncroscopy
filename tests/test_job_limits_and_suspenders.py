@@ -31,14 +31,24 @@ class FakeDevice:
         return SimpleNamespace(value=value)
 
 
+def job_device_members() -> dict:
+    """JobDevice's own attributes, including those of the mixins it is assembled from."""
+    members: dict = {}
+    for klass in reversed(JobDevice.__mro__):
+        if klass.__module__.startswith("asyncroscopy.jobs.job_device"):
+            members.update(vars(klass))
+    return members
+
+
 def envelope_class():
     """JobDevice's envelope methods on a plain class (a Tango Device cannot be built without a server)."""
+    members = job_device_members()
     methods = {
-        name: value for name, value in vars(JobDevice).items()
+        name: value for name, value in members.items()
         if name.startswith("_") and not name.startswith("__") and (callable(value) or isinstance(value, (classmethod, staticmethod)))
     }
     for name in ("aborting", "on_start", "on_stop", "on_finish", "on_suspend", "step_targets", "summary"):
-        methods[name] = vars(JobDevice)[name]
+        methods[name] = members[name]
     return type("Envelope", (), methods)
 
 
@@ -316,9 +326,9 @@ class Scan(Steps):
     """One step that reads the stage and takes an image, each through JobDevice.proxy (a RecordingProxy in a dry run)."""
 
     SUPPORTS_DRY_RUN = True
-    proxy = vars(JobDevice)["proxy"]
-    check_dry_call = vars(JobDevice)["check_dry_call"]
-    safe_commands = vars(JobDevice)["safe_commands"]
+    proxy = job_device_members()["proxy"]
+    check_dry_call = job_device_members()["check_dry_call"]
+    safe_commands = job_device_members()["safe_commands"]
     SAFE_COMMANDS = frozenset()
     step_timeout_s = 5.0
     _proxies = threading.local()
@@ -339,7 +349,7 @@ def test_a_dry_run_records_a_read_named_command_the_deployment_marks_high(tmp_pa
     from asyncroscopy.jobs.recording_proxy import DRY_RUN_PLACEHOLDER
 
     afm = FakeAfm()
-    monkeypatch.setattr("asyncroscopy.jobs.job_device.tango.DeviceProxy", lambda address: afm)
+    monkeypatch.setattr("asyncroscopy.jobs.job_device.dry_run.tango.DeviceProxy", lambda address: afm)
     job = Scan(tmp_path, {})
     reserved = job.call("reserve", {"plan": {"dry_run": True}, "risk_overrides": {pattern: "high", "AFMTwin.get_stage": "low"}})
     job_id = job.call("start", {"reservation_id": reserved["reservation_id"]})["job_id"]

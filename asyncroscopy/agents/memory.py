@@ -34,6 +34,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from asyncroscopy import settings
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.skills.registry import content_words, learned_dir
 
@@ -103,7 +104,7 @@ class Memory:
         this at a file in the repo (e.g. configs/instrument_notes/raman.md); it is read as well as
         the memory folder's, and no INSTRUMENT.md is seeded into the memory folder then.
         """
-        path = os.environ.get("ASYNCROSCOPY_INSTRUMENT_NOTES")
+        path = settings.get().instrument_notes
         return Path(path) if path and Path(path).is_file() else None
 
     # ------------------------------------------------------------------ reading

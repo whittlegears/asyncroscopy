@@ -27,14 +27,16 @@ import importlib.util
 import os
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from asyncroscopy import settings
 
-ENV_VAR = "ASYNCROSCOPY_PLUGINS"
+ENV_VAR = "ASYNCROSCOPY_PLUGINS"  # named in messages; asyncroscopy.settings reads it
 
 
 def plugin_specs(value: str | None = None) -> list[str]:
     """The entries of ``value`` (default: the ``ASYNCROSCOPY_PLUGINS`` variable), in order, without blanks or repeats."""
-    text = os.environ.get(ENV_VAR, "") if value is None else value
+    text = settings.get().plugins if value is None else value
     parts = re.split("[,%s]" % re.escape(os.pathsep), text)
     seen: list[str] = []
     for part in (p.strip() for p in parts):
@@ -71,21 +73,21 @@ def _import_file(path: Path):
 
 
 class Plugins:
-    """The plug-in modules named in one environment variable, each imported at most once."""
+    """The plug-in modules named by ``ASYNCROSCOPY_PLUGINS`` (or by ``source``), each imported at most once."""
 
-    def __init__(self, env_var: str = ENV_VAR) -> None:
-        self.env_var = env_var
+    def __init__(self, source: Callable[[], str] | None = None) -> None:
+        self.source = source or (lambda: settings.get().plugins)
         self._tried: set[str] = set()
         self._errors: dict[str, str] = {}
 
     def specs(self) -> list[str]:
-        """The entries named in the environment variable now."""
-        return plugin_specs(os.environ.get(self.env_var, ""))
+        """The entries named now."""
+        return plugin_specs(self.source())
 
     def load(self, specs: list[str] | str | None = None) -> dict[str, str]:
         """Import every plug-in not yet tried in this process; returns {entry: error} for those that failed.
 
-        ``specs`` defaults to the environment variable, which is read again on each call, so one set
+        ``specs`` defaults to the source, which is read again on each call, so one set
         later in the process is still picked up.
         """
         if specs is None:
@@ -117,7 +119,7 @@ class Plugins:
         if self._errors:
             return "; plug-ins that failed to import: " + ", ".join(f"{k} ({v})" for k, v in self._errors.items())
         if not self.specs():
-            return f"; a class defined in your own module is found only if {self.env_var} (or the stack YAML's plugins:) names it"
+            return f"; a class defined in your own module is found only if {ENV_VAR} (or the stack YAML's plugins:) names it"
         return ""
 
 

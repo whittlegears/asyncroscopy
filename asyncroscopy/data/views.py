@@ -10,6 +10,9 @@ Pure functions over Tiled nodes (or anything with the same ``shape``, ``dtype``,
 ``metadata`` and ``read(slices)``); no Tango or MCP imports, so notebooks and
 other servers can use them too.
 
+Knowledge of one field stays out of this module: X-ray lines and the rest of EDS are in
+``asyncroscopy.data.kinds.eds``, which registers its kinds here.
+
 A new instrument gets sensible views by writing attributes the built-in kinds
 understand (``axis_offset``/``axis_scale``/``axis_label``/``axis_units`` on 1-D
 data, ``pixel_size_m`` on images). For anything else, register a kind::
@@ -32,7 +35,6 @@ import io
 import json
 import math
 from dataclasses import dataclass, field
-from functools import lru_cache
 from itertools import islice
 from typing import Any, Callable, Iterator
 
@@ -51,16 +53,7 @@ MAX_GROUPS = 40  # entries listed per level of a container
 MAX_DEPTH = 3
 MAX_PEAKS = 8
 PEAK_SIGMA = 5.0  # a peak's counts within its FWHM must stand this many sigmas above the background
-# Below WINDOW_RISE_EV an EDS peak must also stand RISE_SIGMA above a smooth curve fitted with it over
-# +-RISE_HALF_WIDTHS line widths: the detector window bends the continuum into a broad rise near 0.6 keV.
-WINDOW_RISE_EV = 1200.0
-RISE_HALF_WIDTHS = 3.0
-RISE_SIGMA = 3.0
 MAX_STRINGS = 50
-SI_ESCAPE_EV = 1740.0
-# Silicon-drift EDS detector resolution, as the twin models it (twin/eds_model.py).
-EDS_FWHM_MN_KA_EV = 130.0
-MN_KA_EV = 5895.0
 IMAGE_GROUPS = ("image", "tiles", "channels")  # looked at first: a run's pictures before its spectra
 SPECTRUM_GROUPS = ("spectrum_image", "spectrum", "spectra")
 
@@ -489,11 +482,6 @@ def energy_axis(attrs: dict) -> Axis | None:
     return None
 
 
-def eds_fwhm_ev(energy_ev: Any) -> np.ndarray:
-    """Silicon-drift detector line width at an energy (eV), at least 30 eV."""
-    return np.sqrt(np.maximum(EDS_FWHM_MN_KA_EV**2 + 2.5 * (np.asarray(energy_ev, dtype=np.float64) - MN_KA_EV), 30.0**2))
-
-
 @dataclass(frozen=True)
 class Peak:
     index: int  # channel in the values given
@@ -564,140 +552,6 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
     return sorted(peaks, key=lambda p: p.significance, reverse=True)[:limit]
 
 
-@lru_cache(maxsize=1)
-def _xray_lines() -> tuple[tuple[float, str, float], ...]:
-    """(energy eV, "Fe K-L3", weight) for the X-ray lines in pyTEMlib's tables, down to 1% of their family's
-    strongest: a Pt particle's L3-M1 and L2-N4 peaks (weights 0.06 and 0.08) were left unnamed at 10%."""
-    try:
-        from pyTEMlib import xrpa_x_sections
-    except ImportError:
-        return ()
-    out = []
-    for entry in xrpa_x_sections.x_sections.values():
-        for line, info in (entry.get("lines") or {}).items():
-            if float(info.get("weight", 0)) >= 0.01 and 100.0 <= float(info["position"]) <= 40000.0:
-                out.append((float(info["position"]), f"{entry['name']} {line}", float(info["weight"])))
-    return tuple(sorted(out))
-
-
-def xray_candidates(energy_ev: float, tolerance_ev: float, peaks_ev: list[float] | None = None, energy_max_ev: float = math.inf) -> str:
-    """The lines that could make a peak, nearest first; "unidentified" when lines are near but none could.
-
-    A line could not when it is a minor line whose family's main line has no peak, or when it is not in its element's
-    main family (K if in range, else L, else M) and that family's main line has no peak. A carbon peak was once listed as Ca L and Ag M lines and read as both; listing them as
-    "less likely" still had them named as present (qwen runs 2026-11-03), so they are left out.
-    """
-    near = sorted((abs(e - energy_ev), name, w) for e, name, w in _xray_lines() if abs(e - energy_ev) <= tolerance_ev)
-    likely = [name for _d, name, weight in near if peaks_ev is None or not _unlikely_line(name, weight, peaks_ev, energy_max_ev)]
-    if near and not likely:
-        return "unidentified: no element whose main lines are present has a line here"
-    return ", ".join(likely[:3])
-
-
-@lru_cache(maxsize=1)
-def _lines_by_element() -> dict[str, list[tuple[float, str, float]]]:
-    out: dict[str, list[tuple[float, str, float]]] = {}
-    for energy, name, weight in _xray_lines():
-        element, line = name.split(" ", 1)
-        out.setdefault(element, []).append((energy, line, weight))
-    return out
-
-
-def _unlikely_line(name: str, weight: float, peaks_ev: list[float], energy_max_ev: float) -> str:
-    element, line = name.split(" ", 1)
-    lines = _lines_by_element()[element]
-    _w, top_energy, top_line = max((w, e, l) for e, l, w in lines if l[0] == line[0])
-    if weight < _w and not _seen(top_energy, peaks_ev):
-        return f"minor line, no {element} {top_line} peak at {top_energy:.0f} eV"
-    # The element's main family is its K lines when they are in range, else its L lines, else its M lines.
-    main = next((f for f in "KLM" if any(l[0] == f and e <= energy_max_ev for e, l, _w in lines)), line[0])
-    if line[0] == main:
-        return ""
-    _w, main_energy, main_line = max((w, e, l) for e, l, w in lines if l[0] == main and e <= energy_max_ev)
-    return "" if _seen(main_energy, peaks_ev) else f"no {element} {main_line} peak at {main_energy:.0f} eV"
-
-
-def _seen(energy_ev: float, peaks_ev: list[float]) -> bool:
-    return any(abs(p - energy_ev) <= float(eds_fwhm_ev(energy_ev)) / 2 for p in peaks_ev)
-
-
-def is_xray(ds: Dataset) -> bool:
-    words = " ".join(str(ds.attrs.get(k, "")) + " " + str(ds.parent_attrs.get(k, "")) for k in ("detector", "acquisition_type", "technique")).lower()
-    return "eds" in words or "edx" in words or "x-ray" in words or "xray" in words
-
-
-def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, xray: bool, step: int = 1) -> list[tuple[float, float, float, int, str]]:
-    """The significant peaks of 1-D data, strongest (net counts) first: (position, net, sigma, index, note).
-
-    The one peak finder: view_data lists these, and the benchmarks' truth is read with it. An X-ray
-    spectrum uses the detector's line width and names candidate lines (or flags escape and sum peaks);
-    any other axis a width of a few channels.
-    """
-    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if xray and axis.scale else 3.0
-    rows: list[tuple[float, float, float, int, str]] = []
-    for peak in find_peaks(y, fwhm):
-        position = float(x[peak.index])
-        note = ""
-        if xray:
-            note = _artefact(position, [row[0] for row in rows], _line_tolerance(position, axis, step))
-        rows.append((position, peak.net, peak.significance, peak.index, note))
-    if xray:
-        indices = [row[3] for row in rows]
-        rows = [
-            (e, net, sig, i, WINDOW_RISE_NOTE if not note and e < WINDOW_RISE_EV and _line_sigma(y, fwhm, i, indices) <= RISE_SIGMA else note)
-            for e, net, sig, i, note in rows
-        ]
-        # Every peak is known before any is named, so a line can be checked against its element's other lines.
-        positions = [row[0] for row in rows if row[4] != WINDOW_RISE_NOTE]
-        top = float(np.nanmax(x)) if x.size else math.inf
-        rows = [(e, net, sig, i, note or xray_candidates(e, _line_tolerance(e, axis, step), positions, top)) for e, net, sig, i, note in rows]
-    return sorted(rows, key=lambda row: row[1], reverse=True)
-
-
-WINDOW_RISE_NOTE = "unidentified: a broad rise of the continuum (the detector window), not an X-ray line"
-
-
-def _line_sigma(values: np.ndarray, fwhm_channels: Any, index: int, others: list[int]) -> float:
-    """How many sigmas a line-width peak at ``index`` stands above a smooth (quadratic) curve fitted with it.
-
-    The detector window bends the low-energy continuum into a rise near 0.6 keV that the running background takes
-    for a peak, which then read as O or F (qwen runs 2026-11-03; 93 of 288 twin spectra without O or F). A quadratic
-    takes that rise; a carbon K peak on it keeps its line-width shape. Other peaks in the window are fitted with it.
-    """
-    y = np.nan_to_num(np.asarray(values, dtype=np.float64))
-    width = np.broadcast_to(np.asarray(fwhm_channels, dtype=np.float64), y.shape)
-    reach = max(2, int(round(RISE_HALF_WIDTHS * float(width[index]))))
-    lo, hi = max(0, index - reach), min(y.size, index + reach + 1)
-    x = np.arange(lo, hi, dtype=np.float64)
-    u = (x - index) / reach
-    centres = [index] + [j for j in others if lo <= j < hi and j != index]
-    columns = [np.ones_like(u), u, u * u] + [np.exp(-0.5 * ((x - j) / (max(float(width[j]), 1.0) / 2.355)) ** 2) for j in centres]
-    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson: variance = counts
-    design = np.stack(columns, axis=1) * weight[:, None]
-    if design.shape[0] <= design.shape[1]:
-        return math.inf  # too few channels to tell: keep the peak
-    coefficients, *_ = np.linalg.lstsq(design, y[lo:hi] * weight, rcond=None)
-    variance = float(np.linalg.pinv(design.T @ design)[3, 3])
-    return float(coefficients[3]) / math.sqrt(max(variance, 1e-300))
-
-
-def _line_tolerance(energy_ev: float, axis: Axis, step: int) -> float:
-    """Half the line width, or all of it below 1 keV: there the detector window cuts the background steeply and a
-    peak's top shifts up (a carbon K peak, 277 eV, is found at 298 to 308 eV)."""
-    width = float(eds_fwhm_ev(energy_ev))
-    return max(width if energy_ev < 1000.0 else width / 2, 2 * abs(axis.scale * step))
-
-
-def _artefact(energy: float, stronger: list[float], tolerance: float) -> str:
-    """A note when an EDS peak may be a Si escape or a sum (pile-up) peak of a stronger one."""
-    for e in stronger:
-        if abs(energy - (e - SI_ESCAPE_EV)) <= tolerance:
-            return f"possible Si escape peak of the {_fmt(e)} eV peak"
-        if abs(energy - 2 * e) <= tolerance:
-            return f"possible sum peak (2 x {_fmt(e)} eV)"
-    return ""
-
-
 def _real(ds: Dataset) -> bool:
     return ds.dtype.kind in "uifcb"
 
@@ -705,78 +559,63 @@ def _real(ds: Dataset) -> bool:
 # ----------------------------------------------------------------- 1-D: spectra and profiles
 
 
-def note_elements(note: str) -> set[str]:
-    """The elements a peak's note says could make it: none for an escape, sum or unidentified peak."""
-    if not note or note.startswith(("possible", "unidentified")):
-        return set()
-    return {c.strip().split(" ")[0] for c in note.split(",") if c.strip()}
+PeakRow = tuple[float, float, float, int, str]  # position, net, sigma, index, note
 
 
-def likely_elements(rows: list[tuple], share: float = 0.25) -> str:
-    """The fewest elements that explain the peaks, as the share of the peak signal (summed sigma) each explains:
-    "Au 85%, Pt 7%", kept while an element explains at least ``share`` of what the best one does.
+@dataclass(frozen=True)
+class LineDomain:
+    """What a field knows about its own 1-D data, given to ``line_kind`` (see ``asyncroscopy.data.kinds.eds``).
 
-    The element explaining the most of what is left takes its peaks, then the next; elements tied on the same peaks
-    share them. Every element that could make a peak once got all of it: a Pd particle's weaker L lines read as Cd and
-    In too, and one peak as "Ca 100%, Ag 100%" (qwen runs 2026-11-03).
+    applies: whether this dataset, on this axis, is that field's.
+    width_channels: the expected peak width in channels (one number or one per channel) for positions ``x`` read every ``step`` channels.
+    name_peaks: the peak rows (position, net, sigma, index, ""), strongest first, with each row's note filled in.
+    reading: the lines that say what the peaks mean, above the peak table.
+    no_peaks: the line for data with no peaks, given its total.
     """
-    left = {i: (float(row[2]), note_elements(row[4])) for i, row in enumerate(rows)}
-    score: dict[str, float] = {}
-    while True:
-        gain: dict[str, float] = {}
-        for sigma, elements in left.values():
-            for element in elements:
-                gain[element] = gain.get(element, 0.0) + sigma
-        if not gain:
-            break
-        best = max(gain.values())
-        tied = sorted(e for e in gain if gain[e] >= best * (1 - 1e-9))
-        taken = [i for i, (_s, elements) in left.items() if set(tied) & elements]
-        for i in taken:
-            sigma, elements = left.pop(i)
-            for element in set(tied) & elements:
-                score[element] = score.get(element, 0.0) + sigma / len(set(tied) & elements)
-    if not score:
-        return ""
-    total = sum(float(r[2]) for r in rows) or 1.0
-    top = max(score.values())
-    ranked = sorted((e for e in score if score[e] >= share * top), key=lambda e: (-score[e], e))[:4]
-    return ", ".join(f"{e} {100.0 * score[e] / total:.0f}%" for e in ranked)
+
+    applies: Callable[[Dataset, Axis], bool]
+    width_channels: Callable[[np.ndarray, Axis, int], Any]
+    name_peaks: Callable[[list[PeakRow], np.ndarray, np.ndarray, Axis, int, Any], list[PeakRow]]
+    reading: Callable[[list[PeakRow], float], list[str]]
+    no_peaks: Callable[[float], str]
 
 
-def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dataset], Axis | None], description: str = "") -> Kind:
-    """A kind for 1-D data plotted against a calibrated axis, with its significant peaks marked and listed."""
+def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, step: int = 1, domain: LineDomain | None = None) -> list[PeakRow]:
+    """The significant peaks of 1-D data, strongest (net counts) first: (position, net, sigma, index, note).
+
+    The one peak finder: view_data lists these, and the benchmarks' truth is read with it. ``domain`` gives the
+    peak width and the notes; without one a peak is a few channels wide and has none.
+    """
+    fwhm = domain.width_channels(x, axis, step) if domain is not None else 3.0
+    rows: list[PeakRow] = [(float(x[peak.index]), peak.net, peak.significance, peak.index, "") for peak in find_peaks(y, fwhm)]
+    if domain is not None:
+        rows = domain.name_peaks(rows, x, y, axis, step, fwhm)
+    return sorted(rows, key=lambda row: row[1], reverse=True)
+
+
+def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dataset], Axis | None], description: str = "", domain: LineDomain | None = None) -> Kind:
+    """A kind for 1-D data plotted against a calibrated axis, with its significant peaks marked and listed;
+    ``domain``, when it applies to a dataset, says what the peaks are."""
 
     def describe(ds: Dataset, opts: ViewOptions):
         y, start, step, read = read_line(ds, opts, axis(ds))
         a = axis(ds) or Axis(0.0, 1.0, "channel", "")
         x = a.offset + a.scale * (start + step * np.arange(y.size))
-        xray = a.units == "eV" and is_xray(ds)
-        rows = line_peaks(x, y, a, xray, step)
+        field = domain if domain is not None and domain.applies(ds, a) else None
+        rows = line_peaks(x, y, a, step, field)
         unit = f" {a.units}" if a.units else ""
         total = float(np.nansum(np.asarray(y, dtype=np.float64)))
         lines = [
             f"{ds.shape[0]} channels; {a.label} {_fmt(x[0])} to {_fmt(x[-1])}{unit} ({_fmt(a.scale * step)}{unit} per value shown)" if y.size else "empty",
             f"total {_fmt(total)}; {_stats(y)}",
         ]
-        if rows and xray:
-            likely = likely_elements(rows)
-            if likely:
-                # A small model given only per-peak candidates did not conclude; the ranking says which elements the
-                # peaks point to, strongest first, and stays a reading of the peaks (a light element can still hide).
-                lines.append(f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}")
-            else:  # only a window rise, escape, sum or unidentified peaks: say so, or the data rows get read as lines
-                lines.append(f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
-                             "a longer exposure is needed to rule elements out")
+        if rows and field is not None:
+            lines += field.reading(rows, total)
         if rows:
             lines += ["peaks (strongest first; net = counts within the line width above the background, sigma = how far above the noise):",
                       _csv(f"{a.label}{unit},net,sigma,note", [(e, net, sig, f'"{note}"' if note else "") for e, net, sig, _i, note in rows])]
-        elif xray and total == 0:
-            lines.append("0 counts: no electrons reached the detector, so a longer exposure will not help. The beam was probably "
-                         "blanked (unblank_beam, then acquire again) or the detector retracted")
-        elif xray:
-            lines.append(f"no peaks detected above noise at this exposure (total {_fmt(total)} counts); "
-                         "a longer exposure is needed to rule elements out")
+        elif field is not None:
+            lines.append(field.no_peaks(total))
         else:
             lines.append(f"no peaks stand {PEAK_SIGMA:g} sigma above the background")
         return lines, read, x, y, a, rows
@@ -812,29 +651,6 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         return "\n".join(lines), read
 
     return Kind(name, matches, png, text, description)
-
-
-def _composition_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
-    values = _read(ds, (slice(0, ds.shape[0]),))
-    figure = Figure(figsize=(6.0, 3.5), dpi=100)
-    plot = figure.add_subplot()
-    plot.bar(np.arange(values.size), values)
-    plot.set_xticks(np.arange(values.size))
-    plot.set_xticklabels(ds.attrs["elements"])
-    plot.set_xlabel("element")
-    plot.set_ylabel("relative intensity")
-    figure.tight_layout()
-    return _png(figure), f"read [0:{ds.shape[0]}]", _composition_text(ds, opts)[0]
-
-
-def _composition_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-    values = _read(ds, (slice(0, ds.shape[0]),))
-    return "\n".join(f"{element}: {_fmt(float(v))}" for element, v in zip(ds.attrs["elements"], values)), f"read [0:{ds.shape[0]}]"
-
-
-def _has_elements(ds: Dataset) -> bool:
-    elements = ds.attrs.get("elements")
-    return ds.ndim == 1 and _real(ds) and isinstance(elements, list) and len(elements) == ds.shape[0] and all(isinstance(e, str) for e in elements)
 
 
 # ----------------------------------------------------------------- strings
@@ -988,45 +804,50 @@ def _spectrum_at(ds: Dataset, opts: ViewOptions) -> Dataset:
     return Dataset(ds.key, f"{ds.path}[{row},{col}]", line, (ds.shape[2],), ds.dtype, ds.attrs, ds.parent_attrs)
 
 
-def _summed_lines(ds: Dataset, cube: np.ndarray, step: int) -> tuple[list[str], np.ndarray, np.ndarray, Axis]:
+def _summed_lines(ds: Dataset, cube: np.ndarray, step: int, domain: LineDomain | None) -> tuple[list[str], np.ndarray, np.ndarray, Axis]:
     axis = energy_axis(ds.attrs) or Axis(0.0, 1.0, "channel", "")
     summed = cube.sum(axis=(0, 1))
     x = axis.values(0, ds.shape[2], step)[: summed.size]
     lines = [f"spectrum image {ds.shape[0]} x {ds.shape[1]} positions x {ds.shape[2]} channels, {ds.dtype}",
              f"{axis.label} {_fmt(x[0])} to {_fmt(x[-1])} {axis.units}".rstrip(),
              "index [row, col] shows the spectrum at one position; region [row0, row1, col0, col1] sums part of it"]
-    fwhm = eds_fwhm_ev(x) / abs(axis.scale * step) if axis.units == "eV" and is_xray(ds) and axis.scale else 3.0
+    fwhm = domain.width_channels(x, axis, step) if domain is not None and domain.applies(ds, axis) else 3.0
     peaks = find_peaks(summed, fwhm)
     if peaks:
         lines += ["peaks of the summed spectrum:", _csv(f"{axis.label},net,sigma", [(float(x[p.index]), p.net, p.significance) for p in peaks])]
     return lines, summed, x, axis
 
 
-def _spectrum_image_png(ds: Dataset, opts: ViewOptions) -> tuple:
-    if opts.index is not None:
-        single = _spectrum_at(ds, opts)
-        return detect(single).png(single, ViewOptions(max_side=opts.max_side))
-    cube, read, step = _read_cube(ds, opts)
-    lines, summed, x, axis = _summed_lines(ds, cube, step)
-    figure = Figure(figsize=(8.0, 3.4), dpi=100)
-    left, right = figure.add_subplot(1, 2, 1), figure.add_subplot(1, 2, 2)
-    left.imshow(np.asarray(to_pixels(cube.sum(axis=2), opts.max_side)), cmap="gray")
-    left.set_title("summed intensity", fontsize=8)
-    left.axis("off")
-    right.plot(x, summed, linewidth=0.9)
-    right.set_xlabel(f"{axis.label} ({axis.units})" if axis.units else axis.label)
-    right.set_title("summed spectrum", fontsize=8)
-    figure.tight_layout()
-    return _png(figure), read, "\n".join(lines)
+def spectrum_image_kind(domain: LineDomain | None = None) -> Kind:
+    """A kind for a spectrum at each scan position; ``domain`` gives the peak width of the summed spectrum."""
+
+    def png(ds: Dataset, opts: ViewOptions) -> tuple:
+        if opts.index is not None:
+            single = _spectrum_at(ds, opts)
+            return detect(single).png(single, ViewOptions(max_side=opts.max_side))
+        cube, read, step = _read_cube(ds, opts)
+        lines, summed, x, axis = _summed_lines(ds, cube, step, domain)
+        figure = Figure(figsize=(8.0, 3.4), dpi=100)
+        left, right = figure.add_subplot(1, 2, 1), figure.add_subplot(1, 2, 2)
+        left.imshow(np.asarray(to_pixels(cube.sum(axis=2), opts.max_side)), cmap="gray")
+        left.set_title("summed intensity", fontsize=8)
+        left.axis("off")
+        right.plot(x, summed, linewidth=0.9)
+        right.set_xlabel(f"{axis.label} ({axis.units})" if axis.units else axis.label)
+        right.set_title("summed spectrum", fontsize=8)
+        figure.tight_layout()
+        return _png(figure), read, "\n".join(lines)
 
 
-def _spectrum_image_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
-    if opts.index is not None:
-        single = _spectrum_at(ds, opts)
-        body, read = detect(single).text(single, ViewOptions(max_rows=opts.max_rows))
-        return f"spectrum at position {_index(opts)}:\n{body}", read
-    cube, read, step = _read_cube(ds, opts)
-    return "\n".join(_summed_lines(ds, cube, step)[0]), read
+    def text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
+        if opts.index is not None:
+            single = _spectrum_at(ds, opts)
+            body, read = detect(single).text(single, ViewOptions(max_rows=opts.max_rows))
+            return f"spectrum at position {_index(opts)}:\n{body}", read
+        cube, read, step = _read_cube(ds, opts)
+        return "\n".join(_summed_lines(ds, cube, step, domain)[0]), read
+
+    return Kind("spectrum_image", _is_spectrum_image, png, text, "a spectrum at each scan position")
 
 
 TABLE_MAX_ROWS = 1000
@@ -1071,15 +892,13 @@ def _table_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
 KINDS: list[Kind] = [
     Kind("text", lambda ds: ds.family == "array" and ds.dtype.kind in "OSU", _strings_png, _strings_text, "strings"),
     line_kind("spectrum", lambda ds: ds.ndim == 1 and _real(ds) and energy_axis(ds.attrs) is not None, lambda ds: energy_axis(ds.attrs),
-              "1-D data on a calibrated axis (EDS, EELS, Raman, a diffractogram ...); its significant peaks listed strongest first, "
-              "with candidate X-ray lines for an X-ray spectrum"),
-    Kind("composition", _has_elements, _composition_png, _composition_text, "one value per element"),
+              "1-D data on a calibrated axis (EELS, Raman, a diffractogram ...); its significant peaks listed strongest first"),
     line_kind("profile", lambda ds: ds.ndim == 1 and _real(ds), lambda ds: None, "any other 1-D data, against channel index"),
     image_kind("label_image", lambda ds: ds.ndim == 2 and ds.dtype.kind in "ui" and ds.attrs.get("acquisition_type") == "segmentation",
                "segmentation labels", colormap="tab20"),
     image_kind("image", lambda ds: _real(ds) and (ds.ndim == 2 or (ds.ndim == 3 and ds.shape[2] in (3, 4) and not _is_spectrum_image(ds))),
                "a picture (H x W, or H x W x 3/4 colour): contrast-stretched, downsampled"),
-    Kind("spectrum_image", _is_spectrum_image, _spectrum_image_png, _spectrum_image_text, "a spectrum at each scan position"),
+    spectrum_image_kind(),
     Kind("stack", lambda ds: ds.ndim >= 3 and _real(ds), _stack_png, _stack_text, "frames (tilt series, 4-D STEM): one frame shown"),
     Kind("table", lambda ds: ds.family == "table", _table_png, _table_text, "rows and columns"),
 ]
@@ -1171,3 +990,7 @@ def summarize(node: Any, key: str) -> dict:
     if _family(node) == "container":
         entry["entries"] = _count(node)
     return entry
+
+
+# The domain kinds that ship with asyncroscopy, each registering itself. Last: they are built from everything above.
+from asyncroscopy.data.kinds import eds as _eds  # noqa: E402,F401

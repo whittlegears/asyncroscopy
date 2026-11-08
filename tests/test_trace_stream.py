@@ -23,6 +23,7 @@ import pytest
 import tango
 
 from asyncroscopy.contracts import load
+from asyncroscopy.core.fileio import SequencedAppender, rotated_paths
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.trace.writer import TraceWriter, read_tool_log
 from asyncroscopy.trace.stream import TraceStream, follow_trace, read_trace, trace_since
@@ -252,7 +253,7 @@ def test_cursor_carries_on_across_rotation_with_none_twice(tmp_path):
     for i in range(5):
         writer.record("x", True, time.time(), step=i, job_id="j1")
     time.sleep(0.6)  # older than the live grace period
-    first = trace_since(tmp_path, limit=3, job="j1")
+    first = trace_since(tmp_path, limit=3, job="j1", from_end=False)
     assert [e["step"] for e in first["events"]] == [0, 1, 2] and first["more"]
     writer.record("x", True, time.time(), step=5, job_id="j1")
     rotate(path, tmp_path / "jobs.jsonl.1")
@@ -320,7 +321,7 @@ def test_trace_since_is_on_the_operator_endpoint_only_and_pages_by_cursor(tmp_pa
 
     async def poll(cursor, limit):
         async with Client(operator.mcp) as client:
-            reply = await client.call_tool("trace_since", {"cursor": cursor, "run": "gui-run", "limit": limit})
+            reply = await client.call_tool("trace_since", {"cursor": cursor, "run": "gui-run", "limit": limit, "from_end": False})
             return reply.structured_content
 
     page = asyncio.run(poll("", 2))
@@ -332,3 +333,142 @@ def test_trace_since_is_on_the_operator_endpoint_only_and_pages_by_cursor(tmp_pa
     page = asyncio.run(poll(page["cursor"], 10))
     assert [e["action"] for e in page["events"]] == ["Mapper.done"]
     assert asyncio.run(poll(page["cursor"], 10))["events"] == []
+
+
+# ---------------------------------------------------------------------- Rotation by the writer itself
+
+
+def rotating(path, bytes_=400, keep=0):
+    return SequencedAppender(path, rotate_bytes=bytes_, keep=keep)
+
+
+def test_the_appender_rotates_at_its_size_and_seq_carries_on(tmp_path):
+    path = tmp_path / "jobs.jsonl"
+    out = rotating(path)
+    for i in range(60):
+        out.append({"i": i, "pad": "x" * 30})
+    parts = rotated_paths(path)
+    assert len(parts) >= 3 and all(p.stat().st_size <= 400 for p in parts)
+    numbers = []
+    for part in [*parts, path]:
+        numbers += [json.loads(line)["seq"] for line in part.read_text(encoding="utf-8").splitlines()]
+    assert numbers == list(range(1, 61))
+
+
+def test_only_the_files_kept_remain_and_a_larger_line_is_never_split(tmp_path):
+    path = tmp_path / "t.jsonl"
+    out = rotating(path, keep=2)
+    for i in range(40):
+        out.append({"i": i, "pad": "y" * 60})
+    assert len(rotated_paths(path)) == 2
+    big = SequencedAppender(tmp_path / "big.jsonl", rotate_bytes=10)
+    for _ in range(3):
+        big.append({"pad": "z" * 100})
+    assert len(rotated_paths(tmp_path / "big.jsonl")) == 2
+
+
+def test_a_rename_refused_keeps_the_line_and_rotates_later(tmp_path, monkeypatch):
+    path = tmp_path / "t.jsonl"
+    out = rotating(path, bytes_=120)
+    real, refused = os.rename, []
+
+    def rename(src, dst, **kw):
+        if not refused:
+            refused.append(src)
+            raise PermissionError("a reader has it open")
+        return real(src, dst, **kw)
+
+    monkeypatch.setattr("asyncroscopy.core.fileio.os.rename", rename)
+    for i in range(6):
+        out.append({"i": i, "pad": "x" * 40})
+    assert refused and rotated_paths(path)
+    lines = [json.loads(s) for p in [*rotated_paths(path), path] for s in p.read_text(encoding="utf-8").splitlines()]
+    assert [r["i"] for r in lines] == list(range(6))
+
+
+def test_a_writer_may_hold_off_rotation_while_it_needs_offsets_to_stay_true(tmp_path):
+    path = tmp_path / "t.jsonl"
+    hold = [True]
+    out = SequencedAppender(path, rotate_bytes=100, may_rotate=lambda: not hold[0])
+    for i in range(8):
+        out.append({"i": i, "pad": "x" * 40})
+    assert not rotated_paths(path)
+    hold[0] = False
+    out.append({"i": 8})
+    assert len(rotated_paths(path)) == 1
+
+
+def test_a_reader_following_across_the_writers_rotation_loses_and_repeats_nothing(tmp_path):
+    path = tmp_path / "jobs.jsonl"
+    out = rotating(path, bytes_=500)
+    stream = TraceStream(tmp_path, grace_s=0.0)
+    seen = []
+    for i in range(80):
+        out.append({"i": i, "pad": "x" * 40, "ts": time.time()})
+        if i % 7 == 0:
+            seen += stream.poll(final=True)
+    seen += stream.poll(final=True)
+    assert len(rotated_paths(path)) >= 3
+    assert [e["i"] for e in seen] == list(range(80))
+    assert [e["seq"] for e in seen] == list(range(1, 81)) and {e["file"] for e in seen} == {"jobs.jsonl"}
+
+
+def test_a_cursor_keeps_its_place_across_rotations(tmp_path):
+    import asyncroscopy.trace.stream as module
+
+    path = tmp_path / "jobs.jsonl"
+    out = rotating(path, bytes_=300)
+    out.append({"i": 0, "pad": "x" * 40})
+    first = trace_since(tmp_path, from_end=False, grace_s=0.0)
+    got, cursor = [e["i"] for e in first["events"]], first["cursor"]
+    for i in range(1, 30):
+        out.append({"i": i, "pad": "x" * 40})
+        if i % 11 == 0:  # a client that keeps only the cursor, as after a server restart
+            module._streams.clear()
+            reply = trace_since(tmp_path, cursor=cursor, grace_s=0.0)
+            got += [e["i"] for e in reply["events"]]
+            cursor = reply["cursor"]
+    while True:
+        reply = trace_since(tmp_path, cursor=cursor, grace_s=0.0)
+        got += [e["i"] for e in reply["events"]]
+        cursor = reply["cursor"]
+        if not reply["events"]:
+            break
+    assert got == list(range(30))
+
+
+def test_trace_since_starts_at_the_end_without_a_cursor(tmp_path):
+    path = tmp_path / "jobs.jsonl"
+    out = SequencedAppender(path)
+    for i in range(5):
+        out.append({"i": i})
+    first = trace_since(tmp_path, grace_s=0.0)
+    assert first["events"] == []
+    out.append({"i": 5})
+    assert [e["i"] for e in trace_since(tmp_path, cursor=first["cursor"], grace_s=0.0)["events"]] == [5]
+
+
+def test_trace_since_uses_one_stream_per_cursor_and_does_not_glob_each_poll(tmp_path, monkeypatch):
+    import asyncroscopy.trace.stream as module
+
+    path = tmp_path / "jobs.jsonl"
+    out = SequencedAppender(path)
+    out.append({"i": 0})
+    expanded = []
+    real = module._expand
+    monkeypatch.setattr(module, "_expand", lambda sources: (expanded.append(1), real(sources))[1])
+    built = []
+    real_init = module.TraceStream.__init__
+
+    def counting(self, *args, **kwargs):
+        built.append(kwargs.get("cursor"))
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(module.TraceStream, "__init__", counting)
+    reply = trace_since(tmp_path, from_end=False, grace_s=0.0)
+    globs = len(expanded)
+    for i in range(1, 6):
+        out.append({"i": i})
+        reply = trace_since(tmp_path, cursor=reply["cursor"], grace_s=0.0)
+        assert [e["i"] for e in reply["events"]] == [i]
+    assert len(built) == 1 and len(expanded) == globs  # within RESCAN_S no new glob, and one stream

@@ -32,6 +32,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+from asyncroscopy import settings
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
@@ -980,12 +981,12 @@ def main(argv: list[str] | None = None) -> int:
         print()
         host = prompt_str("Tango database host", config.tango_host)
         port = prompt_int("Tango database port", config.tango_port)
-        default_tiled = urlsplit(os.environ.get("ASYNCROSCOPY_TILED_URI", f"http://{config.tiled.host}:{config.tiled.port}"))
+        default_tiled = urlsplit(settings.get().tiled_uri or f"http://{config.tiled.host}:{config.tiled.port}")
         tiled_host = prompt_str("Tiled HTTP host", default_tiled.hostname or config.tiled.host)
         tiled_port = prompt_int("Tiled HTTP port", default_tiled.port or config.tiled.port)
         acquisition_dir = prompt_str(
             "Acquisition save path",
-            os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", config.tiled.acquisition_dir),
+            settings.get().acquisition_dir or config.tiled.acquisition_dir,
         )
         should_start_tiled = prompt_bool("Start Tiled HTTP server", config.tiled.autostart)
         should_register_tiled = prompt_bool(
@@ -1124,7 +1125,8 @@ def main(argv: list[str] | None = None) -> int:
                 report_health(device.device_name, elapsed, faults)
 
             if should_start_tiled:
-                warning = tiled_key_warning(tiled_host, os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret"))
+                configured_key = settings.get().tiled_api_key
+                warning = tiled_key_warning(tiled_host, "secret" if configured_key is None else configured_key)
                 if warning:
                     status_line("WARN", "Tiled API key", warning)
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
