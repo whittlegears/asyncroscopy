@@ -84,7 +84,7 @@ class TestRecordingProxy:
         proxy.imsize = 64
         proxy.write_attribute("dwell_time", 1e-6)
         assert proxy.blank_beam() == "blank_beam"  # the one write that really runs
-        assert [c[0] for c in fake.calls] == ["get_stage", "read_attribute", "blank_beam"]
+        assert [c[0] for c in fake.calls if c != ("read_attribute", "action_hints")] == ["get_stage", "read_attribute", "blank_beam"]
         assert [(c[1], c[4]) for c in recorded] == [
             ("move_stage", False), ("acquire_scanned_image", False), ("write_attribute", False), ("write_attribute", False), ("blank_beam", True),
         ]

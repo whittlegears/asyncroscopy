@@ -9,6 +9,10 @@ from __future__ import annotations
 import math
 
 ELECTRON_CHARGE = 1.602176634e-19
+# The one definition of how widely a parked beam's dose is counted: the side (m) of the square around the spot. The probe
+# is far smaller; 10 nm is a typical damage and contamination spread. The Mapper's budget, the dose ledger and the twin's
+# dose map all use it, so they cannot disagree.
+EDS_DOSE_SPREAD_M = 1e-8
 
 
 def frame_dose(current_pa: float, dwell_s: float, fov_m: float, imsize: int) -> float:

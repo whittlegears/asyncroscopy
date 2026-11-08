@@ -70,6 +70,8 @@ devices:
       autofocus_frames: 8
       allow_corrector_writes: false
   scan:      { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: AutoScriptSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript

@@ -9,7 +9,6 @@ reads these attributes via DeviceProxy before acquiring.
 import json
 import math
 import time
-import uuid
 from pathlib import Path
 
 from tango import AttrWriteType, DevState
@@ -39,7 +38,7 @@ def holder_profiles(text: str) -> dict[str, dict[str, tuple[float, float]]]:
     return profiles
 
 class STAGE(Device):
-    """Stage/sample settings device.
+    """Stage settings device: travel, holder limits and position. Which sample is loaded is the SAMPLE device's.
 
     Public stage vectors are always [x, y, z, alpha, beta], with x/y/z in
     meters and alpha/beta in degrees.
@@ -67,7 +66,6 @@ class STAGE(Device):
     high_tilt_deg = device_property(dtype=float, default_value=15.0, doc="Tilt (deg, alpha or beta) above which |z| is held to high_tilt_max_abs_z_m. Set from the fitted holder.")
     high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
-    sample_file = device_property(dtype=str, default_value="", doc="Where load_sample records the loaded sample, so a restart keeps it; blank: outputs/stage/<device name>_sample.json.")
     position_error_m = device_property(
         dtype=float, default_value=0.0,
         doc="1-sigma distance between where the stage lands and where it reports (m), from its specification; reported as "
@@ -162,7 +160,6 @@ class STAGE(Device):
         self._holder = ""
         self._frozen = None
         self._holder_path = Path(self.holder_file or f"outputs/stage/{self.get_name().replace('/', '_')}_holder.json")
-        self._sample_path = Path(self.sample_file or f"outputs/stage/{self.get_name().replace('/', '_')}_sample.json")
         installed, problem = self._restore_holder()
         self._apply_holder(installed)
         if problem:
@@ -285,34 +282,6 @@ class STAGE(Device):
             self.set_state(DevState.ON)
         self.set_status(f"holder {name or 'none'}")
         return self.get_holder()
-
-    @command(dtype_out=str, risk="low", role="setting.read")
-    def get_sample(self) -> str:
-        """The sample in the holder: JSON {"sample_id", "sample_load_id", "loaded_at", "who"}; nulls when none was recorded.
-        Every dataset records these, so a position from an earlier load is not mistaken for one on this sample."""
-        empty = {"sample_id": None, "sample_load_id": None, "loaded_at": None, "who": None}
-        if not self._sample_path.exists():
-            return json.dumps(empty)
-        try:
-            saved = json.loads(self._sample_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            return json.dumps({**empty, "error": f"the sample record in {self._sample_path} could not be read ({exc}); load the sample again"})
-        return json.dumps({key: saved.get(key) for key in empty})
-
-    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"sample_id": "...", "who": "..."}: the sample just put in the holder.', risk="high", operator_only=True, role="setting.set")
-    def load_sample(self, request: str) -> str:
-        """Record that a sample was loaded (operator only): it gets a new sample_load_id, so stage positions
-        recorded before this load are known to belong to another load, even of the same sample."""
-        body = json.loads(request) if request.strip().startswith("{") else {"sample_id": request.strip()}
-        sample_id = str(body.get("sample_id") or "").strip()
-        if not sample_id or len(sample_id) > 200:
-            raise ValueError("load_sample needs a sample_id of 1 to 200 characters")
-        record = {"sample_id": sample_id, "sample_load_id": uuid.uuid4().hex, "loaded_at": time.time(), "who": str(body.get("who") or "")[:80] or None}
-        self._sample_path.parent.mkdir(parents=True, exist_ok=True)
-        partial = self._sample_path.with_name(self._sample_path.name + ".partial")
-        partial.write_text(json.dumps(record), encoding="utf-8")
-        partial.replace(self._sample_path)
-        return json.dumps(record)
 
     @staticmethod
     def _pair(value, name: str) -> tuple[float, float]:

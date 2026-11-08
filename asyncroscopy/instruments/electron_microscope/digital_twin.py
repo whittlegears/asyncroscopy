@@ -120,7 +120,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     contamination_max = _prop(float, 0.0, "Carbon contamination thickness at saturation (m).")
     contamination_dose = _prop(float, 1e4, "Dose (e/A^2) for contamination to reach 63% of saturation.")
     damage_critical_dose = _prop(float, 0.0, "Dose (e/A^2) beyond which particles start to fade (0 = off).")
-    dose_spot_spread = _prop(float, 1e-8, "A parked beam's dose (EDS) is counted over a square this wide (m); keep it equal to the Mapper's eds_dose_spread_m.")
 
     # ------------------------------------------------------------------
     # Model construction
@@ -220,7 +219,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
                 contamination_angstrom_max=float(self.contamination_max) / ANGSTROM,
                 contamination_dose_e_per_a2=float(self.contamination_dose),
                 damage_critical_dose_e_per_a2=float(self.damage_critical_dose),
-                spot_spread_m=float(self.dose_spot_spread),
             ),
             self._specimen.bounds,
             margin_m=(x_max - x_min) * 0.25,

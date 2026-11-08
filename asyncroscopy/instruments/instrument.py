@@ -39,7 +39,11 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     # Instrument Attributes
     # ------------------------------------------------------------------
 
+    # Through a lambda: Tango binds an attribute's default read_<name> to the class declaring it, so a subclass's own
+    # read_instrument_type would never run.
     instrument_type = tango.server.attribute(
+        fget=lambda device: device.read_instrument_type(),
+        name="instrument_type",
         label="Instrument Type",
         dtype=str,
         access=tango.AttrWriteType.READ,

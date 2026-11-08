@@ -9,7 +9,7 @@ import pytest
 import tango
 
 from asyncroscopy.data.record import code_version, current_sample, record_fields
-from asyncroscopy.instruments.electron_microscope.hardware.TestStage import TestStage
+from asyncroscopy.instruments.common.sample import SAMPLE
 from asyncroscopy.utils.commands import declared_hints
 
 
@@ -18,21 +18,21 @@ def attrs_of(key: str) -> dict:
         return {k: (v.decode() if isinstance(v, bytes) else v) for k, v in h5.attrs.items()}
 
 
-def test_a_new_load_gets_a_new_id_and_survives_a_restart(mapping_stage_proxy):
-    first = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "Au-on-C 7", "who": "alice"})))
-    again = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "Au-on-C 7", "who": "alice"})))
+def test_a_new_load_gets_a_new_id_and_survives_a_restart(mapping_sample_proxy):
+    first = json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "Au-on-C 7", "who": "alice"})))
+    again = json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "Au-on-C 7", "who": "alice"})))
     assert first["sample_id"] == again["sample_id"] == "Au-on-C 7"
     assert first["sample_load_id"] != again["sample_load_id"]  # the same sample, loaded twice, is two loads
-    mapping_stage_proxy.Init()
-    assert json.loads(mapping_stage_proxy.get_sample()) == again
+    mapping_sample_proxy.Init()
+    assert json.loads(mapping_sample_proxy.get_sample()) == again
     with pytest.raises(tango.DevFailed, match="sample_id"):
-        mapping_stage_proxy.load_sample(json.dumps({"sample_id": " "}))
-    hints = declared_hints(TestStage)
+        mapping_sample_proxy.load_sample(json.dumps({"sample_id": " "}))
+    hints = declared_hints(SAMPLE)
     assert hints["load_sample"]["operator_only"] and not hints["get_sample"].get("operator_only")
 
 
-def test_an_image_records_the_loaded_sample_and_where_it_came_from(mapping_stage_proxy, mapping_twin_proxy):
-    loaded = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "grid 12", "who": "bob"})))
+def test_an_image_records_the_loaded_sample_and_where_it_came_from(mapping_sample_proxy, mapping_twin_proxy):
+    loaded = json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "grid 12", "who": "bob"})))
     mapping_twin_proxy.set_timeout_millis(60_000)
     first, second = (attrs_of(mapping_twin_proxy.acquire_scanned_image(["haadf"])) for _ in range(2))
     for attrs in (first, second):
@@ -43,8 +43,8 @@ def test_an_image_records_the_loaded_sample_and_where_it_came_from(mapping_stage
     assert first["id"] != second["id"] and len(first["id"]) == 32
 
 
-def test_a_map_run_keeps_its_id_and_refuses_to_resume_on_another_sample_load(mapper_proxy, mapping_stage_proxy):
-    loaded = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "particles A"})))
+def test_a_map_run_keeps_its_id_and_refuses_to_resume_on_another_sample_load(mapper_proxy, mapping_sample_proxy):
+    loaded = json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "particles A"})))
     plan = {"box_m": [-1.2e-7, 1.2e-7, -8e-8, 8e-8], "fov_m": 8e-8, "overlap": 0.2, "imsize": 256, "dwell_s": 2e-6}
     call = lambda verb, body: json.loads(getattr(mapper_proxy, verb)(json.dumps(body)))
 
@@ -67,7 +67,7 @@ def test_a_map_run_keeps_its_id_and_refuses_to_resume_on_another_sample_load(map
     assert before["sample_load_id"] == loaded["sample_load_id"] and before["kind"] == "map_run"
     again = attrs_of(stop_after_a_tile())  # a resume on the same load keeps the run's id
     assert again["id"] == before["id"] and again["instrument_id"] == "asyncroscopy/mapper/default" and again["trace_offset"] >= 0
-    mapping_stage_proxy.load_sample(json.dumps({"sample_id": "particles B"}))
+    mapping_sample_proxy.load_sample(json.dumps({"sample_id": "particles B"}))
     refused = finish(call("start", {"reservation_id": reserve["reservation_id"]})["job_id"])
     assert refused["state"] == "failed" and "reloaded" in refused["last_error"]["message"]
     call("release", {"reservation_id": reserve["reservation_id"]})
@@ -78,17 +78,17 @@ def test_record_fields_say_why_the_sample_is_unknown():
         def get_sample(self):
             raise RuntimeError("Command get_sample not found\nmore")
 
-    assert current_sample(None)["sample_error"].startswith("no STAGE device")
+    assert current_sample(None)["sample_error"].startswith("no SAMPLE device")
     unknown = record_fields("x/y/z", "stem_image", current_sample(Silent()))
     assert "sample_id" not in unknown and "sample_load_id" not in unknown
     assert unknown["sample_error"].endswith("Command get_sample not found")
 
 
-def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_proxy, mapping_twin_proxy, tmp_path, monkeypatch):
+def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_sample_proxy, mapping_twin_proxy, tmp_path, monkeypatch):
     from asyncroscopy.data.dose_ledger import dose_at, exposure_of
     from asyncroscopy.routines.dose import frame_dose
 
-    loaded = json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "dose test"})))
+    loaded = json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "dose test"})))
     mapping_twin_proxy.set_timeout_millis(60_000)
     before = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": 0.0, "y_m": 0.0})))
     assert before["sample_load_id"] == loaded["sample_load_id"] and before["exposures"] == 0 and before["dose_e_per_a2"] == 0.0
@@ -107,7 +107,7 @@ def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_
     assert here["exposures"] == 2 and here["exposures_here"] == 2 and here["dose_e_per_a2"] == pytest.approx(expected) and expected > 0
     away = json.loads(mapping_twin_proxy.get_dose(json.dumps({"x_m": centre[0] + 1e-3, "y_m": centre[1]})))
     assert away["exposures_here"] == 0 and "camera frames" in away["not_counted"]
-    mapping_stage_proxy.load_sample(json.dumps({"sample_id": "dose test"}))  # a new load starts from nothing
+    mapping_sample_proxy.load_sample(json.dumps({"sample_id": "dose test"}))  # a new load starts from nothing
     assert json.loads(mapping_twin_proxy.get_dose("{}"))["exposures"] == 0
     with pytest.raises(tango.DevFailed, match="both x_m and y_m"):
         mapping_twin_proxy.get_dose(json.dumps({"x_m": 0.0}))
@@ -117,7 +117,7 @@ def test_the_dose_ledger_adds_up_every_frame_that_covered_a_point(mapping_stage_
     assert dose_at("no such load")["exposures"] == 0
 
 
-def test_a_frame_records_its_image_shift_and_its_dose_lands_there(mapping_stage_proxy, mapping_twin_proxy):
+def test_a_frame_records_its_image_shift_and_its_dose_lands_there(mapping_sample_proxy, mapping_twin_proxy):
     from asyncroscopy.data.dose_ledger import exposure_of
 
     mapping_twin_proxy.set_timeout_millis(60_000)
@@ -147,11 +147,12 @@ def test_a_partial_scan_region_is_read_as_left_top_width_height():
     assert exposure_of(spot) is None and exposure_of({**spot, "axes": "rows=+y, columns=+x"})["box_m"][0] == pytest.approx(2.5e-7 - 5e-9)
 
 
-def test_a_spectrum_counts_its_parked_beam_over_the_spread_square(mapping_stage_proxy, mapping_twin_proxy):
-    from asyncroscopy.data.dose_ledger import SPOT_SPREAD_M, exposure_of
+def test_a_spectrum_counts_its_parked_beam_over_the_spread_square(mapping_sample_proxy, mapping_twin_proxy):
+    from asyncroscopy.data.dose_ledger import exposure_of
+    from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M as SPOT_SPREAD_M
     from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-    json.loads(mapping_stage_proxy.load_sample(json.dumps({"sample_id": "spot test"})))
+    json.loads(mapping_sample_proxy.load_sample(json.dumps({"sample_id": "spot test"})))
     mapping_twin_proxy.set_timeout_millis(60_000)
     mapping_twin_proxy.place_beam([0.75, 0.5])
     mapping_twin_proxy.unblank_beam()
