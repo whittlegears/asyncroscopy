@@ -30,7 +30,6 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
-import os
 import re
 import time
 from pathlib import Path
@@ -38,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from asyncroscopy import settings
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from asyncroscopy.agents.goals import HEX_ID, MAP_KEY, Call, Goal
 from asyncroscopy.agents.memory import Memory, _slug
@@ -62,7 +62,7 @@ NAME_PROMPT = """Name a procedure for a lab's skill library. Reply with JSON onl
 
 
 def auto_promote_after() -> int:
-    return int(os.environ.get("ASYNCROSCOPY_AUTO_PROMOTE_AFTER", "0") or 0)
+    return settings.get().auto_promote_after
 
 
 def tool_sequence(calls: list[Call]) -> list[str]:

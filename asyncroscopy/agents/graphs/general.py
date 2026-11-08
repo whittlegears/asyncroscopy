@@ -12,11 +12,11 @@ errors with a request id, and the prompt says how to wait for them.
 from __future__ import annotations
 
 import asyncio
-import os
 
 from langchain.agents import create_agent
 from langgraph.graph.state import CompiledStateGraph
 
+from asyncroscopy import settings
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
@@ -68,9 +68,9 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     # A caller (the goal graph) may hand over its own AgentConfig, so this agent's calls join its run ledger.
     agent_config = configurable.get("agent_config") or AgentConfig.from_env(
         model=configurable.get("model"),
-        caller=configurable.get("caller") or os.environ.get("ASYNCROSCOPY_CALLER", "general-agent"),
+        caller=configurable.get("caller") or settings.get().caller or "general-agent",
     )
-    env_tools = [p.strip() for p in os.environ.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()]
+    env_tools = list(settings.get().agent_tools)
     chosen = configurable.get("tools") or env_tools
     # Whether this is a STEM, and which skills apply, depend on the whole endpoint, not the curated subset.
     every = await agent_config.tools(allow=["*"])
@@ -89,7 +89,7 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
               "Set ASYNCROSCOPY_AGENT_TOOLS to choose fewer (small models lose track with many).")
     print(f"[agents] {len(tools)} tools: {', '.join(sorted(t.name for t in tools))}")
-    template = os.environ.get("ASYNCROSCOPY_AGENT_PROMPT") or SYSTEM
+    template = settings.get().agent_prompt or SYSTEM
     names = {t.name for t in tools}
     readers = " or ".join(r for r in ("view_data", "get_region") if r in names) or "the instrument's own read tools"
     extra = (SEARCH_RULE if {"find_tools", "call_tool"} <= names else "") + (STEM_RULES if stem else "")

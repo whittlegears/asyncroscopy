@@ -23,6 +23,7 @@ try:
 except ImportError:
     httpx2 = None
 
+from asyncroscopy import settings
 from asyncroscopy.core.net import is_loopback_host
 
 # Seconds; turned into a Timeout of whichever HTTP library the installed Tiled client uses
@@ -71,7 +72,8 @@ _lock = threading.Lock()
 
 def api_key() -> str:
     """The Tiled API key: ASYNCROSCOPY_TILED_API_KEY, default "secret" (the loopback default SciAgentGUI uses)."""
-    return os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret")
+    key = settings.get().tiled_api_key
+    return "secret" if key is None else key
 
 
 def _nothing_listening(uri: str) -> bool:
@@ -182,7 +184,7 @@ def uri_from_data_device(address: str) -> str:
     except Exception as exc:  # Tango raises DevFailed; a busy DATA device times out
         if cached is not None:
             return cached[0]
-        fallback = os.environ.get("ASYNCROSCOPY_TILED_URI")
+        fallback = settings.get().tiled_uri
         if fallback:
             return fallback
         raise TiledUnavailable(f"could not ask the DATA device {address!r} for the Tiled address ({exc})") from exc

@@ -28,7 +28,6 @@ import asyncio
 import importlib
 import inspect
 import json
-import os
 import re
 import subprocess
 import sys
@@ -50,6 +49,7 @@ from _common import (
 )
 from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
+from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.skill_middleware import recursion_limit
 from asyncroscopy.evaluate import RunData
@@ -871,9 +871,10 @@ async def main(args: argparse.Namespace) -> int:
         return 2
     STACK.update(stacks[args.stack])
     # Environment overrides win over the stack file (configs/mcp_*_operator.yaml comments use them).
-    for field, variable in (("operator", "ASYNCROSCOPY_OPERATOR_URL"), ("tiled", "ASYNCROSCOPY_TILED_URI")):
-        if os.environ.get(variable):
-            STACK[field] = os.environ[variable]
+    env = settings.get()
+    for field, value in (("operator", env.operator_url), ("tiled", env.tiled_uri)):
+        if value:
+            STACK[field] = value
     on_stack = [wf for wf in load_workflows(args.workflows, stacks) if wf["stack"] == args.stack]
     unknown = sorted(set(args.only or ()) - {wf["name"] for wf in on_stack})
     if unknown:
@@ -893,7 +894,7 @@ async def main(args: argparse.Namespace) -> int:
         print(f"{len(workflows)} workflows on stack {args.stack}; runners here: {sorted(available)}")
         return 0
     config = AgentConfig.from_env(model=args.model, caller="workflows")
-    if not os.environ.get("ASYNCROSCOPY_MCP_URL"):
+    if not env.mcp_url:
         config.mcp_url = STACK["mcp"]
     live = Live(config)
     await live.discover()
@@ -946,7 +947,7 @@ if __name__ == "__main__":
     parser.add_argument("--stack", default="twin", help="Which stack is running: a name from benchmarks/stacks.yaml (twin, large, xrd) or a workflow file's stacks:.")
     parser.add_argument("--graph", default=None, help="An extra runner: module:function returning a chat graph, run as 'custom'.")
     parser.add_argument("--n", type=int, default=1, help="Runs per workflow and runner.")
-    parser.add_argument("--model", default=os.environ.get("ASYNCROSCOPY_MODEL", "qwen3:8b"))
+    parser.add_argument("--model", default=settings.get().model or "qwen3:8b")
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")
     parser.add_argument("--evaluators", default=",".join(EVALUATORS),

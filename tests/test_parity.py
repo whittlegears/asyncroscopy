@@ -20,7 +20,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
-import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +30,7 @@ import tango
 from autoscript_core.common import ApplicationServerException
 from autoscript_tem_microscope_client.structures import StagePosition
 
+from asyncroscopy import settings
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE, TILT_LIMITS_DEG
 from asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript import AutoScriptSTAGE
@@ -41,7 +41,7 @@ SOFTWARE_LIMITS = {"min_fov": 1e-9, "max_fov": 1e-4, "max_defocus": 1e-5}  # the
 
 
 def _autoscript_class():
-    path = os.environ.get("ASYNCROSCOPY_PARITY_AUTOSCRIPT")
+    path = settings.get().parity_autoscript
     if not path:
         from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 

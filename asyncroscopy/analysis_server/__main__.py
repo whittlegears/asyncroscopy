@@ -7,10 +7,9 @@ The tool log, the note events and the placement log go under the outputs folder 
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
-from asyncroscopy.settings import Settings
+from asyncroscopy import settings
 
 from .jobs import DEFAULT_MAX_WORKERS
 from .map_tools import DEFAULT_MAX_CANVAS_PIXELS
@@ -49,8 +48,9 @@ def parser(settings: Settings) -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
-    args = parser(Settings.from_env()).parse_args(argv)
-    api_key = args.api_key or os.environ.get("ASYNCROSCOPY_TILED_API_KEY") or os.environ.get("TILED_API_KEY")
+    env = settings.get()
+    args = parser(env).parse_args(argv)
+    api_key = args.api_key or env.tiled_api_key or env.plain_tiled_api_key
     local_roots = args.local_root if args.local_root is not None else [str(Path.cwd())]
     mcp, tools = create_server(
         args.tiled or None, api_key, local_roots=local_roots,

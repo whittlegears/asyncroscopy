@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import time
 from typing import TypedDict
@@ -29,13 +28,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from asyncroscopy import settings
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from asyncroscopy.contracts import load, validate
 
-POLL_S = float(os.environ.get("ASYNCROSCOPY_POLL_S", "1.0"))
-APPROVAL_WAIT_S = float(os.environ.get("ASYNCROSCOPY_APPROVAL_WAIT_S", "1800"))
-ANALYSIS_WAIT_S = float(os.environ.get("ASYNCROSCOPY_ANALYSIS_WAIT_S", "3600"))
 ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
 MAX_POLL_MISSES = 5  # consecutive failed status polls before the graph gives up on a job
 DEFAULT_FOV_M = 200e-9
@@ -138,7 +135,7 @@ WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full)\s+(?:sample|specimen|grid)\b
 
 class MappingGraph:
     def __init__(self, config: AgentConfig | None = None) -> None:
-        self.config = config or AgentConfig.from_env(caller=os.environ.get("ASYNCROSCOPY_CALLER", "mapping-graph"))
+        self.config = config or AgentConfig.from_env(caller=settings.get().caller or "mapping-graph")
         self.instrument: McpServer = self.config.instrument()
         self.analysis: McpServer | None = self.config.analysis()
         self._tool_names: set[str] | None = None
@@ -149,7 +146,7 @@ class MappingGraph:
         if self._mapper_prefix is None:
             if self._tool_names is None:
                 self._tool_names = {t.name for t in await self.instrument.list_tools()}
-            configured = os.environ.get("ASYNCROSCOPY_MAPPER")
+            configured = settings.get().mapper
             candidates = sorted(n[: -len("_reserve")] for n in self._tool_names if n.startswith("Mapper") and n.endswith("_reserve"))
             if configured:
                 if configured not in candidates:
@@ -167,7 +164,7 @@ class MappingGraph:
         """The exported microscope's class name, e.g. DigitalTwin or AutoScriptMicroscope."""
         if self._tool_names is None:
             self._tool_names = {t.name for t in await self.instrument.list_tools()}
-        configured = os.environ.get("ASYNCROSCOPY_MICROSCOPE")
+        configured = settings.get().microscope
         if configured:
             if f"{configured}_move_stage" not in self._tool_names:
                 raise RuntimeError(f"ASYNCROSCOPY_MICROSCOPE={configured!r} has no {configured}_move_stage tool on {self.config.mcp_url}")
@@ -330,7 +327,7 @@ class MappingGraph:
 
     async def start(self, state: MapState) -> MapState:
         arguments = {"request": json.dumps({"reservation_id": state["reservation_id"]})}
-        deadline = time.time() + APPROVAL_WAIT_S
+        deadline = time.time() + settings.get().approval_wait_s
         request_id = None
         while True:
             result = await self.instrument.call(f"{await self._mapper()}_start", arguments)
@@ -356,7 +353,7 @@ class MappingGraph:
                 if time.time() > deadline:
                     await self._release(state)
                     return {"error": "no operator decision before the approval wait ran out", "approval_request_id": request_id, "released": True}
-                await asyncio.sleep(POLL_S)
+                await asyncio.sleep(settings.get().poll_s)
 
     async def wait(self, state: MapState) -> MapState:
         # Give the job three times its estimate (plus 5 minutes), then abort it rather than wait forever.
@@ -377,7 +374,7 @@ class MappingGraph:
                 break
             if time.time() > deadline:
                 return {"error": "the map run took more than three times its estimate"}
-            await asyncio.sleep(POLL_S)
+            await asyncio.sleep(settings.get().poll_s)
         results = await self.instrument.call_json(f"{await self._mapper()}_results", {"request": json.dumps({"job_id": state["job_id"]})})
         await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         if status["state"] != "done":
@@ -441,7 +438,7 @@ class MappingGraph:
 
     # ------------------------------------------------------------------ helpers
     async def _analysis_job(self, job_id: str) -> dict:
-        deadline = time.time() + ANALYSIS_WAIT_S
+        deadline = time.time() + settings.get().analysis_wait_s
         while True:
             status = await self.analysis.call_json("analysis_job_status", {"job_id": job_id})
             if "error" in status:  # e.g. unknown_job after the analysis server restarted
@@ -451,7 +448,7 @@ class MappingGraph:
             if time.time() > deadline:
                 await self.analysis.call_json("analysis_job_abort", {"job_id": job_id})
                 return {"state": "timed out"}
-            await asyncio.sleep(POLL_S)
+            await asyncio.sleep(settings.get().poll_s)
         results = await self.analysis.call_json("analysis_job_results", {"job_id": job_id})
         results["state"] = status["state"]
         return results
@@ -473,7 +470,7 @@ class MappingGraph:
                     status = await self.instrument.call_json(f"{await self._mapper()}_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
                     if status.get("state") not in {"running", "aborting"}:
                         break
-                    await asyncio.sleep(POLL_S)
+                    await asyncio.sleep(settings.get().poll_s)
             await self.instrument.call(f"{await self._mapper()}_release", {"request": json.dumps({"reservation_id": state["reservation_id"]})})
         except Exception:
             log.warning("could not stop or release reservation %s", state["reservation_id"], exc_info=True)
