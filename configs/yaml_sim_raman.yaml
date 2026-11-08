@@ -11,8 +11,10 @@
 # differ from the twin's (Tango 9094, Tiled 9091, outputs/tiled_acquisitions).
 # See docs/Adding_New_Hardware/second_stack.md.
 #
-# The file has a jobs: section, so the device also has the job envelope: an agent
-# runs a line scan with run_job(device="RamanTwin", plan=...) and wait_for_job.
+# The file has a jobs: section, so run_servers also starts its job device, RamanTwinJob
+# (at asyncroscopy/job/default, from the same file and with the state_directory and
+# trace_path below): an agent runs a line scan with run_job(device="RamanTwinJob", plan=...)
+# and wait_for_job.
 
 # A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
 simulated: true
