@@ -13,7 +13,7 @@ from asyncroscopy.settings import Settings
 ROOT = Path(__file__).resolve().parents[1]
 ENV_READ = re.compile(r"""os\.environ\.get\(\s*['"]ASYNCROSCOPY_|os\.getenv\(\s*['"]ASYNCROSCOPY_|os\.environ\[['"]ASYNCROSCOPY_\w*['"]\](?!\s*=[^=])""")
 # Owned by another branch while this one was written; its one read goes through settings once that lands.
-NOT_YET_MOVED = {"asyncroscopy/data/dose_ledger.py"}
+NOT_YET_MOVED: set[str] = set()
 
 
 def python_files():

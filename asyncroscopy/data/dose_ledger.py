@@ -39,18 +39,17 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
 
+from asyncroscopy import settings
 from asyncroscopy.data.integrity import LOCK_WAIT_S, chain_append
 from asyncroscopy.core.fileio import file_lock
 from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M, ELECTRON_CHARGE, frame_dose
 
 LEDGER_ENV = "ASYNCROSCOPY_DOSE_LEDGER"
-DEFAULT_LEDGER = "outputs/dose/ledger.jsonl"
 NOT_COUNTED = ("exposures saved without their position, current and time (camera frames, 4D data, and spectra that do not record "
                "their scan axes, such as the AutoScript microscope's), time the beam spent unblanked between exposures, and image "
                "shift and scan rotation (each exposure is placed where the instrument believes the beam was)")
@@ -70,7 +69,7 @@ CREATE INDEX IF NOT EXISTS exposure_by_load ON exposure (load);
 
 
 def ledger_path() -> Path:
-    return Path(os.environ.get(LEDGER_ENV) or DEFAULT_LEDGER)
+    return settings.get().dose_ledger
 
 
 def _number(value) -> float | None:
