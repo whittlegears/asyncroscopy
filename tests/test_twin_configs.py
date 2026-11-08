@@ -51,7 +51,7 @@ def test_a_twin_mapper_takes_the_stage_error_from_the_twin_stage_or_states_at_le
     raw = _read_config(path)
     stage = raw["devices"].get("stage") or {}
     assert stage.get("class_name") == "DigitalTwinSTAGE", f"{path.name}: a twin's STAGE device is DigitalTwinSTAGE, not a test fixture"
-    properties = raw["instrument"].get("properties") or {}
+    properties = stage.get("properties") or {}
     backlash = max(float(properties.get("stage_backlash_x", 0.0)), float(properties.get("stage_backlash_y", 0.0)))
     noise = (float(properties.get("stage_move_noise_std", 0.0)) ** 2 + backlash**2) ** 0.5 * 0.99
     for device in raw["devices"].values():
@@ -61,9 +61,7 @@ def test_a_twin_mapper_takes_the_stage_error_from_the_twin_stage_or_states_at_le
 
 
 def test_the_twin_reports_its_stage_error_and_a_mapper_without_its_own_reads_it(tango_ctx, monkeypatch):
-    twin = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/drift"))
     stage = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/drift"))
-    twin.get_stage()  # the twin reports its stage error once its STAGE answers
     expected = math.sqrt(DRIFT_TWIN_PROPERTIES["stage_move_noise_std"] ** 2 + DRIFT_TWIN_PROPERTIES["stage_reported_noise_std"] ** 2)
     assert stage.position_sigma_m == pytest.approx(expected)
 

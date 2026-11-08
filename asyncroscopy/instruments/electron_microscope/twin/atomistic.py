@@ -1,17 +1,15 @@
-"""What the atomistic twins share beyond the ``ElectronMicroscopeTwin`` shell: a table of particles and the
-EDS spectrum it gives under the parked beam.
+"""What the atomistic twins share beyond the ``ElectronMicroscopeTwin`` shell: the EDS spectrum their specimen gives
+under the parked beam.
 
 The tilt, diffraction and polycrystalline-gold twins (``digital_twin_tilt.py``, ``digital_twin_diffraction.py``,
-``polycrystalline_gold_digital_twin.py``) build their own samples and renderers; what they share is kept here,
-in a mixin put before the shell in their bases::
+``polycrystalline_gold_digital_twin.py``) take their samples from a ``Specimen`` (``twin/specimen.py``) and keep their
+own renderers; what they share is kept here, in a mixin put before the shell in their bases::
 
     class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin): ...
 
-A twin's ``_generate_sample`` fills ``_particle_records_base`` ({"center": [x, y, z] in angstrom, "radius" in
-angstrom, "btype", "composition": {element: fraction}}) and ``_all_sample_elements``; the mixin keeps
-``_particle_records_view``, the same particles where the stage has put them (tilted, then shifted), and turns
-them into a spectrum. A twin whose records hold something else overrides ``_update_view_cache``. The
-``DigitalTwin`` (specimens, ``twin/specimen.py``) does not use it.
+The mixin keeps ``_particle_records_view``, the specimen's ``particle_records()`` ({"center": [x, y, z] in angstrom,
+"radius" in angstrom, "btype", "composition": {element: fraction}}) where the stage has put them (tilted, then
+shifted), and turns them into a spectrum. The ``DigitalTwin`` does not use it.
 """
 
 from __future__ import annotations
@@ -28,9 +26,14 @@ class ParticleSpectrumMixin:
     def init_device(self) -> None:
         self._particle_records_base: list[dict] = []
         self._particle_records_view: list[dict] = []
-        self._all_sample_elements: list[str] = []
         self._cached_pose_key: tuple | None = None
         super().init_device()
+
+    def _load_specimen(self, seed: int, context=None) -> None:
+        super()._load_specimen(seed, context)
+        self._particle_records_base = self._specimen.particle_records()
+        self._particle_records_view = self._particle_records_base
+        self._cached_pose_key = None
 
     def _sync_stage_from_proxy(self) -> None:
         super()._sync_stage_from_proxy()
@@ -89,7 +92,7 @@ class ParticleSpectrumMixin:
         rng = np.random.default_rng(spectrum_seed)
 
         if weight_sum <= 0.0:
-            return {element: float(np.abs(rng.normal(0.0, 0.02))) for element in (self._all_sample_elements or ["Au", "Pt", "Fe"])}
+            return {element: float(np.abs(rng.normal(0.0, 0.02))) for element in (self._specimen.element_symbols or ("Au", "Pt", "Fe"))}
 
         normalized = {el: val / weight_sum for el, val in weighted.items()}
         noisy = {element: float(max(0.0, value + rng.normal(0.0, 0.01))) for element, value in normalized.items()}

@@ -16,24 +16,10 @@ from ase.build import bulk
 from scipy import ndimage
 
 from asyncroscopy.sim.rng import EventRng
+from .elements import ELEMENTS
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10
-
-# Z, atoms per cubic angstrom, ASE bulk structure and lattice constant (angstrom).
-ELEMENTS: dict[str, tuple[int, float, str, float]] = {
-    "C": (6, 0.100, "diamond", 3.567),
-    "Si": (14, 0.050, "diamond", 5.431),
-    "Fe": (26, 0.085, "bcc", 2.87),
-    "Ni": (28, 0.091, "fcc", 3.52),
-    "Cu": (29, 0.085, "fcc", 3.615),
-    "Pd": (46, 0.068, "fcc", 3.89),
-    "Ag": (47, 0.059, "fcc", 4.09),
-    "Pt": (78, 0.066, "fcc", 3.92),
-    "Au": (79, 0.059, "fcc", 4.08),
-}
-
-
 
 PLACEMENT_TIME_LIMIT_S = 15.0  # longest the twin spends placing particles at start-up
 TEXTURE_FINEST_M = 0.5e-9  # the finest structure of the support film's texture
