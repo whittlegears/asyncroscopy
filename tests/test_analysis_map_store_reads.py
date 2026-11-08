@@ -62,8 +62,8 @@ def test_a_layout_2_run_is_read_as_arrays_and_lazily_and_skips_unwritten_slots(t
 
 def test_the_tile_cache_stays_within_its_byte_limit(tmp_path, monkeypatch):
     path, _tiles = write_layout2(tmp_path / "run.h5", grid=4)
-    monkeypatch.setattr(map_store, "CHUNK_TILES", 2)
-    monkeypatch.setattr(map_store, "CACHE_BYTES", 3 * TILE * TILE * 2)
+    monkeypatch.setattr(map_store.runs, "CHUNK_TILES", 2)
+    monkeypatch.setattr(map_store.runs, "CACHE_BYTES", 3 * TILE * TILE * 2)
     run = MapStore(local_roots=[tmp_path]).open_run(path)
     for tile in run.tiles:
         tile.image
@@ -82,8 +82,8 @@ def test_registering_a_wide_grid_reads_each_chunk_about_once_with_a_small_cache(
             image = scene[r * 48 : r * 48 + 64, c * 48 : c * 48 + 64]
             tiles.append(mosaic.Tile(image, ((c * 48 + 32) * PIXEL, (r * 48 + 32) * PIXEL), PIXEL, len(tiles)))
     path, _ = write_layout2(tmp_path / "wide.h5", grid=40, tiles=tiles)
-    monkeypatch.setattr(map_store, "CHUNK_TILES", 8)
-    monkeypatch.setattr(map_store, "CACHE_BYTES", 3 * 40 * 64 * 64 * 2)
+    monkeypatch.setattr(map_store.runs, "CHUNK_TILES", 8)
+    monkeypatch.setattr(map_store.runs, "CACHE_BYTES", 3 * 40 * 64 * 64 * 2)
     monkeypatch.setattr(mosaic, "STRIP_PX", 16 * 48)
     run = MapStore(local_roots=[tmp_path]).open_run(path)
     mosaic.register_tiles(run.tiles, stage_sigma_m=4 * PIXEL)
@@ -121,8 +121,8 @@ def test_a_layout_1_run_from_tiled_comes_in_one_export_or_tile_by_tile(can_expor
     group = ExportingGroup({n: np.full((4, 4), k, np.uint16) for k, n in enumerate(names)}, can_export)
     store = MapStore(tiled_uri="http://tiled.invalid")
     store._client = {"run.h5": {"tiles": group}}
-    info = map_store._layout1_info("run.h5", {}, names, [(4, 4)] * 5, [{"stage_reported_m": [0.0, 0.0], "pixel_size_m": PIXEL}] * 5)
-    source = map_store.TileSource(store, "run.h5", info)
+    info = map_store.runs._layout1_info("run.h5", {}, names, [(4, 4)] * 5, [{"stage_reported_m": [0.0, 0.0], "pixel_size_m": PIXEL}] * 5)
+    source = map_store.runs.TileSource(store, "run.h5", info)
     assert [int(source.image(k)[0, 0]) for k in range(5)] == list(range(5))
     assert (group.exports, group.reads) == ((1, 0) if can_export else (0, 5))
     source.close()
@@ -218,5 +218,5 @@ def test_an_abandoned_map_version_is_deleted_with_everything_tiled_wrote():
         def delete(self, recursive=False, external_only=True):
             calls.append((recursive, external_only))
 
-    map_store._delete_node(Node())
+    map_store.pyramid._delete_node(Node())
     assert calls == [(True, False)]  # tiled 0.2: delete() acts on the node itself; keep nothing behind
