@@ -87,12 +87,19 @@ def test_the_tiled_client_retries_only_briefly():
     assert utils.TILED_RETRY_ATTEMPTS <= 2 and utils.TILED_RETRY_TIMEOUT <= 3
 
 
+def tiled_http():
+    """The HTTP library the installed Tiled client sends requests with (httpx, or httpx2 from tiled 0.2.21)."""
+    from tiled.client import context
+
+    return context.httpx
+
+
 def test_connect_retries_once_then_names_the_uri(monkeypatch):
     attempts, sleeps = [], []
 
     def refuse(uri, **kwargs):
         attempts.append(kwargs)
-        raise httpx.ConnectError("connection refused")
+        raise tiled_http().ConnectError("connection refused")
 
     monkeypatch.setattr("tiled.client.from_uri", refuse)
     monkeypatch.setattr(tiled_client.time, "sleep", sleeps.append)
@@ -100,8 +107,17 @@ def test_connect_retries_once_then_names_the_uri(monkeypatch):
     with pytest.raises(TiledUnavailable, match=r"Tiled at http://tiled.example:9091 is not answering"):
         tiled_client.connect("http://tiled.example:9091")
     assert len(attempts) == 2 and sleeps == [0.5]
-    assert attempts[0]["timeout"] is tiled_client.TIMEOUT
     assert attempts[0]["api_key"] == "secret"
+
+
+def test_the_timeout_is_one_the_tiled_client_can_use():
+    """Tiled 0.2.21 moved from httpx to httpx2, and an httpx.Timeout then failed every connect with a TypeError."""
+    timeout = tiled_client.tiled_timeout()
+    assert isinstance(timeout, tiled_http().Timeout)
+    assert (timeout.connect, timeout.read) == (tiled_client.TIMEOUT_S["connect"], tiled_client.TIMEOUT_S["read"])
+    with tiled_http().Client(timeout=timeout) as client:
+        with pytest.raises(tiled_http().TransportError):
+            client.get("http://127.0.0.1:9")  # nothing listens on the discard port: a transport error, not a TypeError
 
 
 def test_connect_fails_at_once_when_nothing_listens_locally(monkeypatch):

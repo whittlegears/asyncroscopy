@@ -16,7 +16,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
-import httpx
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult, tool
 from fastmcp.utilities.types import Image as MCPImage
@@ -98,7 +97,7 @@ class DataTools:
             raise ToolError(f"Tiled did not answer within {deadline_s:.0f} s. {next_step}".strip()) from None
         except (tiled_client.TiledUnavailable, tiled_client.DataKeyNotFound, ValueError) as exc:
             raise ToolError(str(exc)) from exc
-        except (httpx.TransportError, OSError) as exc:
+        except (*tiled_client.CONNECTION_ERRORS, OSError) as exc:
             raise ToolError(f"Tiled stopped answering ({type(exc).__name__}: {exc}).") from exc
         except Exception as exc:  # an HTTP error status, a plug-in kind's bug, data this view cannot draw
             raise ToolError(f"could not read the data ({type(exc).__name__}: {exc})") from exc
