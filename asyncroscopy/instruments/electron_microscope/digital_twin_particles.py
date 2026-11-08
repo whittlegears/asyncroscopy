@@ -80,8 +80,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     # Attribute read methods
     # ------------------------------------------------------------------
 
-    def read_manufacturer(self) -> bool:
-        # TODO: query self._microscope.optics.mode when AutoScript available
+    def read_manufacturer(self) -> str:
         return self._manufacturer
 
 
