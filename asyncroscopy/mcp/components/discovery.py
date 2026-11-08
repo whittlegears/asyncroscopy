@@ -50,6 +50,7 @@ class Discovery:
         tools = server.descriptors
         return {
             "role": server.endpoint_role,
+            "stack_id": server.stack_id,
             "analysis_url": self.analysis_url,
             "job_devices": server.jobs.devices(),
             "stem_devices": sorted(p for p, d in server.devices.items() if d.stem),

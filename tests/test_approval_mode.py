@@ -1093,6 +1093,8 @@ class TestRunJob:
         info = server.discovery.endpoint_info()
         assert info["risks"]["Mapper_start"] == "high" and info["risks"]["Mapper_reserve"] == "low"
         assert info["risks"]["run_job"] == "high" and info["risks"]["view_data"] == "low" and info["job_devices"] == ["Mapper"]
+        # Every endpoint of a stack names its Tango database, so a client groups an instrument's endpoints by it.
+        assert info["stack_id"] == server.stack_id and info["stack_id"].startswith("tango://")
 
 
 class TestRunJobResume:
