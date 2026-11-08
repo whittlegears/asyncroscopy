@@ -267,7 +267,7 @@ class Mapper(JobDevice):
         """This job's own events into the run file (run_file.job_trace_events); the run file names the trace file and offset."""
         run = self._run(job)
         offset = int(job.get("trace_offset", 0))
-        events, dropped = job_trace_events(Path(self.trace_path), job["reservation_id"], offset)
+        events, dropped = job_trace_events(Path(self.trace_path), job["reservation_id"], offset, float(job.get("created") or 0.0))
         run.write_trace(events, str(self.trace_path), offset, dropped)
 
     def _close_run_file(self, job: dict) -> None:

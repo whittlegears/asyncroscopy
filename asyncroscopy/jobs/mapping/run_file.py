@@ -24,34 +24,50 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from asyncroscopy.core.fileio import rotated_paths
+
 RUN_LAYOUT = 2
 RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
 TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
 PARTIAL = ".partial"
 
 
-def job_trace_events(trace: Path, run_id: str, offset: int) -> tuple[list[str], int]:
+def job_trace_files(trace: Path, offset: int, since: float) -> list[tuple[Path, int]]:
+    """(file, where to start reading it) for every file that can hold a job created at ``since``, oldest first.
+
+    The job's device holds off rotation while it has a job, but another process appending to the same trace can
+    still rotate it. A rotated file last written before the job was created cannot hold its events; the oldest
+    one written after is the file that was live at reservation, so ``offset`` applies to it and the rest are whole.
+    """
+    files = [path for path in rotated_paths(trace) if path.stat().st_mtime >= since]
+    if trace.exists():
+        files.append(trace)
+    return [(path, offset if i == 0 else 0) for i, path in enumerate(files)]
+
+
+def job_trace_events(trace: Path, run_id: str, offset: int, since: float = 0.0) -> tuple[list[str], int]:
     """One job's own events (reserve, start, stop, approvals, failed steps) from the shared trace; (lines, dropped).
 
     Only the part written since ``offset`` (where the trace ended when the job was reserved) is read, line
     by line, so the cost is this job's, not the history's. Successful per-tile steps are left out (each
     tile's position and time are already in the run file), and at most TRACE_LINES_KEPT lines are kept.
+    ``since`` is when the job was created, to find its events if the trace was rotated while it ran.
     """
     events: list[str] = []
     dropped = 0
     marker = f'"run_id": "{run_id}"'
-    if not trace.exists():
-        return events, dropped
-    with trace.open("rb") as handle:
-        handle.seek(min(offset, trace.stat().st_size))
-        for raw in handle:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if marker not in line or ('.step"' in line and '"ok": true' in line):
-                continue
-            if len(events) < TRACE_LINES_KEPT:
-                events.append(line)
-            else:
-                dropped += 1
+    candidates = job_trace_files(trace, offset, since) if since else ([(trace, offset)] if trace.exists() else [])
+    for path, start in candidates:
+        with path.open("rb") as handle:
+            handle.seek(min(start, path.stat().st_size))
+            for raw in handle:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if marker not in line or ('.step"' in line and '"ok": true' in line):
+                    continue
+                if len(events) < TRACE_LINES_KEPT:
+                    events.append(line)
+                else:
+                    dropped += 1
     return events, dropped
 
 

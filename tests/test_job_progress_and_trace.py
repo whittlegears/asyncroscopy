@@ -107,6 +107,25 @@ def test_the_trace_copied_into_the_run_file_reads_only_this_jobs_part_of_the_sha
     assert elapsed < 0.5
 
 
+def test_a_jobs_trace_events_are_found_after_the_trace_rotated(tmp_path):
+    """Another process sharing the trace can rotate it mid-job: the events still come back, in order, and older files are not read."""
+    trace = tmp_path / "jobs.jsonl"
+    older = tmp_path / "jobs.jsonl.1"
+    live_at_reserve = tmp_path / "jobs.jsonl.2"
+
+    def event(action, run):
+        return json.dumps({"action": action, "ok": False, "run_id": run}) + "\n"
+
+    older.write_text(event("Mapper.reserve", "job1"), encoding="utf-8")  # the same id in an older file must not be read
+    os.utime(older, (1000.0, 1000.0))
+    before = event("Mapper.other", "other")
+    live_at_reserve.write_text(before + event("Mapper.reserve", "job1"), encoding="utf-8")
+    os.utime(live_at_reserve, (3000.0, 3000.0))
+    trace.write_text(event("Mapper.stop", "job1"), encoding="utf-8")
+    events, dropped = job_trace_events(trace, "job1", len(before), since=2000.0)
+    assert [json.loads(e)["action"] for e in events] == ["Mapper.reserve", "Mapper.stop"] and dropped == 0
+
+
 def test_a_grid_of_a_million_tiles_is_a_few_numbers():
     xs = np.linspace(0, 1e-3, 1000)
     grid = compact_grid(xs, xs)
