@@ -8,6 +8,9 @@ position (read from and written to the STAGE device), the sample's extent, and
 its acquisitions. The general-purpose twin is ``DigitalTwin`` in digital_twin.py
 (samples are ``Specimen`` plug-ins, twin/specimen.py); the atomistic twins
 (tilt, diffraction, polycrystalline gold) add ``twin.atomistic.ParticleSpectrumMixin``.
+
+Every twin takes its sample from a ``Specimen`` chosen by the ``specimen`` or ``specimen_source`` property; the twin
+classes differ in the renderer they add (``render_mode``) and the instrument effects around it.
 """
 
 import json
@@ -20,6 +23,7 @@ from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
@@ -31,6 +35,12 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
     # ------------------------------------------------------------------
     # Device properties — configure in Tango DB per deployment
     # ------------------------------------------------------------------
+
+    render_mode = "projected"  # which renderer this twin is; a specimen lists the modes it can be rendered in (Specimen.render_modes)
+
+    # Specimen: where the sample comes from (docs/Operation/specimens.md). A subclass sets its own default source.
+    specimen = device_property(dtype=str, default_value="", doc="Specimen as a mapping (JSON or YAML), e.g. {source: silicon_lamella, lamella_width_nm: 620}; overrides specimen_source.")
+    specimen_source = device_property(dtype=str, default_value="procedural", doc="Specimen source (the twin's own by default).")
 
     # A twin is a simulator unless its stack config says otherwise (run_servers' simulated:).
     simulated = device_property(dtype=bool, default_value=True, doc="True when this stack drives a simulator; set from run_servers' top-level simulated:.")
@@ -54,11 +64,6 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         dtype=float,
         default_value=6e-9,
         doc="Absolute sample thickness (Z) in meters (must be > 0).",
-    )
-    stage_move_noise_std = device_property(
-        dtype=float,
-        default_value=0.0,
-        doc="Gaussian move noise standard deviation in meters (applied to x,y,z).",
     )
     acquisition_save_directory = device_property(
         dtype=str,
@@ -138,6 +143,21 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
             )
         except tango.DevFailed:
             self.error_stream("Failed to read stage proxy position; using internal stage state.")
+
+    def _specimen_options(self) -> dict:
+        """The ``specimen`` mapping, with ``specimen_source`` as the source when it names none."""
+        mapping = parse_specimen(str(self.specimen or ""))
+        return {"source": str(mapping.get("source") or self.specimen_source).strip(), **mapping}
+
+    def _load_specimen(self, seed: int, context: SpecimenContext | None = None) -> None:
+        """Build the configured specimen, check this twin can render it, and take its extent."""
+        context = context or SpecimenContext(rng=EventRng(int(seed)), fov_m=float(self._fov))
+        specimen = build_specimen(self._specimen_options(), context)
+        if self.render_mode not in specimen.render_modes:
+            raise ValueError(f"specimen source {specimen.source!r} renders in {list(specimen.render_modes)}, not this twin's {self.render_mode!r} mode; choose a source for {self.render_mode!r} (docs/Operation/specimens.md)")
+        self._specimen = specimen
+        if hasattr(specimen, "world_bounds_ang"):
+            self._world_bounds_ang = dict(specimen.world_bounds_ang)
 
     @abstractmethod
     def _generate_sample(self, seed: int) -> None:
@@ -226,18 +246,10 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         return self._stage_position
 
     def _move_stage(self, position):
-        """Move the stage to the requested 5-axis vector with optional simulated precision noise."""
+        """Move the stage to the requested 5-axis vector."""
         if len(position) != 5:
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
         target = np.array(position, dtype=np.float64)
-
-        std = float(self.stage_move_noise_std)
-        if std > 0:
-            self._legacy_move_index = getattr(self, "_legacy_move_index", 0) + 1
-            rng = EventRng(int(self.sample_seed)).for_event("stage", self._legacy_move_index)
-            noise = np.zeros(5, dtype=np.float64)
-            noise[:3] = rng.normal(0.0, std, size=3)
-            target = target + noise
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:

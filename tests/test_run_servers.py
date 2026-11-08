@@ -111,12 +111,10 @@ def test_load_tilt_twin_config_includes_simulation_properties():
     assert config.instrument.class_name == "DigitalTwinTilt"
     assert config.instrument.module_name.endswith("digital_twin_tilt")
     assert stage.class_name == "DigitalTwinSTAGE"
-    assert properties["silicon_lattice_parameter_angstrom"] == ["5.431"]
-    assert properties["lattice_parameter_gradient_x_percent"] == ["2.0"]
-    assert properties["crystal_rotation_gradient_x_deg"] == ["4.0"]
-    assert properties["crystal_tilt_gradient_x_mrad"] == ["10.0"]
+    specimen = properties["specimen"][0]
+    assert "silicon_lamella" in specimen and "silicon_lattice_parameter_angstrom" in specimen and "5.431" in specimen
+    assert "lattice_parameter_gradient_x_percent" in specimen and "multislice_supercell_z" in specimen
     assert properties["potential_sampling_angstrom"] == ["0.08"]
-    assert properties["multislice_supercell_z"] == ["8"]
     assert properties["rotation_center_z_nm"] == ["125"]
     assert properties["randomness_scale"] == ["1.0"]
     assert properties["stage_device_address"] == ["asyncroscopy/stage/default"]
@@ -130,7 +128,7 @@ def test_load_particle_twin_config_uses_renamed_module():
 
     assert config.instrument.class_name == "DigitalTwinParticles"
     assert config.instrument.module_name.endswith("digital_twin_particles")
-    assert properties["world_imsize"] == ["128"]
+    assert "world_imsize" in properties["specimen"][0] and "particles" in properties["specimen"][0]
     assert properties["data_device_address"] == ["asyncroscopy/data/default"]
     assert properties["stage_device_address"] == ["asyncroscopy/stage/default"]
 

@@ -7,7 +7,6 @@ import json
 import numpy as np
 import tango
 from ase import Atoms
-from ase.build import bulk
 from tango.server import device_property
 
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
@@ -22,11 +21,14 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     ElectronMicroscopeTwin,
 )
 from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
+from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
 
 
 class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
-    """Silicon FIB-lamella twin with an imperfect, displaced tilt axis."""
+    """FIB-lamella twin (the ``silicon_lamella`` specimen) with an imperfect, displaced tilt axis."""
 
+    render_mode = "lamella"
+    specimen_source = device_property(dtype=str, default_value="silicon_lamella", doc="Specimen source (silicon_lamella, or a plug-in in the lamella render mode).")
     acquisition_save_directory = device_property(
         dtype=str,
         default_value=DEFAULT_ACQUISITION_DIR,
@@ -37,11 +39,6 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         default_value=731,
         doc="Seed for sample texture and repeatable instrument randomness.",
     )
-    lamella_width_nm = device_property(dtype=float, default_value=620.0)
-    lamella_height_nm = device_property(dtype=float, default_value=360.0)
-    lamella_thickness_nm = device_property(dtype=float, default_value=80.0)
-    gridbar_width_nm = device_property(dtype=float, default_value=220.0)
-    layer_period_nm = device_property(dtype=float, default_value=45.0)
     overview_fov_nm = device_property(dtype=float, default_value=1100.0)
     diffraction_image_size = device_property(
         dtype=int,
@@ -54,48 +51,6 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         default_value=8.0,
         doc="Probe convergence semi-angle in mrad.",
     )
-    silicon_lattice_parameter_angstrom = device_property(
-        dtype=float,
-        default_value=5.431,
-        doc="Unstrained silicon lattice parameter.",
-    )
-    lattice_parameter_gradient_x_percent = device_property(
-        dtype=float,
-        default_value=2.0,
-        doc="End-to-end lattice-parameter change across the lamella width.",
-    )
-    lattice_parameter_gradient_y_percent = device_property(
-        dtype=float,
-        default_value=0.5,
-        doc="End-to-end lattice-parameter change across the lamella height.",
-    )
-    crystal_rotation_deg = device_property(
-        dtype=float,
-        default_value=1.5,
-        doc="Mean in-plane silicon crystal rotation.",
-    )
-    crystal_rotation_gradient_x_deg = device_property(
-        dtype=float,
-        default_value=4.0,
-        doc="End-to-end in-plane rotation change across the lamella width.",
-    )
-    crystal_rotation_gradient_y_deg = device_property(
-        dtype=float,
-        default_value=-2.0,
-        doc="End-to-end in-plane rotation change across the lamella height.",
-    )
-    crystal_tilt_x_mrad = device_property(dtype=float, default_value=3.0)
-    crystal_tilt_y_mrad = device_property(dtype=float, default_value=-2.0)
-    crystal_tilt_gradient_x_mrad = device_property(
-        dtype=float,
-        default_value=10.0,
-        doc="End-to-end x-tilt change across the lamella width.",
-    )
-    crystal_tilt_gradient_y_mrad = device_property(
-        dtype=float,
-        default_value=-7.0,
-        doc="End-to-end y-tilt change across the lamella height.",
-    )
     electron_energy_ev = device_property(dtype=float, default_value=200_000.0)
     potential_sampling_angstrom = device_property(
         dtype=float,
@@ -106,22 +61,6 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         dtype=float,
         default_value=1.0,
         doc="Multislice potential slice thickness.",
-    )
-    multislice_supercell_xy = device_property(
-        dtype=int,
-        default_value=4,
-        doc="Silicon unit-cell repetitions in x and y for every probe position.",
-    )
-    multislice_supercell_z = device_property(
-        dtype=int,
-        default_value=8,
-        doc="Silicon unit-cell repetitions along the beam for every probe position.",
-    )
-    multislice_vacuum_angstrom = device_property(dtype=float, default_value=2.0)
-    frozen_phonon_sigma_angstrom = device_property(
-        dtype=float,
-        default_value=0.03,
-        doc="ASE rattle standard deviation before each multislice calculation.",
     )
     rotation_center_x_nm = device_property(dtype=float, default_value=-55.0)
     rotation_center_y_nm = device_property(dtype=float, default_value=35.0)
@@ -170,54 +109,13 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
 
     def _generate_sample(self, seed: int) -> None:
         self._fov = float(self.overview_fov_nm) * 1e-9
-        width = float(self.lamella_width_nm)
-        height = float(self.lamella_height_nm)
-        thickness = float(self.lamella_thickness_nm)
-        grid_width = float(self.gridbar_width_nm)
-        self._world_bounds_ang = {
-            "x_min": (-0.5 * width - grid_width) * 10.0,
-            "x_max": 0.5 * width * 10.0,
-            "y_min": -0.7 * height * 10.0,
-            "y_max": 0.7 * height * 10.0,
-            "z_min": -0.5 * thickness * 10.0,
-            "z_max": 0.5 * thickness * 10.0,
-        }
-        self._all_sample_elements = ["Si"]
+        self._load_specimen(seed)
 
     def _rng(self, event: str, index: int | None = None) -> np.random.Generator:
         event_code = sum((position + 1) * ord(character) for position, character in enumerate(event))
         sequence = self._acquisition_index if index is None else int(index)
         seed = (int(self.sample_seed) * 1_000_003 + event_code * 9_973 + sequence) % (2**32)
         return np.random.default_rng(seed)
-
-    def _lattice_fields(self, local_x_nm, local_y_nm):
-        x_fraction = np.clip(
-            np.asarray(local_x_nm) / float(self.lamella_width_nm),
-            -0.5,
-            0.5,
-        )
-        y_fraction = np.clip(
-            np.asarray(local_y_nm) / float(self.lamella_height_nm),
-            -0.5,
-            0.5,
-        )
-        strain = (
-            float(self.lattice_parameter_gradient_x_percent) * x_fraction
-            + float(self.lattice_parameter_gradient_y_percent) * y_fraction
-        ) / 100.0
-        lattice_parameter = float(self.silicon_lattice_parameter_angstrom) * (1.0 + strain)
-        rotation_deg = (
-            float(self.crystal_rotation_deg)
-            + float(self.crystal_rotation_gradient_x_deg) * x_fraction
-            + float(self.crystal_rotation_gradient_y_deg) * y_fraction
-        )
-        tilt_x_mrad = float(self.crystal_tilt_x_mrad) + float(
-            self.crystal_tilt_gradient_x_mrad
-        ) * x_fraction
-        tilt_y_mrad = float(self.crystal_tilt_y_mrad) + float(
-            self.crystal_tilt_gradient_y_mrad
-        ) * y_fraction
-        return lattice_parameter, rotation_deg, tilt_x_mrad, tilt_y_mrad
 
     def _apply_stage_target(self, position) -> None:
         target = np.asarray(position, dtype=np.float64)
@@ -329,39 +227,8 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             yy - offset[1]
         )
 
-        lamella = (
-            (np.abs(local_x) <= 0.5 * float(self.lamella_width_nm))
-            & (np.abs(local_y) <= 0.5 * float(self.lamella_height_nm))
-        )
-        gridbar = (
-            (local_x >= -0.5 * float(self.lamella_width_nm) - float(self.gridbar_width_nm))
-            & (local_x < -0.5 * float(self.lamella_width_nm))
-            & (np.abs(local_y) <= 0.68 * float(self.lamella_height_nm))
-        )
-
-        layer_phase = np.floor(
-            (local_y + 0.5 * float(self.lamella_height_nm)) / float(self.layer_period_nm)
-        )
-        layers = 0.5 * (1.0 + np.where(layer_phase % 2 == 0, 1.0, -1.0))
-        wedge = np.clip(
-            0.68 + 0.30 * (local_x / float(self.lamella_width_nm) + 0.5),
-            0.55,
-            1.0,
-        )
-        curtains = 0.025 * np.sin(2.0 * np.pi * local_x / 38.0) ** 2
-        texture = 0.025 * np.sin(local_x / 21.0 + local_y / 33.0)
-        image = np.full((size, size), 0.008, dtype=np.float64)
-        image[lamella] = (
-            0.28 + 0.11 * layers[lamella] + 0.22 * wedge[lamella] + texture[lamella]
-        )
-        image[lamella] += curtains[lamella]
-        image[gridbar] = 0.97
-
-        projected_thickness = float(self.lamella_thickness_nm) / max(
-            abs(float(rotation[2, 2])), 0.25
-        )
-        image[lamella] *= np.clip(projected_thickness / float(self.lamella_thickness_nm), 1.0, 2.3)
-        return np.clip(image, 0.0, 1.0), lamella, gridbar, local_x, local_y
+        field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=float(self._fov) * 1e10, imsize=size, local_nm=(local_x, local_y), rotation=rotation))
+        return field.maps["image"], field.maps["lamella"], field.maps["gridbar"], local_x, local_y
 
     def _render_stem_image(
         self,
@@ -414,63 +281,11 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         return material, float(local_x[row, column]), float(local_y[row, column])
 
     def _silicon_atoms(self, local_x_nm: float, local_y_nm: float, event_index: int):
-        lattice_parameter, rotation_deg, tilt_x_mrad, tilt_y_mrad = self._lattice_fields(
-            local_x_nm,
-            local_y_nm,
-        )
-        lattice_parameter = float(lattice_parameter)
-        rotation_deg = float(rotation_deg)
-        tilt_x_mrad = float(tilt_x_mrad)
-        tilt_y_mrad = float(tilt_y_mrad)
-        repetitions = (
-            int(self.multislice_supercell_xy),
-            int(self.multislice_supercell_xy),
-            int(self.multislice_supercell_z),
-        )
-        atoms = bulk(
-            "Si",
-            "diamond",
-            a=lattice_parameter,
-            cubic=True,
-        ).repeat(repetitions)
-        atoms.rotate(rotation_deg, "z", center="COP")
-        atoms.rotate(
-            float(self._stage_position[3]) + np.degrees(tilt_x_mrad * 1e-3),
-            "x",
-            center="COP",
-        )
-        atoms.rotate(
-            float(self._stage_position[4]) + np.degrees(tilt_y_mrad * 1e-3),
-            "y",
-            center="COP",
-        )
-        sigma = (
-            float(self.frozen_phonon_sigma_angstrom)
-            * max(0.0, float(self.randomness_scale))
-        )
-        if sigma > 0.0:
-            seed = int(self._rng("frozen_phonon", event_index).integers(0, 2**31 - 1))
-            atoms.rattle(stdev=sigma, seed=seed)
-        atoms.center(vacuum=float(self.multislice_vacuum_angstrom))
-        atoms.info.update(
-            {
-                "local_x_nm": float(local_x_nm),
-                "local_y_nm": float(local_y_nm),
-                "lattice_parameter_angstrom": lattice_parameter,
-                "nearest_neighbor_distance_angstrom": lattice_parameter * np.sqrt(3.0) / 4.0,
-                "crystal_rotation_deg": rotation_deg,
-                "crystal_tilt_x_mrad": tilt_x_mrad,
-                "crystal_tilt_y_mrad": tilt_y_mrad,
-            }
-        )
-        return atoms
+        seed = int(self._rng("frozen_phonon", event_index).integers(0, 2**31 - 1))
+        return self._specimen.atoms_at(local_x_nm, local_y_nm, ViewRequest(stage=self._stage_position), seed, thermal_scale=max(0.0, float(self.randomness_scale)))
 
     def _vacuum_diffraction(self, imsize: int) -> np.ndarray:
-        lateral_size = (
-            float(self.silicon_lattice_parameter_angstrom)
-            * int(self.multislice_supercell_xy)
-            + 2.0 * float(self.multislice_vacuum_angstrom)
-        )
+        lateral_size = self._specimen.vacuum_lateral_angstrom
         atoms = Atoms(
             cell=[lateral_size, lateral_size, 10.0],
             pbc=(False, False, False),
@@ -689,11 +504,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             "potential_slice_thickness_angstrom": float(
                 self.potential_slice_thickness_angstrom
             ),
-            "multislice_supercell": [
-                int(self.multislice_supercell_xy),
-                int(self.multislice_supercell_xy),
-                int(self.multislice_supercell_z),
-            ],
+            "multislice_supercell": self._multislice_supercell(),
         }
         data_server = self._detector_proxies.get("data")
         path = acquisition_filename(self, "stem_data", str(detector), data_server)
@@ -729,6 +540,10 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             ],
         )
         return data_server.register_path(str(path)) if data_server is not None else str(path)
+
+    def _multislice_supercell(self) -> list[int]:
+        specimen = self._specimen.params
+        return [specimen.multislice_supercell_xy, specimen.multislice_supercell_xy, specimen.multislice_supercell_z]
 
     def _move_stage(self, position) -> None:
         target = np.asarray(position, dtype=np.float64)
@@ -815,6 +630,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
 
     def _get_parameters(self) -> str:
         self._sync_stage_from_proxy()
+        specimen = self._specimen.params
         return json.dumps(
             {
                 "sample": "bulk silicon FIB lamella",
@@ -830,46 +646,24 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
                 "convergence_angle_mrad": float(self.convergence_angle_mrad),
                 "diffraction_image_size": int(self.diffraction_image_size),
                 "diffraction_max_angle_mrad": float(self.diffraction_max_angle_mrad),
-                "lamella_width_nm": float(self.lamella_width_nm),
-                "lamella_height_nm": float(self.lamella_height_nm),
-                "lamella_thickness_nm": float(self.lamella_thickness_nm),
-                "silicon_lattice_parameter_angstrom": float(
-                    self.silicon_lattice_parameter_angstrom
-                ),
-                "lattice_parameter_gradient_x_percent": float(
-                    self.lattice_parameter_gradient_x_percent
-                ),
-                "lattice_parameter_gradient_y_percent": float(
-                    self.lattice_parameter_gradient_y_percent
-                ),
-                "crystal_rotation_deg": float(self.crystal_rotation_deg),
-                "crystal_rotation_gradient_x_deg": float(
-                    self.crystal_rotation_gradient_x_deg
-                ),
-                "crystal_rotation_gradient_y_deg": float(
-                    self.crystal_rotation_gradient_y_deg
-                ),
-                "crystal_tilt_x_mrad": float(self.crystal_tilt_x_mrad),
-                "crystal_tilt_y_mrad": float(self.crystal_tilt_y_mrad),
-                "crystal_tilt_gradient_x_mrad": float(
-                    self.crystal_tilt_gradient_x_mrad
-                ),
-                "crystal_tilt_gradient_y_mrad": float(
-                    self.crystal_tilt_gradient_y_mrad
-                ),
+                "lamella_width_nm": specimen.lamella_width_nm,
+                "lamella_height_nm": specimen.lamella_height_nm,
+                "lamella_thickness_nm": specimen.lamella_thickness_nm,
+                "silicon_lattice_parameter_angstrom": specimen.silicon_lattice_parameter_angstrom,
+                "lattice_parameter_gradient_x_percent": specimen.lattice_parameter_gradient_x_percent,
+                "lattice_parameter_gradient_y_percent": specimen.lattice_parameter_gradient_y_percent,
+                "crystal_rotation_deg": specimen.crystal_rotation_deg,
+                "crystal_rotation_gradient_x_deg": specimen.crystal_rotation_gradient_x_deg,
+                "crystal_rotation_gradient_y_deg": specimen.crystal_rotation_gradient_y_deg,
+                "crystal_tilt_x_mrad": specimen.crystal_tilt_x_mrad,
+                "crystal_tilt_y_mrad": specimen.crystal_tilt_y_mrad,
+                "crystal_tilt_gradient_x_mrad": specimen.crystal_tilt_gradient_x_mrad,
+                "crystal_tilt_gradient_y_mrad": specimen.crystal_tilt_gradient_y_mrad,
                 "electron_energy_ev": float(self.electron_energy_ev),
                 "potential_sampling_angstrom": float(self.potential_sampling_angstrom),
-                "potential_slice_thickness_angstrom": float(
-                    self.potential_slice_thickness_angstrom
-                ),
-                "multislice_supercell": [
-                    int(self.multislice_supercell_xy),
-                    int(self.multislice_supercell_xy),
-                    int(self.multislice_supercell_z),
-                ],
-                "frozen_phonon_sigma_angstrom": float(
-                    self.frozen_phonon_sigma_angstrom
-                ),
+                "potential_slice_thickness_angstrom": float(self.potential_slice_thickness_angstrom),
+                "multislice_supercell": self._multislice_supercell(),
+                "frozen_phonon_sigma_angstrom": specimen.frozen_phonon_sigma_angstrom,
                 "randomness_scale": float(self.randomness_scale),
             }
         )

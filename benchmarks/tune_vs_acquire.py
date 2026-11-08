@@ -56,6 +56,7 @@ from asyncroscopy.evaluate import (
     stale_after_s,
 )
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin import DigitalTwinSTAGE
 from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
 from asyncroscopy.jobs.tuning.tuner import Tuner
 from asyncroscopy.trace.writer import TraceWriter
@@ -99,10 +100,10 @@ TWIN = {
     "sample_size_xy": 1.2e-6,
     "sample_particle_count": 2900,
     "support_thickness": 3e-9,
-    "stage_move_overhead": 1.0,  # move and settle (s)
     "dose_tracking": False,
     "time_scale": 0.0,
 }
+STAGE_MOVE_OVERHEAD_S = 1.0  # move and settle
 DEPTH_OF_FIELD_M = 20e-9  # the resolution evaluator's in-focus tolerance; also the policy's staleness bound
 # Two objectives that disagree: particles found (blur is tolerated), and particles found in frames taken in focus.
 OBJECTIVES = ("information", "information_in_focus")
@@ -144,8 +145,9 @@ def _prop_path(path: Path) -> str:
 def devices_info(work: Path) -> list[dict]:
     return [
         {"class": SCAN, "devices": [{"name": "bench/scan/tva", "properties": {}}]},
+        {"class": DigitalTwinSTAGE, "devices": [{"name": "bench/stage/tva", "properties": {"stage_move_overhead": STAGE_MOVE_OVERHEAD_S}}]},
         {"class": FocusDriftTwin, "devices": [{"name": "bench/twin/tva", "properties": {
-            **TWIN, "scan_device_address": "bench/scan/tva", "acquisition_save_directory": _prop_path(work / "data")}}]},
+            **TWIN, "scan_device_address": "bench/scan/tva", "stage_device_address": "bench/stage/tva", "acquisition_save_directory": _prop_path(work / "data")}}]},
         {"class": Tuner, "devices": [{"name": "bench/tuner/tva", "properties": {
             "microscope_device_address": "bench/twin/tva", "scan_device_address": "bench/scan/tva",
             "state_directory": _prop_path(work / "tuner_state"), "trace_path": _prop_path(work / "trace" / "jobs.jsonl"), "simulated": True}}]},
@@ -228,7 +230,7 @@ class Bench:
         focus_by_acquisition: dict[str, dict] = {}
         keys: list[str] = []
         for x, y in map_tiles():
-            move_s = TWIN["stage_move_overhead"] + math.hypot(x - self.device._stage.commanded[0], y - self.device._stage.commanded[1]) / 5e-6
+            move_s = STAGE_MOVE_OVERHEAD_S + math.hypot(x - self.device._stage.commanded[0], y - self.device._stage.commanded[1]) / 5e-6
             if self.clock() - t0 + move_s + frame_s > budget_s:
                 break
             self.twin.move_stage([x, y, 0.0, 0.0, 0.0])
@@ -341,7 +343,7 @@ def markdown(results: dict) -> str:
         "",
         f"Twin: {results['twin']['sample_particle_count']} particles on {results['twin']['sample_size_xy'] * 1e6:g} um, "
         f"map tiles {ACQUIRE['imsize']} px at {ACQUIRE['fov_m'] * 1e9:g} nm, dwell {ACQUIRE['dwell_s'] * 1e6:g} us; "
-        f"{results['frame_overhead_s']:g} s overhead per frame, {TWIN['stage_move_overhead']:g} s per move. "
+        f"{results['frame_overhead_s']:g} s overhead per frame, {STAGE_MOVE_OVERHEAD_S:g} s per move. "
         f"Information: unique ground-truth particles found (twin only). {results['repeats']} repeat(s) per point.",
         "",
     ]
@@ -419,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         "budget_s": args.budget_s,
         "repeats": args.repeats,
         "frame_overhead_s": args.frame_overhead_s,
-        "twin": TWIN,
+        "twin": {**TWIN, "stage_move_overhead": STAGE_MOVE_OVERHEAD_S},
         "tune_plan": TUNE_PLAN,
         "acquire": ACQUIRE,
         "budgets": {k: BUDGETS[k] for k in args.budgets},

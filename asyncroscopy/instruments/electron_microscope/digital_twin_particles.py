@@ -15,7 +15,10 @@ from tango.server import attribute, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
+from asyncroscopy.instruments.electron_microscope.twin.sample_model import SampleParams
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
+from asyncroscopy.sim.rng import EventRng
 
 
 class DigitalTwinParticles(ElectronMicroscopeTwin):
@@ -24,14 +27,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     dedicated detector devices and read via DeviceProxy at acquisition time.
     """
 
-    # ------------------------------------------------------------------
-    # Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
-    world_imsize = device_property(
-        dtype=int,
-        default_value=128,
-        doc="Number of voxels along each lateral axis of the persistent particle world.",
-    )
+    render_mode = "particle_potential"
+    specimen_source = device_property(dtype=str, default_value="particles", doc="Specimen source (particles, or a plug-in in the particle_potential render mode).")
 
     # ------------------------------------------------------------------
     # Attributes
@@ -65,10 +62,15 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         self._particle_records = []
 
     def _generate_sample(self, seed: int) -> None:
-        """Build the persistent particle world (the shell connects the support devices first)."""
-        np.random.seed(int(seed))
-        self._make_sample_recipe()
-        self._cook_sample_recipe()
+        """Build the particle world (the shell connects the support devices first)."""
+        self._load_specimen(seed, SpecimenContext(rng=EventRng(int(seed)), sample=SampleParams(particle_count=int(self.sample_particle_count)), fov_m=float(self._fov)))
+        self._read_stage()
+
+    def _read_stage(self) -> None:
+        """Take the stage position from the STAGE device."""
+        stage = self._detector_proxies.get("stage")
+        if stage is not None:
+            self._stage_position = np.asarray([stage.x, stage.y, stage.z, stage.alpha, stage.beta], dtype=np.float64)
 
     def _viewport_metadata(self) -> dict:
         return {**super()._viewport_metadata(), "particle_count": len(self._particle_records)}
@@ -78,8 +80,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     # Attribute read methods
     # ------------------------------------------------------------------
 
-    def read_manufacturer(self) -> bool:
-        # TODO: query self._microscope.optics.mode when AutoScript available
+    def read_manufacturer(self) -> str:
         return self._manufacturer
 
 
@@ -115,9 +116,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     ) -> str:
         """
         Acquire a simulated STEM image using the pre-cooked sample state.
-        Requires _cook_sample_recipe() to have been called immediately before this.
         """
-        self._cook_sample_recipe()
+        self._read_stage()
         size = imsize
         self._imsize = imsize
         fov      = self._fov * 1e10          # Å
@@ -132,6 +132,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         ab['FOV']                  = fov / 10   # nm
         ab['convergence_angle']    = 30         # mrad
         ab['wavelength']           = it.get_wavelength(ab['acceleration_voltage'])
+
+        random = self._specimen.random  # one stream with the sample, so a rebuild and what follows it repeat
 
         # ── Helper functions (unchanged from original) ────────────────────────────
         def sub_pix_gaussian(size=10, sigma=0.2, dx=0.0, dy=0.0):
@@ -174,13 +176,13 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         def poisson_noise(image, counts=1e9):
             image = image - image.min()
             image = image / image.sum()
-            noisy = np.random.poisson(image * counts).astype(float)
+            noisy = random.poisson(image * counts).astype(float)
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
         def lowfreq_noise(image, noise_level=0.1, freq_scale=0.1):
             size_x, size_y = image.shape
-            noise      = np.random.normal(0, noise_level, (size_x, size_y))
+            noise      = random.normal(0, noise_level, (size_x, size_y))
             noise_fft  = np.fft.fft2(noise)
             x_freqs    = np.fft.fftfreq(size_x)
             y_freqs    = np.fft.fftfreq(size_y)
@@ -192,70 +194,16 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
-        # ── Pull cooked state ─────────────────────────────────────────────────────
-        # _cook_sample_recipe must have been called before this method.
-        xtal             = self._cooked_atoms
-        proj             = self._cooked_projection   # dict from _cook_sample_recipe
-        projected_label  = proj['projected_label']   # (nx_world, ny_world) uint8
-        particle_lookup  = self._particle_lookup     # {label -> metadata}
-
-        # ── Rebuild _particle_records from cooked projection ──────────────────────
-        # This keeps the contract that _acquire_scanned_image always refreshes
-        # _particle_records to match whatever the current image will show,
-        # accounting for stage shift/tilt applied in _cook_sample_recipe.
-        #
-        # We crop the projected label map to the image FOV (with edge padding
-        # removed), then find the bounding-box centre of each visible label.
-        # Particles that have scrolled off-screen are omitted automatically.
-
-        world_nx, world_ny = projected_label.shape
-
-        # The image FOV sits at the centre of the world map.
-        # edge_crop pixels of padding are added on each side for convolution,
-        # so the "live" image region in world-map coordinates is:
-        img_origin_x = (world_nx - size) // 2
-        img_origin_y = (world_ny - size) // 2
-
-        # Crop the projection to the padded image region (size + 2*edge_crop)
-        pad = edge_crop
-        x0  = max(img_origin_x - pad, 0)
-        y0  = max(img_origin_y - pad, 0)
-        x1  = min(img_origin_x + size + pad, world_nx)
-        y1  = min(img_origin_y + size + pad, world_ny)
-        label_crop = projected_label[x0:x1, y0:y1]     # (size+2*pad, size+2*pad)
-
-        particle_records = []
-        for label, meta in particle_lookup.items():
-            yx = np.argwhere(label_crop == label)
-            if yx.size == 0:
-                continue   # particle not visible in this FOV
-
-            # Centre of mass in cropped-label coordinates → image pixel coordinates
-            centre_crop = yx.mean(axis=0)           # (row≡x, col≡y) in label_crop
-            # Subtract the edge_crop offset to get image pixel coords (0..size-1)
-            cx_pix = centre_crop[0] - pad
-            cy_pix = centre_crop[1] - pad
-
-            # Radius: use the stored physical radius converted to pixels
-            radius_pix = meta['radius_ang'] / pixel_size
-
-            particle_records.append({
-                'center':      np.array([cx_pix, cy_pix]),
-                'radius':      radius_pix,
-                'btype':       meta['btype'],
-                'composition': meta['composition'],
-            })
-
-        self._particle_records = particle_records
-        print(f"_acquire_scanned_image: {len(particle_records)} particles in FOV")
+        # ── This view of the specimen: its atoms and the particles visible ──────────
+        field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=fov, imsize=size, edge_crop=edge_crop))
+        xtal = field.atoms
+        self._particle_records = field.records
 
         # ── Pseudo-potential + PSF convolution (unchanged logic) ──────────────────
         edge     = 2 * edge_crop * pixel_size
         frame    = (0, fov + edge, 0, fov + edge)
 
-        # Clip the cooked atoms to the padded frame before making the potential.
-        # _cooked_atoms already has world-coordinates; we just pass the frame bounds
-        # and let create_pseudo_potential mask by position, same as before.
+        # create_pseudo_potential masks the atoms by position, to the padded frame.
         potential = create_pseudo_potential(
             xtal, pixel_size, sigma=1, bounds=frame, atom_frame=11
         )
@@ -287,327 +235,16 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             images,
             dataset_attrs={
                 "sample_type": "oriented_particles",
-                "particle_count": len(self._particle_lookup),
-                "world_shape": list(self._world_shape),
-                "voxel_size_angstrom": float(self._vox_size),
+                "particle_count": field.info["particle_count"],
+                "world_shape": field.info["world_shape"],
+                "voxel_size_angstrom": field.info["voxel_size_angstrom"],
                 "stage_position": list(self._get_stage()),
             },
             output_format=output_format,
         )
 
-    def _make_sample_recipe(self):
-        """
-        Build three persistent data structures for the sample:
-        1. _particle_lookup  : {label_int -> {'btype', 'composition', 'center_vox', 'radius_vox', 'angles'}}
-        2. _particle_label_map : 3-D uint8 array (nx, ny, nz) – 0 = vacuum, label = particle id
-        3. _atoms_object     : ASE Atoms with all nanoparticle atoms + Cell set from world size
-        """
-        from ase import Atoms
-        from ase.build import bulk
-        import numpy as np
-
-        # ── World geometry ──────────────────────────────────────────────────────────
-        fov_ang     = self._fov * 1e10          # Angstroms, lateral
-        world_z_ang = fov_ang * 0.5             # thin slab, same as _acquire_scanned_image
-        nx = ny = max(16, int(self.world_imsize))
-        vox_size    = fov_ang / nx              # Angstroms per voxel (isotropic)
-
-        nz = max(1, int(round(world_z_ang / vox_size)))
-
-        # ── Particle parameters (mirror _acquire_scanned_image) ────────────────────────
-        particle_radius  = 16.0
-        radius_std       = 2.0
-        aspect_ratio     = 0.4
-        min_separation   = 3.0
-        n_particles      = max(1, int(self.sample_particle_count))
-        max_attempts     = 500
-        desired_angles   = [(0, 0, 0), (60, 0, 0), (45, 45, 45)]
-
-        bulk_types = {
-            'Au': bulk('Au', 'fcc', a=4.08),
-            'Pt': bulk('Pt', 'fcc', a=3.92),
-            'Fe': bulk('Fe', 'bcc', a=2.87),
-        }
-        bulk_names = list(bulk_types.keys())
-
-        def rotation_matrix(alpha, beta, gamma):
-            a, b, g = np.radians([alpha, beta, gamma])
-            Rz = np.array([[np.cos(a), -np.sin(a), 0],
-                        [np.sin(a),  np.cos(a), 0],
-                        [0, 0, 1]])
-            Ry = np.array([[np.cos(b), 0,  np.sin(b)],
-                        [0, 1, 0],
-                        [-np.sin(b), 0, np.cos(b)]])
-            Rx = np.array([[1, 0, 0],
-                        [0, np.cos(g), -np.sin(g)],
-                        [0, np.sin(g),  np.cos(g)]])
-            return Rz @ Ry @ Rx
-
-        # ── 1. Place particle centres (same exclusion logic as _acquire_scanned_image) ─
-        placed_centers   = []
-        placed_particles = []
-        particle_lookup  = {}   # label (1-based int) -> metadata dict
-
-        for _ in range(max_attempts * n_particles):
-            if len(placed_particles) >= n_particles:
-                break
-
-            radius = np.clip(np.random.normal(particle_radius, radius_std), 3.0, None)
-            margin = radius + 2.0
-            sample_fov = (fov_ang, fov_ang, world_z_ang)
-
-            cx = np.random.uniform(margin, sample_fov[0] - margin)
-            cy = np.random.uniform(margin, sample_fov[1] - margin)
-            cz = sample_fov[2] * 0.5
-
-            too_close = any(
-                np.sqrt((cx - px)**2 + (cy - py)**2) < radius + pr + min_separation
-                for px, py, pr in placed_centers
-            )
-            if too_close:
-                continue
-
-            placed_centers.append((cx, cy, radius))
-            btype  = np.random.choice(bulk_names)
-            i      = len(placed_particles)
-            angles = desired_angles[i] if i < len(desired_angles) else tuple(np.random.rand(3) * 360)
-            placed_particles.append((btype, np.array([cx, cy, cz]), radius, angles))
-
-            symbols_in_bulk = bulk_types[btype].get_chemical_symbols()
-            counts_dict = {}
-            for s in symbols_in_bulk:
-                counts_dict[s] = counts_dict.get(s, 0) + 1
-            total = sum(counts_dict.values())
-            composition = {s: c / total for s, c in counts_dict.items()}
-
-            label = i + 1   # 1-based so 0 stays "vacuum"
-            particle_lookup[label] = {
-                'btype':       btype,
-                'composition': composition,
-                'center_ang':  np.array([cx, cy, cz]),
-                'center_vox':  np.array([cx / vox_size, cy / vox_size, cz / vox_size]),
-                'radius_ang':  radius,
-                'radius_vox':  radius / vox_size,
-                'angles':      angles,
-            }
-
-        print(f"_make_sample_recipe: placed {len(placed_particles)} particles")
-
-        # ── 2. Build 3-D label map ─────────────────────────────────────────────────
-        # Each voxel gets the integer label of whichever particle owns it (0 = none).
-        # We use an ellipsoidal test identical to _acquire_scanned_image's r_scaled mask.
-        label_map = np.zeros((nx, ny, nz), dtype=np.uint8)
-
-        # Pre-build voxel coordinate arrays once (Angstrom positions of voxel centres)
-        xv = (np.arange(nx) + 0.5) * vox_size
-        yv = (np.arange(ny) + 0.5) * vox_size
-        zv = (np.arange(nz) + 0.5) * vox_size
-        XX, YY, ZZ = np.meshgrid(xv, yv, zv, indexing='ij')  # (nx, ny, nz)
-
-        for label, (btype, center, radius, angles) in enumerate(placed_particles, start=1):
-            z_radius = radius * aspect_ratio
-            R = rotation_matrix(*angles)
-            # Rotate the offset of every voxel from the particle centre
-            # Broadcasting: offset shape (nx, ny, nz, 3) -> after R: same
-            dX = XX - center[0]
-            dY = YY - center[1]
-            dZ = ZZ - center[2]
-            # Apply inverse rotation to map world coords into particle frame
-            Rinv = R.T
-            dXr = Rinv[0, 0]*dX + Rinv[0, 1]*dY + Rinv[0, 2]*dZ
-            dYr = Rinv[1, 0]*dX + Rinv[1, 1]*dY + Rinv[1, 2]*dZ
-            dZr = Rinv[2, 0]*dX + Rinv[2, 1]*dY + Rinv[2, 2]*dZ
-
-            inside = (dXr/radius)**2 + (dYr/radius)**2 + (dZr/z_radius)**2 <= 1.0
-            # Only overwrite vacuum voxels (first-come wins; avoids blend artefacts)
-            label_map[inside & (label_map == 0)] = label
-
-        # ── 3. Build ASE Atoms object ──────────────────────────────────────────────
-        all_positions = []
-        all_symbols   = []
-
-        for (btype, center, radius, angles) in placed_particles:
-            this_bulk = bulk_types[btype]
-            a_lat     = this_bulk.cell.lengths()[0]
-            z_radius  = radius * aspect_ratio
-            rep       = int(radius * 2 / a_lat) + 3
-            supercell = this_bulk.repeat((rep, rep, rep))
-
-            R         = rotation_matrix(*angles)
-            positions = supercell.get_positions().copy()
-            positions -= positions.mean(axis=0)
-            positions  = positions @ R.T
-
-            r_scaled = np.sqrt(
-                (positions[:, 0] / radius)**2 +
-                (positions[:, 1] / radius)**2 +
-                (positions[:, 2] / z_radius)**2
-            )
-            mask = r_scaled <= 1.0
-            positions = positions[mask] + center
-            symbols   = [s for s, m in zip(supercell.get_chemical_symbols(), mask) if m]
-
-            all_positions.append(positions)
-            all_symbols.extend(symbols)
-
-        all_positions = np.vstack(all_positions)
-        cell = [fov_ang, fov_ang, world_z_ang]
-        atoms_object = Atoms(
-            symbols=all_symbols,
-            positions=all_positions,
-            cell=cell,
-            pbc=False,
-        )
-
-        # ── Persist ────────────────────────────────────────────────────────────────
-        self._vox_size          = vox_size
-        self._world_shape       = (nx, ny, nz)
-        self._particle_lookup   = particle_lookup
-        self._particle_label_map = label_map
-        self._atoms_object      = atoms_object
-
-
-    def _cook_sample_recipe(self):
-        """
-        Apply the current stage position (x, y, z translation + alpha/beta tilt)
-        to both the atom positions and the label map, then project both to 2-D.
-
-        After this call, self._cooked_atoms and self._cooked_projection are ready
-        for consumption by _acquire_scanned_image.
-
-        Projection strategy
-        -------------------
-        The electron beam travels along the optical axis (z after tilt).  After
-        applying the tilt rotation we simply sum the label map along axis=2 to get
-        a 2-D occupancy map and sum the pseudo-potential contribution of every atom
-        along the same axis.  This is the standard "projected potential"
-        approximation used throughout the rest of the simulator.
-
-        Coordinate conventions
-        ----------------------
-        * Stage (x, y, z) are in *metres* (from the proxy), converted to Å here.
-        * Stage (alpha, beta) are in *degrees*.  alpha tilts around the y-axis
-        (in-plane), beta tilts around the x-axis.
-        * All rotations are applied around the centre of the world volume.
-        * The map is wrapped (np.roll) so the sample never "runs out" when shifted.
-        """
-        import numpy as np
-
-        stage    = self._detector_proxies.get("stage")
-        x_m, y_m, z_m  = stage.x, stage.y, stage.z      # metres
-        alpha_deg, beta_deg = stage.alpha, stage.beta     # degrees
-        self._stage_position = np.asarray(
-            [x_m, y_m, z_m, alpha_deg, beta_deg], dtype=np.float64
-        )
-
-        # Convert translation to Angstroms
-        x_ang = x_m * 1e10
-        y_ang = y_m * 1e10
-        z_ang = z_m * 1e10
-
-        nx, ny, nz  = self._world_shape
-        vox         = self._vox_size          # Å/voxel
-        label_map   = self._particle_label_map   # (nx, ny, nz) uint8
-        atoms       = self._atoms_object         # ASE Atoms
-
-        # ── Rotation matrix for tilt (alpha around Y, beta around X) ──────────────
-        def _Ry(deg):
-            t = np.radians(deg)
-            return np.array([[ np.cos(t), 0, np.sin(t)],
-                            [ 0,         1, 0        ],
-                            [-np.sin(t), 0, np.cos(t)]])
-
-        def _Rx(deg):
-            t = np.radians(deg)
-            return np.array([[1, 0,        0       ],
-                            [0, np.cos(t),-np.sin(t)],
-                            [0, np.sin(t), np.cos(t)]])
-
-        R_stage = _Rx(beta_deg) @ _Ry(alpha_deg)
-
-        # ── 1. Cook the atoms ──────────────────────────────────────────────────────
-        positions  = atoms.get_positions().copy()           # (N, 3) in Å
-        world_centre_ang = np.array([
-            nx * vox / 2.0,
-            ny * vox / 2.0,
-            nz * vox / 2.0,
-        ])
-
-        # Translate stage shift (move world relative to beam)
-        positions[:, 0] -= x_ang
-        positions[:, 1] -= y_ang
-        positions[:, 2] -= z_ang
-
-        # Rotate around world centre
-        positions -= world_centre_ang
-        positions  = positions @ R_stage.T
-        positions += world_centre_ang
-
-        # Wrap atom x/y into the FOV periodically so atoms never "run out"
-        fov_x = nx * vox
-        fov_y = ny * vox
-        positions[:, 0] = np.mod(positions[:, 0], fov_x)
-        positions[:, 1] = np.mod(positions[:, 1], fov_y)
-
-        cooked_atoms = atoms.copy()
-        cooked_atoms.set_positions(positions)
-        self._cooked_atoms = cooked_atoms
-
-        # ── 2. Cook the label map ─────────────────────────────────────────────────
-        # Translate via np.roll (integer-pixel wrap, cheap and artefact-free)
-        shift_x_pix = int(round(x_ang / vox))
-        shift_y_pix = int(round(y_ang / vox))
-        rolled = np.roll(label_map, -shift_x_pix, axis=0)
-        rolled = np.roll(rolled,    -shift_y_pix, axis=1)
-
-        # Rotate the map by remapping voxel coordinates through R_stage
-        # We build the rotated map by inverse-mapping: for each output voxel,
-        # find where it came from in the un-rotated volume.
-        xv = (np.arange(nx) - nx / 2.0)
-        yv = (np.arange(ny) - ny / 2.0)
-        zv = (np.arange(nz) - nz / 2.0)
-        XX, YY, ZZ = np.meshgrid(xv, yv, zv, indexing='ij')   # (nx, ny, nz)
-
-        # Inverse-rotate output coords back to input coords
-        Rinv = R_stage.T    # orthogonal matrix: R^{-1} = R^T
-        src_x = Rinv[0,0]*XX + Rinv[0,1]*YY + Rinv[0,2]*ZZ + nx / 2.0
-        src_y = Rinv[1,0]*XX + Rinv[1,1]*YY + Rinv[1,2]*ZZ + ny / 2.0
-        src_z = Rinv[2,0]*XX + Rinv[2,1]*YY + Rinv[2,2]*ZZ + nz / 2.0
-
-        # Nearest-neighbour lookup (label maps are integer, NN is correct)
-        src_xi = np.clip(np.round(src_x).astype(int), 0, nx - 1)
-        src_yi = np.clip(np.round(src_y).astype(int), 0, ny - 1)
-        src_zi = np.clip(np.round(src_z).astype(int), 0, nz - 1)
-
-        rotated_map = rolled[src_xi, src_yi, src_zi]   # (nx, ny, nz) uint8
-
-        # ── 3. Project to 2-D ─────────────────────────────────────────────────────
-        # The beam travels along z (after tilt has been absorbed into the map).
-        # Projection = "is any particle present in this column?"
-        # For the label map we store the label of the *first* (shallowest) particle
-        # hit, which is useful for EDS/EELS spectral routing later.
-
-        # Occupancy map: True wherever any particle voxel exists
-        occupancy_3d = rotated_map > 0          # (nx, ny, nz) bool
-
-        # 2-D projected label: label of the particle in the first occupied z-slice
-        # (shallow-most = smallest z index = beam enters first)
-        projected_label = np.zeros((nx, ny), dtype=np.uint8)
-        for iz in range(nz):
-            slice_label = rotated_map[:, :, iz]
-            unfilled = projected_label == 0
-            projected_label[unfilled] = slice_label[unfilled]
-
-        # Projected thickness (number of occupied voxels per column, in Angstroms)
-        projected_thickness_ang = occupancy_3d.sum(axis=2).astype(np.float32) * vox
-
-        self._cooked_projection = {
-            'label_map_3d':       rotated_map,          # (nx, ny, nz) – tilted+shifted
-            'projected_label':    projected_label,       # (nx, ny) – which particle per pixel
-            'projected_thickness': projected_thickness_ang,  # (nx, ny) – Å of material
-        }
-
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
+        random = self._specimen.random
         px, py = self.read_beam_pos()   # fractional [0, 1]
         px_pix = px * self._imsize
         py_pix = py * self._imsize
@@ -619,7 +256,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
                 raw   = {el: frac for el, frac in rec['composition'].items()}
                 total = sum(raw.values())
                 spectrum = {
-                    el: max(0.0, v / total + np.random.normal(0.01, 0.1))
+                    el: max(0.0, v / total + random.normal(0.01, 0.1))
                     for el, v in raw.items()
                 }
                 break
@@ -628,8 +265,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
                 el for rec in self._particle_records for el in rec['composition']
             }
             spectrum = {
-                el: float(np.abs(np.random.normal(0, 0.05)))
-                for el in all_elements
+                el: float(np.abs(random.normal(0, 0.05)))
+                for el in sorted(all_elements)
             }
 
         elements = sorted(spectrum)
@@ -655,9 +292,9 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     def _set_fov(self, fov) -> None:
         """set field of view in meters"""
         self._fov = float(fov)
-        np.random.seed(int(self.sample_seed))
-        self._make_sample_recipe()
-        self._cook_sample_recipe()
+        self._specimen.set_field(self._fov)
+        self._world_bounds_ang = dict(self._specimen.world_bounds_ang)
+        self._read_stage()
 
     def _get_fov(self) -> float:
         return float(self._fov)
@@ -678,7 +315,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
     def _move_stage(self, position):
         """Move stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         super()._move_stage(position)
-        self._cook_sample_recipe()
+        self._read_stage()
 
 # ----------------------------------------------------------------------
 # Server entry point

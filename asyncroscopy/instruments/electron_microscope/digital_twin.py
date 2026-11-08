@@ -13,8 +13,7 @@ literature magnitudes. See docs/digital_twin.md.
 from __future__ import annotations
 
 import json
-import math
-import time
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
@@ -41,8 +40,7 @@ from asyncroscopy.instruments.electron_microscope.twin import (
 from asyncroscopy.sim.dose import DoseMap
 from asyncroscopy.sim.rng import EventRng
 from asyncroscopy.sim.clock import SimClock
-from asyncroscopy.sim.stage_model import StageModel
-from asyncroscopy.sim.stage_model import StageParams
+from asyncroscopy.sim.stage_model import StageTrajectory
 from asyncroscopy.instruments.electron_microscope.twin.detector import (
     DetectorDrift,
     DetectorParams,
@@ -56,8 +54,8 @@ from asyncroscopy.instruments.electron_microscope.twin.render import (
     Renderer,
     RenderParams,
 )
-from asyncroscopy.instruments.electron_microscope.twin.sample_model import ELEMENTS
-from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
+from asyncroscopy.instruments.electron_microscope.twin.elements import ELEMENTS
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext
 from asyncroscopy.instruments.electron_microscope.twin.scan_distortion import frame_time
 
 __all__ = ["DEFAULT_ACQUISITION_DIR", "DigitalTwin"]
@@ -69,23 +67,12 @@ def _prop(dtype, default, doc):
     return device_property(dtype=dtype, default_value=default, doc=doc)
 
 
-MOVE_BLOCK_S = 2.0  # longest real time one command may wait for a stage move
-
-
-def _limit(value) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):  # "Not specified"
-        return None
-
-
 class DigitalTwin(ElectronMicroscopeTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
     # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
     # are the procedural source's settings and the other sources' defaults (seed, size, support, height).
-    specimen = _prop(str, "", "Specimen as a mapping (JSON or YAML), e.g. {source: recorded, path: ..., pixel_size_m: ...}; overrides the specimen_* properties.")
-    specimen_source = _prop(str, "procedural", "Specimen source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.")
+    # specimen and specimen_source are the base class's; specimen_source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.
     specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
     specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
     specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
@@ -130,20 +117,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
     scan_shear = _prop(float, 0.0, "Scan shear (x shift per unit y).")
     scan_flyback_compression = _prop(float, 0.0, "Left-edge compression after flyback (fraction).")
     fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
-    # Stage and drift (stage_move_noise_std comes from the base class)
-    stage_bias_x = _prop(float, 0.0, "Systematic x landing error (m).")
-    stage_bias_y = _prop(float, 0.0, "Systematic y landing error (m).")
-    stage_reported_noise_std = _prop(float, 0.0, "Stage readback error (m).")
-    stage_backlash_x = _prop(float, 0.0, "x shortfall when the move direction reverses (m).")
-    stage_backlash_y = _prop(float, 0.0, "y shortfall when the move direction reverses (m).")
-    stage_speed = _prop(float, 5e-6, "Stage speed (m/s), sets move duration.")
-    stage_move_overhead = _prop(float, 0.0, "Fixed time per stage move (s).")
-    stage_travel_m = _prop(float, 1e-3, "Largest |x| and |y| the stage may go to (m), used when the STAGE device gives no limits.")
-    stage_z_travel_m = _prop(float, 5e-4, "Largest |z| the stage may go to (m), used when the STAGE device gives no limits.")
-    stage_settle_drift = _prop(float, 0.0, "Drift speed right after a move (m/s), decays with stage_settle_tau.")
-    stage_settle_tau = _prop(float, 30.0, "Settling time constant (s).")
-    drift_rate_per_min = _prop(float, 0.0, "Thermal drift (m/min).")
-    drift_random_walk = _prop(float, 0.0, "Drift random-walk step per minute (m).")
+    # The stage's errors, dynamics and drift are the STAGE device's (DigitalTwinSTAGE); the clock is the microscope's.
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
     # EDS
     eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
@@ -182,12 +156,10 @@ class DigitalTwin(ElectronMicroscopeTwin):
 
     def _specimen_options(self) -> dict:
         """The specimen_* flat properties, overridden by the ``specimen`` mapping."""
-        mapping = parse_specimen(str(self.specimen or ""))
-        options: dict = {"source": str(mapping.get("source") or self.specimen_source or "procedural").strip()}
+        options = super()._specimen_options()
         if options["source"] == "recorded":  # the flat shorthands are the recorded source's options
             path, pixel, labels = str(self.specimen_path or "").strip(), float(self.specimen_pixel_size_m or 0.0), str(self.specimen_labels_path or "").strip()
-            options.update({k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v})
-        options.update(mapping)
+            options = {**{k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v}, **options}
         return options
 
     def _generate_sample(self, seed: int) -> None:
@@ -195,7 +167,6 @@ class DigitalTwin(ElectronMicroscopeTwin):
         self._rng = EventRng(int(seed))
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
-        self._moving_until = 0.0  # monotonic time a long move ends (see _move_stage)
         # Every acquisition's truth goes to a JSONL file as it is taken (export_ground_truth reads it back), so a
         # long session does not hold them all in memory; only the count is kept here.
         self._truth_path = Path(self.acquisition_save_directory) / "ground_truth" / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
@@ -205,8 +176,8 @@ class DigitalTwin(ElectronMicroscopeTwin):
         elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
         # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
         # is the instrument, which only asks the specimen for weights, densities, heights and features.
-        self._specimen = build_specimen(
-            self._specimen_options(),
+        self._load_specimen(
+            seed,
             SpecimenContext(
                 rng=self._rng,
                 sample=SampleParams(
@@ -226,22 +197,10 @@ class DigitalTwin(ElectronMicroscopeTwin):
         )
         for warning in self._specimen.warnings():
             self.warn_stream(warning)
-        self._stage = StageModel(
-            StageParams(
-                bias_m=(float(self.stage_bias_x), float(self.stage_bias_y)),
-                noise_std_m=float(self.stage_move_noise_std),
-                reported_noise_std_m=float(self.stage_reported_noise_std),
-                backlash_m=(float(self.stage_backlash_x), float(self.stage_backlash_y)),
-                speed_m_s=float(self.stage_speed),
-                move_overhead_s=float(self.stage_move_overhead),
-                settle_drift_m_s=float(self.stage_settle_drift),
-                settle_tau_s=float(self.stage_settle_tau),
-                drift_m_per_min=float(self.drift_rate_per_min),
-                drift_random_walk_m=float(self.drift_random_walk),
-            ),
-            self._rng,
-            self._clock,
-        )
+        # The stage model runs on the STAGE device (the session lets it start afresh when this device restarts);
+        # this is what the device last said, at rest at the origin until it first answers.
+        self._stage_session = uuid.uuid4().hex
+        self._stage = StageTrajectory()
         self._renderer = Renderer(
             self._specimen,
             RenderParams(
@@ -296,8 +255,6 @@ class DigitalTwin(ElectronMicroscopeTwin):
             "c1_m": float(self.focus_offset_m),
             "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
-        self._last_written_stage: np.ndarray | None = None
-        self._stage_sigma_published = False
         self._stage_position = self._stage.true.copy()
         self._world_bounds_ang = {
             "x_min": x_min / ANGSTROM,
@@ -321,54 +278,30 @@ class DigitalTwin(ElectronMicroscopeTwin):
     # ------------------------------------------------------------------
     # Stage: commanded / true / reported
     # ------------------------------------------------------------------
-    def _write_stage_proxy(self, position: np.ndarray) -> None:
+    def _stage_request(self, **fields) -> str:
+        """What the STAGE device needs to run its model on this microscope's clock."""
+        return json.dumps({"session": self._stage_session, "seed": int(self.sample_seed), "clock_s": self._clock.now(), **fields})
+
+    def _fetch_stage(self, window_s: float = 0.0) -> None:
+        """Ask the STAGE device where the stage is (one call, however many pixels the frame has) and advance the clock
+        by any move written to it directly; the drift it returns holds for the next ``window_s`` simulated seconds."""
         stage = self._detector_proxies.get("stage")
         if stage is None:
             return
-        stage.x, stage.y, stage.z, stage.alpha, stage.beta = (float(v) for v in position)
-        self._last_written_stage = np.asarray(position, dtype=np.float64).copy()
-        self._publish_stage_sigma()
-
-    def stage_sigma_m(self) -> float:
-        """How far the stage lands from where it reports, 1 sigma: the landing noise, the backlash on a reversal and
-        the readback noise together (the bias is the same for every tile, so it does not separate neighbours)."""
-        backlash = max(abs(float(self.stage_backlash_x)), abs(float(self.stage_backlash_y)))
-        return float(math.sqrt(float(self.stage_move_noise_std) ** 2 + backlash**2 + float(self.stage_reported_noise_std) ** 2))
-
-    def _publish_stage_sigma(self) -> None:
-        """Tell the STAGE device (a DigitalTwinSTAGE) the twin stage's error, once it answers; a STAGE that cannot take it is left alone."""
-        stage = self._detector_proxies.get("stage")
-        if stage is None or self._stage_sigma_published:
-            return
-        try:
-            stage.write_attribute("position_sigma_m", self.stage_sigma_m())
-            self._stage_sigma_published = True
-        except tango.DevFailed:  # not up yet (tried again at the next move), or a STAGE whose sigma is read-only
-            pass
+        reply = json.loads(stage.frame_trajectory(self._stage_request(window_s=float(window_s))))
+        if reply["moved_s"] > 0:
+            self._clock.advance(reply["moved_s"])
+        self._stage = StageTrajectory.from_dict(reply["trajectory"])
+        self._stage_position = self._stage.true.copy()
 
     def _sync_stage_from_proxy(self) -> None:
         """A position written to the STAGE device directly counts as a stage command."""
-        stage = self._detector_proxies.get("stage")
-        if stage is None:
-            return
-        self._publish_stage_sigma()
-        try:
-            proxy_position = np.array([stage.x, stage.y, stage.z, stage.alpha, stage.beta], dtype=np.float64)
-        except tango.DevFailed:
-            self.error_stream("Failed to read stage proxy position; using internal stage state.")
-            return
-        known = self._last_written_stage if self._last_written_stage is not None else self._stage.reported
-        if not np.allclose(proxy_position, known, rtol=0.0, atol=1e-15):
-            self._apply_move(proxy_position)
-
-    def _apply_move(self, position, wait: bool = True) -> None:
-        self._stage.move(position, wait=wait)
-        self._stage_position = self._stage.true.copy()
-        self._write_stage_proxy(self._stage.reported)
+        self._fetch_stage()
 
     def _stage_moving(self) -> bool:
         """True while a long stage move is under way; moves and acquisitions are refused until it is false."""
-        return time.monotonic() < self._moving_until
+        stage = self._detector_proxies.get("stage")
+        return False if stage is None else bool(stage.stage_moving)
 
     def instrument_clock_s(self) -> float:
         """clock_s is the simulated clock that drift, moves and frames run on, whatever time_scale is."""
@@ -376,7 +309,8 @@ class DigitalTwin(ElectronMicroscopeTwin):
         return clock.now() if clock is not None else 0.0
 
     def _refuse_while_moving(self) -> None:
-        left = self._moving_until - time.monotonic()
+        stage = self._detector_proxies.get("stage")
+        left = 0.0 if stage is None else float(stage.moving_seconds_left)
         if left > 0:
             raise ValueError(f"the stage is still moving (about {left:.0f} s left); wait until stage_moving is false")
 
@@ -386,36 +320,15 @@ class DigitalTwin(ElectronMicroscopeTwin):
         target = np.asarray(position, dtype=np.float64)
         if not np.all(np.isfinite(target)):
             raise ValueError(f"Stage position must be finite numbers, got {list(position)}")
-        self._check_stage_limits(target)
-        self._refuse_while_moving()
-        # A command must never hold the device for long: other clients (blank_beam, an abort) queue
-        # behind it. A move whose real wait would exceed MOVE_BLOCK_S returns at once instead, with
-        # stage_moving true until the stage would have arrived.
-        real = self._clock.real_seconds(self._stage.move_seconds(target))
-        if real <= MOVE_BLOCK_S:
-            self._apply_move(target)
-            return
-        self._apply_move(target, wait=False)
-        self._moving_until = time.monotonic() + real
-
-    def _check_stage_limits(self, target: np.ndarray) -> None:
-        """Refuse a move the STAGE device would refuse, before the twin's own model moves."""
         stage = self._detector_proxies.get("stage")
-        travel = {"x": float(self.stage_travel_m), "y": float(self.stage_travel_m), "z": float(self.stage_z_travel_m)}
-        for axis, value in zip(("x", "y", "z", "alpha", "beta"), target):
-            low = high = None
-            if stage is not None:
-                try:
-                    config = stage.get_attribute_config(axis)
-                except (tango.DevFailed, AttributeError) as exc:
-                    # The STAGE device holds the holder's limits; a move it cannot be checked against is refused.
-                    raise ValueError(f"the stage did not move: its {axis} limits could not be read from the STAGE device ({str(exc).strip().splitlines()[0][:160] if str(exc).strip() else type(exc).__name__})") from exc
-                low, high = _limit(config.min_value), _limit(config.max_value)
-            if axis in travel:  # the twin's own travel, where the STAGE device sets none
-                low = -travel[axis] if low is None else low
-                high = travel[axis] if high is None else high
-            if (low is not None and value < low) or (high is not None and value > high):
-                raise ValueError(f"stage {axis} = {value:.6g} is outside the stage limits [{low}, {high}]")
+        if stage is None:
+            raise RuntimeError(f"{type(self).__name__} cannot move a stage: set stage_device_address to a DigitalTwinSTAGE")
+        # The stage checks the limits and refuses while a long move is under way. A move whose real wait would hold
+        # the microscope longer than it may hold a command returns at once, with stage_moving true until it would have arrived.
+        reply = json.loads(stage.move_on_clock(self._stage_request(position=target.tolist(), time_scale=self._clock.time_scale)))
+        self._clock.advance(reply["duration_s"], wait=reply["wait"])
+        self._stage = StageTrajectory.from_dict(reply["trajectory"])
+        self._stage_position = self._stage.true.copy()
 
     def _set_fov(self, fov) -> None:
         self._fov = float(fov)
@@ -508,11 +421,12 @@ class DigitalTwin(ElectronMicroscopeTwin):
 
     def _scan_frame(self, imsize: int, dwell_time: float, scan_region) -> dict:
         """Lay out one scan: pixel coordinates on the sample, timing, and the ground-truth record."""
-        self._sync_stage_from_proxy()
         self._acq_index += 1
         index = self._acq_index
         # SCAN, AutoScript and the tilt twin all use [left, top, width, height] in fractions of the field.
         region = check_scan(imsize, dwell_time, scan_region)
+        # One call for the whole frame; its drift holds for as long as the largest frame takes.
+        self._fetch_stage(frame_time(int(imsize), int(imsize), float(dwell_time), self._scan_params))
         left, top, width, height = region
         t0 = self._clock.now()
         scan_truth: dict = {}
@@ -670,10 +584,10 @@ class DigitalTwin(ElectronMicroscopeTwin):
 
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
         self._refuse_while_moving()
-        self._sync_stage_from_proxy()
+        real_time = float(exposure_time)
+        self._fetch_stage(real_time)
         self._acq_index += 1
         index = self._acq_index
-        real_time = float(exposure_time)
         t0 = self._clock.now()
         xy = self._beam_sample_xy(t0 + real_time / 2.0)
         energies, counts, live_time = point_spectrum(
@@ -758,6 +672,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
         Operator only (an agent must not read a twin's answers); tests and calibration scripts call it through Tango.
         """
         specimen_truth = self._specimen.ground_truth()
+        stage = self._detector_proxies.get("stage")
         return json.dumps(
             {
                 "sample_seed": int(self.sample_seed),
@@ -766,7 +681,7 @@ class DigitalTwin(ElectronMicroscopeTwin):
                 # film) or does not know them (a recorded image without labels: specimen.known is false).
                 "particles": specimen_truth.get("particles", []),
                 "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
-                "moves": [vars(m) for m in self._stage.history],
+                "moves": json.loads(stage.stage_moves()) if stage is not None else [],
                 "acquisitions": self._acquisition_records(),
                 "simulated_time_s": self._clock.now(),
                 "dose": self._dose.summary(),

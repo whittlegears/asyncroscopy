@@ -5,7 +5,7 @@ The mapping twin (`DigitalTwin`, see [digital_twin.md](../digital_twin.md)) is t
 This answers three questions from the hackathon design principles:
 
 - **Can we replace the specimen?** Yes. Set one device property.
-- **Where does it come from?** From a physical model (`procedural` particles, `crystal` film), from recorded data (`recorded`), or from any source you register.
+- **Where does it come from?** From a physical model (`procedural` particles, `crystal` film, and the atomistic samples below), from recorded data (`recorded`), or from any source you register.
 - **Can we test the same controller across different samples?** Yes. `tests/test_specimens.py` runs one Mapper plan on three specimens. The stage error, drift, timing, dose and focus are identical in all three runs. The images and spectra are different.
 
 ## The coupling
@@ -52,6 +52,8 @@ instrument:
 
 Flat properties do the same job: `specimen_source`, plus `specimen_path`, `specimen_pixel_size_m` and `specimen_labels_path` for `recorded`. Use them where a property value cannot contain `:`, as in the Tango test context. Keys in the `specimen` mapping override the flat properties.
 
+The atomistic twins select a source the same way (see [Atomistic specimens](#atomistic-specimens)); each has its own default source.
+
 Without either, the twin uses `procedural`, exactly as before. The flat `sample_*`, `particle_*`, `support_thickness` and `height_gradient_*` properties stay the procedural source's settings. The other sources use them as defaults for size, support film and height. Each source also takes a `seed` option, which gives a different sample on an identical instrument. Mistyped options are refused, and the error lists the options the source takes.
 
 | Example config | Source |
@@ -60,7 +62,12 @@ Without either, the twin uses `procedural`, exactly as before. The flat `sample_
 | `configs/digital_twin_recorded.yaml` | `recorded`: a 400 nm HAADF image with labels |
 | `configs/digital_twin_crystal.yaml` | `crystal`: a 2 um polycrystalline Au film |
 
-All three share the same instrument settings. `get_parameters` reports `specimen_source`, which says what kind of sample is loaded but not what is on it.
+| `configs/digital_twin_tilt.yaml` | `silicon_lamella`, on the tilt twin |
+| `configs/digital_twin_particles.yaml` | `particles`, on the particle twin |
+| `configs/polycrystalline_gold.yaml` | `polycrystal`, on the gold twin |
+| `configs/diffraction.yaml` | `nanoparticle_map`, on the diffraction twin |
+
+The first three share the same instrument settings. `get_parameters` reports `specimen_source`, which says what kind of sample is loaded but not what is on it.
 
 ## The sources
 
@@ -124,6 +131,28 @@ This source is a polycrystalline film of one element, built from its ASE unit ce
 | `seed` | `sample_seed` | Seed for the grains. |
 
 There is no multislice: contrast is the same mass-thickness model as the particles, which keeps the source cheap at any field of view. An abTEM-backed source would plug in the same way. Its `projected_weight` would return the projected potential.
+
+## Atomistic specimens
+
+The atomistic twins render each view from what the specimen shows in that one field, so the interface has a per-view hook as well as the coupling above. A twin class differs from another only in its render mode: it asks the specimen with `view(ViewRequest)` (and `atoms_at` for a parked beam) and keeps its own renderer, optics and detector noise. The sample itself, its size and its crystal live in the source.
+
+| Method | Returns |
+| :-- | :-- |
+| `view(ViewRequest)` | a `FieldView`: `atoms` (ASE atoms in the field), `maps` (per-pixel arrays) and/or `records`, with `info`. `ViewRequest` carries the stage pose, the field in angstrom, the image size, and where the instrument has worked them out the specimen point each pixel sees and the tilt rotation. |
+| `atoms_at(x_nm, y_nm, request, seed, thermal_scale)` | the ASE atoms a parked beam goes through at a specimen point, for a multislice calculation, or `None` over vacuum |
+| `set_field(fov_m)` | nothing: tells a source whose world spans the field that it changed |
+| `particle_records()`, `regions()` | the particles and regions for a twin's EDS and reports |
+
+| Source | Twin (`render_mode`) | Options (defaults are the old device properties) |
+| :-- | :-- | :-- |
+| `silicon_lamella` | `DigitalTwinTilt` (`lamella`) | `lamella_width_nm`, `lamella_height_nm`, `lamella_thickness_nm`, `gridbar_width_nm`, `layer_period_nm`, the lattice-parameter, rotation and tilt gradients, `multislice_supercell_xy`, `multislice_supercell_z`, `multislice_vacuum_angstrom`, `frozen_phonon_sigma_angstrom` |
+| `polycrystal` | `PolycrystallineGoldDigitalTwin` (`grain_potential`) | `element`, `volume_size_xy_nm`, `volume_thickness_nm`, `grain_size_angstrom`, `empty_grain_fraction`, `lattice_constant_angstrom`, `zone_axis_max_index`, `zone_axis_max_deviation_deg` |
+| `particles` | `DigitalTwinParticles` (`particle_potential`) | `world_imsize`, `particle_count`, `elements` |
+| `nanoparticle_map` | `DigitalTwinDiffraction` (`diffraction_map`) | `map_size`, `element` |
+
+Every source takes `seed`. A source lists the render modes that can image it in `render_modes`, and a twin refuses at start-up a specimen it cannot render, naming both. Element data (atomic number, density, structure, lattice constant) comes from one table, `twin/elements.py`, shared by every source.
+
+Tilt-axis and beam imperfections, the probe and the noise stay on the twin: the specimen only says what is at a point. `particles` keeps one random stream with its twin (`random`): a change of field reseeds it and rebuilds the world, so the image noise after it repeats.
 
 ## What ground truth each source gives
 
@@ -236,6 +265,5 @@ To try a controller of your own across samples, use the same pattern. Start one 
 
 ## What is not swappable yet
 
-- The atomistic twins built on `ElectronMicroscopeTwin` (`digital_twin_particles.py`, `digital_twin_tilt.py`, `digital_twin_diffraction.py` and `polycrystalline_gold_digital_twin.py`) still generate their own samples in `_generate_sample`. Their renderers read per-view state this interface does not carry: the tilt twin's lattice fields follow the stage tilt, the gold twin's grain tree works with the corrector probe, the particles twin rebuilds a voxel recipe whenever the field of view changes, and the diffraction twin's particle maps feed abTEM. A `Specimen` gives projected weight, areal density and height at a point, so turning them into plug-ins would change what they render. The `crystal` source already gives `DigitalTwin` a polycrystalline film.
 - The specimen cannot be changed while the twin runs. Restart the twin with a new `specimen` property. This is deliberate: a Tango command to swap it would be an agent tool.
-- Stage z, alpha and beta still do not change what any specimen looks like.
+- Stage z, alpha and beta do not change what the `DigitalTwin` specimens (`procedural`, `recorded`, `crystal`) look like. The atomistic sources use them: tilt and height are part of their view.

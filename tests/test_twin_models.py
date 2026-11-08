@@ -79,7 +79,7 @@ class TestDeterminism:
 
 class TestStage:
     def make(self, **kw):
-        return StageModel(StageParams(**kw), EventRng(5), SimClock(0.0))
+        return StageModel(StageParams(**kw), EventRng(5))
 
     def test_ideal_stage_agrees_everywhere(self):
         stage = self.make()
@@ -103,8 +103,8 @@ class TestStage:
 
     def test_moves_take_time(self):
         stage = self.make(speed_m_s=1e-6, move_overhead_s=0.5)
-        stage.move([2e-6, 0, 0, 0, 0])
-        assert stage.clock.now() == pytest.approx(2.5)
+        assert stage.move([2e-6, 0, 0, 0, 0], at_s=10.0) == pytest.approx(2.5)
+        assert stage.history[-1].time_s == pytest.approx(12.5)  # the settling starts when the move ends
 
     def test_drift_grows_with_time_and_is_repeatable(self):
         a, b = self.make(drift_m_per_min=1e-9, drift_random_walk_m=0.2e-9), self.make(drift_m_per_min=1e-9, drift_random_walk_m=0.2e-9)
