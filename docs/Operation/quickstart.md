@@ -34,13 +34,13 @@ ollama pull qwen3:8b
 ## 2. Get the code and its dependencies
 
 ```bash
-git clone --depth 1 https://github.com/pycroscopy/asyncroscopy.git   # Windows: add a short target, e.g. C:\src\asyncroscopy
+git clone --depth 1 --branch feature/agentic-mapping https://github.com/whittlegears/asyncroscopy.git   # Windows: add a short target, e.g. C:\src\asyncroscopy
 cd asyncroscopy
 uv sync --extra agent --extra ollama   # Windows: fails with "Missing expected target directory"? see the fix below
 uv run pytest -q -m "not slow"
 ```
 
-`--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, keep the clone's path short (under about 60 characters, such as `C:\src\asyncroscopy`): some installed DLLs have long names, and a deeply nested folder pushes them past Windows' path limit (see Troubleshooting).
+This branch is not yet merged into `pycroscopy/asyncroscopy`, whose main branch does not have this guide's scripts and configs. `--depth 1` skips the project history (about 250 MB); leave it out if you want the history. On Windows, keep the clone's path short (under about 60 characters, such as `C:\src\asyncroscopy`): some installed DLLs have long names, and a deeply nested folder pushes them past Windows' path limit (see Troubleshooting).
 
 `uv sync` installs asyncroscopy itself into `.venv` (editable), so `import asyncroscopy` works from `notebooks/` or any other folder, not only the repository root. This repository does not commit a `uv.lock`, so `uv sync` resolves dependency versions fresh on each machine; `pyproject.toml` caps the fast-moving dependencies (sidpy, SciFiReaders, tiled, fastmcp, numpy, LangChain/LangGraph) below their next breaking release so a fresh clone still gets a tested combination. pyTEMlib, whose map/analysis MCP server is not in a PyPI release yet, comes from a fork and is pinned to a fixed commit in `pyproject.toml`.
 
@@ -140,7 +140,7 @@ To see what an agent will be able to do on this stack (every tool, its risk, whe
 uv run startup_scripts/show_agent_view.py
 ```
 
-A command your own device adds shows up as high risk and held: auto mode waits for a person until you switch it on (SciAgentGUI: Settings, Agent permissions) or mark a read-only command low with `mcp.safety.risk`. See [approval_mode.md](approval_mode.md).
+A command your own device adds is held unless you declare it `risk="low"` or `routine=True` (or, without a declaration, mark a read-only command low with `mcp.safety.risk`, or switch it on in SciAgentGUI: Settings, Agent permissions). See [approval_mode.md](approval_mode.md).
 
 If you use SciAgentGUI, this checks that the stack answers the way the GUI expects (approvals, maps and spectra from Tiled):
 
@@ -162,7 +162,7 @@ uv run python -m asyncroscopy.agents.run mapping "Map a 600 nm square around the
 uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the current position and find the 3 most interesting regions"
 ```
 
-Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
+Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in [settings.md](settings.md).
 
 The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 15 of 15 on the final code. See `docs/athena/wg2_traceability.md`.
 
@@ -174,11 +174,11 @@ cp .env.example .env
 uv run langgraph dev
 ```
 
-Studio opens in the browser with two graphs: `mapping` and `general`. Tool calls made from Studio go through the same MCP endpoints and approval mode as everything else.
+Studio opens in the browser with three graphs: `mapping`, `general` and `team`. Tool calls made from Studio go through the same MCP endpoints and approval mode as everything else.
 
 ## 7. Approval mode
 
-The instrument starts in `auto` mode: agent calls run and are recorded. Switch to `approve` before an unattended run on real hardware; see [approval_mode.md](approval_mode.md).
+The instrument starts in `auto` mode: routine commands, and any an operator switched on, run and are recorded; any other high-risk command waits for a person. Switch to `approve` before an unattended run on real hardware; see [approval_mode.md](approval_mode.md).
 
 ## Troubleshooting
 

@@ -2,6 +2,9 @@
 # Contributing Guide
 
 Thank you for contributing to this project.
+
+Set up with [quickstart](Operation/quickstart.md); add hardware with [new_instrument](Adding_New_Hardware/new_instrument.md).
+
 This repository is designed as infrastructure for scientific instrument control. Stability, clarity, and long-term maintainability take priority over rapid feature additions.
 
 Before submitting a pull request, please review the engineering principles below.
@@ -68,7 +71,7 @@ Scientific control systems must be explainable and auditable. Maintainability ou
 
 **Keywords:** Determinism, Interoperability, Stability
 
-* Image commands must return a deterministic DevEncoded format.
+* Acquisition commands return a Tiled key; a command that returns image bytes uses a deterministic DevEncoded format.
 * Metadata must include required fields (e.g., shape, dtype).
 * No implicit reconstruction assumptions.
 
