@@ -174,3 +174,28 @@ def test_to_stage_refuses_a_pixel_outside_the_image_and_says_nanometres_are_alre
     reply = asyncio.run(mcp.call_tool("to_stage", {"dataset": "img.h5", "row": -5.9, "col": 379.4})).structured_content
     assert reply["error"]["code"] == "outside" and "0 to 100 and 0 to 200" in reply["error"]["message"]
     assert "metres = nm x 1e-9" in reply["error"]["message"]
+
+
+def test_a_word_in_place_of_a_key_is_refused_with_the_newest_keys_to_copy(tmp_path):
+    from asyncroscopy.analysis_server.placement_tools import PlacementLog, register as register_placements
+
+    class Keys(list):
+        def tail(self, n):
+            return self[-n:]
+
+    class Client(dict):
+        def keys(self):
+            return Keys(super().keys())
+
+    image = Node(children={"image": Node(children={"HAADF": Node(IMAGE, shape=(101, 201))})})
+    store = Store(Client({f"stem_image_{i}": image for i in range(12)}))
+    tools = {}
+    mcp = type("M", (), {"tool": lambda self: (lambda f: tools.setdefault(f.__name__, f))})()
+    register(mcp, store)
+    register_placements(mcp, store, PlacementLog(tmp_path / "p.jsonl"))
+    for reply in (tools["find_features"]("stitched_map_key"), tools["to_stage"]("new_map", 1, 1),
+                  tools["place_image"]("stem_image_11", "new_map")):
+        assert reply["error"]["code"] == "unknown_dataset"
+        assert reply["error"]["newest_keys"][0] == "stem_image_11" and len(reply["error"]["newest_keys"]) == 8
+    assert "'new_map'" in tools["place_image"]("stem_image_11", "new_map")["error"]["message"]
+    assert "'stitched_map_key'" in tools["place_image"]("stitched_map_key", "stem_image_3")["error"]["message"]
