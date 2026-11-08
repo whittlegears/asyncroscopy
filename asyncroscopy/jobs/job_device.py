@@ -395,11 +395,16 @@ class JobDevice(Device):
         self._proxies = threading.local()  # one DeviceProxy per (address, timeout) per thread: see proxy()
         self._trace = TraceWriter(
             self.trace_path, source="job", writer=self._name, defaults={"simulated": bool(self.simulated)},
-            clock=InstrumentClock(self.trace_clock_device()),
+            clock=InstrumentClock(self.trace_clock_device()), may_rotate=self._no_active_job,
         )
         self._suspenders = parse_suspenders(self.suspenders)  # a bad property fails Init with the reason
         self._reload()
         self.set_state(DevState.ON)
+
+    def _no_active_job(self) -> bool:
+        """The trace file waits to be rotated while this device holds a job: the job's events are found by their offset
+        in the file (``trace_offset``). Runs under the file's lock while other threads may hold self._lock, so it takes none."""
+        return not any(job["state"] in ACTIVE_JOB_STATES for job in list(self._jobs.values()))
 
     def _reload(self) -> None:
         """Pick up jobs from a previous run of this device; interrupted ones become resumable, finished ones stay on disk."""

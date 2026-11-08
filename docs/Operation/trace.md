@@ -78,8 +78,8 @@ Lines are never delivered twice and never missed in these cases:
 - **The file is truncated.** The reader starts again at the top of the file.
 - **The file is rotated.** The file is renamed, say `jobs.jsonl` to `jobs.jsonl.1`, and a new one is started. The follower finds the renamed file by its identity, reads what it had not yet read, and then reads the new file.
 
-Name rotated files `<name>.jsonl.<n>`. Rotate the `.seq` sidecar with its file, or leave it in place.
-On Windows a rename fails (`PermissionError`, WinError 32) while a writer or the follower has the file open for its brief append or read; a rotation script there should retry the rename for a moment.
+Writers rotate their own files by size (`ASYNCROSCOPY_LOG_ROTATE_BYTES`, `ASYNCROSCOPY_LOG_ROTATE_KEEP`; see [settings](settings.md)): under the file's `.seq` lock the file becomes `<name>.jsonl.<n>`, numbers only ever rising, and `seq` carries on in the new file. If the rename is refused (on Windows, while a reader has the file open) the writer keeps appending and tries again on a later line. A job device leaves its trace file alone while it holds a job, because a job's events are found by their offset in the file; the file rotates once the job is over. The integrity manifest rotates the same way into `manifest.jsonl.<n>`; those parts are never deleted, and `verify` walks them in order.
+
 
 ## Privacy
 
@@ -87,6 +87,6 @@ The trace records each call's **arguments in full**, and a preview of its result
 
 - Do not pass secrets as tool arguments.
 - Treat `outputs/trace/` as you would lab notebook data when you share a stack or a log.
-- Rotate or delete old files as your facility's data policy requires.
+- Writers rotate by size and delete the oldest rotated files beyond the number kept. Set `ASYNCROSCOPY_LOG_ROTATE_KEEP=0` and archive old files yourself if your facility's data policy requires it.
 
 For this reason, the agent endpoint cannot read the trace.

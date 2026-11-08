@@ -18,8 +18,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from asyncroscopy import settings
 from asyncroscopy.contracts import ENVELOPE_VERSION
-from asyncroscopy.core.fileio import SequencedAppender
+from asyncroscopy.core.fileio import SequencedAppender, rotated_paths
 
 RESULT_PREVIEW_CHARS = 500
 
@@ -35,10 +36,16 @@ def _json_safe(value: Any) -> Any:
     return json.loads(json.dumps(value, default=_plain))
 
 
+def _appender(path: Path, may_rotate: Callable[[], bool] | None = None) -> SequencedAppender:
+    """An appender for ``path`` that rotates as the settings say (``ASYNCROSCOPY_LOG_ROTATE_BYTES``, ``_KEEP``)."""
+    env = settings.get()
+    return SequencedAppender(path, rotate_bytes=env.log_rotate_bytes, keep=env.log_rotate_keep, may_rotate=may_rotate)
+
+
 class ToolCallLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
-        self._out = SequencedAppender(self.path)
+        self._out = _appender(self.path)
 
     def record(
         self,
@@ -78,7 +85,7 @@ class TraceWriter:
     ``writer`` names who writes (a Tango device name, an MCP server); ``defaults`` are fields
     every event carries unless the call gives its own (``simulated``); ``clock`` returns the
     instrument's ``clock_s`` (None when it cannot be read), else ``clock_s`` is this computer's
-    time and ``clock`` says "wall".
+    time and ``clock`` says "wall". ``may_rotate``: see ``SequencedAppender``.
     """
 
     def __init__(
@@ -88,9 +95,10 @@ class TraceWriter:
         writer: str | None = None,
         defaults: dict[str, Any] | None = None,
         clock: Callable[[], float | None] | None = None,
+        may_rotate: Callable[[], bool] | None = None,
     ) -> None:
         self.path = Path(path)
-        self._out = SequencedAppender(self.path)
+        self._out = _appender(self.path, may_rotate)
         self.source = source
         self.writer = writer or f"{source}@{socket.gethostname()}:{os.getpid()}"
         self.defaults = dict(defaults or {})
@@ -135,25 +143,27 @@ class TraceWriter:
 
 
 def read_tool_log(path: str | Path, start: float | None = None, end: float | None = None) -> list[dict[str, Any]]:
-    """Rows whose start time falls in [start, end]; a missing file reads as empty, a damaged line is skipped.
+    """Rows whose start time falls in [start, end], from the log and its rotated files, oldest first; a missing
+    file reads as empty, a damaged line is skipped.
 
-    One file, as written. To follow several trace files at once, in order, use
+    One log, as written. To follow several trace files at once, in order, use
     ``asyncroscopy.trace.stream``.
     """
     path = Path(path)
-    if not path.exists():
-        return []
     rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
+    for part in [*rotated_paths(path), path]:
+        if not part.exists():
             continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:  # a line cut short by a crash or a concurrent write
-            continue
-        if start is not None and row["ts"] < start:
-            continue
-        if end is not None and row["ts"] > end:
-            continue
-        rows.append(row)
+        for line in part.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:  # a line cut short by a crash or a concurrent write
+                continue
+            if start is not None and row["ts"] < start:
+                continue
+            if end is not None and row["ts"] > end:
+                continue
+            rows.append(row)
     return rows
