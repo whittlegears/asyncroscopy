@@ -120,6 +120,10 @@ class Config:
     plugins: tuple[str, ...] = ()
 
 
+YAML_INSTRUMENT_MODULE = "asyncroscopy.instruments.yaml_sim.device"
+YAML_JOB_MODULE = "asyncroscopy.instruments.yaml_sim.job"
+
+
 def _plugins(raw: dict) -> tuple[str, ...]:
     """The stack YAML's `plugins:` list: files resolved against the project folder and checked to exist,
     module names checked to import, so a typo fails at load rather than as "unknown instrument profile"."""
@@ -337,7 +341,28 @@ def load_config(path: Path) -> Config:
     )
 
 
+def yaml_job_device(config: Config) -> DeviceConfig | None:
+    """The job device (``<class_name>Job``) of a YAML instrument whose file has a ``jobs:`` section, started from the same file."""
+    if config.instrument.module_name != YAML_INSTRUMENT_MODULE:
+        return None
+    from asyncroscopy.instruments.yaml_sim.spec import SpecError, load_spec, resolve_path
+
+    try:
+        if not load_spec(resolve_path(config.instrument.properties["yaml_path"][0])).jobs:
+            return None
+    except (SpecError, KeyError):
+        return None  # the instrument device starts, finds the same problem and reports it as FAULT
+    return DeviceConfig(
+        key="job",
+        class_name=f"{config.instrument.class_name}Job",
+        module_name=YAML_JOB_MODULE,
+        properties={**config.instrument.properties, "instrument_device_address": ["asyncroscopy/instrument/default"]},
+        start_after_dependencies=True,
+    )
+
+
 def build_devices(config: Config) -> list[DeviceConfig]:
+    job_device = yaml_job_device(config)
     return [
         *config.support_devices,
         DeviceConfig(
@@ -346,6 +371,7 @@ def build_devices(config: Config) -> list[DeviceConfig]:
             module_name=config.instrument.module_name,
             start_after_dependencies=True,
         ),
+        *([job_device] if job_device else []),
     ]
 
 
@@ -586,7 +612,8 @@ def explain_conflicts(conflicts: list[tuple[str, int]], config_path: Path) -> st
 
 
 def instrument_cleanup_patterns(config: Config) -> set[str]:
-    return {f"{config.instrument.class_name} instrument_instance"}
+    job_device = yaml_job_device(config)
+    return {f"{config.instrument.class_name} instrument_instance", *([f"{job_device.class_name} {job_device.instance_name}"] if job_device else [])}
 
 
 def selected_instrument(devices: list[DeviceConfig]) -> DeviceConfig:

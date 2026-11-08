@@ -65,7 +65,9 @@ def xrd() -> SimInstrument:
     ("settings: {x: {default: 0, settable: false}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v]}}", "must be a settable number"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: []}}", "list the acquisitions"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v], on_stop: [halt]}}", "['halt'] are not commands"),
-    ("settings: {x: {default: 0}}\ncommands: {abort: {doc: Stop.}}\nacquisitions: {acquire_v: {doc: V., kind: value, values: {a: x}}}\njobs: {scan: {doc: S., axes: [x], acquire: [acquire_v]}}", "job device's own commands"),
+    ("settings: {x: {default: 0}}\ncommands: {start_step: {doc: Go.}}", "instrument device's own names"),
+    ("settings: {x: {default: 0}}\ncommands: {connect: {doc: Go.}}", "instrument device's own names"),
+    ("settings: {clock_s: {default: 0}}", "instrument device's own names"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, units: m, shape: [8, 8], pixel_size_m: 1.0e-9}}", "Poisson noise is for counts"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, units: m, noise: gaussian, shape: [8, 8], pixel_size_m: 1.0e-9}}", "needs its sigma, in m"),
     ("settings: {x: {default: 0}}\nacquisitions: {acquire_h: {doc: H., kind: image, noise_sigma: 2, shape: [8, 8], pixel_size_m: 1.0e-9}}", "only Gaussian noise has a sigma"),
@@ -190,43 +192,34 @@ def test_the_example_runs_as_a_tango_device_behind_the_mcp_server(tmp_path):
     assert "acquire_diffractogram" in outcome["after_init"]  # Init rebuilds the commands
 
 
-def test_the_server_takes_its_class_name_from_the_launchers_database_entry(monkeypatch):
+def test_each_server_takes_its_class_name_from_the_launchers_database_entry(monkeypatch):
     import tango
 
-    from asyncroscopy.instruments.yaml_sim import device
+    from asyncroscopy.instruments.yaml_sim import device, job
 
     class Servers:
-        value_string = ["DataBaseds/2", "XRDTwin/instrument_instance", "XRDTwin/other_instance"]
+        value_string = ["DataBaseds/2", "XRDTwin/instrument_instance", "XRDTwinJob/job_instance"]
 
     class Database:
         def get_server_list(self, pattern):
             assert pattern == "*"  # PyTango's database matches no pattern that starts with a wildcard
             return Servers()
 
-        def get_device_class_list(self, server):
-            assert server == "XRDTwin/instrument_instance"
-            return type("Listing", (), {"value_string": ["dserver/XRDTwin/instrument_instance", "DServer", "asyncroscopy/instrument/default", "XRDTwin"]})()
-
-        def get_device_property(self, name, key):
-            assert (name, key) == ("asyncroscopy/instrument/default", "yaml_path")
-            return {"yaml_path": [str(path)]}
-
-    path = EXAMPLE
     monkeypatch.setattr(tango, "Database", Database)
-    assert device._registration("instrument_instance") == ("XRDTwin", False)
+    assert device.registered_class("instrument_instance", "YamlInstrument") == "XRDTwin"
+    assert device.registered_class("job_instance", "YamlJob") == "XRDTwinJob"
+    assert device.registered_class("other_instance", "YamlInstrument") == "YamlInstrument"
     cls = device.device_class("XRDTwin")
-    assert cls.__name__ == "XRDTwin" and issubclass(cls, device.YamlSimDevice) and device.device_class("XRDTwin") is cls
-    path = RAMAN  # a file with jobs: the job device, under the same class name
-    assert device._registration("instrument_instance") == ("XRDTwin", True)
-    jobs = device.device_class("XRDTwin", jobs=True)
-    assert jobs.__name__ == "XRDTwin" and issubclass(jobs, device.YamlSimJobDevice) and jobs is not cls
+    assert cls.__name__ == "XRDTwin" and device.YamlInstrument in cls.__mro__ and device.device_class("XRDTwin") is cls
+    jobs = job.job_class("XRDTwinJob")
+    assert jobs.__name__ == "XRDTwinJob" and issubclass(jobs, job.YamlJob) and job.job_class("XRDTwinJob") is jobs
 
     class NoDatabase:
         def __init__(self):
             raise tango.DevFailed()
 
     monkeypatch.setattr(tango, "Database", NoDatabase)
-    assert device._registration("instrument_instance") == ("YamlSimDevice", False)
+    assert device.registered_class("instrument_instance", "YamlInstrument") == "YamlInstrument"
 
 
 def raman() -> SimInstrument:
@@ -295,7 +288,7 @@ def test_a_job_plan_is_resolved_estimated_and_bounded():
     grid = resolve_job_plan(spec, {"axes": {"stage_x_m": {"start": 0, "stop": 1e-4, "points": 3}, "stage_y_m": {"start": 0, "stop": 2e-4, "points": 2}}, "settings": {"exposure_s": 2}}, sim.values)
     assert grid.count == 6 and grid.point(0) == {"stage_x_m": 0.0, "stage_y_m": 0.0}
     assert grid.point(1) == {"stage_x_m": 0.0, "stage_y_m": 2e-4} and grid.point(5) == {"stage_x_m": 1e-4, "stage_y_m": 2e-4}
-    estimate = job_estimate(spec, sim, grid, sim.values)
+    estimate = job_estimate(spec, grid, sim.values)
     assert estimate["points"] == 6 and estimate["per_point_s"] == pytest.approx(2.2)
     listed = resolve_job_plan(spec, {"points": [{"stage_x_m": 1e-4}, {"stage_x_m": 0.01, "stage_y_m": 0}]}, sim.values)
     violations = [t for t in job_targets(spec, listed) if not t[3] <= t[2] <= t[4]]
@@ -353,7 +346,7 @@ def test_the_afm_example_lifts_the_tip_around_every_move_as_a_tango_job_device(t
     outcome = json.loads(done.stdout.strip().splitlines()[-1])
     assert "set_stage_x_m refused: it needs not tip_engaged" in outcome["set_stage_engaged"] and outcome["stage_after_refusal"] == 0.0
     assert outcome["stage_after_set"] == 1e-4
-    assert outcome["dry_run"]["error"]["code"] == "dry_run_unsupported" and "AFMTwin does not support dry runs" in outcome["dry_run"]["error"]["message"]
+    assert outcome["dry_run"]["error"]["code"] == "dry_run_unsupported" and "AFMTwinJob does not support dry runs" in outcome["dry_run"]["error"]["message"]
     assert outcome["stage_after_dry_run"] == 1e-4
     assert outcome["job_state"] == "done" and outcome["curves"] == 3 and outcome["curve_units"] == "nN" and outcome["curve_min"] < -0.5
     assert outcome["tip_after_job"] is False and outcome["stage_after_job"] == 2e-4
@@ -365,7 +358,7 @@ def test_the_raman_example_runs_jobs_as_a_tango_job_device(tmp_path):
     assert done.returncode == 0, done.stderr[-2000:]
     outcome = json.loads(done.stdout.strip().splitlines()[-1])
     assert outcome["risks"] == {
-        "RamanTwin_reserve": "low", "RamanTwin_start": "high", "RamanTwin_abort": "low",
+        "RamanTwinJob_reserve": "low", "RamanTwinJob_start": "high", "RamanTwinJob_abort": "low",
         "RamanTwin_laser_off": "low", "RamanTwin_move_xy": "high", "RamanTwin_set_grating": "high",
     }
     assert '"x_m"' in outcome["move_doc"] and '"y_m"' in outcome["move_doc"]  # the MCP server offers both fields
