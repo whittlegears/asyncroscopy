@@ -5,7 +5,7 @@
 
 Still open:
 
-- asyncroscopy points pyTEMlib at the local `../pyTEMlib-sidpy` until that branch is pushed and pinned by rev.
+- Nothing open from this alignment; see the limits in each area's docs (real Jupiter and vendor SEM backends need hardware APIs).
 
 ## Why
 
