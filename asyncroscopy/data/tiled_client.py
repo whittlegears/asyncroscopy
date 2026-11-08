@@ -190,6 +190,15 @@ def node_for_key(key: str, uri: str) -> Any:
         close = [k for k in client.keys() if k.startswith(key)][:10]
     except Exception:
         close = []
+    if key in close:
+        # Registered between the lookup and the listing (an acquisition registering its file as a Mapper tile
+        # read it): a map failed 0/18 on an error naming the key it then listed. Read it again.
+        try:
+            return client[key]
+        except KeyError:
+            pass
+        except CONNECTION_ERRORS as exc:
+            raise unavailable(uri, exc) from exc
     hint = f" Keys that start with it: {close}." if close else ""
     raise DataKeyNotFound(
         f"Tiled at {uri} has no key {key!r}.{hint} If it came from an acquisition just now while Tiled was down, "
