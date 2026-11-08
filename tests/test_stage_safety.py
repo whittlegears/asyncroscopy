@@ -1,9 +1,8 @@
 """Stage safety: moves outside the stage's travel are refused with the limits in the message, and no
 command holds the microscope for long (a long move returns at once and stage_moving says when it ends).
 
-``slow_stage_twin_proxy`` is a twin whose stage moves take real time (1 um per second) and that has no
-STAGE device, so its own travel (stage_travel_m, 10 um) applies; the mapping twin uses the STAGE
-device's limits (+/-1 mm by default).
+``slow_stage_twin_proxy`` is a twin whose stage moves take real time (1 um per second) on a stage with 10 um of
+travel; the mapping twin's STAGE device keeps the default limits (+/-1 mm).
 """
 
 import threading
@@ -13,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 import tango
 
-from asyncroscopy.instruments.electron_microscope.digital_twin import MOVE_BLOCK_S
+from asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin import MOVE_BLOCK_S
 from asyncroscopy.jobs.mapping.profile import MapContext, MapSettings
 
 
@@ -59,7 +58,7 @@ def test_the_stage_device_refuses_writes_outside_its_limits(mapping_stage_proxy)
         mapping_stage_proxy.position = [0.0, 0.0, 0.0, 50.0, 0.0]
 
 
-def test_without_a_stage_device_the_twin_keeps_to_its_own_travel(slow_twin):
+def test_the_stage_device_holds_the_limits_the_twin_moves_within(slow_twin):
     with pytest.raises(tango.DevFailed, match=r"stage y = -2e-05 is outside the stage limits \[-1e-05, 1e-05\]"):
         slow_twin.move_stage([0.0, -2e-5, 0.0, 0.0, 0.0])
 

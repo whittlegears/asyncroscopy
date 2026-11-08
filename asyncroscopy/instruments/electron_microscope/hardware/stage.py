@@ -196,6 +196,11 @@ class STAGE(Device):
     def write_position(self, value: list[float]) -> None:
         if getattr(self, "_frozen", None):
             raise ValueError(f"the stage did not move: {self._frozen}")
+        self._check_limits(value)
+        self._write_position(value)
+
+    def _check_limits(self, value: list[float]) -> None:
+        """Refuse a position outside the limits (with the installed holder's name), or a high tilt away from eucentric height."""
         for axis, v in zip(("x", "y", "z", "alpha", "beta"), value):
             low, high = self._limits[axis]
             if not low <= float(v) <= high:
@@ -203,7 +208,6 @@ class STAGE(Device):
                 where = f"holder {holder!r}'s limits" if holder else "the stage limits"
                 raise ValueError(f"stage {axis} = {float(v):.6g} is outside {where} [{low}, {high}]")
         self._check_z_and_tilt(value)
-        self._write_position(value)
 
     def _check_z_and_tilt(self, value: list[float]) -> None:
         """Refuse a beta tilt on a holder without one (never drop it), and a high tilt far from eucentric height."""

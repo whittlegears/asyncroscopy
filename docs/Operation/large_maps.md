@@ -88,8 +88,8 @@ store once (`migrated_from`).
 
 * The STAGE device refuses positions outside its `x_limits_m`, `y_limits_m`
   and `z_limits_m` properties (default +/-1 mm, +/-0.5 mm in z; set your
-  stage's), naming the limit. The digital twin checks moves against them, or
-  against its own `stage_travel_m` when it has no STAGE device.
+  stage's), naming the limit. A digital twin's `DigitalTwinSTAGE` applies the
+  same limits to every move the twin makes.
 * The Mapper checks every plan at reserve: the outermost tile centres and
   every revisit point must lie inside the STAGE limits
   (`stage_device_address`), or the plan is refused before anything moves.

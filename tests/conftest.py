@@ -123,6 +123,23 @@ LIVE_DRIFT_TWIN_PROPERTIES = {
 }
 
 
+# The stage's errors and drift are DigitalTwinSTAGE properties; the dicts above read as one twin, split where they are set.
+STAGE_MODEL_PROPERTIES = {
+    "stage_move_noise_std", "stage_bias_x", "stage_bias_y", "stage_reported_noise_std", "stage_backlash_x", "stage_backlash_y",
+    "stage_speed", "stage_move_overhead", "stage_settle_drift", "stage_settle_tau", "drift_rate_per_min", "drift_random_walk",
+}
+
+
+def on_the_stage(properties: dict) -> dict:
+    """The twin's stage-model properties: what its DigitalTwinSTAGE takes."""
+    return {key: value for key, value in properties.items() if key in STAGE_MODEL_PROPERTIES}
+
+
+def on_the_microscope(properties: dict) -> dict:
+    """The rest of the twin's properties: what the microscope device takes."""
+    return {key: value for key, value in properties.items() if key not in STAGE_MODEL_PROPERTIES}
+
+
 # Every sample feature the procedural specimen has (clusters, height gradient, support) and every
 # instrument effect that reads the sample (dose damage, contamination), for the golden regression.
 SPECIMEN_GOLDEN_PROPERTIES = {
@@ -209,24 +226,27 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
         {
             "class": TestStage,
             "devices": [
-                {
-                    "name": "asyncroscopy/stage/default",
-                    "properties": {},
-                },
-                {"name": "asyncroscopy/stage/mapping", "properties": {}},
                 {"name": "asyncroscopy/stage/holders", "properties": {
                     "holders": json.dumps({"low_tilt": {"alpha_deg": [-15.0, 15.0], "beta_deg": [-5.0, 5.0], "z_m": [-1e-4, 1e-4]}, "single_tilt": {"beta_deg": [0.0, 1e-9]}}),
                     "holder": "low_tilt",
                 }},
-                {"name": "asyncroscopy/stage/parity", "properties": {}},
-                {"name": "asyncroscopy/stage/livedrift", "properties": {}},
-                *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": {}} for source in SPECIMEN_TWINS),
             ],
         },
         {
-            # The twin's own STAGE device: the drift twin reports its stage model's error to it (test_twin_configs.py).
+            # A twin's STAGE device runs its stage model, so each twin below has its own.
             "class": DigitalTwinSTAGE,
-            "devices": [{"name": "asyncroscopy/stage/drift", "properties": {}}],
+            "devices": [
+                {"name": "asyncroscopy/stage/default", "properties": {}},
+                {"name": "asyncroscopy/stage/mapping", "properties": on_the_stage(MAPPING_TWIN_PROPERTIES)},
+                {"name": "asyncroscopy/stage/drift", "properties": on_the_stage(DRIFT_TWIN_PROPERTIES)},
+                {"name": "asyncroscopy/stage/parity", "properties": {}},
+                {"name": "asyncroscopy/stage/livedrift", "properties": on_the_stage(LIVE_DRIFT_TWIN_PROPERTIES)},
+                {"name": "asyncroscopy/stage/slowstage", "properties": {"stage_speed": 1e-7, "stage_move_overhead": 0.0, "x_limits_m": [-1e-5, 1e-5], "y_limits_m": [-1e-5, 1e-5]}},
+                {"name": "asyncroscopy/stage/dose", "properties": {}},
+                {"name": "asyncroscopy/stage/specimen_golden", "properties": on_the_stage(SPECIMEN_GOLDEN_PROPERTIES)},
+                {"name": "asyncroscopy/stage/tuner", "properties": {}},
+                *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": on_the_stage(MAPPING_TWIN_PROPERTIES)} for source in SPECIMEN_TWINS),
+            ],
         },
         {
             "class": DigitalTwinCorrector,
@@ -272,7 +292,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/mapping",
                         "acquisition_save_directory": prop_path(data_save_dir),
-                        **MAPPING_TWIN_PROPERTIES,
+                        **on_the_microscope(MAPPING_TWIN_PROPERTIES),
                     },
                 },
                 {
@@ -283,7 +303,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/drift",
                         "stage_device_address": "asyncroscopy/stage/drift",
                         "acquisition_save_directory": prop_path(data_save_dir),
-                        **DRIFT_TWIN_PROPERTIES,
+                        **on_the_microscope(DRIFT_TWIN_PROPERTIES),
                     },
                 },
                 {
@@ -293,19 +313,17 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/livedrift",
                         "stage_device_address": "asyncroscopy/stage/livedrift",
                         "acquisition_save_directory": prop_path(data_save_dir),
-                        **LIVE_DRIFT_TWIN_PROPERTIES,
+                        **on_the_microscope(LIVE_DRIFT_TWIN_PROPERTIES),
                     },
                 },
                 {
-                    # Real-time stage moves (1 um takes 1 s) and no STAGE device: its own travel limits apply.
+                    # Real-time stage moves (1 um takes 1 s) on a stage with 10 um of travel.
                     "name": "asyncroscopy/digitaltwin/slowstage",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
+                        "stage_device_address": "asyncroscopy/stage/slowstage",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         "time_scale": 0.1,
-                        "stage_speed": 1e-7,
-                        "stage_move_overhead": 0.0,
-                        "stage_travel_m": 1e-5,
                     },
                 },
                 {
@@ -326,6 +344,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
                         "eds_device_address": "asyncroscopy/eds/default",
+                        "stage_device_address": "asyncroscopy/stage/dose",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         "sample_size_xy": 2e-6,
                         "sample_particle_count": 20,
@@ -337,7 +356,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     # tests/test_specimens.py: the procedural specimen's output must stay bit-identical to the
                     # golden file; only that test touches this twin, so its event indices are reproducible.
                     "name": "asyncroscopy/digitaltwin/specimen_golden",
-                    "properties": {"acquisition_save_directory": prop_path(data_save_dir), **SPECIMEN_GOLDEN_PROPERTIES},
+                    "properties": {"stage_device_address": "asyncroscopy/stage/specimen_golden", "acquisition_save_directory": prop_path(data_save_dir), **on_the_microscope(SPECIMEN_GOLDEN_PROPERTIES)},
                 },
                 # tests/test_specimens.py: one instrument, three specimens, the same Mapper plan on each.
                 *(
@@ -348,7 +367,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                             "stage_device_address": f"asyncroscopy/stage/specimen_{source}",
                             "eds_device_address": "asyncroscopy/eds/default",
                             "acquisition_save_directory": prop_path(data_save_dir),
-                            **MAPPING_TWIN_PROPERTIES,
+                            **on_the_microscope(MAPPING_TWIN_PROPERTIES),
                             **specimen,
                         },
                     }
@@ -362,6 +381,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/tuner",
                         "corrector_device_address": "asyncroscopy/corrector/tuner",
+                        "stage_device_address": "asyncroscopy/stage/tuner",
                         "acquisition_save_directory": prop_path(data_save_dir),
                         "sample_seed": 77,
                         "sample_size_xy": 1e-6,

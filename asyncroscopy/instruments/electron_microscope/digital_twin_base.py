@@ -20,7 +20,6 @@ from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
-from asyncroscopy.sim.rng import EventRng
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
@@ -54,11 +53,6 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         dtype=float,
         default_value=6e-9,
         doc="Absolute sample thickness (Z) in meters (must be > 0).",
-    )
-    stage_move_noise_std = device_property(
-        dtype=float,
-        default_value=0.0,
-        doc="Gaussian move noise standard deviation in meters (applied to x,y,z).",
     )
     acquisition_save_directory = device_property(
         dtype=str,
@@ -226,18 +220,10 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         return self._stage_position
 
     def _move_stage(self, position):
-        """Move the stage to the requested 5-axis vector with optional simulated precision noise."""
+        """Move the stage to the requested 5-axis vector."""
         if len(position) != 5:
             raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
         target = np.array(position, dtype=np.float64)
-
-        std = float(self.stage_move_noise_std)
-        if std > 0:
-            self._legacy_move_index = getattr(self, "_legacy_move_index", 0) + 1
-            rng = EventRng(int(self.sample_seed)).for_event("stage", self._legacy_move_index)
-            noise = np.zeros(5, dtype=np.float64)
-            noise[:3] = rng.normal(0.0, std, size=3)
-            target = target + noise
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
