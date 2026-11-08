@@ -3,7 +3,8 @@
 ``load_spec(path)`` reads and checks the file and returns an ``InstrumentSpec``;
 ``SimInstrument(spec)`` holds the settings' current values and runs commands and
 acquisitions. Nothing here imports Tango, so the behaviour is tested without a
-device server; ``asyncroscopy.instruments.yaml_sim.device`` turns it into one.
+device server; ``asyncroscopy.instruments.yaml_sim.device`` turns it into one (and
+``asyncroscopy.instruments.yaml_sim.job`` serves a file's ``jobs:`` section).
 
 The file format, with every key (see examples/xrd.yaml for a working instrument)::
 
@@ -117,6 +118,7 @@ import yaml
 
 from asyncroscopy.core.names import STOP_ROLES, check_role
 
+PROJECT_DIR = Path(__file__).resolve().parents[3]
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 NAME = re.compile(r"^[a-z][a-z0-9_]*$")
 MAX_DURATION_S = 25.0  # the MCP server stops waiting for a command after 30 s
@@ -153,7 +155,9 @@ TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
 # Commands and attributes a job device (an instrument with jobs) has already.
-JOB_DEVICE_NAMES = {"reserve", "start", "job_status", "abort", "results", "release", "get_reservation", "job_kind", "plan_example"}
+# Names the instrument device has already (Tango names ignore case): its step protocol, and the Instrument base's commands and attributes.
+RESERVED_NAMES = {"hold", "release_hold", "start_step", "step_status", "stop_step", "connect", "disconnect", "instrument_type", "clock_s"}
+SETTLE_STEP = "_settle"  # the step a job runs for its settle_s; "_" keeps it apart from every name a file may give
 
 
 class SpecError(ValueError):
@@ -883,9 +887,9 @@ def map_description(spec: InstrumentSpec, sim: "SimInstrument", overrides: dict 
     pixel = float(evaluate(trees["pixel_size_m"], scope) if trees.get("pixel_size_m") is not None else acquisition.raw["pixel_size_m"])
 
     def seconds(names: list[str]) -> float:
-        return sum(sim.seconds(spec.commands[n].duration, scope) for n in names)
+        return sum(duration_seconds(spec.commands[n].duration, scope) for n in names)
 
-    tile_s = sim.seconds(acquisition.duration, scope) + seconds(section.before_move + section.after_move + section.safe)
+    tile_s = duration_seconds(acquisition.duration, scope) + seconds(section.before_move + section.after_move + section.safe)
 
     def limits(name: str) -> dict:
         q = spec.settings[name]
@@ -917,6 +921,16 @@ def map_description(spec: InstrumentSpec, sim: "SimInstrument", overrides: dict 
         "budgets": budgets,
         "commands": list(dict.fromkeys(commands)),
     }
+
+
+def resolve_path(path: str) -> Path:
+    """The instrument file a ``yaml_path`` property names (absolute, or relative to the working directory or the repository)."""
+    if not path:
+        raise SpecError("the yaml_path device property is empty; set it to the instrument YAML file")
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute() and not candidate.exists() and (PROJECT_DIR / candidate).exists():
+        return PROJECT_DIR / candidate
+    return candidate
 
 
 def load_spec(path: str | Path) -> InstrumentSpec:
@@ -958,9 +972,9 @@ def load_spec(path: str | Path) -> InstrumentSpec:
         raise SpecError(f"{path}: no settings, commands or acquisitions; nothing for an agent to call")
     if "action_hints" in spec.settings:
         raise SpecError(f"{path}: settings.action_hints: the device's own attribute has that name (its commands' roles); rename the setting")
-    taken = sorted(set(names) & JOB_DEVICE_NAMES) if spec.jobs else []
+    taken = sorted({name.lower() for name in (*names, *spec.settings)} & RESERVED_NAMES)
     if taken:
-        raise SpecError(f"{path}: {taken} are the job device's own commands (an instrument with jobs has them); rename yours")
+        raise SpecError(f"{path}: {taken} are the instrument device's own names; rename yours")
     for name, command in spec.commands.items():
         verb = _reads_as_action(command.doc) if name.startswith(("get_", "list_")) else None
         if verb:
@@ -973,6 +987,12 @@ def load_spec(path: str | Path) -> InstrumentSpec:
     for message in spec.warnings:  # stderr, so the device server's console and the check below both show it
         print(f"[yaml_sim] WARNING {message}", file=sys.stderr)
     return spec
+
+
+def duration_seconds(duration: tuple[Any, ast.Expression | None], scope: dict[str, Any]) -> float:
+    """A command's or acquisition's ``duration_s`` at the settings in ``scope``."""
+    raw, tree = duration
+    return float(evaluate(tree, scope) if tree is not None else raw)
 
 
 class SimInstrument:
@@ -1006,12 +1026,8 @@ class SimInstrument:
                 state = {n: scope[n] for n in sorted({node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id in scope})}
                 raise Refused(f"{name} refused: it needs {text} (now {json.dumps(state)})")
 
-    def seconds(self, duration: tuple[Any, ast.Expression | None], scope: dict[str, Any]) -> float:
-        raw, tree = duration
-        return float(evaluate(tree, scope) if tree is not None else raw)
-
     def _wait(self, name: str, duration, scope, limit: float | None = MAX_DURATION_S, sleep=None) -> None:
-        seconds = self.seconds(duration, scope)
+        seconds = duration_seconds(duration, scope)
         if seconds < 0:
             raise Refused(f"{name} would take {seconds:.3g} s; a duration cannot be negative")
         if limit is not None and seconds > limit:
@@ -1031,7 +1047,8 @@ class SimInstrument:
             return [self._value(v, t, scope) for v, t in zip(raw, tree or [None] * len(raw))]
         return evaluate(tree, scope) if tree is not None else raw
 
-    def run_command(self, name: str, argument: Any = None) -> str:
+    def run_command(self, name: str, argument: Any = None, sleep: Callable[[float], None] | None = None) -> str:
+        """Run a command; ``sleep`` replaces its simulated wait, so a job step can stop it early."""
         command = self.spec.commands[name]
         with self.lock:
             scope = {**self.values, **parse_arguments(name, command.inputs, argument)}
@@ -1040,7 +1057,7 @@ class SimInstrument:
             after = {**self.values, **updates}
             for target in updates:  # a command that changes a guarded setting answers to its requires too
                 self._check(name, self.spec.setting_requires.get(target, []), {**scope, **after})
-        self._wait(name, command.duration, scope)
+        self._wait(name, command.duration, scope, sleep=sleep)
         with self.lock:
             self.values.update(updates)
         result = self._value(command.returns, command.returns_trees, {**scope, **updates})
@@ -1266,13 +1283,13 @@ def resolve_job_plan(spec: InstrumentSpec, plan: dict, values: dict[str, Any]) -
     return JobPlan(job=job, axes=axes, points=points, settings=checked, count=count)
 
 
-def job_estimate(spec: InstrumentSpec, sim: "SimInstrument", resolved: JobPlan, values: dict[str, Any]) -> dict:
+def job_estimate(spec: InstrumentSpec, resolved: JobPlan, values: dict[str, Any]) -> dict:
     """Points and seconds: the move time plus every acquisition's duration, at each point (sampled for big plans)."""
     sample = range(resolved.count) if resolved.count <= 2000 else sorted({0, resolved.count - 1, *range(0, resolved.count, max(1, resolved.count // 1000))})
     total = 0.0
     for index in sample:
         scope = {**values, **resolved.settings, **resolved.point(index)}
-        total += resolved.job.settle_s + sum(sim.seconds(spec.acquisitions[a].duration, scope) for a in resolved.job.acquire)
+        total += resolved.job.settle_s + sum(duration_seconds(spec.acquisitions[a].duration, scope) for a in resolved.job.acquire)
     per_point = total / len(sample)
     return {"points": resolved.count, "per_point_s": round(per_point, 6), "duration_s": round(per_point * resolved.count, 3), "acquisitions_per_point": resolved.job.acquire}
 
