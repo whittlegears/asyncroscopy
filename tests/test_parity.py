@@ -78,6 +78,7 @@ class FakeStageProxy:
     _read_position = AutoScriptSTAGE._read_position
     _write_position = AutoScriptSTAGE._write_position
     _read_beta_tilt_enabled = AutoScriptSTAGE._read_beta_tilt_enabled
+    _check_limits = STAGE._check_limits
     _check_z_and_tilt = STAGE._check_z_and_tilt
     read_beta_tilt_enabled = STAGE.read_beta_tilt_enabled
     high_tilt_deg, high_tilt_max_abs_z_m = 15.0, 1e-4  # STAGE's defaults

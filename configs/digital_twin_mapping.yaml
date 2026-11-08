@@ -43,21 +43,6 @@ instrument:
     detector_gain_drift: 0.1
     detector_offset_drift: 2.0
     detector_offset: 5.0  # above the offset's swing, so dark pixels never clip at zero
-    # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
-    # readback error and settling are unverified placeholders.
-    stage_move_noise_std: 1.5e-7
-    stage_bias_x: 1.0e-7
-    stage_bias_y: -1.5e-7
-    stage_reported_noise_std: 1.0e-8
-    stage_backlash_x: 1.5e-7
-    stage_backlash_y: 2.5e-7
-    stage_speed: 5.0e-6
-    stage_move_overhead: 1.0
-    stage_settle_drift: 2.0e-9
-    stage_settle_tau: 30
-    # Thermo Fisher specifies <= 0.5 nm/min drift.
-    drift_rate_per_min: 5.0e-10
-    drift_random_walk: 2.0e-10
     scan_flyback_time: 5.0e-4
     scan_line_jitter_px: 0.3
     scan_shear: 0.005
@@ -113,6 +98,22 @@ devices:
   stage:
     class_name: DigitalTwinSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
+    properties:
+      # Stage: Fiedler 2023 reports about +/-350 nm typical error; backlash, speed,
+      # readback error and settling are unverified placeholders.
+      stage_move_noise_std: 1.5e-7
+      stage_bias_x: 1.0e-7
+      stage_bias_y: -1.5e-7
+      stage_reported_noise_std: 1.0e-8
+      stage_backlash_x: 1.5e-7
+      stage_backlash_y: 2.5e-7
+      stage_speed: 5.0e-6
+      stage_move_overhead: 1.0
+      stage_settle_drift: 2.0e-9
+      stage_settle_tau: 30
+      # Thermo Fisher specifies <= 0.5 nm/min drift.
+      drift_rate_per_min: 5.0e-10
+      drift_random_walk: 2.0e-10
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

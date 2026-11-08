@@ -20,7 +20,7 @@ uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 | :-- | :-- | :-- |
 | Random streams | `asyncroscopy/sim/rng.py` | One seeded stream per kind of event (stage move n, acquisition n, ...). Repeating an acquisition gets fresh noise; rerunning the same script reproduces the run. |
 | Clock | `asyncroscopy/sim/clock.py` | Simulated time. Moves, frames and spectra take as long as they would on the instrument. `time_scale` sets how much real time passes (1 = real waiting, 0 = none). |
-| Stage | `asyncroscopy/sim/stage_model.py` | Keeps **commanded**, **true** and **reported** positions. True = commanded + bias + Gaussian error + backlash on reversal. Reported = commanded + small readback error. Adds settling drift after each move and thermal drift over time. |
+| Stage | `asyncroscopy/sim/stage_model.py`, run by the `DigitalTwinSTAGE` device | Keeps **commanded**, **true** and **reported** positions. True = commanded + bias + Gaussian error + backlash on reversal. Reported = commanded + small readback error. Adds settling drift after each move and thermal drift over time. |
 | Sample | `twin/specimen.py`, `twin/sample_model.py` | A swappable specimen ([specimens.md](Operation/specimens.md)). The default `procedural` one is a table of ellipsoidal particles (element, centre, semi-axes, orientation) on a carbon support film; a 2 um, 400-particle sample is a few kilobytes. With `support_texture` the film's thickness varies at every length from `support_texture_scale_m` down to 0.5 nm, so tiles can be registered on the film itself at any pixel size (a frame sees only the waves at least two of its pixels long, so overlapping frames see the same film however their grids fall); with `subpixel_atoms` each atom is drawn at its sub-pixel position. `recorded` images an image file, `crystal` a polycrystalline film. |
 | Scan | `twin/scan_distortion.py` | Where each pixel really lands: drift during the frame, line jitter, flyback compression, scan rotation and shear, field-of-view calibration error. |
 | Rendering | `twin/render.py` | Pixel >= 0.2 nm: projected thickness x Z^1.7 per particle, Gaussian probe blur. Pixel < 0.2 nm: atoms built for the particles in view only, convolved with the pyTEMlib probe from the current aberrations. HAADF, ADF and BF have their own contrast. |
@@ -45,7 +45,7 @@ Rendering time on a laptop (GTX-class CPU, no GPU needed): about 30 ms for a 512
 
 ## The stage device
 
-Every twin config runs `DigitalTwinSTAGE` (`hardware/stage_digital_twin.py`) as its STAGE device. The twin microscope writes the reported position to it, as a stage controller would, and the STAGE checks every move against its travel limits. The twin also works out how far its stage lands from where it reports (the landing noise, the backlash on a reversal and the readback noise together) and writes it to the STAGE as `position_sigma_m`. A Mapper whose `stage_sigma_m` is left at 0 reads it there, so the stitch searches the right window without a hand-derived number. The stage model itself (bias, backlash, settling, drift, `stage_moving`) runs in the twin microscope, on its simulated clock, because each pixel is rendered from the true position at its own time.
+Every twin config runs `DigitalTwinSTAGE` (`hardware/stage_digital_twin.py`) as its STAGE device, and it owns the stage's behaviour: commanded, true and reported positions, bias, landing error, backlash, settling, thermal drift, `stage_moving` and the travel limits. The twin microscope orchestrates it through its DeviceProxy, as it does the corrector twin: `move_on_clock` moves the stage at the microscope's simulated time and says how long the move takes, and the microscope advances its clock (the single time source) by that; `frame_trajectory`, called once per frame, returns the true position and a compact description of the drift, so rendering each line from the true position does not cost a Tango call per line. A position written directly to `position` or an axis counts as a stage command; the microscope picks it up on its next `frame_trajectory`. `position_sigma_m` is worked out from the stage model, so a Mapper without its own `stage_sigma_m` reads it. A `DigitalTwin` with no STAGE device images at the origin and refuses `move_stage`.
 
 ## Ground truth
 
@@ -64,8 +64,8 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 | Optics | `acceleration_voltage`, `convergence_angle_mrad`, `probe_current_pa` (reported as the measured `beam_current_pa`), `haadf_z_exponent`, `haadf_scattering_scale`, `atomic_pixel_threshold` |
 | Detector | `detector_gain`, `detector_offset`, `detector_read_noise`, `detector_gain_drift` (fraction), `detector_offset_drift` (counts) |
 | Scan | `scan_flyback_time`, `scan_line_jitter_px`, `scan_rotation_deg`, `scan_shear`, `scan_flyback_compression`, `fov_scale_error` |
-| Stage | `stage_move_noise_std`, `stage_bias_x/y`, `stage_reported_noise_std`, `stage_backlash_x/y`, `stage_speed`, `stage_move_overhead`, `stage_settle_drift`, `stage_settle_tau` |
-| Drift and time | `drift_rate_per_min`, `drift_random_walk`, `time_scale` |
+| Stage (properties of the `DigitalTwinSTAGE` device, under `devices: stage:`) | `stage_move_noise_std`, `stage_bias_x/y`, `stage_reported_noise_std`, `stage_backlash_x/y`, `stage_speed`, `stage_move_overhead`, `stage_settle_drift`, `stage_settle_tau`, `drift_rate_per_min`, `drift_random_walk`, and the travel limits `x_limits_m`, `y_limits_m`, `z_limits_m` |
+| Time | `time_scale` |
 | EDS | `eds_fwhm_mn_ka`, `eds_solid_angle`, `eds_dead_time`, `eds_channels`, `eds_energy_max` |
 | Dose | `dose_tracking`, `contamination_max`, `contamination_dose`, `damage_critical_dose` |
 
