@@ -4,7 +4,7 @@
   revisit on the analysis server's map tools, called in this process, with the tip lifted for every move;
 * plans over budget are refused at reserve before anything moves: dose on the STEM, time and
   tip force on the AFM;
-* the mapping twin driven as an SEM (profile ``sem``: the beam commands, no EDS);
+* the simulated SEM (profile ``sem``: the scanning-beam commands, no EDS), stitched end to end;
 * a profile written and registered in this file maps the STEM twin as a plain camera.
 
 The devices are the session's in-process Tango devices from conftest.
@@ -143,17 +143,40 @@ def test_a_stem_plan_over_its_dose_budget_is_refused_before_anything_moves(mappe
     assert list(mapping_twin_proxy.get_stage()) == before
 
 
-def test_the_stem_twin_maps_as_an_sem_without_eds(sem_mapper_proxy, mapping_twin_proxy):
-    plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1e-7, "overlap": 0.0, "imsize": 32, "dwell_s": 1e-6, "detectors": ["haadf"]}
+def test_the_simulated_sem_maps_and_stitches_without_eds(sem_mapper_proxy, sem_twin_proxy, analysis):
+    assert sem_twin_proxy.instrument_type == "SEM" and sem_twin_proxy.default_detector == "se"
+    plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.2e-7, "overlap": 0.25, "imsize": 64, "dwell_s": 1e-6}
     eds = call(sem_mapper_proxy, "reserve", {"plan": {**plan, "per_tile": ["eds_point"]}})
     assert eds["error"]["code"] == "plan_rejected" and "not used when mapping with the 'sem' instrument profile" in eds["error"]["message"]
     reserved, results = run_job(sem_mapper_proxy, plan)
     assert results["state"] == "done", results
+    assert reserved["resolved_plan"]["detectors"] == ["se"] if "resolved_plan" in reserved else True
     assert reserved["estimate"]["max_dose_e_per_a2"] > 0 and "eds_dose_e_per_a2" not in reserved["estimate"]
+    assert "stitch_error" not in results["summary"] and results["result_keys"]["map"]
     with h5py.File(results["summary"]["run_file"], "r") as h5:
-        assert h5.attrs["instrument_profile"] == "sem" and h5["tiles"].shape[0] == reserved["estimate"]["tiles"] == 9
-        assert "spectra" not in h5
-    assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
+        assert h5.attrs["instrument_profile"] == "sem" and h5["tiles"].shape[0] == reserved["estimate"]["tiles"]
+        assert h5["tiles"].attrs["detector"] == "SE" and "spectra" not in h5
+        assert float(np.ptp(h5["tiles"][0])) > 0
+    assert json.loads(sem_twin_proxy.get_parameters())["beam_blanked"] is True
+
+
+def test_the_sem_profile_refuses_a_stem_and_a_stem_detector_on_the_sem(monkeypatch, sem_mapper_proxy):
+    plan = {"box_m": [-1e-7, 1e-7, -1e-7, 1e-7], "fov_m": 1e-7, "overlap": 0.0, "imsize": 16, "stitch": False}
+    monkeypatch.setattr(device("asyncroscopy/mapper/sem"), "microscope_device_address", "asyncroscopy/digitaltwin/mapping")
+    device("asyncroscopy/mapper/sem")._map_profile = None
+    refused = call(sem_mapper_proxy, "reserve", {"plan": plan})
+    assert refused["error"]["code"] == "plan_rejected" and "drives SEM instruments" in refused["error"]["message"] and "is a TEM" in refused["error"]["message"]
+    monkeypatch.undo()
+    device("asyncroscopy/mapper/sem")._map_profile = None
+    _, results = run_job(sem_mapper_proxy, {**plan, "detectors": ["haadf"]})
+    assert results["state"] == "failed"
+
+
+def test_the_image_shift_a_map_may_use_is_the_instruments_own(sem_mapper_proxy, sem_twin_proxy):
+    assert sem_twin_proxy.image_shift_limit_m == pytest.approx(1e-6)
+    assert device("asyncroscopy/mapper/sem").profile().image_shift_limit_m == pytest.approx(1e-6)
+    with pytest.raises(tango.DevFailed, match="within"):
+        sem_twin_proxy.set_image_shift([2e-6, 0.0])
 
 
 @register_profile
@@ -188,7 +211,7 @@ class PinholeCamera(InstrumentProfile):
         return [float(v) for v in self.instrument().get_stage()]
 
     def acquire_tile(self, job, tile):
-        return {"image_key": self.instrument().acquire_scanned_image(["haadf"]), "acquired": time.time()}
+        return {"image_key": self.instrument().acquire_scanned_image([]), "acquired": time.time()}
 
 
 def test_a_profile_registered_by_a_test_maps_the_twin(monkeypatch, sem_mapper_proxy):

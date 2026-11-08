@@ -14,7 +14,7 @@ import tifffile
 
 from asyncroscopy.data.dose_ledger import record_frame
 from asyncroscopy.data.integrity import seal
-from asyncroscopy.data.record import current_sample, record_fields, stage_of
+from asyncroscopy.data.record import current_sample, record_fields, sample_of
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
@@ -82,7 +82,7 @@ def save_acquisition(
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
     # Read from init_device, not device.get_name(): a device object made without Tango's own initialisation crashes on that call.
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
-    sample = current_sample(stage_of(device))
+    sample = current_sample(sample_of(device))
 
     if output_format == ".tiff":
         save_dir = data_server.save_path if data_server is not None else DEFAULT_ACQUISITION_DIR

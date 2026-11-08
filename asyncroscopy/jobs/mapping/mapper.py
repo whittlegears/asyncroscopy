@@ -68,7 +68,8 @@ class Mapper(JobDevice):
     )
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Instrument to drive (a microscope, or any device the instrument profile drives).")
     data_device_address = device_property(dtype=str, default_value="", doc="DATA device; when set, the run file is registered with Tiled.")
-    stage_device_address = device_property(dtype=str, default_value="asyncroscopy/stage/default", doc="STAGE device whose x/y limits every plan is checked against at reserve, and which says which sample is loaded; blank: not checked (the instrument still refuses moves outside them).")
+    stage_device_address = device_property(dtype=str, default_value="asyncroscopy/stage/default", doc="STAGE device whose x/y limits every plan is checked against at reserve; blank: not checked (the instrument still refuses moves outside them).")
+    sample_device_address = device_property(dtype=str, default_value="asyncroscopy/sample/default", doc="SAMPLE device that says which sample is loaded; every run file records it and a resume onto another load is refused. Blank: not recorded.")
     output_directory = device_property(dtype=str, default_value="outputs/maps", doc="Where run files are written when there is no DATA device; with one, they go in its save path (which Tiled serves) under maps/.")
     max_tiles = device_property(dtype=int, default_value=4_000_000, doc="Refuse plans with more tiles than this (a 2000 x 2000 grid by default).")
     estimate_move_s = device_property(dtype=float, default_value=2.0, doc="Assumed time per stage move, for estimates only.")
@@ -323,13 +324,13 @@ class Mapper(JobDevice):
             self._open_run_file(job, sample)
 
     def _sample_now(self) -> dict:
-        """Which sample is loaded (record.current_sample), from the profile's STAGE device; nulls and why when it cannot say."""
-        address = self.profile().sample_stage()
+        """Which sample is loaded (record.current_sample), from the SAMPLE device; nulls and why when it cannot say."""
+        address = self.sample_device_address
         try:
-            stage = self.proxy(address, timeout_s=3.0) if address else None
+            sample = self.proxy(address, timeout_s=3.0) if address else None
         except Exception as exc:
             return {"sample_id": None, "sample_load_id": None, "sample_error": f"no proxy to {address}: {str(exc).splitlines()[0][:200]}"}
-        return current_sample(stage)
+        return current_sample(sample)
 
     def _refuse_another_load(self, job: dict, sample: dict) -> None:
         """A resume onto another sample load would put the new load's features at the old load's positions."""
@@ -338,7 +339,7 @@ class Mapper(JobDevice):
             return
         if sample.get("sample_load_id") is None:
             raise RuntimeError(f"could not tell which sample is loaded ({sample.get('sample_error')}), so this map (load {recorded}) "
-                               "was not resumed; resume it when the STAGE device answers")
+                               "was not resumed; resume it when the SAMPLE device answers")
         if sample["sample_load_id"] != recorded:
             raise RuntimeError(f"the sample was reloaded since this map started (load {recorded}, now {sample['sample_load_id']}); "
                                "its tiles would not line up: reserve a new map instead of resuming")

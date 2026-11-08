@@ -95,6 +95,8 @@ devices:
   approvals:
     class_name: Approvals
     module_name: asyncroscopy.safety.approvals
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: DigitalTwinSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
