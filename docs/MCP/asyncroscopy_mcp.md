@@ -112,7 +112,7 @@ tool for each step of a job:
   computed by the same rules the general agent uses
   (`asyncroscopy/mcp/agent_tools.py`, with the lists of the agent profile
   `asyncroscopy/agents/profiles/default.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
-  every tool but State/Status; never `endpoint_info` or `list_skills`. Other
+  every tool but State/Status; never `endpoint_info`, `list_skills` or `skills_for`. Other
   harnesses (SciAgentGUI) give the model only these.
 - `action_space()`: for agent programs, not given to models: every tool with
   its canonical role (`stage.move`, `acquire.image`, ...), arguments with
@@ -124,6 +124,13 @@ tool for each step of a job:
   request and what has happened so far (an error, a held call, a data key;
   `asyncroscopy.agents.skill_middleware`); `load_skill` is offered only when a
   matching skill did not fit. See `docs/Operation/agents.md`.
+- `skills_for(request, agent_tools=None)`: for agent programs, not given to
+  models: the same choice for another harness. It returns the skills matching
+  a request (`names`, best first), their instructions written out for a system
+  prompt (`text`) and any too long to fit (`cut`, for `load_skill`).
+  `agent_tools` is the tool list the caller gives its model. SciAgentGUI's own
+  agent calls it at the start of each turn, because small models do not call
+  `load_skill` themselves.
 
 `<device>_reserve`, `_start`, `_job_status`, `_results`, `_release`,
 `list_skills` and `load_skill` stay on the endpoint for the `mapping` graph,

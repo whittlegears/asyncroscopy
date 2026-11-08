@@ -31,7 +31,7 @@ class ToolLists:
     stem: tuple[str, ...] = ()
     generic: tuple[str, ...] = ()
     analysis_waits: tuple[str, ...] = ()
-    not_for_models: tuple[str, ...] = field(default=("list_skills", "endpoint_info", "action_space"))
+    not_for_models: tuple[str, ...] = field(default=("list_skills", "skills_for", "endpoint_info", "action_space"))
 
 
 def tool_lists(path: str | Path | None = None) -> ToolLists:

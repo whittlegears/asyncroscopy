@@ -5,7 +5,7 @@ A skill teaches an agent how to combine instrument tools for a kind of experimen
 ## Using them
 
 - Agents: automatic (`asyncroscopy/agents/skill_middleware.py`); see `docs/Operation/agents.md`.
-- MCP: every asyncroscopy MCP endpoint offers `list_skills` and `load_skill(name)` for other clients.
+- MCP: every asyncroscopy MCP endpoint offers `list_skills`, `load_skill(name)` and `skills_for(request)` (the skills matching a request, written out for another harness's prompt) for other clients.
 - Python: `from asyncroscopy.skills import list_skills, load_skill, select_skills, skills_text`.
 
 ## Writing one

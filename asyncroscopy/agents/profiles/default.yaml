@@ -29,7 +29,7 @@ tools:
   # Only when the instrument endpoint has no mcp.analysis_url does an agent need the analysis server's own waits.
   analysis_waits: [analysis_job_status, analysis_job_results]
   # For agent programs, not models: action_space is far too long for a small model's context.
-  not_for_models: [list_skills, endpoint_info, action_space]
+  not_for_models: [list_skills, skills_for, endpoint_info, action_space]
 
 # The team graph (asyncroscopy.agents.graphs.team): which tools each specialist holds. Jobs go through
 # run_job (reserve + start) and wait_for_job (which waits on instrument and analysis jobs and returns
@@ -46,5 +46,5 @@ team:
   shared: [wait_for_job, approval_status, load_skill]
   # Never given to a specialist: covered by run_job / wait_for_job, skills come to the agent, and the operator side
   # of approvals is the operator's.
-  hidden: ["*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", list_skills, endpoint_info,
+  hidden: ["*_reserve", "*_start", "*_job_status", "*_results", "*_release", "analysis_job_*", list_skills, skills_for, endpoint_info,
            action_space, "Approvals_*", "*_State", "*_Status", "*_Init"]

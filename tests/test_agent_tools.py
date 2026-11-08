@@ -13,7 +13,7 @@ from asyncroscopy.mcp.agent_tools import for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.policy import is_envelope_device, is_probe_device, is_stem_device
 
-NATIVE = ["list_data", "view_data", "list_devices", "list_skills", "load_skill", "endpoint_info", "action_space", "run_job", "wait_for_job", "approval_status"]
+NATIVE = ["list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "endpoint_info", "action_space", "run_job", "wait_for_job", "approval_status"]
 TWIN = {
     "DigitalTwin": ["get_stage", "move_stage", "get_parameters", "acquire_scanned_image", "acquire_spectrum", "set_fov", "get_fov",
                     "set_defocus", "place_beam", "blank_beam", "unblank_beam", "set_beam_current", "get_detectors", "State", "Status"],
@@ -84,7 +84,7 @@ def test_endpoint_info_agent_tools_are_the_general_agents_tools(endpoint, monkey
     # run_skill and wait_for_skill are the agent's own (they send a skill's listed calls): offered once a skill's run list can be sent.
     assert [n for n in picked if n not in RUN_TOOLS] == sorted(n for n in offered if for_model(n, patterns))
     assert not set(RUN_TOOLS) & set(picked)  # no run list here has every tool it calls (place_beam_at, find_features)
-    assert "endpoint_info" not in picked and "list_skills" not in picked and "load_skill" in picked
+    assert "endpoint_info" not in picked and "list_skills" not in picked and "skills_for" not in picked and "load_skill" in picked
 
 
 def test_a_stem_gets_the_curated_set_and_the_analysis_waits_only_without_an_analysis_server(endpoint, monkeypatch, tmp_path):
