@@ -2,7 +2,7 @@
 
 import json
 
-from asyncroscopy.agents.guidance import DONE_NOTE, WAIT_NOTES, render
+from asyncroscopy.agents.guidance import DONE_NOTE, STITCH_FAILED_NOTE, WAIT_NOTES, render
 
 
 def test_a_reply_without_structured_fields_is_left_as_it_came():
@@ -22,6 +22,20 @@ def test_a_still_running_wait_becomes_the_state_note_and_loses_the_fields():
 def test_a_finished_job_says_nothing_needs_running_again():
     reply = {"job_id": "j1", "state": "done", "result_keys": {"map": "m"}, "next_actions": [], "warnings": [{"code": "finished"}]}
     assert json.loads(render("run_job", {}, json.dumps(reply)))["note"] == DONE_NOTE
+
+
+def test_a_finished_map_whose_stitch_failed_says_so_and_tiles_placed_by_stage_are_called_rough():
+    error = "analysis job a1 made no progress for 600 s. The tiles are in map_x.h5; stitch them later with assemble_map(run='map_x.h5')."
+    failed = {"job_id": "j1", "state": "done", "result_keys": {"run": "map_x.h5"}, "summary": {"stitch_error": error},
+              "next_actions": [], "warnings": [{"code": "finished"}]}
+    shown = json.loads(render("run_job", {}, json.dumps(failed)))
+    assert shown["note"] == STITCH_FAILED_NOTE.format(error=error) and "placement" not in shown
+    rough = {"job_id": "j2", "state": "done", "result_keys": {"map": "m"}, "summary": {"stitching": {"tiles": 2704, "fallback_tiles": 2633}},
+             "next_actions": [], "warnings": [{"code": "finished"}]}
+    shown = json.loads(render("run_job", {}, json.dumps(rough)))
+    assert shown["note"] == DONE_NOTE and shown["placement"].startswith("2633 of 2704 tiles matched no neighbour")
+    rough["summary"]["stitching"]["fallback_tiles"] = 3
+    assert "placement" not in json.loads(render("run_job", {}, json.dumps(rough)))
 
 
 def test_a_blanked_acquisition_error_reads_as_the_retake():

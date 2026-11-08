@@ -27,6 +27,12 @@ WAIT_NOTES = {
 # A finished job's reply: a small model handed a finished map stitched it again and then ran the whole map again.
 DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
              "reply and its result_keys; nothing needs running or stitching again.")
+# A finished map whose stitch failed: told "a map is already stitched", qwen3:8b answered "the stitched map is available".
+STITCH_FAILED_NOTE = ("Done: every tile was taken, but the stitch failed, so there is no map key: {error} "
+                      "Tell the user the map is not stitched, and name the run file that result_keys gives as run.")
+# Tiles with no image match to any neighbour sit where the stage reported them (2633 of 2704 angstrom tiles on empty film).
+STAGE_PLACED_NOTE = ("{fallback} of {tiles} tiles matched no neighbour, so they sit where the stage reported them: seams between "
+                     "them can be off by the stage's error. Tell the user the map is a rough layout there.")
 STRUCTURED = ("next_actions", "resume_with", "warnings")
 # Analysis server replies (asyncroscopy.analysis_server) whose next step is on the instrument endpoint.
 UNKNOWN_ANALYSIS_JOB_NOTE = ("not a stitching or scoring job: a job id from Mapper_start belongs to the instrument, "
@@ -57,7 +63,12 @@ def render_reply(tool: str, args: dict, reply: dict) -> dict:
         text = f"run_job with {_call_text(resume)} and no plan: it goes on from the next step"
         out["to_resume"] = text if state == "aborted" else f"once wait_for_job says aborted, {text}"
     if "finished" in codes:
-        out["note"] = DONE_NOTE
+        summary = reply.get("summary") if isinstance(reply.get("summary"), dict) else {}
+        out["note"] = STITCH_FAILED_NOTE.format(error=summary["stitch_error"]) if summary.get("stitch_error") else DONE_NOTE
+        stitching = summary.get("stitching") if isinstance(summary.get("stitching"), dict) else {}
+        fallback, tiles = stitching.get("fallback_tiles"), stitching.get("tiles")
+        if isinstance(fallback, int) and isinstance(tiles, int) and tiles and fallback * 2 > tiles:
+            out["placement"] = STAGE_PLACED_NOTE.format(fallback=fallback, tiles=tiles)
     elif "results_unreadable" in codes:
         out["note"] = f"done, but its results could not be read: {codes['results_unreadable'].get('detail', '')}"
     elif any(a.get("tool") == "wait_for_job" for a in actions) and state in WAIT_NOTES:
