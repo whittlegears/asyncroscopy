@@ -413,8 +413,12 @@ class EmptyReplyMiddleware(AgentMiddleware):
 # ---------------------------------------------------------------------- a map plan held to the user's words
 USER_LIMITS = ("dose_budget_e_per_a2",)
 NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
-DROPPED = ("{fields} left out of the plan: the user set no such limit (their words hold no {values}). "
-           "Give a limit only when the user states one.")
+DROPPED = "{field} {value} left out of the plan: the user set no such limit (their words hold no {value}). Give a limit only when the user states one."
+# per_tile measurements by kind, and the words that ask for them (mapping skill: "nothing about EDS ... no per_tile").
+PER_TILE_WORDS = {"eds": re.compile(r"\beds\b|spectr|\belement|composition|chemi|x-?ray", re.IGNORECASE)}
+UNASKED = 'per_tile "{kind}" left out of the plan: the user asked for no spectra. Add per-tile measurements only when the user asks for them.'
+STAGE_CENTRE = re.compile(r"\bcent(?:re|er)(?:d)?\s+(?:of|on)\s+(?:the|its)\s+stage\b|\bstage(?:'s)?\s+cent(?:re|er)\b", re.IGNORECASE)
+CENTRED = '"centre_m": [0, 0] added: the user asked for the centre of the stage, and size_m alone maps around wherever the stage is now.'
 
 
 def _stated(value: Any, words: str) -> bool:
@@ -425,18 +429,31 @@ def _stated(value: Any, words: str) -> bool:
     return any(abs(float(n) - target) <= 1e-9 * max(1.0, abs(target)) for n in NUMBER.findall(words))
 
 
-def without_unstated_limits(args: dict, words: str) -> tuple[dict, list[str]]:
-    """``run_job`` arguments with each limit in USER_LIMITS the user's words do not state taken out of the plan,
-    and the fields taken out. A plan given as a JSON string stays a string."""
+def held_to_words(args: dict, words: str) -> tuple[dict, list[str]]:
+    """``run_job`` arguments with the plan held to the user's words, and a sentence for each change: a limit in
+    USER_LIMITS they do not state taken out, a per_tile measurement they did not ask for taken out, and the stage's
+    centre added when they asked for it and the plan gives only a size. A plan given as a JSON string stays a string."""
     plan = args.get("plan")
     parsed = _json(plan) if isinstance(plan, str) else plan
     if not isinstance(parsed, dict):
         return args, []
-    dropped = [f for f in USER_LIMITS if f in parsed and not _stated(parsed[f], words)]
-    if not dropped:
+    kept, notes = dict(parsed), []
+    for field in USER_LIMITS:
+        if field in kept and not _stated(kept[field], words):
+            notes.append(DROPPED.format(field=field, value=kept.pop(field)))
+    if isinstance(kept.get("per_tile"), list):
+        asked = [k for k in kept["per_tile"] if not any(str(k).startswith(kind) and not said.search(words) for kind, said in PER_TILE_WORDS.items())]
+        notes += [UNASKED.format(kind=k) for k in kept["per_tile"] if k not in asked]
+        if asked:
+            kept["per_tile"] = asked
+        else:
+            kept.pop("per_tile")
+    if "size_m" in kept and "box_m" not in kept and "centre_m" not in kept and STAGE_CENTRE.search(words):
+        kept["centre_m"] = [0.0, 0.0]
+        notes.append(CENTRED)
+    if not notes:
         return args, []
-    kept = {k: v for k, v in parsed.items() if k not in dropped}
-    return {**args, "plan": json.dumps(kept) if isinstance(plan, str) else kept}, [f"{f} {parsed[f]}" for f in dropped]
+    return {**args, "plan": json.dumps(kept) if isinstance(plan, str) else kept}, notes
 
 
 WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|complete) sample\b|\bsample (?:completely|entirely)\b|\ball of the sample\b", re.IGNORECASE)
@@ -475,8 +492,8 @@ def whole_sample_refusal(plan: dict, box: list[float] | None, tool: str) -> str 
 
 
 class UserWordsMiddleware(AgentMiddleware):
-    """Holds a ``run_job`` map plan to what the user said: a dose limit they never stated is taken out (the reply
-    says so), and when they asked for the whole sample a plan that does not map the sample's bounds is refused
+    """Holds a ``run_job`` map plan to what the user said: a dose limit they never stated and EDS they never asked
+    for are taken out, "the centre of the stage" is put in (the reply says so), and when they asked for the whole sample a plan that does not map the sample's bounds is refused
     before it reaches the server, with the bounds to copy (read from the microscope's get_parameters).
 
     qwen3:8b, asked to "map a sample completely down to the angstrom", put "dose_budget_e_per_a2": 100 in the plan
@@ -512,18 +529,18 @@ class UserWordsMiddleware(AgentMiddleware):
         plan = _plan(call.get("args") or {}) if call.get("name") == "run_job" else None
         return plan if plan is not None and WHOLE_SAMPLE.search(self._words(request)) else None
 
-    def _without_limits(self, request):
+    def _held(self, request):
         call = request.tool_call
         if call.get("name") != "run_job":
             return request, []
-        args, dropped = without_unstated_limits(call.get("args") or {}, self._words(request))
-        return (request.override(tool_call={**call, "args": args}) if dropped else request), dropped
+        args, notes = held_to_words(call.get("args") or {}, self._words(request))
+        return (request.override(tool_call={**call, "args": args}) if notes else request), notes
 
     @staticmethod
-    def _noted(result, dropped: list[str]):
-        if not dropped or not isinstance(result, ToolMessage):
+    def _noted(result, notes: list[str]):
+        if not notes or not isinstance(result, ToolMessage):
             return result
-        note = DROPPED.format(fields=", ".join(dropped), values=" or ".join(d.split(" ", 1)[1] for d in dropped))
+        note = " ".join(notes)
         parsed = _json(_text(result))
         content = json.dumps({**parsed, "note": note}, default=str) if isinstance(parsed, dict) else f"{_text(result)}\n{note}"
         return result.model_copy(update={"content": content})
@@ -535,8 +552,8 @@ class UserWordsMiddleware(AgentMiddleware):
             refusal = self._refusal(request, plan, handler(bounds) if bounds is not None else None)
             if refusal is not None:
                 return refusal
-        checked, dropped = self._without_limits(request)
-        return self._noted(handler(checked), dropped)
+        checked, notes = self._held(request)
+        return self._noted(handler(checked), notes)
 
     async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
         plan = self._whole_sample_plan(request)
@@ -545,5 +562,5 @@ class UserWordsMiddleware(AgentMiddleware):
             refusal = self._refusal(request, plan, await handler(bounds) if bounds is not None else None)
             if refusal is not None:
                 return refusal
-        checked, dropped = self._without_limits(request)
-        return self._noted(await handler(checked), dropped)
+        checked, notes = self._held(request)
+        return self._noted(await handler(checked), notes)
