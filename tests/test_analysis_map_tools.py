@@ -11,6 +11,7 @@ from fastmcp import Client
 jsonschema = pytest.importorskip("jsonschema")  # the job replies are validated against the envelope schema
 
 from asyncroscopy.analysis_server import create_server
+from asyncroscopy.analysis_server.map_tools import drift_measured
 from asyncroscopy.contracts import load as load_schema
 from pyTEMlib.image_tools import BaselineScorer
 from tests.analysis_synthetic import PIXEL, TILE, make_tiles
@@ -511,3 +512,10 @@ def test_a_map_tool_given_a_made_up_key_answers_with_the_newest_keys(tmp_path):
         error = json.loads(reply.content[0].text)["error"]
         assert not reply.is_error and error["code"] == "unknown_dataset" and "'new_map'" in error["message"]
         assert error["newest_keys"] == ["map_2_map", "map_1_map", "map_0_map"]
+
+
+def test_a_drift_fit_is_reported_only_when_image_matches_measure_it():
+    drift = {"times_s": [0.0, 83.4, 166.7, 250.1], "total_nm": 145.6, "mean_rate_nm_per_s": 0.58}
+    assert not drift_measured({"matches_used": 2, "drift": drift})
+    assert drift_measured({"matches_used": 8, "drift": drift})
+    assert not drift_measured({"matches_used": 400})

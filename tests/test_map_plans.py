@@ -10,7 +10,6 @@ import pytest
 
 from test_map_pipeline import PLAN, call
 from test_map_pipeline_resilience import analysis, image_count, start, wait  # noqa: F401  (analysis is a fixture)
-from asyncroscopy.jobs.mapping.pipeline import drift_measured
 
 pytestmark = [
     pytest.mark.slow,
@@ -169,10 +168,3 @@ def test_revisit_fields_at_the_top_level_are_refused_with_the_plan_they_belong_i
     with pytest.raises(ValueError, match="belong inside revisit") as refused:
         check_plan_fields({"map": "map_r1_map", "top_k": 3, "fov_m": 6e-8})
     assert '{"revisit": {"map": "map_r1_map", "top_k": 3, "fov_m": 6e-08}}' in str(refused.value)
-
-
-def test_a_drift_fit_is_reported_only_when_image_matches_measure_it():
-    drift = {"times_s": [0.0, 60.0, 120.0], "total_nm": 0.00017, "mean_rate_nm_per_s": 1e-6}
-    assert not drift_measured({"matches_used": 1, "drift": drift})
-    assert drift_measured({"matches_used": 6, "drift": drift})
-    assert not drift_measured({"matches_used": 400})

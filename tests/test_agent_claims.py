@@ -308,6 +308,8 @@ def test_a_map_called_good_when_its_tiles_sit_where_the_stage_put_them_is_flagge
                                             "summary": {"stitching": {"tiles": 100, "matches_used": 0, "fallback_tiles": 100}}})
     claims = check_answer(run.messages, "The map is considered to be of good quality, with no saturated pixels.")
     assert kinds(claims) == ["map_quality"] and "100 of 100" in claims[0].why
+    said_rough_too = "The stitching quality is very good. However, 96 tiles are placed where the stage reported them."
+    assert kinds(check_answer(run.messages, said_rough_too)) == ["map_quality"]
     assert check_answer(run.messages, "The map is not seamless: every tile sits where the stage reported it.") == []
     silent = check_answer(run.messages, "Here's how good the stitched map is: the map key is `map_f7_map` and the tiles are 51.2 nm.")
     assert kinds(silent) == ["map_quality"]

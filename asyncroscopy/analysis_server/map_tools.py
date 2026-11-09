@@ -118,6 +118,17 @@ def eds_pois(run, placement) -> list[dict]:
     return out
 
 
+def drift_measured(summary: dict) -> bool:
+    """Whether the stitch's drift fit rests on image matches: at least two per knot (x and y at each).
+
+    With fewer the fit is its prior, no drift: a 100-tile map with 1 match reported 0.00017 nm (qwen3:8b gave
+    it to the user as metres), one with 2 matches 145.6 nm."""
+    drift = summary.get("drift")
+    if not isinstance(drift, dict):
+        return False
+    return int(summary.get("matches_used") or 0) >= 2 * len(drift.get("times_s") or [])
+
+
 def inputs_sha256(plan: dict, info, stage_sigma_m: float) -> str:
     """A hash of what a stitch was made from: the run, which of its tiles were used, the settings and this pyTEMlib.
 
@@ -203,6 +214,8 @@ class MapTools:
             writer.abandon()
             raise
         quality = stitch_quality(placement)
+        if not drift_measured(quality):
+            quality.pop("drift", None)
         metadata = {
             "levels": levels,
             "downsample": [2**k for k in range(levels)],
