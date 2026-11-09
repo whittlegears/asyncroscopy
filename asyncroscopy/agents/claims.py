@@ -130,11 +130,12 @@ STITCHED = re.compile(
 
 GOOD_MAP = re.compile(
     r"\b(?:good|high|excellent|great)\s+(?:quality|stitch(?:ing)?)\b|\bseamless(?:ly)?\b|\b(?:well|accurately|cleanly|correctly)[- ]stitched\b"
-    r"|\baligned\s+(?:well|correctly|accurately)\b",
+    r"|\baligned\s+(?:well|correctly|accurately)\b|\bquality\s+(?:is|was)\s+(?:very\s+|quite\s+)?(?:good|high|excellent|great)\b",
     re.I,
 )
 
-PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
+# "placed where the stage reported them" is a map's tiles laid out by stage position, not a place_image result.
+PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b(?!\s+(?:where|by|at|from)\s+(?:the\s+)?stage)|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
 # An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
 ANNOUNCES = re.compile(
