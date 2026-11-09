@@ -120,7 +120,8 @@ POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\
 FIELD_UNIT = re.compile(r"_(nm|um|pm|mm|m)(?:_per_s)?$")
 STATED_LENGTH = re.compile(NUMBER + r"`?" + UNIT)  # "`0.00017` meters": a small model puts copied numbers in backticks
 QUALITY_QUESTION = re.compile(r"\bhow\s+(?:good|well)\b|\bquality\b|\bseams?\b", re.I)
-STAGE_PLACED = re.compile(r"\bstage\s+(?:reported|position|placed|put)|\brough\b|\bmatched\s+no\b|\bno\s+(?:image\s+)?match|\bunmatched\b|\bmisalign", re.I)
+STAGE_PLACED = re.compile(r"\bstage(?:'s)?\s+(?:reported|position|placed|put)|\brough\b|\bmatched\s+no\b|\bno\s+(?:image\s+)?match|\bunmatched\b"
+                          r"|\bmisalign|\bunplaced\b|\bfallback\b|\bseams?\b", re.I)
 FIELD_NAME = re.compile(r"\bresult_keys\.\w+")
 STITCHED = re.compile(
     r"\bstitched\s+(?:map|image|mosaic)\s+(?:is|was)\s+(?:now\s+)?(?:available|ready|done|complete|saved)\b|\bmap\s+key\s+is\b"
