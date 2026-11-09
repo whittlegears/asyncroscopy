@@ -37,6 +37,8 @@ stitched map         "the stitched map is available", "the map key is ...": a jo
 map quality          "good quality", "seamless", "well stitched": most of the map's tiles matched no
                      neighbour and sit where the stage reported them; unless negated. When the
                      request asks how good the map is, an answer that never says so is flagged too
+unit                 a number copied from a reply field whose name gives its length unit
+                     (``total_nm``, ``fov_m``) but stated in another length unit
 ==================== =================================================================
 
 Negated and hedged sentences ("could not", "was not", "previously acquired")
@@ -115,6 +117,8 @@ HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phra
 # "at the current position" asks for nothing: only a plural, "position of", or "where ... is" asks where.
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
+FIELD_UNIT = re.compile(r"_(nm|um|pm|mm|m)(?:_per_s)?$")
+STATED_LENGTH = re.compile(NUMBER + r"`?" + UNIT)  # "`0.00017` meters": a small model puts copied numbers in backticks
 QUALITY_QUESTION = re.compile(r"\bhow\s+(?:good|well)\b|\bquality\b|\bseams?\b", re.I)
 STAGE_PLACED = re.compile(r"\bstage\s+(?:reported|position|placed|put)|\brough\b|\bmatched\s+no\b|\bno\s+(?:image\s+)?match|\bunmatched\b|\bmisalign", re.I)
 FIELD_NAME = re.compile(r"\bresult_keys\.\w+")
@@ -148,7 +152,7 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 
 @dataclass
 class Claim:
-    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch, map_quality
+    kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch, map_quality, unit
     text: str  # what the answer says
     why: str  # why no tool call supports it
 
@@ -477,6 +481,30 @@ def _stitch_claims(answer: str, calls) -> list[Claim]:
     return claims
 
 
+def _unit_claims(answer: str, calls) -> list[Claim]:
+    """A reply's number stated in a length unit other than its field's (qwen3:8b gave total_nm 0.00017 as metres)."""
+    fields: dict[float, tuple[str, float]] = {}
+    for call in calls:
+        if call.error:
+            continue
+        for node in _walk(_json(call.result)):
+            for key, value in node.items():
+                m = FIELD_UNIT.search(str(key))
+                number = _number(value)
+                if m and number:
+                    fields.setdefault(number, (str(key), SCALE[m.group(1)]))
+    claims = []
+    for m in STATED_LENGTH.finditer(answer):
+        stated, scale = _number(m.group("num").replace("−", "-")), _scale(m.group("unit"))
+        if stated is None or scale is None:
+            continue
+        for value, (key, field_scale) in fields.items():
+            if abs(stated - value) <= 1e-9 * abs(value) and field_scale != scale:
+                claims.append(Claim("unit", m.group(0).strip("` "), f"this is {key} from a reply: {value} in the unit its name gives, not {m.group('unit')}"))
+                break
+    return claims
+
+
 def _map_quality_claims(answer: str, request: str, calls) -> list[Claim]:
     """A map called good or seamless when most of its tiles matched no neighbour (qwen3:8b called a map whose 100 tiles
     all sat where the stage reported them "of good quality", from its pixel statistics); and, when the request asks
@@ -574,6 +602,7 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims += _field_name_claims(answer)
     claims += _stitch_claims(answer, calls)
     claims += _map_quality_claims(answer, _request(messages), calls)
+    claims += _unit_claims(answer, calls)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
