@@ -9,7 +9,7 @@ num_ctx: 8192
 
 # The agent graphs' middleware, outermost first (asyncroscopy.agents.middleware):
 # skills: puts matching skills and memory notes in the system prompt for each model call;
-# user_words: holds a run_job map plan to the user's words (no unstated dose limit; the whole sample when asked);
+# user_words: holds a run_job map plan to the user's words (no unstated dose limit or EDS; the stage centre and the whole sample when asked);
 # job_wait: waits out a running job inside one tool round; empty_reply: retries a reply with
 # neither text nor a tool call; claim_check: checks a final answer against the run's tool calls.
 middleware: [skills, user_words, job_wait, empty_reply, claim_check]

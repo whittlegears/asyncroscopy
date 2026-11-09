@@ -286,6 +286,14 @@ def test_a_dose_limit_the_user_never_stated_is_taken_out_of_the_plan_and_the_rep
     stated = call("map it, at most 50 e/Å² anywhere", {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50})
     assert sent[-1]["plan"] == {"fov_m": 1.6e-7, "dose_budget_e_per_a2": 50} and "note" not in stated
 
+    words = "map a 400 nm square at the centre of the stage with 51.2 nm tiles and tell me how good the stitched map is"
+    held = call(words, {"fov_m": 5.12e-8, "per_tile": ["eds_point"], "size_m": [4e-7, 4e-7]})
+    assert sent[-1]["plan"] == {"fov_m": 5.12e-8, "size_m": [4e-7, 4e-7], "centre_m": [0.0, 0.0]}
+    assert 'per_tile "eds_point" left out' in held["note"] and '"centre_m": [0, 0] added' in held["note"]
+
+    asked = call("map a 400 nm square with an EDS spectrum at each tile", {"per_tile": ["eds_point"], "size_m": [4e-7, 4e-7]})
+    assert sent[-1]["plan"] == {"per_tile": ["eds_point"], "size_m": [4e-7, 4e-7]} and "note" not in asked
+
 
 def test_a_whole_sample_request_gets_the_sample_bounds_to_copy_and_only_they_pass():
     from asyncroscopy.agents.guards import UserWordsMiddleware
