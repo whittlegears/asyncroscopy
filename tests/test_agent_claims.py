@@ -318,6 +318,16 @@ def test_a_map_called_good_when_its_tiles_sit_where_the_stage_put_them_is_flagge
     assert check_answer(matched.messages, "The map is of good quality.") == []
 
 
+def test_a_number_copied_from_a_reply_in_another_length_unit_is_flagged():
+    run = Calls("map a 400 nm square")
+    run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "summary": {"fov_m": 5.12e-8,
+             "stitching": {"drift": {"total_nm": 0.00017284891920016279, "mean_rate_nm_per_s": 6.912197864191349e-7}}}})
+    answer = "The sample drifts by a total of `0.00017284891920016279` meters, at `6.912197864191349e-7` meters per second."
+    claims = check_answer(run.messages, answer)
+    assert kinds(claims) == ["unit", "unit"] and "total_nm" in claims[0].why
+    assert check_answer(run.messages, "The drift was 0.00017284891920016279 nm, with tiles of 51.2 nm (5.12e-8 m).") == []
+
+
 def test_a_placement_claimed_when_place_image_refused_it_is_flagged():
     run = Calls("Zoom into a particle down to atomic columns, placing each image.")
     run.call("place_image", {"image": IMAGES[1], "parent": IMAGES[0]}, {"child": IMAGES[1], "status": "placed", "score": 0.99})

@@ -48,6 +48,17 @@ REGION_FIELDS = ("id", "x_m", "y_m", "score", "reason", "scorer_version", "windo
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
 
+def drift_measured(summary: dict) -> bool:
+    """Whether the stitch's drift fit rests on image matches: at least two per knot (x and y at each).
+
+    With fewer the fit is its prior, no drift: a 100-tile map with 1 match reported 0.00017 nm, which qwen3:8b
+    then gave the user as metres."""
+    drift = summary.get("drift")
+    if not isinstance(drift, dict):
+        return False
+    return int(summary.get("matches_used") or 0) >= 2 * len(drift.get("times_s") or [])
+
+
 class AnalysisFailed(RuntimeError):
     """The analysis server could not do (or finish) the job; the message says why and how to retry."""
 
@@ -179,7 +190,7 @@ class Pipeline:
         summary = results.get("summary", {})
         pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
         pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver")}
-        if summary.get("drift"):
+        if drift_measured(summary):
             pipeline["stitching"]["drift"] = {k: summary["drift"][k] for k in ("total_nm", "mean_rate_nm_per_s") if k in summary["drift"]}
         with self._lock:
             job["result_keys"]["map"] = pipeline["map"]
