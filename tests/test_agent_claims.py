@@ -314,6 +314,8 @@ def test_a_map_called_good_when_its_tiles_sit_where_the_stage_put_them_is_flagge
     silent = check_answer(run.messages, "Here's how good the stitched map is: the map key is `map_f7_map` and the tiles are 51.2 nm.")
     assert kinds(silent) == ["map_quality"]
     assert check_answer(run.messages, "It is a rough layout: no tile matched a neighbour.") == []
+    live = "All 100 tiles were unplaced. The stage's reported positions may have errors, leading to seams that are off by the stage's error."
+    assert check_answer(run.messages, live) == []
     matched = Calls("map a 400 nm square")
     matched.call("run_job", {"request": "{}"}, {"job_id": "j2", "state": "done", "result_keys": {"map": "map_f8_map"},
                                                 "summary": {"stitching": {"tiles": 100, "matches_used": 180, "fallback_tiles": 4}}})
