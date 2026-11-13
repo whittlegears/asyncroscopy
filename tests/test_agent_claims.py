@@ -322,6 +322,22 @@ def test_a_map_called_good_when_its_tiles_sit_where_the_stage_put_them_is_flagge
     assert check_answer(matched.messages, "The map is of good quality.") == []
 
 
+def test_no_drift_claimed_of_a_stitch_that_could_not_measure_it_is_flagged():
+    run = Calls("map a 400 nm square and tell me how good the stitched map is, including drift")
+    run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "result_keys": {"map": "map_f7_map"},
+             "summary": {"stitching": {"tiles": 4, "matches_used": 3, "fallback_tiles": 1,
+                                       "drift_unmeasured": "too few image matches between tiles to measure drift: it is unknown, not zero"}}})
+    live = "No drift was fitted, as no movement was detected during the acquisition."
+    for said in ("No drift was detected during the map.", "Drift was negligible.", "There was no significant drift.", live):
+        assert kinds(check_answer(run.messages, said)) == ["drift"]
+    assert check_answer(run.messages, "Drift is unknown: too few tiles matched to measure it.") == []
+    assert check_answer(run.messages, "No drift could be measured, so it is unknown.") == []
+    measured = Calls("map a 400 nm square")
+    measured.call("run_job", {"request": "{}"}, {"job_id": "j2", "state": "done",
+                  "summary": {"stitching": {"tiles": 4, "matches_used": 30, "drift": {"total_nm": 0.4}}}})
+    assert check_answer(measured.messages, "Drift was negligible.") == []
+
+
 def test_a_number_copied_from_a_reply_in_another_length_unit_is_flagged():
     run = Calls("map a 400 nm square")
     run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "summary": {"fov_m": 5.12e-8,

@@ -11,7 +11,7 @@ from fastmcp import Client
 jsonschema = pytest.importorskip("jsonschema")  # the job replies are validated against the envelope schema
 
 from asyncroscopy.analysis_server import create_server
-from asyncroscopy.analysis_server.map_tools import drift_measured
+from asyncroscopy.analysis_server.map_tools import drift_measured, measured_drift_only
 from asyncroscopy.contracts import load as load_schema
 from pyTEMlib.image_tools import BaselineScorer
 from tests.analysis_synthetic import PIXEL, TILE, make_tiles
@@ -519,3 +519,7 @@ def test_a_drift_fit_is_reported_only_when_image_matches_measure_it():
     assert not drift_measured({"matches_used": 2, "drift": drift})
     assert drift_measured({"matches_used": 8, "drift": drift})
     assert not drift_measured({"matches_used": 400})
+    unmeasured = measured_drift_only({"matches_used": 2, "fallback_tiles": 98, "drift": drift})
+    assert "drift" not in unmeasured and "unknown" in unmeasured["drift_unmeasured"] and unmeasured["fallback_tiles"] == 98
+    assert measured_drift_only({"matches_used": 8, "drift": drift})["drift"] == drift
+    assert measured_drift_only({"matches_used": 0}) == {"matches_used": 0, "drift_unmeasured": unmeasured["drift_unmeasured"]}

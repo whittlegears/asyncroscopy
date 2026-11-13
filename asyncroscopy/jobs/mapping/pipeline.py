@@ -178,7 +178,7 @@ class Pipeline:
         pipeline["map"] = results["result_keys"]["map"]
         summary = results.get("summary", {})
         pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
-        pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver")}
+        pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver", "drift_unmeasured")}
         if summary.get("drift"):
             pipeline["stitching"]["drift"] = {k: summary["drift"][k] for k in ("total_nm", "mean_rate_nm_per_s") if k in summary["drift"]}
         with self._lock:

@@ -135,6 +135,14 @@ GOOD_MAP = re.compile(
     re.I,
 )
 
+NO_DRIFT = re.compile(
+    r"\bno\s+(?:significant\s+|measurable\s+|noticeable\s+|detectable\s+)?drift\b|\bdrift\s+(?:was\s+|is\s+)?(?:not\s+detected|undetected|negligible|minimal|zero)\b"
+    r"|\b(?:negligible|minimal|zero|little)\s+drift\b|\bdid\s+not\s+drift\b"
+    r"|\bno\s+(?:significant\s+|measurable\s+)?(?:movement|motion|shift)\s+(?:was\s+)?(?:detected|observed|seen|found)\b",
+    re.I,
+)
+DRIFT_UNKNOWN = re.compile(r"\b(?:unknown|unmeasured|could\s*n[o']t\s+be\s+measured|not\s+measured|too\s+few|not\s+enough)\b", re.I)
+
 # "placed where the stage reported them" is a map's tiles laid out by stage position, not a place_image result.
 PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b(?!\s+(?:where|by|at|from)\s+(?:the\s+)?stage)|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
@@ -530,6 +538,15 @@ def _map_quality_claims(answer: str, request: str, calls) -> list[Claim]:
     return claims
 
 
+def _drift_claims(answer: str, calls) -> list[Claim]:
+    """No drift claimed when the stitch could not measure it (qwen3:8b said "no drift detected" of a map whose tiles
+    matched no neighbour, so the fit had nothing to measure)."""
+    if not any(not call.error and any("drift_unmeasured" in node for node in _walk(_json(call.result))) for call in calls):
+        return []
+    why = "the stitch had too few image matches to measure drift: say drift is unknown, not that there was none"
+    return [Claim("drift", s[:160], why) for s in _sentences(answer) if NO_DRIFT.search(s) and not DRIFT_UNKNOWN.search(s)]
+
+
 def _unfinished_claims(answer: str) -> list[Claim]:
     """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
     tail = _sentences(answer)[-2:]
@@ -605,6 +622,7 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims += _stitch_claims(answer, calls)
     claims += _map_quality_claims(answer, _request(messages), calls)
     claims += _unit_claims(answer, calls)
+    claims += _drift_claims(answer, calls)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
