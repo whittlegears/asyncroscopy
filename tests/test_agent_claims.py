@@ -338,6 +338,21 @@ def test_no_drift_claimed_of_a_stitch_that_could_not_measure_it_is_flagged():
     assert check_answer(measured.messages, "Drift was negligible.") == []
 
 
+def test_an_answer_that_never_zoomed_in_on_the_spot_asked_for_is_flagged():
+    request = "survey a 1 micron square around the stage centre, then zoom in on the most interesting spot in the map and tell me what you see there"
+    run = Calls(request)
+    run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "result_keys": {"map": "map_f7_map"}})
+    run.call("list_pois", {"map": "map_f7_map"}, {"points": [{"id": "5b1cf728", "x_m": 6.458e-8, "y_m": -9.252e-8, "score": 22.6}]})
+    answer = "The most interesting spot is 5b1cf728 at x 6.458e-8 m, y -9.252e-8 m."
+    claims = check_answer(run.messages, answer, TOOLS)
+    assert kinds(claims) == ["not_zoomed"] and '"revisit"' in claims[0].why
+    run.call("run_job", {"request": "{}"}, {"job_id": "j2", "state": "done", "revisits": {"images": [{"key": IMAGES[0]}], "skipped": 0}})
+    assert check_answer(run.messages, answer, TOOLS) == []
+    looked = Calls(request).call("DigitalTwin_acquire_scanned_image", {}, {"key": IMAGES[0]})
+    assert "not_zoomed" not in kinds(check_answer(looked.messages, "It shows bright particles.", TOOLS))
+    assert check_answer(Calls("map a 1 micron square").call("list_pois", {}, {"points": []}).messages, answer, TOOLS) == []
+
+
 def test_a_number_copied_from_a_reply_in_another_length_unit_is_flagged():
     run = Calls("map a 400 nm square")
     run.call("run_job", {"request": "{}"}, {"job_id": "j1", "state": "done", "summary": {"fov_m": 5.12e-8,
