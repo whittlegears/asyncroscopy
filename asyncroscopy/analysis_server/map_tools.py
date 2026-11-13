@@ -118,6 +118,9 @@ def eds_pois(run, placement) -> list[dict]:
     return out
 
 
+DRIFT_UNMEASURED = "too few image matches between tiles to measure drift: it is unknown, not zero"
+
+
 def drift_measured(summary: dict) -> bool:
     """Whether the stitch's drift fit rests on image matches: at least two per knot (x and y at each).
 
@@ -127,6 +130,16 @@ def drift_measured(summary: dict) -> bool:
     if not isinstance(drift, dict):
         return False
     return int(summary.get("matches_used") or 0) >= 2 * len(drift.get("times_s") or [])
+
+
+def measured_drift_only(quality: dict) -> dict:
+    """A stitch's quality with a note that drift is unknown whenever its matches did not measure it (no fit, or a fit
+    resting on too few matches, which is dropped).
+
+    Left out silently, qwen3:8b read the missing drift as none and answered "no movement was detected"."""
+    if drift_measured(quality):
+        return quality
+    return {**{k: v for k, v in quality.items() if k != "drift"}, "drift_unmeasured": DRIFT_UNMEASURED}
 
 
 def inputs_sha256(plan: dict, info, stage_sigma_m: float) -> str:
@@ -213,9 +226,7 @@ class MapTools:
         except BaseException:
             writer.abandon()
             raise
-        quality = stitch_quality(placement)
-        if not drift_measured(quality):
-            quality.pop("drift", None)
+        quality = measured_drift_only(stitch_quality(placement))
         metadata = {
             "levels": levels,
             "downsample": [2**k for k in range(levels)],
@@ -298,7 +309,7 @@ class MapTools:
             "map": map_key, "run": meta.get("run"), "tiles": meta.get("tiles"), "levels": meta["levels"], "canvas_shape": meta["canvas_shape"],
             "pixel_size_m": meta["pixel_size_m"], "stage_box_m": [x_min, x_max, y_min, y_max],
             "points_of_interest": self.store.poi_count(map_key),
-            "stitching": {k: meta[k] for k in ("matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "unplaced_tiles", "scan_linear", "tile_gain", "drift") if k in meta},
+            "stitching": {k: meta[k] for k in ("matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "unplaced_tiles", "scan_linear", "tile_gain", "drift", "drift_unmeasured") if k in meta},
             "id": meta.get("id"), "stitched_at": meta.get("stitched_at"), "inputs_sha256": meta.get("inputs_sha256"),
         }
         if meta.get("run"):
