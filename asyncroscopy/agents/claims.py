@@ -98,6 +98,7 @@ MOVED = re.compile(
     r"|\b(?:moved|went|navigated)\s+(?:the\s+stage\s+)?(?:back\s+)?to\s+(?:the\s+)?(?:best|region|position|point|area|feature|particle|centre|center|origin|coordinates?)\b",
     re.I,
 )
+ZOOM_REQUEST = re.compile(r"\bzoom(?:ed|ing)?\s+in\s+on\b|\bimage\s+(?:it|them|that|this|each\s+\w+|the\s+\w+)\s+closer\b|\bcloser\s+look\b", re.I)
 MAGNIFIED = re.compile(r"\b(?:higher|high|increased|greater|more)[- ]magnification\b|\bzoom(?:ed)?\s+in(?:to)?\b|\b(?:smaller|narrower)\s+field\s+of\s+view\b", re.I)
 CONTENT_QUESTION = re.compile(
     r"\bwhat\b[^.?!]{0,40}\b(?:contains?|made\s+of|composed\s+of|composition|is\s+in\s+(?:it|the\s+(?:sample|spectrum|image|data)))\b"
@@ -559,6 +560,21 @@ def _unfinished_claims(answer: str) -> list[Claim]:
     return []
 
 
+def _zoom_claims(request: str, calls, catalog: ToolCatalog) -> list[Claim]:
+    """The request asks to zoom in on a spot, and nothing was imaged or read there (qwen3:8b mapped, scored and listed
+    the points of interest, then answered with the best one's position and score, never imaging it)."""
+    if not ZOOM_REQUEST.search(request):
+        return []
+    if any(c.ok and (c.name in READERS or catalog.category(c.name) == "acquire") for c in calls):
+        return []
+    if any(not c.error and any(node.get("revisits") or node.get("zoom") for node in _walk(_json(c.result))) for c in calls):
+        return []
+    return [Claim("not_zoomed", "zoom in on it",
+                  'the request asks to zoom in, but nothing was imaged there; run_job a revisit-only plan '
+                  '{"revisit": {"fov_m": <a few times smaller than the map tiles>, "points": [[x_m, y_m]]}} with the '
+                  'point from the reply above, wait_for_job, then say what the image it lists shows')]
+
+
 def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     """The request asks where things are, a reply gave their x_m, y_m, and the answer states none of those positions
     (qwen3:8b answered "Here are their stage coordinates:" with no coordinates after a list_pois of 19 points)."""
@@ -623,6 +639,7 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     claims += _map_quality_claims(answer, _request(messages), calls)
     claims += _unit_claims(answer, calls)
     claims += _drift_claims(answer, calls)
+    claims += _zoom_claims(_request(messages), calls, catalog)
     claims += _unfinished_claims(answer)
     claims += _missing_positions_claims(answer, _request(messages), calls)
     if CONTENT_QUESTION.search(_request(messages)) and not any(c.ok and c.name in READERS for c in calls):
