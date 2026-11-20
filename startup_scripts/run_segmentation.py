@@ -19,10 +19,26 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
+from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 DEVICE_NAME = "asyncroscopy/segment/default"
 INSTANCE_NAME = "segment_instance"
 DEFAULT_CONFIG_PATH = PROJECT_DIR / "configs" / "Segmentation.yaml"
+STATE_NAME = "run_segmentation"
+
+SETTINGS = [
+    Setting("tango.host", required=True),
+    Setting("tango.port", "int", required=True),
+    Setting("data_device_address", default="asyncroscopy/data/default"),
+    Setting("model_size", default="facebook/sam2-hiera-large"),
+    Setting("compute_device", default="auto", choices=("auto", "cuda", "cpu")),
+    Setting("device_timeout_seconds", "int", 120),
+]
+
+
+def is_config(raw) -> bool:
+    return isinstance(raw, dict) and "model_size" in raw and "instrument" not in raw
 
 
 @dataclass(frozen=True)
@@ -43,23 +59,17 @@ class SegmentationConfig:
 def load_config(path: Path) -> SegmentationConfig:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    tango_config = raw.get("tango")
-    if not isinstance(tango_config, dict):
-        raise KeyError("Config is missing the 'tango' section")
-
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError([f"{path.name} is not valid YAML: {exc}"]) from exc
+    values = read_settings(raw, SETTINGS)
     return SegmentationConfig(
-        tango=TangoConfig(
-            host=str(tango_config["host"]),
-            port=int(tango_config["port"]),
-        ),
-        data_device_address=str(
-            raw.get("data_device_address", "asyncroscopy/data/default")
-        ),
-        model_size=str(raw.get("model_size", "facebook/sam2-hiera-large")),
-        compute_device=str(raw.get("compute_device", "auto")),
-        device_timeout_seconds=int(raw.get("device_timeout_seconds", 120)),
+        tango=TangoConfig(host=values["tango.host"], port=values["tango.port"]),
+        data_device_address=values["data_device_address"],
+        model_size=values["model_size"],
+        compute_device=values["compute_device"],
+        device_timeout_seconds=values["device_timeout_seconds"],
     )
 
 
@@ -89,13 +99,20 @@ def register_device(config: SegmentationConfig) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--yaml", type=Path, default=DEFAULT_CONFIG_PATH)
+    add_lifecycle_args(parser)
     args = parser.parse_args(argv)
+    install_shutdown_handlers(args.parent_pid)
 
     try:
         config = load_config(args.yaml)
-    except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"Config error: {exc}", file=sys.stderr)
         return 1
+    if args.cleanup:
+        with ProcessManager(name=STATE_NAME):
+            pass
+        print("Stopped processes left by an earlier run.")
+        return 0
 
     tango_host = f"{config.tango.host}:{config.tango.port}"
     os.environ["TANGO_HOST"] = tango_host
@@ -106,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        with ProcessManager() as manager:
+        with ProcessManager(name=STATE_NAME) as manager:
             managed: ManagedProcess = manager.start_process(
                 key="segmentation",
                 label="Segmentation Server",
