@@ -19,7 +19,7 @@ The work spans four codebases, each with one job:
 | Tiled | Storage for every acquired tile, map, point of interest and trace |
 | SciAgentGUI (`whittlegears/sciagentgui`) | A thin client: views data from Tiled and calls asyncroscopy commands. It holds no agent loop and no safety rules. |
 
-All of it is developed and checked on the seeded digital twin, using a local Qwen3 model through Ollama on a 6 GB GPU. The same runs produce evidence for the project Year-1 deliverables.
+All of it is developed and checked on the seeded digital twin, using a local Qwen3 model through Ollama on a 6 GB GPU. The same runs produce evidence for the project's Year-1 deliverables.
 
 ## The Problem
 
@@ -128,8 +128,8 @@ Each goal states how success is checked. "Twin" means the asyncroscopy digital t
     *   The analysis that SciAgentGUI ported to Rust (EDS, EELS, FFT, image, atom finding, peak fitting, probe, optimisation) is returned to the pyTEMlib fork.
     *   For each returned function, a test runs the Rust and Python versions on pyTEMlib's example data and checks that the outputs agree.
     *   The MCP server sits in its own subpackage. The fork is kept rebased on upstream `main`, so the pull requests are ready to offer to `pycroscopy/pyTEMlib`.
-*   **G13. the project evidence.**
-    *   A traceability table links each the project deliverable to the artifact that supports it:
+*   **G13. Project evidence.**
+    *   A traceability table links each project deliverable to the artifact that supports it:
         *   envelope → typed action schema
         *   trace → Instrument Trace
         *   baseline scorer and per-tile trace → STEM reward workflow
@@ -594,7 +594,7 @@ A test loads every YAML file in `configs/` to prove nothing breaks. Agent config
 | 2 | envelope schema, `JobDevice`, `Mapper` (with plan-box and dose limits), `Approvals` (mode, grants, queue), MCP policy hook, trace writer | G3, G4, G8 |
 | 3 | pyTEMlib fork, MCP server, registration and assembly, map in Tiled, map tools, baseline scorer | G5, G6 |
 | 4 | model test, mapping graph and skill, agent trials | G7, G10 (mapping skill) |
-| 5 | Studio packaging, general graph, skills tools, GUI thin client, pyTEMlib analysis returned, the project table | G9–G13 |
+| 5 | Studio packaging, general graph, skills tools, GUI thin client, pyTEMlib analysis returned, traceability table | G9–G13 |
 
 Stage 5 items may start once Stage 2 runs. They must not change the Stage 2 contracts without updating the schema version.
 
@@ -662,7 +662,7 @@ Stage 5 items may start once Stage 2 runs. They must not change the Stage 2 cont
 *   **Pros**:
     *   It is a widely used standard with built-in provenance.
     *   It writes to Tiled natively.
-    *   It matches the the project "Bluesky reference integration" deliverable owned by the facility.
+    *   It matches the facility's "Bluesky reference integration" deliverable.
 *   **Cons**:
     *   It adds a second control layer on top of Tango, and a second process model.
     *   Agents would have to drive the RunEngine, for which there is no MCP integration today.
@@ -745,7 +745,7 @@ Stage 5 items may start once Stage 2 runs. They must not change the Stage 2 cont
 *   **Pros**: Better tool use and longer context.
 *   **Cons**:
     *   It does not fit this machine.
-    *   the project reports that LLM API access is unresolved.
+    *   The project reports that LLM API access is unresolved.
     *   Instrument PCs are often air-gapped.
 *   **Reason for Rejection**:
     *   Designing for the small local model forces the coarse tools and short prompts that also make larger models cheaper and more reliable.
@@ -1339,7 +1339,7 @@ Paths are relative to each repository root:
 *   **Type / Scope**: Unit test.
 *   **Proposed Changes**: Runs the mapping graph with a scripted fake model against the twin. Checks the order of node visits and the interrupt in `approve` mode, and that no state field holds an array.
 
-#### Stage 5: Studio, skills, thin GUI, pyTEMlib return, the project
+#### Stage 5: Studio, skills, thin GUI, pyTEMlib return, traceability
 
 ##### 60. `asyncroscopy/langgraph.json` (Create)
 

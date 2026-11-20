@@ -1,6 +1,6 @@
 """Bearer-token verification for the MCP endpoints (the instrument side of the facility's endpoint proxy).
 
-the facility's design puts a token service (minting and verification) in front of every instrument: a
+The facility's design puts a token service (minting and verification) in front of every instrument: a
 user reaches an instrument through the token service, an endpoint API proxy, and an endpoint
 proxy that terminates TLS and checks the token, then the PyTango / Tiled / MCP servers. This
 module is the check at the MCP server itself. It is optional: without an ``mcp.auth`` section
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 ROLES = ("read", "operate", "approve")
-# Scopes a the facility token carries, and the roles each grants. A deployment can map its own scope names
+# Scopes a facility token carries, and the roles each grants. A deployment can map its own scope names
 # (mcp.auth.roles); a role is granted when the token has any scope listed for it.
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "read": ["instrument:read", "instrument:operate", "instrument:approve"],
