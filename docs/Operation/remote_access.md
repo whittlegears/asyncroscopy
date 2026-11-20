@@ -1,6 +1,6 @@
 # Remote access: tokens, TLS and the endpoint proxy
 
-the facility's security design puts every instrument behind the same chain:
+The facility's security design puts every instrument behind the same chain:
 
 ```
 user / agent ──> Token Minting / Verification Service ──> Endpoint API Proxy
@@ -13,8 +13,8 @@ This page covers the instrument end of that chain: what this repository provides
 
 | Part | Owner | Here |
 | :-- | :-- | :-- |
-| Token minting and verification service (CILogon identity, scopes, JWKS) | the facility | Not here. `startup_scripts/dev_tokens.py` is a **development stand-in** for testing only. |
-| Endpoint API proxy, VPN, the proxy blueprint | the facility | `deploy/proxy/nginx.conf` is a reference an instrument owner starts from until the facility's blueprint exists. |
+| Token minting and verification service (CILogon identity, scopes, JWKS) | The facility | Not here. `startup_scripts/dev_tokens.py` is a **development stand-in** for testing only. |
+| Endpoint API proxy, VPN, the proxy blueprint | The facility | `deploy/proxy/nginx.conf` is a reference an instrument owner starts from until the facility's blueprint exists. |
 | Token check at the MCP server (signature, expiry, issuer, audience; roles from scopes) | this repo | `mcp.auth` in the MCP config; `asyncroscopy/mcp/endpoint_auth.py`. |
 | Approval gate, risk policy, Instrument Trace | this repo | Unchanged; the token's subject is now the caller they record. |
 
@@ -92,7 +92,7 @@ A token with only `instrument:read` lists `get_stage` but not `move_stage`; `ins
 
 ## The Tiled API key is separate
 
-Tiled's API key (`ASYNCROSCOPY_TILED_API_KEY`, `docs/Tiled_server/data_integration.md`) is unchanged. It is a **service-to-service** secret: the DATA device, the MCP server and SciAgentGUI use it to reach Tiled on the instrument host. It is not a user identity and does not replace a the facility token. Users and agents reach data through the MCP endpoint's `list_data` and `view_data`, which the token gates (`read`). Forwarding Tiled through the proxy (port 9443) gives anyone holding the Tiled key direct access, so forward it only to networks that should hold that key, or not at all. Having Tiled accept the facility tokens itself (Tiled supports external authenticators) is the facility's decision and is not done here.
+Tiled's API key (`ASYNCROSCOPY_TILED_API_KEY`, `docs/Tiled_server/data_integration.md`) is unchanged. It is a **service-to-service** secret: the DATA device, the MCP server and SciAgentGUI use it to reach Tiled on the instrument host. It is not a user identity and does not replace a facility token. Users and agents reach data through the MCP endpoint's `list_data` and `view_data`, which the token gates (`read`). Forwarding Tiled through the proxy (port 9443) gives anyone holding the Tiled key direct access, so forward it only to networks that should hold that key, or not at all. Having Tiled accept the facility tokens itself (Tiled supports external authenticators) is the facility's decision and is not done here.
 
 ## Not done
 

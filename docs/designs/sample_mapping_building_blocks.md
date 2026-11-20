@@ -36,7 +36,7 @@ Findings are grouped by severity and deduplicated across reviewers. Each one nam
 - The timeouts are 30 s per Tango command (asyncroscopy\asyncroscopy\mcp\mcp_server.py, line 59), 60 s per SciAgentGUI MCP request (comment at lines 54-58) and 12 s for the twin's proxy (digital_twin.py, line 146).
 - A run of 1000 tiles takes minutes to hours. The client would time out while the server keeps moving the stage.
 - safety-gate.md says a long-running call cannot be cancelled once approved (sciagentgui\docs\guide\safety-gate.md, line 110).
-- The run has to be a background job: start returns a job id, followed by status, abort and results calls. That set is the same as the project common envelope (reserve, release, status, abort, results). All four lenses said to build the envelope once, here, as the contract for long-running jobs.
+- The run has to be a background job: start returns a job id, followed by status, abort and results calls. That set is the same as the project's common envelope (reserve, release, status, abort, results). All four lenses said to build the envelope once, here, as the contract for long-running jobs.
 
 **B3. "One approval at the start, and approval to leave the region" has nothing to enforce it.** Lenses: all six.
 - The server-side Query path runs tools with no approval step (asyncroscopy\asyncroscopy\mcp\agent_mcp_server.py, lines 104-112; safety-gate.md, lines 73-80; sciagentgui\docs\reference\feature-status.md, lines 33-42).
@@ -62,9 +62,9 @@ Findings are grouped by severity and deduplicated across reviewers. Each one nam
   - (A) the mapping workflow
   - (B) agent plumbing: the skill registry, the LangGraph restructure and LangGraph Studio
   - (C) a map viewer in Tauri
-  - (D) the project contract layer: the envelope, authentication, trace and the capability registry
+  - (D) the shared contract layer: the envelope, authentication, trace and the capability registry
   - (E) STEM reward research
-- The the project directive is "real workflow, then minimum useful interface, then validate on the instrument, then generalize". The concept starts by generalizing, before a single workflow runs.
+- The project's directive is "real workflow, then minimum useful interface, then validate on the instrument, then generalize". The concept starts by generalizing, before a single workflow runs.
 
 ### Major
 
@@ -109,9 +109,9 @@ Findings are grouped by severity and deduplicated across reviewers. Each one nam
   - stage x and y (hardware\stage.py, lines 34-70)
 - Grid-planning commands must take these as arguments, or new commands are needed.
 
-**M6. the project priorities do not match a STEM-first envelope.** Lenses: zoom-out, structural, design.
+**M6. Project priorities do not match a STEM-first envelope.** Lenses: zoom-out, structural, design.
 - Typed action schemas start with nanoindentation and then SPM.
-- The common envelope already exists as nanoindentation schema v0.2. Capability registry v0.3 exists and has another owner. Authentication is a the facility deliverable.
+- The common envelope already exists as nanoindentation schema v0.2. Capability registry v0.3 exists and has another owner. Authentication is a facility deliverable.
 - What this work can honestly claim is the "STEM reward baseline": matched settings and image sequences with quality descriptors, due December 2026.
 - A twin run counts as pre-validation, not as validation on the instrument.
 
@@ -176,7 +176,7 @@ Findings are grouped by severity and deduplicated across reviewers. Each one nam
   - One scoring function, `score(tile, metadata) -> (value 0-1, reason)`, built from sharpness, drift and feature visibility, with the version logged.
   - Trace logging on by default, with run id, plan id, tile index, caller, approval id and one event per tile.
   - One ReAct-style agent on qwen3 (4b or 8b), with a set `num_ctx` and an allow-list of about six tools.
-  - A the project evidence package:
+  - A project evidence package:
     - the per-tile trace as the STEM reward baseline
     - one entry in capability registry v0.3
     - call shapes aligned with the v0.2 envelope
@@ -261,8 +261,8 @@ Staging:
     - with no moves outside the region
   - Record tokens and wall time for each trial.
   - Keep to about 10-20 trials on this machine.
-- **Stage 5 (the project package and follow-ons):**
-  - Write a the project traceability table: deliverable, artifact, milestone.
+- **Stage 5 (project evidence package and follow-ons):**
+  - Write a traceability table: deliverable, artifact, milestone.
   - Only then consider the SciAgentGUI map view, the LangGraph Studio packaging and the shared skill registry.
 
 The follow-on design doc should contain these sections:
@@ -275,7 +275,7 @@ The follow-on design doc should contain these sections:
 6. Safety and autonomy
 7. Skill versioning, with minimum asyncroscopy and schema versions in the front matter
 8. Migration and deprecation
-9. the project traceability
+9. Traceability
 10. Validation metrics
 11. Alternatives considered: ASHLAR, Bluesky, DZI and pyramidal TIFF
 12. Risks

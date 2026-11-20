@@ -1,4 +1,4 @@
-# Deployment notes for hosting the stack (the facility)
+# Deployment notes for hosting the stack
 
 This page is for whoever packages the digital twin (or an instrument stack) as
 containers on a cluster such as the facility's Kubernetes/OpenShift. It lists every
@@ -96,7 +96,7 @@ set the published address; not tried here.)
 
 ## Who provides what
 
-| the facility (the cluster) | The instrument owner (this repository and its configs) |
+| The facility (the cluster) | The instrument owner (this repository and its configs) |
 | :-- | :-- |
 | The cluster, namespaces, storage classes and persistent volumes | A stack YAML per instrument (`simulated: true` for twins) with the Approvals device, and its two MCP YAMLs |
 | Token minting and verification; the endpoint proxy with TLS in front of the agent endpoint; Routes or Ingress | Which endpoint is public: only the agent endpoint. The operator endpoint stays cluster-internal (it can approve held calls) |

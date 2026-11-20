@@ -1,4 +1,4 @@
-# Concept brief: closing the project Year-1 on the twin, and STEM automation for first light
+# Concept brief: closing the Year-1 items on the twin, and STEM automation for first light
 
 Status: brainstorm output, not a plan of record. Date: 2026-10-29. This brief replaces the earlier "portable, hackathon-ready stack" brief of the same date.
 
@@ -8,7 +8,7 @@ Method: six independent reviewers read the repository and reported in parallel: 
 
 The concept has two halves.
 
-The first half finishes the three open the project Year-1 items that can be shown on the digital twin:
+The first half finishes the three open Year-1 items that can be shown on the digital twin:
 
 - an online Instrument Trace pipeline;
 - a field-of-view reward that has actually been evaluated;
@@ -31,7 +31,7 @@ The real gaps are a dry-run seam, a recorded AutoScript fake to test parity agai
 
 Each finding carries the highest severity any reviewer gave it.
 
-### 2.1 Parity, dry-run and the AutoScript path (the project: twin-to-instrument parity)
+### 2.1 Parity, dry-run and the AutoScript path (deliverable: twin-to-instrument parity)
 
 - **Blocker: AutoScript bugs that the tests cannot see.** The tests use `SimpleNamespace` fakes (`tests/test_auto_script_microscope.py:406-414`), so none of these fail today. In `asyncroscopy/instruments/electron_microscope/auto_script.py`:
   - The TEM branch of `_auto_focus` (585-586) has a missing dot (`autoscript_tem_microscope_client.structuresRun...`) and uses `self.microscope` where it should use `self._microscope`.
@@ -85,16 +85,16 @@ Each finding carries the highest severity any reviewer gave it.
 - **Major: drift is only handled after the map.** The stitch fits drift (`mapper.py:826-846`), and `drift_at` (197-207) is used only for revisits (929-931). Corrections smaller than about 100 nm need image or beam shift, but `_revisit` moves the stage. On AutoScript, image shift swallows its errors (`auto_script.py:597`).
 - **Major: drift and dose logic are already built into Mapper** (`frame_dose` at `mapper.py:191`, `drift_at` at 197, in a file of about 1,100 lines). A new tracker built next to this code would mean two drift models.
 
-### 2.5 Evaluated reward (the project: STEM field-of-view reward)
+### 2.5 Evaluated reward (deliverable: STEM field-of-view reward)
 
 - **Major: there is ground truth but no evaluation harness.**
   - The only scorer is `BaselineScorer` (`pyTEMlib/scoring/baseline.py:17-36`).
   - Ground truth comes from `sample_model.ground_truth()` (`twin/sample_model.py:164-174`) through `export_ground_truth` (`digital_twin.py:605-620`).
   - No metric, threshold or labelled set exists.
-- **Major: measuring the reward against particle positions measures detection, not "quality and feature visibility".** The twin draws particles bright, and the baseline scorer finds bright things. Report the result as a detection proxy. The "Not claimed" list already says there is no human-preference data (`the traceability table`).
+- **Major: measuring the reward against particle positions measures detection, not "quality and feature visibility".** The twin draws particles bright, and the baseline scorer finds bright things. Report the result as a detection proxy. The "Not claimed" list already says there is no human-preference data (the traceability table).
 - A plug-in point already exists: the `pytemlib.scorers` entry point (`pyTEMlib/scoring/__init__.py:37-49`).
 
-### 2.6 Online Instrument Trace (the project: online trace pipeline)
+### 2.6 Online Instrument Trace (deliverable: online trace pipeline)
 
 - **Major: there are three trace files and two schemas.**
   - Each process writes its own JSONL file: the MCP server, the approvals device, and the jobs device (`outputs/trace/jobs.jsonl`, `job_device.py:229`).
@@ -109,8 +109,8 @@ Each finding carries the highest severity any reviewer gave it.
 - **Major: automation loops must not go through the LLM.** qwen3:8b takes about 11 s per call. A focus sweep plus a stig grid would take about 7 minutes and overflow an 8k context. In approve mode, every one of those calls would also be held. The agent decides when to tune; a job runs the loop.
 - **Major: no rule says where new code should go, and the traceability doc cannot carry one evidence cell per item.**
   - `electron_microscope/` already mixes drivers, five twin variants and a job.
-  - Rows 11 and 12 of `the traceability table` each mix two statuses.
-  - `docs/myst.yml` does not publish `traceability/` or `designs/`.
+  - Rows 11 and 12 of the traceability table each mix two statuses.
+  - `docs/myst.yml` does not publish `designs/`.
 - **Major: the key terms are undefined.** Section 3 gives working definitions.
 
 ## 3. Goals vs Non-Goals
@@ -135,7 +135,7 @@ Each finding carries the highest severity any reviewer gave it.
 4. The reward is evaluated on twin ground truth, and the twin is degraded with defocus and contamination so that the score has to respond to image quality.
 5. Trace events stream online from every source, with a sequence number, sim time, run ID and a `simulated`/`dry_run` flag.
 6. A hackathon team can add a scorer, focuser or drift tracker and get a number from a bench, with no LLM and no live stack.
-7. Each the project row says whether its evidence shows "logic proven (twin)" or "performance proven (instrument)".
+7. Each traceability row says whether its evidence shows "logic proven (twin)" or "performance proven (instrument)".
 
 ### Non-goals
 
@@ -144,7 +144,7 @@ Each finding carries the highest severity any reviewer gave it.
 - A custom autostigmation algorithm that relies on the direction of A1. The twin cannot show the direction at survey pixel sizes.
 - A message broker, Kafka, or live Tiled streaming for the trace.
 - Running tuning loops through the LLM.
-- the facility authentication, and schemas for nanoindentation or SPM.
+- Facility authentication, and schemas for nanoindentation or SPM.
 
 ## 4. Key Decisions and Staging
 
@@ -168,8 +168,8 @@ Each finding carries the highest severity any reviewer gave it.
 - **Stage 3, after first light:** item 8, then tuning with the measured values.
 - **Quick wins:**
   - Split traceability rows 11 and 12.
-  - Give each the project row an ID, an artifact, a check command and an evidence-file cell.
-  - Add `traceability/` and `designs/` to `myst.yml`.
+  - Give each traceability row an ID, an artifact, a check command and an evidence-file cell.
+  - Add `designs/` to `myst.yml`.
   - Add "optimal results unproven until first light" to "Not claimed".
 
 ### Ranked plan

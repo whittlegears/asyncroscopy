@@ -62,8 +62,6 @@ project:
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md
-    - title: the project
-      children:
     - title: Designs
       children:
         - file: designs/concepts_brief.md

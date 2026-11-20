@@ -31,7 +31,7 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = PROJECT_DIR / "outputs" / "dev_tokens"
-DEV_ISSUER = "asyncroscopy-dev-tokens (NOT the facility)"
+DEV_ISSUER = "asyncroscopy-dev-tokens (NOT a production issuer)"
 DEV_AUDIENCE = "asyncroscopy-mcp"
 MAX_TTL_S = 24 * 3600  # dev tokens are short-lived; nothing here should outlive a day
 BANNER = "[dev_tokens] DEVELOPMENT ONLY: a stand-in for the facility's token service. Never use these keys or tokens in production."
