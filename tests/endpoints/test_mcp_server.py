@@ -588,7 +588,25 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "notes_for", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+
+    def test_notes_for_serves_the_matching_agent_memory_read_only(self, monkeypatch, tmp_path) -> None:
+        from asyncroscopy.agents.memory import Memory
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        assert server.memory.notes_for("map with eds") == {"notes": [], "text": ""}
+
+        memory = Memory.from_env()
+        memory.add_lesson("Mapper plans need fov_m below 1e-6 on this twin")
+        memory.add_lesson("Laser power above 10 mW burns graphene")
+        found = server.memory.notes_for("run a Mapper plan with a large fov_m")
+        assert found["notes"][0]["source"] == "LESSONS.md" and "fov_m below" in found["notes"][0]["text"]
+        assert found["text"].startswith("[LESSONS.md] ")
+        assert len(server.memory.notes_for("Mapper fov_m", budget=10**6)["text"]) <= 4000
+        assert server.memory.notes_for("unrelated words xyz")["notes"] == []
+        assert server.memory.notes_for.__fastmcp__.annotations.read_only_hint  # clients may run it without asking
 
     def test_skills_for_writes_out_the_skills_a_request_matches(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)

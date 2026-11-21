@@ -34,7 +34,7 @@ from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, t
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, local_docs
-from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, skills_tools, trace_tools
+from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, skills_tools, trace_tools
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
 from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
@@ -186,11 +186,12 @@ class MCPServer:
         cfg = self.config
         self.data = data_tools.register(self, cfg)
         self.skills = skills_tools.register(self, cfg)
+        self.memory = memory_tools.register(self, cfg)
         self.discovery = discovery.register(self, cfg)
         self.estop = estop.register(self, cfg)
         self.jobs = jobs.register(self, cfg)
         self.traces = trace_tools.register(self, cfg)
-        self.components = [self.data, self.skills, self.discovery, self.estop, self.jobs, self.traces]
+        self.components = [self.data, self.skills, self.memory, self.discovery, self.estop, self.jobs, self.traces]
         self._simulated: bool | None = None
         self.auth = endpoint_auth.attach(self, auth)  # None without mcp.auth
 

@@ -128,25 +128,32 @@ class Memory:
                 chunks.append((f"experiments/{page.name}", head.strip()))
         return chunks
 
-    def notes_for(self, request: str, budget: int = NOTES_BUDGET_CHARS) -> str:
-        """The memory most relevant to ``request``, best first, within ``budget`` characters ("" if none)."""
+    def notes(self, request: str, budget: int = NOTES_BUDGET_CHARS) -> list[tuple[str, str]]:
+        """(source, text) of the memory most relevant to ``request``, best first, redacted, within ``budget``
+        characters as notes_for writes them out ([] if none)."""
         from asyncroscopy.skills.index import rank_texts
 
         if not content_words(request):
-            return ""
+            return []
         sections = self._sections()
         # Ranked with the skills' BM25, so a word few notes share counts more than one in every lesson.
         ranked = [sections[i] for i in rank_texts([text for _source, text in sections], [(request, 1.0)])]
-        out, used = [], 0
+        out: list[tuple[str, str]] = []
+        used = 0
         for source, text in ranked:
-            entry = f"[{source}] {redact(text)}"
-            if used + len(entry) > budget:
+            text = redact(text)
+            size = len(source) + 3 + len(text)  # "[source] text"
+            if used + size > budget:
                 if not out:
-                    out.append(entry[:budget])
+                    out.append((source, text[: max(0, budget - len(source) - 3)]))
                 break
-            out.append(entry)
-            used += len(entry)
-        return "\n".join(out)
+            out.append((source, text))
+            used += size + 1  # and the newline between entries
+        return out
+
+    def notes_for(self, request: str, budget: int = NOTES_BUDGET_CHARS) -> str:
+        """The memory most relevant to ``request``, best first, within ``budget`` characters ("" if none)."""
+        return "\n".join(f"[{source}] {text}" for source, text in self.notes(request, budget))
 
     # writing
     def seed_instrument(self, catalog: ToolCatalog, stem: bool = False) -> bool:
