@@ -30,13 +30,14 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}  # a failed preview is reported, not silent
-PREVIEW_TEXT_CHARS = 1500  # the summary sent with an acquisition's preview (a spectrum's peak table fits)
+PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}  # for these a failed preview is reported to the caller
+PREVIEW_TEXT_CHARS = 1500  # longest summary sent with a preview, enough for a spectrum's peak table
 DATA_TOOL_DEADLINE_S = 20.0  # data tools answer within this, so a slow or stuck Tiled cannot hang the agent
 PREVIEW_DEADLINE_S = 10.0
-LIST_DATA_WINDOW = 300  # newest keys list_data looks through; Tiled refuses pages larger than 300
+LIST_DATA_WINDOW = 300  # newest keys list_data looks through. Tiled refuses pages larger than 300.
 LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
-# What to do next when a lane is busy or Tiled is slow. A preview never suggests trying again: that could re-run the acquisition.
+# What to do next when a lane is busy or Tiled is slow.
+# A preview never suggests trying again because that could run the acquisition again.
 NEXT_STEP = {
     "view": "Try again shortly, or ask for less (a region, or format text).",
     "list": "Try again shortly, or narrow it with search or kind.",
@@ -99,7 +100,7 @@ class DataTools:
             raise ToolError(str(exc)) from exc
         except (*tiled_client.CONNECTION_ERRORS, OSError) as exc:
             raise ToolError(f"Tiled stopped answering ({type(exc).__name__}: {exc}).") from exc
-        except Exception as exc:  # an HTTP error status, a plug-in kind's bug, data this view cannot draw
+        except Exception as exc:
             raise ToolError(f"could not read the data ({type(exc).__name__}: {exc})") from exc
 
     @tool()
@@ -138,7 +139,7 @@ class DataTools:
             if kind and entry.get("kind") != kind:
                 position += 1
                 continue
-            if len(found) == limit:  # a match past this page: the next page starts here
+            if len(found) == limit:  # this match is past the page, so the next page starts here
                 break
             found.append(entry)
             position += 1
@@ -159,11 +160,12 @@ class DataTools:
         region: list[float] | None = None,
         index: list[int] | int | None = None,
         max_side: int = views.PREVIEW_MAX_SIDE,
+        mark_peaks: bool = False,
     ) -> ToolResult:
-        """Look at stored data by key (from an acquisition, a job's results, or list_data). png: a picture (images contrast-stretched, spectra plotted against energy with peaks marked) plus a short text summary (statistics, peaks). text: shape, units, statistics, peaks and a small CSV. dataset: one array or group inside a file (the text lists them). region: an image's [row0, row1, col0, col1] in pixels, or a spectrum's [min, max] in its axis units (eV). index: which frame of a stack or 4-D dataset, or a spectrum image's [row, col] position to show the spectrum there. Never returns raw arrays."""
-        options = views.ViewOptions(region=region, index=index, max_side=max_side)
+        """Look at stored data by key (from an acquisition, a job's results, or list_data). png: a picture (images contrast-stretched, spectra plotted against energy) plus a short text summary (statistics, peaks and the elements they point to). text: shape, units, statistics, peaks and a small CSV. dataset: one array or group inside a file (the text lists them). region: an image's [row0, row1, col0, col1] in pixels, or a spectrum's [min, max] in its axis units (eV). index: which frame of a stack or 4-D dataset, or a spectrum image's [row, col] position to show the spectrum there. mark_peaks: label the identified peaks on a spectrum's plot; only when the user asks to see them marked. Never returns raw arrays."""
+        options = views.ViewOptions(region=region, index=index, max_side=max_side, mark_peaks=bool(mark_peaks))
         summary, png = self.with_deadline(lambda: views.view(self.tiled_node(key), key, format, dataset, options), lane="view")
-        # A TextContent block, not a bare str: FastMCP joins a list of only strings into one JSON array.
+        # Use a TextContent block because FastMCP joins a list of only strings into one JSON array.
         content: list[Any] = [TextContent(type="text", text=summary["text"])]
         if png is not None:
             content.append(MCPImage(data=png, format="png"))
@@ -184,7 +186,7 @@ class DataTools:
             summary, png = self.with_deadline(
                 lambda: views.view(self.tiled_node(result, hints=False), result, "png"), lane="preview", deadline_s=PREVIEW_DEADLINE_S
             )
-        except Exception as exc:  # the hardware already acquired: report, never raise
+        except Exception as exc:  # the hardware already acquired, so report this and do not raise
             if self.verbose:
                 print(f"[preview] could not build a preview for {result!r}: {exc}")
             if command_name not in PREVIEW_COMMANDS:
@@ -193,8 +195,7 @@ class DataTools:
             return ToolResult(content=[TextContent(type="text", text=result), TextContent(type="text", text=note)], structured_content={"result": result})
         if summary.get("beam_blanked"):
             raise beam_blanked(result, command_name, device, arguments)
-        # The text summary (statistics; for a spectrum its peaks and candidate elements) goes with the picture,
-        # so a model that cannot see images still learns what it acquired without another call.
+        # The text summary goes with the picture so a model that cannot see images still learns what it acquired.
         described = str(summary.get("text") or "")[:PREVIEW_TEXT_CHARS]
         content = [TextContent(type="text", text=result)] + ([TextContent(type="text", text=described)] if described else []) + [MCPImage(data=png, format="png")]
         return ToolResult(content=content, structured_content={"result": result})

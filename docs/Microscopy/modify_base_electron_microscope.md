@@ -20,10 +20,10 @@ implements only `_helper` methods:
   `electron_microscope.py`, and `argument_hints()` describes the same ranges to
   clients through the device's `action_hints` attribute.
 - **What each command is.** Every public command is declared on the base with
-  `asyncroscopy.utils.commands.command(risk=, role=, stop=, routine=)`: `blank_beam`
+  `asyncroscopy.utils.commands.command(risk=, role=, stop=)`: `blank_beam`
   is a low-risk stop, `set_fov` and `set_defocus` are low, the imaging, spectra,
-  stage moves and beam placement are high and routine in auto mode, and the column
-  valves, screen and diffraction shift are high and held. A backend inherits all of
+  stage moves and beam placement are high, as are the column
+  valves, screen and diffraction shift. A backend inherits all of
   it and declares nothing; a new public command on the base needs its declaration
   (the MCP server lists any undeclared command at start-up).
 - **Beam current.** The attributes `beam_current_pa`, `beam_current_source`

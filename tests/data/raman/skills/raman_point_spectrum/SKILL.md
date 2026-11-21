@@ -17,4 +17,4 @@ tools: [RamanTwin_get_status, RamanTwin_laser_on, RamanTwin_laser_off, RamanTwin
 6. `view_data` with `{"key": <key>, "format": "text"}` lists the peaks in cm-1.
 7. `RamanTwin_laser_off` when done.
 
-Report the key and the peak positions in cm-1: Si near 520, graphene G near 1580 and 2D near 2690 (2D taller than G means a monolayer). If a call is held for approval, wait for the operator; never try another way around it.
+Report the key and the peak positions in cm-1: Si near 520, graphene G near 1580 and 2D near 2690 (2D taller than G means a monolayer).

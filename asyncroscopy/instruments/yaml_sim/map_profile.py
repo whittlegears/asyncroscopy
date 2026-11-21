@@ -28,7 +28,7 @@ import tango
 
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, register_profile
 
-FOV_TOLERANCE = 1e-6  # relative: the field_of_view setting must make the tile this close to fov_m
+FOV_TOLERANCE = 1e-6  # how close, as a fraction, the field_of_view setting must bring the tile to fov_m
 
 
 @register_profile
@@ -39,7 +39,7 @@ class YamlProfile(InstrumentProfile):
     plan_example = {"size_m": [3e-6, 3e-6], "fov_m": 1e-6, "overlap": 0.25}
     plan_fields = frozenset({"settings"})
 
-    # -- the device's description ----------------------------------------
+    # the device's description
     def _describe(self, settings: dict) -> dict:
         try:
             reply = json.loads(self.instrument().get_map_profile(json.dumps({"settings": settings})))
@@ -56,7 +56,7 @@ class YamlProfile(InstrumentProfile):
     def _info(plan: dict) -> dict:
         return plan["instrument"]
 
-    # -- plan ------------------------------------------------------------
+    # plan
     def resolve(self, p: dict) -> None:
         settings = dict(p.get("settings") or {})
         info = self._describe(settings)
@@ -142,7 +142,7 @@ class YamlProfile(InstrumentProfile):
                 return {axis: float(list(arguments)[0])}
         return None
 
-    # -- run -------------------------------------------------------------
+    # run
     def _run(self, names: list[str]) -> None:
         device = self.instrument()
         for name in names:
@@ -185,7 +185,7 @@ class YamlProfile(InstrumentProfile):
         return [float(device.command_inout(f"get_{stage['x']['setting']}")), float(device.command_inout(f"get_{stage['y']['setting']}"))]
 
     def clock_s(self) -> float:
-        return time.time()  # a YAML twin has no clock of its own; its waits are real (time_scale) seconds
+        return time.time()  # a YAML twin has no clock of its own, so its waits are real seconds
 
     def acquire_tile(self, job: dict, tile: dict) -> dict | None:
         info = self._info(job["resolved_plan"])

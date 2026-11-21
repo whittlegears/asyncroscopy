@@ -38,23 +38,16 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 4. Queries each device's commands and reads its `action_hints` declarations.
 5. Skips blocked commands.
 6. Builds one `ToolDescriptor` per command (`asyncroscopy/mcp/descriptors.py`): role, risk,
-   acts or observes, operator-only, routine in auto mode, stop. The MCP config's
+   acts or observes, operator-only, stop. The MCP config's
    `safety.risk` comes first, then what the device declares, then the name rules; the
    commands that fell back to the rules are printed as `[safety]` lines. Every device of the
    twin stack declares all its commands on its base class, so for it that list is empty
-   (`tests/test_declared_risk.py`); Tango's own `State`, `Status` and `Init` are known by name.
+   (`tests/endpoints/test_declared_risk.py`); Tango's own `State`, `Status` and `Init` are known by name.
    The rules remain for third-party devices that declare nothing.
 7. Registers the remaining commands as FastMCP tools. A call runs through an ordered list
-   of interceptors: the preview, logging and the trace, the job checks, the approval gate,
+   of interceptors: the preview, logging and the trace, the job checks,
    job stamping, and the token subject.
 8. Registers the native tools of its components (`asyncroscopy/mcp/components/`).
-
-The approval decision is one function, `asyncroscopy.safety.decide.decide`, used by the gate,
-`find_tools`, `endpoint_info` and the Approvals device. The commands auto mode runs without a
-person are the ones their device declares `routine` (the `ElectronMicroscope` base declares its
-imaging, spectra, stage moves, beam placement, unblank, stigmator, beam tilt, image shift and
-autofocus), unless the MCP config gives `mcp.safety.auto_routine`, which then replaces every
-declaration.
 
 `endpoint_info` also carries `tools`: each tool's device, command, canonical role, risk and
 whether it acts, as discovery decided them, with `stem_devices` and `map_devices`. Agent programs
@@ -72,19 +65,11 @@ for a small model (`asyncroscopy/agents/guidance.py`); other clients read the fi
 
 ## Jobs, waits and skills: one tool per step
 
-Agent traces showed calls that always came together (see
-`benchmarks/results/tool_usage_analysis.md`), so the agent endpoint offers one
+Agent traces showed calls that always came together, so the agent endpoint offers one
 tool for each step of a job:
 
 - `run_job(device, plan)`: reserve and start in one call. Every successful
-  `<device>_reserve` in the trials was followed by its start. The start still
-  goes through the approval gate once, and the held request shows the operator
-  the reserved plan. Repeating the same `run_job` after approval starts that
-  reservation (for the same caller and agent run, `X-Asyncroscopy-Run`: agents
-  open a new MCP session per call); repeating it before the
-  operator decides files no second request. A denied or expired request, or
-  one nobody came back for within two hours, frees the reservation on the next
-  `run_job`, `wait_for_job` or `approval_status` from anyone. A start that fails
+  `<device>_reserve` in the trials was followed by its start. A start that fails
   releases the reservation it made. Every reply carries the estimate; a plan
   whose estimate is over `mcp.job_limits` (`max_duration_s`,
   `max_dose_e_per_a2`) is refused before it starts, by run_job and by a direct
@@ -92,7 +77,7 @@ tool for each step of a job:
   `via: "run_job"`. The whole call stays under
   25 s, waiting up to 15 s so a short job comes back finished.
 - `run_job(device, resume=<reservation_id>)`: continue an aborted job. No
-  plan: the reservation holds it, and starting it again (through the gate)
+  plan: the reservation holds it, and starting it again
   goes on from the next step. A resume that does not start keeps the
   reservation. A plan and a resume together are refused.
 - `wait_for_job(job_id, device=None)`: waits on any job, an instrument job
@@ -104,7 +89,7 @@ tool for each step of a job:
   swallowed. Without `mcp.analysis_url` agents get `analysis_job_status` and
   `analysis_job_results` instead.
 - `endpoint_info()`: for agent programs, not given to models: each tool's risk
-  as the approval gate sees it (with this deployment's `safety.risk`
+  as the risk policy sees it (with this deployment's `safety.risk`
   overrides), the job devices, `job_limits` and the analysis server. The agents
   read the analysis server's address from it (so it is configured once, here),
   and the goal checker and benchmarks read the risks. `agent_tools` lists the
@@ -121,28 +106,41 @@ tool for each step of a job:
   STEM, probe or job devices. See `docs/Operation/action_space.md`.
 - Skills: since nearly every run began with `load_skill`, the agent no longer
   asks for skills. Before each model call it adds the skills that match the
-  request and what has happened so far (an error, a held call, a data key;
+  request and what has happened so far (an error, a data key;
   `asyncroscopy.agents.skill_middleware`); `load_skill` is offered only when a
   matching skill did not fit. See `docs/Operation/agents.md`.
-- `skills_for(request, agent_tools=None)`: for agent programs, not given to
-  models: the same choice for another harness. It returns the skills matching
-  a request (`names`, best first), their instructions written out for a system
-  prompt (`text`) and any too long to fit (`cut`, for `load_skill`).
-  `agent_tools` is the tool list the caller gives its model. SciAgentGUI's own
-  agent calls it at the start of each turn, because small models do not call
-  `load_skill` themselves.
+- `skills_for(request, agent_tools=None, context=None)`: for agent programs, not
+  given to models: the same choice for another harness. It returns the procedures
+  matching a request (`names`, best first), written out for a system prompt with
+  the passages of any skill that answer this step after them (`text`), the
+  passages alone (`advice`), each passage's label (`passages`) and any procedure
+  too long to fit (`cut`, for `load_skill`). `agent_tools` is the tool list the
+  caller gives its model; `context` is the latest tool replies, newest last.
+  SciAgentGUI's own agent calls it at the start of each turn for its system
+  prompt, then after every tool round for `advice`, which it adds to the latest
+  message rather than to the system prompt (so a server caching the prompt's
+  start, such as Ollama, reads only what is new).
+- `skill_text(name)`, `save_skill(name, text)`, `delete_skill(name)` and
+  `switch_skill(name, on)`: for a client's Skills page, never given to a model
+  (`not_for_models`). They manage the lab's own skills
+  (`$ASYNCROSCOPY_LAB_SKILLS`, `asyncroscopy.skills.lab`): `save_skill` writes one
+  after the promotion linter accepts it (a lab skill with a shipped skill's name
+  replaces it here), `delete_skill` deletes only lab skills, and `switch_skill`
+  switches any skill off or on for every agent of the endpoint (still listed,
+  never given). `list_skills` says where each skill comes from (`source`:
+  shipped, path, lab or learned) and whether it is switched off (`off`).
+  SciAgentGUI's Skills page is built on these, so the lab keeps one library on
+  the endpoint instead of skills on each computer.
 
 `<device>_reserve`, `_start`, `_job_status`, `_results`, `_release`,
 `list_skills` and `load_skill` stay on the endpoint for the `mapping` graph,
 SciAgentGUI and other clients. `configs/mcp_dt.yaml` hides from the agent
 endpoint the commands no agent needs (Tango `State`/`Status`, DATA's Tiled
-administration, `Approvals.request_status` and `list_pending`, and
+administration and
 `Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
-(`configs/mcp_operator.yaml`) keeps them. The Approvals commands that decide
-or file requests are never offered on an agent endpoint whatever the config
-says: the Approvals device declares them operator-only. `OPERATOR_ONLY` in
-`asyncroscopy/safety/policy.py` lists only Tango's admin commands (`Init`, `Kill`,
-`RestartServer`), which no device declares.
+(`configs/mcp_operator.yaml`) keeps them. `OPERATOR_ONLY` in
+`asyncroscopy/safety/policy.py` lists Tango's admin commands (`Init`, `Kill`,
+`RestartServer`), which no device declares; they are never offered on an agent endpoint.
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
@@ -203,7 +201,7 @@ X-ray line". On 288 twin spectra without O or F this cut the spectra read as O o
 93 to 1, while carbon was still named in 57 of the 63 where it had been (the six lost were
 near the detection limit). A strong O peak within a few line widths can still hide a weak
 C peak next to it, because it raises C's side-band background. Live at 0b1ce81 the EDS workflows
-passed 21 of 21 (`benchmarks/results/workflows_twin_general_0b1ce81_eds.json`), and every
+passed 21 of 21, and every
 eds_spectrum_elements run called the rise a continuum rise, not O or F.
 
 `list_data` looks through the newest 300 keys in registration order (files

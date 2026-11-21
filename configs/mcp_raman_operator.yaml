@@ -1,9 +1,9 @@
-# Operator MCP endpoint for the Raman twin (approvals and mode switch), beside the
+# Operator MCP endpoint for the Raman twin , beside the
 # STEM twin's operator endpoint on 8001:
 #
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman_operator.yaml
 #
-# Keep http_host at 127.0.0.1: this endpoint can approve held calls and has no
+# Keep http_host at 127.0.0.1: this endpoint has operator-only tools and no
 # authentication. Benchmarks and the GUI find it with
 # ASYNCROSCOPY_OPERATOR_URL=http://127.0.0.1:8101/mcp.
 
@@ -30,6 +30,5 @@ mcp:
   tool_log: ""
   endpoint_role: operator
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     risk: {}
   trace: outputs/trace/mcp_raman_operator.jsonl

@@ -49,7 +49,7 @@ def suspender_problem(suspender: dict, value: Any) -> str | None:
         if "min" in suspender or "max" in suspender:
             return f"{label} is {value!r}, not a number"
         return None
-    if "min" in suspender and not number >= suspender["min"]:  # "not >=" also catches NaN
+    if "min" in suspender and not number >= suspender["min"]:  # written this way so NaN also counts as bad
         return f"{label} is {number:g}, below {suspender['min']:g}"
     if "max" in suspender and not number <= suspender["max"]:
         return f"{label} is {number:g}, above {suspender['max']:g}"

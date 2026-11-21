@@ -54,7 +54,7 @@ MAX_DEPTH = 3
 MAX_PEAKS = 8
 PEAK_SIGMA = 5.0  # a peak's counts within its FWHM must stand this many sigmas above the background
 MAX_STRINGS = 50
-IMAGE_GROUPS = ("image", "tiles", "channels")  # looked at first: a run's pictures before its spectra
+IMAGE_GROUPS = ("image", "tiles", "channels")  # looked at first, so a run's pictures come before its spectra
 SPECTRUM_GROUPS = ("spectrum_image", "spectrum", "spectra")
 
 
@@ -102,10 +102,11 @@ class Axis:
 
 @dataclass
 class ViewOptions:
-    region: list[float] | None = None  # image [row0, row1, col0, col1] in pixels; 1-D [min, max] in axis units
-    index: list[int] | None = None  # a frame of a stack, or a [row, col] position of a spectrum image
+    region: list[float] | None = None  # row0, row1, col0, col1 in pixels for an image. For 1-D data, min and max in axis units
+    index: list[int] | None = None  # a frame of a stack, or a row and col position in a spectrum image
     max_side: int = PREVIEW_MAX_SIDE
     max_rows: int = 200  # CSV rows in text views
+    mark_peaks: bool = False  # label a spectrum's peaks on its plot; the text always lists and names them
 
 
 @dataclass
@@ -117,7 +118,7 @@ class Kind:
     description: str = ""
 
 
-# ----------------------------------------------------------------- finding datasets
+# finding datasets
 
 
 def _decode(value: Any) -> Any:
@@ -157,7 +158,7 @@ class _Loaded:
 def as_dataset(node: Any, key: str, path: str = "", parent_attrs: dict | None = None) -> Dataset:
     family = _family(node)
     shape = getattr(node, "shape", None)
-    if family == "array" and shape is None:  # a reader that cannot report its shape: read it once
+    if family == "array" and shape is None:  # a reader that cannot report its shape, so read it once
         node = _Loaded(np.asarray(node.read()), dict(getattr(node, "metadata", None) or {}))
         shape = node.shape
     try:
@@ -169,7 +170,7 @@ def as_dataset(node: Any, key: str, path: str = "", parent_attrs: dict | None = 
 
 def _children(node: Any) -> Iterator[tuple[str, Any]]:
     items = getattr(node, "items", None)
-    if callable(items):  # Tiled pages carry each child's structure: no request per child, pages fetched as needed
+    if callable(items):  # Tiled pages carry each child's structure, so no request per child is needed
         return ((str(k), v) for k, v in items())
     return ((str(k), node[k]) for k in node.keys())
 
@@ -301,7 +302,7 @@ def container_listing(node: Any, prefix: str = "", depth: int = 0) -> str:
     return "\n".join(line for line in lines if line)
 
 
-# ----------------------------------------------------------------- reading
+# reading
 
 
 def _stride_for(shape: tuple[int, ...], itemsize: int, target: int | None) -> int:
@@ -389,7 +390,7 @@ def read_line(ds: Dataset, opts: ViewOptions, axis: Axis | None) -> tuple[np.nda
     return _numeric(_read(ds, slices)), start, step, "read " + _describe_slices(slices)
 
 
-# ----------------------------------------------------------------- numbers to words
+# numbers to words
 
 
 def _fmt(value: float) -> str:
@@ -465,7 +466,7 @@ def to_pixels(values: np.ndarray, max_side: int) -> PILImage.Image:
     return image
 
 
-# ----------------------------------------------------------------- peaks
+# peaks
 
 
 def energy_axis(attrs: dict) -> Axis | None:
@@ -475,6 +476,10 @@ def energy_axis(attrs: dict) -> Axis | None:
             return Axis(float(attrs["energy_offset_ev"]), float(attrs["energy_dispersion_ev"]), "energy", "eV")
         if "dispersion" in attrs and ("start_energy" in attrs or "offset" in attrs):
             return Axis(float(attrs.get("start_energy", attrs.get("offset"))), float(attrs["dispersion"]), "energy", str(attrs.get("energy_units", "eV")))
+        if "Dispersion" in attrs and "OffsetEnergy" in attrs:
+            # Thermo Fisher EDS files saved through AutoScript store the first channel energy and the channel width as text in eV.
+            if float(attrs["Dispersion"]) > 0:
+                return Axis(float(attrs["OffsetEnergy"]), float(attrs["Dispersion"]), "energy", "eV")
         if "axis_offset" in attrs and "axis_scale" in attrs:
             return Axis(float(attrs["axis_offset"]), float(attrs["axis_scale"]), str(attrs.get("axis_label", "axis")), str(attrs.get("axis_units", "")))
     except (TypeError, ValueError):
@@ -485,8 +490,8 @@ def energy_axis(attrs: dict) -> Axis | None:
 @dataclass(frozen=True)
 class Peak:
     index: int  # channel in the values given
-    net: float  # counts within +-FWHM/2 above the background
-    significance: float  # net / its noise
+    net: float  # counts above the background within half a FWHM each side
+    significance: float  # net divided by its noise
 
 
 def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PEAKS) -> list[Peak]:
@@ -509,9 +514,9 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
     window = int(max(9, 4 * np.median(width), n // 40))
     window = min(window | 1, n - 1 if n % 2 == 0 else n)
     counts = data.min() >= 0 and np.allclose(data, np.round(data))
-    # Background: the mean of side bands one line width away on each side, of the data clipped near
-    # a running median. The median alone is biased low for sparse counts (it is a whole number), which
-    # turns noise into peaks; a plain running mean would count a peak as its own background.
+    # The background is the mean of side bands one line width away on each side, taken from data
+    # clipped near a running median. The median alone is biased low for sparse counts, which
+    # turns noise into peaks. A plain running mean would count a peak as its own background.
     rough = median_filter(data, size=window, mode="nearest")
     rough_scatter = 1.4826 * float(np.median(np.abs(data - rough))) or 1e-12
     clipped = np.minimum(data, rough + 3.0 * (np.sqrt(np.maximum(rough, 1.0)) if counts else rough_scatter))
@@ -530,8 +535,8 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
     scatter = max(1.4826 * float(np.median(np.abs(residual - np.median(residual)))), 1e-6 * float(data.max() - data.min()))
     summed_residual = np.concatenate(([0.0], np.cumsum(residual)))
     summed_background = np.concatenate(([0.0], np.cumsum(background)))
-    # Candidates: maxima of the residual smoothed to the expected line width (a matched filter),
-    # so a weak peak is centred by its shape, not by its noisiest channel.
+    # Candidates are maxima of the residual smoothed to the expected line width,
+    # so a weak peak is centred by its shape and not by its noisiest channel.
     smoothed = gaussian_filter1d(residual, sigma=max(0.5, float(np.median(width)) / 2.355), mode="nearest")
     candidates, _ = scipy_peaks(smoothed, distance=max(1, int(np.median(width) // 2)))
     peaks = []
@@ -540,9 +545,9 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
         lo, hi = max(0, i - half), min(n, i + half + 1)
         net = summed_residual[hi] - summed_residual[lo]
         channels, under = hi - lo, summed_background[hi] - summed_background[lo]
-        # The background under the peak is itself an estimate from `taken` channels: add its variance.
+        # The background under the peak is itself an estimate from the taken channels, so add its variance.
         spread = 1.0 + channels / max(int(taken[i]), 1)
-        if counts:  # exact Poisson tail (sparse counts have heavier tails than a Gaussian), as a z-score
+        if counts:  # exact Poisson tail as a z-score, since sparse counts have heavier tails than a Gaussian
             expected = max(under, 0.5)
             z = float(norm.isf(max(poisson.sf(round(expected + net) - 1, expected), 1e-300))) / math.sqrt(spread)
         else:
@@ -556,10 +561,10 @@ def _real(ds: Dataset) -> bool:
     return ds.dtype.kind in "uifcb"
 
 
-# ----------------------------------------------------------------- 1-D: spectra and profiles
+# 1-D spectra and profiles
 
 
-PeakRow = tuple[float, float, float, int, str]  # position, net, sigma, index, note
+PeakRow = tuple[float, float, float, int, str]  # position, net, sigma, index and note
 
 
 @dataclass(frozen=True)
@@ -571,6 +576,8 @@ class LineDomain:
     name_peaks: the peak rows (position, net, sigma, index, ""), strongest first, with each row's note filled in.
     reading: the lines that say what the peaks mean, above the peak table.
     no_peaks: the line for data with no peaks, given its total.
+    label: a peak's short label on the plot, from its note ("Au M"); "" leaves the peak unmarked. Without it every
+    peak is marked with its position. The full notes stay in the text table.
     """
 
     applies: Callable[[Dataset, Axis], bool]
@@ -578,6 +585,7 @@ class LineDomain:
     name_peaks: Callable[[list[PeakRow], np.ndarray, np.ndarray, Axis, int, Any], list[PeakRow]]
     reading: Callable[[list[PeakRow], float], list[str]]
     no_peaks: Callable[[float], str]
+    label: Callable[[str], str] | None = None
 
 
 def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, step: int = 1, domain: LineDomain | None = None) -> list[PeakRow]:
@@ -591,6 +599,27 @@ def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, step: int = 1, domain: 
     if domain is not None:
         rows = domain.name_peaks(rows, x, y, axis, step, fwhm)
     return sorted(rows, key=lambda row: row[1], reverse=True)
+
+
+MARK_GAP = 0.06  # labels closer than this share of the x range go on separate rows
+MARK_REACH = 8  # channels either side of a peak searched for its top, where its label sits
+
+
+def _mark_peaks(plot: Any, marks: list[tuple[float, float, str]], span: float) -> None:
+    """Short labels above peaks: a label that would overlap one on its left goes up a row, with a thin line down to its
+    peak, and the y range grows to keep every row inside the axes."""
+    placed: list[tuple[float, int]] = []
+    for x, y, text in sorted(marks):
+        row = 0
+        while any(r == row and abs(x - px) < MARK_GAP * max(span, 1e-12) for px, r in placed):
+            row += 1
+        placed.append((x, row))
+        plot.annotate(text, (x, y), textcoords="offset points", xytext=(0, 4 + 10 * row), ha="center", va="bottom", fontsize=7,
+                      bbox={"boxstyle": "round,pad=0.15", "facecolor": "white", "edgecolor": "none", "alpha": 0.85},
+                      arrowprops={"arrowstyle": "-", "linewidth": 0.4, "color": "0.6", "shrinkA": 0, "shrinkB": 1} if row else None)
+    if placed:
+        low, high = plot.get_ylim()
+        plot.set_ylim(low, high + (high - low) * (0.1 + 0.07 * max(r for _x, r in placed)))
 
 
 def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dataset], Axis | None], description: str = "", domain: LineDomain | None = None) -> Kind:
@@ -622,14 +651,22 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
 
     def png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str, str]:
         lines, read, x, y, a, rows = describe(ds, opts)
+        field = domain if domain is not None and domain.applies(ds, a) else None
         factor, units = (1e-3, "keV") if a.units == "eV" and x.size and np.nanmax(np.abs(x)) > 2000 else (1.0, a.units)
         figure = Figure(figsize=(6.4, 3.6), dpi=100)
         plot = figure.add_subplot()
         plot.plot(x * factor, y, linewidth=0.9)
-        for energy, _net, _sig, index, note in rows:
-            label = note.split(",")[0] if note and not note.startswith("possible") else ""
-            plot.annotate(_axis_value(energy * factor) + (f"\n{label}" if label else ""), (energy * factor, float(y[index])),
-                          textcoords="offset points", xytext=(0, 4), ha="center", fontsize=7)
+        marks = []
+        for energy, _net, _sig, index, note in rows if opts.mark_peaks else []:
+            top = float(np.nanmax(y[max(0, index - MARK_REACH):index + MARK_REACH + 1]))  # the peak's top, not its centre channel
+            if field is not None and field.label is not None:
+                name = field.label(note)
+                if not name:
+                    continue
+                marks.append((energy * factor, top, name))
+            else:
+                marks.append((energy * factor, top, _axis_value(energy * factor)))
+        _mark_peaks(plot, marks, float(np.ptp(x) * factor) if x.size else 1.0)
         plot.set_xlabel(f"{a.label} ({units})" if units else a.label)
         plot.set_ylabel(str(ds.attrs.get("units", "counts")))
         plot.set_title(ds.name, fontsize=8)
@@ -653,7 +690,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
     return Kind(name, matches, png, text, description)
 
 
-# ----------------------------------------------------------------- strings
+# strings
 
 
 def _strings_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
@@ -670,7 +707,7 @@ def _strings_text(ds: Dataset, opts: ViewOptions) -> tuple[str, str]:
     return "\n".join([f"{list(ds.shape)} text entries; the first {len(texts)}:"] + [t[:300] for t in texts]), read
 
 
-# ----------------------------------------------------------------- 2-D and up
+# 2-D and up
 
 
 def image_kind(name: str, matches: Callable[[Dataset], bool], description: str = "", colormap: str | None = None) -> Kind:
@@ -925,7 +962,7 @@ def detect(ds: Dataset) -> Kind:
     raise ValueError(f"{ds.name}: no view for a {ds.family} of shape {list(ds.shape)} and type {ds.dtype}")
 
 
-# ----------------------------------------------------------------- what the tools call
+# what the tools call
 
 
 def _map_text(node: Any) -> str:
@@ -971,7 +1008,7 @@ def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts
         body, read = kind.text(ds, opts)
     summary["read"] = read
     if ds.attrs.get("beam_current_pa") == 0:
-        summary["beam_blanked"] = True  # only detector noise; the MCP server fails such an acquisition
+        summary["beam_blanked"] = True  # only detector noise, and the MCP server fails such an acquisition
     summary["text"] = _cap("\n".join(header + [read] + ([body] if body else [])))
     return summary, png
 
@@ -992,5 +1029,5 @@ def summarize(node: Any, key: str) -> dict:
     return entry
 
 
-# The domain kinds that ship with asyncroscopy, each registering itself. Last: they are built from everything above.
+# The domain kinds that ship with asyncroscopy register themselves. Imported last because they build on everything above.
 from asyncroscopy.data.kinds import eds as _eds  # noqa: E402,F401

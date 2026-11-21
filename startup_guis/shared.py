@@ -605,7 +605,7 @@ class ManagedCommand(QObject):
         assert self.process is not None
         try:
             if os.name == 'nt':
-                # The script runs in its own process group, so this reaches only it (as SIGBREAK).
+                # The script runs in its own process group, so this reaches only it. It arrives as SIGBREAK.
                 os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(self.process.pid, signal.SIGTERM)

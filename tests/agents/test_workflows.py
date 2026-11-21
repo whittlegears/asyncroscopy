@@ -1,0 +1,1032 @@
+"""Tests for workflows built as graphs of blocks, run against a fake instrument."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from langgraph.graph import END, START, StateGraph
+
+from asyncroscopy.agents.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
+from asyncroscopy.agents.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
+from asyncroscopy.agents.workflows.values import evaluate
+
+
+class FakeServer:
+    """An MCP endpoint in memory. ``tools`` maps a tool name to a function that returns the reply text."""
+
+    def __init__(self, tools: dict) -> None:
+        self.tools, self.log = tools, []
+
+    async def list_tools(self):
+        return [SimpleNamespace(name=name) for name in self.tools]
+
+    async def call(self, name, arguments=None):
+        self.log.append((name, dict(arguments or {})))
+        text = self.tools[name](dict(arguments or {}))
+        text = text if isinstance(text, str) else json.dumps(text)
+        return SimpleNamespace(is_error=text.startswith("Error"), structured_content=None, content=[SimpleNamespace(text=text)])
+
+    def names(self):
+        return [name for name, _ in self.log]
+
+
+def twin(on_acquire=None):
+    """A fake microscope and analysis server. ``on_acquire(n)`` may return a reply for acquisition n."""
+    state = {"stage": [1e-6, 2e-6, 0.0, 0.0, 0.0], "shift": [0.0, 0.0], "shift_limit": 1e-6, "fov": 5.8e-9, "blanked": True, "taken": 0,
+             "beam_on_at_acquire": []}
+
+    def move(args):
+        state["stage"] = list(args["position"])
+        return "ok"
+
+    def shift(args):
+        state["shift"] = list(args["shift"])
+        return "ok"
+
+    def set_fov(args):
+        state["fov"] = float(args["fov"])
+        return "ok"
+
+    def acquire(args):
+        state["beam_on_at_acquire"].append(not state["blanked"])
+        if on_acquire:
+            reply = on_acquire(state["taken"])
+            if reply:
+                return reply
+        state["taken"] += 1
+        return f"stem_image_HAADF_{state['taken']:04d}.h5\nimage 256 x 256"
+
+    def blank(value):
+        def set_it(args):
+            state["blanked"] = value
+            return "ok"
+        return set_it
+
+    instrument = FakeServer({
+        "Twin_get_stage": lambda a: json.dumps(state["stage"]),
+        "Twin_move_stage": move,
+        "Twin_get_image_shift": lambda a: json.dumps(state["shift"]),
+        "Twin_get_image_shift_limit": lambda a: json.dumps(state["shift_limit"]),
+        "Twin_set_image_shift": shift,
+        "Twin_set_fov": set_fov,
+        "Twin_get_fov": lambda a: json.dumps(state["fov"]),
+        "Twin_unblank_beam": blank(False),
+        "Twin_blank_beam": blank(True),
+        "Twin_acquire_scanned_image": acquire,
+    })
+    analysis = FakeServer({
+        "collect_map_run": lambda a: {"run": "map_abc", "tiles": len(a["image_keys"])},
+        "assemble_map": lambda a: {"job_id": "j1", "state": "running"},
+        "analysis_job_status": lambda a: {"job_id": "j1", "state": "done"},
+        "analysis_job_results": lambda a: {"result_keys": {"map": "map_abc_map_v1"}, "summary": {"tiles": 4}},
+    })
+    return instrument, analysis, state
+
+
+INPUTS = {"size_m": 5.0e-7, "fov_m": 3.0e-7}  # a 2 x 2 grid
+SHIPPED = {"map_grid", "map_4x4", "map_sample", "spectrum_at_point", "spectrum_on_feature", "spectrum_at_best_region"}
+
+
+def run(coro):
+    return asyncio.run(coro)
+
+
+# The graph and its checks
+def test_the_map_is_a_langgraph_graph_built_from_blocks_and_lints_clean():
+    workflow = get_workflow("map_grid")
+    assert "map_grid" in all_workflows()
+    # The module source is what people see and what gets hashed.
+    assert "graph = StateGraph(WorkflowState)" in workflow.source() and "graph.add_conditional_edges(" in workflow.source()
+    compiled = workflow.compile(None)
+    assert {"plan", "tile", "home", "run", "stitch"} <= set(compiled.get_graph().nodes)
+    blueprint = workflow.blueprint()
+    assert blueprint["nodes"]["tile"]["block"] == "acquire_tile" and ["START", "plan"] in blueprint["edges"]
+    assert {"from": "tile", "when": "tile.remaining > 0", "to": "tile", "otherwise": "home", "max_visits": 2000} in blueprint["edges"]
+    result = workflow.lint()
+    assert result["ok"], result["problems"]
+    assert result["acts"] and "acquire_tile" in result["blocks"] and len(result["hash"]) == 64
+    assert "*_move_stage" in result["tools"] and "assemble_map" in result["tools"]
+
+
+def two_tiles(name: str, summary: str = "Two blocks from the shelf: plan a grid, then take its tiles.", **changes) -> Workflow:
+    """A small workflow built from the shipped blocks in plain LangGraph."""
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("plan", use.block(changes.get("plan_block", "plan_grid"), size_m="{inputs.size_m}", fov_m=3e-7, move_by="stage"))
+        graph.add_node("tile", use.block("acquire_tile", **changes.get("tile", {"tiles": "{plan.tiles}", "fov_m": 3e-7, "stage_rest": "{plan.stage_rest}"})))
+        graph.add_edge(START, "plan")
+        graph.add_edge("plan", "tile")
+        bound = changes.get("max_visits", 400)
+        graph.add_conditional_edges("tile", use.when(changes.get("when", "tile.remaining > 0"), then="tile", otherwise=END, max_visits=bound))
+        return graph
+    return Workflow(name=name, summary=summary, inputs={"size_m": {"type": "number", "default": 5e-7, "min": 1e-7, "max": 5e-6}},
+                    budget={"max_tool_calls": 200}, build=build)
+
+
+def test_a_new_workflow_is_more_langgraph_code_over_the_same_blocks(tmp_path):
+    workflow = two_tiles("two_tiles")
+    assert workflow.lint()["ok"], workflow.lint()["problems"]
+    instrument, analysis, state = twin()
+    record = run(run_workflow(workflow, {}, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done" and state["taken"] == 4 and state["blanked"], record
+    assert record["blueprint"]["nodes"]["plan"]["block"] == "plan_grid"
+    assert analysis.log == []  # this workflow has no stitch step
+    # Changing a condition changes the hash.
+    assert two_tiles("two_tiles").hash() == workflow.hash() != two_tiles("two_tiles", when="tile.remaining > 1").hash()
+
+
+def test_lint_names_each_problem():
+    problems = " | ".join(two_tiles("bad", tile={"tiles": "{plan.nothing}", "fov_m": "wide", "speed": 3}).lint()["problems"])
+    assert "no output 'nothing'" in problems
+    assert "'wide' is not a number" in problems
+    assert "no input(s) ['speed']" in problems
+    assert "needs input(s) ['stage_rest']" in problems
+    unknown = two_tiles("bad", plan_block="no_such_block").lint()
+    assert not unknown["ok"] and "no block 'no_such_block'" in unknown["problems"][0] and unknown["hash"] is None
+
+
+def test_lint_refuses_an_unbounded_loop_python_in_a_condition_and_a_node_that_is_not_a_block():
+    assert any("has no bound" in p for p in two_tiles("bad", max_visits=None).lint()["problems"])
+    assert any("is not a condition" in p for p in two_tiles("bad", when="__import__('os').system('x')").lint()["problems"])
+
+    def build(use):
+        graph = StateGraph(WorkflowState)
+
+        async def anything(state):
+            return {}
+        graph.add_node("plan", use.block("plan_grid", size_m=5e-7, fov_m=3e-7))
+        graph.add_node("free", anything)
+        graph.add_edge(START, "plan")
+        graph.add_conditional_edges("plan", lambda state: "free", ["free"])
+        graph.add_edge("free", END)
+        return graph
+    problems = " | ".join(Workflow(name="loose", summary="A node and a router written by hand.", build=build).lint()["problems"])
+    assert "node free is not a block" in problems and "a conditional edge not made with use.when" in problems
+
+
+def test_a_node_knows_its_name_from_the_graph_and_langgraph_knows_where_a_condition_leads():
+    # One block is made once and added under two names. Each node reads its own name when it runs.
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        read = use.block("run_tool", tool="*_get_stage")
+        graph.add_node("first", read)
+        graph.add_node("second", read)
+        graph.add_edge(START, "first")
+        graph.add_conditional_edges("first", use.when("first.result != 0", then="second", otherwise=END))
+        graph.add_edge("second", END)
+        return graph
+    workflow = Workflow(name="twice", summary="Read the stage twice.", build=build)
+    assert workflow.lint()["ok"], workflow.lint()["problems"]
+    assert {"from": "first", "when": "first.result != 0", "to": "second", "otherwise": "END"} in workflow.blueprint()["edges"]
+    drawn = workflow.compile(None).get_graph().draw_mermaid()
+    assert "first -.-> second" in drawn and "first -.-> __end__" in drawn  # the targets come from the router, not a list
+
+    def two_conditions(use):
+        graph = build(use)
+        graph.add_conditional_edges("first", use.when("first.result == 0", then="second", otherwise=END))
+        return graph
+    problems = " | ".join(Workflow(name="split", summary="Two conditions on one node.", build=two_conditions).lint()["problems"])
+    assert "node first has a condition and 1 other edge(s) leaving it" in problems
+
+
+def test_a_workflow_in_the_old_shape_is_told_the_new_one():
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE, check_source
+
+    old = TEMPLATE.replace('use.block("plan_grid", ', 'use.block("plan", "plan_grid", ').replace(
+        'use.when("tile.remaining > 0", then="tile", otherwise="home", max_visits=400))',
+        'use.when("tile", "tile.remaining > 0", then="tile", otherwise="home", max_visits=400), ["tile", "home"])')
+    problems = " | ".join(check_source(old))
+    assert 'use.block takes the block\'s name as text' in problems and 'add_conditional_edges("name", use.when("condition"' in problems
+
+
+def test_lint_reports_what_langgraph_refuses_and_the_shapes_it_lets_through():
+    def shaped(*edges):
+        def build(use):
+            graph = StateGraph(WorkflowState)
+            graph.add_node("first", use.block("run_tool", tool="*_get_stage"))
+            graph.add_node("second", use.block("run_tool", tool="*_get_fov"))
+            for edge in edges:
+                graph.add_edge(*edge)
+            return graph
+        return Workflow(name="shaped", summary="Two reads.", build=build).lint()
+
+    unknown = shaped((START, "first"), ("first", "nowhere"))
+    assert unknown["hash"] is None and "unknown node" in unknown["problems"][0]
+    assert "entrypoint" in shaped(("first", "second"), ("second", END))["problems"][0]
+    assert shaped((START, "first"), ("first", END), ("second", END))["problems"] == ["node second is never reached from START"]
+    assert "node second has no edge leaving it" in shaped((START, "first"), ("first", "second"))["problems"][0]
+
+
+def test_lint_against_the_endpoints_tools():
+    instrument, analysis, _ = twin()
+    names = [n for n in instrument.tools if n != "Twin_move_stage"]
+    problems = get_workflow("map_grid").lint(names, list(analysis.tools))["problems"]
+    assert problems == ["the instrument endpoint offers no tool matching *_move_stage, which a block of this workflow calls"]
+
+
+def test_inputs_outside_their_range_are_refused():
+    workflow = get_workflow("map_grid")
+    assert workflow.check_inputs({"size_m": "4e-7"})["size_m"] == 4e-7
+    with pytest.raises(ValueError, match="outside its range"):
+        workflow.check_inputs({"size_m": 1.0})
+    with pytest.raises(ValueError, match="not \\['dwell'\\]"):
+        workflow.check_inputs({"dwell": 1e-6})
+
+
+def test_conditions():
+    assert evaluate("tile.remaining > 0 and not inputs.dry", {"dry": False}, {"tile": {"remaining": 2}}) is True
+    assert evaluate("tile.remaining > 0", {}, {"tile": {"remaining": 0}}) is False
+
+
+def test_blocks_describe_their_ports():
+    blocks = {b["name"]: b for b in describe_blocks()}
+    assert {"plan_grid", "acquire_tile", "collect_run", "stitch_map", "return_stage"} <= set(blocks)
+    assert blocks["acquire_tile"]["outputs"]["remaining"] == "integer"
+
+
+# Running
+def test_map_workflow_runs_tile_by_tile_and_stitches(tmp_path):
+    instrument, analysis, state = twin()
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done", record
+    assert record["outputs"]["plan"]["count"] == 4
+    assert len(record["outputs"]["tile"]["keys"]) == 4 and record["visits"]["tile"] == 4
+    assert record["outputs"]["stitch"]["map"] == "map_abc_map_v1"
+    assert state["beam_on_at_acquire"] == [True] * 4 and state["blanked"]
+    # The run puts back the field of view it found.
+    fovs = [args["fov"] for name, args in instrument.log if name == "Twin_set_fov"]
+    assert fovs == [3e-7] * 4 + [5.8e-9] and state["fov"] == 5.8e-9
+    # With image shift the stage never moves.
+    assert "Twin_move_stage" not in instrument.names() and state["stage"][:2] == [1e-6, 2e-6] and state["shift"] == [0.0, 0.0]
+    every = [args["shift"] for name, args in instrument.log if name == "Twin_set_image_shift"]
+    assert every[1:8:2] == [[0.0, 0.0]] * 4 and every[8] == [0.0, 0.0]  # the shift is reset after every tile
+    shifts = every[0:8:2]
+    assert shifts[0][0] < shifts[1][0] and shifts[2][0] > shifts[3][0]  # serpentine
+    assert max(abs(v) for xy in shifts for v in xy) == pytest.approx(1.05e-7)
+    # Each tile keeps its centre so images with no recorded position can still be mapped.
+    read_at = record["outputs"]["tile"]["stage_xy_m"]
+    assert read_at == [[1e-6 + dx, 2e-6 + dy] for dx, dy in shifts]
+    assert analysis.log[0] == ("collect_map_run", {"image_keys": record["outputs"]["tile"]["keys"], "stage_xy_m": read_at, "fov_m": 3e-7,
+                                                   "plan": {"workflow": "map_grid", "size_m": 5e-7, "fov_m": 3e-7, "overlap": 0.3}})
+    assert "stage_sigma_m" not in analysis.log[1][1]  # 0 means the analysis server default
+
+
+def test_the_map_can_move_the_stage_instead_and_a_square_beyond_the_beams_reach_is_refused(tmp_path):
+    instrument, analysis, state = twin()
+    record = run(run_workflow("map_grid", {**INPUTS, "move_by": "stage"}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "a"))
+    assert record["state"] == "done", record
+    moves = [args["position"][:2] for name, args in instrument.log if name == "Twin_move_stage"]
+    assert len(moves) == 5 and moves[0][0] < moves[1][0] and moves[2][0] > moves[3][0] and moves[4] == [1e-6, 2e-6]
+    assert "Twin_set_image_shift" not in instrument.names() and record["outputs"]["tile"]["stage_xy_m"] == moves[:4]
+
+    instrument, analysis, state = twin()
+    far = run(run_workflow("map_grid", {"size_m": 4e-6, "fov_m": 5e-7}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "b"))
+    assert far["state"] == "failed" and "over the limit of 1e-06 m" in far["error"] and "move_by stage" in far["error"]
+    assert state["taken"] == 0 and not {"Twin_set_image_shift", "Twin_move_stage"} & set(instrument.names())
+    bad = run(run_workflow("map_grid", {**INPUTS, "move_by": "teleport"}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
+    assert bad["state"] == "failed" and "move_by must be one of" in bad["error"]
+
+
+def test_the_stitch_is_given_the_stage_error_when_the_caller_states_it(tmp_path):
+    instrument, analysis, _ = twin()
+    record = run(run_workflow("map_grid", {**INPUTS, "stage_sigma_m": 2e-7}, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done", record
+    assert analysis.log[1] == ("assemble_map", {"run": "map_abc", "refine": True, "stage_sigma_m": 2e-7})
+
+
+def test_a_refused_run_makes_no_call(tmp_path):
+    instrument, analysis, _ = twin()
+    record = run(run_workflow("map_grid", {"size_m": 1.0}, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "refused" and "outside its range" in record["problems"][0]
+    assert instrument.log == []
+
+
+def test_a_failed_tile_blanks_the_beam_and_resumes_at_that_tile(tmp_path):
+    failing = {"on": True}
+    instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 2 and failing["on"] else None)
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "failed" and "detector timeout" in record["error"]
+    assert state["blanked"] and record["cleanup"] == [{"tool": "*_blank_beam", "ok": True}]
+    assert len(record["outputs"]["tile"]["keys"]) == 2 and record["at_node"] == ["tile"]
+    # A failed run leaves the instrument as it found it.
+    assert state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
+
+    failing["on"] = False
+    before = len(instrument.log)
+    record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done" and len(record["outputs"]["tile"]["keys"]) == 4
+    assert state["taken"] == 4  # the two finished tiles were not taken again
+    assert [a["fov"] for n, a in instrument.log[before:] if n == "Twin_set_fov"] == [3e-7, 3e-7, 5.8e-9]  # set again, then put back
+    assert state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
+    assert read_run(record["run_id"], tmp_path)["state"] == "done"
+
+
+def test_a_scan_running_at_the_console_is_named_and_the_run_puts_everything_back(tmp_path):
+    busy = {"on": True}
+    reply = "Error calling tool 'Twin_acquire_scanned_image': ApplicationServerException: Another scantask is already active"
+    instrument, analysis, state = twin(lambda n: reply if busy["on"] else None)
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "failed" and "a scan is already running on the microscope" in record["error"] and "resume" in record["error"]
+    assert state["taken"] == 0 and state["blanked"] and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
+    busy["on"] = False
+    record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done" and state["taken"] == 4 and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
+
+
+def test_stop_is_seen_before_the_next_call_and_the_run_resumes(tmp_path):
+    instrument, analysis, state = twin()
+
+    def stop_after_first(n):
+        if n == 1:
+            stop_workflow("stopme", tmp_path)
+        return None
+
+    instrument.tools["Twin_acquire_scanned_image"] = (lambda inner: lambda a: (stop_after_first(state["taken"]), inner(a))[1])(instrument.tools["Twin_acquire_scanned_image"])
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path, run_id="stopme"))
+    assert record["state"] == "stopped" and state["blanked"]
+    assert state["taken"] == 2 and len(record["outputs"]["tile"]["keys"]) == 2
+    record = run(resume_workflow("stopme", instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "done" and state["taken"] == 4
+
+
+def test_the_tool_call_budget_stops_a_run(tmp_path):
+    instrument, analysis, state = twin()
+    import dataclasses
+
+    tight = dataclasses.replace(get_workflow("map_grid"), budget={"max_tool_calls": 8})
+    record = run(run_workflow(tight, INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "stopped" and "budget" in record["error"] and state["blanked"]
+
+
+def test_a_resumed_run_has_only_the_budget_its_earlier_attempts_left(tmp_path):
+    import dataclasses
+
+    instrument, analysis, state = twin()
+    tight = dataclasses.replace(get_workflow("map_grid"), budget={"max_tool_calls": 15})
+    record = run(run_workflow(tight, INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "stopped" and "budget" in record["error"] and record["calls"] >= 15 and record["seconds"] >= 0
+    taken = state["taken"]
+    record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path, find=lambda name: tight))
+    assert record["state"] == "stopped" and "budget" in record["error"] and state["taken"] == taken
+
+
+def test_a_number_that_is_not_finite_is_refused_before_anything_runs(tmp_path):
+    workflow = get_workflow("map_grid")
+    for bad in ({"fov_m": float("nan")}, {"fov_m": "nan"}, {"size_m": float("inf")}, {"tiles_per_side": float("inf")}, {"tiles_per_side": "nan"}):
+        with pytest.raises(ValueError, match="must be a"):
+            workflow.check_inputs(bad)
+    instrument, analysis, _ = twin()
+    record = run(run_workflow("map_grid", {"fov_m": "nan"}, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "refused" and instrument.log == []
+
+
+def test_the_grid_is_held_to_the_instruments_own_image_shift_limit(tmp_path):
+    instrument, analysis, state = twin()
+    state["shift_limit"] = 1e-7  # the 2 x 2 grid needs 1.05e-7 m
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path / "a"))
+    assert record["state"] == "failed" and "over the limit of 1e-07 m" in record["error"]
+    assert state["taken"] == 0 and "Twin_set_image_shift" not in instrument.names()
+
+    instrument, analysis, state = twin()
+    state["shift_limit"] = 5e-6  # a wider instrument but the workflow asks for less
+    record = run(run_workflow("map_grid", {**INPUTS, "max_shift_m": 1e-7}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "b"))
+    assert record["state"] == "failed" and "over the limit of 1e-07 m" in record["error"]
+    record = run(run_workflow("map_grid", {"size_m": 4e-6, "fov_m": 5e-7}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
+    assert record["state"] == "done", record  # within this instrument's reach
+
+
+def test_a_stage_map_that_fails_puts_the_stage_back(tmp_path):
+    instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
+    record = run(run_workflow("map_grid", {**INPUTS, "move_by": "stage"}, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "failed" and "detector timeout" in record["error"]
+    assert state["stage"][:2] == [1e-6, 2e-6] and state["fov"] == 5.8e-9 and state["blanked"]
+
+
+def test_a_blank_that_fails_never_hides_why_the_tile_failed(tmp_path):
+    instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 0 else None)
+    instrument.tools["Twin_blank_beam"] = lambda a: "Error: blanker offline"
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path / "a"))
+    assert record["state"] == "failed" and "detector timeout" in record["error"] and "could not be blanked" in record["error"]
+
+    instrument, analysis, state = twin()
+    instrument.tools["Twin_blank_beam"] = lambda a: "Error: blanker offline"
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path / "b"))
+    assert record["state"] == "failed" and "stem_image_HAADF_0001.h5" in record["error"] and "could not be blanked" in record["error"]
+
+
+def test_a_restore_that_fails_is_named_in_the_record(tmp_path):
+    instrument, analysis, state = twin()
+    shift = instrument.tools["Twin_set_image_shift"]
+    instrument.tools["Twin_set_image_shift"] = lambda a: "Error: shift refused" if a["shift"] == [0.0, 0.0] else shift(a)
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["unrestored"] and record["unrestored"][0]["tool"] == "*_set_image_shift" and "shift refused" in record["unrestored"][0]["error"]
+    assert record["state"] == "failed" and state["blanked"]  # The next shift back to the centre fails the run and the beam is still blanked.
+
+
+def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
+    import inspect
+
+    from asyncroscopy.agents.workflows import graph as graph_module
+
+    before = get_workflow("map_grid").hash()
+    real = inspect.getsource
+    monkeypatch.setattr(graph_module.inspect, "getsource",
+                        lambda obj: real(obj) + ("\n# _expose changed" if getattr(obj, "__name__", "") == "asyncroscopy.agents.workflows.shipped_blocks" else ""))
+    assert get_workflow("map_grid").hash() != before
+
+
+# The MCP server an agent uses
+class FakeEndpoints:
+    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1"):
+        self.instrument, self.analysis, self.simulated, self.stack_id = instrument, analysis, simulated, stack_id
+
+    async def open(self, run_id=None):
+        return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id}
+
+
+def served(tmp_path, simulated=True, **kwargs):
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+
+    instrument, analysis, state = twin(**kwargs)
+    server = WorkflowServer(FakeEndpoints(instrument, analysis, simulated), state_dir=tmp_path / "state")
+    return server, instrument, state
+
+
+async def call(client, tool, **arguments):
+    result = await client.call_tool(tool, arguments)
+    return result.structured_content if result.structured_content is not None else json.loads(result.content[0].text)
+
+
+def test_an_agent_lists_runs_and_reads_a_workflow_over_mcp(tmp_path):
+    from fastmcp import Client
+
+    server, instrument, state = served(tmp_path)
+
+    async def go():
+        async with Client(server.mcp) as client:
+            names = {t.name for t in await client.list_tools()}
+            assert {"list_workflows", "run_workflow", "workflow_status", "stop_workflow", "resume_workflow", "list_blocks"} <= names
+            assert "propose_workflow" in names
+            listed = await call(client, "list_workflows")
+            maps = {w["name"]: w for w in listed["workflows"]}["map_grid"]
+            assert "size_m" in maps["inputs"]
+            shown = await call(client, "get_workflow", name="map_grid")
+            assert "StateGraph(WorkflowState)" in shown["source"] and shown["graph"]["nodes"]["stitch"]["block"] == "stitch_map"
+            done = await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
+            assert done["state"] == "done" and done["outputs"]["stitch"]["map"] == "map_abc_map_v1"
+            assert len(done["outputs"]["plan"]["tiles"]) == 4
+            again = await call(client, "workflow_status", run_id=done["run_id"])
+            assert again["state"] == "done"
+            refused = await call(client, "run_workflow", name="map_grid", inputs={"size_m": 1.0})
+            assert refused["state"] == "refused" and "outside its range" in refused["problems"][0]
+            assert (await call(client, "run_workflow", name="nope"))["state"] == "refused"
+    run(go())
+    assert state["taken"] == 4 and state["blanked"]
+
+
+def test_the_server_runs_nothing_on_a_stack_that_is_not_simulated(tmp_path):
+    from fastmcp import Client
+
+    for flag in (False, None):
+        server, instrument, state = served(tmp_path / str(flag), simulated=flag)
+
+        async def go():
+            async with Client(server.mcp) as client:
+                return await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
+        reply = run(go())
+        assert reply["state"] == "refused" and "simulated" in reply["problems"][0]
+        assert instrument.log == []
+
+
+def test_a_failed_run_is_resumed_over_mcp_and_a_changed_workflow_is_not(tmp_path):
+    from fastmcp import Client
+
+    failing = {"on": True}
+    server, instrument, state = served(tmp_path, on_acquire=lambda n: "Error: detector timeout" if n == 1 and failing["on"] else None)
+
+    async def go():
+        async with Client(server.mcp) as client:
+            failed = await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
+            assert failed["state"] == "failed" and "resume_workflow" in failed["next"]
+            failing["on"] = False
+            resumed = await call(client, "resume_workflow", run_id=failed["run_id"])
+            assert resumed["state"] == "done"
+            assert "plan_grid" in {b["name"] for b in (await call(client, "list_blocks"))["blocks"]}
+    run(go())
+    assert state["taken"] == 4
+
+    # A run only resumes with the code it started with.
+    first = register_workflow(two_tiles("changing"))
+    instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
+    record = run(run_workflow("changing", {}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
+    assert record["state"] == "failed"
+    from asyncroscopy.agents.workflows import graph as registry
+
+    registry._WORKFLOWS["changing"] = two_tiles("changing", when="tile.remaining > 1")
+    try:
+        with pytest.raises(ValueError, match="has changed since run"):
+            run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
+    finally:
+        registry._WORKFLOWS.pop("changing", None)
+    assert first.name == "changing"
+
+
+def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_purpose(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.agents.workflows.runner import twin_only_problem
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+
+    assert twin_only_problem({"simulated": None}) and twin_only_problem({}) and not twin_only_problem({"simulated": True})
+    assert twin_only_problem({"simulated": False}, hardware=True) is None
+    instrument, analysis, state = twin()
+    server = WorkflowServer(FakeEndpoints(instrument, analysis, None), state_dir=tmp_path / "state", hardware=True)
+
+    async def go():
+        async with Client(server.mcp) as client:
+            return await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
+    reply = run(go())
+    assert reply["state"] != "refused" and instrument.log
+
+
+# Workflow tools on the pyTEMlib analysis server
+def test_the_analysis_server_can_carry_the_workflow_tools_for_a_chat_client(tmp_path):
+    from fastmcp import Client
+    from asyncroscopy.agents.workflows import analysis_host
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.analysis_server import create_server
+
+    instrument, analysis, state = twin()
+    mcp, _ = create_server(local_roots=[tmp_path])
+    workflows = WorkflowServer(FakeEndpoints(instrument, analysis, simulated=True), state_dir=tmp_path / "state")
+    added = analysis_host.add_workflow_tools(mcp, workflows)
+    assert set(added) == set(analysis_host.OFFERED)
+
+    async def go():
+        async with Client(mcp) as client:
+            listed = {t.name: t for t in await client.list_tools()}
+            assert {"assemble_map", "collect_map_run", "run_workflow", "workflow_status"} <= set(listed)
+            assert {"propose_workflow", "list_blocks"} <= set(listed) and listed["list_blocks"].annotations.read_only_hint
+            assert listed["list_workflows"].annotations.read_only_hint and listed["map_info"].annotations.read_only_hint
+            assert not (listed["run_workflow"].annotations and listed["run_workflow"].annotations.read_only_hint)
+            return await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
+    done = run(go())
+    assert done["state"] == "done" and state["taken"] == 4 and state["blanked"]
+    assert analysis_host.main(["--host", "0.0.0.0", "--workflows-hardware"]) == 1
+
+
+# Workflows inside the agent process
+def test_the_agent_server_runs_workflows_itself_so_no_workflow_server_is_needed(tmp_path):
+    pytest.importorskip("langchain_core")
+    from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer, main
+
+    plain = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False)
+    assert plain.workflows is None
+
+    server = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False, workflows=True)
+    assert server.workflows.endpoints.mcp_url == "http://127.0.0.1:8000/mcp" and not server.workflows.hardware
+    instrument, analysis, state = twin()
+    server.workflows.endpoints = FakeEndpoints(instrument, analysis, simulated=True)
+    server.workflows.state_dir = tmp_path
+    tools = {t.name: t for t in server.workflow_tools()}
+    assert {"list_workflows", "run_workflow", "workflow_status", "stop_workflow", "resume_workflow"} <= set(tools)
+    done = run(tools["run_workflow"].ainvoke({"name": "map_grid", "inputs": INPUTS}))
+    assert done["state"] == "done" and state["taken"] == 4 and state["blanked"]
+
+    # Real hardware needs the hardware flag and a loopback host.
+    server.workflows.endpoints = FakeEndpoints(*twin()[:2], simulated=None)
+    assert run(tools["run_workflow"].ainvoke({"name": "map_grid", "inputs": INPUTS}))["state"] == "refused"
+    assert AgentMCPServer("agent", [], verbose=False, workflows_hardware=True).workflows.hardware
+    assert main(["--name", "a", "--transport", "streamable-http", "--http-host", "0.0.0.0", "--http-port", "8002", "--workflows-hardware"]) == 1
+
+
+# Workflows written by an agent and their approval
+ASKED = "Please create a workflow that takes the tiles of a square and stops, without stitching."
+
+
+def test_an_agent_written_workflow_is_held_to_graph_wiring_before_any_of_it_runs(tmp_path):
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE, NotAWorkflow, check_source, load_source
+
+    assert check_source(TEMPLATE) == []
+    workflow = load_source(TEMPLATE)  # the example shown to models must itself pass
+    assert workflow.name == "tiles_only" and workflow.lint()["ok"] and workflow.source() == TEMPLATE
+
+    marker = tmp_path / "ran"
+    hostile = {
+        "an import": TEMPLATE.replace("from langgraph.graph import", "import os\nfrom langgraph.graph import"),
+        "a call in build": TEMPLATE.replace("    return graph", f"    open({str(marker)!r}, 'w')\n    return graph"),
+        "a call as an input": TEMPLATE.replace('move_by="stage"', f"move_by=open({str(marker)!r}, 'w')"),
+        "a call at the top": TEMPLATE.replace("INPUTS = {", f"X = open({str(marker)!r}, 'w')\nINPUTS = {{"),
+        "a second function": TEMPLATE.replace("def build(", "def other():\n    pass\n\n\ndef build("),
+        "a hand-made node": TEMPLATE.replace('graph.add_edge(START, "plan")', 'graph.add_node("x", lambda s: s)\n    graph.add_edge(START, "plan")'),
+        "a hand-made router": TEMPLATE.replace('use.when("tile.remaining > 0", then="tile", otherwise="home", max_visits=400)', "lambda s: 'home'"),
+        "an attribute": TEMPLATE.replace("return graph", "return graph.__class__"),
+        "a dunder name": TEMPLATE.replace("inputs=INPUTS", "inputs=__builtins__"),
+        "a comprehension": TEMPLATE.replace('"min": 1.0e-7', '"min": [x for x in (1,)]'),
+    }
+    for what, source in hostile.items():
+        assert source != TEMPLATE, what
+        problems = check_source(source)
+        assert problems and all(p.startswith("line ") or "exactly one" in p for p in problems), (what, problems)
+        with pytest.raises(NotAWorkflow):
+            load_source(source)
+    assert not marker.exists()  # no refused module ran any code
+    assert "not valid Python" in check_source("def build(:")[0] and check_source("")
+
+
+def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_approves_it_once(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.agents.workflows import Library
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    instrument, analysis, state = twin()
+    on_twin = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "twin", library=library)
+    hardware_instrument, hardware_analysis, hardware_state = twin()
+    on_hardware = WorkflowServer(FakeEndpoints(hardware_instrument, hardware_analysis, None, "tango://scope-a:9094"), state_dir=tmp_path / "hw",
+                                 library=library, hardware=True)
+    inputs = {"size_m": 5e-7}
+
+    async def as_the_agent():
+        async with Client(on_twin.mcp) as client:
+            shown = await call(client, "list_blocks")
+            assert "plan_grid" in {b["name"] for b in shown["blocks"]} and "StateGraph(WorkflowState)" in shown["example"] and shown["rules"]
+            # A proposal without the user's request is refused.
+            for missing in ("", "   ", "a map"):
+                unasked = await call(client, "propose_workflow", user_request=missing, source=TEMPLATE)
+                assert not unasked["ok"] and "written for a task the user gave" in unasked["problems"][0] and unasked["draft"] is None
+            assert {w["name"] for w in (await call(client, "list_workflows"))["workflows"]} == SHIPPED
+            bad = await call(client, "propose_workflow", user_request=ASKED, source=TEMPLATE.replace('"plan_grid"', '"plan_gird"'))
+            assert not bad["ok"] and "no block 'plan_gird'" in " ".join(bad["problems"]) and bad["draft"] is None
+            unsafe = await call(client, "propose_workflow", user_request=ASKED, source=TEMPLATE.replace("    return graph", "    exit()\n    return graph"))
+            assert not unsafe["ok"] and "inside build only" in unsafe["problems"][0]
+            taken = await call(client, "propose_workflow", user_request=ASKED, source=TEMPLATE.replace('name="tiles_only"', 'name="map_grid"'))
+            assert not taken["ok"] and "shipped workflow's name" in taken["problems"][0]
+            kept = await call(client, "propose_workflow", user_request=ASKED, source=TEMPLATE)
+            assert kept["ok"] and kept["status"] == "draft" and "approve tiles_only" in kept["next"] and "waiting for a person" in kept["next"]
+            waiting = {w["name"]: w for w in (await call(client, "list_workflows"))["workflows"]}["tiles_only"]
+            assert waiting["requested"] == ASKED
+            assert {w["name"]: w["status"] for w in (await call(client, "list_workflows"))["workflows"]} == {**{name: "shipped" for name in SHIPPED}, "tiles_only": "draft"}
+            assert (await call(client, "get_workflow", name="tiles_only"))["source"] == TEMPLATE
+            return await call(client, "run_workflow", name="tiles_only", inputs=inputs)
+    rehearsed = run(as_the_agent())
+    assert rehearsed["state"] == "done" and state["taken"] == 4 and state["blanked"]  # a draft runs on the twin without approval
+
+    async def on_the_instrument(tool="run_workflow", **arguments):
+        async with Client(on_hardware.mcp) as client:
+            return await call(client, tool, **arguments)
+    refused = run(on_the_instrument(name="tiles_only", inputs=inputs))
+    assert refused["state"] == "refused" and "nobody has approved it" in refused["problems"][0] and hardware_instrument.log == []
+    assert run(on_the_instrument(name="map_grid", inputs=INPUTS))["state"] == "done"  # a shipped workflow needs no approval
+    taken_by_shipped = hardware_state["taken"]
+
+    with pytest.raises(ValueError, match="names the person"):
+        library.approve("tiles_only", "")
+    record = library.approve("tiles_only", "sam")  # only a person approves and no tool can
+    assert record["by"] == "sam" and record["hash"] == library.workflow("tiles_only").hash() and library.find("tiles_only")[1] == "approved"
+    # The approval records the rehearsal run on the twin.
+    assert record["rehearsed"]["run_id"] == rehearsed["run_id"] and record["instrument"] == "any" and record["expires"] is None
+    assert record["request"] == ASKED
+    assert "approve" not in " ".join(t.__name__ for t in on_hardware.tools())
+    for _ in range(2):  # one approval covers later runs
+        assert run(on_the_instrument(name="tiles_only", inputs=inputs))["state"] == "done"
+    assert hardware_state["taken"] == taken_by_shipped + 8
+    listed = {w["name"]: w for w in run(on_the_instrument("list_workflows"))["workflows"]}
+    assert listed["tiles_only"]["status"] == "approved" and listed["tiles_only"]["approved_by"] == "sam"
+
+    # Changed code or a revoked approval makes it a draft again.
+    approved_file = tmp_path / "library" / "approved" / "tiles_only.py"
+    approved_file.write_text(TEMPLATE.replace("max_visits=400", "max_visits=399"), encoding="utf-8")
+    assert library.find("tiles_only")[1] == "draft"
+    assert run(on_the_instrument(name="tiles_only", inputs=inputs))["state"] == "refused"
+    approved_file.write_text(TEMPLATE, encoding="utf-8")
+    assert library.find("tiles_only")[1] == "approved"
+    assert library.revoke("tiles_only") == {"name": "tiles_only", "status": "draft"}
+    assert run(on_the_instrument(name="tiles_only", inputs=inputs))["state"] == "refused"
+    assert (tmp_path / "library" / "drafts" / "tiles_only.py").exists()  # revoking keeps the text
+
+    # An approval can be tied to one instrument and can expire.
+    library.approve("tiles_only", "sam", instrument="tango://scope-b:9094")
+    elsewhere = run(on_the_instrument(name="tiles_only", inputs=inputs))
+    assert elsewhere["state"] == "refused" and "approved for the instrument tango://scope-b:9094, not this one (tango://scope-a:9094)" in elsewhere["problems"][0]
+    library.approve("tiles_only", "sam", instrument="tango://scope-a:9094", days=30)
+    assert run(on_the_instrument(name="tiles_only", inputs=inputs))["state"] == "done"
+    listed = {w["name"]: w for w in run(on_the_instrument("list_workflows"))["workflows"]}["tiles_only"]
+    assert listed["approved_for"] == "tango://scope-a:9094" and listed["approval_ends"]
+    import time as clock
+
+    assert library.hardware_problem("tiles_only", "approved", "tango://scope-a:9094", now=clock.time() + 29 * 86400) is None
+    assert "ended on" in library.hardware_problem("tiles_only", "approved", "tango://scope-a:9094", now=clock.time() + 31 * 86400)
+    with pytest.raises(ValueError, match="days must be above 0"):
+        library.approve("tiles_only", "sam", days=0)
+
+
+def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_honoured(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.agents.workflows import Library
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    assert library.propose(TEMPLATE, request=ASKED)["ok"] and library.request("tiles_only")["request"] == ASKED
+
+    # Every rehearsal is recorded for the approver, including failed ones.
+    instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
+    failing = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "a", library=library)
+
+    async def rehearse(server, **inputs):
+        async with Client(server.mcp) as client:
+            return await call(client, "run_workflow", name="tiles_only", inputs=inputs)
+    assert run(rehearse(failing))["state"] == "failed"
+    kept = library.rehearsals("tiles_only")
+    assert [r["state"] for r in kept] == ["failed"] and "detector timeout" in kept[0]["error"]
+    instrument, analysis, state = twin()
+    assert run(rehearse(WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "b", library=library)))["state"] == "done"
+    assert [r["state"] for r in library.rehearsals("tiles_only", library.workflow("tiles_only").hash())] == ["failed", "done"]
+    # An edited draft has no rehearsals but can still be approved.
+    assert library.propose(TEMPLATE.replace("max_visits=400", "max_visits=300"))["ok"]
+    assert library.rehearsals("tiles_only", library.workflow("tiles_only").hash()) == [] and library.request("tiles_only") is None
+    assert library.approve("tiles_only", "sam")["rehearsed"] is None
+    library.revoke("tiles_only")
+    assert library.propose(TEMPLATE, request=ASKED)["ok"]
+
+    # With an approvers list only those logins can approve.
+    (tmp_path / "library" / "approvers.json").write_text('["sam.r"]', encoding="utf-8")
+    with pytest.raises(PermissionError, match="approvers.json"):
+        library.approve("tiles_only", "Somebody Else", login="guest")
+    with pytest.raises(PermissionError):
+        library.approve("tiles_only", "sam")  # no login is also refused
+    record = library.approve("tiles_only", "Sam Reed", login="sam.r")
+    assert (record["by"], record["login"]) == ("Sam Reed", "sam.r") and library.find("tiles_only")[1] == "approved"
+
+
+def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
+    from asyncroscopy.agents.workflows import Library
+    from asyncroscopy.agents.workflows.__main__ import main
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE
+    from asyncroscopy.agents.workflows.view import graph_svg, render_html
+
+    library = Library(tmp_path / "library")
+    # Text written by a model is escaped on the page.
+    nasty = TEMPLATE.replace("Take every tile of a square grid around the current position", "<script>alert(1)</script> Take every tile")
+    assert library.propose(nasty, request="<img src=x onerror=alert(2)> please create a tiles-only workflow")["ok"]
+    page = render_html(library)
+    assert page.startswith("<!doctype html>") and "http://" not in page and "https://" not in page  # one file that fetches nothing
+    assert "<script" not in page and "<img" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "&lt;img src=x" in page
+    waiting, shipped = page.index("Waiting for a person's approval (1)"), page.index(f"Shipped with the software ({len(SHIPPED)})")
+    assert waiting < page.index('id="tiles_only"') < page.index("Approved (0)") < shipped < page.index('id="map_grid"')
+    assert "python -m asyncroscopy.agents.workflows approve tiles_only" in page and "it has never run to the end anywhere" in page
+    assert "graph = StateGraph(WorkflowState)" in page and page.count("<svg") == len(SHIPPED) + 1  # each shipped workflow and the draft
+    drawing = graph_svg(get_workflow("map_grid").blueprint())
+    for text in ("plan_grid", "acquire_tile", "return_start", "collect_run", "stitch_map", "tile.remaining &gt; 0<tspan", ">at most 2000 times<", "otherwise", ">start<", ">end<"):
+        assert text in drawing, text
+
+    library.approve("tiles_only", "sam", days=30)
+    page = render_html(library)
+    assert "Waiting for a person's approval (0)" in page and "Approved (1)" in page and "by sam" in page and "please create a tiles-only workflow" in page
+
+    out = tmp_path / "page.html"
+    assert main(["view", "--library", str(tmp_path / "library"), "--out", str(out)]) == 0
+    assert capsys.readouterr().out.strip() == str(out.resolve()) and "tiles_only" in out.read_text(encoding="utf-8")
+
+
+def test_the_page_is_served_beside_the_tools_for_a_browser(tmp_path):
+    from starlette.testclient import TestClient
+
+    from asyncroscopy.agents.workflows import analysis_host
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.analysis_server import create_server
+
+    instrument, analysis, _ = twin()
+    mcp, _ = create_server(local_roots=[tmp_path])
+    analysis_host.add_workflow_tools(mcp, WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state"))
+    with TestClient(mcp.http_app()) as browser:
+        reply = browser.get(analysis_host.VIEW_PATH)
+    assert reply.status_code == 200 and reply.headers["content-type"].startswith("text/html") and 'id="map_grid"' in reply.text
+    assert instrument.log == []  # viewing the page calls no instrument
+
+
+def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):
+    from asyncroscopy.agents.workflows.__main__ import main
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE
+
+    source = tmp_path / "mine.py"
+    source.write_text(TEMPLATE, encoding="utf-8")
+    library = ["--library", str(tmp_path / "library")]
+    assert main(["propose", str(source), "--request", ASKED, *library]) == 0
+    assert main(["approve", "tiles_only", *library]) == 1  # without a terminal or --yes nothing is approved
+    out = capsys.readouterr()
+    assert "graph = StateGraph(WorkflowState)" in out.out and '"hash"' in out.out and ASKED in out.out
+    assert "never run to the end on a digital twin" in out.out and "instrument any, until revoked" in out.out and "not approved" in out.err
+    here = ["--instrument", "tango://scope-a:9094", *library]
+    assert main(["approve", "tiles_only", "--yes", "--by", "sam", "--days", "90", *here]) == 0
+    approved = capsys.readouterr().out
+    assert '"by": "sam"' in approved and '"instrument": "tango://scope-a:9094"' in approved and "for 90 days" in approved
+    assert main(["list", *library]) == 0
+    listed = {w["name"]: w for w in json.loads(capsys.readouterr().out)}
+    assert listed["tiles_only"]["status"] == "approved" and listed["tiles_only"]["approved_by"] == "sam" and listed["map_grid"]["status"] == "shipped"
+    assert listed["tiles_only"]["approved_for"] == "tango://scope-a:9094" and listed["tiles_only"]["approval_ends"]
+    assert main(["revoke", "tiles_only", *library]) == 0 and main(["revoke", "tiles_only", *library]) == 1
+    assert main(["approve", "nope", *here]) == 1
+
+
+# Parallel steps, any tool as a step and questions for a person
+class SlowServer(FakeServer):
+    """A fake endpoint whose calls take a moment. It counts how many ran at once."""
+
+    def __init__(self, tools: dict, delay_s: float = 0.05) -> None:
+        super().__init__(tools)
+        self.delay_s, self.going, self.most_at_once = delay_s, 0, 0
+
+    async def call(self, name, arguments=None):
+        self.going += 1
+        self.most_at_once = max(self.most_at_once, self.going)
+        try:
+            await asyncio.sleep(self.delay_s)
+            return await super().call(name, arguments)
+        finally:
+            self.going -= 1
+
+
+def spectra_endpoint(**replies):
+    taken = {"n": 0}
+
+    def image(args):
+        taken["n"] += 1
+        return f"stem_image_HAADF_{taken['n']:04d}.h5\nimage 256 x 256"
+
+    return SlowServer({
+        "Twin_acquire_scanned_image": image,
+        "Twin_set_fov": lambda a: "ok",
+        "Twin_acquire_spectrum": replies.get("eds", lambda a: "spectrum_eds_0001.h5\npeaks at 8.04 keV"),
+        "EELS_acquire_eels_spectrum": replies.get("eels", lambda a: "spectrum_eels_0001.h5"),
+    })
+
+
+def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_person(tmp_path):
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL, check_source, load_source
+    from asyncroscopy.agents.workflows.runner import check_answers
+
+    assert check_source(TEMPLATE_PARALLEL) == []
+    workflow = load_source(TEMPLATE_PARALLEL)  # the second example shown to models must also pass
+    blueprint, checked = workflow.blueprint(), workflow.lint()
+    assert checked["ok"], checked["problems"]
+    assert {"*_acquire_scanned_image", "*_set_fov", "*_acquire_spectrum", "*_acquire_eels_spectrum"} == set(checked["tools"])
+    assert ["zoom", "eds"] in blueprint["edges"] and ["zoom", "eels"] in blueprint["edges"]  # two plain edges make parallel branches
+    assert {"from": "eds", "to": "look", "after": ["eds", "eels"]} in blueprint["edges"]  # the join
+
+    def find(name):
+        return workflow
+
+    instrument = spectra_endpoint()
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
+    # It took the image and now waits for an answer.
+    assert record["state"] == "waiting" and instrument.names() == ["Twin_acquire_scanned_image"], record
+    question = record["questions"][0]
+    assert question["node"] == "ok" and question["options"] == ["yes", "no"] and question["show"] == "stem_image_HAADF_0001.h5"
+    with pytest.raises(ValueError, match="waiting for a person's answer"):
+        run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=find))
+    with pytest.raises(ValueError, match="must be one of"):
+        check_answers(record, {question["id"]: "maybe"})
+    with pytest.raises(ValueError, match="has no question"):
+        check_answers(record, {"nothing": "yes"})
+    assert instrument.names() == ["Twin_acquire_scanned_image"]
+
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=find, answers={question["id"]: "Yes"}))
+    assert record["state"] == "done" and not record.get("questions"), record
+    assert record["outputs"]["ok"]["answer"] == "yes" and record["answered"][0]["answer"] == "yes"
+    names = instrument.names()
+    assert names[:2] == ["Twin_acquire_scanned_image", "Twin_set_fov"] and names[-1] == "Twin_acquire_scanned_image"  # the first image is not retaken
+    assert set(names[2:4]) == {"Twin_acquire_spectrum", "EELS_acquire_eels_spectrum"} and len(names) == 5
+    assert instrument.most_at_once == 2  # the two spectra ran together
+    assert record["outputs"]["eds"]["key"] == "spectrum_eds_0001.h5" and record["outputs"]["eels"]["key"] == "spectrum_eels_0001.h5"
+
+    # Answering no ends the run with no more calls.
+    instrument = spectra_endpoint()
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path / "no"))
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path / "no", find=find,
+                                 answers={record["questions"][0]["id"]: "no"}))
+    assert record["state"] == "done" and instrument.names() == ["Twin_acquire_scanned_image"]
+
+
+def test_a_branch_that_fails_is_the_only_one_repeated_on_resume(tmp_path):
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL, load_source
+
+    workflow = load_source(TEMPLATE_PARALLEL)
+
+    def find(name):
+        return workflow
+
+    failing = {"on": True}
+    instrument = spectra_endpoint(eels=lambda a: "Error: spectrometer busy" if failing["on"] else "spectrum_eels_0001.h5")
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=find, answers={record["questions"][0]["id"]: "yes"}))
+    assert record["state"] == "failed" and "spectrometer busy" in record["error"] and record["at_node"] == ["eels"], record
+    failing["on"] = False
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=find))
+    assert record["state"] == "done"
+    assert instrument.names().count("Twin_acquire_spectrum") == 1 and instrument.names().count("EELS_acquire_eels_spectrum") == 2
+
+
+def any_tool(name: str, both_ways: bool = False, **step) -> Workflow:
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("first", use.block("run_tool", **{"tool": "*_get_stage", **step}))
+        graph.add_node("second", use.block("run_tool", tool="*_get_fov"))
+        graph.add_edge(START, "first")
+        if both_ways:
+            graph.add_conditional_edges("first", use.when("first.result > 0", then="second", otherwise=END))
+        graph.add_edge("first", "second")
+        graph.add_edge("second", END)
+        return graph
+    return Workflow(name=name, summary="Read two values.", inputs={"which": {"type": "string", "default": "*_get_stage"}}, build=build)
+
+
+def test_lint_knows_the_tools_a_workflow_names_and_refuses_what_it_cannot_check():
+    fine = any_tool("reads").lint(["Twin_get_stage", "Twin_get_fov"])
+    assert fine["ok"] and fine["tools"] == ["*_get_fov", "*_get_stage"], fine
+    missing = any_tool("reads").lint(["Twin_get_stage"])
+    assert any("offers no tool matching *_get_fov" in p for p in missing["problems"])
+    # The tool name must be written in the workflow because a person approves it.
+    hidden = any_tool("reads", tool="{inputs.which}").lint()
+    assert any("must be written out as text" in p for p in hidden["problems"])
+    on_analysis = any_tool("reads", tool="map_info", server="analysis").lint(["Twin_get_fov"], ["map_info"])
+    assert on_analysis["ok"] and on_analysis["needs_analysis"], on_analysis
+    # A node with a condition may have no other edges out.
+    both = any_tool("reads", both_ways=True).lint()
+    assert any("a node with a condition has only that one way out" in p for p in both["problems"])
+
+
+def test_the_agent_relays_a_workflows_question_and_the_users_answer(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.agents.workflows import Library
+    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL
+    from asyncroscopy.agents.workflows.server import WorkflowServer
+
+    instrument = spectra_endpoint()
+    server = WorkflowServer(FakeEndpoints(instrument, None, True), state_dir=tmp_path / "state", library=Library(tmp_path / "library"))
+
+    async def go():
+        async with Client(server.mcp) as client:
+            shown = await call(client, "list_blocks")
+            assert {"run_tool", "ask_person"} <= {b["name"] for b in shown["blocks"]} and shown["example_parallel"] == TEMPLATE_PARALLEL
+            kept = await call(client, "propose_workflow", user_request="Please make a workflow that takes EDS and EELS together.", source=TEMPLATE_PARALLEL)
+            assert kept["ok"], kept
+            asked = await call(client, "run_workflow", name="spectra_together")
+            assert asked["state"] == "waiting" and "answer_workflow" in asked["next"] and "Never answer it yourself" in asked["next"]
+            assert asked["questions"][0]["question"].startswith("Zoom in here")
+            again = await call(client, "resume_workflow", run_id=asked["run_id"])  # resuming is not answering
+            assert again["state"] == "waiting" and "waiting for a person's answer" in again["error"]
+            wrong = await call(client, "answer_workflow", run_id=asked["run_id"], answer="perhaps")
+            assert wrong["state"] == "waiting" and "must be one of" in wrong["error"]
+            done = await call(client, "answer_workflow", run_id=asked["run_id"], answer="yes")
+            assert done["state"] == "done" and done["outputs"]["eels"]["key"] == "spectrum_eels_0001.h5", done
+            late = await call(client, "answer_workflow", run_id=asked["run_id"], answer="yes")
+            assert "not waiting for an answer" in late["error"]
+    run(go())
+    assert instrument.most_at_once == 2
+
+
+def test_a_loop_of_three_nodes_runs_up_to_its_bound_without_hitting_the_recursion_limit(tmp_path):
+    from asyncroscopy.agents.workflows.blocks import Block, register_block, all_blocks
+
+    async def count(ctx, args, previous):
+        return {"n": (previous or {}).get("n", 0) + 1}
+
+    if "test_count" not in all_blocks():
+        register_block(Block(name="test_count", summary="Count visits.", run=count, outputs={"n": "integer"}))
+
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        for name in ("a", "b", "c"):
+            graph.add_node(name, use.block("test_count"))
+        graph.add_edge(START, "a")
+        graph.add_edge("a", "b")
+        graph.add_edge("b", "c")
+        graph.add_conditional_edges("c", use.when("c.n < 150", then="a", otherwise=END, max_visits=150))
+        return graph
+
+    workflow = Workflow(name="three_node_loop", summary="A loop of three nodes.", build=build)
+    record = run(run_workflow(workflow, {}, instrument=FakeServer({}), state_dir=tmp_path))
+    assert record["state"] == "done", record
+    assert record["outputs"]["c"]["n"] == 150
+
+
+def test_a_run_being_driven_is_not_resumed_a_second_time(tmp_path):
+    from asyncroscopy.agents.workflows.runner import _run_lock
+
+    instrument, analysis, state = twin()
+    instrument.tools["Twin_acquire_scanned_image"] = lambda a: "Error: no beam"
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path, run_id="busy"))
+    assert record["state"] == "failed"
+    with _run_lock(tmp_path, "busy"):  # as if another process were driving it now
+        with pytest.raises(ValueError, match="being run now"):
+            run(resume_workflow("busy", instrument=instrument, analysis=analysis, state_dir=tmp_path))

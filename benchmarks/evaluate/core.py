@@ -43,7 +43,7 @@ class Score:
     def to_dict(self) -> dict[str, Any]:
         value = self.value
         if isinstance(value, float) and not math.isfinite(value):
-            value = None  # JSON has no NaN or inf: an objective that could not be computed is null
+            value = None  # JSON has no NaN or inf so a value that could not be computed is null
         return {"value": value, "units": self.units, "reason": self.reason}
 
 

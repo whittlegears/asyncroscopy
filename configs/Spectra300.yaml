@@ -1,4 +1,4 @@
-# Real hardware: approval auto mode is refused, and the MCP endpoint binds 127.0.0.1 unless
+# Real hardware: the MCP endpoint binds 127.0.0.1 unless
 # its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
 simulated: false
 
@@ -13,13 +13,6 @@ instrument:
 # Support device servers. class_name defaults to the key upper-cased
 # (camera -> CAMERA); add `class_name:` to a device only to override that.
 devices:
-  # The approval gate for agents on real hardware: starts in approve mode, so a person answers every
-  # high-risk call until they switch it to auto (SciAgentGUI's "Ask first" switch).
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
-    properties:
-      default_mode: approve
   aperture:
     class_name: AutoScriptAPERTURE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript
@@ -55,8 +48,8 @@ devices:
       # Goniometer readout error and drift bound for the stitch; placeholders until first light measures them.
       stage_sigma_m: 5.0e-8
       max_drift_m_per_s: 5.0e-11
-  # Autofocus and stigmation jobs (docs/Operation/autofocus.md). OptiSTEM C1A1 is the strategy here
-  # (decision D2); the corrector strategy is refused until first light's sign test settles the CEOS
+  # Autofocus and stigmation jobs (docs/Operation/autofocus.md). OptiSTEM C1A1 is the strategy here.
+  # The corrector strategy is refused until first light's sign test settles the CEOS
   # correction's sign and units (then set allow_corrector_writes: true). The dose budget needs a
   # measured beam current, as for the Mapper; autofocus_frames is a placeholder to calibrate.
   tuner:
@@ -83,7 +76,7 @@ tango:
   host: 10.46.217.241
   port: 9094
   # Listen on every interface, so the operator and monitor endpoints on this PC reach it as localhost.
-  # Firewall 9094 to the microscope PC: Tango itself has no access control (first_light_review.md, B5).
+  # Firewall 9094 to the microscope PC: Tango itself has no access control.
   bind_host: 0.0.0.0
   reset_database_file: false
 

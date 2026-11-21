@@ -93,20 +93,18 @@ class FieldView:
 class Specimen:
     """A sample the twin can image. Subclasses fill in the geometry; the defaults are an empty specimen."""
 
-    source = ""  # registry name; the twin's ``specimen`` property selects it
-    render_modes: tuple[str, ...] = ("projected",)  # the twin renderers that can image it (each twin has a render_mode)
+    source = ""  # registry name, selected by the twin's specimen property
+    render_modes: tuple[str, ...] = ("projected",)  # the twin renderers that can image it
     support_element = "C"
     support_thickness_m = 0.0
     height_gradient: tuple[float, float] = (0.0, 0.0)
-    bounds: tuple[float, float, float, float] = (-1e-9, 1e-9, -1e-9, 1e-9)  # x_min, x_max, y_min, y_max (m)
+    bounds: tuple[float, float, float, float] = (-1e-9, 1e-9, -1e-9, 1e-9)  # x_min, x_max, y_min, y_max in metres
 
     @classmethod
     def from_options(cls, options: dict, context: "SpecimenContext") -> "Specimen":
         raise NotImplementedError
 
-    # ------------------------------------------------------------------
     # What the instrument model reads
-    # ------------------------------------------------------------------
     def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         """sum(Z^n * atoms per cubic angstrom * thickness in angstrom) on an n x n grid.
 
@@ -143,9 +141,7 @@ class Specimen:
         """The elements the specimen may contain (EDS and status reports)."""
         return ()
 
-    # ------------------------------------------------------------------
-    # What a per-view (atomistic) twin reads
-    # ------------------------------------------------------------------
+    # What an atomistic twin reads for each view
     def view(self, request: ViewRequest) -> FieldView:
         """What the specimen shows in this field: atoms in the field, per-pixel maps and/or records."""
         raise NotImplementedError(f"specimen source {self.source!r} has no per-view rendering (render modes: {self.render_modes})")
@@ -170,9 +166,7 @@ class Specimen:
         """Problems worth a warning at start-up (the twin logs them)."""
         return []
 
-    # ------------------------------------------------------------------
     # What evaluators read
-    # ------------------------------------------------------------------
     def ground_truth(self) -> dict:
         """{"known": bool, "particles": [...], ...}: what a scorer may compare against; never shown to an agent."""
         return {"known": False, "particles": []}
@@ -187,7 +181,7 @@ class SpecimenContext:
     """What a source may take from the twin: its seed, the flat sample properties and the field of view as defaults."""
 
     rng: EventRng
-    sample: "SampleParams | None" = None  # the twin's flat sample properties; None: the SampleParams defaults
+    sample: "SampleParams | None" = None  # the twin's flat sample properties, or None for the SampleParams defaults
     base_dir: Path = field(default_factory=Path.cwd)
     fov_m: float | None = None  # the field of view, for a specimen whose world spans it
 
@@ -206,9 +200,7 @@ class SpecimenContext:
         return EventRng(int(options["seed"])) if options.get("seed") is not None else self.rng
 
 
-# ----------------------------------------------------------------------
 # Registry
-# ----------------------------------------------------------------------
 SPECIMENS: Registry[type[Specimen]] = Registry(
     "asyncroscopy.specimens",
     {

@@ -37,15 +37,15 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class Setting:
-    path: str  # dotted YAML path, e.g. "tango.port"
+    path: str  # dotted YAML path like "tango.port"
     kind: str = "str"
     default: Any = None
     label: str = ""
     section: str = "General"
     help: str = ""
     required: bool = False
-    choices: tuple[str, ...] = ()  # suggestions; any value may still be typed
-    presets: dict[str, str] = field(default_factory=dict)  # one-click values, first is applied when the GUI opens
+    choices: tuple[str, ...] = ()  # suggestions only, any value may still be typed
+    presets: dict[str, str] = field(default_factory=dict)  # One click values. The first is applied when the GUI opens.
 
     def __post_init__(self):
         if self.kind not in KINDS:

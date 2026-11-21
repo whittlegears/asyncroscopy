@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/envelope.schema.json",
-  "title": "Common job envelope",
+  "title": "Job envelope",
   "description": "Request and response shapes for any long-running instrument or analysis job: reserve, start, status, abort, results, release. Every verb takes and returns one JSON object. Shared by asyncroscopy devices and the analysis MCP server; other instruments implement the same verbs.",
   "schema_version": "1.1.0",
   "$defs": {
     "state": {
-      "enum": ["reserved", "queued", "running", "paused_awaiting_approval", "paused_suspended", "aborting", "done", "failed", "aborted", "released"]
+      "enum": ["reserved", "queued", "running", "paused_suspended", "aborting", "done", "failed", "aborted", "released"]
     },
     "error": {
       "type": "object",
@@ -71,8 +71,7 @@
       "type": "object",
       "required": ["reservation_id"],
       "properties": {
-        "reservation_id": {"type": "string"},
-        "grant_id": {"type": ["string", "null"]}
+        "reservation_id": {"type": "string"}
       }
     },
     "job_request": {
@@ -102,7 +101,6 @@
           }
         },
         "last_error": {"anyOf": [{"$ref": "#/$defs/error"}, {"type": "null"}]},
-        "pending_request_id": {"type": ["string", "null"]},
         "suspended": {
           "description": "While paused_suspended: why (a condition such as beam current is out of range), since when, and, once conditions are good again, seconds until it resumes.",
           "anyOf": [

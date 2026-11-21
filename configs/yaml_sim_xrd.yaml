@@ -1,6 +1,6 @@
 # An instrument with no Python: the X-ray diffractometer described in
 # asyncroscopy/instruments/yaml_sim/examples/xrd.yaml, run as a Tango device
-# with DATA (so its scans are saved to Tiled) and approval mode.
+# with DATA (so its scans are saved to Tiled).
 #
 #   uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_xrd.yaml
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
@@ -13,7 +13,7 @@
 # and check the file first:
 #   uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml
 
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
 simulated: true
 
 instrument:
@@ -27,9 +27,6 @@ instrument:
 devices:
   data:
     module_name: asyncroscopy.data.data
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
 
 tiled:
   host: localhost

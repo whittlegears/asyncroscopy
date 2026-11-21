@@ -34,14 +34,14 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
 On the Spectra 300, follow [first_light_runbook.md](first_light_runbook.md): it
-adds the read-only pre-flight (`startup_scripts/preflight_hardware.py`), the
-operator endpoint and the analysis server, in that order.
+adds the read-only pre-flight (`startup_scripts/preflight_hardware.py`) and the
+analysis server, in that order.
 
 ## What It Starts
 
 | Order | Device(s) | Tango name |
 |-------|-----------|------------|
-| 1 | support devices: every key under `devices:` in the YAML | `asyncroscopy/<key>/default`; for `configs/Spectra300.yaml`: `asyncroscopy/{approvals,aperture,camera,corrector,data,eds,mapper,tuner,scan,stage}/default` |
+| 1 | support devices: every key under `devices:` in the YAML | `asyncroscopy/<key>/default`; for `configs/Spectra300.yaml`: `asyncroscopy/{aperture,camera,corrector,data,eds,mapper,tuner,scan,stage}/default` |
 | 2 | Tiled HTTP server | started through the `data` device |
 | 3 | instrument | `asyncroscopy/instrument/default` |
 
@@ -112,8 +112,8 @@ If MCP runs on a different computer, edit `configs/mcp.yaml`:
   binds `127.0.0.1` instead; with it but without `mcp.auth`, `run_mcp.py` refuses
   to start. On a simulated stack a remote bind is allowed without tokens, so use
   it only on a trusted network.
-- Never open the operator endpoint (`configs/mcp_operator.yaml`) to other
-  machines: it approves held calls and has no login.
+- If you start the optional operator endpoint (`configs/mcp_operator.yaml`), never
+  open it to other machines: it serves operator-only commands and has no login.
 
 ## Prompts
 

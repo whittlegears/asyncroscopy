@@ -46,8 +46,8 @@ def install_shutdown_handlers(parent_pid: int | None = None) -> None:
         parent_gone = threading.Lock()
 
         def stop_for_parent() -> None:
-            # The parent was reading our output; with it gone every print would raise
-            # BrokenPipeError and abort the shutdown, so send output nowhere first.
+            # The parent was reading our output. With it gone every print would raise
+            # BrokenPipeError and abort the shutdown. So send output nowhere first.
             if requested.is_set() or not parent_gone.acquire(blocking=False):
                 return
             detach_output()
@@ -109,7 +109,7 @@ def process_alive(pid: int) -> bool:
         if not handle:
             return False
         try:
-            return kernel32.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT: still running
+            return kernel32.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT means still running
         finally:
             kernel32.CloseHandle(handle)
     try:

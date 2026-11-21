@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-# benchmarks/ for _common, which also puts the project on sys.path
+# Add benchmarks/ so _common can be imported. _common also puts the project on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import yaml
@@ -63,38 +63,38 @@ if TYPE_CHECKING:
 
 HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
-WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "approval", "checks"}
+WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
-SURVEY_FOV_M = 6.0e-7  # survey_image: room for two zoom steps (16x then 8x) down to atomic columns
-# Setups taken where the run starts: re-homed before them, not after (a stage move after the survey would put the
-# stage's landing error between the survey and the run, which no real zoom has), and never reused from a cache.
+SURVEY_FOV_M = 6.0e-7  # gives survey_image room for two zoom steps down to atomic columns
+# These setups are taken where the run starts so the stage is homed before them and not after.
+# A stage move after the survey would add a landing error that no real zoom has. They are never reused from a cache.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
-STAGE_SETTLE_S = 600.0  # the longest a re-homing stage move may take (the mapping twin moves 5 um/s in real time)
-TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # a failed run's messages and calls, one file per run
+STAGE_SETTLE_S = 600.0  # The longest a stage move home may take. The mapping twin moves 5 um/s in real time.
+TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # one file per failed run with its messages and calls
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
 STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
-# The stack being run (set by main): its run_servers config and the addresses it serves.
+# The stack being run, set by main. It holds the run_servers config and the addresses it serves.
 STACK: dict[str, str] = {**STACK_DEFAULTS, "name": "twin"}
-# Setup maps: (side, field of view, per-tile actions, scored). large_map has enough tiles to need zooming.
+# Each setup map is side, field of view, per tile actions and scored. large_map has enough tiles to need zooming.
 SETUP_MAPS = {
     "map": (4.8e-7, 1.6e-7, ["eds_point"], True),
     "map_plain": (6.0e-7, 1.6e-7, [], False),
     "large_map": (6.0e-6, 4.0e-7, [], True),
 }
-TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner + specialists + reporter
+TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner, specialists and reporter
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
-# Evaluators (benchmarks.evaluate) scored on every run's trace, as extra columns; they never change pass or fail.
-# The default reads no data; information, resolution and dose read the run's images from Tiled (set by --evaluators).
+# These evaluators are scored on every run's trace as extra columns. They never change pass or fail.
+# The default reads no data. Others read the run's images from Tiled and are set by --evaluators.
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
 
 
-# ------------------------------------------------------------------ workflow files
+# workflow files
 
 
 class WorkflowError(ValueError):
@@ -159,8 +159,6 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             if wf.get("stack", "twin") not in stacks:
                 raise WorkflowError(f"{where}: stack {wf.get('stack')!r} is not declared; known: {sorted(stacks)} "
                                     "(declare one in benchmarks/stacks.yaml or under stacks: in this file)")
-            if wf.get("approval") not in (None, "approve", "deny"):
-                raise WorkflowError(f"{where}: approval is approve or deny")
             for spec in wf.get("checks") or []:
                 if not isinstance(spec, dict) or spec.get("check") not in CHECKS:
                     raise WorkflowError(f"{where}: unknown check {spec.get('check') if isinstance(spec, dict) else spec!r}; known: {sorted(CHECKS)}")
@@ -177,7 +175,7 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
 
 def _fact(facts: dict, name: str) -> Any:
     value = facts.get(name)
-    if value is None:  # "x = None nm" in a request is a broken setup, not a test of the agent
+    if value is None:  # a missing value in a request is a broken setup and not a test of the agent
         raise InfraError(f"placeholder {{{name}}} has no value: the setup did not produce it")
     return value
 
@@ -197,7 +195,7 @@ def render(value: Any, facts: dict) -> Any:
     return value
 
 
-# ------------------------------------------------------------------ the live stack
+# the live stack
 
 
 class Live:
@@ -212,7 +210,7 @@ class Live:
         self.operator = McpServer(STACK["operator"], {"X-Asyncroscopy-Caller": "workflow-operator"})
         self.names: set[str] = set()
         self.operator_names: set[str] = set()
-        self.risks: dict[str, str] | None = None  # the endpoint's own tool risks (endpoint_info)
+        self.risks: dict[str, str] | None = None  # the endpoint's own tool risks from endpoint_info
         self.setup_cache: dict[str, dict] = {}
 
     async def discover(self) -> None:
@@ -221,7 +219,7 @@ class Live:
         try:
             self.operator_names = {t.name for t in await self.operator.list_tools()}
         except Exception as exc:
-            print(f"[workflows] operator endpoint {STACK['operator']} unavailable ({exc}); approval workflows will fail", flush=True)
+            print(f"[workflows] operator endpoint {STACK['operator']} unavailable ({exc})", flush=True)
 
     def tool(self, *suffixes: str, prefix: str = "") -> str | None:
         return find_tool(self.names, *suffixes, prefix=prefix)
@@ -275,13 +273,13 @@ class Live:
                 if isinstance(parameters, str):
                     parameters = json.loads(parameters)
             except Exception:
-                return  # parameters that do not answer or parse: nothing to wait on
+                return  # parameters that do not answer or parse give nothing to wait on
             if not (isinstance(parameters, dict) and parameters.get("stage_moving")):
                 return
             await asyncio.sleep(1.0)
         raise InfraError(f"the stage was still moving {timeout_s:.0f} s after re-homing")
 
-    # ---------------------------------------------------------- jobs, used by setups
+    # jobs, used by setups
 
     async def run_map(self, plan: dict, timeout_s: float = 1800) -> dict:
         """Run a Mapper job to the end with whichever job tools the endpoint offers; returns its results."""
@@ -381,12 +379,12 @@ class Live:
         except Exception as exc:
             return f"{tool} did not answer: {str(exc)[:200]}"
 
-    # ---------------------------------------------------------- setups (run by the benchmark, not the agent)
+    # setups, run by the benchmark and not the agent
 
     async def setup(self, name: str) -> dict:
         if name in self.setup_cache and name not in IN_PLACE_SETUPS:
             return self.setup_cache[name]
-        if name in ("image", "survey_image"):  # image: at the field of view the instrument has; survey_image: at SURVEY_FOV_M
+        if name in ("image", "survey_image"):  # image uses the field of view the instrument has and survey_image uses SURVEY_FOV_M
             if name == "survey_image":
                 await self.text(self.tool("_set_fov"), {"fov": SURVEY_FOV_M})
             await self.required(self.tool("_unblank_beam"), {})  # a blanked beam images noise
@@ -422,29 +420,6 @@ class Live:
         self.setup_cache[name] = facts
         return facts
 
-    # ---------------------------------------------------------- approval mode and the scripted operator
-
-    async def set_mode(self, mode: str) -> str | None:
-        get_mode, set_mode = find_tool(self.operator_names, "_get_mode"), find_tool(self.operator_names, "_set_mode")
-        before = (await self.required(get_mode, server=self.operator)).strip().strip('"') or None
-        await self.required(set_mode, {"request": json.dumps({"mode": mode, "who": "workflow-benchmark"})}, server=self.operator)
-        return before
-
-    async def operate(self, caller: str, decision: str, stop: asyncio.Event) -> None:
-        """Approve or deny every request ``caller`` makes until ``stop`` is set."""
-        pending_tool = find_tool(self.operator_names, "_list_pending")
-        decide_tool = find_tool(self.operator_names, "_approve" if decision == "approve" else "_deny")
-        while not stop.is_set():
-            listed = await self.text(pending_tool, server=self.operator)
-            for request in json.loads(listed or "[]"):
-                if request.get("caller") == caller:
-                    body = {"request_id": request["request_id"], "who": "workflow-operator", "reason": "workflow benchmark"}
-                    await self.text(decide_tool, {"request": json.dumps(body)}, server=self.operator)
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=1.0)
-            except TimeoutError:
-                pass
-
 
 class InfraError(RuntimeError):
     """The stack, not the agent, failed: a wedged device, a setup that produced nothing. Such rows are not counted."""
@@ -472,7 +447,7 @@ def _floats(text: str | None) -> list[float] | None:
     return [float(v) for v in value] if isinstance(value, list) else None
 
 
-# ------------------------------------------------------------------ truth from the data
+# truth from the data
 
 
 def data_truth(keys: list[str]) -> dict:
@@ -482,7 +457,7 @@ def data_truth(keys: list[str]) -> dict:
 
     uri = STACK["tiled"]
     spectra, strongest = {}, None
-    # The newest: a map with a spectrum per tile came before the spectrum the answer is about, and the first six were all tiles.
+    # Take the newest keys. A map with a spectrum per tile puts its tiles before the spectrum the answer is about.
     for key in keys[-6:]:
         try:
             node = tiled_client.node_for_key(key, uri)
@@ -491,19 +466,19 @@ def data_truth(keys: list[str]) -> dict:
                 continue
             values = np.asarray(ds.node.read(), dtype=np.float64)
             axis = views.energy_axis({**ds.parent_attrs, **ds.attrs})
-        except Exception as exc:  # the truth is missing, so checks that need it fail with the reason
+        except Exception as exc:  # the truth is missing so checks that need it fail with the reason
             spectra[key] = {"error": f"{type(exc).__name__}: {exc}"}
             continue
         line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
         positions = line_axis.offset + line_axis.scale * np.arange(len(values), dtype=np.float64)
         xray = line_axis.units == "eV" and eds.is_xray(ds)
-        # view_data's own peak function (same widths, same strongest-first order), so truth and what the agent read agree.
+        # Use view_data's own peak function so the truth and what the agent read agree.
         rows = eds.line_peaks(positions, values, line_axis) if xray else views.line_peaks(positions, values, line_axis)
         strongest = rows[0][0] if rows else float(positions[int(np.argmax(values))])
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
             entry["peaks_ev"] = [round(row[0], 1) for row in rows]
-            likely = eds.likely_elements(rows)  # the elements view_data names, not every line that could fit a peak
+            likely = eds.likely_elements(rows)  # the elements view_data names and not every line that could fit a peak
             entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
             entry["could_be"] = sorted({el for row in rows for el in eds.note_elements(row[4])})
         spectra[key] = entry
@@ -548,7 +523,7 @@ def run_keys(job_events: list[dict]) -> list[str]:
 
 def stitch_truth(map_meta: dict, tile_shape: tuple[int, int], steps: list[dict], truth: dict) -> dict:
     """How far the stitched map put each tile from where the twin really imaged it (pixels), with the
-    common offset removed, as tests/test_map_end_to_end.py measures it; and the same for stage readings alone."""
+    common offset removed, as tests/analysis/test_map_end_to_end.py measures it; and the same for stage readings alone."""
     positions = np.asarray(map_meta.get("tile_positions_px") or [], dtype=np.float64)
     pixel = float(map_meta["pixel_size_m"])
     images = [a for a in truth.get("acquisitions", []) if a.get("kind") == "image" and a.get("center_true_m") and a.get("reported_m")]
@@ -560,7 +535,7 @@ def stitch_truth(map_meta: dict, tile_shape: tuple[int, int], steps: list[dict],
         match = next((a for a in reversed(images) if np.allclose(a["reported_m"][:2], read[:2], rtol=0, atol=1e-15)), None)
         if match is None:
             continue
-        true_centres.append([match["center_true_m"][1] / pixel, match["center_true_m"][0] / pixel])  # (row, col)
+        true_centres.append([match["center_true_m"][1] / pixel, match["center_true_m"][0] / pixel])  # as row, col
         reported.append([read[1] / pixel, read[0] / pixel])
         estimated.append(positions[index] + np.asarray(tile_shape, dtype=np.float64) / 2.0)
     if len(true_centres) < 2:
@@ -587,7 +562,7 @@ def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:
     return meta, tuple(tiles[first].structure().shape[:2])
 
 
-# ------------------------------------------------------------------ runners
+# runners
 
 
 def runners_available() -> dict[str, Any]:
@@ -671,9 +646,8 @@ async def ensure_healthy(live: Live, baseline: dict) -> None:
     raise InfraError(f"the instrument is not answering: {why}")
 
 
-async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: dict) -> dict:
-    from asyncroscopy.agents.graphs.mapping import MappingGraph
-
+async def _prepare(live: Live, wf: dict, baseline: dict) -> dict:
+    """Run the setups of a workflow and restore the baseline."""
     facts: dict = {}
     setups = wf.get("setup") or []
     in_place = bool(IN_PLACE_SETUPS & set(setups))
@@ -686,64 +660,65 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         raise InfraError(f"setup failed: {type(exc).__name__}: {exc}") from exc
     if not in_place:
         await live.restore(baseline)
-    caller = unique_caller(f"wf-{wf['name']}-{runner}")
-    config = live.config.for_run(caller=caller)
-    stop, operator, mode_before = asyncio.Event(), None, None
-    if wf.get("approval"):
-        mode_before = await live.set_mode("approve")
-        operator = asyncio.create_task(live.operate(caller, wf["approval"], stop))
-    facts["before"] = await live.snapshot()
-    started = time.time()
-    run = Run(facts=facts, has_calls=runner != "mapping", risks=live.risks)
-    error, transcript = None, []
-    try:
-        request = render(wf.get("request") or "", facts)
-        if runner == "mapping":
-            state = await asyncio.wait_for(MappingGraph(config).build().ainvoke({"request": request}), wf["timeout_s"])
-            run.final = str(state.get("report") or state.get("error") or "")
-        elif runner == "team":
-            from asyncroscopy.agents.graphs.team import TeamGraph
+    return facts
 
-            state = await asyncio.wait_for(TeamGraph(config).build().ainvoke({"request": request}, {"recursion_limit": 100}), wf["timeout_s"])
-            run.final, run.calls = str(state.get("answer", "")), calls_from_trace(state.get("trace"))
-            run.skills = skills_of(state.get("skills_applied"))
-        elif runner == "goal":
-            from asyncroscopy.agents.goals import Goal
-            from asyncroscopy.agents.graphs.goal import GoalGraph
 
-            goal = Goal.from_text(request, max_seconds=float(wf["timeout_s"]))
-            state = await asyncio.wait_for(GoalGraph(goal, "team", config).build().ainvoke({"goal": goal.to_dict()}, {"recursion_limit": 4 * goal.budget.max_attempts + 4}), wf["timeout_s"] * 1.2)
-            run.final, run.calls = str(state.get("report") or state.get("answer", "")), calls_from_trace(state.get("trace"))
-            run.skills = skills_of(state.get("skills_applied"))
-        else:
-            messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
-            run.calls = trace_from_messages(messages)
-            transcript = [transcript_entry(m) for m in messages]
-            if not (run.final or "").strip():  # what the model sent last, to see why it gave no answer
-                facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
-    except TimeoutError:
-        error = f"timed out after {wf['timeout_s']} s"
-    except InfraError:
-        raise
-    except Exception as exc:  # a crash or the recursion limit counts as a failed run
-        error = f"{type(exc).__name__}: {exc}"
-    finally:
-        stop.set()
-        if operator:
-            await operator
-        if mode_before:
-            await live.set_mode(mode_before)
-    seconds = round(time.time() - started, 1)
-    if error and len(config.ledger) > len(run.calls):  # stopped part way: keep every call whose reply arrived
-        run.calls = [Call.from_dict(c) for c in config.ledger]
-    await asyncio.sleep(1.0)  # let the last trace lines land
+async def _run_team(config: AgentConfig, wf: dict, request: str, run: Run) -> None:
+    """Run the request on the team graph and keep its answer."""
+    from asyncroscopy.agents.graphs.team import TeamGraph
+
+    state = await asyncio.wait_for(TeamGraph(config).build().ainvoke({"request": request}, {"recursion_limit": 100}), wf["timeout_s"])
+    run.final, run.calls = str(state.get("answer", "")), calls_from_trace(state.get("trace"))
+    run.skills = skills_of(state.get("skills_applied"))
+
+
+async def _run_goal(config: AgentConfig, wf: dict, request: str, run: Run) -> None:
+    """Run the request on the goal graph and keep its answer."""
+    from asyncroscopy.agents.goals import Goal
+    from asyncroscopy.agents.graphs.goal import GoalGraph
+
+    goal = Goal.from_text(request, max_seconds=float(wf["timeout_s"]))
+    state = await asyncio.wait_for(GoalGraph(goal, "team", config).build().ainvoke({"goal": goal.to_dict()}, {"recursion_limit": 4 * goal.budget.max_attempts + 4}), wf["timeout_s"] * 1.2)
+    run.final, run.calls = str(state.get("report") or state.get("answer", "")), calls_from_trace(state.get("trace"))
+    run.skills = skills_of(state.get("skills_applied"))
+
+
+async def _run_chat(factory: str, config: AgentConfig, wf: dict, facts: dict, caller: str, started: float, run: Run, transcript: list) -> None:
+    """Run the request on a chat graph and keep its answer and messages."""
+    messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
+    run.calls = trace_from_messages(messages)
+    transcript[:] = [transcript_entry(m) for m in messages]
+    if not (run.final or "").strip():  # keep what the model sent last to see why it gave no answer
+        facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
+
+
+async def _run_graph(mapping_graph: Any, runner: str, factory: str, config: AgentConfig, wf: dict, facts: dict, caller: str, started: float, run: Run, transcript: list) -> None:
+    """Run the request of a workflow on the graph its runner names."""
+    request = render(wf.get("request") or "", facts)
+    if runner == "mapping":
+        state = await asyncio.wait_for(mapping_graph(config).build().ainvoke({"request": request}), wf["timeout_s"])
+        run.final = str(state.get("report") or state.get("error") or "")
+    elif runner == "team":
+        await _run_team(config, wf, request, run)
+    elif runner == "goal":
+        await _run_goal(config, wf, request, run)
+    else:
+        await _run_chat(factory, config, wf, facts, caller, started, run, transcript)
+
+
+async def _collect_trace(live: Live, run: Run, facts: dict, started: float, caller: str) -> list[str]:
+    """Read the trace of a run, tidy its jobs and give its run keys."""
     facts["after"] = await live.snapshot()
     run.events = read_trace(started, [caller])
     facts["all_job_events"] = [e for e in read_trace(started) if e.get("source") == "job"]
     mine = {e.get("run_id") for e in run.events if e.get("source") == "job"}
     await live.tidy([e for e in facts["all_job_events"] if e.get("run_id") in mine])
-    # The maps this run touched: named in its replies or answer, stitched from its runs, or set up for it.
-    mine_runs = run_keys([e for e in facts["all_job_events"] if e.get("run_id") in mine])
+    return run_keys([e for e in facts["all_job_events"] if e.get("run_id") in mine])
+
+
+async def _collect_pois(live: Live, wf: dict, run: Run, facts: dict, mine_runs: list[str]) -> list[str]:
+    """Record the points of every map a run touched and give the maps it stitched."""
+    # The maps this run touched are those named in its replies or answer, stitched from its runs or set up for it.
     map_keys = {m for c in run.calls for m in MAP_KEY.findall(c.result)} | set(MAP_KEY.findall(run.final))
     map_keys |= {f"{Path(r).stem}_map" for r in mine_runs}
     if facts.get("setup_map"):
@@ -756,36 +731,84 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
             facts["map_info"][key] = await live.map_info(key)
     if not wf.get("setup"):
         facts["pois"] = [[p["x_m"], p["y_m"]] for records in facts["poi_records"].values() for p in records if str(p.get("source", "")).startswith("scorer")] or facts.get("pois", [])
-    stitched_here = [k for k in facts["poi_records"] if any(k == f"{Path(r).stem}_map" for r in mine_runs)]
+    return [k for k in facts["poi_records"] if any(k == f"{Path(r).stem}_map" for r in mine_runs)]
+
+
+async def _stitch_results(live: Live, wf: dict, run: Run, stitched_here: list[str]) -> dict:
+    """Compare each map a run stitched with the ground truth."""
     stitch = {}
     if stitched_here and any(c.get("check") == "stitch_accuracy" for c in wf["checks"]):
         truth_doc = await live.ground_truth()
-        # (run id, step result) for every tile; a run file is map_<run id>.h5, its map map_<run id>_map.
+        # Each tile gives a run id and a step result. A run file is map_<run id>.h5 and its map is map_<run id>_map.
         steps = [(e.get("run_id"), json.loads(e["result"])) for e in run.events if str(e.get("action", "")).endswith(".step") and e.get("ok") and e.get("result")]
         for key in stitched_here if truth_doc is not None else []:
             try:
                 meta, shape = map_metadata_and_tile_shape(key)
                 stitch[key] = stitch_truth(meta, shape, [step for run_id, step in steps if f"map_{run_id}" == Path(meta["run"]).stem], truth_doc)
-            except Exception as exc:  # recorded, so the check fails with the reason
+            except Exception as exc:  # recorded so the check fails with the reason
                 stitch[key] = {"error": f"{type(exc).__name__}: {exc}"}
+    return stitch
+
+
+def _run_checks(wf: dict, runner: str, run: Run, facts: dict, stitch: dict) -> dict:
+    """Add the truth of a run to its facts and evaluate its checks."""
     truth_keys = produced_keys(run) + [k for k in (facts.get("spectrum_key"),) if k]
     truth = data_truth(truth_keys) if truth_keys else {}
     facts["truth"] = {**facts.get("truth", {}), **truth, **({"stitch": stitch} if stitch else {})}
     checks = evaluate(run, render(wf["checks"], {**facts, **facts.get("truth", {})}))
     if runner != "mapping" and not (run.final or "").strip():
         checks["answered"] = {"ok": False, "detail": "the agent gave no final answer"}
-    names = [c.name for c in run.calls] or [str(e["action"]) for e in run.events if e.get("source") == "mcp"]
-    try:  # extra columns only: an evaluator that fails is recorded, the row's verdict stays as the checks gave it
-        scores = evaluator_scores(RunData(caller, run.events, tiled_uri=STACK.get("tiled")), EVALUATORS)
+    return checks
+
+
+def _run_scores(caller: str, run: Run) -> dict:
+    """Score a run with the extra evaluators."""
+    try:  # These are extra columns only. A failing evaluator is recorded and the verdict stays as the checks gave it.
+        return evaluator_scores(RunData(caller, run.events, tiled_uri=STACK.get("tiled")), EVALUATORS)
     except Exception as exc:
-        scores = {"error": f"{type(exc).__name__}: {exc}"}
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
+def _save_transcript(caller: str, wf: dict, runner: str, error: str | None, checks: dict, run: Run, transcript: list) -> None:
+    """Write the transcript of a failed run to a file."""
+    TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
+    (TRANSCRIPTS / f"{caller}.json").write_text(json.dumps({
+        "workflow": wf["name"], "runner": runner, "error": error, "checks": checks, "final": run.final,
+        "messages": transcript, "calls": [c.to_dict() for c in run.calls],
+    }, indent=1, default=str), encoding="utf-8")
+
+
+async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: dict) -> dict:
+    from asyncroscopy.agents.graphs.mapping import MappingGraph
+
+    facts = await _prepare(live, wf, baseline)
+    caller = unique_caller(f"wf-{wf['name']}-{runner}")
+    config = live.config.for_run(caller=caller)
+    facts["before"] = await live.snapshot()
+    started = time.time()
+    run = Run(facts=facts, has_calls=runner != "mapping", risks=live.risks)
+    error, transcript = None, []
+    try:
+        await _run_graph(MappingGraph, runner, factory, config, wf, facts, caller, started, run, transcript)
+    except TimeoutError:
+        error = f"timed out after {wf['timeout_s']} s"
+    except InfraError:
+        raise
+    except Exception as exc:  # a crash or the recursion limit counts as a failed run
+        error = f"{type(exc).__name__}: {exc}"
+    seconds = round(time.time() - started, 1)
+    if error and len(config.ledger) > len(run.calls):  # the run stopped part way so keep every call whose reply arrived
+        run.calls = [Call.from_dict(c) for c in config.ledger]
+    await asyncio.sleep(1.0)  # let the last trace lines land
+    mine_runs = await _collect_trace(live, run, facts, started, caller)
+    stitched_here = await _collect_pois(live, wf, run, facts, mine_runs)
+    stitch = await _stitch_results(live, wf, run, stitched_here)
+    checks = _run_checks(wf, runner, run, facts, stitch)
+    names = [c.name for c in run.calls] or [str(e["action"]) for e in run.events if e.get("source") == "mcp"]
+    scores = _run_scores(caller, run)
     ok = error is None and all(c["ok"] for c in checks.values())
     if not ok:
-        TRANSCRIPTS.mkdir(parents=True, exist_ok=True)
-        (TRANSCRIPTS / f"{caller}.json").write_text(json.dumps({
-            "workflow": wf["name"], "runner": runner, "error": error, "checks": checks, "final": run.final,
-            "messages": transcript, "calls": [c.to_dict() for c in run.calls],
-        }, indent=1, default=str), encoding="utf-8")
+        _save_transcript(caller, wf, runner, error, checks, run, transcript)
     return {
         "ok": ok,
         "error": error,
@@ -825,7 +848,7 @@ def message_summary(message: BaseMessage) -> dict:
     }
 
 
-# ------------------------------------------------------------------ reports
+# reports
 
 
 def score_median(rows: list[dict], column: str) -> str:
@@ -871,7 +894,7 @@ async def main(args: argparse.Namespace) -> int:
         print(f"no stack {args.stack!r}; declared: {sorted(stacks)} (benchmarks/stacks.yaml, or stacks: in a workflow file)")
         return 2
     STACK.update(stacks[args.stack])
-    # Environment overrides win over the stack file (configs/mcp_*_operator.yaml comments use them).
+    # Environment overrides win over the stack file. The comments in configs/mcp_*_operator.yaml use them.
     env = settings.get()
     for field, value in (("operator", env.operator_url), ("tiled", env.tiled_uri)):
         if value:
@@ -891,7 +914,7 @@ async def main(args: argparse.Namespace) -> int:
     if args.list:
         for wf in workflows:
             runners = runners_for(wf, available)
-            print(f"{wf['name']:32s} {','.join(runners):22s} timeout {wf['timeout_s']:5d} s  {wf['file']}" + ("  [approval]" if wf.get("approval") else ""))
+            print(f"{wf['name']:32s} {','.join(runners):22s} timeout {wf['timeout_s']:5d} s  {wf['file']}" + "")
         print(f"{len(workflows)} workflows on stack {args.stack}; runners here: {sorted(available)}")
         return 0
     config = AgentConfig.from_env(model=args.model, caller="workflows")
@@ -920,7 +943,7 @@ async def main(args: argparse.Namespace) -> int:
                 try:
                     await ensure_healthy(live, baseline)
                     row = await run_once(live, wf, runner, available[runner], baseline)
-                except Exception as exc:  # a setup or stack failure: recorded, the suite goes on
+                except Exception as exc:  # a setup or stack failure is recorded and the suite goes on
                     row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "infra_error": isinstance(exc, InfraError),
                            "seconds": 0, "checks": {}, "tool_names": [], "sleepwalking": []}
                 rows.append(row)

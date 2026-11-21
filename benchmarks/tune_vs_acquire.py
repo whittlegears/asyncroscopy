@@ -65,8 +65,8 @@ from asyncroscopy.trace.stream import read_trace
 if TYPE_CHECKING:
     from tango.test_context import MultiDeviceTestContext
 
-# ---------------------------------------------------------------------- the study
-# Tuning budgets: the Tuner's search sizes (image_metric). "none" skips tuning.
+# the study
+# Tuning budgets are the Tuner's search sizes for image_metric. "none" skips tuning.
 BUDGETS = {
     "none": None,
     "focus_only": {"corrections": ["focus"], "coarse_points": 5, "fine_points": 3, "rounds": 1},
@@ -75,7 +75,7 @@ BUDGETS = {
     "m": {"corrections": ["focus", "stigmation"], "coarse_points": 9, "fine_points": 7, "rounds": 1, "stig_passes": 1},
     "l": {"corrections": ["focus", "stigmation"], "coarse_points": 13, "fine_points": 9, "rounds": 2, "stig_passes": 1},
 }
-# Starting column: hidden C1 and A1 (m), and focus drift (m/s).
+# Each starting column has hidden C1 and A1 in m and a focus drift in m/s.
 CONDITIONS = {
     "small_error": {"c1_m": 30e-9, "a1_m": [10e-9, 0.0], "drift_m_per_s": 0.0},
     "large_error": {"c1_m": 250e-9, "a1_m": [40e-9, -30e-9], "drift_m_per_s": 0.0},
@@ -84,7 +84,7 @@ CONDITIONS = {
 }
 TUNE_PLAN = {
     "strategy": "image_metric",
-    "dose_budget_e_per_a2": 1e7,  # the bench measures dose; it does not limit it
+    "dose_budget_e_per_a2": 1e7,  # the bench measures dose and does not limit it
     "max_steps": 1000,
     "focus_range_m": 4e-7,
     "stig_range_m": 1.5e-7,
@@ -93,8 +93,8 @@ TUNE_PLAN = {
     "dwell_s": 1e-6,
 }
 ACQUIRE = {"fov_m": 1e-7, "imsize": 256, "dwell_s": 4e-6}  # one map tile
-MAP_GRID = 9  # tiles per side (100 nm apart, no overlap)
-FOCUS_FIELD_M = (0.52e-6, 0.0)  # sacrificial field off the map, where the tuning is done
+MAP_GRID = 9  # tiles per side, 100 nm apart with no overlap
+FOCUS_FIELD_M = (0.52e-6, 0.0)  # a field off the map where the tuning is done
 TWIN = {
     "sample_seed": 77,
     "sample_size_xy": 1.2e-6,
@@ -104,8 +104,8 @@ TWIN = {
     "time_scale": 0.0,
 }
 STAGE_MOVE_OVERHEAD_S = 1.0  # move and settle
-DEPTH_OF_FIELD_M = 20e-9  # the resolution evaluator's in-focus tolerance; also the policy's staleness bound
-# Two objectives that disagree: particles found (blur is tolerated), and particles found in frames taken in focus.
+DEPTH_OF_FIELD_M = 20e-9  # The resolution evaluator's in focus tolerance. The policy also uses it as its staleness bound.
+# Two objectives that disagree. One counts every particle found. The other counts only those in frames taken in focus.
 OBJECTIVES = ("information", "information_in_focus")
 
 
@@ -221,7 +221,7 @@ class Bench:
             tuned = self.tune(BUDGETS[budget_name], trial)
         tune_s = self.clock() - t0
         after_tune = self.device._focus_truth()
-        # Acquire the map, tile after tile, while a whole tile still fits in the budget.
+        # Acquire the map tile by tile while a whole tile still fits in the budget.
         self.twin.set_fov(ACQUIRE["fov_m"])
         self.scan.imsize = ACQUIRE["imsize"]
         self.scan.dwell_time = ACQUIRE["dwell_s"]
@@ -250,9 +250,9 @@ class Bench:
         truth = json.loads(self.twin.export_ground_truth())
         truth["focus_by_acquisition"] = focus_by_acquisition
         data = RunData(trial, events, truth=truth)
-        # Information per T: the whole budget, tuning included, is the time it cost.
+        # Information is divided by the whole budget because tuning time is part of the cost.
         scores = score_run(data, [get_evaluator("information", duration_s=budget_s), "resolution", "dose", "time"])
-        for key in keys:  # the frames are scored; keep the disk small
+        for key in keys:  # the frames are scored so remove them to keep the disk small
             try:
                 os.remove(key)
             except OSError:
@@ -315,10 +315,9 @@ def summarise(rows: list[dict], budget_s: float) -> dict:
         for objective in OBJECTIVES:
             best = max(curve, key=lambda p: (p[objective] or 0.0, -(p["tune_s"] or 0.0)))
             optima[objective] = {"budget": best["budget"], "value": best[objective], "tune_s": best["tune_s"]}
-        # The stopping rule (benchmarks.evaluate.policy.keep_tuning), fed the rates this bench measured:
-        # would it have told an agent to tune with each budget instead of acquiring at once, and was that right?
-        # The rule's rates come from these same trials, so this checks the rule's arithmetic and its staleness
-        # term, not its ability to predict.
+        # Check the stopping rule benchmarks.evaluate.policy.keep_tuning with the rates this bench measured.
+        # Would it have told an agent to tune with each budget, and was that right?
+        # The rates come from these same trials. So this checks the rule's arithmetic and staleness term and not how well it predicts.
         base = next((p for p in curve if p["budget"] == "none"), None)
         drift = CONDITIONS[condition]["drift_m_per_s"]
         for point in curve:
@@ -328,7 +327,7 @@ def summarise(rows: list[dict], budget_s: float) -> dict:
                 rate_now = (base[objective] or 0.0) / budget_s
                 rate_tuned = (point[objective] or 0.0) / max(1e-9, budget_s - point["tune_s"])
                 stale = stale_after_s(DEPTH_OF_FIELD_M, drift, point["residual_after_tune_m"] or 0.0)
-                # Unless the objective needs focus, a stale focus still finds particles: staleness applies to in-focus information only.
+                # A stale focus still finds particles. Staleness only applies to the in focus objective.
                 window = stale if objective == "information_in_focus" else math.inf
                 decision = keep_tuning(rate_now, rate_tuned, point["tune_s"], budget_s, window)
                 point.setdefault("rule_says_tune", {})[objective] = decision.keep_tuning

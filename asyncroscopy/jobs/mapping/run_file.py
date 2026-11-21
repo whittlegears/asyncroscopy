@@ -27,8 +27,8 @@ import numpy as np
 from asyncroscopy.core.fileio import rotated_paths
 
 RUN_LAYOUT = 2
-RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # a finished run file may briefly be open elsewhere (Windows)
-TRACE_LINES_KEPT = 2000  # job events copied into the run file; the rest are in the shared trace (see trace_file)
+RENAME_RETRY_DELAYS_S = (0.0, 0.2, 0.5, 1.0, 2.0)  # on Windows a finished run file may briefly be open elsewhere
+TRACE_LINES_KEPT = 2000  # how many job events are copied into the run file. The rest stay in the shared trace.
 PARTIAL = ".partial"
 
 
@@ -46,7 +46,7 @@ def job_trace_files(trace: Path, offset: int, since: float) -> list[tuple[Path, 
 
 
 def job_trace_events(trace: Path, run_id: str, offset: int, since: float = 0.0) -> tuple[list[str], int]:
-    """One job's own events (reserve, start, stop, approvals, failed steps) from the shared trace; (lines, dropped).
+    """One job's own events (reserve, start, stop, failed steps) from the shared trace; (lines, dropped).
 
     Only the part written since ``offset`` (where the trace ended when the job was reserved) is read, line
     by line, so the cost is this job's, not the history's. Successful per-tile steps are left out (each
@@ -91,7 +91,7 @@ class RunFile:
     def is_open(self) -> bool:
         return self._h5 is not None
 
-    # -- writing ---------------------------------------------------------
+    # writing
     def open(self, attrs: dict, first_attrs: dict) -> None:
         """Open (or reopen, on a resume) the ``.partial`` file for writing and set its run attributes.
 
@@ -228,7 +228,7 @@ class RunFile:
             return self.final, f"the run file was in use, so it was copied to {self.final.name}; {self.partial.name} is left behind ({last})"
         return self.final, f"the run file was in use, so it was copied to {self.final.name} ({last})"
 
-    # -- reading ---------------------------------------------------------
+    # reading
     def attr(self, name: str):
         """One file attribute, or None (also when there is no file yet)."""
         if self._h5 is not None:

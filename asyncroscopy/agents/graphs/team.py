@@ -4,7 +4,7 @@ Small local models lose track with many tools and long instructions, so no
 single agent here gets both. The planner (one model call, JSON out) splits
 the request into steps for named specialists:
 
-* ``operator``: the instrument (stage, beam, acquisitions, job devices such as the Mapper, approvals);
+* ``operator``: the instrument (stage, beam, acquisitions, job devices such as the Mapper);
 * ``analyst``: stored data and maps (list_data, view_data, stitching, scoring, points of interest).
 
 Each specialist is a tool-using agent that holds only its role's tools,
@@ -39,13 +39,13 @@ from asyncroscopy import settings
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
-from asyncroscopy.agents.graphs import run_keeping_partial
+from asyncroscopy.agents.graphs import map_rule, run_keeping_partial
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
 from asyncroscopy.agents.profile import TeamTools, load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 
-try:  # import the model client here: an import inside the async factory blocks the event loop
+try:  # import the model client here because an import inside the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
 except ImportError:
     pass
@@ -53,12 +53,11 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 6
-STEP_TOOL_ROUNDS = 25  # tool calls one step may make (a long map is many wait_for_job calls)
+STEP_TOOL_ROUNDS = 25  # tool calls one step may make, since a long map is many wait_for_job calls
 STEP_RECURSION = recursion_limit(STEP_TOOL_ROUNDS)
 ROLE_PROMPTS = {
     "operator": """You run the instrument for one step of a larger task. Tools act on the instrument or its digital twin.
-- Lengths are metres. A map is one Mapper job: run_job, then wait_for_job until done (its reply has the keys). Never a loop of moves.
-- If a call says APPROVAL REQUIRED, follow approval_status until approved, then repeat the call once; if denied, stop.
+- Lengths are metres. {map_rule}
 - Do only your step. Another agent stitches and analyses data: hand on the keys (run key, job id, spectrum keys).
 - Fix a refused call from its message and call again; never repeat a failing call unchanged.
 - Finish with one short paragraph: what you did and the keys you got.""",
@@ -77,7 +76,7 @@ a map request is an operator step (run the map) followed by an analyst step (sti
 REPORT_PROMPT = """Write the final answer to the user's request from the notes below. Use only keys and numbers that appear in the facts or notes; never invent a key.
 Say briefly what was done, the keys of what was produced, and anything refused, denied or left undone."""
 AGENT_LINES = {
-    "operator": "operator: runs the instrument: moves, images, spectra, map jobs (Mapper), approvals",
+    "operator": "operator: runs the instrument: moves, images, spectra, map jobs (Mapper)",
     "analyst": "analyst: reads and analyses stored data: list/view data, stitch a map run, score regions, points of interest",
 }
 
@@ -90,7 +89,7 @@ class TeamState(TypedDict, total=False):
     trace: list
     retried: bool
     answer: str
-    skills_applied: list  # {"step", "agent", "skill", "reason"} for every skill a specialist was given
+    skills_applied: list  # one entry with step, agent, skill and reason for every skill a specialist was given
 
 
 def _parse_json(text: str) -> dict:
@@ -141,19 +140,21 @@ class TeamGraph:
         self.config = config or AgentConfig.from_env(caller=settings.get().caller or "team")
         self.memory = memory or Memory.from_env()
         self.team = load_profile(self.config.profile).team
-        self.catalog = ToolCatalog.unknown()  # what the endpoint's tools are (endpoint_info), read with the tools
+        self.catalog = ToolCatalog.unknown()  # what the endpoint's tools are, read along with the tools
         self._tools: dict[str, list] | None = None
         self._all_names: set[str] = set()
+        self._has_mapper = True
 
     async def tools_by_role(self) -> dict[str, list]:
         if self._tools is None:
             tools = await self.config.tools(allow=["*"])
             self._all_names = {t.name for t in tools}
             info = await self.config.info()
+            self._has_mapper = bool(info.get("map_devices"))
             self.catalog = ToolCatalog.from_info(info)
             stem = bool(info.get("stem_devices"))
             self.memory.seed_instrument(self.catalog, stem=stem)
-            waits = bool(info.get("analysis_url"))  # else the analyst needs analysis_job_*
+            waits = bool(info.get("analysis_url"))  # without it the analyst needs the analysis_job tools
             role = lambda name: role_of(name, self.team, self.catalog, stem, waits)  # noqa: E731
             self._tools = {r: [t for t in tools if role(t.name) in (r, "shared")] for r in self.team.roles}
             self._tools = {r: ts for r, ts in self._tools.items() if any(role(t.name) == r for t in ts)}
@@ -163,14 +164,18 @@ class TeamGraph:
         """A tool-using agent for one step: its role's tools and rules, the notes so far, and (each model call) the skills and memory that apply."""
         names = {t.name for t in tools}
         known = ("\n\nWhat earlier steps produced:\n" + "\n".join(notes[-4:])) if notes else ""
-        prompt = ROLE_PROMPTS[role] + known
-        # The claim check matters here too: the step's answer becomes the next step's notes.
+        # The map sentence names how this endpoint maps, so it agrees with the mapping skill the step gets.
+        maps = map_rule(self._has_mapper, self._all_names or names).strip() or "Never move the stage or acquire in a loop for a map."
+        if self._has_mapper:
+            maps += " A Mapper job is run_job, then wait_for_job until done (its reply has the keys)."
+        prompt = ROLE_PROMPTS[role].replace("{map_rule}", maps) + known
+        # The claim check matters here too, because the step's answer becomes the next step's notes.
         middleware = build_middleware(self.config.middleware, prompt=prompt, tool_names=names, offered=self._all_names or names, tools=tools,
                                       memory=self.memory.notes_for, num_ctx=self.config.num_ctx, deadline=self.config.deadline,
-                                      catalog=self.catalog)
+                                      catalog=self.catalog, profile=self.config.agent_profile())
         return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=middleware)
 
-    # ------------------------------------------------------------------ nodes
+    # nodes
     async def plan(self, state: TeamState) -> TeamState:
         roles = set(await self.tools_by_role())
         if not roles:
@@ -198,8 +203,8 @@ class TeamGraph:
                 task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
                         ". Wait for it with wait_for_job (its reply has the results); do not start another job."
         agent = self.specialist(step["agent"], tools, task, notes)
-        # A recursion limit, a timeout or a model crash keeps the calls made so far: a job started
-        # before the failure is still on the instrument and the retry must know about it.
+        # A recursion limit, a timeout or a model crash keeps the calls made so far.
+        # A job started before the failure is still on the instrument, and the retry must know about it.
         result, failed = await run_keeping_partial(agent, {"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
         messages, applied = result.get("messages", []), result.get("skills_applied") or []
         calls = trace_from_messages(messages)
@@ -228,7 +233,7 @@ class TeamGraph:
             answer = ""
         return {"answer": answer.strip() or f"Steps run:\n{notes}\nFacts: {facts.summary()}"}
 
-    # ------------------------------------------------------------------ graph
+    # graph
     def build(self) -> CompiledStateGraph:
         graph = StateGraph(TeamState)
         graph.add_node("plan", self.plan)

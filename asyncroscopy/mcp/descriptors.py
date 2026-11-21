@@ -1,6 +1,6 @@
 """What the MCP server knows about each tool, decided once at discovery: ``ToolDescriptor``.
 
-The approval gate, ``find_tools``, ``endpoint_info``, ``action_space``, the token role check
+``find_tools``, ``endpoint_info``, ``action_space``, the token role check
 (``endpoint_auth``) and ``stop_all`` all read the descriptor; none of them parses a tool's name again.
 
 A device command's facts come from, in order:
@@ -30,14 +30,19 @@ from asyncroscopy.core.names import ACTION_HINTS, READ_ROLES, TANGO_ADMIN, TANGO
 from asyncroscopy.mcp.action_roles import role_for
 from asyncroscopy.safety import policy
 
-# Native tools of the MCP server (no device behind them): role, risk, whether it acts, whether it starts a job.
+# Native tools of the MCP server, which have no device behind them.
+# Each gives role, risk, whether it acts and whether it starts a job.
 NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "run_job": ("job.run", "high", True, True),
     "wait_for_job": ("job.status", "low", False, False),
     "list_data": ("data.read", "low", False, False),
     "view_data": ("data.read", "low", False, False),
+    # They change what agents are told, not the instrument, and are never given to a model (not_for_models).
+    "save_skill": ("other", "low", True, False),
+    "delete_skill": ("other", "low", True, False),
+    "switch_skill": ("other", "low", True, False),
 }
-# Envelope verbs that only read a job (an observe, not an act).
+# Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})
 
 
@@ -46,7 +51,7 @@ class ToolDescriptor:
     """One tool as the server decided it at discovery.
 
     ``device``/``command``: the tool prefix and Tango command (None for a native tool). ``risk``: "low" or
-    "high" as the approval gate sees it, and ``risk_source`` where that came from ("override",
+    "high", and ``risk_source`` where that came from ("override",
     "declared", "rule", "native"). ``acts``: it changes something (else it only observes).
     ``routine``: auto mode runs it without a person. ``stop``: stop_all calls it (no argument).
     ``job_start``: it starts a job.
@@ -76,13 +81,13 @@ class DeviceInfo:
     prefix: str
     dev_class: str
     proxy: Any = None
-    stem: bool = False  # scans images and blanks a beam (policy.is_stem_device)
-    probe: bool = False  # brings a probe to the sample (policy.is_probe_device)
-    envelope: bool = False  # runs jobs (the whole job envelope)
+    stem: bool = False  # scans images and blanks a beam
+    probe: bool = False  # brings a probe to the sample
+    envelope: bool = False  # runs jobs
     job_kind: str | None = None
     plan_example: str | None = None
-    in_types: dict[str, Any] = field(default_factory=dict)  # command -> Tango input type
-    hints: dict[str, dict] = field(default_factory=dict)  # command -> its action_hints entry
+    in_types: dict[str, Any] = field(default_factory=dict)  # Tango input type of each command
+    hints: dict[str, dict] = field(default_factory=dict)  # action_hints entry of each command
 
     def kinds(self) -> set[str]:
         return {k for k in ("stem", "probe", "envelope") if getattr(self, k)}
@@ -147,7 +152,7 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
     if declared and declared not in ("low", "high"):
         warnings.append(f"{device.prefix}.{command}: declared risk {hint.get('risk')!r} is not low or high; the rules decide")
         declared = ""
-    if matched:  # overrides that disagree (a broad "*": low and an exact high) never lower a tool: high wins
+    if matched:  # when overrides disagree the high one wins
         risk, source = ("high" if "high" in matched else matched[0]), "override"
     elif declared:
         risk, source = declared, ("tango" if hint is builtin else "declared")

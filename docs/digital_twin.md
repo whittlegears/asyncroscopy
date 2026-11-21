@@ -41,7 +41,7 @@ Before you trust a workflow that passes on the twin, know where the twin is simp
 - **Inputs are limited to plausible values.** `set_fov` outside `min_fov`..`max_fov` (1 nm to 100 um), `|defocus|` above `max_defocus` (10 um), a stigmator component above `max_stigmator` (1 um), non-finite numbers and stage moves outside the STAGE limits are refused with an error. The `ElectronMicroscope` base checks these for every backend, so AutoScript refuses the same values. Your instrument's limits may differ, so set these properties to match it.
 - **`scan_region` is `[left, top, width, height]`** in fractions of the field, as on the SCAN device and in AutoScript.
 
-Rendering time on a laptop (GTX-class CPU, no GPU needed): about 30 ms for a 512x512 survey tile, about 0.7 s for the first 512x512 atomic-resolution tile of a particle and 0.1 s after that. `tests/test_twin_render_perf.py` checks this.
+Rendering time on a laptop (GTX-class CPU, no GPU needed): about 30 ms for a 512x512 survey tile, about 0.7 s for the first 512x512 atomic-resolution tile of a particle and 0.1 s after that. `tests/twin/test_twin_render_perf.py` checks this.
 
 ## The stage device
 
@@ -91,4 +91,4 @@ Each acquisition's record is appended to `<acquisition_save_directory>/ground_tr
 - `DigitalTwinParticles`: `particles`, voxel-backed oriented particles.
 - `PolycrystallineGoldDigitalTwin`: `polycrystal` grains, driven by the corrector twin.
 
-To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer (implement `_generate_sample`). Every command, and what it is (risk, role, stop, routine), comes from the `ElectronMicroscope` base: a twin declares nothing. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.
+To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer (implement `_generate_sample`). Every command, and what it is (risk, role, stop), comes from the `ElectronMicroscope` base: a twin declares nothing. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.

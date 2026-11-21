@@ -16,7 +16,7 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class APERTURE(Device):
     """Base device for a motorized aperture mechanism."""
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------

@@ -35,7 +35,7 @@ Each evaluator works at two levels. `score_event(event, data)` scores one operat
 | `information` | `features_found` (max), `features_in_focus` (max), `features_per_s` (max), `features_per_dose` (max), `recall` (max), `images` | Ground-truth particles that a detected feature lands on, each counted once per run however often it was imaged. `features_in_focus` counts only frames taken within 20 nm of focus. | Features with sharp edges according to pyTEMlib's `baseline` scorer (`pyTEMlib.scoring`), summed over the images. This is a proxy: a particle imaged twice counts twice. |
 | `resolution` | `focus_error_m` (min), `in_focus_fraction` (max), `sharpness` (max) | The hidden `hypot(C1, |A1|)` behind each frame, if the bench recorded it (`focus_by_acquisition`) | The pyTEMlib `baseline` score (0-1) |
 | `dose` | `max_dose_e_per_a2`, `mean_dose_e_per_a2`, `over_threshold_fraction`, `job_dose_e_per_a2` (all min), `exposed_area_m2` | It also reports the twin's own dose map maximum | Each frame's current × dwell / pixel area, taken from the data's attributes and laid on a grid at the frame's field. The dose that jobs report (the Tuner's `dose_e_per_a2`) is counted, but not placed. |
-| `time` | `wall_s`, `clock_s`, `idle_s`, `idle_fraction` (min), `busy_s` | Not used | `clock_s` is the instrument clock span (simulated seconds on a twin). `busy_s` is the union of call and step durations. `idle_s` is wall time with nothing running: thinking, waiting and approvals. |
+| `time` | `wall_s`, `clock_s`, `idle_s`, `idle_fraction` (min), `busy_s` | Not used | `clock_s` is the instrument clock span (simulated seconds on a twin). `busy_s` is the union of call and step durations. `idle_s` is wall time with nothing running: thinking and waiting. |
 
 Per unit of time means per `clock_s` of the run, unless the caller gives `duration_s`. Per unit of dose means per e/Å² summed over frames. Options are constructor keyword arguments, for example `get_evaluator("dose", threshold_e_per_a2=500)` or `get_evaluator("information", in_focus_m=10e-9)`. If an evaluator raises, its result is `{"error": ...}`, and the other evaluators still run.
 
@@ -89,7 +89,7 @@ class Revisits(Evaluator):
 revisits = "my_package.evaluators:Revisits"
 ```
 
-Then run `python -m benchmarks.evaluate --run <id> --evaluators revisits,dose`. When the score changes meaning, bump `version`, so that scores from different versions are not mixed. `tests/test_evaluate.py` contains a shorter example that also checks a failing evaluator.
+Then run `python -m benchmarks.evaluate --run <id> --evaluators revisits,dose`. When the score changes meaning, bump `version`, so that scores from different versions are not mixed. `tests/scoring/test_evaluate.py` contains a shorter example that also checks a failing evaluator.
 
 ## Objectives that conflict, and a team's own reward
 
@@ -117,7 +117,7 @@ register_evaluator(composite("careful", {
 
 `features(run)` returns one flat row per run, made only of numbers and strings:
 
-- `run.*` columns are counted from the events alone: `events`, `tool_calls`, `job_steps`, `jobs`, `failed`, `approvals`, `dry_run_events`, `acquire_calls`, `distinct_actions`, `simulated`.
+- `run.*` columns are counted from the events alone: `events`, `tool_calls`, `job_steps`, `jobs`, `failed`, `dry_run_events`, `acquire_calls`, `distinct_actions`, `simulated`.
 - `<evaluator>.<objective>` columns hold every evaluator's run score. `feature_units()` gives their units.
 
 `features_table(runs)` makes the rows for many runs, and `write_table(rows, "runs.csv")` saves them. To learn a reward, add an outcome column per run, such as an operator's rating or a later analysis result. Then regress the outcome on the columns, or fit the weights of a `composite`. Nothing in this package learns. It only makes trace → features → score a clean table. `--features` on the command line prints one run's row.
@@ -150,7 +150,7 @@ The bench adds two things that the twin does not model:
 - **Focus drift.** The twin drifts the stage, not the focus. `FocusDriftTwin` adds `rate × (clock − t0)` to C1.
 - **Per-frame overhead.** The twin's clock counts only frame time and stage moves.
 
-The results below came from this checkout (`benchmarks/results/tune_vs_acquire.md`). `found` is the number of unique ground-truth particles found (twin), and `in focus` is `features_in_focus`.
+The results below came from this checkout. `found` is the number of unique ground-truth particles found (twin), and `in focus` is `features_in_focus`.
 
 | Budget | Tuning (s) | Map tiles | Small error (C1 30 nm, \|A1\| 10 nm): found / in focus | Large error (C1 250 nm, \|A1\| 50 nm) | Large error, drift 0.3 nm/s | Large error, drift 2 nm/s |
 | :-- | --: | --: | --: | --: | --: | --: |

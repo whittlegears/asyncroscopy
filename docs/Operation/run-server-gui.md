@@ -4,6 +4,7 @@
 uv run startup_guis/server_gui.py   # Tango database, devices, Tiled (run_servers.py)
 uv run startup_guis/mcp_gui.py      # MCP bridge (run_mcp.py)
 uv run startup_guis/llm_gui.py      # agent MCP server (run_llm.py)
+uv run startup_guis/pytemlib_mcp.py # pyTEMlib analysis MCP server (run_pytemlib.py)
 ```
 
 The server GUI opens on `configs/DigitalTwin.yaml` and the MCP GUI on the digital-twin
@@ -12,7 +13,7 @@ Tango host, so a fresh window never targets the real microscope.
 ## The GUI has no rules of its own
 
 Each window is drawn from its startup script. The script declares its settings once
-(`SETTINGS` in `run_servers.py`, `run_mcp.py`, `run_llm.py`), and the same list both
+(`SETTINGS` in `run_servers.py`, `run_mcp.py`, `run_llm.py`, `run_pytemlib.py`), and the same list both
 validates the YAML on the command line and builds the window. So:
 
 - **New option:** add a `Setting(...)` to the script. It appears in the GUI.

@@ -28,7 +28,7 @@ import math
 from dataclasses import dataclass
 
 DEFAULT_MAX_BEAM_CURRENT_AGE_S = 900.0
-# The current a microscope assumes until it has measured one (its default_beam_current_pa property).
+# The current a microscope assumes until it has measured one.
 DEFAULT_BEAM_CURRENT_PA = 50.0
 
 
@@ -42,7 +42,7 @@ class BeamCurrent:
     source: str  # "measured" or "default"
     age_s: float | None
     simulated: bool
-    refused: str | None  # why it may not be used for a dose budget; None when it may
+    refused: str | None  # why it may not be used for a dose budget, or None when it may
 
     def estimate(self) -> dict:
         """The fields a job's estimate reports about the current it used."""
@@ -82,7 +82,7 @@ def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_M
                 else "the microscope does not say the current was measured (no beam_current_source)"
             )
     if not (math.isfinite(pa) and pa > 0):
-        # Never usable, simulated or not: a zero or negative current makes every dose zero.
+        # Never usable, simulated or not, because a zero or negative current makes every dose zero.
         return BeamCurrent(pa, source, age, simulated, f"beam_current_pa {parameters.get('beam_current_pa')!r} is not a current > 0")
     if simulated:
         return BeamCurrent(pa, source, age, simulated, None)
@@ -113,7 +113,7 @@ START_CURRENT_TOLERANCE = 0.05
 def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa: float | None, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
     """The current, checked again when a job with a dose budget starts or resumes; raises ``BeamCurrentRefused``.
 
-    The approval may come long after the reserve: the current must still be usable for a budget, and no more
+    The start may come long after the reserve: the current must still be usable for a budget, and no more
     than ``START_CURRENT_TOLERANCE`` above ``budgeted_pa``, the current the budget was checked with.
     """
     current = usable_beam_current(parameters, simulated, max_age_s, default_pa)

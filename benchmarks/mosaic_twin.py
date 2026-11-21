@@ -1,4 +1,4 @@
-"""Stitching measured on the twin against its ground truth (docs/designs/multiscale_maps.md, phase P2).
+"""Stitching measured on the twin against its ground truth.
 
 Takes a serpentine grid of tiles with the twin from a configuration (stage error, drift, scan distortion,
 detector drift, support texture: whatever the configuration turns on), stitches them with pyTEMlib exactly
@@ -38,8 +38,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = "asyncroscopy/digitaltwin/benchmark"
-# The thresholds of docs/designs/multiscale_maps.md, goal G2.
-MISPLACED_PX = 2.0  # a tile further than this from the shared affine fit is misplaced (design G3's "wrong placement")
+MISPLACED_PX = 2.0  # a tile further than this from the shared affine fit counts as misplaced
 THRESHOLDS = {
     "placement_median_px": 0.3,
     "placement_p95_px": 0.7,
@@ -146,7 +145,7 @@ def _affine_residual(estimate: np.ndarray, true: np.ndarray) -> np.ndarray:
     design = np.hstack([true, np.ones((len(true), 1))])
     keep = np.ones(len(true), bool)
     for _ in range(10):
-        if keep.sum() < 3:  # too few tiles near any fit to refine it: keep the plain least-squares fit
+        if keep.sum() < 3:  # too few tiles are near the fit to refine it so keep the plain least squares fit
             coeffs, *_ = np.linalg.lstsq(design, estimate, rcond=None)
             return np.hypot(*(estimate - design @ coeffs).T)
         coeffs, *_ = np.linalg.lstsq(design[keep], estimate[keep], rcond=None)
@@ -159,14 +158,14 @@ def _affine_residual(estimate: np.ndarray, true: np.ndarray) -> np.ndarray:
 
 def placement_errors(positions_px: np.ndarray, records: list[dict], pixel_m: float, imsize: int) -> dict:
     """Tile centres on the canvas (top-left + half a tile) against the true centres, in pixels."""
-    true = np.array([[r["center_true_m"][1], r["center_true_m"][0]] for r in records]) / pixel_m  # (row, col)
+    true = np.array([[r["center_true_m"][1], r["center_true_m"][0]] for r in records]) / pixel_m  # as row, col
     drawn = positions_px + (imsize - 1) / 2.0
     diff = drawn - true
     diff -= np.median(diff, axis=0)
     offset_only = np.hypot(*diff.T)
     local = _affine_residual(drawn, true)
     placed = local <= MISPLACED_PX
-    if not placed.any():  # stage positions alone: nothing is within 2 px of any fit, so report every tile
+    if not placed.any():  # with stage positions alone no tile is within 2 px of any fit so report every tile
         placed = np.ones(len(local), bool)
     return {
         "median_px": float(np.median(offset_only)), "p95_px": float(np.percentile(offset_only, 95)), "max_px": float(offset_only.max()),
@@ -187,7 +186,7 @@ def seam_ratio(canvas: np.ndarray, tops: np.ndarray, imsize: int, margin: int = 
             if 0 < r < h:
                 edge_rows[r] = True
     covered = canvas > 0
-    step_x = np.abs(np.diff(canvas, axis=1))  # step_x[:, c - 1] is between columns c - 1 and c
+    step_x = np.abs(np.diff(canvas, axis=1))  # column j of step_x is the step between canvas columns j and j + 1
     step_y = np.abs(np.diff(canvas, axis=0))
     near_col = np.convolve(edge_cols, np.ones(2 * margin + 1), "same") > 0
     near_row = np.convolve(edge_rows, np.ones(2 * margin + 1), "same") > 0
@@ -259,7 +258,7 @@ def run(args: argparse.Namespace) -> dict:
     placement = register_tiles(tiles, stage_sigma_m=args.stage_sigma, max_drift_m_per_s=args.max_drift, scan_linear=calibration)
     levels, placement = stitch_to_arrays(tiles, placement)
     stitched_s = time.perf_counter() - started
-    tops = np.round(placement.positions_px).astype(int)  # where tile edges fall, to the pixel, for the seam check
+    tops = np.round(placement.positions_px).astype(int)  # tile edges to the nearest pixel for the seam check
     fallback = placement.fallback if placement.fallback is not None else np.zeros(len(tiles), bool)
     detector = [r.get("detector", {}).get("gain") for r in records]
     return {

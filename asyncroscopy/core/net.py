@@ -12,7 +12,7 @@ from __future__ import annotations
 import ipaddress
 
 LOOPBACK_FALLBACK = "127.0.0.1"
-WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean "every interface"; reached locally on loopback
+WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean every interface, reached locally on loopback
 
 
 def is_loopback_host(host: str) -> bool:
@@ -20,7 +20,7 @@ def is_loopback_host(host: str) -> bool:
     text = str(host or "").strip()
     if text.startswith("[") and text.endswith("]"):
         text = text[1:-1]
-    text = text.split("%", 1)[0]  # an IPv6 zone id (fe80::1%eth0) does not change what the address is
+    text = text.split("%", 1)[0]  # drop an IPv6 zone id, which does not change the address
     if text.lower().rstrip(".") == "localhost":
         return True
     try:
@@ -43,6 +43,6 @@ def bind_host(requested: str, allow_remote_bind: bool, simulated: bool) -> tuple
         return requested, None
     return LOOPBACK_FALLBACK, (
         f"[safety] http_host {requested!r} would accept connections from other machines, and this stack is not simulated "
-        "(or its Approvals device could not say). Binding 127.0.0.1 instead; to accept other machines on real hardware, "
+        "(or its devices could not say). Binding 127.0.0.1 instead; to accept other machines on real hardware, "
         "set mcp.allow_remote_bind: true in the MCP config."
     )

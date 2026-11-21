@@ -19,7 +19,7 @@ startup it:
 3. Opens each exported device with `DeviceProxy`.
 4. Reads each device's `command_list_query()`.
 5. Decides once what each command is (a `ToolDescriptor`: action role, risk, whether it acts,
-   operator-only, routine in auto mode, a stop) from what the device declares and the MCP config.
+   operator-only, a stop) from what the device declares and the MCP config.
 6. Registers every non-blocked command as a FastMCP tool.
 
 That means the Tango database is the source of truth. If a device is registered,
@@ -75,8 +75,7 @@ class CAMERA(Device):
 Declare on the base class: every vendor backend and twin that subclasses it inherits the
 declarations and redeclares nothing (`declared_hints` merges them along the class hierarchy). A
 `role` from the read roles (`setting.read`, `stage.read`, `data.read`, `job.status`,
-`job.results`) also tells the server the command only observes. `routine=True` lets auto mode run a
-high-risk command without a person; `operator_only=True` keeps it off agent endpoints. A device
+`job.results`) also tells the server the command only observes. `operator_only=True` keeps a command off agent endpoints. A device
 that works out more about its commands (units and ranges at its own limits, as the
 `ElectronMicroscope` base does with `min_fov`, `max_fov` and `max_defocus`) passes
 `action_hints_attribute(extra=lambda device: device.argument_hints())`.
@@ -93,7 +92,7 @@ Python parameter.
 ## Add A Native MCP Helper
 
 Native helpers live in components (`asyncroscopy/mcp/components/`): `data_tools` (`list_data`,
-`view_data`), `jobs` (`run_job`, `wait_for_job`), `gate` (`approval_status`), `discovery`
+`view_data`), `jobs` (`run_job`, `wait_for_job`), `discovery`
 (`find_tools`, `call_tool`, `endpoint_info`, `action_space`), `skills_tools`, `trace_tools`
 (`trace_since`) and `estop` (`stop_all`). Each has `register(server, cfg)` and a `natives()`
 method returning the tools it offers on this endpoint:
@@ -146,7 +145,7 @@ command names, class-specific command names, or fully qualified
 Use the focused MCP tests:
 
 ```bash
-uv run pytest tests/test_mcp_server.py tests/test_run_servers.py
+uv run pytest tests/endpoints/test_mcp_server.py tests/startup/test_run_servers.py
 ```
 
 Add or adjust tests when you change tool discovery, command filtering, argument

@@ -140,7 +140,7 @@ class ScriptGui(QMainWindow):
         self.script = script
         self.devices = getattr(script, "DEVICES", None)
         self.status_patterns = getattr(script, "STATUS_PATTERNS", [])
-        # With a script's own reader (extends: merged in) the generated file stands alone: a relative base would not resolve from outputs/.
+        # A script's own reader merges in extends so the generated file stands alone. A relative base would not resolve from outputs/.
         self.read_yaml = getattr(script, "read_config", load_yaml)
         self.generated_path = GENERATED_CONFIG_DIR / f"{Path(script.LAUNCHER).stem}_gui.yaml"
         self.setWindowTitle(script.TITLE)
@@ -149,8 +149,8 @@ class ScriptGui(QMainWindow):
         self.command = ManagedCommand(self.enqueue_output, self.process_done)
         self.raw: dict = {}
         self.loaded_path: Path | None = None
-        self.fields: dict[str, tuple[Setting, object]] = {}  # path -> (setting, widget)
-        self.shown: dict[str, str | bool] = {}  # path -> what the widget showed right after loading
+        self.fields: dict[str, tuple[Setting, object]] = {}  # maps a path to its setting and widget
+        self.shown: dict[str, str | bool] = {}  # maps a path to what the widget showed right after loading
         self.presets: dict[str, PresetToggle] = {}
         self.device_checks: dict[str, CheckBox] = {}
         self.device_shown: dict[str, bool] = {}
@@ -174,7 +174,7 @@ class ScriptGui(QMainWindow):
                 self.enqueue_output(f"{setting.title} set to the {name} preset ({value}); the config says {self.get_shown(path)}.\n")
                 self.set_shown(path, value)
 
-    # ---------------------------------------------------------------- layout
+    # layout
 
     def build(self) -> None:
         apply_theme(self)
@@ -317,7 +317,7 @@ class ScriptGui(QMainWindow):
         configure_terminal(self.output)
         layout.addWidget(self.output)
 
-    # ---------------------------------------------------------------- field values
+    # field values
 
     def get_shown(self, path: str) -> str | bool:
         setting, widget = self.fields[path]
@@ -355,7 +355,7 @@ class ScriptGui(QMainWindow):
             toggle.set_value(str(self.get_shown(path)).strip())
         self.validate_timer.start()
 
-    # ---------------------------------------------------------------- devices
+    # devices
 
     def rebuild_devices(self) -> None:
         if self.devices is None:
@@ -377,7 +377,7 @@ class ScriptGui(QMainWindow):
             self.device_checks[key] = checkbox
             self.device_shown[key] = enabled
 
-    # ---------------------------------------------------------------- config
+    # config
 
     def config_files(self) -> list[str]:
         names = []
@@ -475,7 +475,7 @@ class ScriptGui(QMainWindow):
         if path:
             self.load_config_from_path(path)
 
-    # ---------------------------------------------------------------- process
+    # process
 
     def launch_command(self, config_path: Path, *extra: str) -> list[str]:
         return python_command(self.script.LAUNCHER, "--yaml", str(config_path), *extra)

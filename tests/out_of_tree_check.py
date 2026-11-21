@@ -10,7 +10,6 @@ from pathlib import Path
 
 from asyncroscopy.instruments.nano_indenter.indent_grid import IndentGrid
 from asyncroscopy.instruments.nano_indenter.sim_indenter import SimIndenter
-from asyncroscopy.safety.approvals import Approvals
 from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path
 
 work = Path(tempfile.mkdtemp(dir=sys.argv[1]))
@@ -18,11 +17,9 @@ devices = [
     {"class": SimIndenter, "devices": [{"name": "asyncroscopy/instrument/default", "properties": {"seed": 3}}]},
     {"class": IndentGrid, "devices": [{"name": "asyncroscopy/indentgrid/default", "properties": {
         "state_directory": prop_path(work / "state"), "trace_path": prop_path(work / "trace.jsonl")}}]},
-    {"class": Approvals, "devices": [{"name": "asyncroscopy/approvals/default", "properties": {
-        "default_mode": "approve", "mode_file": prop_path(work / "mode.json"), "trace_path": prop_path(work / "approvals.jsonl")}}]},
 ]
 with instrument_context(devices):
-    server = mcp_server_for(devices, approvals_device_address="asyncroscopy/approvals/default")
+    server = mcp_server_for(devices)
     tools = server.list_tool_descriptions()
     outcome = {}
     calls = {"SimIndenter_indent": [0.001], "SimIndenter_retract": [], "IndentGrid_reserve": [json.dumps({"plan": {"origin_m": [0, 0], "nx": 2, "ny": 1, "pitch_m": 1e-5, "load_n": 0.01}})]}
@@ -32,12 +29,11 @@ with instrument_context(devices):
             reply = server.tools[prefix][command](*args)
             outcome[name] = "error" if isinstance(reply, str) and '"error"' in reply else "ran"
         except Exception as exc:
-            outcome[name] = "held" if "APPROVAL REQUIRED" in str(exc) else f"error: {exc}"
-    # Overrides may name the tool; one that matches nothing is reported at start-up.
+            outcome[name] = f"error: {exc}"
+    # An override that matches no tool is reported at startup.
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
-        overridden = mcp_server_for(devices, approvals_device_address="asyncroscopy/approvals/default",
-                                    risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high", "SimIndenter.retract": "high", "SimIndenter_ret*": "low"})
+        overridden = mcp_server_for(devices, risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high", "SimIndenter.retract": "high", "SimIndenter_ret*": "low"})
     try:
         with instrument_context(devices):
             second_context = "started"

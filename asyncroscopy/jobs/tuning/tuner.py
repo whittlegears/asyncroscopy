@@ -1,14 +1,13 @@
 """Tuner: autofocus and astigmatism correction as one bounded, abortable background job.
 
 An agent decides *when* to tune; this job runs the loop, so dozens of
-set-image-score calls never go through the LLM or the approval gate one by one
-(docs/designs/concepts_brief.md, 2.3 and 2.7). ``run_job(device="Tuner",
-plan={...})`` reserves, approves and starts it like any job.
+set-image-score calls never go through the LLM one by one. ``run_job(device="Tuner",
+plan={...})`` reserves and starts it like any job.
 
 How the tuning is done is a **strategy**, chosen by name in the plan:
 
 * ``vendor_autofocus``: the microscope's own autofocus (AutoScript runs OptiSTEM
-  C1A1 in STEM; the twin simulates it). The default (decision D2).
+  C1A1 in STEM; the twin simulates it). The default.
 * ``image_metric``: bounded searches over the defocus, and over the stigmator
   where the microscope offers one, scoring images with
   ``asyncroscopy.routines.focus``.
@@ -92,7 +91,7 @@ PLAN_DEFAULTS: dict[str, Any] = {
     "error_tolerance_m": 1e-9,
 }
 PLAN_FIELDS = set(PLAN_DEFAULTS) | {"dose_budget_e_per_a2", "detector"}
-HISTORY_KEPT = 200  # history entries a job keeps (the trace has every step)
+HISTORY_KEPT = 200  # history entries a job keeps. The trace has every step.
 
 
 def read_image(key: str, detector: str, data_proxy: tango.DeviceProxy | None = None) -> np.ndarray:
@@ -117,9 +116,7 @@ class _Aborted(Exception):
     """abort was called; run_step returns None and the worker restores the snapshot."""
 
 
-# ----------------------------------------------------------------------
 # Strategies
-# ----------------------------------------------------------------------
 class Strategy:
     """How to tune. Subclass, set ``name``, implement ``exposures`` and ``run``, and register it.
 
@@ -169,9 +166,9 @@ class VendorAutofocus(Strategy):
         return 1
 
     def check(self, plan: dict, capabilities: set) -> None:
-        # The vendor autofocus (OptiSTEM C1A1) changes the stigmator whatever the plan's corrections. A microscope
-        # whose stigmator the Tuner cannot read and write (AutoScript until objective_stigmator_m_per_unit is set)
-        # could not put it back on an abort or a failure, so the run is refused rather than left unrestorable.
+        # The vendor autofocus changes the stigmator whatever the plan asks for.
+        # If the Tuner cannot read and write the stigmator it could not put it back after an abort or a failure.
+        # So the run is refused.
         if "stigmator" not in capabilities:
             raise ValueError(
                 "strategy vendor_autofocus changes the stigmator, and this microscope offers no "
@@ -269,9 +266,7 @@ class Corrector(Strategy):
         return {"names": names, "error_before_m": first, "error_after_m": error(measured), "iterations": iterations, "measured": measured}
 
 
-# ----------------------------------------------------------------------
 # The context a strategy tunes through
-# ----------------------------------------------------------------------
 class TuneContext:
     """Every instrument call a strategy can make, each bounded, counted, blanked and abortable."""
 
@@ -286,7 +281,7 @@ class TuneContext:
         self._defocus = float(self.snapshot["defocus_m"])
         self._stigmator = list(self.snapshot["stigmator_m"])
 
-    # -- bookkeeping -------------------------------------------------
+    # bookkeeping
     def _check_abort(self) -> None:
         if self.device.aborting(self.job):
             raise _Aborted()
@@ -322,7 +317,7 @@ class TuneContext:
         if abs(best - centre) > half - margin:
             raise TuneFailed("peak_at_edge", f"the sharpest {what} ({best:.4g} m) is at the edge of the search range {centre:.4g} +/- {half:g} m: the error may be larger than {field}; widen it or start closer")
 
-    # -- optics ------------------------------------------------------
+    # optics
     def get_defocus(self) -> float:
         return self._defocus
 
@@ -354,7 +349,7 @@ class TuneContext:
             self._stigmator = nxt
             self.state["writes"] += 1
 
-    # -- measurements ------------------------------------------------
+    # measurements
     def image(self) -> np.ndarray:
         """One frame at the plan's field of view, size and dwell; the beam is on only while it is taken."""
         self._expose("image", 1)
@@ -440,19 +435,94 @@ class TuneContext:
             raise TuneFailed("corrector_error", f"correct {name} {values} failed: {exc.args[0].desc.strip()[:300]}") from exc
         self.state["corrector_sent"][name] = totals  # recorded only once sent, so a restore undoes exactly this
         self.state["writes"] += 1
-        self.device._persist(self.job)  # on disk too: a device restart must not forget a correction it never undid
+        self.device._persist(self.job)  # saved to disk so a device restart does not forget a correction it never undid
         self.log(kind="corrector_correct", name=name, values_m=values)
 
 
-# ----------------------------------------------------------------------
+def _checked_plan(plan: dict) -> dict:
+    """Check the plan's fields and fill in the defaults."""
+    unknown = sorted(set(plan) - PLAN_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown plan field(s) {unknown}; allowed: {sorted(PLAN_FIELDS)}")
+    if "dose_budget_e_per_a2" not in plan:
+        raise ValueError("dose_budget_e_per_a2 is required: the most electrons per square angstrom tuning may put on the field")
+    p = {**PLAN_DEFAULTS, **plan}
+    corrections = p["corrections"]
+    if isinstance(corrections, str):
+        corrections = [corrections]
+    if not isinstance(corrections, list) or not corrections or any(c not in CORRECTIONS for c in corrections):
+        raise ValueError(f"corrections must be a non-empty list of {list(CORRECTIONS)}, got {p['corrections']!r}")
+    p["corrections"] = [c for c in CORRECTIONS if c in corrections]
+    for key in ("focus_range_m", "stig_range_m", "max_step_m", "fov_m", "dwell_s", "dose_budget_e_per_a2", "corrector_target_m"):
+        if isinstance(p[key], bool) or not isinstance(p[key], (int, float)) or not float(p[key]) > 0:
+            raise ValueError(f"{key} must be a number > 0, got {p[key]!r}")
+    for key in ("max_steps", "imsize", "coarse_points", "fine_points"):
+        if isinstance(p[key], bool) or not isinstance(p[key], int) or p[key] < 3:
+            raise ValueError(f"{key} must be an integer >= 3, got {p[key]!r}")
+    if not 0 < float(p["corrector_gain"]) <= 1:
+        raise ValueError("corrector_gain must be in (0, 1]: a correction never sends more than was measured")
+    return p
+
+
+def _plan_strategy(p: dict) -> Strategy:
+    """Make the plan's strategy and check it can do the corrections."""
+    strategy = STRATEGIES.get(p["strategy"])()
+    missing = set(p["corrections"]) - set(strategy.corrections)
+    if missing:
+        raise ValueError(f"strategy {strategy.name} cannot correct {sorted(missing)}")
+    return strategy
+
+
+def _microscope_parameters(microscope) -> dict:
+    """Read the microscope's parameters, or none if it cannot say."""
+    try:
+        parameters = json.loads(microscope.get_parameters())
+    except (tango.DevFailed, ValueError, TypeError):
+        parameters = {}
+    return parameters
+
+
+def _check_vendor_dose_counted(strategy: Strategy, vendor: list[str], frames_per: dict, simulated: bool, calibrated: bool) -> None:
+    """Refuse vendor measurements on hardware until their dose is calibrated."""
+    if vendor and not simulated and not calibrated:
+        raise ValueError(
+            f"strategy {strategy.name} takes {' and '.join(vendor)} measurements, which scan at their own settings; their dose is "
+            f"counted as {frames_per['autofocus']} (autofocus) / {frames_per['corrector_measure']} (corrector) frames at the plan's "
+            "settings, a placeholder until first light measures it. On an instrument that is refused until the Tuner's "
+            "vendor_dose_calibrated is set; use strategy image_metric, whose images are all at the plan's settings"
+        )
+
+
+def _check_within_limits(strategy: Strategy, p: dict, current: float, worst: float, per_frame: float, frames: int, measurements: int) -> None:
+    """Refuse a plan that needs too many steps or too much dose."""
+    budget = float(p["dose_budget_e_per_a2"])
+    if measurements > int(p["max_steps"]):
+        raise ValueError(f"strategy {strategy.name} needs up to {measurements} measurements with these settings, above max_steps {p['max_steps']}; raise max_steps or use fewer points")
+    if worst > budget:
+        raise ValueError(
+            f"tuning could give up to {worst:.4g} e/A^2 ({frames} frames of {per_frame:.3g} e/A^2 at {current:g} pA), above the budget of {budget:g} e/A^2; "
+            "raise dose_budget_e_per_a2, lower dwell_s, use a larger fov_m or fewer search points"
+        )
+
+
+def _dose_assumption(vendor: list[str], frames_per: dict, p: dict, calibrated: bool) -> str:
+    """Say how the dose of each frame was counted."""
+    return (
+        f"{' and '.join(vendor)} runs scan at their own settings, which the Tuner cannot read; each is counted as "
+        f"{frames_per['autofocus'] if 'autofocus' in vendor else frames_per['corrector_measure']} frames at fov_m {p['fov_m']:g} m, "
+        f"imsize {p['imsize']}, dwell_s {p['dwell_s']:g} s ("
+        + ("checked at first light: vendor_dose_calibrated" if calibrated else "a placeholder, not calibrated") + ")"
+        if vendor else "every frame is at the plan's fov_m, imsize and dwell_s"
+    )
+
+
 # The job device
-# ----------------------------------------------------------------------
 class Tuner(JobDevice):
     """Autofocus and stigmation as a job: a pluggable strategy, bounded steps, a dose budget, snapshot and restore."""
 
     JOB_KIND = "autofocus and astigmatism correction (strategies: vendor_autofocus, image_metric, corrector), bounded and restored on abort"
     PLAN_EXAMPLE = {"corrections": ["focus"], "strategy": "image_metric", "dose_budget_e_per_a2": 3000.0}
-    # No dry runs: every measurement reads an image or a corrector reply, which a dry run does not produce.
+    # No dry runs. Every measurement reads an image or a corrector reply, which a dry run does not produce.
     # Rehearse a tune on a simulated stack instead.
     SUPPORTS_DRY_RUN = False
 
@@ -472,11 +542,9 @@ class Tuner(JobDevice):
         dtype=float, default_value=DEFAULT_MAX_BEAM_CURRENT_AGE_S,
         doc="Oldest screen-current measurement a dose budget accepts on hardware (asyncroscopy/routines/beam.py says why 15 min).",
     )
-    allow_corrector_writes = device_property(dtype=bool, default_value=False, doc="Allow the corrector strategy on a stack that is not simulated (only once first light has settled the correction's sign and units; decision D2).")
+    allow_corrector_writes = device_property(dtype=bool, default_value=False, doc="Allow the corrector strategy on a stack that is not simulated (only once first light has settled the correction's sign and units).")
 
-    # ------------------------------------------------------------------
     # Plan
-    # ------------------------------------------------------------------
     def _capabilities(self, microscope) -> set:
         commands = {c.cmd_name for c in microscope.command_list_query()}
         caps = set()
@@ -489,76 +557,33 @@ class Tuner(JobDevice):
         return caps
 
     def resolve_plan(self, plan: dict) -> dict:
-        unknown = sorted(set(plan) - PLAN_FIELDS)
-        if unknown:
-            raise ValueError(f"unknown plan field(s) {unknown}; allowed: {sorted(PLAN_FIELDS)}")
-        if "dose_budget_e_per_a2" not in plan:
-            raise ValueError("dose_budget_e_per_a2 is required: the most electrons per square angstrom tuning may put on the field")
-        p = {**PLAN_DEFAULTS, **plan}
-        corrections = p["corrections"]
-        if isinstance(corrections, str):
-            corrections = [corrections]
-        if not isinstance(corrections, list) or not corrections or any(c not in CORRECTIONS for c in corrections):
-            raise ValueError(f"corrections must be a non-empty list of {list(CORRECTIONS)}, got {p['corrections']!r}")
-        p["corrections"] = [c for c in CORRECTIONS if c in corrections]
-        for key in ("focus_range_m", "stig_range_m", "max_step_m", "fov_m", "dwell_s", "dose_budget_e_per_a2", "corrector_target_m"):
-            if isinstance(p[key], bool) or not isinstance(p[key], (int, float)) or not float(p[key]) > 0:
-                raise ValueError(f"{key} must be a number > 0, got {p[key]!r}")
-        for key in ("max_steps", "imsize", "coarse_points", "fine_points"):
-            if isinstance(p[key], bool) or not isinstance(p[key], int) or p[key] < 3:
-                raise ValueError(f"{key} must be an integer >= 3, got {p[key]!r}")
-        if not 0 < float(p["corrector_gain"]) <= 1:
-            raise ValueError("corrector_gain must be in (0, 1]: a correction never sends more than was measured")
-        strategy = STRATEGIES.get(p["strategy"])()
-        missing = set(p["corrections"]) - set(strategy.corrections)
-        if missing:
-            raise ValueError(f"strategy {strategy.name} cannot correct {sorted(missing)}")
+        p = _checked_plan(plan)
+        strategy = _plan_strategy(p)
 
         microscope = self.proxy(self.microscope_device_address)
-        try:
-            parameters = json.loads(microscope.get_parameters())
-        except (tango.DevFailed, ValueError, TypeError):
-            parameters = {}
+        parameters = _microscope_parameters(microscope)
         simulated = self._stack_simulated()
         capabilities = self._capabilities(microscope)
-        lacking = set(strategy.needs) - capabilities
-        if lacking:
-            raise ValueError(f"strategy {strategy.name} needs {sorted(lacking)}, which this stack does not offer (corrector_device_address, auto_focus, set_stigmator)")
-        if strategy.name == "corrector" and not simulated and not bool(self.allow_corrector_writes):
-            raise ValueError("corrector writes are not allowed on this instrument until first light has settled their sign and units (allow_corrector_writes); use strategy vendor_autofocus")
-        strategy.check(p, capabilities)
+        self._check_stack_offers(strategy, p, capabilities, simulated)
         if not p.get("detector"):
             p["detector"] = self._default_detector(microscope)
 
-        # The budget is only as good as the current: on hardware a default or stale current is refused (routines/beam.py).
-        # The microscope reports its current (measured, or its own default_beam_current_pa, assumed).
+        # The budget is only as good as the beam current, so on hardware a default or stale current is refused.
+        # The microscope reports its current, either measured or its own assumed default.
         beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s))
         current = beam.pa
         frames_per = {"image": 1, "autofocus": int(self.autofocus_frames), "corrector_measure": int(self.corrector_measure_frames)}
-        # Images are taken at the plan's own fov_m, imsize and dwell_s (on_start sets them), so their dose is known.
-        # The vendor autofocus and the corrector scan at their own settings, which the Tuner cannot read: each run is counted as
-        # autofocus_frames / corrector_measure_frames frames at the plan's settings, an assumption the estimate states.
+        # Images are taken at the plan's own settings, so their dose is known.
+        # The vendor autofocus and the corrector scan at settings the Tuner cannot read.
+        # Each such run is counted as a fixed number of frames at the plan's settings, and the estimate says so.
         vendor = sorted(set(strategy.needs) & {"autofocus", "corrector"})
         calibrated = bool(self.vendor_dose_calibrated)
-        if vendor and not simulated and not calibrated:
-            raise ValueError(
-                f"strategy {strategy.name} takes {' and '.join(vendor)} measurements, which scan at their own settings; their dose is "
-                f"counted as {frames_per['autofocus']} (autofocus) / {frames_per['corrector_measure']} (corrector) frames at the plan's "
-                "settings, a placeholder until first light measures it. On an instrument that is refused until the Tuner's "
-                "vendor_dose_calibrated is set; use strategy image_metric, whose images are all at the plan's settings"
-            )
+        _check_vendor_dose_counted(strategy, vendor, frames_per, simulated, calibrated)
         per_frame = frame_dose(current, float(p["dwell_s"]), float(p["fov_m"]), int(p["imsize"]))
         frames = int(strategy.exposures(p, frames_per)) + 2  # plus the sharpness images before and after
         measurements = int(strategy.measurements(p, frames_per)) + 2
         worst = frames * per_frame
-        budget = float(p["dose_budget_e_per_a2"])
-        if measurements > int(p["max_steps"]):
-            raise ValueError(f"strategy {strategy.name} needs up to {measurements} measurements with these settings, above max_steps {p['max_steps']}; raise max_steps or use fewer points")
-        if worst > budget:
-            raise ValueError(
-                f"tuning could give up to {worst:.4g} e/A^2 ({frames} frames of {per_frame:.3g} e/A^2 at {current:g} pA), above the budget of {budget:g} e/A^2; "
-                "raise dose_budget_e_per_a2, lower dwell_s, use a larger fov_m or fewer search points"
-            )
+        _check_within_limits(strategy, p, current, worst, per_frame, frames, measurements)
         frame_s = int(p["imsize"]) ** 2 * float(p["dwell_s"])
         estimate = {
             "steps": 1,
@@ -569,13 +594,7 @@ class Tuner(JobDevice):
             "frame_dose_e_per_a2": round(per_frame, 4),
             **beam.estimate(),
             "strategy": strategy.name,
-            "dose_assumption": (
-                f"{' and '.join(vendor)} runs scan at their own settings, which the Tuner cannot read; each is counted as "
-                f"{frames_per['autofocus'] if 'autofocus' in vendor else frames_per['corrector_measure']} frames at fov_m {p['fov_m']:g} m, "
-                f"imsize {p['imsize']}, dwell_s {p['dwell_s']:g} s ("
-                + ("checked at first light: vendor_dose_calibrated" if calibrated else "a placeholder, not calibrated") + ")"
-                if vendor else "every frame is at the plan's fov_m, imsize and dwell_s"
-            ),
+            "dose_assumption": _dose_assumption(vendor, frames_per, p, calibrated),
         }
         return {
             **p,
@@ -589,6 +608,15 @@ class Tuner(JobDevice):
             "drives": self._drives(strategy),
         }
 
+    def _check_stack_offers(self, strategy: Strategy, p: dict, capabilities: set, simulated: bool) -> None:
+        """Check this stack can run the strategy."""
+        lacking = set(strategy.needs) - capabilities
+        if lacking:
+            raise ValueError(f"strategy {strategy.name} needs {sorted(lacking)}, which this stack does not offer (corrector_device_address, auto_focus, set_stigmator)")
+        if strategy.name == "corrector" and not simulated and not bool(self.allow_corrector_writes):
+            raise ValueError("corrector writes are not allowed on this instrument until first light has settled their sign and units (allow_corrector_writes); use strategy vendor_autofocus")
+        strategy.check(p, capabilities)
+
     def _drives(self, strategy: Strategy) -> dict[str, list[str]]:
         """{device address: commands} a tuning job with ``strategy`` may send, restoring included, so auto mode
         can tell whether it runs them all (a corrector write is held there until an operator switches it on)."""
@@ -600,9 +628,7 @@ class Tuner(JobDevice):
             drives.setdefault(self.corrector_device_address, []).extend(["measure_aberrations", "correct"])
         return drives
 
-    # ------------------------------------------------------------------
     # Snapshot, run, restore
-    # ------------------------------------------------------------------
     @staticmethod
     def _reads_stigmator(microscope) -> bool:
         """Whether the microscope's stigmator can be read (and so snapshotted and restored): a backend may offer the
@@ -654,7 +680,7 @@ class Tuner(JobDevice):
         return why
 
     def _check_current_at_start(self, plan: dict, microscope) -> None:
-        """The approval may come long after the reserve: the current must still be usable, and no higher than budgeted."""
+        """The start may come long after the reserve: the current must still be usable, and no higher than budgeted."""
         try:
             parameters = json.loads(microscope.get_parameters())
         except (tango.DevFailed, ValueError, TypeError):
@@ -671,9 +697,9 @@ class Tuner(JobDevice):
         plan = job["resolved_plan"]
         microscope = self.proxy(self.microscope_device_address)
         scan = self.proxy(self.scan_device_address)
-        microscope.blank_beam()  # nothing is exposed except while a measurement is taken
-        # A resume: an earlier attempt that left optics or corrector changes in place is undone first, against the
-        # earlier (true) snapshot. A fresh snapshot taken over them would make those changes the new baseline.
+        microscope.blank_beam()  # the sample is exposed only while a measurement is taken
+        # On a resume, changes an earlier attempt left in place are undone first using the earlier snapshot.
+        # A fresh snapshot taken over them would make those changes the new baseline.
         previous = job.get("tune") or {}
         unrestored = self._left_unrestored(previous)
         if unrestored:
@@ -704,7 +730,7 @@ class Tuner(JobDevice):
             "steps": 0, "images": 0, "writes": 0, "dose_e_per_a2": 0.0, "dose_budget_e_per_a2": float(plan["dose_budget_e_per_a2"]),
             "corrector_sent": {}, "history": [],
         }
-        self._persist(job)  # before the first change: a restart mid-tune must find this snapshot
+        self._persist(job)  # saved before the first change so a restart during the tune finds this snapshot
         microscope.set_fov(float(plan["fov_m"]))
         scan.imsize = int(plan["imsize"])
         scan.dwell_time = float(plan["dwell_s"])
@@ -787,7 +813,7 @@ class Tuner(JobDevice):
         if sent:
             corrector = self.proxy(self.corrector_device_address)
             for name, totals in list(sent.items()):
-                # Undo exactly what was sent, in the backend's own convention: send the negated total, in bounded pieces.
+                # Undo what was sent by sending the negated total in bounded pieces.
                 try:
                     remaining = [-float(v) for v in totals]
                     while max(abs(v) for v in remaining) > 1e-15:
@@ -822,7 +848,7 @@ class Tuner(JobDevice):
     def on_finish(self, job: dict) -> dict:
         errors: list[str] = []
         self.proxy(self.microscope_device_address).blank_beam()
-        self._restore_imaging(job, errors)  # the tuned optics stay; the imaging settings go back
+        self._restore_imaging(job, errors)  # the tuned optics stay and the imaging settings go back
         if errors:
             job["tune"]["restore_errors"] = errors
         return {}

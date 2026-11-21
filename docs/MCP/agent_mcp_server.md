@@ -58,13 +58,15 @@ agent:
       tools: ["list_devices"]
 ```
 
+`workflows: true` (optional, under `agent:`) runs workflows (`asyncroscopy/agents/workflows`, for example the `map_grid` map) in the agent's own process: `list_workflows`, `run_workflow`, `workflow_status`, `stop_workflow` and the rest are offered by this server and to the swarm's agents (give an agent `tools: ["*workflow*"]`). A map then needs three processes: the instrument's MCP endpoint, this agent server, and the pyTEMlib MCP server that stitches (`startup_scripts/run_pytemlib.py`). Workflows drive the first of `mcp_urls`. `workflows_hardware: true` also runs them on a stack that is not simulated; it needs `http_host: 127.0.0.1`, because this server has no login.
+
 `mcp_urls` is the only link to the instrument stack. `use_init_chat_model: true` initializes through LangChain's `init_chat_model` using `model` and `model_provider` instead of a local Ollama model.
 
 ## Tools
 
 | Tool | Signature | Purpose |
 | --- | --- | --- |
-| `query_agent` | `(prompt: str, include_transcript: bool) -> str` | Run the swarm and return its response. |
+| `query_agent` | `(prompt: str, include_transcript: bool, graph: str, goal: bool, model: str) -> str` | Run the swarm (or the named graph) and return its response. `model` runs it on that model, a name under the server's provider (Ollama by default), instead of the server's own; SciAgentGUI sends the Ollama model chosen there. |
 | `spawn_agent` | `(config: str) -> str` | Add a worker; returns its name, or `""` on failure. |
 | `list_agents` | `() -> list[str]` | Names of the agents in the swarm. |
 | `list_agent_tools` | `() -> str` | JSON list of the inherited MCP tool names. |
@@ -73,4 +75,4 @@ agent:
 
 `spawn_agent` takes `name`, `system_prompt`, and optionally `tools` (glob patterns matched against inherited tool names, e.g. `["*spectrum"]`), `model`, and `description`.
 
-`query_agent` returns the whole run by default: supervisor routing, each tool call and its result, and the generated text, followed by `FINAL ANSWER:`. Pass `include_transcript=False` to get just the answer.
+`query_agent` returns the whole run by default: supervisor routing, each tool call and its result, and the generated text, followed by `FINAL ANSWER:`. Pass `include_transcript=False` to get just the answer. A server whose own model failed to load at startup still connects its tools, so a request that names a model runs.

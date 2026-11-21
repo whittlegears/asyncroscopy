@@ -61,13 +61,14 @@ def _prop(dtype, default, doc):
 class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
-    # Specimen: where the sample comes from (docs/Operation/specimens.md). The flat sample properties below
-    # are the procedural source's settings and the other sources' defaults (seed, size, support, height).
-    # specimen and specimen_source are the base class's; specimen_source: procedural (seeded particles), recorded (an image file), crystal (a polycrystalline film), or a plug-in.
+    # The specimen says where the sample comes from. See docs/Operation/specimens.md. The flat sample properties below
+    # are the settings of the procedural source and the defaults of the other sources for seed, size, support and height.
+    # specimen and specimen_source belong to the base class. specimen_source is procedural for seeded particles,
+    # recorded for an image file, crystal for a polycrystalline film, or the name of a plug-in.
     specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
     specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
     specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
-    # Sample (sample_seed, sample_particle_count, sample_size_xy come from the base class)
+    # Sample. sample_seed, sample_particle_count and sample_size_xy come from the base class.
     particle_radius_mean = _prop(float, 1.6e-9, "Mean particle radius (m).")
     particle_radius_std = _prop(float, 0.2e-9, "Particle radius standard deviation (m).")
     particle_aspect_ratio = _prop(float, 0.4, "Particle thickness / radius.")
@@ -78,11 +79,11 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     sample_cluster_fraction = _prop(float, 0.0, "Fraction of particles placed in clusters (0-1).")
     height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
     height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
-    # Limits a real column enforces; the twin refuses rather than rendering nonsense (or running out of memory).
-    # min_fov, max_fov, max_image_shift, max_defocus (render cost grows with defocus squared) and max_stigmator are the bases'.
-    # Focus truth the operator does not see: get_defocus and get_stigmator never include it. A twin
-    # started with these set is defocused and astigmatic, and its images are blurred accordingly, so a
-    # focus routine has to find the correction from the images (export_ground_truth reports the residual).
+    # A real column enforces limits. The twin refuses instead of rendering nonsense or running out of memory.
+    # min_fov, max_fov, max_image_shift, max_defocus and max_stigmator belong to the bases. Render cost grows with defocus squared.
+    # The operator does not see the focus truth below. get_defocus and get_stigmator never include it. A twin
+    # started with these set is defocused and astigmatic, and its images are blurred to match, so a
+    # focus routine has to find the correction from the images. export_ground_truth reports the residual.
     focus_offset_m = _prop(float, 0.0, "Hidden focus error (m) added to C1; not reported by get_defocus.")
     astigmatism_offset_a_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, first component (m); not reported by get_stigmator.")
     astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
@@ -107,7 +108,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     scan_shear = _prop(float, 0.0, "Scan shear (x shift per unit y).")
     scan_flyback_compression = _prop(float, 0.0, "Left-edge compression after flyback (fraction).")
     fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
-    # The stage's errors, dynamics and drift are the STAGE device's (DigitalTwinSTAGE); the clock is the microscope's.
+    # The errors, dynamics and drift of the stage belong to the STAGE device DigitalTwinSTAGE. The clock belongs to the microscope.
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
     # EDS
     eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
@@ -154,28 +155,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     def _generate_sample(self, seed: int) -> None:
         self._check_properties()
         self._start_beam_twin(int(seed))
-        elements = tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip())
-        # The specimen is a plug-in (twin/specimen.py, docs/Operation/specimens.md); everything below it
-        # is the instrument, which only asks the specimen for weights, densities, heights and features.
-        self._load_specimen(
-            seed,
-            SpecimenContext(
-                rng=self._rng,
-                sample=SampleParams(
-                    size_xy_m=float(self.sample_size_xy),
-                    particle_count=int(self.sample_particle_count),
-                    radius_mean_m=float(self.particle_radius_mean),
-                    radius_std_m=float(self.particle_radius_std),
-                    aspect_ratio=float(self.particle_aspect_ratio),
-                    elements=elements,
-                    support_thickness_m=float(self.support_thickness),
-                    height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
-                    cluster_count=int(self.sample_cluster_count),
-                    cluster_radius_m=float(self.sample_cluster_radius),
-                    cluster_fraction=float(self.sample_cluster_fraction),
-                ),
-            ),
-        )
+        # The specimen is a plug-in. Everything after it is the instrument, which only asks the specimen for weights, densities, heights and features.
+        self._load_specimen(seed, SpecimenContext(rng=self._rng, sample=self._sample_params()))
         for warning in self._specimen.warnings():
             self.warn_stream(warning)
         self._renderer = Renderer(
@@ -196,6 +177,33 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             flyback_compression=float(self.scan_flyback_compression),
             fov_scale_error=float(self.fov_scale_error),
         )
+        self._set_up_detectors()
+        self._dose = self._dose_map()
+        self._stigmator = np.zeros(2, dtype=np.float64)
+        self._autofocus_runs = 0
+        self._focus_error = {
+            "c1_m": float(self.focus_offset_m),
+            "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
+        }
+        self._stage_position = self._stage.true.copy()
+        self._world_bounds_ang = self._world_bounds()
+
+    def _sample_params(self) -> SampleParams:
+        return SampleParams(
+            size_xy_m=float(self.sample_size_xy),
+            particle_count=int(self.sample_particle_count),
+            radius_mean_m=float(self.particle_radius_mean),
+            radius_std_m=float(self.particle_radius_std),
+            aspect_ratio=float(self.particle_aspect_ratio),
+            elements=tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip()),
+            support_thickness_m=float(self.support_thickness),
+            height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
+            cluster_count=int(self.sample_cluster_count),
+            cluster_radius_m=float(self.sample_cluster_radius),
+            cluster_fraction=float(self.sample_cluster_fraction),
+        )
+
+    def _set_up_detectors(self) -> None:
         self._detector_params = DetectorParams(
             beam_current_pa=float(self.probe_current_pa),
             gain=float(self.detector_gain),
@@ -211,8 +219,10 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             dead_time_s=float(self.eds_dead_time),
             voltage_v=float(self.acceleration_voltage),
         )
-        x_min, x_max, y_min, y_max = self._specimen.bounds
-        self._dose = DoseMap(
+
+    def _dose_map(self) -> DoseMap:
+        x_min, x_max, _, _ = self._specimen.bounds
+        return DoseMap(
             DoseParams(
                 enabled=bool(self.dose_tracking),
                 cell_m=max((x_max - x_min) / 200.0, 2e-9),
@@ -223,14 +233,10 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             self._specimen.bounds,
             margin_m=(x_max - x_min) * 0.25,
         )
-        self._stigmator = np.zeros(2, dtype=np.float64)
-        self._autofocus_runs = 0
-        self._focus_error = {
-            "c1_m": float(self.focus_offset_m),
-            "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
-        }
-        self._stage_position = self._stage.true.copy()
-        self._world_bounds_ang = {
+
+    def _world_bounds(self) -> dict:
+        x_min, x_max, y_min, y_max = self._specimen.bounds
+        return {
             "x_min": x_min / ANGSTROM,
             "x_max": x_max / ANGSTROM,
             "y_min": y_min / ANGSTROM,
@@ -240,7 +246,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         }
 
     # ------------------------------------------------------------------
-    # Stage: commanded / true / reported
+    # Stage as commanded, true and reported
     # ------------------------------------------------------------------
     def _set_fov(self, fov) -> None:
         self._fov = float(fov)
@@ -388,7 +394,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         if self._scan_params.rotation_deg:
             a = np.deg2rad(self._scan_params.rotation_deg)
             x, y = np.cos(a) * x - np.sin(a) * y, np.sin(a) * x + np.cos(a) * y
-        # The beam is placed in the scan's frame, which the image shift moves with it (as on the instrument).
+        # The beam is placed in the frame of the scan. The image shift moves that frame with it, as on the instrument.
         return self._stage.true_xy_at(t) + self._image_shift + np.array([x, y])
 
     def _areal_density(self, xy: np.ndarray) -> dict[str, float]:
@@ -507,13 +513,13 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     # Status and ground truth
     # ------------------------------------------------------------------
     def _viewport_metadata(self) -> dict:
-        # The base class reads _stage_position, which here is the true pose: report what the stage reports.
+        # The base class reads _stage_position, which here is the true pose. Report what the stage reports instead.
         metadata = super()._viewport_metadata()
         x, y, z = (float(v) / ANGSTROM for v in self._stage.reported[:3])
         half = self._fov / ANGSTROM / 2
         metadata["stage_position"] = self._stage.reported.tolist()
         metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
-        # The seed regenerates the sample: export_ground_truth (operator only) has it; an agent must find
+        # The seed regenerates the sample, so only the operator command export_ground_truth has it. An agent must find
         # particles by imaging.
         metadata.pop("sample_seed", None)
         return metadata
@@ -524,11 +530,11 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["scan_detectors"] = sorted(d.lower() for d in DETECTOR_SCALE)
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
-        # The twin delivers exactly its configured current, so it counts as measured (AutoScript: the screen current).
+        # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
         parameters.update(self.beam_current_fields())
         parameters["beam_blanked"] = self._blanked
         parameters["stage_moving"] = self._stage_moving()
-        parameters["simulated"] = True  # for clients; job devices take the stack's `simulated` property, never this
+        parameters["simulated"] = True  # This is for clients. Job devices take the simulated property of the stack and never this.
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 
@@ -544,8 +550,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             {
                 "sample_seed": int(self.sample_seed),
                 "sample_bounds_m": list(self._specimen.bounds),
-                # The particle list scorers compare against; empty when the source has none (a crystal
-                # film) or does not know them (a recorded image without labels: specimen.known is false).
+                # Scorers compare against this particle list. It is empty when the source has none, as with a crystal
+                # film. It is also empty for a recorded image without labels, where specimen.known is false.
                 "particles": specimen_truth.get("particles", []),
                 "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
                 "moves": json.loads(stage.stage_moves()) if stage is not None else [],

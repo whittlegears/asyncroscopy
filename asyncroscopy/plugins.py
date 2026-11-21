@@ -31,7 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 from asyncroscopy import settings
 
-ENV_VAR = "ASYNCROSCOPY_PLUGINS"  # named in messages; asyncroscopy.settings reads it
+ENV_VAR = "ASYNCROSCOPY_PLUGINS"  # named in messages, and read by asyncroscopy.settings
 
 
 def plugin_specs(value: str | None = None) -> list[str]:
@@ -105,7 +105,7 @@ class Plugins:
                     _import_file(Path(spec))
                 else:
                     importlib.import_module(spec)
-            except Exception as exc:  # a broken plug-in must not take the device down; it is reported instead
+            except Exception as exc:  # a broken plug-in must not take the device down, so it is reported instead
                 self._errors[spec] = f"{type(exc).__name__}: {exc}"
                 print(f"[asyncroscopy.plugins] could not import {spec!r}: {self._errors[spec]}", file=sys.stderr)
         return {spec: self._errors[spec] for spec in entries if spec in self._errors}

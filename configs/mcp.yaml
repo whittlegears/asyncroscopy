@@ -17,7 +17,7 @@ mcp:
   name: Spectra300_MCP
   transport: streamable-http
   http_host: 127.0.0.1
-  # allow_remote_bind: true   # only with http_host 0.0.0.0, the approval gate on, and mcp.auth set
+  # allow_remote_bind: true   # only with http_host 0.0.0.0 and mcp.auth set
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
@@ -29,13 +29,9 @@ mcp:
       - Init
       - Kill
       - RestartServer
-      # Tango's per-device State/Status: never called by an agent or the GUI.
-      - State
-      - Status
-    # The same agent-hidden commands as the twin's endpoint (configs/mcp_dt.yaml); tests/test_agent_configs.py
+    # The same agent-hidden commands as the twin's endpoint (configs/mcp_dt.yaml); tests/agents/test_agent_configs.py
     # checks that every agent configuration blocks at least these.
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    Approvals: [request_status, list_pending]
     Mapper: [get_reservation]
     Tuner: [get_reservation]
     # Until first light's sign test settles the CEOS correction's sign and units, the corrector is written only by
@@ -49,11 +45,8 @@ mcp:
   # wait_for_job also waits on assemble_map and score_map jobs; agents read this
   # address from the endpoint (endpoint_info). Empty: no analysis server.
   analysis_url: http://127.0.0.1:8003/mcp
-  # The approval gate. The hardware run_servers configs start an Approvals device in approve mode,
-  # so every high-risk agent call waits for a person (SciAgentGUI's chat, or the operator endpoint).
-  # If this endpoint is opened to other machines (allow_remote_bind), keep the gate on.
+  # Risk overrides: {"Class.command" or tool-name glob: low|high}.
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     risk: {}
   # Bearer tokens from the facility's token service (docs/Operation/remote_access.md). Required before this
   # hardware endpoint binds beyond 127.0.0.1; run_mcp.py refuses to start it otherwise.
@@ -65,7 +58,7 @@ mcp:
   job_limits:
     max_duration_s: 14400
     max_dose_e_per_a2: 5000
-  # Agent endpoint: operator-only commands are never offered here. The GUI uses an operator configuration.
+  # Agent endpoint: operator-only commands are never offered here. The GUI uses this endpoint too (stop_all, jobs).
   endpoint_role: agent
   # Instrument Trace: one JSON line per tool call. The clock is this computer's on hardware.
   trace: outputs/trace/mcp_agent.jsonl

@@ -92,22 +92,29 @@ class UnknownKeyReply(Middleware):
             return ToolResult(content=json.dumps(reply), structured_content=reply)
 
 
-# Tools that only read: they change no data, file or job. Clients that gate tool calls (SciAgentGUI's
-# approval mode) read MCP's readOnlyHint and run these without asking; every other tool is left
-# unmarked, which MCP reads as "may change things". The basic tools are upstream pyTEMlib's, which
-# marks none, so they are named here too. A test fails when a tool is in neither set.
+# Tools that only read. Clients that gate tool calls read MCP's readOnlyHint and run these without asking.
+# The basic tools come from pyTEMlib, which marks none, so they are named here too.
+# A test fails when a tool is in neither set.
 READ_ONLY = frozenset({
     "get_pytemlib_status", "calculate_electron_wavelength", "list_supported_file_formats", "open_tem_file",
     "list_loaded_datasets", "get_dataset_info", "calculate_probe_size", "get_element_info",
     "analyze_diffraction_pattern", "create_visualization_script", "get_available_tools",
     "analysis_job_status", "analysis_job_results", "map_info", "list_maps", "get_region", "list_pois",
     "list_scorers", "list_tiles", "to_stage", "find_features", "to_pixel", "list_placements",
-    "list_annotations", "annotation_history",
+    "list_annotations", "annotation_history", "match_tiles",
 })
+try:  # pyTEMlib's analysis tools all only compute, and pyTEMlib names them
+    from pyTEMlib.mcp_analysis import READ_ONLY_TOOLS as _ANALYSIS_TOOLS
+
+    READ_ONLY = READ_ONLY | frozenset(tool.__name__ for tool in _ANALYSIS_TOOLS)
+except ImportError:  # a pyTEMlib older than its analysis tools
+    _ANALYSIS_TOOLS = ()
 WRITES = frozenset({
-    "assemble_map", "score_map", "analysis_job_abort", "add_poi", "jobs_envelope", "place_image",
+    "assemble_map", "collect_map_run", "score_map", "analysis_job_abort", "add_poi", "jobs_envelope", "place_image",
     "annotate", "edit_annotation", "delete_annotation", "restore_annotation",
 })
+if {"segment_sam", "find_atoms_blobnet"} <= {tool.__name__ for tool in _ANALYSIS_TOOLS}:  # learned_tools adds these
+    WRITES = WRITES | frozenset({"segment_sam_and_save", "find_atoms_blobnet_and_save"})
 
 
 class MarkReadOnly(Transform):
@@ -139,6 +146,7 @@ def create_server(
     annotations_path: str | Path | None = None,
     placements_path: str | Path | None = None,
     max_jobs: int = DEFAULT_MAX_WORKERS,
+    local_runs: str | Path | None = None,
 ) -> tuple[FastMCP, MapTools]:
     """Build a new MCP server; returns (FastMCP app, MapTools) so callers can also use the tools directly.
 
@@ -149,12 +157,16 @@ def create_server(
     ...); without it the note tools are not offered. ``placements_path``: the JSON-lines log of finer
     images placed on coarser ones (place_image, list_placements); without it those tools are not
     offered. ``max_jobs``: stitching and scoring jobs run at once; more wait as "queued".
+    ``local_runs``: a folder under ``local_roots`` where collect_map_run saves runs as files. Their maps
+    are saved beside them and nothing is written to Tiled.
 
     Nothing is written anywhere this call is not given: the command line (``python -m
     asyncroscopy.analysis_server``) puts the files under the outputs folder of
     ``asyncroscopy.settings``. Every call returns a fresh FastMCP instance, so calling it twice never
-    registers a tool twice. The basic tools are upstream pyTEMlib's ``pyTEMlib.mcp_server``, mounted
-    unchanged.
+    registers a tool twice. The basic tools are pyTEMlib's ``pyTEMlib.mcp_server``, mounted unchanged:
+    its analysis tools (EELS, EDS, FFT, atoms, peaks, probe) read Tiled keys through ``tiled_datasets`` and
+    files only under ``local_roots``. When that pyTEMlib has the learned tools (segment_sam, find_atoms_blobnet),
+    ``learned_tools`` adds versions of them that also save the result in Tiled.
     """
     mcp = FastMCP(name)
     if trace_path:
@@ -163,9 +175,18 @@ def create_server(
         from pyTEMlib import mcp_server as basic_tools
 
         mcp.mount(basic_tools.mcp)
-    tools = MapTools(MapStore(tiled_uri, api_key, local_roots=local_roots), max_canvas_pixels=max_canvas_pixels, max_jobs=max_jobs)
+    tools = MapTools(MapStore(tiled_uri, api_key, local_roots=local_roots), max_canvas_pixels=max_canvas_pixels, max_jobs=max_jobs,
+                     local_runs=local_runs)
     mcp.add_middleware(UnknownKeyReply(tools.store))
     tools.register(mcp)
+    if include_basic and _ANALYSIS_TOOLS:
+        from .tiled_datasets import install as install_tiled_datasets
+
+        install_tiled_datasets(lambda: tools.store.client if tiled_uri else None, local_roots)
+        from .learned_tools import register as register_learned
+
+        register_learned(mcp, lambda: tools.store.client if tiled_uri else None, tools.store.sample_of, tools.store.is_local,
+                         tools.store.version_suffix)
     from .frames import register as register_frames
 
     register_frames(mcp, tools.store)

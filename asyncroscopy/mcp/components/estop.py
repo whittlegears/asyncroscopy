@@ -3,7 +3,6 @@ device's stops from the tool descriptors (action role or declared stop) and repo
 
 from __future__ import annotations
 
-import json
 import time
 import warnings
 from typing import TYPE_CHECKING, Any
@@ -22,12 +21,36 @@ def _failed(exc: Exception) -> str:
     return describe_error(exc) if isinstance(exc, tango.DevFailed) else str(exc)[:500]
 
 
+def _add_stop(target: estop.StopTarget, device, command: str, tool) -> None:
+    """Put a command on the target when it is one of the device's stops."""
+    if tool.action_role == "beam.blank":
+        target.energy.append(command)
+    elif command == estop.ABORT_ALL and device.envelope:
+        target.other.append(command)
+    elif tool.action_role == "probe.retract" and device.probe:
+        target.other.append(command)
+        target.retracts.add(command)
+    elif tool.stop:
+        target.other.append(command)
+
+
 class Estop:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
 
     def natives(self) -> list:
         return [] if self.server.endpoint_role == "monitor" else [self.stop_all]
+
+    def _stops_of(self, prefix: str, device) -> estop.StopTarget:
+        """The stop commands one device offers here."""
+        server = self.server
+        target = estop.StopTarget(prefix, device.proxy)
+        for command in sorted(server.tools.get(prefix, {})):
+            tool = server.descriptors.get(f"{prefix}_{command}")
+            if tool is None or not tool.void:
+                continue
+            _add_stop(target, device, command, tool)
+        return target
 
     def targets(self) -> tuple[list[estop.StopTarget], list[dict]]:
         """(each device's stops, the steps already failed: a beam, job or probe device with no stop for it here)."""
@@ -40,20 +63,7 @@ class Estop:
             device = server.devices[prefix]
             if device.proxy is None:
                 continue
-            target = estop.StopTarget(prefix, device.proxy)
-            for command in sorted(server.tools.get(prefix, {})):
-                tool = server.descriptors.get(f"{prefix}_{command}")
-                if tool is None or not tool.void:
-                    continue
-                if tool.action_role == "beam.blank":
-                    target.energy.append(command)
-                elif command == estop.ABORT_ALL and device.envelope:
-                    target.other.append(command)
-                elif tool.action_role == "probe.retract" and device.probe:
-                    target.other.append(command)
-                    target.retracts.add(command)
-                elif tool.stop:
-                    target.other.append(command)
+            target = self._stops_of(prefix, device)
             targets.append(target)
             if device.stem and not target.energy:
                 beams.append({"tool": f"{prefix}_blank_beam", "ok": False, "error": f"{prefix} offers no beam blank here (blocked or missing); blank it by hand"})
@@ -66,22 +76,16 @@ class Estop:
 
     @tool()
     def stop_all(self) -> dict[str, Any]:
-        """Emergency stop. First puts the approval mode in approve and voids every unused approval, so nothing starts
-        again without a person; then, on every device at once: blanks beams, closes shutters, switches lasers, lamps
-        and X-rays off, aborts running jobs and lifts probes; then blanks and closes once more. Never waits for
-        approval, and never switches off high tension, a gun or a filament (blanking is enough to stop, and those take
-        hours to recover). A device that cannot be stopped is reported, not skipped. A stage move already under way
+        """Emergency stop. On every device at once: blanks beams, closes shutters, switches lasers, lamps
+        and X-rays off, aborts running jobs and lifts probes; then blanks and closes once more. Never switches off
+        high tension, a gun or a filament (blanking is enough to stop, and those take hours to recover). A device that cannot be stopped is reported, not skipped. A stage move already under way
         is not stopped (there is no stage stop to call) and is listed in "not_stopped". Returns what each step did."""
         server = self.server
-        latch = None
-        if server.gate.address is not None:
-            def latch(command: str, body: dict) -> None:
-                getattr(server.gate.approvals(), command)(json.dumps(body))
         targets, missing = self.targets()
-        report = estop.stop_all(targets, latch=latch, who=f"stop_all ({server.caller() or 'unknown caller'})", missing=missing,
+        report = estop.stop_all(targets, who=f"stop_all ({server.caller() or 'unknown caller'})", missing=missing,
                                 describe=_failed, wait_s=estop.STOP_ALL_WAIT_S)
-        # No stage stop exists to call: AutoScript 1.18's stage (CompuStage) has none, only stop_jogging, and its
-        # absolute moves run to the end; a twin's move does too. Say so, so "stopped" is not read as the stage too.
+        # There is no stage stop to call, and a stage move runs to its end.
+        # Say so, so that stopped is not read as covering the stage too.
         not_stopped = [
             f"{prefix}: a stage move already under way is not stopped (no stage stop exists; AutoScript 1.18 has none); "
             "stop it at the microscope's stage controls if it must not finish"

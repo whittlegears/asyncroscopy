@@ -48,7 +48,8 @@ except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
 
 AUTOSCRIPT_STEM_OUTPUT_DIRECTORY = Path(r"Y:\AutoScript TEM")
-# Screen-current calibration: monochromator focus series (V) and the wait for the current to settle at each step.
+# The screen current calibration steps the monochromator focus through this series in V.
+# It waits this long at each step for the current to settle.
 SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
 SCREEN_SETTLE_S = 1.0
 
@@ -73,9 +74,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value=9095,
         doc="Port of the AutoScript microscope server",
     )
-    # Not applied: AutoScript 1.18's client waits for every reply with no time limit and offers none to set
-    # (autoscript_core ClientEndpoint.perform_call; connect has none either). A hung AutoScript server therefore
-    # holds the call until the server answers or the connection drops. Kept so configs that set timeout_seconds load.
+    # This property is not applied. The AutoScript 1.18 client waits for every reply with no time limit, and neither
+    # perform_call of the autoscript_core ClientEndpoint nor connect offers one to set. A hung AutoScript server
+    # holds the call until it answers or the connection drops. The property stays so configs that set timeout_seconds load.
     hardware_timeout_seconds = device_property(
         dtype=int,
         default_value=120,
@@ -102,9 +103,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
     )
-    # The software limits (min_fov, max_fov, max_defocus, max_stigmator) are the ElectronMicroscope base's: narrow
-    # them to the Spectra 300's working range at first light.
-    # 4D-STEM parks the probe and records one camera frame per scan point: bound it until first light has timed it.
+    # The software limits min_fov, max_fov, max_defocus and max_stigmator belong to the ElectronMicroscope base.
+    # Narrow them to the working range of the Spectra 300 at first light.
+    # 4D-STEM parks the probe and records one camera frame per scan point. This bounds the scan until first light has timed it.
     max_4dstem_imsize = device_property(
         dtype=int, default_value=64,
         doc="Largest 4D-STEM scan accepted, per side (64: 4096 camera frames). Larger scans are refused.",
@@ -112,6 +113,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
     min_4dstem_exposure_s = device_property(
         dtype=float, default_value=1e-3,
         doc="Shortest camera exposure per 4D-STEM point (s), taken from the CAMERA device's exposure_time.",
+    )
+    stem_shift_deflector = device_property(
+        dtype=str, default_value="image_shift",
+        doc="The AutoScript deflector set_image_shift and get_image_shift use in STEM: image_shift (the default) or "
+        "beam_shift. Outside STEM it is always image_shift.",
     )
     objective_stigmator_m_per_unit = device_property(
         dtype=float,
@@ -184,18 +190,18 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
 
     def _init_device_attributes(self) -> None:
-        # The server runs without Tango's per-device lock (serve, below), so that blank_beam is never queued
-        # behind a long command. Every other hardware call takes the base's command lock instead (hardware_call).
+        # The serve function below runs the server without the device lock of Tango, so that blank_beam is never queued
+        # behind a long command. Every other hardware call goes through hardware_call and takes the command lock of the base.
         super()._init_device_attributes()
         self._blank_client = None  # a second AutoScript connection, used only to blank the beam
-        self._blank_count = 0  # counts blank_beam calls: a running 4D-STEM scan stops when it changes
+        self._blank_count = 0  # counts blank_beam calls so that a running 4D-STEM scan stops when it changes
 
     def _connect(self):
         self._connect_error = None
         self._connect_hardware()
         self._connect_detector_proxies()
         self.screen_current_calibration = None
-        self._measured_beam_current = None  # {"pa": ..., "at": time.time()} from the last screen-current reading
+        self._measured_beam_current = None  # a dict with pa and at from the last screen current reading, where at is a time.time value
         # Without a client, report FAULT instead of looking connected.
         if self._connect_error:
             self.set_state(DevState.FAULT)
@@ -330,7 +336,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
         detector_list = [d.upper() for d in detector_list]
-        attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # before the frame: where and how it is taken
+        attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # read before the frame so they say where and how it is taken
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         with self._beam_restored():
             adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
@@ -348,7 +354,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             current = self.beam_current_fields()
         except Exception as exc:
             return {"frame_attrs_error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
-        try:  # the field's centre is the stage plus this; a frame without it is placed as if it were zero
+        try:  # The centre of the field is the stage plus this shift. A frame without it is placed as if the shift were zero.
             shift = {"image_shift_m": [float(v) for v in self._get_image_shift()][:2]}
         except Exception as exc:
             self.debug_stream(f"frame recorded without image_shift_m: {exc}")
@@ -545,7 +551,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """Blank the beam (the blank_beam command, and the e-stop's). It takes no command lock and uses its own
         AutoScript connection, so it does not wait for a running acquisition or stage move; it also tells a running
         4D-STEM scan to stop."""
-        if self._microscope is None:  # testing mode, which has no client by design (_check_connected refuses otherwise)
+        if self._microscope is None:  # Testing mode has no client by design. In any other mode _check_connected refuses first.
             return
         self._blank_count += 1
         self._blank_now()
@@ -631,7 +637,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope.optics.monochromator.focus = original_gun_lens
         current_series = np.array(current_series) * 1e12
 
-        # fit a polynomial and save, with the span it is valid over:
+        # fit a polynomial and save it with the span it is valid over
         coeffs = np.polyfit(gun_lens_series, current_series, 11)
         self.screen_current_calibration = np.poly1d(coeffs)
         self.screen_current_calibration_range = {
@@ -666,7 +672,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
     def _set_screen_current(self, current) -> None:
         """set screen current in pA"""
-        self._measured_beam_current = None  # the monochromator focus sets the current: the old reading no longer holds
+        self._measured_beam_current = None  # the monochromator focus sets the current, so the old reading no longer holds
         if self.screen_current_calibration is None:
             self.warn_stream("Screen current calibration not available. running calibration (should take 15 seconds).")
             self._calibrate_screen_current()
@@ -693,7 +699,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 else:
                     conditions[f"aperture_{mechanism_type}"] = str(mechanism.aperture.name)
             return conditions
-        except Exception as error:  # cannot tell what the current depends on: no reading can be trusted
+        except Exception as error:  # we cannot tell what the current depends on, so no reading can be trusted
             self.warn_stream(f"could not read the optics that set the beam current: {error}")
             return None
 
@@ -754,7 +760,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         position = self._microscope.specimen.stage.position
         tilts = [float("nan") if v is None else math.degrees(float(v)) for v in (position.a, position.b)]
         if math.isnan(tilts[1]):
-            tilts[1] = 0.0  # single-tilt holder: no beta
+            tilts[1] = 0.0  # a single tilt holder has no beta
         return np.array([float(position.x), float(position.y), float(position.z), *tilts], dtype=np.float64)
 
     def _get_parameters(self):
@@ -789,7 +795,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         for deflector in optics.deflectors.get_available_deflectors():
             defl = optics.deflectors.get_deflector_value(deflector)
             status[deflector] = [defl.x, defl.y]
-        # The keys every microscope backend reports, with the twin's names and units (tests/test_parity.py).
+        # These are the keys every microscope backend reports, with the names and units of the twin.
+        # See tests/instruments/test_parity.py.
         status.update({
             'stem_mode': stem,
             'defocus_m': self._get_defocus(),
@@ -821,16 +828,23 @@ class AutoScriptMicroscope(ElectronMicroscope):
             settings = RunObjectiveAutoStigmatorSettings(camera_detector="Flucam")
             self._microscope.auto_functions.run_objective_auto_stigmator(settings)
 
-    # The shift and tilt setters let AutoScript's errors through: a write the instrument refuses must
-    # reach the caller (and the job that sent it), not be logged while the command reports success.
+    # The shift and tilt setters let the errors of AutoScript through. A write the instrument refuses must
+    # reach the caller and the job that sent it. It must not be logged while the command reports success.
+    def _shift_deflector(self) -> str:
+        """The deflector used for image shift. In STEM it is ``stem_shift_deflector`` and otherwise image_shift."""
+        if not self._is_stem():
+            return "image_shift"
+        chosen = getattr(self, "stem_shift_deflector", None)
+        chosen = chosen.strip().lower() if isinstance(chosen, str) and chosen.strip() else "image_shift"  # use the default when the property is missing
+        if chosen not in ("image_shift", "beam_shift"):
+            raise ValueError(f"stem_shift_deflector must be image_shift or beam_shift, not {chosen!r}")
+        return chosen
+
     def _set_image_shift(self, shift):
-        """Apply image shift in meters (the beam shift in STEM)."""
+        """Apply image shift in meters on the deflector from ``_shift_deflector``."""
         x_shift = float(shift[0])
         y_shift = float(shift[1])
-        if self._is_stem():
-            self._microscope.optics.deflectors.beam_shift = (x_shift, y_shift)
-        else:
-            self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
+        setattr(self._microscope.optics.deflectors, self._shift_deflector(), (x_shift, y_shift))
 
     def _set_diffraction_shift(self, shift):
         """Apply diffraction shift; only in diffraction (the projector's mode, as the getter reads it)."""
@@ -849,10 +863,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
 
     def _get_image_shift(self):
-        if self._is_stem():
-            position = self._microscope.optics.deflectors.beam_shift
-        else:
-            position = self._microscope.optics.deflectors.image_shift
+        position = getattr(self._microscope.optics.deflectors, self._shift_deflector())
         return np.array([position.x, position.y])
 
     def _get_beam_tilt(self):

@@ -4,7 +4,7 @@ The MCP server (``asyncroscopy.mcp.mcp_server``) offers it as the native tool ``
 ``build(server)`` makes it. One JSON document (``asyncroscopy/contracts/action_space.schema.json``):
 
 - ``actions``: every tool, with its arguments (type, units, range, choices, and the stage ``axis``
-  or array ``elements`` where known), a one-line purpose, its risk as the approval gate sees it,
+  or array ``elements`` where known), a one-line purpose, its risk,
   whether it ``act``s or only ``observe``s, and a canonical ``role`` (``asyncroscopy.mcp.action_roles``);
 - ``state``: what can be read, through a tool (``get_*``, ``State``) or as a Tango attribute, with units;
 - ``jobs``: each job device's plan schema and example plan;
@@ -35,9 +35,9 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 SCHEMA_VERSION = "1.0.0"
-# Attributes that describe a device to the MCP server rather than the instrument's state.
+# Attributes that describe a device to the MCP server and are not instrument state.
 META_ATTRIBUTES = frozenset({"state", "status", "job_kind", "plan_example", "plan_schema", ACTION_HINTS})
-# Unit words in command docs ("Field of view in metres", "(pA)") -> the unit.
+# Maps unit words found in command docs to the unit.
 UNIT_WORDS = {
     "metres": "m", "meters": "m", "metre": "m", "meter": "m", "nanometres": "nm", "nanometers": "nm",
     "degrees": "deg", "radians": "rad", "radian": "rad", "seconds": "s", "picoamperes": "pA",
@@ -145,12 +145,12 @@ def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
             try:
                 entry[key[:3]] = float(value)
             except ValueError:
-                pass  # "Not specified"
+                pass  # no limit is set
         found.append(entry)
     return found
 
 
-# Declaration keys of action_hints that the descriptors already carry (risk, role): not argument hints.
+# Keys of action_hints that the descriptors already carry, so they are not argument hints.
 _DECLARED = ("risk", "operator_only", "stop", "routine", "role")
 
 
@@ -224,7 +224,7 @@ def _job(server, prefix: str, device) -> dict:
         try:
             text = str(device.proxy.read_attribute(name).value)
             return json.loads(text) if text else None
-        except Exception:  # an older job device without it, or not JSON
+        except Exception:  # the device has no such attribute or it is not JSON
             return None
 
     example = device.plan_example
@@ -244,7 +244,7 @@ def actions_with(space: dict, role: str, device: str | None = None) -> list[dict
     return [a for a in space.get("actions", []) if a["role"] == role and (device is None or a["device"] == device)]
 
 
-# ---------------------------------------------------------------------- command line
+# command line
 def _arg_text(arg: dict) -> str:
     text = arg["name"]
     if arg.get("elements"):

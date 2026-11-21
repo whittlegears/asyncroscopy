@@ -31,6 +31,11 @@ def parser(env: settings.Settings) -> argparse.ArgumentParser:
         "--max-canvas-megapixels", type=float, default=DEFAULT_MAX_CANVAS_PIXELS / 1e6,
         help="Largest full-resolution map assemble_map will stitch, a guard against wrong run metadata (default: %(default)g).",
     )
+    out.add_argument(
+        "--local-runs", default="", metavar="DIR",
+        help="Folder (under a --local-root) where collect_map_run writes its runs as HDF5 files, with their maps stitched beside them; "
+             "nothing is then written to Tiled, which is only read (empty: runs and maps go to Tiled).",
+    )
     out.add_argument("--max-jobs", type=int, default=DEFAULT_MAX_WORKERS, help="Stitching and scoring jobs run at once; more wait queued (default: %(default)s).")
     out.add_argument(
         "--trace", default=str(env.output("trace", "analysis.jsonl")),
@@ -47,25 +52,39 @@ def parser(env: settings.Settings) -> argparse.ArgumentParser:
     return out
 
 
-def main(argv: list[str] | None = None) -> None:
-    env = settings.get()
-    args = parser(env).parse_args(argv)
+def build(args: argparse.Namespace, env: settings.Settings):
+    """Build the server from the parsed options. Returns the FastMCP app and the MapTools."""
     api_key = args.api_key or env.tiled_api_key or env.plain_tiled_api_key
     local_roots = args.local_root if args.local_root is not None else [str(Path.cwd())]
-    mcp, tools = create_server(
+    return create_server(
         args.tiled or None, api_key, local_roots=local_roots,
         max_canvas_pixels=int(args.max_canvas_megapixels * 1e6), trace_path=args.trace or None,
         annotations_path=args.annotations or None, placements_path=args.placements or None, max_jobs=args.max_jobs,
+        local_runs=args.local_runs or None,
     )
+
+
+def serve(mcp, tools, args: argparse.Namespace, note: str = "") -> None:
+    """Serve until stopped. ``note`` is an extra line printed at startup."""
     try:
         if args.transport == "stdio":
             mcp.run(transport="stdio")
         else:
             print(f"asyncroscopy analysis server at http://{args.host}:{args.port}/mcp (Tiled: {args.tiled or 'none, local files'}; "
-                  f"local roots: {', '.join(map(str, tools.store.local_roots))})", flush=True)
+                  f"local roots: {', '.join(map(str, tools.store.local_roots))}"
+                  + (f"; gathered runs and their maps are saved in {Path(args.local_runs).resolve()}" if args.local_runs else "") + ")", flush=True)
+            if note:
+                print(note, flush=True)
             mcp.run(transport=args.transport, host=args.host, port=args.port)
     finally:
         tools.jobs.shutdown()
+
+
+def main(argv: list[str] | None = None) -> None:
+    env = settings.get()
+    args = parser(env).parse_args(argv)
+    mcp, tools = build(args, env)
+    serve(mcp, tools, args)
 
 
 if __name__ == "__main__":

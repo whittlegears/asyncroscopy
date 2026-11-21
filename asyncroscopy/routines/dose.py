@@ -1,7 +1,7 @@
 """Electron dose: what one scanned frame or a parked-beam spectrum puts on the sample, in e/A^2.
 
 Pure numbers; no instrument. Used by the Mapper's electron-beam profiles (STEM, SEM)
-and the Tuner; see docs/designs/concepts_brief.md, decision D1.
+and the Tuner.
 """
 
 from __future__ import annotations
@@ -9,9 +9,9 @@ from __future__ import annotations
 import math
 
 ELECTRON_CHARGE = 1.602176634e-19
-# The one definition of how widely a parked beam's dose is counted: the side (m) of the square around the spot. The probe
-# is far smaller; 10 nm is a typical damage and contamination spread. The Mapper's budget, the dose ledger and the twin's
-# dose map all use it, so they cannot disagree.
+# The side in metres of the square around the spot over which a parked beam's dose is counted.
+# The probe is far smaller, and 10 nm is a typical damage and contamination spread.
+# The Mapper's budget, the dose ledger and the twin's dose map all use it, so they cannot disagree.
 EDS_DOSE_SPREAD_M = 1e-8
 
 

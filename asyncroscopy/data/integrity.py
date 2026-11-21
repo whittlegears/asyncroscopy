@@ -41,7 +41,7 @@ from asyncroscopy.core.fileio import file_lock, rotate, rotated_paths
 
 LOCK_WAIT_S = 5.0  # well inside a Tango client's timeout
 CHUNK = 1 << 20
-TAIL_BYTES = 64  # the bytes before the end of what was indexed: an append leaves them as they were
+TAIL_BYTES = 64  # the bytes before the end of what was indexed, which an append leaves as they were
 _guard = threading.Lock()
 _index_lock = threading.Lock()
 
@@ -167,7 +167,7 @@ def chain_append(log: Path, record: dict, rotate_bytes: int = 0) -> dict:
             parts = _segments(log)
             newest = parts[-1] if parts else log
             last = json.loads(_last_line(newest) or "{}")
-        except ValueError:  # a last line cut short by a crash: the chain reports it, the next entry follows it
+        except ValueError:  # a last line cut short by a crash, which the chain reports and the next entry follows
             last, cut = {}, True
         if not isinstance(last, dict):
             last, cut = {}, True
@@ -183,48 +183,70 @@ def chain_append(log: Path, record: dict, rotate_bytes: int = 0) -> dict:
     return entry
 
 
+class _ChainWalk:
+    """What reading a chained log line by line has found so far."""
+
+    def __init__(self, key: bytes) -> None:
+        self.key = key
+        self.problems: list[str] = []
+        self.entries = 0
+        self.previous = ""
+        self.legacy = 0
+        self.legacy_digest = hashlib.sha256()
+
+    def take(self, part: str, number: int, raw: bytes) -> None:
+        """Check one line of the log."""
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            entry = None
+        mac = entry.pop("mac", None) if isinstance(entry, dict) else None
+        if mac is None:
+            self._unsealed(part, number, raw, entry)
+        else:
+            self._sealed(part, number, entry, mac)
+
+    def _unsealed(self, part: str, number: int, raw: bytes, entry) -> None:
+        """Count a line with no seal or report it."""
+        if self.entries == 0:
+            self.legacy += 1
+            self.legacy_digest.update(raw.rstrip(b"\r\n") + b"\n")
+        elif entry is None:
+            self.problems.append(f"{part} line {number} is not a record (cut short or edited)")
+            self.previous = ""
+        else:
+            self.problems.append(f"{part} line {number} has no seal")
+
+    def _sealed(self, part: str, number: int, entry: dict, mac) -> None:
+        """Check the seal of a line and its link to the line before."""
+        legacy = self.legacy
+        if self.entries == 0 and legacy and (entry.get("legacy_lines") != legacy or entry.get("legacy_sha256") != self.legacy_digest.hexdigest()):
+            self.problems.append(f"{part}: the {legacy} line(s) before line {number} are not the unsealed lines its first seal recorded (lines were edited, added or stripped of their seals)")
+        self.entries += 1
+        if not hmac.compare_digest(mac, _mac(self.key, entry)):
+            self.problems.append(f"{part} line {number} was changed after it was written (its seal does not match)")
+        elif entry.get("prev", "") != self.previous:
+            self.problems.append(f"{part} line {number} does not follow the line before it (a line was removed, inserted or moved)")
+        self.previous = mac
+
+
 def verify_chain(log: Path) -> dict:
     """{"entries", "problems": [...], "head"}: every line's mac and its link to the line before, across rotated parts.
 
     Lines at the start of a log written before it was chained are counted as "unsealed_before_chain". They are
     accepted only when the first sealed line recorded that many lines with the same SHA-256, or when no line
     is sealed yet; an unsealed line after the first sealed one is a problem."""
-    problems: list[str] = []
-    entries, previous = 0, ""
-    legacy, legacy_digest = 0, hashlib.sha256()
     parts = _segments(log)
     if not parts:
         return {"entries": 0, "problems": [], "head": ""}
-    key = _key()
+    walk = _ChainWalk(_key())
     for part in parts:
         with open(part, "rb") as handle:
             for number, raw in enumerate(handle, 1):
-                try:
-                    entry = json.loads(raw)
-                except ValueError:
-                    entry = None
-                mac = entry.pop("mac", None) if isinstance(entry, dict) else None
-                if mac is None:
-                    if entries == 0:
-                        legacy += 1
-                        legacy_digest.update(raw.rstrip(b"\r\n") + b"\n")
-                    elif entry is None:
-                        problems.append(f"{part.name} line {number} is not a record (cut short or edited)")
-                        previous = ""
-                    else:
-                        problems.append(f"{part.name} line {number} has no seal")
-                    continue
-                if entries == 0 and legacy and (entry.get("legacy_lines") != legacy or entry.get("legacy_sha256") != legacy_digest.hexdigest()):
-                    problems.append(f"{part.name}: the {legacy} line(s) before line {number} are not the unsealed lines its first seal recorded (lines were edited, added or stripped of their seals)")
-                entries += 1
-                if not hmac.compare_digest(mac, _mac(key, entry)):
-                    problems.append(f"{part.name} line {number} was changed after it was written (its seal does not match)")
-                elif entry.get("prev", "") != previous:
-                    problems.append(f"{part.name} line {number} does not follow the line before it (a line was removed, inserted or moved)")
-                previous = mac
-    report = {"entries": entries, "problems": problems, "head": previous}
-    if legacy:
-        report["unsealed_before_chain"] = legacy
+                walk.take(part.name, number, raw)
+    report = {"entries": walk.entries, "problems": walk.problems, "head": walk.previous}
+    if walk.legacy:
+        report["unsealed_before_chain"] = walk.legacy
     return report
 
 
@@ -321,7 +343,7 @@ def _index() -> dict[str, dict]:
                 seen = _read_all(log)
                 _index_cache[str(log)] = seen
             return seen.entries
-        if seen is not None and seen.ino in (stat.st_ino, 0):  # 0: the manifest did not exist when last read
+        if seen is not None and seen.ino in (stat.st_ino, 0):  # ino 0 means the manifest did not exist when last read
             if stat.st_size == seen.offset and stat.st_mtime_ns == seen.mtime_ns:
                 return seen.entries
             if stat.st_size >= seen.offset and _read_new(log, seen, stat):
@@ -363,7 +385,7 @@ def verify(paths: list[str] | None = None, logs: tuple[Path, ...] = ()) -> dict:
         heads[str(log)] = checked["head"]
         if checked.get("unsealed_before_chain"):
             before_chain[str(log)] = checked["unsealed_before_chain"]
-    index = dict(_index())  # a copy: another thread may add entries while the files are checked
+    index = dict(_index())  # a copy, since another thread may add entries while the files are checked
     wanted = index if paths is None else {str(Path(p).resolve()): index.get(str(Path(p).resolve())) for p in paths}
     changed, missing, unsealed = [], [], []
     for resolved, entry in wanted.items():

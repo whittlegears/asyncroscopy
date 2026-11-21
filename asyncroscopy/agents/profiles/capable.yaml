@@ -1,0 +1,23 @@
+# For any model that follows tool descriptions and longer instructions well: a larger local model, or a hosted
+# one (set ASYNCROSCOPY_MODEL and ASYNCROSCOPY_MODEL_PROVIDER, e.g. claude-sonnet-5-5 with anthropic).
+# It starts from default.yaml and turns off what is there only to help a small model:
+# no tools held back by the request's wording, the servers' structured replies are shown as they are
+# (with the sentences added), and more skill text and memory fit in the prompt.
+# The tool selection, the team split and the middleware (skills, job waits, the claim check) stay: they keep
+# any model's context on the task and check its final answer against what it did.
+# Not yet measured with the workflow benchmark (benchmarks/run_workflows.py); every recorded run is qwen3:8b.
+extends: default
+
+model: gemma4:31b
+model_provider: ollama
+num_ctx: 32768
+
+skills:
+  from_request: 3
+  at_most: 6
+  prompt_chars: 20000
+  notes_chars: 4000
+
+tool_gates: []
+
+replies: facts_and_notes

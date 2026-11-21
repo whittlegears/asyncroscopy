@@ -7,7 +7,9 @@ reads these attributes via DeviceProxy before acquiring.
 """
 
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command
+from tango.server import Device, attribute
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 
 class EDS(Device):
@@ -18,6 +20,8 @@ class EDS(Device):
     # ------------------------------------------------------------------
 
     # (no hardware connection properties needed — EDS is settings-only)
+
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -59,18 +63,23 @@ class EDS(Device):
         self._exposure_time = value
 
     # ------------------------------------------------------------------
-    # Attribute read / write
+    # Commands
     # ------------------------------------------------------------------
-    @command(dtype_out=float)
+
+    @command(dtype_in=float, doc_in=":param seconds: Time the next EDS spectrum counts for, in seconds, from 1e-6 to 100.",
+             risk="high", role="setting.set", routine=True)
+    def set_eds_exposure_time(self, seconds: float) -> None:
+        """Set how long each following EDS spectrum counts for, in seconds (1 s when the device starts). A longer time
+        gives more counts and more dose where the beam is parked."""
+        seconds = float(seconds)
+        if not 1e-6 <= seconds <= 1e2:
+            raise ValueError(f"the EDS exposure time must be from 1e-6 to 100 seconds, got {seconds:g}")
+        self._exposure_time = seconds
+
+    @command(dtype_out=float, risk="low", role="setting.read")
     def get_eds_exposure_time(self) -> float:
-        return self.read_exposure_time()
-    
-    @command(dtype_in=float)
-    def set_eds_exposure_time(self, value: float) -> None:
-        self.write_exposure_time(value)
-    
-
-
+        """Read how long an EDS spectrum counts for, in seconds."""
+        return self._exposure_time
 
 
 # ----------------------------------------------------------------------

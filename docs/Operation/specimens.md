@@ -6,7 +6,7 @@ This answers three questions from the hackathon design principles:
 
 - **Can we replace the specimen?** Yes. Set one device property.
 - **Where does it come from?** From a physical model (`procedural` particles, `crystal` film, and the atomistic samples below), from recorded data (`recorded`), or from any source you register.
-- **Can we test the same controller across different samples?** Yes. `tests/test_specimens.py` runs one Mapper plan on three specimens. The stage error, drift, timing, dose and focus are identical in all three runs. The images and spectra are different.
+- **Can we test the same controller across different samples?** Yes. `tests/twin/test_specimens.py` runs one Mapper plan on three specimens. The stage error, drift, timing, dose and focus are identical in all three runs. The images and spectra are different.
 
 ## The coupling
 
@@ -232,7 +232,7 @@ class CrossGrating(Specimen):
         return {"known": True, "particles": [], "pitch_m": self.pitch_m, "line_fraction": self.line_fraction}
 ```
 
-`tests/test_specimens.py` runs this block from this page, so the example stays correct. The twin finds the source in one of two ways:
+`tests/twin/test_specimens.py` runs this block from this page, so the example stays correct. The twin finds the source in one of two ways:
 
 - the module defining it is imported before the twin starts;
 - a package installs it with the `asyncroscopy.specimens` entry point:
@@ -254,7 +254,7 @@ Rules for a source:
 
 ## Same controller, different samples
 
-`test_the_same_mapper_plan_on_three_specimens` in `tests/test_specimens.py` starts three twins from `MAPPING_TWIN_PROPERTIES`, the realistic mapping instrument in `tests/conftest.py`. They differ only in the specimen: `procedural`, `crystal`, and `recorded` with labels. The test runs the same Mapper plan on each, with `time_scale: 0`: a 3 x 3 grid of 32-pixel tiles and an EDS point per tile. It takes about 2 s. It checks:
+`test_the_same_mapper_plan_on_three_specimens` in `tests/twin/test_specimens.py` starts three twins from `MAPPING_TWIN_PROPERTIES`, the realistic mapping instrument in `tests/conftest.py`. They differ only in the specimen: `procedural`, `crystal`, and `recorded` with labels. The test runs the same Mapper plan on each, with `time_scale: 0`: a 3 x 3 grid of 32-pixel tiles and an EDS point per tile. It takes about 2 s. It checks:
 
 - `moves`, `acquisitions` (true centres, drift), `simulated_time_s`, `dose` and `focus` from `export_ground_truth` are identical across the three runs.
 - The run files' reported stage positions, commanded positions and acquisition times are identical.

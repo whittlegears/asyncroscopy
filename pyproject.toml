@@ -15,6 +15,8 @@ dependencies = [
     "colorama>=0.4.6",
     "defusedxml>=0.7.1",
     "gevent>=25.9.1",
+    # Every job device runs its steps as a LangGraph graph
+    "langgraph<2",
     "h5py>=3.15.1",
     "ipykernel>=7.1.0",
     "jupyter>=1.1.1",
@@ -69,6 +71,7 @@ agent = [
     "langchain<2",
     "langchain-openai",
     "langgraph<2",
+    "langgraph-checkpoint-sqlite",   # lets a workflow run resume after a restart
     "langchain-mcp-adapters",    
 ]
 

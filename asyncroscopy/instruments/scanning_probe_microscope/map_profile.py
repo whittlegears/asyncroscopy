@@ -25,7 +25,7 @@ import tango
 from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
 from asyncroscopy.jobs.mapping.profile import InstrumentProfile, Setting, register_profile
 
-# One frame takes about lines / rate seconds; twice that and a minute more for a slow start (as the Jupiter backend allows).
+# One frame takes about lines / rate seconds. The timeout is twice that plus a minute for a slow start.
 SCAN_TIMEOUT_MARGIN_S = 60.0
 
 
@@ -41,7 +41,7 @@ class SPMProfile(InstrumentProfile):
     settings = {"scan_device_address": Setting(str, "asyncroscopy/scan/default", "SPM SCAN device (frame settings and acquire_scan).")}
     needs = {"microscope_device_address": ("retract", "approach", "move_stage"), "scan_device_address": ("acquire_scan",)}
 
-    # -- the devices -----------------------------------------------------
+    # the devices
     def _scan(self, lines: int | None = None, rate_hz: float | None = None) -> tango.DeviceProxy:
         """The SCAN device, with a timeout that outlasts a frame of ``lines`` at ``rate_hz`` (the default one to set it up)."""
         if lines is None or rate_hz is None:
@@ -54,7 +54,7 @@ class SPMProfile(InstrumentProfile):
             raise ValueError("the 'spm' instrument profile reads the stage from the Mapper's stage_device_address, which is blank")
         return self.ctx.proxy(address)
 
-    # -- plan ------------------------------------------------------------
+    # plan
     def resolve(self, p: dict) -> None:
         found = str(self.instrument().read_attribute("instrument_type").value)
         if found != "SPM":
@@ -81,7 +81,7 @@ class SPMProfile(InstrumentProfile):
         x, y = (float(v) for v in list(arguments[0])[:2])
         return {"x": x, "y": y}
 
-    # -- run -------------------------------------------------------------
+    # run
     def _set_frame(self, size_m: float, lines: int, rate_hz: float) -> None:
         scan = self._scan()
         scan.scan_size_m = float(size_m)

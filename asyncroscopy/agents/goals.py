@@ -29,8 +29,8 @@ kind                 met when                                       options
 ==================== ============================================== ==========================================
 
 What each tool is comes from the endpoint itself (``endpoint_info``'s ``tools``, read once per run:
-``asyncroscopy.agents.catalog``), never from its name: its risk as the approval gate sees it (so
-deployment overrides and STEM settings count as the gate counts them), the device it belongs to, and
+``asyncroscopy.agents.catalog``), never from its name: its risk as the endpoint reports it (so
+deployment overrides and STEM settings count as the endpoint counts them), the device it belongs to, and
 its canonical role, from which its category follows (acquire.* is acquire, stage.move move, setting.set
 and optics.* settings, beam.* beam, probe.* probe, the job envelope and run_job job). Without the
 endpoint's catalog ``no_unrequested`` is reported as not checked rather than guessed, and no call counts
@@ -59,7 +59,6 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from asyncroscopy.agents.catalog import ToolCatalog
-from asyncroscopy.agents.skill_runs import skill_run_calls
 from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
 from asyncroscopy.skills.registry import read_only_request
 
@@ -69,18 +68,17 @@ if TYPE_CHECKING:
     from asyncroscopy.agents.mcp_tools import McpServer
 
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
-# A stitched map key ends in _map and carries its run id (so tool names such as assemble_map do not match).
-# A stitched map: <run>_map (stitched before map versions), <run>_map_<YYYYmmddTHHMMSS>_<hex4> (a re-stitch before
-# versions), or a version <run>_map_<YYYYmmddTHHMMSSmmm>Z_<hex4> (the analysis server keeps every version).
+# A stitched map key is a run id followed by _map, so tool names such as assemble_map do not match.
+# A map version or a re-stitch also ends in a timestamp and four hex digits.
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
-# What kinds of instrument action a goal may take, from each tool's canonical role (any instrument, not only a STEM).
+# The kinds of instrument action a goal may take. They come from tool roles, so they fit any instrument.
 CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
-# A goal file's no_unrequested with neither allow nor categories: running (and stopping) the job it asks for.
+# Used when a goal file's no_unrequested has neither allow nor categories. It allows running and stopping the job.
 DEFAULT_CATEGORIES = ["job"]
 
-# Inferring a goal from a sentence: only what the words say plainly. Unsure means fewer criteria, never
-# wrong ones: a criterion the request did not ask for would make the retry push actions nobody wanted.
+# Take from a sentence only what its words say plainly. When unsure use fewer criteria,
+# because a wrong one makes the retry push actions nobody wanted.
 NEW_MAP = re.compile(
     r"\b(?:map|survey)\s+(?:a|an|the\s+(?:area|sample|region|square|whole|surface|flake)|this\s+(?:area|sample|region)|around|here|\d)"
     r"|\b(?:make|take|acquire|record|do|perform|run|start|get)\s+(?:a|an|another|one|new)\s+(?:[\w-]+\s+){0,3}?(?:map|survey)\b"
@@ -129,7 +127,7 @@ class Goal:
     statement: str
     criteria: list[dict] = field(default_factory=list)
     budget: Budget = field(default_factory=Budget)
-    leave_running: bool = False  # the request said to start a job and not wait for it: never abort it
+    leave_running: bool = False  # the request said to start a job and not wait, so never abort it
 
     @classmethod
     def from_text(cls, statement: str, **budget: Any) -> Goal:
@@ -164,7 +162,8 @@ class Goal:
                 categories |= {"acquire", "settings", "beam"}
             acquire_any = ACQUIRE_ANY.search(statement)
             if acquire_any and "acquire" not in categories and not new_map:
-                # Some other acquisition (a diffractogram, a force curve): data of any kind, as many as a number says.
+                # Some other acquisition such as a diffractogram or a force curve.
+                # Ask for data of any kind, as many as a number says.
                 number = re.search(r"\b(\d+)\b", acquire_any.group(0))
                 criteria.append({"kind": "data", "count": int(number.group(1)) if number else 1})
                 categories |= {"acquire", "settings", "beam"}
@@ -226,7 +225,7 @@ class Goal:
         return {"statement": self.statement, "criteria": self.criteria, "budget": asdict(self.budget), "leave_running": self.leave_running}
 
 
-# ---------------------------------------------------------------------- calls
+# calls
 @dataclass
 class Call:
     """One tool call and the server's reply. The one record of a call for goals, graphs and benchmarks."""
@@ -251,11 +250,24 @@ class Call:
         return cls(str(data.get("name", "")), dict(data.get("args") or {}), str(data.get("result", "")), bool(error))
 
 
+def content_text(content: Any) -> str:
+    """The text of a message's content: a string as it is, and of a list of content blocks only its text blocks.
+
+    A tool reply that carries an image is such a list. The image's base64 is no fact to check and would only bloat a
+    digest, so it is left out."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(b if isinstance(b, str) else str(b.get("text", "")) for b in content
+                         if isinstance(b, str) or (isinstance(b, dict) and b.get("type") == "text"))
+    return json.dumps(content, default=str)
+
+
 def trace_from_messages(messages: Sequence[BaseMessage]) -> list[Call]:
     """The tool calls in a LangChain message list, each with the server's reply.
 
     A call failed when it has no reply, its reply has status "error", or the reply text is a
-    tool error ("Error...", "APPROVAL REQUIRED...").
+    tool error ("Error...").
     """
     replies = {getattr(m, "tool_call_id", None): m for m in messages if getattr(m, "type", "") == "tool"}
     calls = []
@@ -263,11 +275,32 @@ def trace_from_messages(messages: Sequence[BaseMessage]) -> list[Call]:
         for call in getattr(message, "tool_calls", None) or []:
             reply = replies.get(call.get("id"))
             content = getattr(reply, "content", "") if reply is not None else ""
-            text = content if isinstance(content, str) else json.dumps(content, default=str)
-            error = reply is None or getattr(reply, "status", "") == "error" or text.startswith(("Error", "APPROVAL REQUIRED"))
+            text = content_text(content)
+            error = reply is None or getattr(reply, "status", "") == "error" or text.startswith("Error")
             calls.append(Call(call["name"], dict(call.get("args") or {}), text, error))
-            # A skill run's calls were made for the agent in the background: they count as its own.
-            calls += [Call(c["tool"], dict(c.get("args") or {}), str(c.get("result", "")), bool(c.get("error"))) for c in skill_run_calls(text)]
+            # A workflow run made its calls for the agent in the background, so they count as the agent's own.
+            calls += workflow_calls(text)
+    return calls
+
+
+def workflow_calls(reply: Any) -> list[Call]:
+    """The calls a workflow run reports in its reply (run_workflow, workflow_status), or none for any other reply.
+
+    The reply's ``tools_called`` has one entry per tool with how often it succeeded and failed and its last
+    successful arguments and result (``asyncroscopy.agents.workflows.runner.tools_called``): one call per tool
+    that succeeded, with those, and one failed call per tool that only failed.
+    """
+    value = _json(reply) if isinstance(reply, str) else reply
+    if not isinstance(value, dict) or "run_id" not in value or not isinstance(value.get("tools_called"), dict):
+        return []
+    calls = []
+    for name, entry in value["tools_called"].items():
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("ok"):
+            calls.append(Call(str(name), dict(entry.get("last_args") or {}), str(entry.get("last_result", "")), False))
+        elif entry.get("failed"):
+            calls.append(Call(str(name), {}, "Error: failed in a workflow run", True))
     return calls
 
 
@@ -331,12 +364,12 @@ def _is_acquisition(name: str, catalog: ToolCatalog) -> bool:
 @dataclass
 class Facts:
     data_keys: set[str] = field(default_factory=set)  # data this run made
-    map_keys: set[str] = field(default_factory=set)  # stitched maps this run made (its map jobs, or stitching its runs)
-    seen_keys: set[str] = field(default_factory=set)  # every key a server returned in this run (the answer may name them)
-    jobs: dict[str, dict] = field(default_factory=dict)  # job_id -> {"device", "state", "kind"}, for jobs this run started
+    map_keys: set[str] = field(default_factory=set)  # stitched maps this run made
+    seen_keys: set[str] = field(default_factory=set)  # every key a server returned in this run, which the answer may name
+    jobs: dict[str, dict] = field(default_factory=dict)  # jobs this run started, by job_id, each with device, state and kind
     dose_e_per_a2: float = 0.0
     high_risk: list[str] = field(default_factory=list)
-    risks_known: bool = False  # high_risk comes from the endpoint's own catalog (without one: not checked)
+    risks_known: bool = False  # high_risk comes from the endpoint's catalog and is not checked without one
     catalog: ToolCatalog = field(default_factory=ToolCatalog.unknown, repr=False, compare=False)  # what the tools are
     errors: int = 0
     calls: int = 0
@@ -420,11 +453,11 @@ class Facts:
         return "; ".join(parts)
 
 
-# ---------------------------------------------------------------------- checking
+# checking
 @dataclass
 class Verdict:
     met: bool
-    results: list[dict]  # {"criterion", "met", "why"}
+    results: list[dict]  # each has criterion, met and why
     over_budget: str = ""
 
     def feedback(self) -> str:
@@ -507,7 +540,7 @@ class GoalChecker:
 
     async def _check_map(self, c: dict, facts: Facts, answer: str):
         if self.analysis is None and not c.get("min_pois"):
-            # No analysis server (a Raman, an AFM): nothing stitches, so the map is the job's own result.
+            # With no analysis server nothing stitches, so the map is the job's own result.
             done = [j for j, v in facts.jobs.items() if v["device"] not in ("analysis", "unknown") and v["state"] == "done"]
             if done:
                 return True, f"job {done[-1]} finished (this instrument has no analysis server, so its map is the job's result)"
@@ -541,7 +574,7 @@ class GoalChecker:
         for key in sorted(facts.data_keys):
             opened = await self._ok(self.instrument, "view_data", {"key": key, "format": "text"})
             if opened is None:
-                found.append(key)  # no instrument to ask: trust the server reply that named it
+                found.append(key)  # no instrument to ask, so trust the server reply that named it
                 continue
             if not opened or not opened[0]:
                 continue

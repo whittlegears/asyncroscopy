@@ -20,6 +20,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
+from asyncroscopy.core.net import is_loopback_host  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
@@ -48,6 +49,10 @@ SETTINGS = [
     Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
     Setting('agent.use_init_chat_model', 'bool', False, section='Model', label='Use init_chat_model'),
     Setting('agent.startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
+    Setting('agent.workflows', 'bool', False, section='Workflows', label='Run workflows here',
+            help='Workflow tools (list_workflows, run_workflow, ...) in the agent process.'),
+    Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
+            help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
 ]
 
 
@@ -69,6 +74,8 @@ class AgentConfig:
     # Kept as plain dicts so this module never imports the agent extras, which
     # keeps --help and config errors working without them installed.
     startup_agents: list[dict] = field(default_factory=list)
+    workflows: bool = False
+    workflows_hardware: bool = False
 
 
 @dataclass(frozen=True)
@@ -86,13 +93,16 @@ def load_config(path: Path) -> Config:
         raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
     values = read_settings(raw, SETTINGS)
     problems = []
-    # Every key lives under agent:, so a typo there would otherwise be silently ignored.
+    # Every key lives under agent, so a typo there would otherwise be silently ignored.
     known = {setting.path.split('.', 1)[1] for setting in SETTINGS}
     unknown = sorted(set(raw.get('agent') or {}) - known) + sorted(f'(top level) {k}' for k in set(raw) - {'agent'})
     if unknown:
         problems.append(f"unknown key(s) {', '.join(unknown)}; expected agent: with {', '.join(sorted(known))}")
     if values['agent.max_steps'] is not None and values['agent.max_steps'] < 1:
         problems.append('agent.max_steps must be at least 1')
+    if values['agent.workflows_hardware'] and not is_loopback_host(str(values['agent.http_host'] or '')):
+        problems.append('agent.workflows_hardware needs agent.http_host 127.0.0.1: the agent server has no login, so on another '
+                        'address anyone who reaches the port would run workflows on the real instrument')
     startup_agents = values['agent.startup_agents'] or []
     if not isinstance(startup_agents, list) or not all(isinstance(e, dict) and e.get('name') for e in startup_agents):
         problems.append('agent.startup_agents must be a list of agents, each with a name')
@@ -111,6 +121,8 @@ def load_config(path: Path) -> Config:
             max_steps=values['agent.max_steps'],
             use_init_chat_model=values['agent.use_init_chat_model'],
             startup_agents=[dict(entry) for entry in startup_agents],
+            workflows=bool(values['agent.workflows']),
+            workflows_hardware=bool(values['agent.workflows_hardware']),
         ),
     )
 
@@ -139,12 +151,16 @@ def build_command(config: Config) -> list[str]:
         '--startup-agents-json',
         json.dumps(agent.startup_agents),
         extras=AGENT_EXTRAS,
-        # Install the extras only if they are missing; otherwise skip uv's sync
+        # Install the extras only if they are missing. Otherwise skip uv's sync
         # so this child cannot race other launchers re-syncing the same venv.
         sync=not agent_extras_installed(),
     )
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
+    if agent.workflows_hardware:
+        command.append('--workflows-hardware')
+    elif agent.workflows:
+        command.append('--workflows')
     return command
 
 
@@ -231,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
                     managed.process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     pass
-            # The server stopped on its own: fail, so a supervisor sees it (as run_mcp.py does).
+            # The server stopped on its own. Fail so a supervisor sees it, as run_mcp.py does.
             code = managed.process.returncode
             print(f"Agent MCP server exited with code {code}", file=sys.stderr)
             return code or 1

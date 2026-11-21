@@ -27,9 +27,9 @@ from .limits import LimitChecks
 from .suspenders import SuspenderChecks, parse_suspenders
 from .progress import done_count, step_count
 
-STOPPABLE_STATES = {"running", "paused_suspended", "paused"}  # abort sets the worker's abort event
+STOPPABLE_STATES = {"running", "paused_suspended", "paused"}
 RESUMABLE_STATES = {"reserved", "failed", "aborted"}
-SUMMARY_STEPS = 50  # step records results returns by default; the rest are in the job's .steps.jsonl
+SUMMARY_STEPS = 50  # How many step records results returns. The rest stay in the job's steps file.
 
 
 def _has_null(value) -> bool:
@@ -51,26 +51,26 @@ def _kind(value) -> str:
 
 class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, Device):
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # The MCP server reads each command's risk and role from here.
     action_hints = action_hints_attribute()
 
-    # One line saying what this device's job does; MCP tool descriptions start with it.
+    # One line saying what this device's job does. MCP tool descriptions start with it.
     JOB_KIND = "background job"
 
-    # A valid plan, returned with every refused plan so a caller (often a small model) can correct itself.
+    # A valid plan sent back with every refused plan so the caller can fix its own.
     PLAN_EXAMPLE: dict | None = None
 
-    # The plan's JSON Schema, by name in asyncroscopy/contracts ("map_plan"); None: the device gives none.
+    # Name of the plan's JSON Schema in asyncroscopy/contracts. None means the device gives none.
     PLAN_SCHEMA: str | None = None
 
-    # True when run_step copes with a dry run: every recorded command returns DRY_RUN_PLACEHOLDER (no
-    # image, no reply to parse). False (the default): reserve refuses a dry_run plan, naming the device.
+    # True when run_step copes with a dry run, where every recorded command returns a placeholder.
+    # When False reserve refuses a dry run plan.
     SUPPORTS_DRY_RUN = False
 
-    # Commands that only make the instrument safer (blank a beam, retract a tip): they really run in a dry run.
+    # Commands that only make the instrument safer, like blanking a beam. A dry run really runs them.
     SAFE_COMMANDS: frozenset = frozenset()
 
-    # Workers still finishing a step when the device was last re-initialised (see delete_device).
+    # Workers still finishing a step when the device was last restarted.
     _stale_workers: tuple = ()
 
     _generation = 0
@@ -189,14 +189,14 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         self._generation += 1  # a worker from an earlier generation no longer writes state files
         self._lock = threading.RLock()
         self._jobs: dict[str, dict] = {}
-        self._unloaded: dict[str, Path] = {}  # finished jobs not read yet: reservation id -> progress file
+        self._unloaded: dict[str, Path] = {}  # finished jobs not read yet, reservation id to progress file
         self._job_index: dict[str, str] = {}
         self._threads: dict[str, threading.Thread] = {}
         self._abort: dict[str, threading.Event] = {}
         self._name = self.get_name()
         self._state_dir = Path(self.state_directory)
         self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._proxies = threading.local()  # one DeviceProxy per (address, timeout) per thread: see proxy()
+        self._proxies = threading.local()  # each thread keeps its own proxies
         self._trace = TraceWriter(
             self.trace_path, source="job", writer=self._name, defaults={"simulated": bool(self.simulated)},
             clock=InstrumentClock(self.trace_clock_device()), may_rotate=self._no_active_job,
@@ -252,7 +252,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         return None
 
     def _by_job_id(self, job_id: str) -> dict:
-        # Accept a reservation id too: callers often only kept that.
+        # Accept a reservation id too because callers often keep only that.
         job = self._job(self._job_index.get(job_id, job_id))
         if job is None:
             raise JobError("unknown_job", f"no job {job_id!r}")
@@ -304,11 +304,11 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     def _reserve(self, request: str) -> str:
         body = self._parse(request, "plan")
-        try:  # the deployment's risk patterns (mcp.safety.risk), so a dry run records a get_* command marked high
+        try:  # the deployment's risk patterns tell a dry run which commands to record
             risk_overrides = check_overrides(body.get("risk_overrides"))
         except (ValueError, AttributeError) as exc:
             raise JobError("bad_request", f"risk_overrides: {exc}") from exc
-        self._refuse_if_busy()  # a quick answer for a busy device, before reading the instrument
+        self._refuse_if_busy()  # answer fast for a busy device before reading the instrument
         plan, dry_run, resolved, shape, limits = self._checked_plan(body["plan"])
         body["plan"] = plan
         with self._lock:
@@ -331,17 +331,16 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 "result_keys": {},
                 "job_ids": [],
                 "caller": body.get("caller"),
-                "run": body.get("run") or None,  # the agent run (X-Asyncroscopy-Run) the MCP server passes on, for the trace
-                "grant_id": None,
+                "run": body.get("run") or None,  # the agent run id the MCP server passes on for the trace
                 "last_error": None,
                 "created": time.time(),
-                # Where this job's events start in the shared trace file, so reading them back costs this job, not the history.
+                # Where this job's events start in the shared trace file so reading them back skips the history.
                 "trace_offset": self._trace.path.stat().st_size if self._trace.path.exists() else 0,
             }
             try:
                 self._save_plan(job)
                 self._save(job)
-            except OSError:  # nothing is reserved: no half-written job is left for a restart to find
+            except OSError:  # leave no half written job for a restart to find
                 for path in (self._plan_path(reservation_id), self._path(reservation_id)):
                     path.unlink(missing_ok=True)
                 raise
@@ -363,27 +362,27 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         if not isinstance(plan, dict):
             raise JobError("bad_request", "'plan' must be an object")
         plan = dict(plan)
-        dry_run = plan.pop("dry_run", False)  # the envelope's, not the device's: resolve_plan never sees it
+        dry_run = plan.pop("dry_run", False)  # dry_run belongs to the envelope so resolve_plan never sees it
         if not isinstance(dry_run, bool):
             raise JobError("bad_request", f"dry_run must be true or false, got {dry_run!r}")
-        if "drives" in plan:  # auto mode trusts this list to decide the start; only the device writes it
+        if "drives" in plan:  # auto mode trusts this list to decide the start so only the device may write it
             raise JobError("bad_request", "drives is not a plan field: the job device works out which commands it drives")
         if dry_run and not getattr(self, "SUPPORTS_DRY_RUN", False):
             raise JobError(
                 "dry_run_unsupported", f"{type(self).__name__} does not support dry runs: its steps read replies a dry run "
                 "does not produce (SUPPORTS_DRY_RUN is false). Nothing was reserved; rehearse this job on a simulated stack",
             )
-        # Resolving the plan and reading limits call other devices (seconds each when one is slow); doing it
-        # outside the lock keeps abort, release and a running job's progress from waiting behind it.
+        # Resolving the plan and reading limits call other devices and can take seconds.
+        # Doing it outside the lock keeps abort, release and a running job's progress from waiting.
         try:
             resolved = self.resolve_plan(plan)
         except (JobError, ValueError, TypeError, KeyError, jsonschema.ValidationError):
-            raise  # sorted out by _guard: the caller's plan, or the device's bug
+            raise  # _guard sorts these into a bad plan or a device bug
         except Exception as exc:
             raise JobError("device_error", f"{type(self).__name__}.resolve_plan failed: {type(exc).__name__}: {exc}") from exc
         lazy = isinstance(resolved, dict) and isinstance(resolved.get("step_count"), int) and "steps" not in resolved
         if not isinstance(resolved, dict) or not (lazy or isinstance(resolved.get("steps"), list)):
-            # The device's own bug, not the caller's plan: say so, outside plan_rejected.
+            # This is the device's bug so it is not reported as a rejected plan.
             raise JobError("device_error", f"{type(self).__name__}.resolve_plan must return a dict with a 'steps' list or a 'step_count', got {type(resolved).__name__}")
         shape = {"step_count": resolved["step_count"]} if lazy else {"steps": resolved["steps"]}
         limits = self._check_limits({"plan": plan, "resolved_plan": resolved, **shape})
@@ -433,7 +432,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="The plan, resolved plan, estimate and state of one reservation.", risk="low", role="job.status")
     def get_reservation(self, request: str) -> str:
-        """What a reservation will do; shown to the operator who approves its start."""
+        """What a reservation will do: its plan, resolved plan, estimate and state."""
         return self._guard(self._get_reservation, request)
 
     def _get_reservation(self, request: str) -> str:
@@ -442,7 +441,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             job = self._job(reservation_id)
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {reservation_id!r}")
-            # dry_run comes first: the operator approving the start must see whether anything will move.
+            # dry_run comes first so whoever reads it sees at once whether anything will move.
             return self._reply({"dry_run": bool(job.get("dry_run")), **{k: job.get(k) for k in ("reservation_id", "plan_id", "plan", "resolved_plan", "estimate", "state", "caller")}})
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"reservation_id": "..."} from reserve.', doc_out="Starts this device's background job and returns job_id at once.", risk="high", role="job.start")
@@ -457,7 +456,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             if job is None:
                 raise JobError("unknown_reservation", f"no reservation {body['reservation_id']!r}")
             if "dry_run" in body and bool(body["dry_run"]) != bool(job.get("dry_run")):
-                # A start never turns a rehearsal into a real run (or back): the approved plan decides.
+                # A start never turns a rehearsal into a real run or back. The reserved plan decides.
                 raise JobError("bad_request", f"this reservation is {'a dry run' if job.get('dry_run') else 'a real run'}; dry_run is set in the plan at reserve, not at start")
             pausing = job.get("pause_requested") and job["state"] in ("running", "paused", "paused_suspended")
             if pausing and not body.get("continue"):  # an agent's start or resume must not undo a person's pause
@@ -465,8 +464,8 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             if pausing:
                 return self._continue(job, body)
             if body.get("plan_id") and body["plan_id"] != job.get("plan_id"):
-                raise JobError("plan_changed", f"the plan was revised (now {job.get('plan_id')}) after the start was approved for {body['plan_id']}; ask again")
-            if body.get("continue"):  # a person pressed Continue on a paused job: never resume one stopped since
+                raise JobError("plan_changed", f"the plan was revised (now {job.get('plan_id')}) after this start was asked for {body['plan_id']}; ask again")
+            if body.get("continue"):  # Continue is for a paused job and must not resume one stopped since
                 raise JobError("bad_state", f"job is {job['state']}, not paused; it was not continued")
             if job["state"] not in RESUMABLE_STATES:
                 raise JobError("bad_state", f"reservation is {job['state']}")
@@ -476,9 +475,8 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             if any(t.is_alive() for t in self._stale_workers):
                 raise JobError("bad_state", "a worker from before the device restarted is still finishing its step; try again shortly")
             job_id = uuid.uuid4().hex[:12]
-            # Each start records its own approval (none in auto mode); a resume never inherits an old one.
             started = {
-                **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id, "grant_id": body.get("grant_id"),
+                **job, "job_ids": [*job["job_ids"], job_id], "job_id": job_id,
                 "caller": body.get("caller") or job.get("caller"), "run": body.get("run") or job.get("run"), "state": "running", "last_error": None, "suspended": None,
                 "pause_requested": False,
             }
@@ -486,7 +484,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             self._save(started)  # if this fails, the reservation stays as it was and can be started again
             job.update(started)
             self._job_index[job_id] = job["reservation_id"]
-            for finished in [j for j, t in self._threads.items() if not t.is_alive()]:  # a long-lived server keeps no dead workers
+            for finished in [j for j, t in self._threads.items() if not t.is_alive()]:  # drop dead workers so a long running server does not collect them
                 self._threads.pop(finished, None)
                 self._abort.pop(finished, None)
             self._abort[job_id] = threading.Event()
@@ -497,7 +495,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 thread.start()
                 if job["lease_until"] is not None:
                     threading.Thread(target=self._watch_lease, args=(job, job_id, thread), name=f"lease-{job_id}", daemon=True).start()
-            except Exception:  # no thread to run it (RuntimeError, MemoryError): put the reservation back as it was
+            except Exception:  # the thread could not start so put the reservation back as it was
                 for table in (self._job_index, self._abort, self._threads):
                     table.pop(job_id, None)
                 job.clear()
@@ -561,7 +559,6 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
                 "state": job["state"],
                 "progress": {"done": done, "total": step_count(job)},
                 "last_error": job["last_error"],
-                "pending_request_id": None,
                 "suspended": job.get("suspended"),
                 **({"pause_requested": True} if job.get("pause_requested") else {}),
                 **({"phase": phase} if (phase := getattr(self, "phase", lambda _job: None)(job)) else {}),
@@ -584,8 +581,8 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             elif job["state"] == "reserved":
                 job["state"] = "aborted"
             self._save(job)
-        # Wait briefly so a quick step reports "aborted" at once; a long step keeps the state
-        # "aborting" (poll job_status) rather than blocking this device past client timeouts.
+        # Wait briefly so a quick step reports aborted at once.
+        # A long step stays aborting so this call does not block past client timeouts.
         thread = self._threads.get(job_id)
         if thread is not None:
             thread.join(timeout=2.0)
@@ -617,7 +614,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     def _results(self, request: str) -> str:
         job = self._by_job_id(self._parse(request, "job_id")["job_id"])
-        with self._lock:  # the worker adds step results under this lock; summary iterates them
+        with self._lock:  # the worker adds step results under this lock
             reply = {
                 "job_id": job.get("job_id", job["reservation_id"]),
                 "state": job["state"],

@@ -68,7 +68,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from asyncroscopy import settings
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from asyncroscopy.agents.catalog import ToolCatalog
-from asyncroscopy.agents.goals import MAP_KEY, Facts, trace_from_messages
+from asyncroscopy.agents.goals import MAP_KEY, Facts, content_text, trace_from_messages
 from asyncroscopy.agents.guards import CLAIM_CHECK, is_request
 from asyncroscopy.agents.guidance import stage_placed
 
@@ -80,12 +80,12 @@ UNIT = r"(?:\s*(?P<unit>nanomet(?:er|re)s?|micromet(?:er|re)s?|millimet(?:er|re)
 SCALE = {"nm": 1e-9, "pm": 1e-12, "µm": 1e-6, "μm": 1e-6, "um": 1e-6, "mm": 1e-3, "m": 1.0,
          "nanomet": 1e-9, "micromet": 1e-6, "millimet": 1e-3, "picomet": 1e-12, "met": 1.0}
 _VALUE = NUMBER.replace("?P<num>", "?:") + UNIT.replace("?P<unit>", "?:")
-VALUES = rf"{_VALUE}(?:\s*(?:,\s*(?:and\s+)?|\s+and\s+){_VALUE})*"  # "-20 nm, 0 nm, and +20 nm"
+VALUES = rf"{_VALUE}(?:\s*(?:,\s*(?:and\s+)?|\s+and\s+){_VALUE})*"  # matches a list like -20 nm, 0 nm, and +20 nm
 FINAL_STATE =r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+back\s+to|(?:reset|restored|returned)\s+to|is\s+now(?:\s+at)?|now\s+at|left\s+at|ends?\s+at)"
 SETTING_ALIASES = {"fov": ("fov", "field of view"), "defocus": ("defocus", "focus")}
 
 ACQUIRED = re.compile(
-    # Only the agent saying it did it: "the latest acquired image" describes data, it claims nothing.
+    # Only matches the agent saying it did something. A phrase like the latest acquired image claims nothing.
     r"(?:\b(?:I|we)\s+(?:then\s+|also\s+|first\s+|have\s+|successfully\s+|just\s+)*|\b(?:and|then)\s+)(?:took|acquired|captured|recorded|collected)\s+(?:(?:an?|the|one|two|three|four|five|some|several|new|\d+)\s+)?(?:[\w-]+\s+){0,3}?"
     r"(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?|data|frames?)\b"
     r"|\b(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?)\s+(?:was|were|has\s+been|have\s+been)\s+(?:taken|acquired|captured|recorded|collected)\b"
@@ -112,10 +112,10 @@ DEFERS = re.compile(
     re.I,
 )
 
-# The unit a table's column header or a sentence gives its bare numbers: "x (nm)", "in nm", "in metres".
+# Finds the unit that a table header or a phrase like in nm gives to bare numbers.
 HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phrase>nanomet(?:er|re)s|micromet(?:er|re)s|met(?:er|re)s|nm|µm|μm|um|m)\b", re.I)
 
-# "at the current position" asks for nothing: only a plural, "position of", or "where ... is" asks where.
+# Only a plural, position of, or where something is asks for positions. The phrase at the current position does not.
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
 FIELD_UNIT = re.compile(r"_(nm|um|pm|mm|m)(?:_per_s)?$")
@@ -147,7 +147,7 @@ DRIFT_UNKNOWN = re.compile(r"\b(?:unknown|unmeasured|could\s*n[o']t\s+be\s+measu
 # "placed where the stage reported them" is a map's tiles laid out by stage position, not a place_image result.
 PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b(?!\s+(?:where|by|at|from)\s+(?:the\s+)?stage)|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
-# An answer that ends by announcing work instead of reporting it ("I'll now take an EDS spectrum on it.").
+# Matches an answer that ends by saying what it will do next instead of reporting what it did.
 ANNOUNCES = re.compile(
     r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+(?:us|me)|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
     r"(?:do|take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare"
@@ -180,8 +180,7 @@ def is_correction(message: BaseMessage) -> bool:
 
 
 def _text(message) -> str:
-    content = getattr(message, "content", "")
-    return content if isinstance(content, str) else json.dumps(content, default=str)
+    return content_text(getattr(message, "content", ""))
 
 
 def _request(messages) -> str:
@@ -262,7 +261,7 @@ class _Settings:
             if name and _number(call.result) is not None:
                 self.last[name] = (_number(call.result), call.name)
                 continue
-            for node in _walk(_json(call.result)):  # a reply that reports settings (get_parameters: defocus_m, fov_m)
+            for node in _walk(_json(call.result)):  # a reply such as get_parameters that reports settings
                 for key, value in node.items():
                     setting = key[:-2] if key.endswith("_m") else key
                     if setting in self.names and _number(value) is not None:
@@ -299,46 +298,66 @@ def _show(value: float, scale: float | None, unit: str | None) -> str:
     return f"{value / scale:g} {unit}" if scale else f"{value:g}"
 
 
+def _setting_mentions(sentence: str, settings: _Settings):
+    """Each place a sentence states a value for a setting, and whether it states it as the final value."""
+    for name, phrase in settings.phrases():
+        p = re.escape(phrase)
+        patterns = (
+            re.compile(rf"\b{p}\b[^.;\n]{{0,40}}?\b{FINAL_STATE}\s+{NUMBER}{UNIT}", re.I),
+            re.compile(rf"\bset\s+(?:the\s+)?{p}\s+(?:back\s+)?(?:to|at)\s+{NUMBER}{UNIT}", re.I),
+            re.compile(rf"\b{p}\s+(?:was|were|has\s+been)\s+set\s+(?:back\s+)?(?:to|at)\s+{NUMBER}{UNIT}", re.I),
+        )
+        for pattern in patterns:
+            for m in pattern.finditer(sentence):
+                yield name, phrase, pattern is patterns[0], m
+
+
+def _final_setting_claim(m, name: str, phrase: str, settings: _Settings) -> Claim | None:
+    """A claim when the stated value is not the last one set or read."""
+    stated = float(m.group("num").replace("−", "-"))
+    unit = m.group("unit")
+    scale = _scale(unit)
+    said = m.group(0).strip()
+    if name not in settings.last:
+        return Claim("setting", said, f"no tool call in this run set or read the {phrase}")
+    actual, source = settings.last[name]
+    if _matches(stated, scale, actual) is not False:
+        return None
+    # Name the exact call that would make the claim true. A vague correction gets the same answer back.
+    setter = f"{source.split('_')[0]}_set_{name}"
+    target = json.dumps({name: stated * scale if scale else stated})
+    return Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source}); "
+                                  f"to make it true, call {setter} with {target} now")
+
+
+def _set_setting_claim(m, name: str, phrase: str, settings: _Settings) -> Claim | None:
+    """A claim when no set call in the run gave the stated value."""
+    stated = float(m.group("num").replace("−", "-"))
+    unit = m.group("unit")
+    scale = _scale(unit)
+    said = m.group(0).strip()
+    values = settings.set.get(name, [])
+    if not values:
+        return Claim("setting", said, f"no successful set_{name} call in this run")
+    if all(_matches(stated, scale, v) is False for v in values):
+        shown = ", ".join(_show(v, scale, unit) for v in values)
+        return Claim("setting", said, f"the {phrase} values set in this run were {shown}")
+    return None
+
+
 def _setting_claims(answer: str, settings: _Settings) -> list[Claim]:
     claims: list[Claim] = []
     seen: set[tuple[str, int]] = set()
     for sentence in _sentences(answer):
-        for name, phrase in settings.phrases():
-            p = re.escape(phrase)
-            patterns = (
-                re.compile(rf"\b{p}\b[^.;\n]{{0,40}}?\b{FINAL_STATE}\s+{NUMBER}{UNIT}", re.I),
-                re.compile(rf"\bset\s+(?:the\s+)?{p}\s+(?:back\s+)?(?:to|at)\s+{NUMBER}{UNIT}", re.I),
-                re.compile(rf"\b{p}\s+(?:was|were|has\s+been)\s+set\s+(?:back\s+)?(?:to|at)\s+{NUMBER}{UNIT}", re.I),
-            )
-            for pattern in patterns:
-                for m in pattern.finditer(sentence):
-                    key = (sentence, m.start())
-                    if key in seen or _negated(sentence, m):
-                        continue
-                    seen.add(key)
-                    stated = float(m.group("num").replace("−", "-"))
-                    unit = m.group("unit")
-                    scale = _scale(unit)
-                    said = m.group(0).strip()
-                    if pattern is patterns[0] or re.search(r"\bback\b", said, re.I):
-                        if name not in settings.last:
-                            claims.append(Claim("setting", said, f"no tool call in this run set or read the {phrase}"))
-                            continue
-                        actual, source = settings.last[name]
-                        if _matches(stated, scale, actual) is False:
-                            # Name the exact call that would make the claim true: a small model told only that a claim is
-                            # unsupported repeated its answer unchanged.
-                            setter = f"{source.split('_')[0]}_set_{name}"
-                            target = json.dumps({name: stated * scale if scale else stated})
-                            claims.append(Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source}); "
-                                                                 f"to make it true, call {setter} with {target} now"))
-                    else:
-                        values = settings.set.get(name, [])
-                        if not values:
-                            claims.append(Claim("setting", said, f"no successful set_{name} call in this run"))
-                        elif all(_matches(stated, scale, v) is False for v in values):
-                            shown = ", ".join(_show(v, scale, unit) for v in values)
-                            claims.append(Claim("setting", said, f"the {phrase} values set in this run were {shown}"))
+        for name, phrase, final, m in _setting_mentions(sentence, settings):
+            key = (sentence, m.start())
+            if key in seen or _negated(sentence, m):
+                continue
+            seen.add(key)
+            check = _final_setting_claim if final or re.search(r"\bback\b", m.group(0).strip(), re.I) else _set_setting_claim
+            claim = check(m, name, phrase, settings)
+            if claim is not None:
+                claims.append(claim)
     return claims
 
 
@@ -348,7 +367,7 @@ def _at_values(sentence: str, phrase: str):
     if not m:
         return None
     items = list(re.finditer(rf"{NUMBER}{UNIT}", m.group("list")))
-    unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # "-20, 0 and +20 nm"
+    unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # the last unit covers the whole list, as in -20, 0 and +20 nm
     return m, [(float(i.group("num").replace("−", "-")), _scale(i.group("unit") or unit), i.group("unit") or unit) for i in items]
 
 
@@ -396,8 +415,8 @@ def _failed_acquisition_claims(answer: str, calls, catalog: ToolCatalog) -> list
     for sentence in _sentences(answer):
         for key in dict.fromkeys(DATA_KEY_IN_TEXT.findall(sentence)):
             if key in failed and not NEGATION.search(sentence):
-                # The reason's first sentence only, and no blind "acquire again": a model that had already retaken the
-                # image took one more when told to, and still listed this key.
+                # Give only the first sentence of the reason and do not tell the model to acquire again.
+                # Told that, it takes one more image and still lists this key.
                 why = failed[key].split("ToolError:", 1)[-1].strip().split(". ")[0][:120]
                 claims.append(Claim("failed_acquisition", key, f"that acquisition failed ({why}), so this file is not a result: leave this key "
                                                                 "out and report the key of the successful acquisition that replaced it; "
@@ -414,7 +433,7 @@ def _action_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
     jobs = any(catalog.category(c.name) == "job" for c in ok)
     acquired = jobs or any(catalog.category(c.name) == "acquire" for c in ok)
     moved = jobs or any(catalog.category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
-    # A job zoomed only if its plan imaged finer than its tiles (a revisit or a zoom); a plain map changed nothing.
+    # A job zooms only if its plan images finer than its tiles. A plain map changes nothing.
     magnified = any(catalog.role(c.name) == "optics.fov" or (catalog.category(c.name) == "job" and re.search(r"revisit|zoom|images", json.dumps(c.args, default=str) + str(c.result))) for c in ok)
     claims = []
     for sentence in _sentences(answer):
@@ -580,7 +599,7 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     (qwen3:8b answered "Here are their stage coordinates:" with no coordinates after a list_pois of 19 points)."""
     if not POSITION_QUESTION.search(request):
         return []
-    found: dict[str, set] = {}  # each tool's distinct positions (a point's links may repeat it)
+    found: dict[str, set] = {}  # distinct positions per tool, since a point's links may repeat it
     for call in calls:
         if call.error:
             continue
@@ -592,17 +611,17 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     if not values:
         return []
     text = MAP_KEY.sub(" ", DATA_KEY_IN_TEXT.sub(" ", answer))
-    # A table headed "x (nm)" leaves its numbers without a unit: they are read in the units its headers name. Only
-    # headers: "x_m" and "spectrum" end in unit letters, and read as units they made tile numbers into positions.
+    # Numbers under a table header that names a unit have no unit of their own, so read them in the header's unit.
+    # Only headers count, because words like x_m and spectrum end in unit letters.
     headed = {_scale(m["header"] or m["phrase"]) for m in HEADER_UNIT.finditer(text)} - {None}
     for m in re.finditer(NUMBER + UNIT, text):
         stated = abs(float(m["num"].replace("−", "-")))
         scales = [_scale(m["unit"])] if m["unit"] else [1.0, *headed]
-        # Within 2% and 1 nm of rounding: _matches allows half a unit, and "tile 2" read in µm matched every point.
+        # Allow 2% and 1 nm for rounding. A looser match lets a tile number read in µm match every point.
         if stated and any(abs(stated * scale - value) <= 0.02 * value + 1e-9 for scale in scales if scale for value in values):
             return []
     tool, points = list(found.items())[-1]
-    # Not "make the missing call": qwen3:8b called list_pois again, and its second copy filled the 8k context.
+    # Do not say to make the missing call. A second list_pois reply can fill a small context.
     return [Claim("missing_positions", "the positions asked for",
                   f"the request asks where, and the {tool} reply above gave x_m, y_m for {len(points)} point(s), but the "
                   f"answer states none of them; do not call {tool} again: answer now, listing each point's id with its "
@@ -621,7 +640,7 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     calls = trace_from_messages(messages)
     facts = Facts.from_calls(calls, catalog)
     claims: list[Claim] = []
-    # Keys: any key a reply, a request or the prompt gave the model may be named (an error reply too).
+    # The answer may name any key that a reply, a request or the prompt gave the model, even from an error reply.
     given = " ".join(_text(m) for m in messages if getattr(m, "type", "") in ("tool", "human")) + " " + context
     known = facts.seen_keys | set(DATA_KEY_IN_TEXT.findall(given)) | set(MAP_KEY.findall(given))
     named = list(dict.fromkeys(DATA_KEY_IN_TEXT.findall(answer) + MAP_KEY.findall(answer)))

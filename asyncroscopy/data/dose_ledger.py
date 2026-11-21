@@ -99,7 +99,7 @@ def exposure_of(attrs: dict) -> dict | None:
     if stage is None or fov is None or current is None or not (fov > 0 and current >= 0):
         return None
     shift = _vector(attrs.get("image_shift_m"))
-    if shift is not None:  # the field's centre is the stage plus the image shift it was taken with
+    if shift is not None:  # the field's centre is the stage plus the image shift
         stage = [stage[0] + shift[0], stage[1] + shift[1], *stage[2:]]
     source = {"current_source": str(attrs["beam_current_source"])} if attrs.get("beam_current_source") else {}
     placed = attrs.get("axes") == AXES
@@ -118,7 +118,7 @@ def exposure_of(attrs: dict) -> dict | None:
     region = region or [0.0, 0.0, 1.0, 1.0]
     if len(region) != 4 or not (region[2] > 0 and region[3] > 0):
         return None
-    across, down, width, height = region  # [left, top, width, height] as fractions of the field; rows run along +y
+    across, down, width, height = region  # left, top, width and height as fractions of the field, with rows along +y
     left, bottom = stage[0] - fov / 2, stage[1] - fov / 2
     return {
         "box_m": [left + across * fov, left + (across + width) * fov, bottom + down * fov, bottom + (down + height) * fov],
@@ -136,7 +136,7 @@ def record_frame(attrs: dict, sample_load_id: str | None, key: str, instrument_i
     record = {"at": time.time(), "sample_load_id": sample_load_id, "instrument_id": instrument_id, "key": key, **exposure}
     try:
         chain_append(ledger_path(), record)
-    except (OSError, ValueError) as exc:  # an unreadable integrity key must not lose the dose: the line is kept unsealed, which verify reports
+    except (OSError, ValueError) as exc:  # an unreadable integrity key must not lose the dose, so the line is kept unsealed and verify reports it
         print(f"[dose ledger] {key} written without a seal: {exc}")
         path = ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +174,7 @@ def _bring_up_to_date(db: sqlite3.Connection, path: Path) -> None:
                 handle.seek(position)
                 for raw in handle:
                     if not raw.endswith(b"\n"):
-                        break  # a line still being written: the next query takes it
+                        break  # a line still being written is left for the next query
                     row = _row(raw, position)
                     if row is not None:
                         rows.append(row)
@@ -209,7 +209,7 @@ def dose_at(sample_load_id: str | None, x_m: float | None = None, y_m: float | N
     load = "" if sample_load_id is None else str(sample_load_id)
     try:
         exposures, (at_point, dose, unmeasured) = _query(index, path, load, x_m, y_m)
-    except sqlite3.DatabaseError:  # a damaged index: the file is the record, so it is built again
+    except sqlite3.DatabaseError:  # the file is the record, so a damaged index is built again
         index.unlink(missing_ok=True)
         exposures, (at_point, dose, unmeasured) = _query(index, path, load, x_m, y_m)
     reply = {"sample_load_id": sample_load_id, "exposures": exposures, "not_counted": NOT_COUNTED}

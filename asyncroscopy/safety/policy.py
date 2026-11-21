@@ -10,7 +10,7 @@ Risk is decided by ``Class.command`` patterns, first match wins:
 
 1. the deployment's own patterns (the MCP config's ``safety.risk``), so a
    team can mark e.g. ``Opentrons.get_tip`` high or ``MyStage.jog`` high;
-2. safe-stop commands, always low: an agent must never wait for approval to
+2. safe-stop commands, always low: an agent must always be able to
    abort, stop, retract, switch off or close a shutter. This is an allow-list,
    like the rest of the policy: a command's name (split on "_" and CamelCase)
    has exactly one stop verb (STOP_VERBS, RETREAT_VERBS, or "off" as the last
@@ -30,10 +30,8 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    this code base (``get_*``, ``list_*``), plus, on a device that acquires
    scanned images, a few STEM commands that neither move hardware nor expose
    the sample (STEM_LOW);
-5. everything else is high: a new or renamed command is held in approval
-   mode rather than waved through, and in auto mode too unless it is
-   routine (declared by its device, or listed in the MCP config's
-   ``mcp.safety.auto_routine``, ``check_auto_routine``) or an operator switched it on.
+5. everything else is high: a new or renamed command counts as high (token
+   auth needs the operate role for it, and a job's dry run records it).
 
 The convention in (4) is a promise instrument authors keep: a command named
 ``get_...`` or ``list_...`` must not move or change anything (an SPM
@@ -49,30 +47,31 @@ from typing import Iterable
 
 from asyncroscopy.core.names import ENVELOPE_VERBS
 
-# A safe stop is recognised by an allow-list (anything else is high, like any unknown name):
-# exactly one stop verb, and every other word one of the objects that verb may take.
+# A safe stop is recognised by an allow-list, and anything else is high like any unknown name.
+# It needs exactly one stop verb, and every other word must be an object that verb may take.
 STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
-RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample; take hardware objects only
+RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample, and take hardware objects only
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
     "indenter", "head", "objective", "robot", "xray", "source",
 })
-# What "retract"/"withdraw" may move: a probe, needle or Z away from the sample. It must name one: a bare
-# Retract lifts the tip on an SPM, but a syringe pump's Withdraw aspirates. A bare one (or "retract_now")
-# is low only on a probe device (``probe=True``, see ``is_probe_device``). retract_shutter opens a beam
-# path, retract_stage or retract_robot moves an axis or an arm, and retract_screen uncovers the detectors.
+# What retract or withdraw may move away from the sample. It must name one, because a bare
+# Retract lifts the tip on an SPM but a syringe pump's Withdraw aspirates.
+# A bare one or "retract_now" is low only on a probe device. See is_probe_device.
+# retract_shutter opens a beam path, retract_stage or retract_robot moves an axis or an arm,
+# and retract_screen uncovers the detectors.
 RETREAT_OBJECTS = frozenset({"tip", "probe", "head", "z", "indenter", "objective", "needle", "now"})
-# Words that make a device a probe instrument, whose bare retract/withdraw lifts the probe off the sample.
+# Words that make a device a probe instrument, where a bare retract or withdraw lifts the probe off the sample.
 PROBE_WORDS = frozenset({"approach", "engage", "indent"})
-# What "disengage" may take, and it must name one: disengage_motor or a bare Disengage can free an axis.
+# What "disengage" may take. It must name one, because disengage_motor or a bare Disengage can free an axis.
 DISENGAGE_OBJECTS = frozenset({"tip", "probe", "head"})
-# What "off" may switch off: a source of energy. "stage_off", "z_off" or "shutter_off" are not stops
-# (a de-energised shutter may open; close it with close_shutter).
+# What "off" may switch off, which is a source of energy. "stage_off", "z_off" and "shutter_off" are not stops.
+# A shutter without power may open, so close it with close_shutter.
 OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv", "xray", "source"})
 MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live", "indent", "imaging", "exposure", "protocol"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
-# "emergency" qualifies a stop verb (emergency_stop) and is never one by itself.
+# "emergency" qualifies a stop verb, as in emergency_stop, and is never one by itself.
 MODIFIERS = frozenset({"emergency"})
 
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release", "renew_lease")
@@ -85,16 +84,14 @@ DEFAULT_RISK: list[tuple[str, str]] = [
     ("*.state", "low"),
     ("*.status", "low"),
 ]
-# STEM settings that neither move hardware nor expose the sample. Low only on a device that
-# acquires scanned images: on an optical microscope set_defocus drives the objective. place_beam
-# is not here: with the beam unblanked it parks the probe on one spot.
+# STEM settings that neither move hardware nor expose the sample. They are low only on a device that
+# acquires scanned images, since on an optical microscope set_defocus drives the objective.
+# place_beam is left out because with the beam unblanked it parks the probe on one spot.
 STEM_LOW = frozenset({"set_fov", "set_defocus"})
 
-# Never offered on the agent endpoint, whatever the config says: Tango's own admin commands, which no
-# device declares (restarting a device resets its state, the approval mode among it). Everything else
-# a device keeps from agents it declares itself: command(operator_only=True) (the Approvals device's
-# approve, deny, set_mode, ...; a twin's export_ground_truth; a stage's set_holder; the SAMPLE device's load_sample; a
-# job device's revise; the DATA device's configure and Tiled server commands).
+# Never offered on the agent endpoint, whatever the config says. These are Tango's own admin commands,
+# which no device declares. Restarting a device resets its state.
+# A device declares anything else it keeps from agents itself, by passing operator_only=True to command.
 OPERATOR_ONLY: list[str] = [
     "*.init",
     "*.kill",
@@ -124,7 +121,7 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
     A bare retract or withdraw counts only on a probe device (``probe``; see ``is_probe_device``).
     """
     ordered = [w for w in _word_list(command) if w not in MODIFIERS]
-    # "beam" then "stop" names the beamstop (BeamStopMove moves it out of the direct beam): one noun.
+    # "beam" then "stop" names the beamstop, so the two count as one noun.
     for i in range(len(ordered) - 1, 0, -1):
         if ordered[i - 1] == "beam" and ordered[i] == "stop":
             ordered[i - 1:i + 1] = ["beamstop"]
@@ -139,8 +136,8 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
         return False
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
-    # A motion is stopped only when it follows the verb: "abort_approach" stops, "approach_stop" approaches.
-    if verbs[0] == "off":  # a bare Off is a de-energise (on a stage it drops holding torque)
+    # A motion is stopped only when it follows the verb. "abort_approach" stops and "approach_stop" approaches.
+    if verbs[0] == "off":  # a bare Off cuts power, and on a stage that drops holding torque
         return bool(before) and before <= OFF_OBJECTS
     if verbs[0] == "disengage":
         return bool(before | after) and (before | after) <= DISENGAGE_OBJECTS
@@ -171,7 +168,7 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
     with a probe, so a bare retract lifts it away (see ``is_probe_device``)."""
     key = _key(dev_class, command)
     matched = [level for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower())]
-    if matched:  # overrides that disagree (a broad "*": low beside an exact high) never lower a command
+    if matched:  # overrides that disagree never lower a command
         return "high" if "high" in matched else matched[0]
     name = command.lower()
     if is_safe_stop(command, probe=probe):

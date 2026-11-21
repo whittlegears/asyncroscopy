@@ -115,15 +115,15 @@ class Config:
     reset_database_file: bool
     tiled: TiledConfig
     device_timeout_seconds: int
-    # Top-level `simulated:`. Every device gets it as its `simulated` property; False (real hardware) when absent.
+    # The top level `simulated` key. Every device gets it as its `simulated` property. When absent it is False, which means real hardware.
     simulated: bool = False
-    # tango.bind_host: the interface the Tango database listens on, when it differs from tango.host (the
-    # name clients use). In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
+    # tango.bind_host is the interface the Tango database listens on, when it differs from tango.host, the
+    # name clients use. In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
     tango_bind_host: str = ""
-    # Top-level `plugins:`: modules or .py files every device imports (asyncroscopy/plugins.py), so a
-    # team's own @register_profile / @register_tracker / @register_strategy classes exist in each process.
+    # The top level `plugins` key lists modules or .py files every device imports. See asyncroscopy/plugins.py.
+    # They make a team's own @register_profile, @register_tracker and @register_strategy classes exist in each process.
     plugins: tuple[str, ...] = ()
-    # devices: entries switched off with enabled: false; removed from a kept database at start.
+    # Entries under `devices` that have `enabled` set to false. They are removed from a kept database at start.
     disabled_devices: tuple[str, ...] = ()
 
 
@@ -267,7 +267,7 @@ def module_source(module_name: str) -> Path:
         spec = None
     except Exception as exc:  # importing a parent package can fail in any way
         raise ValueError(f"module '{module_name}' could not be located: {type(exc).__name__}: {exc}") from None
-    if spec is not None and spec.submodule_search_locations:  # a package: -m runs its __main__.py
+    if spec is not None and spec.submodule_search_locations:  # for a package, -m runs its __main__.py
         for location in spec.submodule_search_locations:
             if (Path(location) / "__main__.py").is_file():
                 return Path(location) / "__main__.py"
@@ -309,7 +309,7 @@ def find_device_class(path: Path, requested: str | None = None, fallback: str | 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         and node.func.attr == "run_server" and isinstance(node.func.value, ast.Name)
     }
-    served &= set(classes) | set(imported)  # e.g. `device_class.run_server()` names a variable, not a class
+    served &= set(classes) | set(imported)  # a call such as `device_class.run_server` names a variable, not a class
     if len(served) == 1:
         return served.pop()
     if fallback in classes:
@@ -336,7 +336,7 @@ def _instrument_config(raw: dict, values: dict | None = None) -> InstrumentConfi
         values = read_settings({"instrument": raw}, [s for s in SETTINGS if s.path.startswith("instrument.")])
     module = raw.get("module_name") or None
     if module:
-        # Code outside this repository: a module the servers' Python can import.
+        # This is code outside this repository. It is a module the servers' Python can import.
         if not values["instrument.class_name"]:
             raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
         _check_importable(module, "instrument.module_name")
@@ -458,7 +458,7 @@ def load_config(path: Path) -> Config:
             support_devices.append(device)
         else:
             disabled.append(key)
-    # The DATA device starts Tiled (get_data_proxy), so autostart without it fails after everything is up.
+    # The DATA device starts Tiled in get_data_proxy, so autostart without it fails after everything is up.
     if values["tiled.autostart"] and "data" not in broken and not any(d.key == "data" for d in support_devices):
         problems.append("tiled.autostart needs the data device; enable data or turn off tiled.autostart")
     simulated = plugins = None
@@ -470,7 +470,7 @@ def load_config(path: Path) -> Config:
     if problems:
         raise ConfigError(problems)
     # The stack flag reaches every device as its `simulated` property. A device may repeat it, but never
-    # contradict it: one device saying simulated on a hardware stack would lift that device's hardware rules.
+    # contradict it. One device saying simulated on a hardware stack would lift that device's hardware rules.
     for where, properties in [("instrument", instrument.properties), *((f"devices.{d.key}", d.properties) for d in support_devices)]:
         _check_device_simulated(properties.get("simulated"), simulated, where, path)
         properties["simulated"] = [str(simulated).lower()]
@@ -590,10 +590,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-# --- Other stacks ---------------------------------------------------------
 # A launcher started without --isolated scours its Tango and Tiled ports and
 # deletes the project-root Tango database file. That is right for this config's
-# own leftovers (a crashed earlier run) and wrong for anyone else's stack.
+# own leftovers from a crashed earlier run and wrong for anyone else's stack.
 
 LAUNCHER_NAME = "run_servers.py"
 ORPHAN_MARKERS = ("tango.databaseds", "tiled", "asyncroscopy.")  # processes an earlier stack leaves behind
@@ -608,7 +607,7 @@ class ProcessInfo:
 
 @dataclass(frozen=True)
 class OtherStack:
-    identity: tuple[str, str]  # (config path, isolated directory or "")
+    identity: tuple[str, str]  # the config path, then the isolated directory or ""
     pid: int
     config: str  # for messages, relative to the repository where possible
 
@@ -716,7 +715,7 @@ def stack_conflicts(
         for stack in stacks.values():
             if not stack.identity[1]:
                 conflicts.append((f"{stack.config} (launcher pid {stack.pid}) uses the same Tango database file (neither stack is --isolated)", stack.pid))
-    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # another stack -> (pid to stop, its ports)
+    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # maps another stack to the pid to stop and its ports
     for port, pids in sorted(listeners.items()):
         for pid in sorted(pids):
             if pid in my_pids or pid not in snapshot:
@@ -931,7 +930,7 @@ def device_health(device_name: str) -> tuple[str, str]:
     try:
         proxy = tango.DeviceProxy(device_name)
         return str(proxy.state()), str(proxy.status()).strip()
-    except Exception as exc:  # it answered the ping a moment ago: say why it cannot be read, as a fault
+    except Exception as exc:  # It answered the ping a moment ago. Report why it cannot be read, as a fault.
         return "FAULT", f"State/Status could not be read: {exc}"
 
 
@@ -948,20 +947,6 @@ def report_health(device_name: str, elapsed: float, faults: dict[str, str]) -> N
         status_line("WARN", device_name, status)
     else:
         print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
-
-
-def isolate_approvals(devices: list[DeviceConfig], isolated_dir: Path | None) -> None:
-    """Keep an isolated stack's approval mode in its own folder.
-
-    The Approvals device saves its mode (auto or approve) to mode_file and restores it on restart. Two
-    stacks in one checkout would otherwise share outputs/approvals/mode.json, and one stack switched to
-    approve would come back in the other after a restart. A mode_file the config sets is kept.
-    """
-    if isolated_dir is None:
-        return
-    for device in devices:
-        if device.module_name == "asyncroscopy.safety.approvals" and "mode_file" not in device.properties:
-            device.properties["mode_file"] = [str(isolated_dir / "approvals" / "mode.json")]
 
 
 def register_devices(
@@ -1091,7 +1076,6 @@ def print_summary(
             print(f"  {color('TILED_LOG', Style.bold):<18} {tiled_config['tiled_log']}")
     print()
     if faults:
-        # The servers run, but these devices did not reach their hardware: the stack is not live.
         print(color(f"NOT READY: {len(faults)} device(s) are in FAULT; the servers run, but the stack is not live:", Style.bold + Style.red))
         for name, status in faults.items():
             print(color(f"  {name}: {status}", Style.red))
@@ -1109,7 +1093,7 @@ def manager_options(args: argparse.Namespace, port: int) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Line-buffer even when stdout is a pipe or file (a GUI, a log, CI), so "ready"
+    # Line-buffer even when stdout is a pipe or file, as under a GUI, a log or CI. Then "ready"
     # and the summary appear when they happen rather than when the launcher exits.
     sys.stdout.reconfigure(line_buffering=True)
     args = parse_args(argv)
@@ -1202,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {color('PROJECT', Style.bold):<18} {PROJECT_DIR}")
     print(f"  {color('CONFIG', Style.bold):<18} {config_path}")
     print(f"  {color('INSTRUMENT', Style.bold):<18} {instrument.class_name}")
-    print(f"  {color('SIMULATED', Style.bold):<18} {str(config.simulated).lower()}" + ("" if config.simulated else "  (real hardware: approval auto mode refused)"))
+    print(f"  {color('SIMULATED', Style.bold):<18} {str(config.simulated).lower()}" + ("" if config.simulated else "  (real hardware)"))
     if log_dir is not None:
         print(f"  {color('DEBUG LOGS', Style.bold):<18} {log_dir}")
     print_inventory(devices)
@@ -1272,7 +1256,6 @@ def main(argv: list[str] | None = None) -> int:
 
             print_section(3, total_steps, "Registering devices")
             if should_register_devices:
-                isolate_approvals(devices, isolated_dir)
                 register_devices(devices, registered_instrument_properties, config.disabled_devices)
             else:
                 status_line("SKIP", "device registration")
@@ -1349,8 +1332,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 while True:
                     time.sleep(0.1)
-                    # A server that dies after startup stops the stack with an error, so a supervisor
-                    # (systemd, Kubernetes) sees the failure instead of a launcher that looks healthy.
+                    # A server that dies after startup stops the stack with an error. A supervisor such as
+                    # systemd or Kubernetes then sees the failure instead of a launcher that looks healthy.
                     stopped = next((p for p in manager.active_processes if not p.running), None)
                     if stopped is not None:
                         raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
@@ -1365,7 +1348,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     except KeyboardInterrupt:
-        # Stopped during startup; the ProcessManager context has already stopped what was running.
+        # Stopped during startup. The ProcessManager context has already stopped what was running.
         stop_tiled_server_quietly()
         status_line("OK", "stopped during startup")
         return 130
@@ -1388,7 +1371,7 @@ def main(argv: list[str] | None = None) -> int:
                     log_file.write_text(f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}", encoding="utf-8")
                 print(color(f"Saved logs to {log_dir}", Style.bold + Style.yellow))
 
-        # No stop_tiled_server() here: the process manager's tree kill has already ended Tiled with the data server.
+        # No stop_tiled_server call is needed here. The process manager's tree kill has already ended Tiled with the data server.
             
         return 1
 

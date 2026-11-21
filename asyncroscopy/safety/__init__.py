@@ -1,4 +1,4 @@
-"""Approval mode for agent-driven instrument control. See docs/Operation/approval_mode.md."""
+"""Risk policy and the emergency stop for agent-driven instrument control."""
 
 from .policy import OPERATOR_ONLY, risk_of
 

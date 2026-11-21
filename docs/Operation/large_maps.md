@@ -10,7 +10,7 @@ table to reproduce it.
 
 A map is one Mapper job (`run_job` with device `Mapper`, then
 `wait_for_job` until it is done). Its phases are steps of the same job, so
-abort, approval and progress (`phase` in the status) cover all of them:
+abort and progress (`phase` in the status) cover all of them:
 
 1. **tiles**: one step per tile. Steps are computed from the plan's grid
    when needed, so a plan of millions of tiles stores a few numbers.

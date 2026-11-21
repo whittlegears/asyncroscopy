@@ -4,7 +4,7 @@ Pure numbers; no instrument. The Mapper's revisits use ``drift_at`` to put a map
 back under the probe; its live drift tracking (plan ``"drift": {"track": true}``, see
 asyncroscopy/jobs/mapping/live_drift.py) uses a ``DriftTracker`` to predict, before each tile, how
 far the image will sit from where it was planned, and ``tile_offset_m`` to measure it from
-the overlap with a neighbouring tile. See docs/designs/concepts_brief.md (decision D1, item 8).
+the overlap with a neighbouring tile.
 
 Every position here is the placement error of a tile: where its image really is minus
 where it was planned, with the image shift the tracker applied taken out, relative to the
@@ -37,8 +37,8 @@ from numpy.typing import ArrayLike
 
 from asyncroscopy.registry import Registry
 
-DEFAULT_WINDOW = 12  # observations the linear tracker fits (the most recent ones)
-MIN_CONFIDENCE = 0.3  # normalised cross-correlation of the overlap below which a registration is no measurement
+DEFAULT_WINDOW = 12  # how many of the most recent observations the linear tracker fits
+MIN_CONFIDENCE = 0.3  # a registration whose overlap correlation is below this is not a measurement
 
 log = logging.getLogger(__name__)
 
@@ -56,9 +56,7 @@ def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
     return float(end[0]), float(end[1])
 
 
-# ----------------------------------------------------------------------
-# Live trackers
-# ----------------------------------------------------------------------
+# live trackers
 class DriftTracker:
     """Predicts a tile's placement error from the errors measured so far. Subclass, set ``name``, register it.
 
@@ -136,9 +134,7 @@ trackers = TRACKERS.all
 register_tracker(LinearTracker)
 
 
-# ----------------------------------------------------------------------
-# Measuring: where a tile sits relative to an overlapping neighbour
-# ----------------------------------------------------------------------
+# measuring where a tile sits relative to an overlapping neighbour
 def _ncc(a: np.ndarray, b: np.ndarray) -> float:
     a = a - a.mean()
     b = b - b.mean()
@@ -161,7 +157,7 @@ def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expec
     b = np.asarray(image, dtype=np.float64)
     if a.ndim != 2 or a.shape != b.shape or a.std() == 0 or b.std() == 0:
         return None
-    predicted = np.array([expected_xy_m[1], expected_xy_m[0]], dtype=np.float64) / pixel_m  # (row, col)
+    predicted = np.array([expected_xy_m[1], expected_xy_m[0]], dtype=np.float64) / pixel_m  # row then col
     rows, cols = a.shape
     height, width = rows - abs(predicted[0]), cols - abs(predicted[1])
     if height < 8 or width < 8:
@@ -192,9 +188,7 @@ def bounded_correction(target_xy: ArrayLike, current_xy: ArrayLike, base_xy: Arr
     return [float(v) for v in shifted], bool(np.any(np.abs(shifted - target) > 1e-15))
 
 
-# ----------------------------------------------------------------------
-# Bench: score a tracker with no stack (synthetic texture, steady drift, stage noise)
-# ----------------------------------------------------------------------
+# bench that scores a tracker with no stack
 def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds: Iterable[int] = (0, 1, 2), rate_m_per_s: float = 5e-11, grid: int = 5,
                 fov_m: float = 5e-8, imsize: int = 64, overlap: float = 0.25, tile_s: float = 12.0, stage_sigma_m: float = 1e-9,
                 max_step_m: float = 2e-8, settings: dict | None = None) -> dict:
@@ -217,7 +211,7 @@ def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds: Iterable[in
         direction = np.array([np.cos(angle), np.sin(angle)])
         size = int(imsize + step_px * (grid - 1) + 4 * imsize)
         field = ndimage.gaussian_filter(rng.normal(size=(size, size)), 1.5)
-        origin = 2 * imsize  # canvas pixel of the first tile's corner (room for drift)
+        origin = 2 * imsize  # canvas pixel of the first tile's corner, with room for drift
 
         def cut(x_m: float, y_m: float) -> np.ndarray:
             r, c = origin + y_m / pixel, origin + x_m / pixel

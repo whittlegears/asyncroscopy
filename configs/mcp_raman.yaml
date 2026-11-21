@@ -25,10 +25,7 @@ mcp:
       - Init
       - Kill
       - RestartServer
-      - State
-      - Status
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    Approvals: [request_status, list_pending]
     Mapper: [get_reservation]
     Tuner: [get_reservation]
   include_only_functions: []
@@ -37,6 +34,5 @@ mcp:
   analysis_url: ""
   endpoint_role: agent
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     risk: {}
   trace: outputs/trace/mcp_raman.jsonl

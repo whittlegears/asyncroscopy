@@ -28,6 +28,15 @@ def rotation_matrix(alpha, beta, gamma):
     return Rz @ Ry @ Rx
 
 
+def _composition(bulk) -> dict[str, float]:
+    """The share of each element in a bulk cell."""
+    counts_dict: dict[str, int] = {}
+    for symbol in bulk.get_chemical_symbols():
+        counts_dict[symbol] = counts_dict.get(symbol, 0) + 1
+    total = sum(counts_dict.values())
+    return {symbol: count / total for symbol, count in counts_dict.items()}
+
+
 @register_specimen
 class ParticleWorld(Specimen):
     """Oriented ellipsoidal particles in a thin world, as ASE atoms and a 3-D label map."""
@@ -65,32 +74,43 @@ class ParticleWorld(Specimen):
             kwargs["elements"] = tuple(e.strip() for e in (options["elements"].split(",") if isinstance(options["elements"], str) else options["elements"]) if e.strip())
         return cls(context.rng_for(options).seed, float(context.fov_m or DEFAULT_FOV_M), **kwargs)
 
-    # ------------------------------------------------------------------
     # The world
-    # ------------------------------------------------------------------
     def set_field(self, fov_m: float) -> None:
         """Rebuild the world for a new field of view, from the start of the specimen's random stream."""
         self.random.seed(self.seed)
         self._build(float(fov_m))
 
     def _build(self, fov_m: float) -> None:
-        random = self.random
-        fov_ang = fov_m * 1e10  # Angstroms, lateral
+        fov_ang = fov_m * 1e10  # angstrom across
         world_z_ang = fov_ang * 0.5  # thin slab
         nx = ny = max(16, self.world_imsize)
-        vox_size = fov_ang / nx  # Angstroms per voxel (isotropic)
+        vox_size = fov_ang / nx  # angstrom per voxel, the same on every axis
         nz = max(1, int(round(world_z_ang / vox_size)))
+        bulk_types = {element: bulk_cell(element) for element in self.elements}
 
+        placed_particles, particle_lookup = self._place_particles(fov_ang, world_z_ang, vox_size, bulk_types)
+        label_map = self._label_voxels(placed_particles, (nx, ny, nz), vox_size)
+        all_symbols, all_positions = self._carve_atoms(placed_particles, bulk_types)
+
+        self._atoms = Atoms(symbols=all_symbols, positions=np.vstack(all_positions), cell=[fov_ang, fov_ang, world_z_ang], pbc=False)
+        self.vox_size = vox_size
+        self.world_shape = (nx, ny, nz)
+        self.particle_lookup = particle_lookup
+        self._label_map = label_map
+        self.bounds = (0.0, fov_ang * 1e-10, 0.0, fov_ang * 1e-10)
+        self.world_bounds_ang = {"x_min": 0.0, "x_max": fov_ang, "y_min": 0.0, "y_max": fov_ang, "z_min": 0.0, "z_max": world_z_ang}
+
+    def _place_particles(self, fov_ang: float, world_z_ang: float, vox_size: float, bulk_types: dict) -> tuple[list[tuple], dict[int, dict]]:
+        """Draw particles one at a time and keep those that do not crowd an earlier one."""
+        random = self.random
         n_particles = max(1, self.particle_count)
         radius_mean, radius_std = self.PARTICLE_RADIUS_ANGSTROM, self.RADIUS_STD_ANGSTROM
-        aspect_ratio = self.ASPECT_RATIO
         min_separation = self.MIN_SEPARATION_ANGSTROM
-        bulk_types = {element: bulk_cell(element) for element in self.elements}
         bulk_names = list(bulk_types.keys())
 
         placed_centers: list[tuple[float, float, float]] = []
         placed_particles: list[tuple] = []
-        particle_lookup: dict[int, dict] = {}  # label (1-based) -> metadata
+        particle_lookup: dict[int, dict] = {}  # metadata by label, with labels starting at 1
 
         for _ in range(self.MAX_ATTEMPTS * n_particles):
             if len(placed_particles) >= n_particles:
@@ -107,24 +127,23 @@ class ParticleWorld(Specimen):
             i = len(placed_particles)
             angles = DESIRED_ANGLES[i] if i < len(DESIRED_ANGLES) else tuple(random.rand(3) * 360)
             placed_particles.append((btype, np.array([cx, cy, cz]), radius, angles))
-            symbols_in_bulk = bulk_types[btype].get_chemical_symbols()
-            counts_dict: dict[str, int] = {}
-            for symbol in symbols_in_bulk:
-                counts_dict[symbol] = counts_dict.get(symbol, 0) + 1
-            total = sum(counts_dict.values())
-            composition = {symbol: count / total for symbol, count in counts_dict.items()}
-            label = i + 1  # 1-based so 0 stays vacuum
+            label = i + 1  # labels start at 1 so 0 stays vacuum
             particle_lookup[label] = {
                 "btype": btype,
-                "composition": composition,
+                "composition": _composition(bulk_types[btype]),
                 "center_ang": np.array([cx, cy, cz]),
                 "center_vox": np.array([cx / vox_size, cy / vox_size, cz / vox_size]),
                 "radius_ang": radius,
                 "radius_vox": radius / vox_size,
                 "angles": angles,
             }
+        return placed_particles, particle_lookup
 
-        # 3-D label map: each voxel gets the label of the first particle that claims it.
+    def _label_voxels(self, placed_particles: list[tuple], shape: tuple[int, int, int], vox_size: float) -> np.ndarray:
+        """Mark each voxel with the particle that fills it."""
+        nx, ny, nz = shape
+        aspect_ratio = self.ASPECT_RATIO
+        # Each voxel gets the label of the first particle that claims it.
         label_map = np.zeros((nx, ny, nz), dtype=np.uint8)
         xv = (np.arange(nx) + 0.5) * vox_size
         yv = (np.arange(ny) + 0.5) * vox_size
@@ -139,7 +158,11 @@ class ParticleWorld(Specimen):
             dZr = Rinv[2, 0] * dX + Rinv[2, 1] * dY + Rinv[2, 2] * dZ
             inside = (dXr / radius) ** 2 + (dYr / radius) ** 2 + (dZr / z_radius) ** 2 <= 1.0
             label_map[inside & (label_map == 0)] = label
+        return label_map
 
+    def _carve_atoms(self, placed_particles: list[tuple], bulk_types: dict) -> tuple[list[str], list]:
+        """Cut each particle out of a turned block of its crystal and return the symbols and positions."""
+        aspect_ratio = self.ASPECT_RATIO
         all_positions = []
         all_symbols: list[str] = []
         for btype, center, radius, angles in placed_particles:
@@ -156,22 +179,13 @@ class ParticleWorld(Specimen):
             mask = r_scaled <= 1.0
             all_positions.append(positions[mask] + center)
             all_symbols.extend(s for s, m in zip(supercell.get_chemical_symbols(), mask) if m)
-
-        self._atoms = Atoms(symbols=all_symbols, positions=np.vstack(all_positions), cell=[fov_ang, fov_ang, world_z_ang], pbc=False)
-        self.vox_size = vox_size
-        self.world_shape = (nx, ny, nz)
-        self.particle_lookup = particle_lookup
-        self._label_map = label_map
-        self.bounds = (0.0, fov_ang * 1e-10, 0.0, fov_ang * 1e-10)
-        self.world_bounds_ang = {"x_min": 0.0, "x_max": fov_ang, "y_min": 0.0, "y_max": fov_ang, "z_min": 0.0, "z_max": world_z_ang}
+        return all_symbols, all_positions
 
     @property
     def element_symbols(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(meta["btype"] for meta in self.particle_lookup.values()))
 
-    # ------------------------------------------------------------------
-    # One view: the world under the stage
-    # ------------------------------------------------------------------
+    # One view of the world under the stage
     def view(self, request: ViewRequest) -> FieldView:
         """atoms: the world's atoms where the stage has put them (wrapped into the field, angstrom);
         maps: {"projected_label", "projected_thickness"}; records: the particles visible in an image of request.imsize pixels."""
@@ -203,7 +217,7 @@ class ParticleWorld(Specimen):
         atoms = self._atoms.copy()
         atoms.set_positions(positions)
 
-        # Translate the label map by whole voxels (a wrap), then tilt it by inverse-mapping each output voxel.
+        # Shift the label map by whole voxels with wrap, then tilt it by mapping each output voxel back.
         rolled = np.roll(self._label_map, -int(round(x_ang / vox)), axis=0)
         rolled = np.roll(rolled, -int(round(y_ang / vox)), axis=1)
         xv = np.arange(nx) - nx / 2.0
@@ -219,7 +233,7 @@ class ParticleWorld(Specimen):
         src_zi = np.clip(np.round(src_z).astype(int), 0, nz - 1)
         rotated_map = rolled[src_xi, src_yi, src_zi]
 
-        # The beam travels along z: each column shows the first (shallowest) particle it meets.
+        # The beam travels along z, so each column shows the first particle it meets.
         occupancy = rotated_map > 0
         projected_label = np.zeros((nx, ny), dtype=np.uint8)
         for iz in range(nz):
@@ -242,7 +256,7 @@ class ParticleWorld(Specimen):
             return []
         pixel_size = request.fov_angstrom / size
         world_nx, world_ny = projected_label.shape
-        # The image sits at the centre of the world map; only the padded image region counts.
+        # The image sits at the centre of the world map. Only the padded image region counts.
         img_origin_x = (world_nx - size) // 2
         img_origin_y = (world_ny - size) // 2
         x0 = max(img_origin_x - pad, 0)

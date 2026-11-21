@@ -26,7 +26,7 @@ arguments, and these declarations, which the MCP server reads through the
 device's ``action_hints`` attribute (``action_hints_attribute``) instead of
 guessing from the command's name:
 
-- ``risk``: "low" or "high" (as the approval gate sees it);
+- ``risk``: "low" or "high" (as the safety policy classes it);
 - ``operator_only``: only the operator endpoint offers it;
 - ``stop``: a no-argument command the emergency stop calls;
 - ``routine``: auto mode runs it without a person;
@@ -75,8 +75,8 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
         options = dict(kwargs)  # a decorator reused on several functions must not share their docs
         if not options.get("doc_out"):
             options["doc_out"] = summary(func)
-        # The MCP server names the tool's argument after ":param <name>:" (otherwise "arg");
-        # take the name from the Python signature when doc_in does not give one.
+        # The MCP server names the tool's argument from the param line of doc_in.
+        # Take the name from the Python signature when doc_in does not give one.
         params = [p for p in inspect.signature(func).parameters.values() if p.name != "self"]
         doc_in = options.get("doc_in") or ""
         if params and options.get("dtype_in") is not None and ":param " not in doc_in:

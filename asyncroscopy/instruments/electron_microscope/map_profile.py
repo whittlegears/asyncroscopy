@@ -39,7 +39,7 @@ class STEMProfile(ScanningBeamProfile):
     plan_fields = ScanningBeamProfile.plan_fields | {"per_tile", "eds_exposure_s", "eds_map_points"}
     plan_defaults = {**ScanningBeamProfile.plan_defaults, "per_tile": [], "eds_exposure_s": 1.0, "eds_map_points": 8}
     instrument_types = ("TEM", "STEM")
-    plan_example = {**ScanningBeamProfile.plan_example, "per_tile": []}  # per_tile ["eds_point"] adds a spectrum at each tile
+    plan_example = {**ScanningBeamProfile.plan_example, "per_tile": []}  # putting eds_point in per_tile adds a spectrum at each tile
     tile_fields = frozenset({"per_tile"})
     settings = {
         **BEAM_SETTINGS,
@@ -105,7 +105,7 @@ class STEMProfile(ScanningBeamProfile):
             except tango.DevFailed as exc:
                 if not exc.args or exc.args[0].reason != "UnsupportedCommand":
                     raise
-                job["spectrum_image_native"] = False  # asked once a job: the backend's answer does not change
+                job["spectrum_image_native"] = False  # asked once per job because the backend's answer does not change
             else:
                 return {"spectrum_key": "eds_map", "spectrum_stored": True, "spectrum_image_source": key}
         return self._spectrum_map_by_points(job, tile, microscope, points)
@@ -116,7 +116,7 @@ class STEMProfile(ScanningBeamProfile):
             row = []
             attrs: dict = {}
             for fx in coords:
-                if self.ctx.aborting(job):  # points x points spectra can take long; stop with the beam blanked
+                if self.ctx.aborting(job):  # a grid of spectra can take long, so check for an abort at every point
                     return None
                 microscope.place_beam([float(fx), float(fy)])
                 data = self.ctx.read_acquisition(microscope.acquire_spectrum("eds"))

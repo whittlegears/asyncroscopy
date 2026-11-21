@@ -47,7 +47,7 @@ Numbers:
   each that lowers the score, and by how much.
 
 Seeds 0-2 are for tuning; seeds 3-29 are held out and are what is reported
-(the bench's default). Pass mark (proposed for D6, to be agreed with the project):
+(the bench's default). Pass mark:
 precision@5 >= 0.8 on every held-out seed **and** mean per-kind precision@5
 >= 0.8 for every kind. A random ranking reaches 0.8 on one map with
 probability 2.7 % (30 of 100), and for one kind with probability 2e-5.
@@ -81,7 +81,7 @@ On the earlier, single-kind set (`synthetic-fov-1`, seeds 0-2) 1.0.0 scored
 0.0 and 2.0.0 1.0; those records were in `benchmarks/results/reward_eval.jsonl`
 of pyTEMlib's feature/mcp-mapping branch.
 
-Probes from an independent review (`tests/test_scorer_evaluation.py`), score of the
+Probes from an independent review (`tests/scoring/test_scorer_evaluation.py`), score of the
 sharp version / the same defocused by 4 px:
 
 | probe | 2.0.0 | 3.0.0 |

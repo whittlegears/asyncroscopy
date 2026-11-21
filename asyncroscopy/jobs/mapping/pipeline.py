@@ -42,9 +42,9 @@ SCORE_STALL_S = 900.0
 REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
 ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
-ZOOM_CANDIDATES = 8  # features asked for at each tier; the first whose finer image fits inside the parent is aimed at
+ZOOM_CANDIDATES = 8  # features asked for at each tier. The first whose finer image fits inside the parent is used.
 REGION_FIELDS = ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")
-# What a dry run (plan "dry_run": true, see JobDevice) reports in place of every image and spectrum.
+# What a dry run reports in place of every image and spectrum.
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
 
@@ -74,7 +74,7 @@ class Pipeline:
         self._warn = warn
         self._service: StitchService | None = None
 
-    # -- calls -----------------------------------------------------------
+    # calls
     def service(self) -> StitchService:
         """The stitching backend, built the first time it is needed."""
         if self._service is None:
@@ -109,13 +109,13 @@ class Pipeline:
             try:
                 started = start()
                 break
-            except Exception as exc:  # down, restarting, or the call timed out: try again; a busy reply below adopts
+            except Exception as exc:  # the server is down or slow, so try again
                 last = exc
         if started is None:
             raise AnalysisFailed(f"the analysis server at {self.url} did not answer ({type(last).__name__}: {last})")
         if "error" in started:
             if started["error"].get("code") == "busy" and started.get("job_id"):
-                started = {"job_id": started["job_id"]}  # someone (or this job, before a timeout) is already on it
+                started = {"job_id": started["job_id"]}  # an analysis job is already running on this, so wait for that one
             else:
                 raise AnalysisFailed(started["error"].get("message", str(started["error"])))
         with self._lock:
@@ -150,7 +150,6 @@ class Pipeline:
                 time.sleep(ANALYSIS_BACKOFF_S[failures - 1])
                 continue
             if "error" in status or "state" not in status:
-                # unknown_job: the server restarted and forgot the job.
                 raise AnalysisFailed(f"the analysis server no longer knows job {job_id} ({(status.get('error') or {}).get('message', status)}); it may have restarted")
             if status["state"] in {"done", "failed", "aborted", "released"}:
                 break
@@ -161,7 +160,7 @@ class Pipeline:
             raise AnalysisFailed(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
         return self.service().analysis_job_results(job_id=job_id)
 
-    # -- phases ----------------------------------------------------------
+    # phases
     def stitch(self, job: dict, run: str, tiles: int) -> dict | None:
         pipeline = self.state(job)
         try:
@@ -174,7 +173,7 @@ class Pipeline:
             pipeline.pop("stitch_job", None)
             return {"phase": "stitch", "ok": False}
         if results is None:
-            return None  # aborted while stitching; a resume waits for (or restarts) the same stitch
+            return None  # aborted while stitching, and a resume waits for the same stitch
         pipeline["map"] = results["result_keys"]["map"]
         summary = results.get("summary", {})
         pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
@@ -204,7 +203,7 @@ class Pipeline:
         if "regions" in pipeline:
             return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}  # already scored before a resume
         n = int(job["resolved_plan"]["find_regions"])
-        # The job's tag makes scoring idempotent: a retry replaces the regions it added before.
+        # The job's tag lets a retry replace the regions it added before.
         arguments = {"map": pipeline["map"], "top_k": n, "tag": job["reservation_id"]}
         try:
             results = self._await(job, self._submit(job, "score_job", lambda: self.service().score_map(**arguments)), SCORE_STALL_S)
@@ -227,8 +226,8 @@ class Pipeline:
         revisit = job["resolved_plan"]["revisit"]
         reply = self.service().list_pois(map=revisit["map"], kind="candidate", limit=500)
         candidates = sorted((p for p in reply.get("pois", []) if p.get("score") is not None), key=lambda p: p["score"], reverse=True)
-        # Scoring a map twice stores the same regions again under new ids, and two regions closer than half a
-        # field of view share one image: each is imaged once, and the next best distinct region takes its place.
+        # Scoring a map twice stores the same regions again under new ids.
+        # Regions closer than half a field of view share one image, so only the best of them is kept.
         apart = float(revisit["fov_m"]) / 2.0
         top: list[dict] = []
         for c in candidates:
@@ -261,13 +260,13 @@ class Pipeline:
                     visit["poi"] = poi.get("id")
                     visit.pop("poi_error", None)
                     self._save(job)
-            except Exception as exc:  # the image is saved either way; the next revisit step or the finish tries again
+            except Exception as exc:  # the image is saved either way and a later step tries the link again
                 visit["poi_error"] = f"{type(exc).__name__}: {exc}"
 
     def revisit(self, job: dict, k: int, profile: InstrumentProfile, move: Callable[[dict, float, float], bool]) -> dict | None:
         pipeline = self.state(job)
         if "regions" not in pipeline and job["resolved_plan"].get("regions"):
-            pipeline["regions"] = job["resolved_plan"]["regions"]  # revisit-only plan with given points
+            pipeline["regions"] = job["resolved_plan"]["regions"]  # a plan that only revisits given points
         self.link_pending(job)
         regions = pipeline.get("regions") or []
         if k >= len(regions):
@@ -279,21 +278,20 @@ class Pipeline:
         revisit = plan["revisit"]
         fov = float(revisit["fov_m"])
         if visit is None:
-            # The map places content at stage reading + drift(t) (pyTEMlib's fit), so to put the region under
-            # the probe now the stage goes to its map position minus the drift, extrapolated to now on the
-            # instrument's clock (the one the tiles were timed with).
+            # The map places content at the stage reading plus the drift.
+            # To put the region under the probe the stage goes to its map position minus the drift so far.
             now = profile.clock_s()
             dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
-            # With live tracking the tiles were corrected, so the stitch fitted only what tracking left; the
-            # tracker's own estimate (on the same clock, from the same first tile) is the rest.
+            # With live tracking the stitch fitted only the drift that tracking left.
+            # The tracker's own estimate is the rest.
             tx, ty = live_drift.estimate_at(job, now)
             dx, dy = dx + tx, dy + ty
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
-            # The image must stay inside the approved box. A region near its edge is still imaged, off centre,
-            # with the image moved inward, as long as the region keeps a margin inside that image.
-            # A points-only plan's box is the point +/- half the image, so its width equals fov but for rounding.
+            # The image must stay inside the reserved plan's box. A region near the edge is still imaged
+            # with the image moved inward, as long as the region keeps a margin inside it.
+            # A plan of points only has a box as wide as the image, give or take rounding.
             cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov - EDGE_TOLERANCE_M else None
             cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov - EDGE_TOLERANCE_M else None
             if cx is None or cy is None or abs(cx - x) > REVISIT_EDGE_SHIFT * half or abs(cy - y) > REVISIT_EDGE_SHIFT * half:
@@ -304,7 +302,7 @@ class Pipeline:
             if not move(job, x, y):
                 return None
             image_key = profile.acquire_revisit(job, revisit)
-            # clock_s: the instrument time the drift correction (drift_xy_m) was extrapolated to.
+            # clock_s is the instrument time the drift correction was worked out for.
             visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
             if job.get("dry_run"):
                 visit = {"region": region["id"], "acquisition": DRY_RUN_SKIPPED, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
@@ -329,7 +327,7 @@ class Pipeline:
         else:
             record = self._zoom_tier(job, k, before["image"] if before else zoom["parent"], tier, profile)
             if record is None:
-                return None  # aborted before imaging; a resume does this tier again
+                return None  # aborted before imaging, and a resume does this tier again
         with self._lock:
             tiers.append(record)
             self._save(job)
@@ -356,7 +354,7 @@ class Pipeline:
             return {**record, "stopped": f"find_features refused {parent}: {found['error'].get('message', found['error'])}"}
         if not found.get("features"):
             return {**record, "stopped": f"{parent} shows no distinct feature {low * fov:.2g} to {high * fov:.2g} m across to zoom in on"}
-        # The finer image must lie inside its parent to be placed on it: a feature near the parent's edge is passed over.
+        # The finer image must lie inside its parent to be placed on it, so skip features near the parent's edge.
         half = fov / 2.0 / float(found["pixel_size_m"])
         rows, cols = (int(v) for v in found["shape"][:2])
         inside = [f for f in found["features"] if half <= f["row"] <= rows - 1 - half and half <= f["col"] <= cols - 1 - half]

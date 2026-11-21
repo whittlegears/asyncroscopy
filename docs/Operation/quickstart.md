@@ -59,7 +59,7 @@ Later `uv run` commands do not need `--python`. If no file matches, install that
 
 ## 3. Start the stack
 
-Use four terminals, from the repository root. Each MCP server prints a large FastMCP banner when it starts; that is normal. To run them in the background in PowerShell instead (use `$uv` from section 1 if `uv` is not on `PATH`):
+Use three terminals, from the repository root. Each MCP server prints a large FastMCP banner when it starts; that is normal. To run them in the background in PowerShell instead (use `$uv` from section 1 if `uv` is not on `PATH`):
 
 ```powershell
 if (-not $uv) { $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source }   # keeps the $uv from section 1 if you set it there
@@ -75,13 +75,12 @@ if (-not $uv) {
         if (-not $ready -and (-not $servers -or $servers.HasExited -or (Get-Date) -gt $deadline)) { 'The servers did not get ready (stop them as below):'; Get-Content servers.log, servers.err -Tail 20 -ErrorAction SilentlyContinue; break }
         if (-not $ready) { Start-Sleep 1 }
     }   # about a minute
-    $agent = $operator = $analysis = $null
+    $agent = $analysis = $null
     if ($ready) {   # if the servers stopped, read the lines above and fix that first
         $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
-        $operator = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_operator.yaml' -RedirectStandardOutput mcp_op.log -RedirectStandardError mcp_op.err -WindowStyle Hidden -PassThru
         $analysis = Start-Process $uv 'run','python','-m','asyncroscopy.analysis_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput analysis.log -RedirectStandardError analysis.err -WindowStyle Hidden -PassThru
         Start-Sleep 20
-        foreach ($s in @(@($agent, 'mcp_dt.err'), @($operator, 'mcp_op.err'), @($analysis, 'analysis.err'))) {
+        foreach ($s in @(@($agent, 'mcp_dt.err'), @($analysis, 'analysis.err'))) {
             if (-not $s[0] -or $s[0].HasExited) { "$($s[1]) says the server stopped (or did not start):"; Get-Content -Encoding utf8 $s[1] -Tail 10 -ErrorAction SilentlyContinue }
         }
     }
@@ -94,33 +93,29 @@ On Linux or macOS, the same in the background from bash (each server in its own 
 setsid uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml > servers.log 2> servers.err & echo $! > servers.pid
 until grep -q 'Leave this terminal open' servers.log; do sleep 1; done          # about a minute
 setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml > mcp_dt.log 2> mcp_dt.err & echo $! > mcp_dt.pid
-setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml > mcp_op.log 2> mcp_op.err & echo $! > mcp_op.pid
 setsid uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003 > analysis.log 2> analysis.err & echo $! > analysis.pid
 ```
 
-Stop them with `for f in servers mcp_dt mcp_op analysis; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.mcp_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.
+Stop them with `for f in servers mcp_dt analysis; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.mcp_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.
 
-Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $operator, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers (in the same PowerShell window; from another one, see Troubleshooting); check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
+Each `.log` file gets the server's request lines and each `.err` file its banner, warnings and tool errors; read them with `Get-Content -Encoding utf8 mcp_dt.err -Wait` (without `-Encoding utf8`, Windows PowerShell 5.1 shows the banner as garbled characters). Stop everything later with `foreach ($p in $servers, $agent, $analysis) { if ($p) { taskkill /PID $p.Id /T /F 2>$null | Out-Null } }`, which also stops the child servers (in the same PowerShell window; from another one, see Troubleshooting); check with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue` (no output means all stopped). In the background `servers.log` still ends with "Leave this terminal open ... Ctrl+C": there it only marks that the servers are ready.
 
 ```bash
-# 1. Twin + data + Tiled + Mapper + Approvals. Wait for "Leave this terminal open".
+# 1. Twin + data + Tiled + Mapper. Wait for "Leave this terminal open".
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 
-# 2. Agent MCP endpoint (port 8000)
+# 2. MCP endpoint (port 8000): the agent and SciAgentGUI (Stop everything, job controls) both use it
 uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 
-# 3. Operator MCP endpoint for the GUI (port 8001, this machine only)
-uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
-
-# 4. analysis server: stitching, scoring, points of interest (port 8003)
-uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
+# 3. analysis server: stitching, scoring, points of interest (port 8003)
+uv run startup_scripts/run_pytemlib.py   # configs/pytemlib.yaml; in a window: uv run startup_guis/pytemlib_mcp.py
 ```
 
 `configs/digital_twin_mapping.yaml` simulates a real instrument's timing (`time_scale: 1.0`): stage moves take seconds. Set `time_scale: 0` in that file for fast runs. `configs/DigitalTwin.yaml` is an ideal instrument with a tiny sample, useful for unit-style experiments.
 
 The environment was synced in step 2, so after that the launchers start their child servers with `uv run --no-sync` and never reinstall packages while the stack is coming up. If you change `pyproject.toml` or the extras, run `uv sync ...` once, in one terminal, before starting the stack again: several `uv run` commands syncing the same environment at the same time can trip over each other.
 
-Both MCP endpoints listen on `127.0.0.1` only. They have no authentication, and the agent endpoint runs in `auto` approval mode, so anyone who can reach it can drive the instrument. To use the agent endpoint from another machine, do it deliberately: set `mcp.http_host` in `configs/mcp_dt.yaml` to this machine's address on a network you trust (or `0.0.0.0` for every interface), switch approval mode to `approve` (see section 7), and point the other machine's `ASYNCROSCOPY_MCP_URL` at `http://<this machine>:8000/mcp`. Keep the operator endpoint (`mcp_operator.yaml`) on `127.0.0.1`: it can approve held calls. For bearer tokens (the facility's token service, or development tokens to test with), TLS and a reverse proxy, see [Remote access](remote_access.md).
+The MCP endpoint listens on `127.0.0.1` only. It has no authentication, so anyone who can reach the agent endpoint can drive the instrument. To use the agent endpoint from another machine, do it deliberately: set `mcp.http_host` in `configs/mcp_dt.yaml` to this machine's address on a network you trust (or `0.0.0.0` for every interface), and point the other machine's `ASYNCROSCOPY_MCP_URL` at `http://<this machine>:8000/mcp`. `stop_all` is on this same endpoint. The optional operator endpoint (`configs/mcp_operator.yaml`, port 8001; not started by default, used by benchmarks for the twin's ground truth) always stays on `127.0.0.1`. For bearer tokens (the facility's token service, or development tokens to test with), TLS and a reverse proxy, see [Remote access](remote_access.md).
 
 The Tiled API key `secret` is the default the DATA device starts Tiled with; set `ASYNCROSCOPY_TILED_API_KEY` to change it (and pass the same value to the analysis server).
 
@@ -132,25 +127,13 @@ The Tiled API key `secret` is the default the DATA device starts Tiled with; set
 uv run startup_scripts/check_stack.py --analysis http://127.0.0.1:8003/mcp
 ```
 
-It runs a small map, stitches it, scores it, marks a point, and exercises the approval mode. Every line should say PASS. A FAIL line says what failed and why.
+It runs a small map, stitches it, scores it, and marks a point. Every line should say PASS. A FAIL line says what failed and why.
 
-To see what an agent will be able to do on this stack (every tool, its risk, whether auto mode runs it or holds it for you, and which tools a small model is given up front):
+A command your own device adds shows up as high risk until you mark a read-only command low with `mcp.safety.risk`.
 
-```bash
-uv run startup_scripts/show_agent_view.py
-```
+The checks use whatever stack is on these ports, so two people testing on one machine share it.
 
-A command your own device adds shows up as high risk and held: auto mode waits for a person until you switch it on (SciAgentGUI: Settings, Agent permissions) or mark a read-only command low with `mcp.safety.risk`. See [approval_mode.md](approval_mode.md).
-
-If you use SciAgentGUI, this checks that the stack answers the way the GUI expects (approvals, maps and spectra from Tiled):
-
-```bash
-uv run startup_scripts/check_gui_contract.py
-```
-
-The checks use whatever stack is on these ports, so two people testing on one machine share it. Both checks briefly switch approval mode to `approve`, so don't run them while an agent is working. While they run, the agent endpoint's terminal (in the background: `mcp_dt.err`) prints `Error calling tool ...` for each call they deliberately hold for approval; that is expected.
-
-Ports: Tango database 9094, Tiled 9091, MCP endpoints 8000 and 8001, analysis server 8003.
+Ports: Tango database 9094, Tiled 9091, MCP endpoint 8000, analysis server 8003 (and 8001 if you start the optional operator endpoint).
 
 ## 5. Map with an agent
 
@@ -162,9 +145,9 @@ uv run python -m asyncroscopy.agents.run mapping "Map a 600 nm square around the
 uv run python -m asyncroscopy.agents.run general "Map a 600 nm square around the current position and find the 3 most interesting regions"
 ```
 
-Choose the model with `ASYNCROSCOPY_MODEL` (default `qwen3:8b`; `qwen3:4b` for machines with less memory). Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
+Choose the model with `ASYNCROSCOPY_MODEL` (default `gemma4:31b`, from the `capable` agent profile). On a machine with less GPU memory use the small-model profile: `ASYNCROSCOPY_AGENT_PROFILE=default` (`qwen3:8b`), or `qwen3:4b` with it. Ollama on another machine (a GPU box, or Windows from WSL without mirrored networking): set `OLLAMA_HOST=http://<host>:11434`. All settings are listed in `asyncroscopy/agents/__init__.py`.
 
-The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 15 of 15 on the final code. See `benchmarks/README.md` to rerun them.
+The command prints a progress line as each step finishes (`[mapping   40s] wait: done`), then the final answer. Expect about two minutes for the mapping request: the twin's mapping config runs in simulated real time (`time_scale: 1`), so 25 tiles with EDS take as long as they would on the instrument. On a 6 GB laptop GPU, with qwen3:8b, the `mapping` graph completed 29 of 30 trial runs, then 9 of 9 on the final code; the `general` agent, which makes every call itself, completed 30 of 30, then 15 of 15 on the final code.
 
 ## 6. LangGraph Studio
 
@@ -174,11 +157,7 @@ cp .env.example .env
 uv run langgraph dev
 ```
 
-Studio opens in the browser with two graphs: `mapping` and `general`. Tool calls made from Studio go through the same MCP endpoints and approval mode as everything else.
-
-## 7. Approval mode
-
-The instrument starts in `auto` mode: agent calls run and are recorded. Switch to `approve` before an unattended run on real hardware; see [approval_mode.md](approval_mode.md).
+Studio opens in the browser with two graphs: `mapping` and `general`. Tool calls made from Studio go through the same MCP endpoints as everything else.
 
 ## Troubleshooting
 
@@ -192,9 +171,9 @@ The instrument starts in `auto` mode: agent calls run and are recorded. Switch t
 | A launcher seems stuck on `WAIT ...` while its output goes to a file | Older launchers buffered output when not writing to a terminal; update. The servers were probably ready. |
 | Analysis server: `Tiled ... refused to store the map` | Start it with `--api-key` set to the Tiled key (default `secret`). |
 | `ImportError: cannot import name 'RequestContext' from 'mcp.shared.context'` | An old `langchain-mcp-adapters` is installed; asyncroscopy no longer needs it. `uv sync` again. |
-| `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the two `run_mcp.py` servers. |
-| The recipe prints `mcp_op.err says the server stopped (or did not start)` (or another server's) | Read that `.err` file: it names the error. If it is empty, the process was stopped from outside before it printed anything (seen once while other test scripts were killing processes on the same machine). Start just that server again with its `Start-Process` line from the recipe. |
-| `check_stack.py` says an endpoint is not reachable | The stack is not up yet: start it (section 3) and wait until both MCP logs say "MCP ready". |
+| `check_stack.py` fails at "a microscope with move_stage is exported", or the agent endpoint lists far fewer tools than usual | The MCP servers were started before `run_servers.py` printed "Leave this terminal open"; they offer only the devices that existed when they started. Restart the `run_mcp.py` server. |
+| The recipe prints `mcp_dt.err says the server stopped (or did not start)` (or another server's) | Read that `.err` file: it names the error. If it is empty, the process was stopped from outside before it printed anything (seen once while other test scripts were killing processes on the same machine). Start just that server again with its `Start-Process` line from the recipe. |
+| `check_stack.py` says an endpoint is not reachable | The stack is not up yet: start it (section 3) and wait until the MCP log says "MCP ready". |
 | Started in the background and something is still running after stopping, "already running", or you need to stop it from another window | Free ports alone do not mean everything stopped: the launcher and its device servers hold no port. Stop every asyncroscopy stack on this machine with `Get-CimInstance Win32_Process \| Where-Object { $_.CommandLine -match 'startup_scripts[/\\]run_(servers\|mcp)\.py\|-m (pyTEMlib\.mcp_server\|asyncroscopy\.)' } \| ForEach-Object { taskkill /PID $_.ProcessId /T /F 2>$null \| Out-Null }`, which also catches the device servers (`python -m asyncroscopy...`) of a launcher that died, then check the ports again; anything still holding one (a leftover Tango database or Tiled) stops with `Get-NetTCPConnection -State Listen -LocalPort 8000,8001,8003,9091,9094 -ErrorAction SilentlyContinue \| Select-Object -Unique OwningProcess \| ForEach-Object { taskkill /PID $_.OwningProcess /T /F 2>$null \| Out-Null }`. |
 | Port already in use | A previous stack is still running. Stop it with Ctrl+C in its terminal. On the next start `run_servers.py` also stops leftovers of the same config (whatever an earlier run of it left on its Tango and Tiled ports, and its device servers). It does not stop another stack: if another config's stack holds the ports, or both would share the project-root Tango database file (neither started with `--isolated`), it refuses, names that stack, and says how to run beside it ([second_stack.md](../Adding_New_Hardware/second_stack.md)); `--replace` stops it on purpose. |
 | A map plan is refused with `the limits of ... could not be read` | The Mapper checks every tile against the STAGE device's x/y limits and refuses a plan it cannot check. The STAGE device (`asyncroscopy/stage/default`) is not running or not answering: restart the servers (section 3). A job device for hardware without readable limits can set its `require_limits` property to false. |

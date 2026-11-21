@@ -34,8 +34,8 @@ def _sharp_features(image) -> tuple[int, float, str]:
     return int(sharp), float(value), reason
 
 
-IN_FOCUS_M = 20e-9  # |C1, A1| below this counts as in focus: about the depth of field of a 30 mrad probe near 1 nm resolution
-IN_FOCUS_SCORE = 0.5  # without the twin's focus truth: a pyTEMlib baseline score at or above this counts as in focus
+IN_FOCUS_M = 20e-9  # Focus error below this counts as in focus. It is about the depth of field of a 30 mrad probe.
+IN_FOCUS_SCORE = 0.5  # Used when the twin gives no focus truth. A pyTEMlib baseline score at or above this counts as in focus.
 
 
 def in_focus(data: RunData, image: Image, tolerance_m: float = IN_FOCUS_M, sharp_score: float = IN_FOCUS_SCORE) -> dict:
@@ -50,7 +50,6 @@ def in_focus(data: RunData, image: Image, tolerance_m: float = IN_FOCUS_M, sharp
     return {"sharpness": value, "ok": value >= float(sharp_score), "reason": reason}
 
 
-# ----------------------------------------------------------------------
 @register_evaluator
 class Information(Evaluator):
     """Features found, per unit of dose and per unit of time.
@@ -79,7 +78,7 @@ class Information(Evaluator):
     k_sigma = 5.0  # detection threshold, in noise standard deviations
     in_focus_m = IN_FOCUS_M
     in_focus_score = IN_FOCUS_SCORE
-    duration_s = None  # time to divide by; default: the run's instrument-clock span (tuning time included)
+    duration_s = None  # Time to divide by. None means the run's instrument clock span with tuning time included.
 
     def _image_scores(self, data: RunData, image) -> tuple[dict, str]:
         matched = match_particles(data, image, k=float(self.k_sigma))
@@ -152,7 +151,6 @@ class Information(Evaluator):
         return out
 
 
-# ----------------------------------------------------------------------
 @register_evaluator
 class Resolution(Evaluator):
     """Image quality: the focus error behind each image (twin, when recorded) or pyTEMlib's baseline score."""
@@ -195,7 +193,6 @@ class Resolution(Evaluator):
         return out
 
 
-# ----------------------------------------------------------------------
 @register_evaluator
 class Dose(Evaluator):
     """Cumulative dose per area: frames laid on a grid at their field, plus the dose jobs report (e.g. the Tuner's)."""
@@ -210,8 +207,8 @@ class Dose(Evaluator):
         "job_dose_e_per_a2": ("e/A^2", "min"),
     }
     option_names = ("threshold_e_per_a2", "cell_m")
-    threshold_e_per_a2 = 1000.0  # a beam-sensitive specimen's budget; set per specimen
-    cell_m = None  # grid cell; default: a quarter of the smallest field of view
+    threshold_e_per_a2 = 1000.0  # A budget for a beam sensitive specimen. Set it per specimen.
+    cell_m = None  # Grid cell size. None means a quarter of the smallest field of view.
 
     def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         doses = [d for d in (image.frame_dose_e_per_a2() for image in data.images(event)) if d is not None]
@@ -228,7 +225,7 @@ class Dose(Evaluator):
             dose, centre, fov = image.frame_dose_e_per_a2(), data.centre_m(image), image.fov_m
             if dose is not None and centre is not None and fov is not None:
                 frames.append((dose, centre, fov))
-        # Jobs that report their own dose (the Tuner): counted, not placed (their events carry no field position).
+        # Jobs like the Tuner report their own dose. It is counted but not placed because their events carry no field position.
         job = 0.0
         for event in data.events:
             if str(event.get("action", "")).endswith(".step") and event.get("ok"):
@@ -262,7 +259,6 @@ class Dose(Evaluator):
         return out
 
 
-# ----------------------------------------------------------------------
 @register_evaluator
 class Time(Evaluator):
     """Wall time, instrument-clock time, and the wall time in which nothing was running (idle)."""

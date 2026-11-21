@@ -15,21 +15,20 @@ Addresses used below (from `configs/Spectra300.yaml`):
 | Tango database | listens on every interface, port 9094 | this PC only (firewall, step 4) |
 | Tiled (data) | 127.0.0.1:9091 | this PC only |
 | analysis server | 127.0.0.1:8003 | this PC only (no login) |
-| Agent MCP endpoint (`configs/mcp.yaml`) | 127.0.0.1:8000 | this PC only, unless tokens are set up |
-| Operator MCP endpoint (`configs/mcp_operator.yaml`) | 127.0.0.1:8001 | this PC only, always |
+| Agent MCP endpoint (`configs/mcp.yaml`); SciAgentGUI uses it too | 127.0.0.1:8000 | this PC only, unless tokens are set up |
+| Operator MCP endpoint (`configs/mcp_operator.yaml`), optional, not started by default | 127.0.0.1:8001 | this PC only, always |
 | Read-only monitor endpoint (`configs/mcp_monitor.yaml`) | 127.0.0.1:8002 | this PC only |
 | CEOS corrector server | 10.46.217.241:9092 in the config (confirm, see step 3) | this PC |
 
 ## Rules for the Claude on the microscope PC
 
 * You are a setup helper. Run only the commands in this runbook. Never run a command that moves the stage,
-  unblanks the beam, acquires, changes an attribute, or switches the approval mode.
-* Do not connect to the agent or operator MCP endpoints yourself, and never approve a held call. Only the operator
-  approves.
+  unblanks the beam, acquires, or changes an attribute.
+* Do not connect to the agent or operator MCP endpoints yourself. Only the operator does.
 * Never print, log or commit the Tiled API key. Use the placeholders below; the operator types the real key.
-* The agent that later drives the microscope must **not** have a shell on this PC. The operator endpoint trusts any
-  process on this PC: an agent with a shell could approve its own held calls. Give a driving agent only its MCP
-  connection.
+* The agent that later drives the microscope must **not** have a shell on this PC: with one it could reach Tango
+  directly, or the operator endpoint if one is running (it trusts any process on this PC), and call operator-only
+  commands. Give a driving agent only its MCP connection.
 * The agent endpoint stays on 127.0.0.1. Opening it to other machines needs both `mcp.auth` (bearer tokens,
   [remote_access.md](remote_access.md)) and `mcp.allow_remote_bind: true`; without them `run_mcp.py` binds
   127.0.0.1 or refuses to start. The operator endpoint is never opened to other machines.
@@ -198,8 +197,7 @@ Open `configs/Spectra300.yaml` and confirm each item with the operator or the fa
 ## 4. Windows Firewall
 
 The Tango database now listens on every interface (so the endpoints on this PC reach it as `localhost`). **Tango
-has no access control:** anything that reaches it can move the stage, unblank the beam, approve held calls, or
-restart the approval device in another mode. Each device server also listens on a random port. Nothing in this
+has no access control:** anything that reaches it can move the stage, or unblank the beam. Each device server also listens on a random port. Nothing in this
 setup needs another machine to reach this PC on these ports. Connections on this PC (loopback) are not filtered
 by the firewall.
 
@@ -248,15 +246,18 @@ It prints `asyncroscopy analysis server at http://127.0.0.1:8003/mcp (Tiled: htt
 
 **Terminal 3: the read-only pre-flight.** See step 6.
 
-**Terminal 4: the operator endpoint** (SciAgentGUI uses it to approve held calls and to stop everything).
+**Terminal 4 (optional): the operator endpoint.** SciAgentGUI does not need it: from the agent endpoint on, its
+Stop everything and job controls use the agent endpoint. Start it only in the first session if you want
+asyncroscopy's `stop_all` beside the read-only monitor endpoint, which offers no `stop_all`:
 
 ```powershell
 uv run --no-sync startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 ```
 
 It prints `Starting MCP server Operator_MCP`, its config, `tango: localhost:9094` and
-`http: http://127.0.0.1:8001/mcp`, and then `MCP ready: <n> tool(s) registered`. Start it only after Terminal 1
-is ready: an endpoint offers only the devices that answered when it started.
+`http: http://127.0.0.1:8001/mcp`, and then `MCP operator endpoint ready: <n> tool(s) registered`. Start it only after Terminal 1
+is ready: an endpoint offers only the devices that answered when it started. Add it in SciAgentGUI with **Add server**
+(127.0.0.1, port 8001).
 
 **Terminal 5, first session: the read-only monitor endpoint**, instead of the agent endpoint:
 
@@ -273,8 +274,7 @@ It offers only pure reads (`get_*`, `list_*`, `State`, `Status`), the data tools
 uv run --no-sync startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
-It prints `http: http://127.0.0.1:8000/mcp` and `MCP ready: ...`. The approval mode is `approve`: every
-high-risk call waits for the operator. Auto mode is refused on this stack.
+It prints `http: http://127.0.0.1:8000/mcp` and `MCP ready: ...`. The stack is not simulated, so the endpoint binds 127.0.0.1.
 
 ## 6. Pre-flight (read-only)
 
@@ -284,7 +284,7 @@ Run it after Terminals 1 and 2 are ready, and again after the endpoints start:
 uv run --no-sync startup_scripts/preflight_hardware.py --yaml configs/Spectra300.yaml
 ```
 
-It never moves, blanks or unblanks, acquires, writes an attribute or switches the approval mode. It refuses to
+It never moves, blanks or unblanks, acquires, or writes an attribute. It refuses to
 send any Tango command that the risk policy does not count as a pure read. It does open its own short AutoScript
 connection to read the server's version; add `--no-autoscript-server` to skip that.
 
@@ -298,7 +298,6 @@ It prints one line per check: `PASS`, `FAIL`, `WARN` or `SKIP`, then `PRE-FLIGHT
   server's version against the client's;
 * the microscope reads: stage position, optical mode, high tension, column valves, beam blanked, and the beam
   current if the screen current was measured;
-* the Approvals device is in `approve` and says the stack is not simulated;
 * CEOS accepts a TCP connection (nothing is sent);
 * Tiled answers at 127.0.0.1:9091 and accepts the API key;
 * the analysis server at the Mapper's `analysis_url` answers MCP `initialize` and `list_tools`;
@@ -317,7 +316,6 @@ What a FAIL usually means:
 | `ceos at ...` | wrong CEOS address, or CEOS not running on the corrector PC |
 | `tiled accepts the API key` | `run_servers.py` was started in a terminal with a different key: stop it, fix the key, start again |
 | `analysis server` | Terminal 2 not running, or started with `--host` other than 127.0.0.1 |
-| `approvals mode` | someone switched to auto earlier; it must be approve |
 
 Do not continue past a FAIL. Fix it and run the pre-flight again.
 
@@ -342,7 +340,7 @@ Goal: confirm the stack sees the microscope as the operator sees it. Nothing mov
 
 ## 8. Calibration (operator-run, after the holder limits are set)
 
-These run as the operator, straight through Tango. They bypass the approval gate, so only the operator starts
+These run as the operator, straight through Tango. They go straight to Tango, past the MCP endpoints, so only the operator starts
 them, at the microscope, watching. Do them in this order. Each prints a YAML block to paste into the digital
 twin's `instrument.properties`. All take `--device` (default `asyncroscopy/instrument/default`), `--scan`
 (`asyncroscopy/scan/default`), `--fov` in metres (default 2e-7), `--imsize` in pixels (default 256) and `--dwell`
@@ -408,9 +406,8 @@ microscopes under `not_stopped`; stop the stage at the microscope's own controls
 
 ## Never run on the microscope
 
-* `startup_scripts/check_stack.py`: digital twin only. It approves its own stage move to z = 0 and both tilts 0,
-  switches the approval mode and runs two maps. It now refuses to start unless the stack says it is simulated.
-* `startup_scripts/check_gui_contract.py`: switches the approval mode and makes held agent calls.
+* `startup_scripts/check_stack.py`: digital twin only. It moves the stage to z = 0 and both tilts 0
+  and runs two maps. It now refuses to start unless the stack says it is simulated.
 * Anything in `benchmarks/`, and `startup_scripts/run_llm.py` or any agent against `configs/mcp.yaml`, until
   section B of the review is fixed.
 * Anything that moves the stage before the holder limits are set (step 3.4): `move_stage`, `Mapper` jobs, the
@@ -425,8 +422,9 @@ microscopes under `not_stopped`; stop the stage at the microscope's own controls
 **The microscope's own controls come first.** To stop in an emergency, use the microscope's user interface or
 hardware: blank the beam, close the column valves, stop the stage there. asyncroscopy's stop is a second line.
 
-* **Stop everything (asyncroscopy).** SciAgentGUI's **Stop everything** button, or the `stop_all` tool on the
-  operator endpoint. It switches the approval mode to approve, voids unused approvals, blanks the beam and aborts
+* **Stop everything (asyncroscopy).** SciAgentGUI's **Stop everything** button (it also cancels the agent's run),
+  or the `stop_all` tool on the agent endpoint (or on the operator endpoint, if you started it; the read-only
+  monitor endpoint has none). It blanks the beam and aborts
   running jobs on every device at once. Today it does **not** stop the stage, and it waits behind a command
   already running on the microscope device for up to 20 s (review B4). That is why the microscope's own controls
   come first.
@@ -434,5 +432,4 @@ hardware: blank the beam, close the column valves, stop the stage there. asyncro
 * **Stop the software.** Press Ctrl+C in each terminal, the MCP endpoints and the analysis server first, then
   Terminal 1. `run_servers.py` stops every device server and Tiled. Stopping the software does not blank the beam
   or stop the stage: blank first.
-* **After a crash.** Run `run_servers.py` again; it clears its own leftover processes. The approval mode survives
-  restarts in `outputs/approvals/mode.json`, and this stack always starts in approve.
+* **After a crash.** Run `run_servers.py` again; it clears its own leftover processes.

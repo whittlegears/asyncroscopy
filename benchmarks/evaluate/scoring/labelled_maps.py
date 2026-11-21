@@ -66,14 +66,12 @@ TUNING_SEEDS = (0, 1, 2)
 HELDOUT_SEEDS = tuple(range(3, 30))
 DEFAULT_SEEDS = HELDOUT_SEEDS
 DEFAULT_K = 5
-# Proposed D6 threshold (to be agreed with the project): at least 4 of the top 5 regions clean features, on
-# every held-out seed, and on average for each feature kind. With 30 of 100 regions clean features, a
-# scorer that ranks at random reaches 4 of 5 with probability 2.7 % per map (hypergeometric); per kind
-# (5 of 75) with probability 2e-5.
+# This threshold is proposed and not yet agreed. It asks for 4 of the top 5 regions to be clean features.
+# A scorer that ranks at random does that on about 2.7 % of maps.
 DEFAULT_THRESHOLD = 0.8
 
-# HAADF signal: counts per (Z^1.7 x atoms per cubic angstrom x nm): 3 nm of carbon support gives
-# ~16 counts per pixel, the centre of a typical Au particle (~1.3 nm thick) ~330 and of Fe ~70.
+# HAADF counts scale with Z^1.7 times atoms per cubic angstrom times thickness in nm.
+# 3 nm of carbon support gives about 16 counts per pixel and the centre of a typical Au particle about 330.
 _ELEMENTS = {"C": (6, 0.100), "Fe": (26, 0.085), "Pt": (78, 0.066), "Au": (79, 0.059)}
 _COUNTS = 2.6
 _PIXEL_NM = 0.25
@@ -135,7 +133,7 @@ def _overlap(a, b) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-# ---------------------------------------------------------------- synthetic labelled maps
+# synthetic labelled maps
 
 FEATURE_KINDS = ("separated", "crowded", "small", "large", "sampling", "low_contrast")
 NEGATIVE_KINDS = ("empty", "defocused", "contaminated")
@@ -179,30 +177,32 @@ def _render_particles(shape, particles, pixel_nm) -> np.ndarray:
     return signal
 
 
+def _cell_particles(rng: np.random.Generator, kind: str, window: int) -> tuple[list[dict], float, float | None]:
+    """The particles, pixel size and peak scale of one feature kind."""
+    if kind == "separated":  # the twin's sample has particles about 6.4 px in radius at 0.25 nm per pixel
+        return _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0)), _PIXEL_NM, None
+    if kind == "crowded":
+        return _place_particles(rng, window, int(rng.integers(8, 15)), lambda g: np.clip(g.normal(8.0, 2.0), 4.0, 14.0), overlap=True), _PIXEL_NM, None
+    if kind == "small":
+        return _place_particles(rng, window, 1, lambda g: g.uniform(2.0, 4.5)), _PIXEL_NM, None
+    if kind == "large":
+        a = float(rng.uniform(16.0, 32.0))
+        return _place_particles(rng, window, 1 if a > 22 else 2, lambda g: a * g.uniform(0.9, 1.0)), _PIXEL_NM, None
+    if kind == "sampling":
+        # The twin's 1.6 nm particles at a pixel size that makes them 2 to 40 px in radius.
+        # Counts per pixel stay as at 0.25 nm because the dwell time is assumed to follow the pixel size.
+        a = float(np.exp(rng.uniform(np.log(2.0), np.log(40.0))))
+        return _place_particles(rng, window, 1 if a > 14 else int(rng.integers(1, 4)), lambda g: a * g.uniform(0.9, 1.0)), 1.6 / a, None
+    if kind == "low_contrast":
+        particles = _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0))
+        scale = float(rng.uniform(4.0, 8.0)) * np.sqrt(_SUPPORT_NM * _signal_per_nm("C"))  # the peak is 4 to 8 times the background noise
+        return particles, _PIXEL_NM, scale
+    raise ValueError(f"unknown feature kind {kind!r}")
+
+
 def render_cell(rng: np.random.Generator, kind: str, window: int) -> tuple[np.ndarray, list[dict]]:
     """Noiseless signal (counts above the support) and particles (local pixels) of one clean feature region."""
-    pixel_nm = _PIXEL_NM
-    scale = None
-    if kind == "separated":  # the twin's sample: 1.6 +- 0.2 nm semi-axis at 0.25 nm per pixel (~6.4 px)
-        particles = _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0))
-    elif kind == "crowded":
-        particles = _place_particles(rng, window, int(rng.integers(8, 15)), lambda g: np.clip(g.normal(8.0, 2.0), 4.0, 14.0), overlap=True)
-    elif kind == "small":
-        particles = _place_particles(rng, window, 1, lambda g: g.uniform(2.0, 4.5))
-    elif kind == "large":
-        a = float(rng.uniform(16.0, 32.0))
-        particles = _place_particles(rng, window, 1 if a > 22 else 2, lambda g: a * g.uniform(0.9, 1.0))
-    elif kind == "sampling":
-        # The twin's 1.6 nm particles at a pixel size that makes them 2-40 px in radius; counts per pixel
-        # as at 0.25 nm (the dwell time is assumed to follow the pixel size).
-        a = float(np.exp(rng.uniform(np.log(2.0), np.log(40.0))))
-        pixel_nm = 1.6 / a
-        particles = _place_particles(rng, window, 1 if a > 14 else int(rng.integers(1, 4)), lambda g: a * g.uniform(0.9, 1.0))
-    elif kind == "low_contrast":
-        particles = _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0))
-        scale = float(rng.uniform(4.0, 8.0)) * np.sqrt(_SUPPORT_NM * _signal_per_nm("C"))  # peak = 4-8 x background noise
-    else:
-        raise ValueError(f"unknown feature kind {kind!r}")
+    particles, pixel_nm, scale = _cell_particles(rng, kind, window)
     signal = _render_particles((window, window), particles, pixel_nm)
     if scale is not None and signal.max() > 0:
         signal *= scale / signal.max()
@@ -258,7 +258,7 @@ def make_labelled_map(seed: int, grid: int = 10, window: int = 96, pixel_size_m:
     return LabelledMap(image, window, particles, bad, pixel_size_m, seed, good)
 
 
-# ---------------------------------------------------------------- metrics
+# metrics
 
 
 class RandomScorer:

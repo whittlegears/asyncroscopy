@@ -1,4 +1,4 @@
-# A tiny YAML instrument for tests/test_yaml_step_protocol.py: an exposure that can run for an hour,
+# A tiny YAML instrument for tests/instruments/test_yaml_step_protocol.py: an exposure that can run for an hour,
 # a command that takes a while, and a job with an on_stop command.
 description: A counter with a beam, for testing how a job drives a YAML instrument.
 settings:

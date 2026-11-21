@@ -30,7 +30,6 @@ OVERRIDES = {
     "mapper": {"output_directory": [prop_path(work / "maps")], "state_directory": [prop_path(work / "state")], "trace_path": [prop_path(work / "trace.jsonl")], "analysis_url": None, "data_device_address": None},
     "sample": {"sample_file": [prop_path(work / "sample.json")]},
     "stage": {"holder_file": [prop_path(work / "holder.json")]},
-    "approvals": {"trace_path": [prop_path(work / "approvals.jsonl")], "mode_file": [prop_path(work / "mode.json")]},
 }
 
 

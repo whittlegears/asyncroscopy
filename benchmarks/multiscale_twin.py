@@ -1,4 +1,4 @@
-"""Placing finer images on coarser ones, measured on the twin (docs/designs/multiscale_maps.md, phase P3).
+"""Placing finer images on coarser ones, measured on the twin.
 
 One survey tile (tier 1) is taken; inside it, children at a finer tier (tier 2, 16x) are aimed by image shift
 at points spread over it; inside each child, one grandchild at the finest tier (tier 3, 8x more, atomic
@@ -61,7 +61,7 @@ def where_in(frame: tuple[np.ndarray, np.ndarray], point_xy: np.ndarray) -> np.n
     rows, cols = np.indices(xs.shape)
     design = np.stack([rows.ravel(), cols.ravel(), np.ones(rows.size)], axis=1).astype(np.float64)
     coef, *_ = np.linalg.lstsq(design, np.stack([xs.ravel(), ys.ravel()], axis=1), rcond=None)
-    linear, offset = coef[:2].T, coef[2]  # sample = linear @ (row, col) + offset
+    linear, offset = coef[:2].T, coef[2]  # a sample point is linear times its row and col, plus offset
     return np.linalg.solve(linear, np.asarray(point_xy, dtype=np.float64) - offset)
 
 
@@ -75,7 +75,7 @@ def acquire(device: Any, saved: list, fov_m: float, imsize: int, dwell_s: float,
 
 def predicted(parent_record: dict, parent_shift: np.ndarray, child_shift: np.ndarray, parent_pixel: float, imsize: int) -> np.ndarray:
     """Where the child's centre should be in the parent's pixels, from the commanded image shifts alone."""
-    d = (np.asarray(child_shift) - np.asarray(parent_shift)) / parent_pixel  # (x, y) in parent pixels
+    d = (np.asarray(child_shift) - np.asarray(parent_shift)) / parent_pixel  # x, y in parent pixels
     return np.array([(imsize - 1) / 2.0 + d[1], (imsize - 1) / 2.0 + d[0]])
 
 
@@ -134,7 +134,7 @@ def run(args: argparse.Namespace) -> dict:
                 if placed3.status == "placed":
                     entry3["error_px"] = float(np.hypot(*(np.array(placed3.translation_px) - true3)))
                     if placed2.status == "placed":
-                        # Chain both placements: the grandchild's centre in the survey, against the truth there.
+                        # Chain both placements to get the grandchild's centre in the survey and compare it with the truth there.
                         in_child = np.array(placed3.translation_px)
                         via = np.array(placed2.translation_px) + (in_child - (args.imsize - 1) / 2.0) * pixels[1] / pixels[0]
                         truth_survey = where_in(parent_frame, np.array(grand_record["center_true_m"]))
@@ -169,7 +169,7 @@ def verdict(result: dict) -> dict[str, bool]:
         "tier2_placed_share": t2["placed_share"] >= THRESHOLDS["placed_share"],
         "tier3_placed_share": t3["placed_share"] >= THRESHOLDS["placed_share"],
         "wrong_placements": t2["wrong"] + t3["wrong"] <= THRESHOLDS["wrong"],
-        # Each step may be off by p95_parent_px of its parent's pixels, so a chain by their sum, in survey pixels.
+        # Each step may be off by p95_parent_px of its parent's pixels. A chain may be off by their sum in survey pixels.
         "atomic_image_in_survey_after_two_placements": chained["median"] is not None
         and chained["p95"] <= THRESHOLDS["p95_parent_px"] * (1.0 + result["pixels_m"][1] / result["pixels_m"][0]),
     }

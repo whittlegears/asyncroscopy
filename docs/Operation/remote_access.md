@@ -1,6 +1,6 @@
 # Remote access: tokens, TLS and the endpoint proxy
 
-The facility's security design puts every instrument behind the same chain:
+A facility can put every instrument behind the same chain:
 
 ```
 user / agent ──> Token Minting / Verification Service ──> Endpoint API Proxy
@@ -13,10 +13,10 @@ This page covers the instrument end of that chain: what this repository provides
 
 | Part | Owner | Here |
 | :-- | :-- | :-- |
-| Token minting and verification service (CILogon identity, scopes, JWKS) | The facility | Not here. `startup_scripts/dev_tokens.py` is a **development stand-in** for testing only. |
-| Endpoint API proxy, VPN, the proxy blueprint | The facility | `deploy/proxy/nginx.conf` is a reference an instrument owner starts from until the facility's blueprint exists. |
+| Token minting and verification service (identity, scopes, JWKS) | The facility | Not here. `startup_scripts/dev_tokens.py` is a **development stand-in** for testing only. |
+| Endpoint API proxy, VPN, the proxy blueprint | The facility | Not here. |
 | Token check at the MCP server (signature, expiry, issuer, audience; roles from scopes) | this repo | `mcp.auth` in the MCP config; `asyncroscopy/mcp/endpoint_auth.py`. |
-| Approval gate, risk policy, Instrument Trace | this repo | Unchanged; the token's subject is now the caller they record. |
+| Risk policy, Instrument Trace | this repo | Unchanged; the token's subject is now the caller they record. |
 
 The MCP server checks the token itself even behind the proxy, so a request that reaches port 8000 some other way (another process on the host, a misconfigured proxy) is still refused.
 
@@ -26,7 +26,7 @@ The MCP server checks the token itself even behind the proxy, so a request that 
 mcp:
   # ...
   auth:
-    jwks_url: https://tokens.example.org/.well-known/jwks.json   # the facility's token service
+    jwks_url: https://tokens.example.org/.well-known/jwks.json   # The facility's token service
     # public_key_file: outputs/dev_tokens/public.pem                 # or one PEM key (relative: the project directory)
     issuer: https://tokens.example.org                             # must match the token's iss
     audience: asyncroscopy:spectra300                                 # this instrument; must match aud
@@ -43,34 +43,34 @@ Exactly one of `jwks_url` and `public_key_file`; `issuer` and `audience` are req
 With `auth` set:
 
 - **Every request needs `Authorization: Bearer <token>`.** A missing, expired, wrongly signed, wrong-issuer or wrong-audience token is answered with HTTP 401. A token must carry `exp` and `sub`.
-- **The token's `sub` is the caller.** It is recorded in the Instrument Trace and in approval requests, and it is the `who` of an approve, deny or set_mode. `X-Asyncroscopy-Caller` is ignored (agents still send it; it does no harm).
-- **Roles gate tools, from the existing risk policy** (`asyncroscopy/safety/policy.py`, `docs/Operation/approval_mode.md`), not from a second list:
+- **The token's `sub` is the caller.** It is recorded in the Instrument Trace. `X-Asyncroscopy-Caller` is ignored (agents still send it; it does no harm).
+- **Roles gate tools, from the existing risk policy** (`asyncroscopy/safety/policy.py`), not from a second list:
 
   | Role | Tools |
   | :-- | :-- |
-  | `read` | low-risk tools: `get_*`, `list_*`, `job_status`, `view_data`, `endpoint_info`, `approval_status`, safe stops ... |
-  | `operate` | high-risk tools: `move_stage`, `acquire_*`, `<job>_start`, `run_job` ... The approval gate still holds them in approve mode. |
-  | `approve` | operator-only commands (`Approvals.approve`, `deny`, `set_mode`, ...), offered only on the operator endpoint |
+  | `read` | low-risk tools: `get_*`, `list_*`, `job_status`, `view_data`, `endpoint_info`, safe stops ... |
+  | `operate` | high-risk tools: `move_stage`, `acquire_*`, `<job>_start`, `run_job` ... |
+  | `approve` | operator-only commands, offered only on the operator endpoint |
 
   A risk override in `mcp.safety.risk` moves a tool between `read` and `operate` with it. A token sees only the tools its roles allow in `tools/list`.
 
 Without `auth`, nothing changes: no token is asked for, and the caller is the self-reported `X-Asyncroscopy-Caller`.
 
-**Refusal to start.** A stack that is not simulated (its Approvals device says `simulated: false`, or cannot say) whose MCP endpoint would bind beyond 127.0.0.1 (`http_host: 0.0.0.0` with `allow_remote_bind: true`, or a network address) must have `auth`: `run_mcp.py` refuses to start it, and so does the server when started directly. Twins may still bind every interface without tokens. The recommended hardware setup keeps `http_host: 127.0.0.1` and lets the proxy be the only thing on the network.
+**Refusal to start.** A stack that is not simulated (its devices' `simulated` property is false, or cannot be read) whose MCP endpoint would bind beyond 127.0.0.1 (`http_host: 0.0.0.0` with `allow_remote_bind: true`, or a network address) must have `auth`: `run_mcp.py` refuses to start it, and so does the server when started directly. Twins may still bind every interface without tokens. The recommended hardware setup keeps `http_host: 127.0.0.1` and lets the proxy be the only thing on the network.
 
 ## What an instrument owner configures
 
 1. Ask the facility for the token service's JWKS URL and issuer, and an audience name for this instrument; agree the scopes (`instrument:read`, `instrument:operate`, `instrument:approve` unless the facility names them otherwise; map them with `mcp.auth.roles`).
 2. Add the `auth` section to the agent endpoint's MCP config (and to the operator endpoint's, if it is ever reached from another machine).
-3. Keep the MCP servers and Tiled on 127.0.0.1. Put the proxy in front: `deploy/proxy/nginx.conf` terminates TLS, forwards `/mcp` to 8000, `/analysis/mcp` to 8003 and port 9443 to Tiled (9091), and passes the bearer token through. It needs your certificate paths and host name, and nginx 1.25.1 or newer for `http2 on;`. **It has not been validated** (no nginx where it was written): run `nginx -t` first.
-4. Leave the operator endpoint (8001) unforwarded unless the facility decides approvers may decide remotely; if so, give it `auth` too (deciding then needs `instrument:approve`).
+3. Keep the MCP servers and Tiled on 127.0.0.1. Put a proxy in front that terminates TLS, forwards `/mcp` to 8000 and `/analysis/mcp` to 8003, and passes the bearer token through.
+4. Leave the operator endpoint (8001) unforwarded unless the facility decides operators may use it remotely; if so, give it `auth` too (operator-only commands then need `instrument:approve`).
 
 The analysis server (`asyncroscopy.analysis_server`, port 8003) does not verify tokens yet; keep it on 127.0.0.1 behind the proxy.
 
 ## Clients
 
 - **asyncroscopy agents** read `ASYNCROSCOPY_MCP_TOKEN` and send it as `Authorization: Bearer` to the instrument and analysis endpoints (`AgentConfig.token`, `asyncroscopy/agents/config.py`; any `McpServer` without its own Authorization header picks it up too). A token expires: get a new one from the token service before a long run.
-- **SciAgentGUI** (a separate repository) already stores an MCP bearer token per server in the OS keychain; enter the facility token there for a server that has `mcp.auth`.
+- **SciAgentGUI** (a separate repository) already stores an MCP bearer token per server in the OS keychain; enter the bearer token there for a server that has `mcp.auth`.
 - **Scripts** with the FastMCP client: `StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})`.
 
 ## Testing with development tokens
@@ -88,15 +88,14 @@ Then, in the shell that runs the agent:
 $env:ASYNCROSCOPY_MCP_TOKEN = "<the token>"
 ```
 
-A token with only `instrument:read` lists `get_stage` but not `move_stage`; `instrument:operate` can call `move_stage`, which approve mode holds for an operator as before. `tests/test_endpoint_auth.py` runs this whole flow in-process.
+A token with only `instrument:read` lists `get_stage` but not `move_stage`; `instrument:operate` can call `move_stage`. `tests/endpoints/test_endpoint_auth.py` runs this whole flow in-process.
 
 ## The Tiled API key is separate
 
-Tiled's API key (`ASYNCROSCOPY_TILED_API_KEY`, `docs/Tiled_server/data_integration.md`) is unchanged. It is a **service-to-service** secret: the DATA device, the MCP server and SciAgentGUI use it to reach Tiled on the instrument host. It is not a user identity and does not replace a facility token. Users and agents reach data through the MCP endpoint's `list_data` and `view_data`, which the token gates (`read`). Forwarding Tiled through the proxy (port 9443) gives anyone holding the Tiled key direct access, so forward it only to networks that should hold that key, or not at all. Having Tiled accept the facility tokens itself (Tiled supports external authenticators) is the facility's decision and is not done here.
+Tiled's API key (`ASYNCROSCOPY_TILED_API_KEY`, `docs/Tiled_server/data_integration.md`) is unchanged. It is a **service-to-service** secret: the DATA device, the MCP server and SciAgentGUI use it to reach Tiled on the instrument host. It is not a user identity and does not replace a facility token. Users and agents reach data through the MCP endpoint's `list_data` and `view_data`, which the token gates (`read`). Forwarding Tiled through the proxy (port 9443) gives anyone holding the Tiled key direct access, so forward it only to networks that should hold that key, or not at all. Having Tiled accept bearer tokens itself (Tiled supports external authenticators) is the facility's decision and is not done here.
 
 ## Not done
 
 - No token has come from the facility's real service yet; the JWKS path is exercised only by FastMCP's verifier, and the tests use a local public key file.
-- The nginx config is unvalidated.
-- The analysis server and Tiled do not verify the facility tokens.
+- The analysis server and Tiled do not verify bearer tokens.
 - Token refresh is the client's job; agents do not refresh tokens.

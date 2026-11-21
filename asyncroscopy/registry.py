@@ -51,7 +51,7 @@ class Registry(Generic[T]):
         self._entry_points_loaded = False
         self._errors: dict[str, str] = {}
 
-    # -- registering ---------------------------------------------------------
+    # registering
     def register(self, cls: T) -> T:
         """Make ``cls`` available under its ``key`` attribute; usable as a class decorator."""
         name = getattr(cls, self.key, "")
@@ -64,7 +64,7 @@ class Registry(Generic[T]):
         """Forget ``name`` (tests register throwaway classes)."""
         self._classes.pop(name, None)
 
-    # -- looking up ----------------------------------------------------------
+    # looking up
     def get(self, name: str) -> T:
         """The class registered as ``name``; ValueError naming the known ones and any load failures otherwise."""
         if name not in self._classes and name in self.builtins:
@@ -95,7 +95,7 @@ class Registry(Generic[T]):
         for point in entry_points(group=self.group):
             try:
                 self.register(point.load())
-            except Exception as exc:  # a broken plug-in must not take the device down; it is reported instead
+            except Exception as exc:  # a broken plug-in must not take the device down, so it is reported instead
                 self._fail(f"entry point {point.name!r}", exc)
 
     def errors(self) -> dict[str, str]:
@@ -109,7 +109,7 @@ class Registry(Generic[T]):
             text += self._plugins.hint()
         return text
 
-    # -- internals -----------------------------------------------------------
+    # internals
     def _import(self, module: str) -> None:
         label = f"built-in module {module!r}"
         if label in self._errors:

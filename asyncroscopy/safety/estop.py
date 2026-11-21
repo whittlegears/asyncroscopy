@@ -1,11 +1,10 @@
-"""The emergency stop: latch the approval mode, then stop every device at once.
+"""The emergency stop: stop every device at once.
 
-``stop_all`` first puts the Approvals device in approve mode and voids every unused grant, so nothing
-starts again without a person. Then, on every device in parallel, it calls the stops the MCP server
+On every device in parallel, ``stop_all`` calls the stops the MCP server
 picked for it (``StopTarget``): first the ones that stop energy reaching the sample (blank a beam,
 close a shutter, switch a laser or lamp off), then the others (abort the device's jobs, lift its
 probe); then the energy stops once more, in case a job step that ended late switched a source back
-on. It never waits for approval. What a device could not do is reported, not skipped.
+on. What a device could not do is reported, not skipped.
 
 Which commands are stops is declared, not guessed here: a command's action role (``beam.blank``,
 ``probe.retract``; ``asyncroscopy.core.names.STOP_ROLES``) or its ``stop`` declaration, and the
@@ -33,14 +32,14 @@ class StopTarget:
 
     prefix: str
     proxy: Any
-    energy: list[str] = field(default_factory=list)  # stop energy reaching the sample (called in both phases)
-    other: list[str] = field(default_factory=list)  # abort jobs, lift probes (first phase)
-    retracts: set[str] = field(default_factory=set)  # probe lifts: a reply of True means the probe is still engaged
+    energy: list[str] = field(default_factory=list)  # stop energy reaching the sample, called in both phases
+    other: list[str] = field(default_factory=list)  # abort jobs and lift probes, called in the first phase
+    retracts: set[str] = field(default_factory=set)  # probe lifts, where a reply of True means the probe is still engaged
 
 
-def stop_all(targets: list[StopTarget], *, latch: Callable[[str, dict], Any] | None, who: str,
+def stop_all(targets: list[StopTarget], *, who: str,
              missing: list[dict], describe: Callable[[Exception], str], wait_s: float = STOP_ALL_WAIT_S) -> list[dict[str, Any]]:
-    """Latch (``latch(command, body)`` on the Approvals device; None without one), then stop ``targets``.
+    """Stop ``targets``. ``who`` names the caller for the record.
 
     ``missing``: steps already known to have failed (a device that offers no stop for what it does).
     Returns every step, {"tool", "ok", "error"?}, in the order they finished.
@@ -52,13 +51,6 @@ def stop_all(targets: list[StopTarget], *, latch: Callable[[str, dict], Any] | N
         with guard:
             steps.append(step)
 
-    if latch is not None:
-        for command, body in (("set_mode", {"mode": "approve", "who": who}), ("revoke_grants", {"who": who, "reason": "e-stop"})):
-            try:
-                latch(command, body)
-                record({"tool": f"Approvals_{command}", "ok": True})
-            except Exception as exc:
-                record({"tool": f"Approvals_{command}", "ok": False, "error": describe(exc)})
     for step in missing:
         record(step)
 
@@ -67,7 +59,7 @@ def stop_all(targets: list[StopTarget], *, latch: Callable[[str, dict], Any] | N
             try:
                 reply = target.proxy.command_inout(command)
                 step: dict[str, Any] = {"tool": f"{target.prefix}_{command}", "ok": True}
-                if reply is True and command in target.retracts:  # an SPM retract answers "still approached"
+                if reply is True and command in target.retracts:  # an SPM retract answers True when it is still approached
                     step.update(ok=False, error="the device says the probe is still engaged")
                 if command == ABORT_ALL:
                     states = [job.get("state") for job in json.loads(str(reply)).get("aborted", [])]
@@ -79,8 +71,8 @@ def stop_all(targets: list[StopTarget], *, latch: Callable[[str, dict], Any] | N
 
     work = [t for t in targets if t.energy or t.other]
     if work:
-        # Every device at once: sources off, then its jobs and probes; then, once all of that has returned,
-        # sources off again, in case a job step that ended late switched one back on.
+        # Every device at once. First sources off, then its jobs and probes.
+        # Once all of that has returned, sources off again in case a late job step switched one back on.
         pool = ThreadPoolExecutor(max_workers=len(work), thread_name_prefix="stop_all")
         phases = ({t.prefix: (t, [*t.energy, *t.other]) for t in work}, {t.prefix: (t, list(t.energy)) for t in work if t.energy})
         hung: set[str] = set()

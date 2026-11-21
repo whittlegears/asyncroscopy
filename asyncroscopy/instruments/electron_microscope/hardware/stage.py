@@ -44,25 +44,26 @@ class STAGE(Device):
     meters and alpha/beta in degrees.
     """
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Device properties — set per-deployment in the Tango DB
     # ------------------------------------------------------------------
-    # Travel limits: a move outside them is refused, and job devices check plans against them at reserve.
-    # The defaults (+/-1 mm in x and y, +/-0.5 mm in z) are conservative for a TEM goniometer; set your stage's.
+    # A move outside the travel limits is refused, and job devices check plans against them at reserve.
+    # The defaults of 1 mm each way in x and y and 0.5 mm each way in z are conservative for a TEM goniometer.
+    # Set them to the travel of your stage.
     x_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage x travel (m).")
     y_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage y travel (m).")
     z_limits_m = device_property(dtype=(float,), default_value=[-5e-4, 5e-4], doc="[min, max] stage z travel (m).")
-    # A holder narrows Z (its height toward the pole piece) and tilt further. Fill these in from your holders'
-    # specifications; there are no built-in holder values. Blank: the travel and TILT_LIMITS_DEG apply.
+    # A holder narrows tilt and Z, its height toward the pole piece, further. Fill these in from the specifications
+    # of your holders, because no holder values are built in. When blank, the travel and TILT_LIMITS_DEG apply.
     holders = device_property(dtype=str, default_value="{}", doc='JSON {"holder name": {"z_m": [min, max], "alpha_deg": [min, max], "beta_deg": [min, max]}}; every key optional.')
     holder = device_property(dtype=str, default_value="", doc="The holder installed when no holder_file says otherwise (a name in holders); blank: none.")
-    # Z and tilt together: a tilted holder swings its edge toward the pole piece, and more so the further it sits
-    # from eucentric height. A move tilted beyond high_tilt_deg (alpha or beta) is refused unless |z| is at most
-    # high_tilt_max_abs_z_m. The defaults are conservative placeholders, not any holder's specification:
-    # set both from the fitted holder's pole-piece clearance before tilting far on the instrument.
+    # Z and tilt limit each other. A tilted holder swings its edge toward the pole piece, and more so the further it sits
+    # from eucentric height. A move tilted beyond high_tilt_deg in alpha or beta is refused unless the size of z is at most
+    # high_tilt_max_abs_z_m. The defaults are conservative placeholders and not the specification of any holder.
+    # Set both from the pole piece clearance of the fitted holder before tilting far on the instrument.
     high_tilt_deg = device_property(dtype=float, default_value=15.0, doc="Tilt (deg, alpha or beta) above which |z| is held to high_tilt_max_abs_z_m. Set from the fitted holder.")
     high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
@@ -163,7 +164,7 @@ class STAGE(Device):
         installed, problem = self._restore_holder()
         self._apply_holder(installed)
         if problem:
-            # Which holder is fitted is unknown: hold the stage to what every configured holder allows,
+            # Which holder is fitted is unknown. Hold the stage to what every configured holder allows,
             # or refuse every move when no position suits them all.
             strictest = dict(self._limits)
             for name in self._holders:

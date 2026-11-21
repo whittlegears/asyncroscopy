@@ -81,7 +81,7 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
-    # Read from init_device, not device.get_name(): a device object made without Tango's own initialisation crashes on that call.
+    # Use the value init_device stored and do not call device.get_name here. A device object made without Tango's own initialisation crashes on that call.
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
     sample = current_sample(sample_of(device))
 

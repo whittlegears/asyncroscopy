@@ -58,7 +58,7 @@
           "role": {"type": "string", "description": "One of the roles above."},
           "role_source": {"enum": ["annotation", "rule", "default"], "description": "annotation: the device's action_hints (a YAML role:); rule: from the command's words; default: other."},
           "purpose": {"type": "string", "description": "What the tool does, one line from its doc."},
-          "risk": {"enum": ["low", "high"], "description": "As the approval gate sees it: approve mode holds high-risk calls."},
+          "risk": {"enum": ["low", "high"], "description": "As the safety policy classes it: a high-risk call needs the operate token role and is only recorded in a dry run."},
           "effect": {"enum": ["act", "observe"], "description": "observe: only reads; act: may change the instrument or the sample."},
           "args": {"type": "array", "items": {"$ref": "#/$defs/value"}},
           "returns": {"$ref": "#/$defs/value"},

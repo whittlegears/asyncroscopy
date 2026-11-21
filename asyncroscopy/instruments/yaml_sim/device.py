@@ -4,7 +4,7 @@ Every setting becomes an attribute plus ``get_<name>`` (and ``set_<name>`` when
 settable) commands; every command and acquisition in the file becomes a Tango
 command, so the MCP server offers each one as an agent tool and the safety
 policy classes it like any other command (``get_*`` read-only, ``set_*`` and
-``acquire*`` held in approve mode, ``xray_off``-style stops always allowed).
+``acquire*`` high risk, ``xray_off``-style stops always low).
 Acquisitions are saved through the DATA device and return its key, so agents
 look at them with ``view_data``.
 
@@ -73,7 +73,7 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 
 TANGO_TYPES = {float: CmdArgType.DevDouble, int: CmdArgType.DevLong64, bool: CmdArgType.DevBoolean, str: CmdArgType.DevString}
 DATA_TIMEOUT_MS = 15_000  # DATA registers a file in Tiled within about 10 s
-STOP_WAIT_S = 0.2  # stop_step waits this long for the step to end; only a step in the middle of saving takes longer
+STOP_WAIT_S = 0.2  # how long stop_step waits for the step to end
 HOLD_WATCH_S = 0.05  # how often a hold's lease is checked
 
 
@@ -129,9 +129,7 @@ class YamlInstrument(Instrument):
     time_scale = device_property(dtype=float, default_value=1.0, doc="Real seconds per simulated second of every duration_s (0: no waiting; tests and fast rehearsals).")
     hold_lease_s = device_property(dtype=float, default_value=10.0, doc="How long a job's hold lasts without being renewed; a job device that dies stops holding the instrument after this long.")
 
-    # ------------------------------------------------------------------
     # Instrument
-    # ------------------------------------------------------------------
     def read_instrument_type(self) -> str:
         return "YAML_SIM"
 
@@ -179,9 +177,7 @@ class YamlInstrument(Instrument):
         self._drop_hold("the device was re-initialised")
         Device.delete_device(self)
 
-    # ------------------------------------------------------------------
     # The file's settings, commands and acquisitions
-    # ------------------------------------------------------------------
     def _scaled_sleep(self, seconds: float) -> None:
         if seconds and self._scale:
             time.sleep(seconds * self._scale)
@@ -219,7 +215,7 @@ class YamlInstrument(Instrument):
         if quantity.units:
             props.set_unit(quantity.units)
         attr.set_default_properties(props)
-        # Tango calls attribute methods with (device, attribute), unlike dynamic commands.
+        # Tango calls attribute methods with the device and the attribute, unlike dynamic commands.
         self.add_attribute(attr, r_meth=lambda _device, a: read(a), w_meth=(lambda _device, a: write(a)) if quantity.settable else None)
 
         def get():
@@ -269,7 +265,7 @@ class YamlInstrument(Instrument):
             try:
                 overrides = (json.loads(request) if request.strip() else {}).get("settings") or {}
                 return json.dumps(map_description(self.sim.spec, self.sim, overrides))
-            except (Refused, ValueError, AttributeError) as exc:  # the caller's settings: say why, never fail the device
+            except (Refused, ValueError, AttributeError) as exc:  # a bad setting from the caller, so say why and never fail the device
                 return json.dumps({"error": str(exc)})
 
         doc = ("How a Mapper maps this instrument: its image acquisition, stage and field-of-view settings and limits, the commands run "
@@ -302,9 +298,7 @@ class YamlInstrument(Instrument):
             file_attrs={"instrument": type(self).__name__, "description": self.sim.spec.description, **(file_attrs or {})},
         )
 
-    # ------------------------------------------------------------------
-    # The step protocol: how a job device drives this instrument
-    # ------------------------------------------------------------------
+    # The step protocol a job device uses to drive this instrument
     @command(dtype_in=str, dtype_out=float, doc_in=":param job_token: Names the job (and is needed for every later step of it).", risk="high", operator_only=True, role="other")
     def hold(self, job_token: str) -> float:
         """Keep every other set_* and acquire* call out for this job, or renew its hold. Returns the lease in seconds; renew within it."""
@@ -462,8 +456,8 @@ def device_class(name: str) -> type:
 def registered_class(instance: str, default: str) -> str:
     """The class the launcher registered for this server instance (``<class_name>/<instance>``), or ``default``."""
     try:
-        # Listed whole and matched here: PyTango's own database (the one run_servers starts)
-        # returns nothing for a pattern starting with a wildcard such as "*/<instance>".
+        # List every server and match here. PyTango's own database, which run_servers starts,
+        # returns nothing for a pattern that starts with a wildcard.
         servers = [s for s in tango.Database().get_server_list("*").value_string if s.split("/", 1)[-1].lower() == instance.lower()]
     except tango.DevFailed:
         return default

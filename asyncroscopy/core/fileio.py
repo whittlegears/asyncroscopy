@@ -18,7 +18,7 @@ from typing import IO, Any, Callable, Iterator
 
 LOCK_TIMEOUT_S = 5.0  # longest one attempt waits for another process's append
 LOCK_ATTEMPTS = 3  # attempts before an append gives up and raises
-_LOCK_BYTE = 1 << 20  # Windows locks this byte of the .seq file, past its data, so its data stays readable
+_LOCK_BYTE = 1 << 20  # Windows locks this byte of the .seq file. It sits past the data, so the data stays readable
 
 
 def seq_path(path: str | Path) -> Path:
@@ -70,6 +70,19 @@ def file_lock(handle: IO[bytes], deadline: float) -> Iterator[None]:
         release()
 
 
+def _replace(temp: str, path: Path) -> None:
+    """Move ``temp`` over ``path``. Windows refuses while a reader has the file open, so try again for a moment."""
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
 def write_atomic(path: str | Path, text: str) -> None:
     """Replace ``path`` with ``text`` in one step: a reader sees the old file or the new one, never half of it.
 
@@ -83,7 +96,7 @@ def write_atomic(path: str | Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, path)
+        _replace(temp, path)
     except BaseException:
         try:
             os.unlink(temp)
@@ -126,7 +139,7 @@ def rotate(path: str | Path, keep: int = 0) -> Path | None:
         for old in rotated[: max(0, len(rotated) + 1 - keep)]:
             try:
                 os.unlink(old)
-            except OSError:  # open in a reader: goes on a later rotation
+            except OSError:  # still open in a reader, so it goes on a later rotation
                 pass
     return target
 
@@ -212,7 +225,7 @@ class SequencedAppender:
                         stored = counter.read(100).decode("ascii", errors="replace").split()
                         try:
                             last_seq, last_written = int(stored[0]), float(stored[1])
-                        except (IndexError, ValueError):  # a new sidecar (or a damaged one): continue from the log itself
+                        except (IndexError, ValueError):  # a new or damaged sidecar, so continue from the log itself
                             last_seq, last_written = _last_seq_in(self.path)
                         row["seq"] = last_seq + 1
                         row["written"] = max(time.time(), last_written)

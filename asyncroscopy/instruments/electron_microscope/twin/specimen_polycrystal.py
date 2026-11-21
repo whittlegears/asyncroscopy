@@ -30,6 +30,25 @@ class GrainParameters:
     composition: dict[str, float]
 
 
+def _zone_axis_families(max_index: int) -> list[tuple[int, int, int]]:
+    """The distinct low index zone axes up to max_index."""
+    return [
+        (n, m, ell)
+        for n in range(max_index + 1)
+        for m in range(n, max_index + 1)
+        for ell in range(m, max_index + 1)
+        if (n, m, ell) != (0, 0, 0) and np.gcd.reduce((n, m, ell)) == 1
+    ]
+
+
+def _draw_tilt(rng, max_deviation: float) -> np.ndarray:
+    """Draw a tilt off the zone axis that stays within max_deviation degrees."""
+    while True:
+        tilt_xy_deg = rng.normal(0.0, max_deviation / 3.0, 2) if max_deviation > 0.0 else np.zeros(2)
+        if np.linalg.norm(tilt_xy_deg) <= max_deviation:
+            return tilt_xy_deg
+
+
 @register_specimen
 class Polycrystal(Specimen):
     """FCC grains in a slab, with a fraction of the grain sites left empty."""
@@ -82,44 +101,11 @@ class Polycrystal(Specimen):
         self.grain_centers = rng.random((grain_count, 3)) * sample_size
         empty_count = int(grain_count * empty_fraction)
         self.empty_grain_indices = {int(index) for index in rng.choice(grain_count, empty_count, replace=False)}
-        zone_axes = [
-            (n, m, ell)
-            for n in range(max_index + 1)
-            for m in range(n, max_index + 1)
-            for ell in range(m, max_index + 1)
-            if (n, m, ell) != (0, 0, 0) and np.gcd.reduce((n, m, ell)) == 1
-        ]
+        zone_axes = _zone_axis_families(max_index)
         self.grain_zone_axes = [zone_axes[int(rng.integers(len(zone_axes)))] for _index in range(grain_count)]
-        self.grain_zone_offsets: list[float] = []
-        self.grain_rotations: list[np.ndarray] = []
-        self.grain_angles: list[tuple[float, float, float]] = []
-        for zone_axis in self.grain_zone_axes:
-            zone_direction = np.asarray(zone_axis, dtype=float)
-            zone_direction /= np.linalg.norm(zone_direction)
-            while True:
-                tilt_xy_deg = rng.normal(0.0, max_deviation / 3.0, 2) if max_deviation > 0.0 else np.zeros(2)
-                if np.linalg.norm(tilt_xy_deg) <= max_deviation:
-                    break
-            alignment, _error = Rotation.align_vectors([[0.0, 0.0, 1.0]], [zone_direction])
-            tilt = Rotation.from_rotvec(np.radians([tilt_xy_deg[0], tilt_xy_deg[1], 0.0]))
-            in_plane = Rotation.from_rotvec([0.0, 0.0, rng.uniform(0.0, 2.0 * np.pi)])
-            rotation = in_plane * tilt * alignment
-            self.grain_zone_offsets.append(float(np.linalg.norm(tilt_xy_deg)))
-            self.grain_rotations.append(rotation.as_matrix())
-            self.grain_angles.append(tuple(float(value) for value in rotation.as_euler("ZYX", degrees=True)))
+        self._draw_grain_orientations(rng, max_deviation)
         self.grain_tree = cKDTree(self.grain_centers)
-        self.region_parameters = [
-            GrainParameters(
-                index + 1,
-                index not in self.empty_grain_indices,
-                tuple(float(value) for value in self.grain_centers[index]),
-                self.grain_zone_axes[index],
-                self.grain_zone_offsets[index],
-                self.grain_angles[index],
-                {element: 1.0} if index not in self.empty_grain_indices else {},
-            )
-            for index in range(grain_count)
-        ]
+        self.region_parameters = self._grain_parameters(grain_count)
         self._metadata = {
             "volume_size_xy_nm": self.volume_size_xy_nm,
             "volume_thickness_nm": self.volume_thickness_nm,
@@ -131,6 +117,38 @@ class Polycrystal(Specimen):
             "zone_axis_families": [list(axis) for axis in zone_axes],
             "zone_axis_max_deviation_deg": max_deviation,
         }
+
+    def _draw_grain_orientations(self, rng, max_deviation: float) -> None:
+        """Draw a small tilt and an in plane turn for each grain and store its rotation."""
+        self.grain_zone_offsets: list[float] = []
+        self.grain_rotations: list[np.ndarray] = []
+        self.grain_angles: list[tuple[float, float, float]] = []
+        for zone_axis in self.grain_zone_axes:
+            zone_direction = np.asarray(zone_axis, dtype=float)
+            zone_direction /= np.linalg.norm(zone_direction)
+            tilt_xy_deg = _draw_tilt(rng, max_deviation)
+            alignment, _error = Rotation.align_vectors([[0.0, 0.0, 1.0]], [zone_direction])
+            tilt = Rotation.from_rotvec(np.radians([tilt_xy_deg[0], tilt_xy_deg[1], 0.0]))
+            in_plane = Rotation.from_rotvec([0.0, 0.0, rng.uniform(0.0, 2.0 * np.pi)])
+            rotation = in_plane * tilt * alignment
+            self.grain_zone_offsets.append(float(np.linalg.norm(tilt_xy_deg)))
+            self.grain_rotations.append(rotation.as_matrix())
+            self.grain_angles.append(tuple(float(value) for value in rotation.as_euler("ZYX", degrees=True)))
+
+    def _grain_parameters(self, grain_count: int) -> list[GrainParameters]:
+        """One GrainParameters row for each grain."""
+        return [
+            GrainParameters(
+                index + 1,
+                index not in self.empty_grain_indices,
+                tuple(float(value) for value in self.grain_centers[index]),
+                self.grain_zone_axes[index],
+                self.grain_zone_offsets[index],
+                self.grain_angles[index],
+                {self.element: 1.0} if index not in self.empty_grain_indices else {},
+            )
+            for index in range(grain_count)
+        ]
 
     @classmethod
     def from_options(cls, options: dict, context: SpecimenContext) -> "Polycrystal":

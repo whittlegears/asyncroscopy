@@ -1,6 +1,6 @@
 # An instrument with no Python, beside the STEM twin: the Raman microscope in
 # asyncroscopy/instruments/yaml_sim/examples/raman.yaml, with DATA (its spectra go
-# to its own Tiled) and approval mode, on ports that do not clash with the twin.
+# to its own Tiled), on ports that do not clash with the twin.
 #
 #   uv run startup_scripts/run_servers.py --yaml configs/yaml_sim_raman.yaml --isolated outputs/stacks/raman
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_raman.yaml            # agent endpoint, port 8100
@@ -16,7 +16,7 @@
 # trace_path below): an agent runs a line scan with run_job(device="RamanTwinJob", plan=...)
 # and wait_for_job.
 
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
 simulated: true
 
 instrument:
@@ -32,12 +32,6 @@ instrument:
 devices:
   data:
     module_name: asyncroscopy.data.data
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
-    properties:
-      # Its own saved mode: the twin's outputs/approvals/mode.json would carry this stack's approve mode over to the twin.
-      mode_file: outputs/stacks/raman/approvals/mode.json
 
 tiled:
   host: localhost

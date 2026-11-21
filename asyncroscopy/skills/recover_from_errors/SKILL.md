@@ -1,7 +1,7 @@
 ---
 name: recover_from_errors
 description: Read a refused or failed call, fix its arguments and try once more; never repeat an identical failing call, never change a value the user stated.
-version: 1.1.0
+version: 1.2.0
 min_asyncroscopy: 0.1.0
 keywords: [error, failed, refused, retry, wrong, fix, broken, not working, timeout, timed out]
 acts: false
@@ -20,3 +20,6 @@ tools: []
 8. "Tiled ... not answering" or "try again in a few seconds": wait once and retry once. If it fails again, report it.
 9. A job that ends `failed` reports `last_error`: report it; start it again only if the error says the cause is gone.
 10. After two different fixes fail, stop and tell the user exactly what was refused and why.
+11. Looking for a tool (`find_tools`): two searches with different words that find nothing mean the instrument has no such tool. Tell the user it cannot be set or done from here; do not keep searching, and do not do something else in its place.
+12. "coordinates must be in 0..1 range" from `place_beam`: it takes fractions of the current image (`[0.5, 0.5]` is the centre), not metres.
+13. "Stage position must be [x, y, z, alpha, beta]": `move_stage` takes all five, x, y, z in metres and the tilts in degrees. Read them with `get_stage`, change only x and y, and send the other three back unchanged.

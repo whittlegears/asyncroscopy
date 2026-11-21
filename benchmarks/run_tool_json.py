@@ -37,7 +37,7 @@ SYSTEM = (
 )
 ALLOW = [
     "*_get_stage", "*_move_stage", "*_acquire_scanned_image", "*_set_fov", "*_place_beam", "*_acquire_spectrum",
-    "*_blank_beam", "*_set_defocus", "Approvals_get_mode", "approval_status", "Mapper_*", "list_devices",
+    "*_blank_beam", "*_set_defocus", "Mapper_*", "list_devices",
     "assemble_map", "score_map", "add_poi", "get_region", "list_scorers", "analysis_job_status", "analysis_job_results",
 ]
 

@@ -1,4 +1,4 @@
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
 simulated: true
 
 instrument:
@@ -30,7 +30,8 @@ tango:
 tiled:
   host: 127.0.0.1
   port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
+  # Simulated data is kept apart from real acquisitions
+  acquisition_dir: outputs/tiled_twin
   autostart: true
   register_on_startup: false
 device_timeout_seconds: 120

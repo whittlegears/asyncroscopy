@@ -20,6 +20,6 @@ Detectors are Tango devices in `asyncroscopy/instruments/electron_microscope/det
    newdet:
      module_name: asyncroscopy.instruments.electron_microscope.detectors.newdet
    ```
-6. Add `tests/test_NEWDET.py`, using `tests/test_CAMERA.py` as a template.
+6. Add `tests/test_NEWDET.py`, using `tests/instruments/test_CAMERA.py` as a template.
 
 For an instrument that is not an electron microscope, see [new_instrument.md](new_instrument.md).

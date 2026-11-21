@@ -38,7 +38,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlparse
 
 from asyncroscopy import settings
-from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
+from asyncroscopy.data import tiled_client  # imported before tiled because it limits the retries of the Tiled client
 from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
 from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
@@ -54,14 +54,15 @@ from tiled.client.register import identity, register
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
-# Suffixes Tiled 0.2 registers from a file (tiled.mimetypes plus the stdlib's image/tiff); Tiled skips others silently.
+# REGISTRABLE_SUFFIXES are the suffixes Tiled 0.2 registers from a file. They come from tiled.mimetypes plus
+# image/tiff from the stdlib. Tiled skips other files silently.
 # register_path answers within about REGISTER_WAIT_SECONDS plus a 2 s check that Tiled
 # answers, well inside the 12 s the instrument devices give DATA. A registration that
 # takes longer carries on in the background, and reconcile catches it if it fails.
 REGISTER_WAIT_SECONDS = 8.0
 # How long a background registration may run before it is reported as failed.
 REGISTER_TIMEOUT_SECONDS = 20
-RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone: they may still be being written
+RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone because they may still be being written
 FUTURE_MTIME_SLACK_SECONDS = 60.0  # a file "modified" further in the future than this has a wrong clock, not a writer
 CATALOG_INIT_TIMEOUT_SECONDS = 60
 TILED_LOGS_KEPT = 5
@@ -75,7 +76,7 @@ RESTART_WINDOW_SECONDS = 600.0
 class DATA(Device):
     """Tango bridge to the Tiled HTTP data server."""
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     host = attribute(label="Tiled Host", dtype=str, access=AttrWriteType.READ_WRITE, doc="Hostname or IP address for the Tiled HTTP data server.")
@@ -92,7 +93,7 @@ class DATA(Device):
         restart_tiled = getattr(self, "_restart_tiled_after_init", False)
         self._tiled_lock = getattr(self, "_tiled_lock", None) or threading.RLock()
         self._register_lock = getattr(self, "_register_lock", None) or threading.Lock()
-        if not hasattr(self, "_host"):  # values set through configure() survive Init
+        if not hasattr(self, "_host"):  # values set through configure survive Init
             env = settings.get()
             self._host, self._port = self._parse_uri(env.tiled_uri or DEFAULT_TILED_URI)
             self._save_path = env.acquisition_dir or DEFAULT_ACQUISITION_DIR
@@ -209,7 +210,7 @@ class DATA(Device):
             if self._tiled_process.poll() is None and self._tiled_alive():
                 self._tiled_server = "yes"
                 return self.get_config()
-            self._stop_tiled_processes()  # ours, but exited or hung: never mistake it for a foreign server
+            self._stop_tiled_processes()  # This is our server and it has exited or hung. Do not treat it as someone else's.
         note = ""
         if self._tiled_alive():
             refusal, note = self._replace_leftover_tiled()
@@ -831,7 +832,7 @@ def _registered_file(node) -> str | None:
     if parsed.scheme != "file":
         return None
     local = unquote(parsed.path)
-    if len(local) > 2 and local[0] == "/" and local[2] == ":":  # /C:/... on Windows
+    if len(local) > 2 and local[0] == "/" and local[2] == ":":  # a Windows path that has a slash before the drive letter
         local = local[1:]
     return local
 
@@ -854,7 +855,7 @@ def _is_ours(pid: int, our_pid: int) -> bool:
     try:
         return any(parent.pid == our_pid for parent in psutil.Process(pid).parents())
     except psutil.Error:
-        return True  # cannot tell: do not restart a Tiled that answers
+        return True  # We cannot tell, so do not restart a Tiled that answers.
 
 
 def _live_owner(process) -> str | None:
@@ -867,7 +868,7 @@ def _live_owner(process) -> str | None:
     try:
         current = process
         while True:
-            parent = current.parent()  # psutil returns None when the parent is gone (it also checks pid reuse)
+            parent = current.parent()  # psutil returns None when the parent is gone, and it also checks pid reuse
             if parent is None:
                 return None
             command_line = parent.cmdline()
@@ -881,8 +882,9 @@ def _live_owner(process) -> str | None:
         return f"a process that cannot be inspected ({type(exc).__name__})"
 
 
-# Directories Tiled writes for the analysis server's nodes: map versions (<run>_map, <run>_map_<time>_<hex>) and a
-# run's point store (<run>_points). Their files are Tiled's own storage, never acquisitions to register.
+# Tiled writes these directories for the nodes of the analysis server. A map version is named after its run with
+# _map on the end, or with _map, a time and a hex tag. The point store of a run ends in _points. Their files are
+# storage that belongs to Tiled and are never acquisitions to register.
 TILED_WRITTEN = re.compile(r".+_(?:map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?|points)")
 
 

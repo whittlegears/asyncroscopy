@@ -16,8 +16,8 @@ RS256 tokens with the scopes you choose, so the token path can be exercised agai
     set ASYNCROSCOPY_MCP_TOKEN=<the token>        (PowerShell: $env:ASYNCROSCOPY_MCP_TOKEN = "<the token>")
 
 Scopes (mcp.auth.roles maps them to roles): instrument:read (low-risk tools),
-instrument:operate (high-risk tools, still through the approval gate), instrument:approve
-(approve, deny and set_mode on the operator endpoint).
+instrument:operate (high-risk tools), instrument:approve
+(operator-only commands on the operator endpoint).
 """
 
 from __future__ import annotations
@@ -31,9 +31,9 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = PROJECT_DIR / "outputs" / "dev_tokens"
-DEV_ISSUER = "asyncroscopy-dev-tokens (NOT a production issuer)"
+DEV_ISSUER = "asyncroscopy-dev-tokens (not for production)"
 DEV_AUDIENCE = "asyncroscopy-mcp"
-MAX_TTL_S = 24 * 3600  # dev tokens are short-lived; nothing here should outlive a day
+MAX_TTL_S = 24 * 3600  # dev tokens are short lived and none should outlive a day
 BANNER = "[dev_tokens] DEVELOPMENT ONLY: a stand-in for the facility's token service. Never use these keys or tokens in production."
 
 
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
     p_init = sub.add_parser("init", help="Make a key pair and print the mcp.auth section that trusts it.")
     p_init.add_argument("--force", action="store_true")
     p_mint = sub.add_parser("mint", help="Print a short-lived token.")
-    p_mint.add_argument("--sub", required=True, help="The token's subject: the caller the trace and approvals record.")
+    p_mint.add_argument("--sub", required=True, help="The token's subject: the caller the trace records.")
     p_mint.add_argument("--scope", action="append", default=[], help="A scope, e.g. instrument:read (repeat for more).")
     p_mint.add_argument("--ttl", type=int, default=900, help="Seconds until it expires (default 900, at most a day).")
     p_mint.add_argument("--audience", default=DEV_AUDIENCE)

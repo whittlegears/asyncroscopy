@@ -20,9 +20,9 @@ Safety: a learned skill starts as ``status: draft`` and is never put in a
 prompt until promoted, by an operator (``python -m asyncroscopy.agents.skills
 promote <name>``) or automatically after ``$ASYNCROSCOPY_AUTO_PROMOTE_AFTER``
 successes (default 0: never). ``lint`` refuses one that is too long, tells
-the agent to get around approvals or safety, names operator-only tools or
+the agent to get around safety, names operator-only tools or
 hard-codes data keys, or uses a tool the endpoint does not offer. A learned
-skill only describes calls; every call still goes through the approval gate.
+skill only describes calls; every call still goes through the endpoint's safety policy.
 """
 
 from __future__ import annotations
@@ -51,10 +51,9 @@ log = logging.getLogger(__name__)
 MAX_LEARNED_CHARS = 4000
 MAX_RUNS_KEPT = 20
 UNSAFE = [
-    (re.compile(r"\b(?:bypass|skip|ignore|disable|avoid|circumvent|turn off|switch off|get around|work around|override|defeat|disregard)\b[^.\n]{0,40}\b(?:approvals?|safety|operators?|polic(?:y|ies)|limits?|gates?|interlocks?|dose budgets?|job limits?|warnings?)\b", re.I), "tells the agent to get around approvals or safety"),
-    (re.compile(r"\b(?:without|before|instead of)\s+(?:asking|waiting for|telling)\s+(?:the\s+)?(?:operator|user|approval)", re.I), "tells the agent to act without the operator or user"),
-    (re.compile(r"\bApprovals_\w+\b|\bset_mode\b|\bexport_ground_truth\b|\b(?:Init|Kill|RestartServer)\b", re.I), "names an operator-only tool"),
-    (re.compile(r"\b(?:approve|grant|deny)\b[^.\n]{0,30}\b(?:your own|itself|yourself|the request|its request)\b", re.I), "tells the agent to approve or decide a request"),
+    (re.compile(r"\b(?:bypass|skip|ignore|disable|avoid|circumvent|turn off|switch off|get around|work around|override|defeat|disregard)\b[^.\n]{0,40}\b(?:safety|operators?|polic(?:y|ies)|limits?|gates?|interlocks?|dose budgets?|job limits?|warnings?)\b", re.I), "tells the agent to get around safety"),
+    (re.compile(r"\b(?:without|before|instead of)\s+(?:asking|waiting for|telling)\s+(?:the\s+)?(?:operator|user)", re.I), "tells the agent to act without the operator or user"),
+    (re.compile(r"\bexport_ground_truth\b|\b(?:Init|Kill|RestartServer)\b", re.I), "names an operator-only tool"),
     (re.compile(r"\b(?:ignore|disregard|forget)\b[^.\n]{0,30}\b(?:instructions|rules|system prompt|previous)\b", re.I), "tells the agent to ignore its instructions"),
 ]
 NAME_PROMPT = """Name a procedure for a lab's skill library. Reply with JSON only:
@@ -113,7 +112,7 @@ def lint(text: str, tools: list[str], offered: set[str] | None = None, learned: 
     if len(text) > max_chars:
         problems.append(f"longer than {max_chars} characters")
     for pattern, why in UNSAFE:
-        # "Never approve your own request" is the advice we want: a match negated in its own clause is fine.
+        # A match that is forbidden in its own clause is fine, as in never bypass the safety limits.
         if any(not _negated(text, m.start()) for m in pattern.finditer(text)):
             problems.append(why)
     body = text.split("---", 2)[2] if text.startswith("---") else text
@@ -138,7 +137,7 @@ def lint_skill(path: Path, offered: set[str] | None = None) -> list[str]:
     tools = [str(t) for t in meta.get("tools") or []]
     text = body + "\n" + str(meta.get("description", "")) + "\n" + " ".join(str(k) for k in meta.get("keywords") or [])
     learned = "learned" in meta or "status" in meta
-    # A hand-written skill may be as long as fits an agent's prompt; one learned from a run is kept short.
+    # A hand-written skill may be as long as fits an agent's prompt. One learned from a run is kept short.
     problems += lint(text, tools, offered, learned=learned, max_chars=MAX_LEARNED_CHARS if learned else PROMPT_BUDGET_CHARS)
     if "acts" in meta and not isinstance(meta["acts"], bool):
         problems.append("'acts' must be true or false")
@@ -204,7 +203,7 @@ async def distill(goal: Goal, calls: list[Call], memory: Memory, offered: set[st
             learned["last"] = today
             meta["learned"] = learned
             if meta.get("status") == "draft" and auto_promote_after() and learned["successes"] >= auto_promote_after():
-                if not lint_skill(path, offered):  # body, description and keywords, as promote checks them
+                if not lint_skill(path, offered):  # checks the body, description and keywords, as promote does
                     meta["status"] = "promoted"
             _write(path, meta, read_front_matter(path)[1])
             return path, f"merged into {name} ({learned['successes']} successes)"
@@ -232,7 +231,7 @@ async def distill(goal: Goal, calls: list[Call], memory: Memory, offered: set[st
         "",
         f"- {criteria}",
         "",
-        "If a call is held for approval, wait for the operator as usual; if one fails, read its message and fix the arguments.",
+        "If a call fails, read its message and fix the arguments.",
         "",
     ])
     meta = {

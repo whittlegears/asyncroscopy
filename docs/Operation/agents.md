@@ -1,6 +1,13 @@
 # Agents: graphs, a team, goals, skills and memory
 
-asyncroscopy ships three LangGraph agents. All of them reach the instrument only through the MCP endpoints, so the safety rules (risk policy, approval mode, operator-only tools) apply to every call they make. They are built for a small local model (qwen3:8b through Ollama on a 6 GB GPU) and work the same with a larger one.
+asyncroscopy ships three LangGraph agents. All of them reach the instrument only through the MCP endpoints, so the safety rules (risk policy, operator-only tools) apply to every call they make. They work with any tool-calling model. What depends on the model is kept in an agent profile (`asyncroscopy/agents/profiles/*.yaml`, chosen with `ASYNCROSCOPY_AGENT_PROFILE`, `capable` when unset), not in code:
+
+| Profile | For | What it sets |
+| :-- | :-- | :-- |
+| `default` | A small local model (measured on qwen3:8b through Ollama, 8k context) | Two skills from the request and 7000 characters of skill text; `tool_gates` that hold back the note writers, the beam parkers and the pixel conversions unless the request asks for them; tool replies whose structured fields are replaced by sentences (`replies: notes`) |
+| `capable` (the default) | A larger local model (gemma4:31b through Ollama, 32k context) or a hosted one (`ASYNCROSCOPY_MODEL`, `ASYNCROSCOPY_MODEL_PROVIDER`) | Extends `default`: no tool gates, more skill text and memory, the servers' structured replies kept beside the sentences (`replies: facts_and_notes`). Not yet measured with the workflow benchmark |
+
+A profile can start from another with `extends: default` and set only what differs. Every profile keeps the rules that hold for any model: the tool selection, the claim check, the context guard, a read-only request getting no skill that acts, and one mapping procedure per endpoint (the Mapper job where there is a Mapper, the `map_grid` workflow elsewhere).
 
 | Graph | Who decides the calls | Use it for |
 | :-- | :-- | :-- |
@@ -16,16 +23,16 @@ uv run python -m asyncroscopy.agents.run team "map a 600 nm square here and find
 
 The agent MCP server (`asyncroscopy/mcp/agent_mcp_server.py`) runs the same graphs through `query_agent(prompt, graph="team")`.
 
-Long experiments are one job: `run_job` (plan checked, then started, through the approval gate) and `wait_for_job` (waits on instrument jobs and on the analysis server's stitching and scoring jobs, and returns their `result_keys` and `summary` when done). The envelope's separate reserve/start/status/results/release tools stay on the endpoint for scripts and the `mapping` graph, but agents are not given them.
+Long experiments are one job: `run_job` (plan checked, then started) and `wait_for_job` (waits on instrument jobs and on the analysis server's stitching and scoring jobs, and returns their `result_keys` and `summary` when done). The envelope's separate reserve/start/status/results/release tools stay on the endpoint for scripts and the `mapping` graph, but agents are not given them.
 
 What `run_job` guarantees, so an agent cannot leave the instrument tied up:
 
-- Every reply carries the plan's estimate (tiles, duration, dose), also when a held run is retried.
+- Every reply carries the plan's estimate (tiles, duration, dose),.
 - A plan whose estimate is over the endpoint's `mcp.job_limits` (`max_duration_s`, `max_dose_e_per_a2`; see `configs/mcp_dt.yaml`) is refused before it starts, whether it comes through `run_job` or a direct `<device>_reserve`; the agent is told to ask the user. Only an operator raises the limits.
-- A start that fails (an error reply, a Tango failure, an unreachable approval service) releases the reservation it made, and says so.
-- A start held in approve mode keeps its reservation for the same caller and agent run. Agents send their run id with every call (`X-Asyncroscopy-Run`), because they open a new MCP session per call; two agents with one caller name stay apart by it. Asking again before the operator decides files no second request. A denied or expired request, or one nobody came back for within two hours, frees the reservation even if the agent never asks again.
+- A start that fails (an error reply or a Tango failure) releases the reservation it made, and says so.
+- Agents send their run id with every call (`X-Asyncroscopy-Run`), because they open a new MCP session per call; two agents with one caller name stay apart by it.
 
-- An aborted job can be continued: `run_job(device, resume=<reservation_id>)` (no plan) starts the same reservation again, through the approval gate, and it goes on from the next step. A resume that fails to start keeps the reservation, so it can be tried again.
+- An aborted job can be continued: `run_job(device, resume=<reservation_id>)` (no plan) starts the same reservation again, and it goes on from the next step. A resume that fails to start keeps the reservation, so it can be tried again.
 - `run_job` waits up to 15 s, and an agent's own `run_job` call goes on waiting inside the call until the job ends. Pass `wait=false` when the user wants the job id now, or will stop the job: the call returns as soon as the job runs. An abort reply includes `resume_with`, the exact `run_job` call that continues the job (the agent graphs show it to the model as `to_resume`).
 
 What the graphs do so a small model's context does not overflow (`asyncroscopy/agents/guards.py`), measured against `num_ctx`:
@@ -34,7 +41,7 @@ What the graphs do so a small model's context does not overflow (`asyncroscopy/a
 - Before every model call the messages are fitted to what the system prompt and the tool schemas leave: the system prompt, the first and the latest request and the latest tool reply (cut at 6000 characters) are kept; older tool replies become one-line digests, and the oldest finished rounds go first. The skills and memory notes share at most a quarter of the context.
 - A call repeated with the same arguments and the same result: the second time the model is told so in the prompt; the third time the run stops with an honest answer saying what was repeated, instead of looping to the recursion limit.
 
-`endpoint_info` (for agent programs, not given to models) reports each tool's risk as the approval gate sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.analysis_url` in the MCP config is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
+`endpoint_info` (for agent programs, not given to models) reports each tool's risk as the risk policy sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.analysis_url` in the MCP config is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
 
 An endpoint with `mcp.auth` needs a bearer token: agents send `ASYNCROSCOPY_MCP_TOKEN` as `Authorization: Bearer` to the instrument and analysis endpoints, and the endpoint takes the caller from the token's subject instead of `ASYNCROSCOPY_CALLER`. See [Remote access](remote_access.md).
 
@@ -46,7 +53,7 @@ A small model loses track with many tools and long instructions, so the `team` g
 2. **Specialists**, one per step, each holding only its role's tools:
    - `operator`: the instrument: `run_job`, `*_abort`, stage, beam and acquisitions. On a STEM a curated set; on any other instrument (for example a YAML-defined twin) every device command.
    - `analyst`: stored data and maps: `list_data`, `view_data`, `assemble_map`, `score_map`, `map_info`, `get_region`, points of interest.
-   - both: `wait_for_job` and `approval_status`. Operator-only tools (`Approvals_*`) are never given to an agent.
+   - both: `wait_for_job`. Operator-only tools are never given to an agent.
 
    The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/default.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
 3. Each step sees what earlier steps produced as **facts from the servers' replies** (run keys, map keys, job states), not the previous agent's prose. A failed step is retried once with the error as feedback.
@@ -62,11 +69,12 @@ Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents nev
 | Skill | Added when |
 | :-- | :-- |
 | `recover_from_errors` | a tool call failed |
-| `approval_etiquette` | a call was held (APPROVAL REQUIRED), or approval_status said denied or expired |
 | `inspect_data` | a data key came back, or the request asks about data |
 | `explore_regions` | a stitched map came back and the request asks for regions |
 
-A request counts as acting unless it is clearly read-only: it says not to act ("do not acquire anything"), or it is a question about data that already exist (a key, "the latest", "the stitched map") with no instruction to act anywhere in it ("show me a new image", "by taking a spectrum", "blank it" all act). Taking an acting request for read-only would keep the skills it needs away; the opposite is still held by the risk policy and the approval gate. A read-only request never gets a skill that acts on the instrument (`acts: true` in its front matter, or no `acts` at all: a skill that does not say it only reads counts as acting), whatever comes back during the run. Each turn of a conversation is judged by its own latest request, and `load_skill` is hidden only from a read-only request whose skills all fitted.
+A request counts as acting unless it is clearly read-only: it says not to act ("do not acquire anything"), or it is a question about data that already exist (a key, "the latest", "the stitched map") with no instruction to act anywhere in it ("show me a new image", "by taking a spectrum", "blank it" all act). Taking an acting request for read-only would keep the skills it needs away; the opposite is still covered by the risk policy. A read-only request never gets a skill that acts on the instrument (`acts: true` in its front matter, or no `acts` at all: a skill that does not say it only reads counts as acting), whatever comes back during the run. Each turn of a conversation is judged by its own latest request, and `load_skill` is hidden only from a read-only request whose skills all fitted.
+
+Then, before every model call, every usable skill is searched as passages (`asyncroscopy/skills/index.py`): each manual is split into its `##` sections, and a long section into groups of its list items. The query is the request and the latest two tool replies (a failed one counting as much as the request), ranked with BM25 plus how well each passage's skill matches. At most two passages come from one skill and three in all (`passages` and `passage_chars` in the profile). They are added to the latest message (the tool reply, or the request) as advice, not to the system prompt, so the prompt's start stays the same from call to call and Ollama reuses what it has already read. The search runs in process over a few dozen passages, about 3 ms, with no model call and no embeddings, and the same conversation always gets the same passages. `recover_from_errors` and `inspect_data` arrive this way only: a failed call brings the steps about that error, not the whole manual. The labels of the latest step's passages are kept in the run's state as `guidance`. Memory notes are ranked with the same BM25.
 
 At most four skills per run, within about 7000 characters shared with the memory notes; a skill that does not fit is listed by its description and only then is `load_skill` shown to the model. A skill is given only to an agent holding at least one of its tools. Which skills were applied, and why, is kept in the run's state as `skills_applied` (per step in the team, per attempt in a goal run).
 
@@ -77,7 +85,6 @@ At most four skills per run, within about 7000 characters shared with the memory
 | `explore_regions` | After a map: rank regions, go back closer, mark them |
 | `focus` | Autofocus and stigmation as one Tuner job, never a hand loop over `set_defocus` |
 | `inspect_data` | Find and read images, spectra and maps; judge peaks and noise |
-| `approval_etiquette` | A call is held, approved, denied or expired |
 | `find_feature_then_measure` | Find a particle or feature in an image, then a spectrum or closer image on it |
 | `recover_from_errors` | A refused or failed call: fix the form, never a value the user stated; after a timeout read the state first; never "reset" by unblanking or toggling |
 
@@ -123,25 +130,27 @@ The agent keeps notes as plain Markdown in `$ASYNCROSCOPY_AGENT_MEMORY` (default
 | `INSTRUMENT.md` | What the instrument is: devices, jobs, conventions, limits, samples | Seeded from the tool list on first use; then you |
 | `LESSONS.md` | One dated line per lesson ("- 2026-10-28: ...") | A goal run that was not met; you |
 | `experiments/<date>_<run>.md` | Request, goal, steps, keys produced, outcome, issues | Every goal run |
-| `skills/<name>/SKILL.md` | Skills learned from successful runs | Goal runs that were met (drafts) |
+| `skills/<name>/SKILL.md` | Skills learned from successful runs | Goal runs that were met, with `ASYNCROSCOPY_LEARN_SKILLS` on (drafts) |
 
 Once per run the sections that share the most words with the request are added to the prompt, at most about 1500 characters: never the whole folder. Data keys, map keys and ids in them are replaced by placeholders, so an agent never takes an earlier run's key for this one's.
 
 `$ASYNCROSCOPY_INSTRUMENT_NOTES` names a team's own instrument notes kept in its repository (for example `configs/instrument_notes/raman.md`); they are read as well, and no `INSTRUMENT.md` is seeded then.
 
-Nothing an agent writes here is reviewed before another run reads it, so it is kept small and checked: a lesson is one short line with keys and ids taken out, refused if it advises getting around approvals or safety, never added twice; `LESSONS.md` keeps the newest 100 and `experiments/` the newest 200 pages.
+Nothing an agent writes here is reviewed before another run reads it, so it is kept small and checked: a lesson is one short line with keys and ids taken out, refused if it advises getting around safety, never added twice; `LESSONS.md` keeps the newest 100 and `experiments/` the newest 200 pages.
 
-## Skill runs are agent-side macros
+## Skills are manuals; fixed procedures are workflows
 
-A skill's `run:` list runs in the agent's own process (`asyncroscopy/agents/skill_runs.py`), as if the model had made each call itself. It is not a job: it has no reservation, `job_status`, `abort` or pause, nothing keeps it going if the agent stops, and `stop_all` does not reach it. Every step is an ordinary tool call, so each one passes the endpoint's safety policy and approval gate and is written to the trace under the agent's name. A step the gate holds stops the run.
+A skill (`asyncroscopy/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
 
-It stays on the agent's side because a job device would have to make those calls for the agent:
+A procedure whose calls are the same every time is a LangGraph workflow (`asyncroscopy/agents/workflows/graphs/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
 
-- The steps are MCP tools (`view_data`, `find_features`, `list_pois`, an acquisition with its saved key and summary), and only the endpoints that serve them can run them. A device would have to call its own MCP server, against the rule that devices sit below it.
-- With `mcp.auth`, the endpoint takes the caller from the token. The device's token would replace the agent's, so the trace would name the device, and a grant, which is issued to one caller and run, could not match. An agent could also reach tools its own token does not allow.
-- Starting such a job would need its own approval on top of each step's.
+| Workflow | What it does | Manual |
+| :-- | :-- | :-- |
+| `spectrum_at_point` | Move to a stage position, park the beam, take an EDS spectrum, blank, read the peaks | `revisit_point`, `explore_regions` |
+| `spectrum_on_feature` | Survey image, find the most distinct feature, spectrum on it, read the peaks, put the field of view back | `find_feature_then_measure` |
+| `spectrum_at_best_region` | The best region of a scored map, then `spectrum_on_feature` there | `best_region_spectrum` |
 
-For work that must survive the agent, or stop with `abort`, write a job device (`asyncroscopy/jobs/job_device`), as the Mapper is.
+A workflow runs in the workflow server's process (the analysis server started with `asyncroscopy.agents.workflows.analysis_host`), so every instrument call goes through the endpoint's safety policy and trace, it can be stopped (`stop_workflow`) and resumed, and its cleanup blanks the beam whatever happens. A finished run's reply lists the tools it called (`tools_called`), so the goal checker and the claim check count its acquisitions and moves as the agent's own. A skill with the older `run:` list is listed as unavailable, with the reason.
 
 ## Learned skills
 
@@ -158,7 +167,7 @@ uv run python -m asyncroscopy.agents.skills promote <name> --check-endpoint     
 
 A learned skill file that cannot be read is reported by `list` (exit code 1), not skipped.
 
-`ASYNCROSCOPY_AUTO_PROMOTE_AFTER=N` promotes a draft after N successes (default 0: never). Promotion re-checks the skill: not too long, no text about getting around approvals or safety, no operator-only tools, no hard-coded data keys, and (with `--check-endpoint`) only tools the agent endpoint offers. A promoted learned skill never replaces a shipped or lab skill of the same name, is given only to an agent offered every tool it lists, and only describes calls: every call still goes through the approval gate.
+`ASYNCROSCOPY_AUTO_PROMOTE_AFTER=N` promotes a draft after N successes (default 0: never). Promotion re-checks the skill: not too long, no text about getting around safety, no operator-only tools, no hard-coded data keys, and (with `--check-endpoint`) only tools the agent endpoint offers. A promoted learned skill never replaces a shipped or lab skill of the same name, is given only to an agent offered every tool it lists, and only describes calls: every call is still an ordinary tool call under the endpoint's safety rules.
 
 ## For a hackathon team
 
@@ -168,4 +177,4 @@ A learned skill file that cannot be read is reported by `list` (exit code 1), no
 
 ## Testing without a model
 
-`tests/test_team_graph.py`, `tests/test_goals.py`, `tests/test_agents_skills.py` and `tests/test_agents_memory.py` run the graphs, skill triggers, memory and learning with a scripted model and fake MCP servers. Live trials on the twin: `benchmarks/run_mapping_trials.py`.
+`tests/agents/test_team_graph.py`, `tests/agents/test_goals.py`, `tests/agents/test_agents_skills.py` and `tests/agents/test_agents_memory.py` run the graphs, skill triggers, memory and learning with a scripted model and fake MCP servers. Live trials on the twin: `benchmarks/run_mapping_trials.py`.

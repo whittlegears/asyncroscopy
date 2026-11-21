@@ -20,7 +20,7 @@ In Python, `asyncroscopy.mcp.action_space.build(server)` makes the document for 
 | Section | Contents |
 | :-- | :-- |
 | `instruments` | Each device: its tool prefix, Tango class and address, and its kind flags: `stem` (scans images and blanks a beam), `probe` (approaches the sample with a probe) and `envelope` (runs jobs). |
-| `actions` | Every tool. Each has its `role` and where the role came from (`role_source`: `annotation`, `rule` or `default`), a one-line `purpose` from the command's doc, its `risk` as the approval gate sees it, its `effect` (`act`, or `observe` for a pure read), and its `args`. An acquisition marked `primary` is the instrument's main observable. |
+| `actions` | Every tool. Each has its `role` and where the role came from (`role_source`: `annotation`, `rule` or `default`), a one-line `purpose` from the command's doc, its `risk` as the risk policy sees it, its `effect` (`act`, or `observe` for a pure read), and its `args`. An acquisition marked `primary` is the instrument's main observable. |
 | `args` | Each argument has a name, a JSON type, and whether it is `required`. Where known, it also has `units`, `min` and `max`, `enum` (the allowed values), `axis` (the stage axis a scalar sets) and `elements` (what each element of an array is, for example `[x, y, z, alpha, beta]`). `returns` describes a tool's result the same way. |
 | `state` | What can be observed: each read tool (`get_*`, `State`, `Status`), and each readable Tango attribute, with units and range. Attributes are listed for Tango clients; an MCP client reads the matching tool. |
 | `jobs` | Each job device: what its job does, its plan's JSON Schema (`plan_schema`, `null` when the device gives none), a valid `plan_example`, and its envelope tools. Run a job with `run_job`. |
@@ -106,7 +106,7 @@ Most YAML commands need no annotation, because the file already says more than t
 
 `raman.yaml` and `xrd.yaml` annotate `laser_on` and `xray_on` (`beam.unblank`) and `laser_off` and `xray_off` (`beam.blank`); `afm.yaml` its tip and stage commands. A command's role also sets its risk when the file gives no `risk:` (a stop role low, any other high), so annotate every command.
 
-A Python device declares its commands with `asyncroscopy.utils.commands.command(risk=..., role=..., stop=..., routine=..., operator_only=...)` and serves them with `action_hints = action_hints_attribute()` (`Instrument` and the device bases already have it). `action_hints_attribute(extra=...)` adds what the device works out itself, such as units and ranges at its own limits.
+A Python device declares its commands with `asyncroscopy.utils.commands.command(risk=..., role=..., stop=..., operator_only=...)` and serves them with `action_hints = action_hints_attribute()` (`Instrument` and the device bases already have it). `action_hints_attribute(extra=...)` adds what the device works out itself, such as units and ranges at its own limits.
 
 A job device publishes its plan's schema by setting `PLAN_SCHEMA` to the name of a schema in `asyncroscopy/contracts`. The Mapper sets it to `"map_plan"`. The `plan_schema` attribute then serves the schema. A device that gives no schema still has its `plan_example`.
 
@@ -121,7 +121,7 @@ A job device publishes its plan's schema by setting `PLAN_SCHEMA` to the name of
 
 On the STEM twin, these steps call `get_stage`, `move_stage`, `unblank_beam`, `acquire_scanned_image`, `blank_beam` and `view_data`. On the AFM twin, they call `get_stage_x_m`, `get_stage_y_m`, `retract_tip`, `move_xy`, `approach_tip`, `acquire_topography`, `retract_tip` and `view_data`. None of these names appears in the controller.
 
-`tests/test_action_space.py` runs the controller unchanged on both twins, in-process, with no stack running. Against a running stack (it moves the stage and acquires for real):
+`tests/endpoints/test_action_space.py` runs the controller unchanged on both twins, in-process, with no stack running. Against a running stack (it moves the stage and acquires for real):
 
 ```bash
 uv run python -m asyncroscopy.examples.role_controller --url http://127.0.0.1:8000/mcp

@@ -39,9 +39,9 @@ class RoleController:
 
     def __init__(self, client: Client, space: dict) -> None:
         self.client, self.space = client, space
-        self.calls: list[tuple[str, str]] = []  # (role, tool) in call order
-        # The main observable (an acquisition marked primary, else the first image, spectrum, ...); every
-        # other role is looked up on its instrument.
+        self.calls: list[tuple[str, str]] = []  # role and tool in call order
+        # The main observable is an acquisition marked primary, else the first image or spectrum.
+        # Every other role is looked up on its instrument.
         candidates = [a for role in MAIN_OBSERVABLES for a in actions_with(space, role)]
         acquire = next((a for a in candidates if a.get("primary")), candidates[0] if candidates else None)
         if acquire is None:
@@ -96,7 +96,7 @@ class RoleController:
         await self.each("probe.approach")
         await self.each("beam.unblank")
         try:
-            # Required arguments the controller knows nothing about get their empty value: [] for a list.
+            # Required list arguments the controller knows nothing about are sent empty.
             arguments = {a["name"]: [] for a in self.acquire["args"] if a.get("required") and a.get("type") == "array"}
             return await self.call(self.acquire, arguments)
         finally:

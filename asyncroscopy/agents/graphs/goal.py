@@ -19,9 +19,11 @@ running is aborted (the report says so). The retry is told only the keys this
 goal's own attempts made, never data found by listing.
 
 At the end the run is remembered (``asyncroscopy.agents.memory``): a page in
-experiments/, and either a learned skill drafted from the calls that worked
-(goal met; ``asyncroscopy.agents.learning``) or a lesson in LESSONS.md (not
-met). The skills each attempt was given are collected in ``skills_applied``.
+experiments/, and a lesson in LESSONS.md when the goal was not met. Drafting a
+learned skill from the calls of a met goal (``asyncroscopy.agents.learning``) is
+opt-in with ASYNCROSCOPY_LEARN_SKILLS, so runs do not keep making new skills.
+The skills each attempt was given are collected in ``skills_applied`` (for
+traces, not for the report).
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from asyncroscopy import settings
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, Goal, GoalChecker, trace_from_messages
 from asyncroscopy.agents.graphs import run_keeping_partial
@@ -125,7 +128,7 @@ class GoalGraph:
     async def _facts(self, trace: list) -> Facts:
         return await (await self.checker()).facts([Call.from_dict(c) for c in trace])
 
-    # ------------------------------------------------------------------ nodes
+    # nodes
     async def work(self, state: GoalState) -> GoalState:
         started = state.get("started") or time.monotonic()
         remaining = self.goal.budget.max_seconds - (time.monotonic() - started)
@@ -144,8 +147,8 @@ class GoalGraph:
             answer, calls = f"stopped: the time budget of {self.goal.budget.max_seconds:.0f} s ran out", []
         except Exception as exc:
             answer, calls = f"the agent failed: {type(exc).__name__}: {str(exc)[:300]}", []
-        # The ledger has every call whose reply arrived, in order, even from a step or attempt that was
-        # stopped part way (a team's state only grows when a step ends): it knows every job started.
+        # The ledger has every call whose reply arrived, in order, even from a step that was stopped part way.
+        # A team's state only grows when a step ends, so only the ledger knows every job started.
         recorded = [Call.from_dict(c) for c in self.config.ledger[ledger_start:]]
         if len(recorded) > len(calls):
             calls = recorded
@@ -176,13 +179,12 @@ class GoalGraph:
         running = facts.active_jobs()
         if running and self.goal.leave_running:  # the request said to start it and not wait
             lines.append("Left running, as asked: " + ", ".join(f"job {j} on {v['device']}" for j, v in running.items()))
-        elif running:  # the goal is over: nothing it started keeps running
+        elif running:  # the goal is over, so nothing it started keeps running
             stopped = await (await self.checker()).stop_jobs(facts)
             lines.append("Stopped jobs this goal had left running: " + "; ".join(f"{c.name} {c.args.get('request', '')}{' (FAILED: ' + c.result[:120] + ')' if c.error else ''}" for c in stopped))
         lines += [f"{'met' if r['met'] else 'NOT met'}: {r['why']}" for r in verdict["results"]]
-        skills = state.get("skills_applied", [])
-        if skills:
-            lines.append("Skills used: " + "; ".join(f"{s['skill']} ({s['reason']})" for s in skills[:8]))
+        # Which skills were applied stays in the state as skills_applied for traces and benchmarks, not in the answer.
+        # Skills are background for the model, not something to report.
         learned = await self.remember(state, facts) if self.learn else ""
         if learned:
             lines.append(learned)
@@ -203,6 +205,8 @@ class GoalGraph:
             if not verdict["met"]:
                 outcome = self.memory.add_lesson(lesson(self.goal, verdict["results"], calls))
                 return {"added": "Lesson recorded in LESSONS.md.", "duplicate": "This lesson is already in LESSONS.md."}.get(outcome, f"Lesson not recorded ({outcome}).")
+            if not settings.get().learn_skills:  # drafting skills from runs is off unless ASYNCROSCOPY_LEARN_SKILLS turns it on
+                return ""
             offered = self.offered
             if offered is None:
                 offered = {t.name for t in await self.config.tools(allow=["*"])}

@@ -1,5 +1,5 @@
 # The worked example from docs/Adding_New_Hardware/new_instrument.md: a
-# simulated nanoindenter plus an IndentGrid job device, with approval mode.
+# simulated nanoindenter plus an IndentGrid job device.
 #
 #   uv run startup_scripts/run_servers.py --yaml configs/sim_indenter.yaml
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
@@ -7,7 +7,7 @@
 # Every device below gets the Tango name asyncroscopy/<key>/default, and the
 # instrument is asyncroscopy/instrument/default.
 
-# A simulator: approval auto mode is allowed, and the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
 simulated: true
 
 instrument:
@@ -27,9 +27,6 @@ devices:
     module_name: asyncroscopy.instruments.nano_indenter.indent_grid
     properties:
       indenter_device_address: asyncroscopy/instrument/default
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
 
 tiled:
   host: localhost

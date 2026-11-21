@@ -27,19 +27,22 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_MODEL` | Model tag or provider model name | the agent profile's |
 | `ASYNCROSCOPY_MODEL_PROVIDER` | `ollama`, or any `init_chat_model` provider | the agent profile's |
 | `ASYNCROSCOPY_NUM_CTX` | Ollama context window | the agent profile's |
-| `ASYNCROSCOPY_AGENT_PROFILE` | Agent profile: a name in `agents/profiles`, or a YAML path | `default` |
+| `ASYNCROSCOPY_AGENT_PROFILE` | Agent profile: a name in `agents/profiles`, or a YAML path | `capable` (gemma4:31b) |
 | `ASYNCROSCOPY_AGENT_TOOLS` | General agent's tool globs, comma-separated | the STEM set, else every tool |
 | `ASYNCROSCOPY_AGENT_PROMPT` | General agent's system prompt template | built in |
 | `ASYNCROSCOPY_CALLER` | Name recorded in the trace | set per graph |
 | `ASYNCROSCOPY_MAPPER` | Which Mapper the mapping graph uses, by tool prefix | the only one |
 | `ASYNCROSCOPY_MICROSCOPE` | Which microscope the mapping graph uses, by tool prefix | the only one |
 | `ASYNCROSCOPY_POLL_S` | Mapping graph's poll interval, seconds | `1.0` |
-| `ASYNCROSCOPY_APPROVAL_WAIT_S` | Mapping graph's wait for an approval, seconds | `1800` |
 | `ASYNCROSCOPY_ANALYSIS_WAIT_S` | Mapping graph's wait for stitching and scoring, seconds | `3600` |
 | `ASYNCROSCOPY_CLAIM_CHECK` | `0`, `false`, `no` or `off` turns off checking final answers against tool calls | on |
+| `ASYNCROSCOPY_LEARN_SKILLS` | `1`, `true`, `yes` or `on`: a goal run that met its goal drafts a learned skill from its calls (a draft until promoted). Off, goal runs still write their experiment page and lessons | off |
 | `ASYNCROSCOPY_AUTO_PROMOTE_AFTER` | Successful uses after which a learned skill promotes itself; `0` never | `0` |
 | `ASYNCROSCOPY_PLUGINS` | Plug-in modules or files, comma- or `os.pathsep`-separated | none |
 | `ASYNCROSCOPY_SKILLS_PATH` | Extra skill folders, `os.pathsep`-separated | none |
+| `ASYNCROSCOPY_LAB_SKILLS` | The lab's own skills, written from a client such as SciAgentGUI's Skills page (`save_skill`), and `off.txt`, the skills switched off here | `outputs/lab_skills` |
+| `ASYNCROSCOPY_SKILLS` | `1`, `true`, `yes` or `on` turns agent skills on (matching, prompts and the `load_skill`, `list_skills`, `skills_for` tools). | off |
+| `ASYNCROSCOPY_SKILLS_OFF` | Skills no agent or MCP client is offered: comma-separated names or globs (e.g. `mapping,multiscale_region`) | none |
 | `ASYNCROSCOPY_QT_API` | `pyqt5` selects PyQt5 for the desktop GUIs | PyQt6 |
 | `ASYNCROSCOPY_WRITE_GOLDEN` | Tests only: `1` rewrites golden files | off |
 | `ASYNCROSCOPY_WRITE_BENCHMARKS` | Tests only: `1` writes benchmark results | off |

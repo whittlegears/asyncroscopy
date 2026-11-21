@@ -43,7 +43,7 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
-from asyncroscopy.agents.goals import MAP_KEY
+from asyncroscopy.agents.goals import MAP_KEY, content_text
 
 CHARS_PER_TOKEN = 3.5
 OUTPUT_RESERVE_TOKENS = 1500  # left for the model's answer and tool call
@@ -73,8 +73,7 @@ def tools_chars(tools: Iterable[BaseTool] | None) -> int:
 
 
 def _text(message) -> str:
-    content = getattr(message, "content", "")
-    return content if isinstance(content, str) else json.dumps(content, default=str)
+    return content_text(getattr(message, "content", ""))
 
 
 def _size(message) -> int:
@@ -110,7 +109,7 @@ def fit_messages(messages: list, budget_chars: int) -> list:
             out.append(AIMessage(_text(m)[:OLD_TEXT_CHARS] + " ...", tool_calls=list(getattr(m, "tool_calls", None) or [])))
         else:
             out.append(m)
-    # Still over: drop the oldest finished tool rounds (an AI message with its replies), never a request.
+    # If still over, drop the oldest finished tool rounds. Never drop a request.
     while sum(_size(m) for m in out) > budget_chars:
         drop = None
         for i, m in enumerate(out):
@@ -141,11 +140,7 @@ def tool_rounds(messages: list) -> list[tuple[str, str, str]]:
     return rounds
 
 
-# Waiting for an operator repeats the same "pending" reply by design; the approval's own expiry ends it.
-NEVER_A_LOOP = ("approval_status",)
-
-
-CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message (asyncroscopy.agents.claims)
+CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message
 EMPTY_REPLY = "empty_reply"  # the name of EmptyReplyMiddleware's request for a reply
 
 
@@ -164,8 +159,6 @@ def _this_request(messages: list) -> list:
 def repeats(messages: list) -> int:
     """How many times in a row the latest tool round repeated the one before (0: it did not)."""
     rounds = tool_rounds(_this_request(messages))
-    if rounds and rounds[-1][0] in NEVER_A_LOOP:
-        return 0
     count = 0
     for i in range(len(rounds) - 1, 0, -1):
         if rounds[i] != rounds[i - 1]:
@@ -179,8 +172,8 @@ def cycles(messages: list) -> int:
     over the same few calls loops as surely as one repeating a single call. Going back to a place
     once is normal, so callers allow more of these than of repeats in a row."""
     rounds = tool_rounds(_this_request(messages))
-    # An action without arguments (blank the beam, laser off) is repeated by normal protocols.
-    if not rounds or rounds[-1][0] in NEVER_A_LOOP or rounds[-1][1] == "{}":
+    # Normal protocols repeat an action that takes no arguments, such as blanking the beam.
+    if not rounds or rounds[-1][1] == "{}":
         return 0
     return rounds[:-1].count(rounds[-1])
 
@@ -220,7 +213,7 @@ ALREADY_DONE = ("This exact plan already ran in this request and finished (job {
                 "them. Run it again only if the user asks for a second, separate one. Results: {results}")
 
 
-# ---------------------------------------------------------------------- waiting inside one tool call
+# waiting inside one tool call
 def _json(text: str) -> Any:
     try:
         return json.loads(text)
@@ -241,10 +234,10 @@ class JobWaitMiddleware(AgentMiddleware):
         super().__init__()
         self.wait_tool = next((t for t in tools if getattr(t, "name", "") == "wait_for_job"), None)
         self.default_cap_s = default_cap_s
-        self.deadline = deadline  # time.monotonic() after which no wait goes on (a goal's budget)
+        self.deadline = deadline  # the time.monotonic value after which no wait goes on
         self.on_progress = on_progress
         self.stop = stop
-        self.estimates: dict[str, float] = {}  # job id -> estimated duration (s), from run_job replies
+        self.estimates: dict[str, float] = {}  # estimated duration in seconds for each job id, from run_job replies
 
     def _cap(self, job_id: str) -> float:
         estimate = self.estimates.get(job_id)
@@ -259,7 +252,7 @@ class JobWaitMiddleware(AgentMiddleware):
         if self.wait_tool is None or name not in ("run_job", "wait_for_job") or not isinstance(result, ToolMessage):
             return None
         if name == "run_job" and str((request.tool_call.get("args") or {}).get("wait", True)).strip().lower() in ("false", "0", "no"):
-            return None  # the user wants the job id now (to stop it, or to come back later)
+            return None  # the user wants the job id now, to stop it or to come back later
         if getattr(result, "status", "success") == "error":
             return None
         status = _json(_text(result))
@@ -320,7 +313,7 @@ class JobWaitMiddleware(AgentMiddleware):
             if self.on_progress:
                 self.on_progress(job_id, status, time.monotonic() - began)
             if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
-                await asyncio.sleep(1.0)  # the server returned before its own wait ended: do not spin
+                await asyncio.sleep(1.0)  # the server returned before its own wait ended, so do not spin
         return self._final(request, first, status, time.monotonic() - began, checks)
 
     def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
@@ -360,8 +353,8 @@ def stop_message(messages: list) -> AIMessage:
     return AIMessage(STOP_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))
 
 
-# qwen3:8b's empty replies were tool calls Ollama dropped (about 55 tokens): a call to a skill's name, which is not
-# a tool, or arguments that are not JSON (a placeholder such as <Microscope>_get_fov where a number goes).
+# An empty reply is often a tool call that Ollama dropped.
+# The call named something that is not a tool, or its arguments were not JSON.
 ASK_AGAIN = ("Your last reply was empty. The latest tool reply ({name}) is above: make the next tool call the "
              "request needs, or give your final answer from what the tools returned. A call to a name that is not one "
              "of your tools (the instructions you follow are not tools) or with arguments that are not plain JSON is "

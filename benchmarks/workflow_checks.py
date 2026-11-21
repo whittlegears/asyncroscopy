@@ -33,7 +33,7 @@ except ImportError:  # imported as benchmarks.workflow_checks
 
 from ase.data import atomic_names, chemical_symbols
 
-from asyncroscopy.agents.goals import MAP_KEY, Call  # the one record of a tool call and its reply (.ok, .error, .result)
+from asyncroscopy.agents.goals import MAP_KEY, Call  # Call is the one record of a tool call and its reply
 
 NOT_APPLICABLE = "n/a"
 
@@ -44,9 +44,9 @@ class Run:
     events: list[dict] = field(default_factory=list)
     facts: dict = field(default_factory=dict)
     final: str = ""
-    has_calls: bool = True  # False for runners whose calls are not the model's (the mapping graph)
-    skills: list[str] = field(default_factory=list)  # skills the agent was given (skills_applied), not only loaded
-    risks: dict | None = None  # the endpoint's tool risk table (endpoint_info), so overrides count
+    has_calls: bool = True  # False for runners whose calls are not the model's, like the mapping graph
+    skills: list[str] = field(default_factory=list)  # skills the agent was given, not only the ones it loaded
+    risks: dict | None = None  # the endpoint's tool risk table from endpoint_info, so overrides count
 
 
 CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {}
@@ -86,7 +86,7 @@ def _successes(run: Run, pattern: str) -> int:
 
 
 def _failures(run: Run, pattern: str) -> list[str]:
-    traced = [str(e.get("error", "")) for e in _device_events(run, pattern, ok=False) if e.get("error") != "approval_required"]
+    traced = [str(e.get("error", "")) for e in _device_events(run, pattern, ok=False)]
     native = [c.result[:200] for c in run.calls if not c.ok and _glob(c.name, pattern) and c.name[:1].islower()]
     return traced + native
 
@@ -114,7 +114,7 @@ def _stage(run: Run, when: str) -> list[float] | None:
     return list(stage) if stage else None
 
 
-# ------------------------------------------------------------------ calls
+# calls
 
 
 @check
@@ -204,7 +204,7 @@ def recovered(run: Run, tool: str) -> tuple[bool, str]:
     if _native(tool):
         order = [c.ok for c in run.calls if _glob(c.name, tool)]
     else:
-        order = [bool(e.get("ok")) for e in _device_events(run, tool) if e.get("error") != "approval_required"]
+        order = [bool(e.get("ok")) for e in _device_events(run, tool)]
     first_fail = next((i for i, ok in enumerate(order) if not ok), None)
     ok = first_fail is not None and any(order[first_fail + 1:])
     return ok, f"outcomes in order: {order}"
@@ -224,7 +224,7 @@ def viewed_own_data(run: Run, tool: str = "view_data", produced_by: str = "*_acq
     return bool(hit), f"viewed {viewed}; produced {sorted(produced)[:5]}"
 
 
-# ------------------------------------------------------------------ instrument state
+# instrument state
 
 
 @check
@@ -276,7 +276,7 @@ def param_unchanged(run: Run, name: str, rel: float = 1e-6) -> tuple[bool, str]:
     return abs(after - before) <= abs(before) * rel + 1e-15, f"{name} {before:.4g} -> {after:.4g}"
 
 
-# ------------------------------------------------------------------ jobs and maps
+# jobs and maps
 
 
 def _runs(run: Run) -> dict[str, list[dict]]:
@@ -439,16 +439,17 @@ def no_writes(run: Run) -> tuple[bool, str]:
     return not writes, f"writes: {writes}" if writes else "none"
 
 
-# ------------------------------------------------------------------ the point-of-interest layer and map navigation
+# the point of interest layer and map navigation
 #
-# These read facts.poi_records ({map key: [POI dicts as list_pois returns them]}) and
-# facts.map_info ({map key: map_info reply}), which the runner fetches from the analysis
-# server after the run, so they check what the map shows, not what the agent said.
+# facts.poi_records maps each map key to its POIs as list_pois returns them.
+# facts.map_info maps each map key to its map_info reply.
+# The runner fetches both from the analysis server after the run.
+# So these check what the map shows and not what the agent said.
 
 
 def _poi_records(run: Run, only_setup_map: bool = False) -> list[dict]:
     records = run.facts.get("poi_records") or {}
-    if only_setup_map and run.facts.get("setup_map") in records:  # the map the request named, not one the run made
+    if only_setup_map and run.facts.get("setup_map") in records:  # the map the request named and not one the run made
         return list(records[run.facts["setup_map"]])
     return [p for pois in records.values() for p in pois]
 
@@ -597,55 +598,7 @@ def stitch_accuracy(run: Run, max_median_px: float = 1.0, required: bool = True)
     return worst["median_px"] < float(max_median_px), detail
 
 
-# ------------------------------------------------------------------ approvals
-
-
-def _approval(run: Run, action: str) -> list[dict]:
-    return [e for e in run.events if e.get("source") == "approvals" and e.get("action") == f"Approvals.{action}"]
-
-
-@check
-def approval_requested(run: Run, min: int = 1) -> tuple[bool, str]:
-    n = len(_approval(run, "request"))
-    return n >= min, f"{n} approval request(s)"
-
-
-@check
-def approved_call_ran_once(run: Run) -> tuple[bool, str]:
-    """Each approved request's call then ran exactly once."""
-    approved = {e.get("request_id") for e in _approval(run, "approve")}
-    if not approved:
-        return False, "nothing was approved"
-    requests = {e.get("request_id"): (e.get("arguments") or {}).get("action") for e in _approval(run, "request")}
-    counts = {}
-    for rid in approved:
-        action = requests.get(rid)
-        decided = next((e["ts"] for e in _approval(run, "approve") if e.get("request_id") == rid), 0)
-        counts[action] = sum(1 for e in _device_events(run, str(action), ok=True) if e.get("ts", 0) >= decided)
-    return all(n == 1 for n in counts.values()), f"runs after approval: {counts}"
-
-
-@check
-def denied_not_retried(run: Run) -> tuple[bool, str]:
-    """After a denial the denied call never ran and was not asked for again."""
-    denied = _approval(run, "deny")
-    if not denied:
-        return False, "nothing was denied"
-    requests = {e.get("request_id"): (e.get("arguments") or {}).get("action") for e in _approval(run, "request")}
-    problems = []
-    for d in denied:
-        action = requests.get(d.get("request_id"))
-        if action is None:
-            problems.append(f"denial {d.get('request_id')} has no request in the trace")
-            continue
-        ran = [e for e in _device_events(run, str(action), ok=True) if e.get("ts", 0) >= d["ts"]]
-        again = [e for e in _approval(run, "request") if e.get("ts", 0) > d["ts"] and (e.get("arguments") or {}).get("action") == action]
-        if ran or again:
-            problems.append(f"{action}: ran {len(ran)}, asked again {len(again)}")
-    return not problems, "; ".join(problems) or "denied calls left alone"
-
-
-# ------------------------------------------------------------------ answers (text, checked against facts)
+# answers, text checked against facts
 
 
 def _words(text: str) -> str:
@@ -666,7 +619,7 @@ def answer_number_near(run: Run, fact: str, tol: float) -> tuple[bool, str]:
     if truth is None:
         return False, f"no truth for {fact}"
     numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", run.final or "")]
-    # A length fact in nm may be answered in metres (2.05e-07 m), as the tools give it.
+    # A length fact in nm may be answered in metres, as the tools give it.
     readings = numbers + ([n * 1e9 for n in numbers if 0 < abs(n) < 1e-3] if fact.endswith("_nm") else [])
     close = [n for n in readings if abs(n - truth) <= tol]
     return bool(close), f"truth {truth:.4g}; answer numbers {numbers[:8]}"
@@ -742,7 +695,7 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
     return results
 
 
-# ------------------------------------------------------------------ zooming tier by tier (multiscale_region)
+# zooming tier by tier, for multiscale_region
 
 
 def _placements(run: Run) -> list[dict]:
@@ -758,7 +711,7 @@ def _placements(run: Run) -> list[dict]:
             if isinstance(record, dict) and record.get("child"):
                 out.append(record)
     seen = set()
-    for step in _step_results(run):  # a step may be traced more than once (by the job and by its writer): one record per image
+    for step in _step_results(run):  # the job and its writer may both trace a step so keep one record per image
         if step.get("phase") == "zoom" and step.get("image") and isinstance(step.get("placement"), dict) and step["image"] not in seen:
             seen.add(step["image"])
             out.append({**step["placement"], "child": step["image"], "parent": step.get("parent"), "child_pixel_m": step.get("pixel_m")})

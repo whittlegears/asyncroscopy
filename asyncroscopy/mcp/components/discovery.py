@@ -1,7 +1,6 @@
 """What this endpoint offers, for models and for agent programs: find_tools, call_tool, endpoint_info, action_space.
 
-All four read the tool descriptors built at discovery (``asyncroscopy.mcp.descriptors``) and the one
-approval decision (``asyncroscopy.safety.decide``).
+All four read the tool descriptors built at discovery (``asyncroscopy.mcp.descriptors``).
 """
 
 from __future__ import annotations
@@ -12,27 +11,15 @@ from typing import TYPE_CHECKING, Any
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult, tool
 
-from asyncroscopy.safety.decide import decide
-
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
-
-# What find_tools says for each outcome of the approval decision.
-WHEN = {
-    "runs": "runs",
-    "job": "runs when every command the job drives runs",
-    "refused": "refused: the approval service is not answering",
-    "held": "held",
-}
-# What endpoint_info's "auto" says for each outcome in auto mode with nothing switched on.
-AUTO = {"runs": "routine", "job": "job", "held": "held"}
 
 
 class Discovery:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
         self.analysis_url = cfg.analysis_url
-        self.agent_profile = cfg.agent_profile  # whose tool selection endpoint_info reports; None: the default profile
+        self.agent_profile = cfg.agent_profile  # the profile whose tool selection endpoint_info reports. None means the default profile.
 
     def natives(self) -> list:
         return [self.endpoint_info, self.action_space, self.find_tools, self.call_tool]
@@ -47,31 +34,28 @@ class Discovery:
 
     @tool()
     def endpoint_info(self) -> dict[str, Any]:
-        """For agent programs, not models: each tool's risk as the approval gate sees it and what it is (tools: its
+        """For agent programs, not models: each tool's risk and what it is (tools: its
         device, command, canonical role, risk and whether it acts), the job devices, the
-        analysis server, agent_tools: globs of the tools (here and on the analysis server) to give a model, and
-        auto: for each high-risk tool an agent may call, how auto mode treats it before any is switched on
-        ("routine" runs, "held" waits for a person, "job" runs when every command the job drives runs)."""
+        analysis server, and agent_tools: globs of the tools (here and on the analysis server) to give a model."""
         server = self.server
         tools = server.descriptors
+        simulated = server.stack_simulated()
         return {
             "role": server.endpoint_role,
             "stack_id": server.stack_id,
+            # Draft workflows only run where this is true.
+            "simulated": simulated,
             "analysis_url": self.analysis_url,
             "job_devices": server.jobs.devices(),
             "stem_devices": sorted(p for p, d in server.devices.items() if d.stem),
             "map_devices": sorted(p for p, d in server.devices.items() if d.envelope and d.dev_class == "Mapper"),
             "job_limits": server.jobs.job_limits,
             "risks": {name: t.risk for name, t in sorted(tools.items())},
-            # What each tool is, as discovery decided it, so an agent program never guesses from a tool's name.
+            # What each tool is, so an agent program never guesses from a tool's name.
             "tools": {name: {"device": t.device, "command": t.command, "role": t.action_role, "risk": t.risk, "acts": t.acts}
                       for name, t in sorted(tools.items())},
-            # The general agent's own selection (asyncroscopy.mcp.agent_tools, from the agent profile), so other harnesses match it.
+            # The general agent's own tool selection, so other harnesses can match it.
             "agent_tools": self.agent_tool_globs(),
-            "auto": {
-                name: AUTO[decide(t, endpoint_role="agent", mode="auto")]
-                for name, t in sorted(tools.items()) if t.risk == "high" and not t.operator_only
-            },
         }
 
     @tool()
@@ -87,11 +71,9 @@ class Discovery:
     @tool()
     def find_tools(self, query: str = "", limit: int = 40) -> dict[str, Any]:
         """Every tool this instrument offers, including ones not in your tool list. query: words to look for in a
-        tool's name or description (empty lists them all). Each match has its description, its arguments, and
-        "when": "runs" (no approval needed now) or "held" (it waits for a person to approve). Run one with call_tool.
-        mode "unknown" means the approval service is not answering: high-risk tools are refused until it does."""
+        tool's name or description (empty lists them all). Each match has its description and its arguments.
+        Run one with call_tool."""
         server = self.server
-        mode, switched = server.gate.mode_and_switches()
         words = [w for w in re.split(r"\W+", query.lower()) if w]
         matches = []
         for name in sorted(server.registered):
@@ -102,16 +84,14 @@ class Discovery:
             text = f"{name.lower()} {description.lower()}"
             if words and not all(w in text for w in words):
                 continue
-            outcome = decide(server.descriptors[name], endpoint_role=server.endpoint_role, mode=mode, switched=switched)
             matches.append({"name": name, "description": description.splitlines()[0][:300] if description else "",
-                            "arguments": sorted((registered.parameters or {}).get("properties", {})), "when": WHEN[outcome]})
-        return {"mode": mode, "count": len(matches), "tools": matches[:max(1, int(limit))],
+                            "arguments": sorted((registered.parameters or {}).get("properties", {}))})
+        return {"count": len(matches), "tools": matches[:max(1, int(limit))],
                 **({"note": f"{len(matches) - int(limit)} more: narrow the query"} if len(matches) > int(limit) else {})}
 
     @tool()
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> ToolResult:
-        """Run any tool this instrument offers by name (find one with find_tools), with its arguments as an object.
-        It goes through the same approval rules as calling the tool directly."""
+        """Run any tool this instrument offers by name (find one with find_tools), with its arguments as an object."""
         if name in ("find_tools", "call_tool"):
             raise ToolError(f"{name} cannot be run through call_tool; call it directly")
         registered = self.server.registered.get(name)

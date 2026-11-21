@@ -1,6 +1,6 @@
 # Agentic sample mapping
 
-An agent maps a sample from one sentence, then stitches it into a zoomable map, marks where EDS spectra were taken, and proposes interesting regions. The design is in [docs/designs/agentic_sample_mapping.md](../designs/agentic_sample_mapping.md); this page is how to use it.
+An agent maps a sample from one sentence, then stitches it into a zoomable map, marks where EDS spectra were taken, and proposes interesting regions. This page is how to use it.
 
 ## The pieces
 
@@ -19,7 +19,6 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 | Instrument profiles | `asyncroscopy/jobs/mapping/profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `spm` (an SPMMicroscope, the tip lifted for every move), `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
 | Routines | `asyncroscopy/routines/grid.py`, `dose.py`, `drift.py` | The pure arithmetic: tile grids, electron dose, the stitch's drift at a time, live drift trackers. |
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with the analysis server's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
-| Approval mode | `asyncroscopy/safety/` | `auto` or `approve`; see [approval_mode.md](approval_mode.md). |
 | Map tools | `asyncroscopy/analysis_server/` (algorithms: pyTEMlib `image_tools`) | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
 | Graphs | `asyncroscopy/agents/graphs/` | `mapping`: the model only writes the plan. `general`: the model makes every call, using the `mapping` skill. |
 | Skill | `asyncroscopy/skills/mapping/SKILL.md` | The procedure agents load before mapping. |
@@ -53,7 +52,7 @@ The fields after `overlap` are the STEM profile's. Another instrument's Mapper (
 - The estimate's `max_dose_e_per_a2` counts the frames where tiles overlap, a revisit image, and the EDS spectra. A spectrum's parked-beam dose is counted over a square of side `EDS_DOSE_SPREAD_M` (10 nm, the one definition in `asyncroscopy/routines/dose.py`); an `eds_map` grid can put several spectra in one square. `eds_dose_e_per_a2` gives the EDS share.
 - The current comes from the microscope's `get_parameters` (the same as its `beam_current_pa`, `beam_current_source` and `beam_current_age_s` attributes): `beam_current_pa` with `beam_current_source` `measured` or `default` (then `beam_current_reason` says why). A microscope that has not measured it reports its own `default_beam_current_pa`. The twin reports its configured `probe_current_pa` as measured. The Spectra 300 (AutoScript) reports `default` until the screen current is measured: insert the screen, call `get_screen_current`, then retract it.
 - On a stack that is not simulated, `reserve` refuses a plan with a dose budget when the current is `default`, or measured too long ago (`max_beam_current_age_s`). Only the Mapper's `simulated` property (run_servers' top-level `simulated:`) makes a stack simulated; what the microscope reports does not.
-- `start` checks the current again, and so does every resume: the approval may come long after the reserve. A plan with a dose budget fails at start, before anything is set, when the current can no longer be used or is more than 5 % above the one the budget was checked with. Reserve again after measuring it.
+- `start` checks the current again, and so does every resume: a start may come long after the reserve. A plan with a dose budget fails at start, before anything is set, when the current can no longer be used or is more than 5 % above the one the budget was checked with. Reserve again after measuring it.
 - The agent endpoint's `mcp.job_limits.max_dose_e_per_a2` refuses, on a stack that is not simulated, any beam job whose estimate gives no dose or a current that is not `measured` (`run_job`, `<Device>_reserve` and every `<Device>_start` alike).
 - `set_screen_current` writes the monochromator focus only for a current inside the calibrated range (`calibrate_screen_current`, screen inserted); any other value is refused before anything is written.
 
@@ -65,7 +64,7 @@ The stitch fits drift after the map, and revisits extrapolate that fit. A plan c
 {"box_m": [-1.2e-7, 1.2e-7, -1.2e-7, 1.2e-7], "fov_m": 5e-8, "overlap": 0.25, "drift": {"track": true, "max_shift_m": 5e-9}}
 ```
 
-- **How it corrects.** Before each tile, after the stage move, a tracker predicts how far the tile will sit from where the plan put it. It predicts for the middle of the frame, on the instrument's clock (`clock_s`, simulated time on the twin). The Mapper then sets the image shift (the beam shift in STEM) to cancel that error. The stage still goes only to the planned tile centres, so tracking never takes it outside the plan box.
+- **How it corrects.** Before each tile, after the stage move, a tracker predicts how far the tile will sit from where the plan put it. It predicts for the middle of the frame, on the instrument's clock (`clock_s`, simulated time on the twin). The Mapper then sets the image shift (in STEM too, unless the device's `stem_shift_deflector` says beam_shift) to cancel that error. The stage still goes only to the planned tile centres, so tracking never takes it outside the plan box.
 - **How it measures.** After the tile, the Mapper registers it against an overlapping tile already taken: the previous tile in serpentine order, or else the tile in the row before. It uses the same bounded cross-correlation as the stitch (pyTEMlib `image_tools.mosaic.bounded_shift`). The result, with the applied shift taken out, is the tracker's next measurement. A featureless or ambiguous overlap gives no measurement.
 - **Limits.** One correction changes the shift by at most `max_shift_m` per axis (default: a tenth of `fov_m`). All corrections together stay within `max_total_m` of the shift before the map. That default, and its maximum, is the instrument profile's limit (1 µm for STEM and SEM).
 - **Refusals at reserve.** `reserve` refuses, by name, tracking on a profile that cannot shift the image (the YAML/AFM profile), tracking on a plan without overlap, an unknown tracker, and limits above the profile's.
@@ -75,7 +74,7 @@ The stitch fits drift after the map, and revisits extrapolate that fit. A plan c
 - **Dry run.** A dry run measures nothing, but it records each `set_image_shift` and checks it against `max_total_m`.
 - **Trackers.** Trackers live in `asyncroscopy/routines/drift.py`. The default, `linear`, fits a line over the last `window` measurements on the clock. A hackathon team can add one with `@register_tracker` (or the `asyncroscopy.drift_trackers` entry point), choose it with `"tracker"`, and score it with `drift_bench(MyTracker)`. The bench needs no stack. The Mapper runs in its own process, so list your tracker's file or module in the stack YAML's `plugins:` (or `ASYNCROSCOPY_PLUGINS`); otherwise reserve answers `unknown drift tracker`. For example, with `class MyTracker(LinearTracker): name = "smooth"` in `my_lab/drift.py` decorated with `@register_tracker`, add `plugins: [my_lab/drift.py]` to the run_servers config and plan `"drift": {"track": true, "tracker": "smooth"}`. Profiles (`@register_profile`) load the same way; see "Make the Mapper's process import it" in [new_instrument.md](../Adding_New_Hardware/new_instrument.md#writing-a-profile).
 
-`tests/test_live_drift.py` runs this on a twin drifting at 5e-11 m/s: 36 tiles of 50 nm with 25 % overlap, a 10 s move per tile, and 430 s of simulated time. Placement error is measured against the twin's ground truth, not a stitch:
+`tests/jobs/test_live_drift.py` runs this on a twin drifting at 5e-11 m/s: 36 tiles of 50 nm with 25 % overlap, a 10 s move per tile, and 430 s of simulated time. Placement error is measured against the twin's ground truth, not a stitch:
 
 - Without tracking, the worst tile is 0.39 of a field of view off.
 - With tracking, the worst tile is 0.08 off. There are 36 traced corrections, 36 measurements, and a largest single correction of 3.5 nm.
@@ -100,7 +99,7 @@ Then stitch with the analysis server (`assemble_map`), or in Python with `pyTEMl
 
 ## Testing a workflow on the twin before the instrument
 
-`configs/digital_twin_mapping.yaml` gives the twin stage error, backlash, drift, scan distortion, focus, noise, EDS spectra and beam damage at literature magnitudes. `export_ground_truth` on the twin (operator endpoint or Tango, never the agent endpoint) returns where every tile really was, so a workflow can be scored: `tests/test_map_end_to_end.py` checks that stitching recovers the true layout to under a pixel while stage positions alone are visibly off.
+`configs/digital_twin_mapping.yaml` gives the twin stage error, backlash, drift, scan distortion, focus, noise, EDS spectra and beam damage at literature magnitudes. `export_ground_truth` on the twin (operator endpoint or Tango, never the agent endpoint) returns where every tile really was, so a workflow can be scored: `tests/analysis/test_map_end_to_end.py` checks that stitching recovers the true layout to under a pixel while stage positions alone are visibly off.
 
 ## Measuring an agent
 

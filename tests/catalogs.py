@@ -12,7 +12,7 @@ from asyncroscopy.safety.policy import is_envelope_device, is_probe_device, is_s
 from asyncroscopy.utils.commands import declared_hints
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
-NATIVES = sorted(set(NATIVE) | {"approval_status", "find_tools", "call_tool", "endpoint_info", "action_space", "load_skill", "list_devices"})
+NATIVES = sorted(set(NATIVE) | {"find_tools", "call_tool", "endpoint_info", "action_space", "load_skill", "list_devices"})
 
 
 def _commands(device_class: type) -> list[str]:
@@ -32,7 +32,7 @@ def catalog(devices: dict[str, type | str], natives: list[str] = NATIVES) -> Too
             spec = load_spec(EXAMPLES / source)
             hints = {name: hint for name, hint in declared_hints(YamlInstrument).items() if not hint.get("operator_only")} | action_hints(spec)
             entries.append((prefix, hints, list(hints) + ["State", "Status"]))
-            if spec.jobs:  # the file's jobs are a device of their own, as run_servers starts them
+            if spec.jobs:  # the file's jobs run as their own device
                 entries.append((f"{prefix}Job", declared_hints(JobDevice), _commands(JobDevice)))
         else:
             entries.append((prefix, declared_hints(source), _commands(source)))

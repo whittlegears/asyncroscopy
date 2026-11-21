@@ -107,7 +107,7 @@ class Memory:
         path = settings.get().instrument_notes
         return Path(path) if path and Path(path).is_file() else None
 
-    # ------------------------------------------------------------------ reading
+    # reading
     def _sections(self) -> list[tuple[str, str]]:
         """(source, text) chunks: INSTRUMENT.md by heading, each lesson, each experiment page's summary."""
         chunks: list[tuple[str, str]] = []
@@ -130,16 +130,15 @@ class Memory:
 
     def notes_for(self, request: str, budget: int = NOTES_BUDGET_CHARS) -> str:
         """The memory most relevant to ``request``, best first, within ``budget`` characters ("" if none)."""
-        asked = content_words(request)
-        if not asked:
+        from asyncroscopy.skills.index import rank_texts
+
+        if not content_words(request):
             return ""
-        scored = []
-        for order, (source, text) in enumerate(self._sections()):
-            hits = len(asked & content_words(text))
-            if hits:
-                scored.append((hits, -order, source, text))
+        sections = self._sections()
+        # Ranked with the skills' BM25, so a word few notes share counts more than one in every lesson.
+        ranked = [sections[i] for i in rank_texts([text for _source, text in sections], [(request, 1.0)])]
         out, used = [], 0
-        for _hits, _order, source, text in sorted(scored, reverse=True):
+        for source, text in ranked:
             entry = f"[{source}] {redact(text)}"
             if used + len(entry) > budget:
                 if not out:
@@ -149,7 +148,7 @@ class Memory:
             used += len(entry)
         return "\n".join(out)
 
-    # ------------------------------------------------------------------ writing
+    # writing
     def seed_instrument(self, catalog: ToolCatalog, stem: bool = False) -> bool:
         """Write INSTRUMENT.md from what the endpoint's tools are (``catalog``, from endpoint_info) if it does not exist
         yet; ``stem``: the endpoint has an electron microscope. True if written; never from an unknown catalog."""
@@ -188,7 +187,6 @@ class Memory:
             "- Lengths are metres. Each command's description gives its arguments"
             + (" (a STEM stage position, for one, is [x, y, z, alpha, beta] in metres and degrees)." if stem else "."),
             "- Data are keys in Tiled; look at them with view_data (text or png).",
-            "- High-risk calls may be held for an operator (APPROVAL REQUIRED); never try to approve them yourself.",
             "",
             "## Limits",
             "",

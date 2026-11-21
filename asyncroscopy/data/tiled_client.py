@@ -26,18 +26,18 @@ except ImportError:
 from asyncroscopy import settings
 from asyncroscopy.core.net import is_loopback_host
 
-# Seconds; turned into a Timeout of whichever HTTP library the installed Tiled client uses
-# (httpx up to tiled 0.2.20, httpx2 from 0.2.21), since each library only accepts its own.
+# Seconds. Turned into the Timeout of whichever HTTP library the installed Tiled client uses,
+# since httpx and httpx2 each accept only their own.
 TIMEOUT_S = {"connect": 3.0, "read": 15.0, "write": 15.0, "pool": 3.0}
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
 DEFAULT_URI = "http://127.0.0.1:9091"
 
-# The Tiled client retries every request on a connection error for up to 45 s
-# (10 attempts). A dead Tiled would then hang each call past the 12-30 s the
-# instrument devices and the MCP bridge wait, so keep its retries short. An
-# explicit TILED_RETRY_* in the environment still wins. The values are read at
-# import by tiled, and at call time from tiled.client.utils, so both are set.
+# By default the Tiled client retries a connection error for up to 45 s.
+# A dead Tiled would then hang each call longer than the instrument devices
+# and the MCP bridge wait, so keep its retries short.
+# A TILED_RETRY_* set in the environment still wins. Tiled reads the values at
+# import and again at call time, so both are set.
 os.environ.setdefault("TILED_RETRY_ATTEMPTS", "2")
 os.environ.setdefault("TILED_RETRY_TIMEOUT", "3")
 
@@ -92,7 +92,7 @@ def _nothing_listening(uri: str) -> bool:
         return not any(
             c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port for c in psutil.net_connections(kind="tcp")
         )
-    except Exception:  # psutil missing or not permitted: fall back to connecting
+    except Exception:  # psutil is missing or not permitted, so fall back to connecting
         return False
 
 
@@ -111,8 +111,8 @@ def about(uri: str, timeout_s: float = 2.0) -> dict | None:
     return None
 
 
-# Failures that mean Tiled cannot be reached. Not OSError in general: FileExistsError,
-# FileNotFoundError and TimeoutError are OSErrors too, and mean something else.
+# Failures that mean Tiled cannot be reached. OSError is too broad, because FileExistsError,
+# FileNotFoundError and TimeoutError are OSErrors too and mean something else.
 CONNECTION_ERRORS = tuple(
     error for error in (httpx.TransportError, getattr(httpx2, "TransportError", None), ConnectionError) if error is not None
 )
@@ -181,7 +181,7 @@ def uri_from_data_device(address: str) -> str:
         proxy = DeviceProxy(address)
         proxy.set_timeout_millis(5000)
         uri = json.loads(proxy.get_config()).get("uri")
-    except Exception as exc:  # Tango raises DevFailed; a busy DATA device times out
+    except Exception as exc:  # Tango raises DevFailed, and a busy DATA device times out
         if cached is not None:
             return cached[0]
         fallback = settings.get().tiled_uri
@@ -209,8 +209,7 @@ def node_for_key(key: str, uri: str) -> Any:
     except Exception:
         close = []
     if key in close:
-        # Registered between the lookup and the listing (an acquisition registering its file as a Mapper tile
-        # read it): a map failed 0/18 on an error naming the key it then listed. Read it again.
+        # The key can be registered between the lookup and the listing, so read it again.
         try:
             return client[key]
         except KeyError:

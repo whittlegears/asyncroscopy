@@ -19,8 +19,8 @@ from __future__ import annotations
 from asyncroscopy.core.names import ENVELOPE_VERBS
 from asyncroscopy.safety.policy import OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
 
-# What switching off stops the beam reaching the sample, without the hours a gun, filament, high tension
-# or emission source takes to come back: their "off" is a safe stop, not a beam blank (stop_all never calls it).
+# Things whose off switch counts as blanking the beam.
+# A gun, filament, high tension or emission source is left out because it takes hours to come back.
 _BEAM_OFF = OFF_OBJECTS - {"gun", "filament", "hv", "emission", "source"}
 _JOB_ROLES = {"reserve": "job.reserve", "start": "job.start", "job_status": "job.status", "abort": "job.abort",
               "results": "job.results", "release": "job.release", "get_reservation": "job.status"}
@@ -55,7 +55,7 @@ def role_for(dev_class: str, command: str, *, envelope: bool = False, probe: boo
     if reads:
         if w & _STAGE:
             return "stage.read"
-        if "data" in w and "image" in w:  # get_image_data_cached
+        if "data" in w and "image" in w:  # such as get_image_data_cached
             return "data.read"
         return "setting.read"
     if words and words[0].startswith("acquire"):

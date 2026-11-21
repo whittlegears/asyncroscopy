@@ -30,14 +30,14 @@ from tango.server import attribute, device_property
 from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, unsupported
 from asyncroscopy.utils.commands import command
 
-# Detector and sub-device proxies the base connects: {name: the device property holding its address}.
+# The base connects these detector and sub-device proxies. Each name maps to the device property that holds its address.
 DETECTOR_ADDRESSES = {
     **BEAM_ADDRESSES,
     "eds": "eds_device_address",
     "camera": "camera_device_address",
     "corrector": "corrector_device_address",
 }
-# The limit properties' defaults: what the base enforces when a deployment sets none.
+# The defaults of the limit properties are what the base enforces when a deployment sets none.
 SPECTRUM_DETECTORS = ("eds", "eels")
 DEFAULT_MAX_DEFOCUS = 1e-5
 DEFAULT_MAX_STIGMATOR = 1e-6
@@ -99,7 +99,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
         doc="Scanning detector used when a caller names none: acquire_scanned_image with an empty list, a Tuner plan without a detector.",
     )
 
-    # Limits checked before any backend sees a value; action_hints tells clients the same ranges.
+    # These limits are checked before any backend sees a value. action_hints tells clients the same ranges.
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
     max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")

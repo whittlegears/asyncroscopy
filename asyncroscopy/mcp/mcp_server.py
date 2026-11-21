@@ -2,7 +2,7 @@
 
 The server discovers the devices in the Tango database, decides once what each command is
 (``asyncroscopy.mcp.descriptors``), and offers every command as an MCP tool. A tool call passes an
-ordered list of interceptors (``asyncroscopy.mcp.interceptors``): the approval gate, the job checks,
+ordered list of interceptors (``asyncroscopy.mcp.interceptors``): the job checks,
 logging and the trace, an acquisition's preview. The native tools (data, jobs, discovery, skills,
 the trace and the emergency stop) come from the components in ``asyncroscopy.mcp.components``.
 """
@@ -33,18 +33,18 @@ from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_typ
 from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, tool_name
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
-from asyncroscopy.mcp import endpoint_auth
-from asyncroscopy.mcp.components import data_tools, discovery, estop, gate, jobs, skills_tools, trace_tools
+from asyncroscopy.mcp import endpoint_auth, local_docs
+from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, skills_tools, trace_tools
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
-from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, looks_like_stop, operator_only
+from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
 from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
-# Tango's client default of 3000 ms is shorter than a real acquisition: the digital twin's first
-# acquire_camera_image takes over 3 s cold. SciAgentGUI allows 60 s per MCP HTTP request, so 30 s lets
-# slow commands finish while still failing inside the client's window with a readable Tango error.
+# The Tango client default of 3000 ms is shorter than a real acquisition. The first acquire_camera_image
+# of the digital twin takes over 3 s cold. SciAgentGUI allows 60 s per MCP HTTP request, so 30 s lets
+# slow commands finish while still failing inside the window of the client with a readable Tango error.
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_LIMITS = ("max_duration_s", "max_dose_e_per_a2")
 
@@ -60,7 +60,7 @@ def _placeholder_doc(text: str) -> bool:
     Such text must never lead a tool description: models read the first line to
     pick a tool. Use asyncroscopy.utils.commands.command to carry the docstring.
     """
-    # A plain tango.server.command gives ":param x: (not documented)\n:type x: DevDouble".
+    # A plain tango.server.command gives a param line that says not documented and then a type line.
     t = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", text.strip())
     t = "\n".join(line for line in t.splitlines() if not line.strip().startswith(":type")).strip().lower()
     return t in ("", "uninitialised", "uninitialized", "none", "(not documented)") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
@@ -73,9 +73,8 @@ class ServerConfig:
     name: str
     endpoint_role: str
     data_device_address: str
-    approvals_device_address: str | None = None
     risk_overrides: dict[str, str] = field(default_factory=dict)
-    auto_routine: dict[str, list[str]] | None = None  # mcp.safety.auto_routine; None: the devices' routine declarations
+    auto_routine: dict[str, list[str]] | None = None  # from mcp.safety.auto_routine. None means the routine declarations of the devices apply.
     analysis_url: str | None = None
     job_limits: dict[str, float] = field(default_factory=dict)
     trace_follow: list[str] = field(default_factory=list)
@@ -101,7 +100,6 @@ class MCPServer:
         verbose: bool = True,
         tool_log_path: str | None = None,
         endpoint_role: str = "agent",
-        approvals_device_address: str | None = None,
         risk_overrides: dict[str, str] | None = None,
         trace_path: str | None = None,
         database: Any = None,
@@ -123,10 +121,9 @@ class MCPServer:
             include_only_functions: Command names/patterns to allow exclusively.
             verbose: Print device discovery and tool registration progress.
             tool_log_path: JSONL file with one line per tool call. Off when empty.
-            endpoint_role: "agent" (default) hides operator-only commands such as Approvals.approve and
+            endpoint_role: "agent" (default) hides operator-only commands such as
                 export_ground_truth; "operator" is for the GUI; "monitor" offers only pure reads (get_*,
                 list_*, State, Status) and the trace, for a status panel or an agent that must not act.
-            approvals_device_address: Approvals device holding the approval mode. Unset: every call runs.
             risk_overrides: {"Class.command" or tool-name glob: "low"|"high"}, checked before what devices declare.
             trace_path: Instrument Trace JSONL file. Off when empty.
             database: Stands in for the Tango database (anything with get_device_exported);
@@ -152,14 +149,14 @@ class MCPServer:
             raise ValueError(f"unknown job_limits {sorted(unknown_limits)}; allowed: {', '.join(JOB_LIMITS)}")
         self.config = ServerConfig(
             name=name, endpoint_role=endpoint_role, data_device_address=data_device_address,
-            approvals_device_address=approvals_device_address or None, risk_overrides=check_overrides(risk_overrides),
+            risk_overrides=check_overrides(risk_overrides),
             auto_routine=None if auto_routine is None else dict(auto_routine), analysis_url=analysis_url or None,
             job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
             verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
-        # ``database`` replaces the Tango database lookup (asyncroscopy.testing passes a device list).
+        # A given database replaces the Tango database lookup. asyncroscopy.testing passes a device list this way.
         self.database = database if database is not None else Database(tango_host, tango_port)
-        # Which stack this endpoint serves: every endpoint of one stack names the same Tango database,
+        # This says which stack the endpoint serves. Every endpoint of one stack names the same Tango database,
         # so a client groups the agent, operator and monitor endpoints of an instrument by it.
         self.stack_id = f"tango://{tango_host}:{tango_port}"
         self.mcp = FastMCP(name)
@@ -175,16 +172,16 @@ class MCPServer:
             trace_path, source="mcp", writer=f"mcp:{name}:{endpoint_role}", clock=InstrumentClock(clock_device or ""),
         ) if trace_path else None
         self.devices: dict[str, DeviceInfo] = {}  # tool prefix -> its device
-        self.descriptors: dict[str, ToolDescriptor] = {}  # tool name -> what it is (devices' and native tools)
+        self.descriptors: dict[str, ToolDescriptor] = {}  # maps a tool name to what it is, for device tools and native tools
         self.tools: dict[str, dict[str, Callable]] = {}  # tool prefix -> command -> its wrapper
-        self.registered: dict[str, Tool] = {}  # tool name -> the MCP tool (description, input schema)
+        self.registered: dict[str, Tool] = {}  # maps a tool name to the MCP tool with its description and input schema
         self.native_names: set[str] = set()
         self.interceptors: list[Interceptor] = []
         self._lowered: set[str] = set()  # tools an override made low that the declarations or rules would hold
-        self.risk_warnings: list[str] = []  # what setup() printed as [safety] lines
+        self.risk_warnings: list[str] = []  # the safety lines that setup printed
         self.risk_fallbacks: dict[str, list[str]] = {}  # tool prefix -> commands whose risk only the name rules decided
         self.discovery_warnings: list[str] = []
-        # Whether the current caller's token may call a tool (endpoint_auth.attach replaces it); find_tools and call_tool ask it.
+        # Says whether the token of the current caller may call a tool. endpoint_auth.attach replaces it, and find_tools and call_tool ask it.
         self.may_call: Callable[[str], bool] = lambda name: True
         cfg = self.config
         self.data = data_tools.register(self, cfg)
@@ -192,12 +189,11 @@ class MCPServer:
         self.discovery = discovery.register(self, cfg)
         self.estop = estop.register(self, cfg)
         self.jobs = jobs.register(self, cfg)
-        self.gate = gate.register(self, cfg)
         self.traces = trace_tools.register(self, cfg)
-        self.components = [self.data, self.skills, self.discovery, self.estop, self.jobs, self.gate, self.traces]
+        self.components = [self.data, self.skills, self.discovery, self.estop, self.jobs, self.traces]
+        self._simulated: bool | None = None
         self.auth = endpoint_auth.attach(self, auth)  # None without mcp.auth
 
-    # ------------------------------------------------------------------ registries
     def add_interceptor(self, interceptor: Interceptor) -> None:
         """Add a step every applicable tool call passes through; the list stays sorted by ``order``."""
         self.interceptors.append(interceptor)
@@ -209,9 +205,25 @@ class MCPServer:
         self.devices[prefix] = device
         return device
 
+    def stack_simulated(self) -> bool:
+        """Whether the stack drives a simulator: run_servers' top-level ``simulated:``, which every device holds as
+        its ``simulated`` property. Unknown (no device says) counts as real hardware."""
+        if self._simulated is None:
+            for device in self.devices.values():
+                if device.proxy is None:
+                    continue
+                try:
+                    values = device.proxy.get_property(["simulated"]).get("simulated") or []
+                except Exception:
+                    continue
+                if values:
+                    self._simulated = str(values[0]).strip().lower() == "true"
+                    break
+        return bool(self._simulated)
+
     @property
     def tool_risks(self) -> dict[str, str]:
-        """Each device tool's risk as the approval gate sees it."""
+        """Each device tool's risk."""
         return {name: t.risk for name, t in self.descriptors.items() if not t.native}
 
     def tool_names(self) -> set[str]:
@@ -239,7 +251,6 @@ class MCPServer:
         except Exception:
             return ""
 
-    # ------------------------------------------------------------------ discovery
     def _is_blocked_class(self, class_name: str) -> bool:
         return class_name.lower() in self._blocked_classes_normalized
 
@@ -270,24 +281,7 @@ class MCPServer:
         Returns tool prefix (the class name, or <Class>_<member> when several devices share a class)
         -> command name -> (func, cmd_info).
         """
-        opened: list[tuple[str, DeviceProxy, str]] = []
-        for device_name in self._list_all_devices():
-            if self._is_admin_device(device_name):
-                continue
-            try:
-                dev = DeviceProxy(device_name)
-                dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-                dev_class = dev.info().dev_class
-            except Exception as exc:
-                if self.verbose:
-                    print(f"Skipping {device_name}: failed to open proxy ({exc})")
-                continue
-            if not self._is_blocked_class(dev_class):
-                opened.append((device_name, dev, dev_class))
-                self._warn_if_fault(device_name, dev)
-        # Tools are named <Class>_<command>. When several devices share a class (two robots, two job devices)
-        # each gets its own prefix, <Class>_<member>, so neither hides the other and an approval for one never
-        # covers the other.
+        opened = self._open_devices()
         members: dict[str, list[str]] = {}
         families: dict[str, list[str]] = {}
         for name, _dev, dev_class in opened:
@@ -299,14 +293,7 @@ class MCPServer:
         self.discovery_warnings = []
         tools: dict[str, dict[str, tuple[Callable, CommandInfo]]] = {}
         for device_name, dev, dev_class in opened:
-            prefix = dev_class
-            if len(members[dev_class]) > 1:
-                # The member ("lab/mapper/2" -> 2); else the family, which the launcher sets from the config key
-                # ("asyncroscopy/grid2/default" -> grid2); else the whole device name.
-                parts = device_name.split("/")
-                member, family = parts[-1], (parts[1] if len(parts) == 3 else device_name)
-                suffix = member if members[dev_class].count(member) == 1 else family if families[dev_class].count(family) == 1 else "_".join(parts)
-                prefix = f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
+            prefix = self._tool_prefix(device_name, dev_class, members[dev_class], families[dev_class])
             try:
                 commands = dev.command_list_query()
             except Exception as exc:
@@ -324,22 +311,7 @@ class MCPServer:
                 device.plan_example = self._attribute(dev, "plan_example") or None
             for cmd in commands:
                 command_name = cmd.cmd_name
-                declared_operator = hints.get(command_name, {}).get("operator_only") is True
-                if self.endpoint_role != "operator" and (declared_operator or operator_only(dev_class, command_name)):
-                    continue
-                if self.endpoint_role == "monitor":
-                    name = tool_name(prefix, command_name).lower()
-                    marked_high = any(level == "high" and fnmatchcase(name, pattern.lower()) for pattern, level in self.config.risk_overrides.items())
-                    if marked_high or not (is_read_only(dev_class, command_name, self.config.risk_overrides) or command_name in ("job_status", "results")):
-                        continue
-                global_blocks = self.blocked_functions.get("*", [])
-                if command_name in global_blocks or f"{dev_class}.{command_name}" in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
-                    continue
-                if self.include_only_functions and not (
-                    command_name in self.include_only_functions
-                    or f"{dev_class}.{command_name}" in self.include_only_functions
-                    or any(item.endswith(f".{command_name}") for item in self.include_only_functions)
-                ):
+                if not self._offers_command(prefix, dev_class, command_name, hints):
                     continue
                 try:
                     func = getattr(dev, command_name)
@@ -350,6 +322,57 @@ class MCPServer:
                 tools.setdefault(prefix, {})[command_name] = (func, cmd)
                 device.in_types[command_name] = getattr(cmd, "in_type", None)
         return tools
+
+    def _open_devices(self) -> list[tuple[str, DeviceProxy, str]]:
+        """Each device this endpoint may serve, as (name, proxy, class)."""
+        opened: list[tuple[str, DeviceProxy, str]] = []
+        for device_name in self._list_all_devices():
+            if self._is_admin_device(device_name):
+                continue
+            try:
+                dev = DeviceProxy(device_name)
+                dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+                dev_class = dev.info().dev_class
+            except Exception as exc:
+                if self.verbose:
+                    print(f"Skipping {device_name}: failed to open proxy ({exc})")
+                continue
+            if not self._is_blocked_class(dev_class):
+                opened.append((device_name, dev, dev_class))
+                self._warn_if_fault(device_name, dev)
+        return opened
+
+    @staticmethod
+    def _tool_prefix(device_name: str, dev_class: str, members: list[str], families: list[str]) -> str:
+        """The start of a device's tool names, which is its class name.
+
+        When several devices share a class each gets <Class>_<suffix>, so neither hides the other.
+        The suffix is the member ("lab/mapper/2" gives 2). If that is
+        not unique it is the family ("asyncroscopy/grid2/default" gives grid2), and failing that the whole name.
+        """
+        if len(members) < 2:
+            return dev_class
+        parts = device_name.split("/")
+        member, family = parts[-1], (parts[1] if len(parts) == 3 else device_name)
+        suffix = member if members.count(member) == 1 else family if families.count(family) == 1 else "_".join(parts)
+        return f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
+
+    def _offers_command(self, prefix: str, dev_class: str, command_name: str, hints: dict) -> bool:
+        """Whether this endpoint's role and its block and allow lists let it serve the command."""
+        declared_operator = hints.get(command_name, {}).get("operator_only") is True
+        if self.endpoint_role != "operator" and (declared_operator or operator_only(dev_class, command_name)):
+            return False
+        if self.endpoint_role == "monitor":
+            name = tool_name(prefix, command_name).lower()
+            marked_high = any(level == "high" and fnmatchcase(name, pattern.lower()) for pattern, level in self.config.risk_overrides.items())
+            if marked_high or not (is_read_only(dev_class, command_name, self.config.risk_overrides) or command_name in ("job_status", "results")):
+                return False
+        qualified = f"{dev_class}.{command_name}"
+        global_blocks = self.blocked_functions.get("*", [])
+        if command_name in global_blocks or qualified in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
+            return False
+        allowed = self.include_only_functions
+        return not allowed or command_name in allowed or qualified in allowed or any(item.endswith(f".{command_name}") for item in allowed)
 
     @staticmethod
     def _attribute(dev: DeviceProxy, name: str) -> str | None:
@@ -368,7 +391,6 @@ class MCPServer:
         if state == "FAULT":
             print(f"[safety] {device_name} is in FAULT ({status.strip()[:300]}); its tools are registered but it cannot run them. Fix it and restart this server", flush=True)
 
-    # ------------------------------------------------------------------ wrapping
     @staticmethod
     def _tango_type_to_python(cmd_type: CmdArgType) -> Any:
         if cmd_type == CmdArgType.DevVoid:
@@ -443,10 +465,15 @@ class MCPServer:
         """
         prefix = tool_prefix or dev_class
         in_type, in_desc, out_type = cmd_info.in_type, cmd_info.in_type_desc, cmd_info.out_type
+        # Fill in missing command docs from the local source so a model is not left with only a name.
+        local_summary, local_in = local_docs.describe(dev_class, command_name)
+        if local_in and in_type != CmdArgType.DevVoid and not (in_desc and not _placeholder_doc(in_desc) and _without_param_name(in_desc)):
+            named = re.search(r"(?::param|@param)\s+(\w+):", in_desc or "")
+            # Keep the argument name the device gave and only fill in the description.
+            in_desc = (f":param {named.group(1)}: " if named else "") + _without_param_name(local_in)
         py_type = self._tango_type_to_python(in_type)
         descriptor = self._describe(prefix, dev_class, command_name, in_type)
         unique_name = descriptor.name
-        device = self.devices[prefix]
         chain = [i for i in self.interceptors if i.applies(descriptor)]
 
         def _run(arguments: dict, *call_args: Any) -> Any:
@@ -454,25 +481,9 @@ class MCPServer:
             return run_call(call, chain, lambda args: self._normalize_command_result(out_type, func(*args)))
 
         py_return_type = self._tango_type_to_python(out_type)
-        doc_lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
-        # A DevVoid type line tells a model nothing; small models read every line.
-        if in_type != CmdArgType.DevVoid:
-            doc_lines.append(f"Input Type: {in_type.name}")
-        if in_desc and not _placeholder_doc(in_desc) and _without_param_name(in_desc):
-            doc_lines.append(f"Input Description: {_without_param_name(in_desc)}")
-        if out_type != CmdArgType.DevVoid:
-            doc_lines.append(f"Output Type: {out_type.name}")
-        out_desc = cmd_info.out_type_desc
-        if out_desc and not _placeholder_doc(out_desc):
-            # Lead with what the command is for (once): models weigh the first line most when choosing a tool.
-            doc_lines.insert(0, out_desc)
-        if device.envelope and device.job_kind and command_name.lower() in ENVELOPE_VERBS:
-            doc_lines.insert(0, f"{prefix} job: {device.job_kind}.")
-        if device.envelope and command_name == "reserve" and device.plan_example:
-            doc_lines.insert(1, f'Example request: {{"plan": {device.plan_example}}}')
-        doc = "\n".join(doc_lines)
+        doc = self._tool_doc(prefix, dev_class, command_name, cmd_info, in_desc, local_summary)
 
-        # The parameter's name comes from the description's ":param <name>:"; otherwise "arg".
+        # The name of the parameter comes from the param line of the description. Without one it is arg.
         match = re.search(r"(?::param|@param)\s+(\w+):", in_desc or "")
         param_name = match.group(1) if match else "arg"
         if in_desc and not _placeholder_doc(in_desc):
@@ -481,53 +492,13 @@ class MCPServer:
         else:
             clean_desc = ""
             arg_type = py_type
-        # A string parameter documented as JSON also accepts the object itself: models pass
-        # {"job_id": "..."} far more reliably than a JSON-encoded string of it.
+        # A string parameter documented as JSON also accepts the object itself. Models pass
+        # an object with a job_id field far more reliably than a JSON string of it.
         json_string = py_type is str and clean_desc.upper().startswith("JSON")
         if json_string:
             arg_type = Annotated[str | dict[str, Any] | list[Any], Field(description=clean_desc)]
 
-        if in_type == CmdArgType.DevVoid:
-            def wrapper():
-                return _run({})
-
-            params = []
-        elif py_type is dict:
-            # For commands taking a dictionary (like DevEncoded), allow arbitrary keyword arguments.
-            def wrapper(**kwargs):
-                arg_input = kwargs["arg"] if "arg" in kwargs and len(kwargs) == 1 and isinstance(kwargs["arg"], dict) else kwargs
-                return _run({"arg": arg_input}, arg_input)
-
-            params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
-        elif json_string:
-            # JSON-object commands (job envelope, approvals): accept {"request": {...}}, {"request": "<json>"} or the
-            # object's fields given directly, e.g. {"plan": {...}}. The fields come from the description's example
-            # object; FastMCP does not allow **kwargs.
-            fields = [f for f in dict.fromkeys(re.findall(r'"(\w+)"\s*:', clean_desc)) if f != param_name]
-
-            def wrapper(*args, **kwargs):
-                arg = args[0] if args else kwargs.get(param_name)
-                if arg is None:
-                    arg = {k: v for k, v in kwargs.items() if k in fields and v is not None}
-                if isinstance(arg, str):
-                    try:
-                        arg = json.loads(arg)
-                    except json.JSONDecodeError:
-                        pass  # not JSON: the device reports the error
-                if isinstance(arg, (dict, list)):
-                    # One canonical text for one call, whatever form it came in, so the approval fingerprint of a
-                    # retried call matches its grant.
-                    arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
-                return _run({param_name: numpy_to_python(arg)}, arg)
-
-            params = [inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[arg_type | None, Field(description=clean_desc)], default=None)]
-            params += [inspect.Parameter(f, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[Any, Field(description=f"Same as {param_name}.{f}.")], default=None) for f in fields]
-        else:
-            def wrapper(*args, **kwargs):
-                arg = args[0] if args else kwargs.get(param_name)
-                return _run({param_name: numpy_to_python(arg)}, arg)
-
-            params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
+        wrapper, params = self._wrapper_and_params(_run, in_type, py_type, param_name, arg_type, clean_desc if json_string else None)
 
         # Annotations without VAR_KEYWORD parameters, so Pydantic allows dynamic extra fields.
         wrapper.__annotations__ = {p.name: p.annotation for p in params if p.kind != inspect.Parameter.VAR_KEYWORD}
@@ -538,40 +509,99 @@ class MCPServer:
         wrapper.__qualname__ = unique_name
         return wrapper
 
-    # ------------------------------------------------------------------ setup
+    @staticmethod
+    def _wrapper_and_params(_run: Callable, in_type: CmdArgType, py_type: Any, param_name: str, arg_type: Any,
+                            json_desc: str | None) -> tuple[Callable, list[inspect.Parameter]]:
+        """The function a tool call lands in and its parameters. ``json_desc`` is the description of a string
+        parameter documented as JSON, or None for any other parameter."""
+        if in_type == CmdArgType.DevVoid:
+            def wrapper():
+                return _run({})
+
+            params = []
+        elif py_type is dict:
+            # A command that takes a dictionary accepts any keyword arguments.
+            def wrapper(**kwargs):
+                arg_input = kwargs["arg"] if "arg" in kwargs and len(kwargs) == 1 and isinstance(kwargs["arg"], dict) else kwargs
+                return _run({"arg": arg_input}, arg_input)
+
+            params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
+        elif json_desc is not None:
+            # A command that takes a JSON object accepts the object, its JSON text, or its fields given directly.
+            # The field names come from the example in the description because FastMCP does not allow **kwargs.
+            fields = [f for f in dict.fromkeys(re.findall(r'"(\w+)"\s*:', json_desc)) if f != param_name]
+
+            def wrapper(*args, **kwargs):
+                arg = args[0] if args else kwargs.get(param_name)
+                if arg is None:
+                    arg = {k: v for k, v in kwargs.items() if k in fields and v is not None}
+                if isinstance(arg, str):
+                    try:
+                        arg = json.loads(arg)
+                    except json.JSONDecodeError:
+                        pass  # the device reports text that is not JSON
+                if isinstance(arg, (dict, list)):
+                    # Every form of one call becomes the same text, so the trace records one form.
+                    arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
+                return _run({param_name: numpy_to_python(arg)}, arg)
+
+            params = [inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[arg_type | None, Field(description=json_desc)], default=None)]
+            params += [inspect.Parameter(f, inspect.Parameter.KEYWORD_ONLY, annotation=Annotated[Any, Field(description=f"Same as {param_name}.{f}.")], default=None) for f in fields]
+        else:
+            def wrapper(*args, **kwargs):
+                arg = args[0] if args else kwargs.get(param_name)
+                return _run({param_name: numpy_to_python(arg)}, arg)
+
+            params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
+        return wrapper, params
+
+    def _tool_doc(self, prefix: str, dev_class: str, command_name: str, cmd_info: CommandInfo, in_desc: str, local_summary: str) -> str:
+        """The description a model reads for one command. What the command is for comes first because models weigh the first line most."""
+        device = self.devices[prefix]
+        in_type, out_type, out_desc = cmd_info.in_type, cmd_info.out_type, cmd_info.out_type_desc
+        lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
+        # A DevVoid type line tells a model nothing and small models read every line.
+        if in_type != CmdArgType.DevVoid:
+            lines.append(f"Input Type: {in_type.name}")
+        if in_desc and not _placeholder_doc(in_desc) and _without_param_name(in_desc):
+            lines.append(f"Input Description: {_without_param_name(in_desc)}")
+        if out_type != CmdArgType.DevVoid:
+            lines.append(f"Output Type: {out_type.name}")
+        if out_desc and not _placeholder_doc(out_desc):
+            lines.insert(0, out_desc)
+        elif local_summary:
+            lines.insert(0, local_summary)
+        if device.envelope and device.job_kind and command_name.lower() in ENVELOPE_VERBS:
+            lines.insert(0, f"{prefix} job: {device.job_kind}.")
+        if device.envelope and command_name == "reserve" and device.plan_example:
+            lines.insert(1, f'Example request: {{"plan": {device.plan_example}}}')
+        return "\n".join(lines)
+
     def _warn_about_risks(self) -> None:
         """Print what an instrument author most likely got wrong in the risk settings: an override that matches no
-        command, a stop-like command that approve mode holds, and a command an override made low."""
+        command."""
         found = []
         devices = [t for t in self.descriptors.values() if not t.native]
         example = next((t.name for t in devices if not t.name.endswith(("_State", "_Status"))), "Class_command")
         for pattern in self.config.risk_overrides:
             p = pattern.lower()
-            # An operator-only command (declared, or Tango's admin commands) is not on this endpoint, but real.
+            # A command only for the operator is real but not on this endpoint. It is either declared so or an admin command of Tango.
             hidden = any(fnmatchcase(f"{d.dev_class}.{c}".lower(), p) or fnmatchcase(tool_name(d.prefix, c).lower(), p)
                          for d in self.devices.values() for c, h in d.hints.items() if h.get("operator_only") is True)
             hidden = hidden or ("." in pattern and operator_only(*pattern.split(".", 1)))
             if not hidden and not any(fnmatchcase(t.name.lower(), p) or fnmatchcase(f"{t.dev_class}.{t.command}".lower(), p) for t in devices):
                 found.append(f"risk override {pattern!r} matches no command; write it as Class.command or a tool name such as {example}")
-        for t in devices:
-            if self.endpoint_role == "agent" and t.risk == "high" and looks_like_stop(t.command or ""):
-                found.append(f"{t.name} looks like a stop but is high: approve mode holds it. If it only stops, switches off a source or lifts a probe "
-                             f"away from the sample (not if it opens, moves or frees anything), add {{\"{t.name}\": \"low\"}} to mcp.safety.risk")
-        for name in sorted(self._lowered if self.endpoint_role == "agent" else ()):
-            found.append(f"{name} would be held by default; an mcp.safety.risk override makes it low, so approve mode lets agents run it")
         self.risk_warnings = found
         for line in found + self.discovery_warnings:
             print(f"[safety] {line}")
 
     def _report_fallbacks(self) -> None:
-        """Print which commands declare no risk, so the name rules decided it: a device should declare them."""
+        """Record which commands declare no risk, so the name rules decided it (endpoint_info and tests read it)."""
         fallbacks: dict[str, list[str]] = {}
         for t in self.descriptors.values():
             if t.risk_source == "rule":
                 fallbacks.setdefault(t.device or "", []).append(t.command or "")
         self.risk_fallbacks = {prefix: sorted(commands) for prefix, commands in sorted(fallbacks.items())}
-        for prefix, commands in self.risk_fallbacks.items():
-            print(f"[safety] {prefix} declares no risk for {len(commands)} command(s); the name rules decided: {', '.join(commands)}")
 
     def _natives(self) -> list[tuple[Any, Callable]]:
         """(component, tool) for each native tool this endpoint offers, in registration order."""
@@ -585,11 +615,6 @@ class MCPServer:
     def setup(self, print_summary: bool = True) -> None:
         """Discover the devices, decide what each command is, and add every tool to the MCP instance."""
         raw_tools = self._find_tools()
-        exported = {str(device.proxy.dev_name()).lower() for device in self.devices.values() if device.proxy is not None}
-        address = self.config.approvals_device_address
-        if address and address.lower() not in exported:
-            print(f"[safety] approvals device {address} is not among the exported devices; while it is not running, "
-                  "gated calls are refused. Start this server after run_servers.py prints ready, or check safety.approvals_device_address", flush=True)
         self.tools = {
             prefix: {command: self._create_wrapper(func, cmd_info, command, self.devices[prefix].dev_class, tool_prefix=prefix)
                      for command, (func, cmd_info) in raw_tools[prefix].items()}
@@ -601,11 +626,8 @@ class MCPServer:
                 print(f"- {prefix}: {len(raw_tools[prefix])}")
                 for command_name in sorted(raw_tools[prefix]):
                     print(f"    - {command_name}")
-        if self.trace is not None and "simulated" not in self.trace.defaults and address and address.lower() in exported:
-            try:  # the stack's simulated flag, as its Approvals device holds it (run_servers' top-level simulated:)
-                self.trace.defaults["simulated"] = bool(self.gate.approvals().get_simulated())
-            except Exception:
-                pass  # unknown: the events leave it out
+        if self.trace is not None and "simulated" not in self.trace.defaults and self.devices:
+            self.trace.defaults["simulated"] = self.stack_simulated()
         natives = self._natives()
         self.native_names = {getattr(t, "__name__", getattr(t, "name", "")) for _c, t in natives}
         for component, native_tool in natives:
@@ -632,7 +654,10 @@ class MCPServer:
         self._warn_about_risks()
         self._report_fallbacks()
         # Printed unconditionally so GUIs can parse the final count from stdout even when quiet mode is on.
-        print(f"MCP ready: {len(natives) + num_device_tools} tool(s) registered", flush=True)
+        # The operator endpoint words it differently: it usually starts beside an agent endpoint in the same
+        # terminal, and the startup window's tool count is what the agent endpoint offers.
+        ready = "MCP operator endpoint ready" if self.endpoint_role == "operator" else "MCP ready"
+        print(f"{ready}: {len(natives) + num_device_tools} tool(s) registered", flush=True)
         if print_summary and self.verbose:
             print(f"\nRegistered {len(natives)} native tool(s)\nRegistered {num_device_tools} Tango device command tool(s)\nTotal: {len(natives) + num_device_tools} tools")
             print("\nAll MCP tools available:")
@@ -667,7 +692,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
     parser.add_argument("--endpoint-role", default="agent", choices=ENDPOINT_ROLES)
-    parser.add_argument("--approvals-device-address", default="", help="Approvals device; empty disables the approval mode.")
+    parser.add_argument("--approvals-device-address", default="", help=argparse.SUPPRESS)  # ignored and kept so old launch lines still parse
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--auto-routine-json", default="", help='{"stem": [command globs], "tools": [tool globs]}: what auto mode runs; empty: the packaged profile.')
     parser.add_argument("--agent-profile", default="", help="Agent profile YAML whose tool selection endpoint_info reports; empty: the default.")
@@ -677,7 +702,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
     parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
-    parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated (its Approvals device says so); otherwise such a stack binds 127.0.0.1.")
+    parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated; otherwise such a stack binds 127.0.0.1.")
     parser.add_argument("--auth-json", default="", help="The MCP config's auth section (bearer-token verification); empty: none.")
     return parser.parse_args(argv)
 
@@ -694,31 +719,32 @@ def check_port_free(host: str, port: int) -> str | None:
     return None
 
 
-def stack_simulated(tango_host: str, tango_port: int, approvals_address: str | None) -> bool:
-    """Whether the stack drives a simulator, as its Approvals device says (get_simulated).
-
-    No approvals device, or one that cannot be read, counts as real hardware: the safe answer when it is not known.
-    """
-    if not approvals_address:
-        return False
+def stack_simulated(tango_host: str, tango_port: int, _unused: str | None = None) -> bool:
+    """Whether the stack drives a simulator: the ``simulated`` property its devices hold (run_servers' top-level
+    ``simulated:``). No device saying so, or a database that cannot be read, counts as real hardware."""
     try:
-        proxy = DeviceProxy(f"tango://{tango_host}:{tango_port}/{approvals_address}")
-        proxy.set_timeout_millis(3000)
-        return bool(proxy.get_simulated())
+        database = Database(tango_host, tango_port)
+        for name in database.get_device_exported("*"):
+            if name.lower().startswith(("dserver/", "sys/")):
+                continue
+            values = database.get_device_property(name, ["simulated"]).get("simulated") or []
+            if values:
+                return str(values[0]).strip().lower() == "true"
     except Exception:
-        return False
+        pass
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     auth = json.loads(args.auth_json) if args.auth_json else None
     if args.transport == "streamable-http":
-        simulated = is_remote_host(args.http_host) and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address)
+        simulated = is_remote_host(args.http_host) and not args.allow_remote_bind and stack_simulated(args.tango_host, args.tango_port)
         args.http_host, note = bind_host(args.http_host, args.allow_remote_bind, simulated)
         if note:
             print(note, flush=True)
-        if not auth and is_remote_host(args.http_host):  # run_mcp checks this too; a direct start must not skip it
-            refused = endpoint_auth.remote_without_auth(args.http_host, stack_simulated(args.tango_host, args.tango_port, args.approvals_device_address), auth)
+        if not auth and is_remote_host(args.http_host):  # run_mcp checks this too, but a direct start must not skip it
+            refused = endpoint_auth.remote_without_auth(args.http_host, stack_simulated(args.tango_host, args.tango_port), auth)
             if refused:
                 print(f"MCP ERROR: {refused}", flush=True)
                 return 1
@@ -739,7 +765,7 @@ def main(argv: list[str] | None = None) -> int:
         blocked_classes=json.loads(args.blocked_classes_json), blocked_functions=json.loads(args.blocked_functions_json),
         include_only_functions=json.loads(args.include_only_functions_json), data_device_address=args.data_device_address,
         verbose=not args.quiet, tool_log_path=args.tool_log or None, endpoint_role=args.endpoint_role,
-        approvals_device_address=args.approvals_device_address or None, risk_overrides=json.loads(args.risk_json),
+        risk_overrides=json.loads(args.risk_json),
         trace_path=args.trace or None, analysis_url=args.analysis_url or None, job_limits=json.loads(args.job_limits_json),
         auth=auth, clock_device=args.clock_device or None, trace_follow=json.loads(args.trace_follow_json) or None,
         auto_routine=json.loads(args.auto_routine_json) if args.auto_routine_json else None, agent_profile=args.agent_profile or None,

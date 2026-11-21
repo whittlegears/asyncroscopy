@@ -104,7 +104,7 @@ def _delete_node(node) -> None:
     map version whose writing failed, before anything could name it."""
     if hasattr(node, "delete_tree"):
         node.delete_tree()
-    else:  # tiled 0.2: delete() removes this node; external_only=False also removes data Tiled wrote itself
+    else:  # tiled 0.2 needs external_only=False to also remove data Tiled wrote itself
         node.delete(recursive=True, external_only=False)
 
 

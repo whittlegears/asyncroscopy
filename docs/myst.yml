@@ -45,13 +45,11 @@ project:
         - file: Operation/action_space.md
         - file: Operation/large_maps.md
         - file: Operation/autofocus.md
-        - file: Operation/approval_mode.md
         - file: Operation/remote_access.md
         - file: Operation/dry_run.md
         - file: Operation/trace.md
         - file: Operation/evaluators.md
         - file: Operation/run-servers.md
-        - file: Operation/deployment_notes.md
         - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
@@ -62,11 +60,6 @@ project:
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md
-    - title: Designs
-      children:
-        - file: designs/concepts_brief.md
-        - file: designs/agentic_sample_mapping.md
-        - file: designs/sample_mapping_building_blocks.md
     - file: upcoming_changes.md
 
 site:

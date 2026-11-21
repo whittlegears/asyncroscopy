@@ -39,7 +39,7 @@ MAX_KIND_CHARS = 40
 MAX_LINKS = 20
 MAX_NOTES_PER_DATASET = 5000
 MAX_NAME_CHARS = 80
-LOCK_WAIT_S = 30.0  # longest an operation waits for another process holding the event file's lock
+LOCK_WAIT_S = 30.0  # longest wait for another process that holds the event file's lock
 
 
 class AnnotationError(ValueError):

@@ -186,7 +186,7 @@ class SPMMicroscope(Instrument):
         return json.dumps(state)
     
 
-    # The only command it answers itself; the rest delegate to sub-devices.
+    # The only command it answers itself. The rest delegate to sub-devices.
     @command(dtype_out=str, risk="low", role="setting.read")
     def get_meter_values(self) -> str:
         """Read current meter values (Sum, Deflection, Lateral, Z) as JSON."""

@@ -20,7 +20,7 @@ async def run_keeping_partial(graph: Runnable, inputs: dict, config: dict | None
     the run stopped appears without one (a failed call) in the messages.
     """
     last: dict = {"messages": list(inputs.get("messages", []))}
-    if not hasattr(graph, "astream"):  # a plain runnable (and test stand-ins): no partial state to keep
+    if not hasattr(graph, "astream"):  # a plain runnable has no partial state to keep
         try:
             run = graph.ainvoke(inputs, config)
             return (await asyncio.wait_for(run, timeout) if timeout else await run), ""
@@ -41,3 +41,13 @@ async def run_keeping_partial(graph: Runnable, inputs: dict, config: dict | None
         return last, "stopped: the time budget ran out"
     except Exception as exc:
         return last, f"{type(exc).__name__}: {str(exc)[:300]}"
+
+
+def map_rule(has_mapper: bool, tool_names: set[str]) -> str:
+    """How this endpoint makes a map, as one sentence, so a prompt agrees with the mapping skill the endpoint gets:
+    the Mapper job where there is a Mapper, else the map_grid workflow where run_workflow is offered."""
+    if has_mapper:
+        return " Never move the stage or acquire in a loop for a map: use the Mapper job."
+    if "run_workflow" in tool_names:
+        return " Never move the stage or acquire in a loop for a map: run the map_grid workflow with run_workflow."
+    return ""

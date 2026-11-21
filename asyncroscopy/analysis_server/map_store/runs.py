@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 CHUNK_TILES = 32  # tiles read per request
 CACHE_BYTES = 512 * 2**20  # tile images kept in memory while stitching
-V1_EXPORT_MAX_TILES = 20_000  # a layout-1 run from Tiled is exported in one request up to this size
+V1_EXPORT_MAX_TILES = 20_000  # largest layout 1 run exported from Tiled in one request
 
 
 @dataclass
@@ -31,12 +31,12 @@ class RunInfo:
     run: str
     plan: dict
     layout: int
-    index: np.ndarray  # (n,) tile index in the run
-    stage_xy_m: np.ndarray  # (n, 2)
-    shapes: np.ndarray  # (n, 2)
-    pixel_sizes_m: np.ndarray  # (n,)
-    acquired_s: np.ndarray | None  # (n,) or None when unknown
-    names: list = field(default_factory=list)  # layout 1: dataset names
+    index: np.ndarray  # tile index in the run, one per tile
+    stage_xy_m: np.ndarray  # two values per tile
+    shapes: np.ndarray  # two values per tile
+    pixel_sizes_m: np.ndarray  # one value per tile
+    acquired_s: np.ndarray | None  # one value per tile, or None when unknown
+    names: list = field(default_factory=list)  # dataset names in layout 1
     row_col: np.ndarray | None = None
 
     def __len__(self) -> int:
@@ -130,7 +130,7 @@ class _Locks:
             return lock
 
 
-# Local files are locked by resolved path in every store of the process (two stores may open one file).
+# Local files are locked by resolved path across every store in the process, since two stores may open one file.
 _FILE_LOCKS = _Locks()
 
 
@@ -268,7 +268,7 @@ class TileSource:
         try:
             self.store.client[self.run]["tiles"].export(path, format="application/x-hdf5")
             return path
-        except Exception:  # a Tiled that cannot export HDF5: read tile by tile
+        except Exception:  # this Tiled cannot export HDF5, so read tile by tile
             os.unlink(path)
             return ""
 

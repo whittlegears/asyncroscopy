@@ -23,9 +23,9 @@ from typing import Callable
 from asyncroscopy.contracts import ENVELOPE_VERSION
 from asyncroscopy.core.names import ACTIVE_JOB_STATES, FINISHED_JOB_STATES
 
-RESERVATION_TTL_S = 900.0  # a reservation nobody started within this is released, so it cannot hold a run or map forever
-KEEP_FINISHED_S = 6 * 3600.0  # finished jobs stay readable this long, then are forgotten (a long-lived server keeps no history)
-DEFAULT_MAX_WORKERS = 2  # stitching jobs hold a tile cache each; more at once only share the same CPUs and disk
+RESERVATION_TTL_S = 900.0  # a reservation nobody started is released after this, so it cannot hold a run or map forever
+KEEP_FINISHED_S = 6 * 3600.0  # finished jobs stay readable this long and are then forgotten
+DEFAULT_MAX_WORKERS = 2  # each stitching job holds a tile cache, and more at once only share the same CPUs and disk
 
 
 class Aborted(Exception):
@@ -77,8 +77,8 @@ class JobRunner:
         return {"schema_version": ENVELOPE_VERSION, "error": {"code": code, "message": message}, **fields}
 
     def _unknown(self, job_id: str) -> dict:
-        # A job id from an instrument's job device (a Mapper run) is not one of these; the instrument
-        # endpoint's wait_for_job waits on both kinds.
+        # Job ids from an instrument's job device are not kept here.
+        # The instrument endpoint's wait_for_job waits on both kinds.
         return self.error("unknown_job", f"no analysis job {job_id!r}",
                           next_actions=[{"server": "instrument", "tool": "wait_for_job", "args": {"job_id": job_id}}])
 
@@ -93,7 +93,7 @@ class JobRunner:
         if task not in self.tasks:
             return self.error("plan_rejected", f"unknown task {task!r}; known: {sorted(self.tasks)}")
         try:
-            estimate = self.tasks[task][0](plan)  # outside the lock: may touch the store
+            estimate = self.tasks[task][0](plan)  # runs outside the lock because it may touch the store
         except (ValueError, KeyError, FileNotFoundError) as exc:
             return self.error("plan_rejected", str(exc))
         reservation_id = uuid.uuid4().hex[:12]
@@ -196,7 +196,6 @@ class JobRunner:
                 "state": job["state"],
                 "progress": {"done": job["done"], "total": job["total"]},
                 "last_error": dict(job["last_error"]) if job["last_error"] else None,
-                "pending_request_id": None,
             }
         )
 
@@ -224,8 +223,8 @@ class JobRunner:
             elif job["state"] == "reserved":
                 job.update(state="aborted", finished=time.time())
         if future is not None:
-            # Briefly, so a job between checks reports "aborted" at once; a long step (a large solve)
-            # stays "aborting" until its next check instead of blocking this call.
+            # A short wait, so a job between checks reports "aborted" at once.
+            # A long step stays "aborting" until its next check instead of blocking this call.
             wait_futures([future], timeout=2)
         return self.status(job_id)
 

@@ -5,7 +5,6 @@ import sys
 
 from . import SpecError, load_spec, plan_example
 
-# Check a file before starting it:  uv run python -m asyncroscopy.instruments.yaml_sim.spec my_instrument.yaml
 if len(sys.argv) != 2:
     sys.exit("usage: python -m asyncroscopy.instruments.yaml_sim.spec <instrument.yaml>")
 try:

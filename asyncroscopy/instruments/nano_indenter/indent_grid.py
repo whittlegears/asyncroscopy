@@ -7,7 +7,7 @@ Instrument Trace line per step. A team writes only the four hooks below.
 
 The MCP server sees reserve ... release and treats this device as a job
 device: reserve, job_status, results and release are low risk, start is the
-one high-risk call (one approval per grid in approve mode), and abort is
+one high-risk call, and abort is
 always allowed.
 
 Dry runs (plan ``"dry_run": true``) are supported, and this is the pattern to copy:
@@ -33,15 +33,15 @@ MAX_INDENTS = 400
 class IndentGrid(JobDevice):
     JOB_KIND = "a grid of nanoindents with hardness at each point"
     PLAN_EXAMPLE = {"origin_m": [0.0, 0.0], "nx": 5, "ny": 5, "pitch_m": 2e-5, "load_n": 0.01}
-    # run_step below copes with a dry run: it records the move and the indent and parses no reply.
+    # In a dry run run_step records the move and the indent and parses no reply.
     SUPPORTS_DRY_RUN = True
-    # Lifting the tip only makes the indenter safer: a dry run really does it.
+    # Lifting the tip only makes the indenter safer, so a dry run really does it.
     SAFE_COMMANDS = frozenset({"retract"})
 
     indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Tango address of the indenter (the launcher names the instrument asyncroscopy/instrument/default).")
 
     def _indenter(self) -> tango.DeviceProxy:
-        # proxy(), not tango.DeviceProxy: an indent takes longer than Tango's 3 s default timeout.
+        # Use self.proxy because an indent takes longer than Tango's default 3 s timeout.
         return self.proxy(self.indenter_device_address)
 
     def resolve_plan(self, plan: dict) -> dict:
@@ -61,7 +61,7 @@ class IndentGrid(JobDevice):
         far = max(max(abs(s["x"]), abs(s["y"])) for s in steps)
         if far > limits["travel_m"]:
             raise ValueError(f"the grid reaches {far:.3g} m from the origin; the stage travels {limits['travel_m']} m")
-        # Everything except "steps" is kept as job["resolved_plan"] and returned by reserve.
+        # Everything except steps is kept as the job's resolved_plan and returned by reserve.
         return {
             "steps": steps,
             "origin_m": [x0, y0], "nx": nx, "ny": ny, "pitch_m": pitch, "load_n": load,
@@ -73,12 +73,12 @@ class IndentGrid(JobDevice):
         indenter = self._indenter()
         indenter.move_xy([step["x"], step["y"]])
         reply = indenter.indent(job["resolved_plan"]["load_n"])
-        if job.get("dry_run"):  # the indent was recorded, not made: there is no reply to analyse
+        if job.get("dry_run"):  # the indent was recorded but not made, so there is no reply to analyse
             return {"index": index, "x_m": step["x"], "y_m": step["y"], "indent": "skipped (dry run)"}
         return {"index": index, "x_m": step["x"], "y_m": step["y"], **json.loads(reply)}
 
     def on_stop(self, job: dict, reason: str) -> None:
-        # Abort or failure: leave the tip off the sample.
+        # After an abort or failure leave the tip off the sample.
         self._indenter().retract()
 
     def on_finish(self, job: dict) -> dict:
@@ -86,7 +86,7 @@ class IndentGrid(JobDevice):
         return {}  # keys of anything saved to Tiled would go here
 
     def summary(self, job: dict) -> dict:
-        # Small enough to return whole; a real device would save to Tiled and return keys.
+        # Small enough to return whole. A real device would save to Tiled and return keys.
         indents = [job["step_results"][k] for k in sorted(job["step_results"], key=int)]
         return {"indents": [{k: r.get(k) for k in ("x_m", "y_m", "hardness_gpa")} for r in indents]}
 

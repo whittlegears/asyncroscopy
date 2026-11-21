@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from .errors import JobError
 
-VIOLATIONS_SHOWN = 20  # violations listed in a refusal; the total is always given
+VIOLATIONS_SHOWN = 20  # how many violations a refusal lists
 
 
 def _limit(value) -> float | None:
@@ -62,6 +62,6 @@ class LimitChecks:
         """(min, max) from the attribute's Tango config, or why they could not be read."""
         try:
             config = self.proxy(device, timeout_s=3.0).get_attribute_config(attribute)
-        except Exception as exc:  # DevFailed: device down or no such attribute
+        except Exception as exc:  # the device is down or has no such attribute
             return f"could not read its limits: {exc}".splitlines()[0][:200]
         return _limit(config.min_value), _limit(config.max_value)

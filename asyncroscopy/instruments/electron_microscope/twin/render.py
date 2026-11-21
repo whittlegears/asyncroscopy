@@ -35,8 +35,9 @@ ANGSTROM = 1e-10
 @dataclass
 class RenderParams:
     z_exponent: float = 1.7
-    # Fraction scattered to HAADF is 1 - exp(-k * sum(Z^n * rho * t)), t in angstrom.
-    # 2.25e-5 gives ~30% for a 16 nm Au particle and ~0.5% for 10 nm of carbon.
+    # The fraction scattered to HAADF is one minus exp of minus k times the sum of Z^n * rho * t, with t in angstrom.
+    # Here k is haadf_scale and n is z_exponent.
+    # 2.25e-5 gives about 30% for a 16 nm Au particle and about 0.5% for 10 nm of carbon.
     haadf_scale: float = 2.25e-5
     atomic_pixel_m: float = 0.2e-9
     voltage_v: float = 300e3
@@ -55,14 +56,14 @@ def object_signal(weight: np.ndarray, detector: str, params: RenderParams) -> np
     if detector == "BF":
         return np.exp(-k * weight)
     if detector == "ADF":
-        # Medium-angle signal: scattered, but not so strongly that it goes to HAADF.
+        # The medium-angle signal is what scatters but not strongly enough to reach HAADF.
         return np.exp(-params.haadf_scale * weight) - np.exp(-k * weight)
     return 1.0 - np.exp(-k * weight)
 
 
 class Renderer:
     def __init__(self, sample: Specimen, params: RenderParams) -> None:
-        self.sample = sample  # any Specimen: it gives the projected weight, the renderer applies the instrument
+        self.sample = sample  # the specimen gives the projected weight and the renderer applies the instrument
         self.params = params
 
     def level_for(self, pixel_m: float) -> str:
@@ -97,7 +98,7 @@ class Renderer:
         support_weight = support_z ** self.params.z_exponent * support_rho
         weight += support_weight * support_angstrom
         texture = self.sample.support_texture(x_min, y_min, n, pixel_m)
-        if texture is not None:  # the film's own thickness varies; contamination (in support_angstrom) does not
+        if texture is not None:  # only the film's own thickness varies, the contamination does not
             weight += support_weight * (float(self.sample.support_thickness_m) / ANGSTROM) * texture
         obj = object_signal(weight, detector, self.params)
         if level == "survey":

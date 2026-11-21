@@ -39,8 +39,8 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     # Instrument Attributes
     # ------------------------------------------------------------------
 
-    # Through a lambda: Tango binds an attribute's default read_<name> to the class declaring it, so a subclass's own
-    # read_instrument_type would never run.
+    # This reads through a lambda. Tango binds the default read method of an attribute to the class declaring it,
+    # so the read_instrument_type of a subclass would never run.
     instrument_type = tango.server.attribute(
         fget=lambda device: device.read_instrument_type(),
         name="instrument_type",
@@ -50,7 +50,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         doc="Instrument modality, for example 'STEM', 'SPM', 'TEM', or 'OPTIC'.",
     )
 
-    # What each command is (risk, role, stop, routine), as its @command declares it, for the MCP server.
+    # Tells the MCP server the risk, role, stop and routine of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     clock_s = tango.server.attribute(

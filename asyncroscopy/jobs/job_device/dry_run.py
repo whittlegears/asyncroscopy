@@ -41,7 +41,7 @@ class DryRunCalls:
         if not performed:
             try:
                 check = self.check_dry_call(job, device, name, arguments)
-            except Exception as exc:  # a broken check is reported, never mistaken for a pass
+            except Exception as exc:  # a broken check must not count as a pass
                 check = {"ok": False, "reason": f"check_dry_call failed: {type(exc).__name__}: {exc}"}
         ok = check is None or bool(check.get("ok", True))
         with self._lock:

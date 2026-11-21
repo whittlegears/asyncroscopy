@@ -26,7 +26,7 @@ from tango.server import Device, attribute
 
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
-# Components of each aberration a corrector reports (CEOS naming): one for round ones, two for the rest.
+# The number of components of each aberration a corrector reports, in CEOS naming. Round ones have one and the rest have two.
 ABERRATION_COMPONENTS = {"WD": 2, "C1": 1, "A1": 2, "B2": 2, "A2": 2, "C3": 1, "S3": 2, "A3": 2, "D4": 2, "B4": 2, "A4": 2}
 FIRST_ORDER = ("C1", "A1")
 
@@ -49,7 +49,7 @@ class CORRECTOR(Device):
     supply backend operations.
     """
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     status_message = attribute(

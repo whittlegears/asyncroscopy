@@ -17,7 +17,7 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class EELSBase(Device):
     """Hardware-independent Tango API for an EELS detector."""
 
-    # What each command is (risk, role, stop), as its @command declares it, for the MCP server.
+    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------

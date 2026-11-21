@@ -2,7 +2,7 @@
 
 A Tango command times out after seconds; a map takes hours. ``JobDevice``
 splits a job into the envelope verbs: ``reserve`` checks a plan and returns an
-estimate, ``start`` launches a worker thread and returns at once, ``status``
+estimate, ``start`` launches a worker thread that runs the job's LangGraph graph and returns at once, ``status``
 reports progress, ``abort`` stops within one step, ``results`` returns what was
 produced and ``release`` frees the device. State is saved after every step,
 so a restarted device resumes a job and skips the steps already done.
@@ -35,17 +35,17 @@ for Tango:
 A person supervising a job can ``pause`` it: after the current step the device
 calls ``on_suspend`` (the instrument waits safely, e.g. beam blanked) and the job
 waits in state ``paused`` holding the device. ``start`` on a paused job continues
-it, through the same approval as any start; ``abort`` stops it. Before a reserved
+it; ``abort`` stops it. Before a reserved
 plan starts, an operator can ``revise`` it: the plan is checked again as at
 reserve and gets a new plan_id. ``get_jobs`` lists the jobs a supervisor can act on.
 
-Dry run (decision D3 of docs/designs/concepts_brief.md): a plan with ``"dry_run": true``
-is reserved, approved and started like any other, but inside its worker ``proxy()``
+Dry run: a plan with ``"dry_run": true``
+is reserved and started like any other, but inside its worker ``proxy()``
 returns a ``RecordingProxy``: reads pass through, the device's ``safe_commands`` (making
 the instrument safer, such as blanking the beam) really run, and every
 other command or attribute write is recorded in the trace (``dry_run: true``), checked
 by ``check_dry_call`` and not performed. ``dry_run`` is part of the plan, so it is fixed
-at reserve, shown to the operator who approves the start, and kept on a resume. Only a device that
+at reserve, shown by ``get_reservation``, and kept on a resume. Only a device that
 sets ``SUPPORTS_DRY_RUN`` takes one: its steps must cope with the placeholder a recorded command
 returns. Any other device refuses ``dry_run`` at reserve, naming itself. The reserve request may carry
 ``risk_overrides`` (the MCP server passes its ``mcp.safety.risk``); a command they mark high is

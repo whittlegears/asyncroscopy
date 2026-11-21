@@ -39,7 +39,7 @@ class SimInstrument:
             raise Refused(f"{name} is read-only")
         with self.lock:
             coerced = quantity.coerce(value)
-            # A setting's requires guard every way of changing it (set_<name>, a job's axes), like a command's.
+            # A setting's requires guard every way of changing it, including a job's axes.
             self._check(f"set_{name}", self.spec.setting_requires.get(name, []), {**self.values, name: coerced})
             self.values[name] = coerced
 
@@ -121,7 +121,7 @@ class SimInstrument:
                 shape = peak.get("shape", "gaussian")
                 if "fwhm" in peak:
                     fwhm = max(abs(num(f"peaks[{i}].fwhm", peak["fwhm"])), 1e-30)
-                else:  # width: a Gaussian's sigma, as files written before fwhm existed give it
+                else:  # older files give width, which is a Gaussian's sigma
                     fwhm = max(abs(num(f"peaks[{i}].width", peak["width"])), 1e-30) * FWHM_PER_SIGMA
                 eta = {"gaussian": 0.0, "lorentzian": 1.0}.get(shape)
                 if eta is None:

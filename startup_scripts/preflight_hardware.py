@@ -5,7 +5,7 @@ Run it after run_servers.py (and after the analysis server), on the microscope P
 
     uv run --no-sync startup_scripts/preflight_hardware.py --yaml configs/Spectra300.yaml
 
-It never moves, blanks or unblanks, acquires, writes an attribute or switches the approval mode.
+It never moves, blanks or unblanks, acquires or writes an attribute.
 Every Tango command it sends goes through ``ReadOnlyDevice``, which refuses any command the risk
 policy does not count as a pure read (``asyncroscopy.safety.policy.is_read_only``). It reads:
 
@@ -15,7 +15,6 @@ policy does not count as a pure read (``asyncroscopy.safety.policy.is_read_only`
 * the AutoScript client version in this Python, and the server's version (its own short AutoScript connection,
   which only reads ``service.autoscript.server.version``; skip it with --no-autoscript-server);
 * the microscope: stage position, optical mode, beam blanked, beam current if the screen current was measured;
-* the Approvals device: mode is approve, and it says the stack is not simulated;
 * CEOS: a TCP connect to the corrector's ceos_host:ceos_port, nothing sent;
 * Tiled at the DATA device's address, with the API key (an authenticated read);
 * the analysis server at the Mapper's analysis_url (MCP initialize and list_tools);
@@ -52,14 +51,13 @@ from asyncroscopy.safety.policy import is_read_only
 
 DEFAULT_YAML = PROJECT_DIR / "configs" / "Spectra300.yaml"
 DEFAULT_MCP_YAMLS = (PROJECT_DIR / "configs" / "mcp.yaml", PROJECT_DIR / "configs" / "mcp_operator.yaml")
-EXPECTED_AUTOSCRIPT = "1.18"  # the client wheels pyproject.toml installs (stubs/AutoScript_v_1.18)
+EXPECTED_AUTOSCRIPT = "1.18"  # the client wheels pyproject.toml installs from stubs/AutoScript_v_1.18
 AUTOSCRIPT_DEFAULT_PORT = 7521
-APPROVALS_MODULE = "asyncroscopy.safety.approvals"
 DEVICE_TIMEOUT_MS = 5000
 NET_TIMEOUT_S = 5.0
 MCP_TIMEOUT_S = 15.0
 
-# Attributes this script may read. Attribute reads never act, but the list keeps the script's reach explicit.
+# Attributes this script may read. Reads never act but the list makes clear what the script touches.
 READ_ATTRIBUTES = frozenset({"beam_state"})
 BAD_STATES = frozenset({"FAULT", "UNKNOWN"})
 
@@ -162,7 +160,7 @@ def _autoscript_server_version(host: str, port: int) -> str:
     try:
         return str(client.service.autoscript.server.version)
     finally:
-        client.disconnect()  # this script's own connection only; the instrument device keeps its own
+        client.disconnect()  # Closes this script's own connection only. The instrument device keeps its own.
 
 
 REAL_PROBES = Probes(
@@ -191,7 +189,7 @@ class Report:
 
 def _error(exc: BaseException) -> str:
     text = str(exc).strip().splitlines()
-    for line in text:  # a Tango DevFailed prints many lines; the "desc" one says what happened
+    for line in text:  # A Tango DevFailed prints many lines. The one with desc says what happened.
         if "desc" in line.lower():
             return line.strip()[:240]
     return f"{type(exc).__name__}: {text[0][:240] if text else ''}"
@@ -340,27 +338,6 @@ def check_microscope(config: Any, devices: dict[str, ReadOnlyDevice], report: Re
         report.add("FAIL", "beam blanked", _error(exc))
 
 
-def check_approvals(config: Any, devices: dict[str, ReadOnlyDevice], report: Report) -> None:
-    names = [d.device_name for d in config.support_devices if d.module_name == APPROVALS_MODULE]
-    if not names:
-        report.add("FAIL", "approvals", "no Approvals device in the config: nothing holds high-risk agent calls")
-        return
-    approvals = devices.get(names[0])
-    if approvals is None:
-        report.add("FAIL", "approvals", f"{names[0]} did not answer")
-        return
-    try:
-        mode = str(approvals.command("get_mode"))
-        report.add("PASS" if mode == "approve" else "FAIL", "approvals mode", mode if mode == "approve" else f"{mode}: must be approve on hardware")
-    except Exception as exc:
-        report.add("FAIL", "approvals mode", _error(exc))
-    try:
-        simulated = bool(approvals.command("get_simulated"))
-        report.add("FAIL" if simulated else "PASS", "approvals: stack is hardware", "simulated: true" if simulated else "simulated: false")
-    except Exception as exc:
-        report.add("FAIL", "approvals: stack is hardware", _error(exc))
-
-
 def check_ceos(config: Any, probes: Probes, report: Report) -> None:
     for device in config.support_devices:
         if "ceos_host" not in device.properties:
@@ -466,7 +443,6 @@ def run(config_path: Path, mcp_paths: list[Path], probes: Probes = REAL_PROBES, 
         devices = check_devices(config, probes, report)
     check_autoscript(config, probes, report, ask_autoscript_server)
     check_microscope(config, devices, report)
-    check_approvals(config, devices, report)
     check_ceos(config, probes, report)
     check_tiled(config, probes, report)
     check_analysis(config, probes, report)

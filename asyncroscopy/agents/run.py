@@ -35,11 +35,9 @@ if TYPE_CHECKING:
     from .goals import Goal
 
 GRAPHS = AGENT_GRAPHS
-# The graph a query names: "" for the agent swarm, or one of GRAPHS (query_agent lists them as an enum).
+# The graph a query names. An empty string means the agent swarm.
 GraphName = Literal["", *GRAPHS]
-# Where every task's task_start and task_end events go (empty: none), next to the instrument trace, so a benchmark
-# can put the time a task took beside the instrument, model and approval time inside it.
-GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make (each round is three graph steps with the skill middleware)
+GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make
 
 
 @contextlib.asynccontextmanager
@@ -177,7 +175,7 @@ def main() -> None:
 
     text, failed = asyncio.run(traced())
     print(text)
-    if failed:  # scripts and CI see a map that did not complete
+    if failed:  # a nonzero exit tells scripts and CI that the map did not complete
         sys.exit(1)
 
 

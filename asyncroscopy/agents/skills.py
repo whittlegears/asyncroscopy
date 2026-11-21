@@ -11,7 +11,7 @@
 the ones agents learned ($ASYNCROSCOPY_AGENT_MEMORY/skills, default outputs/agent_memory),
 with each one's status and any problem. A learned skill is a draft until promoted; only
 promoted ones are put in agents' prompts. ``lint`` checks a skill file the way promotion
-does: front matter, length, no advice to get around approvals or safety, and (with
+does: front matter, length, no advice to get around safety, and (with
 --check-endpoint) only tools the agent endpoint offers.
 """
 

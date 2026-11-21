@@ -1,6 +1,6 @@
-"""Bearer-token verification for the MCP endpoints (the instrument side of the facility's endpoint proxy).
+"""Bearer-token verification for the MCP endpoints (the instrument side of an endpoint proxy).
 
-The facility's design puts a token service (minting and verification) in front of every instrument: a
+A facility can put a token service (minting and verification) in front of every instrument: a
 user reaches an instrument through the token service, an endpoint API proxy, and an endpoint
 proxy that terminates TLS and checks the token, then the PyTango / Tiled / MCP servers. This
 module is the check at the MCP server itself. It is optional: without an ``mcp.auth`` section
@@ -10,19 +10,16 @@ With ``mcp.auth`` set:
 
 * every request needs a valid bearer JWT: signature (a public key file or the token service's
   JWKS), expiry, issuer and audience are checked, and ``exp`` and ``sub`` must be present;
-* the token's ``sub`` is the caller recorded in the trace and in approval requests, and the
-  ``who`` of an approve, deny or set_mode; ``X-Asyncroscopy-Caller`` is ignored;
+* the token's ``sub`` is the caller recorded in the trace; ``X-Asyncroscopy-Caller`` is ignored;
 * the token's scopes give it roles, and each tool needs one, taken from the tool's descriptor
-  (``asyncroscopy.safety.decide.required_role``), not from a second list:
+  (``required_role``), not from a second list:
 
   ========= ==================================================================
   role      tools
   ========= ==================================================================
   read      low-risk tools (get_*, list_*, job_status, view_data, ...)
-  operate   high-risk tools (move_stage, acquire_*, <job>_start, run_job, ...);
-            the approval gate still applies to them
-  approve   operator-only commands (Approvals approve, deny, set_mode, ...),
-            which only the operator endpoint offers
+  operate   high-risk tools (move_stage, acquire_*, <job>_start, run_job, ...)
+  approve   operator-only commands, which only the operator endpoint offers
   ========= ==================================================================
 
   A token sees only the tools its roles allow (tools/list is filtered too).
@@ -45,15 +42,13 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 ROLES = ("read", "operate", "approve")
-# Scopes a facility token carries, and the roles each grants. A deployment can map its own scope names
-# (mcp.auth.roles); a role is granted when the token has any scope listed for it.
+# Scopes a token carries and the roles each grants. A deployment can map its own scope names.
+# A role is granted when the token has any scope listed for it.
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "read": ["instrument:read", "instrument:operate", "instrument:approve"],
     "operate": ["instrument:operate"],
     "approve": ["instrument:approve"],
 }
-# Approvals commands whose "who" names the person deciding; with auth it is the token's subject.
-DECIDING_COMMANDS = frozenset({"approve", "deny", "set_mode", "set_auto_allowed"})
 
 
 @dataclass(frozen=True)
@@ -65,8 +60,7 @@ class AuthSettings:
     jwks_url: str = ""
     public_key_file: str = ""
     algorithm: str = "RS256"
-    # Claims whose values are matched against the role scopes ("scope" is space-separated, "scp" or a
-    # roles claim may be a list).
+    # Claims whose values are matched against the role scopes. A claim may be a list or a string split on spaces.
     role_claims: tuple[str, ...] = ("scope", "scp")
     roles: dict[str, list[str]] = field(default_factory=lambda: {k: list(v) for k, v in DEFAULT_ROLE_SCOPES.items()})
 
@@ -137,22 +131,18 @@ class AuthSettings:
         return {role for role, scopes in self.roles.items() if values & set(scopes)}
 
 
-def stamp_who(dev_class: str, command_name: str, call_args: tuple, subject: str | None) -> tuple:
-    """An approve, deny, set_mode or set_auto_allowed of an Approvals device records the token's subject as ``who``."""
-    if dev_class.lower() != "approvals" or command_name not in DECIDING_COMMANDS or not call_args or not subject:
-        return call_args
-    try:
-        body = json.loads(call_args[0])
-    except (TypeError, ValueError):
-        return call_args
-    if not isinstance(body, dict):
-        return call_args
-    body["who"] = subject
-    return (json.dumps(body, sort_keys=True, separators=(",", ":")), *call_args[1:])
+def required_role(tool) -> str:
+    """The token role a tool needs: "approve" for operator-only commands, "operate" for high-risk ones,
+    "read" for the rest. A tool the endpoint does not know (None) needs "operate": unknown is high."""
+    if tool is None:
+        return "operate"
+    if tool.operator_only:
+        return "approve"
+    return "operate" if tool.risk != "low" else "read"
 
 
 def is_loopback(host: str) -> bool:
-    return is_loopback_host(host)  # one rule for every bind check (asyncroscopy.core.net)
+    return is_loopback_host(host)  # one rule for every bind check
 
 def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | dict | None) -> str | None:
     """Why a server must not start: real hardware (simulated: false, or not known) reachable from other
@@ -166,7 +156,7 @@ def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | d
     )
 
 
-# ---------------------------------------------------------------------- FastMCP wiring
+# FastMCP wiring
 def _verifier(settings: AuthSettings):
     from fastmcp.server.auth.providers.jwt import JWTVerifier
 
@@ -207,8 +197,6 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
     from fastmcp.exceptions import ToolError
     from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-    from asyncroscopy.safety.decide import required_role
-
     class RoleGate(Middleware):
         """Refuses a tool call whose token lacks the tool's role, and lists only the tools a token may call.
 
@@ -229,7 +217,7 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
             if token is None:
                 raise ToolError(f"{name} refused: this endpoint needs a valid bearer token (mcp.auth)")
             names = [name]
-            if name == "call_tool":  # call_tool runs another tool: the token needs that tool's role too
+            if name == "call_tool":  # call_tool runs another tool, so the token needs that tool's role too
                 names.append(str((context.message.arguments or {}).get("name", "")))
             for checked in names:
                 need = self._needs(checked)

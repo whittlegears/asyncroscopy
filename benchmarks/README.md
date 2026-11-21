@@ -38,7 +38,9 @@ Some workflows need a different stack: start it instead of `digital_twin_mapping
 | `xrd` | `configs/yaml_sim_xrd.yaml` | xrd (an instrument described in YAML, no Python) |
 
 These are declared in `benchmarks/stacks.yaml`. A stack is a run_servers config and the addresses it
-serves (`mcp`, `operator`, `tiled`; defaults 8000, 8001 and 9091 on this machine;
+serves (`mcp`, `operator`, `tiled`; defaults 8000, 8001 and 9091 on this machine. The operator endpoint is no
+longer started with the agent endpoint: for the checks that read the twin's ground truth, start it yourself with
+`uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml`;
 `ASYNCROSCOPY_MCP_URL`, `ASYNCROSCOPY_OPERATOR_URL` and `ASYNCROSCOPY_TILED_URI` override them), and your own is
 declared there or at the top of your workflow file (see below), with no edit to the harness. The
 stacks above share ports, so only one runs at a time. A stack whose config this checkout does not
@@ -128,7 +130,7 @@ The checks, all in `benchmarks/workflow_checks.py`:
 | `answer_peak_near` | the run's spectra have a peak within `tol` of `position` (axis units), the agent read its spectrum with `view_data`, and the answer gives the position |
 
 To add a check, write `def my_check(run, **params) -> (bool, str)` with `@check` in that file and a
-test in `tests/test_workflow_checks.py`. A 1-D dataset your instrument saves with `axis_offset` /
+test in `tests/scoring/test_workflow_checks.py`. A 1-D dataset your instrument saves with `axis_offset` /
 `axis_scale` (or the twin's energy attributes) gets its peaks and `strongest_peak` (and, in eV,
 candidate elements) computed for `answer_*` checks automatically, with the same peak finder and order
 (strongest net counts first) that `view_data` shows the agent.

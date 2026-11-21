@@ -13,7 +13,7 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-# CEOS corrector names (metres) -> pyTEMlib names (nanometres).
+# Maps CEOS corrector names in metres to pyTEMlib names in nanometres.
 CORRECTOR_TO_PYTEMLIB = {
     "C1": ("C10",),
     "A1": ("C12a", "C12b"),
@@ -27,8 +27,8 @@ CORRECTOR_TO_PYTEMLIB = {
     "A4": ("C45a", "C45b"),
 }
 
-# Diffraction-limited probe width (Gaussian sigma) of an aberration-corrected
-# 300 kV probe; the Spectra 300 datasheet quotes 50 pm resolution.
+# Gaussian sigma of the best probe at 300 kV with aberrations corrected.
+# The Spectra 300 datasheet quotes 50 pm resolution.
 IDEAL_PROBE_SIGMA_M = 0.05e-9 / 2.355
 
 

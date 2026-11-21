@@ -21,9 +21,7 @@ from typing import Any, Callable
 import numpy as np
 from numpy.typing import ArrayLike
 
-# ----------------------------------------------------------------------
-# Sharpness metrics: image (2-D array) -> float, higher is sharper
-# ----------------------------------------------------------------------
+# sharpness metrics, where higher is sharper
 
 
 def _as_image(image) -> np.ndarray:
@@ -68,7 +66,7 @@ def smoothed_gradient_energy(image: ArrayLike) -> float:
         return 0.0
     dx = np.diff(smooth, axis=1)
     dy = np.diff(smooth, axis=0)
-    # The box filter leaves 1/9 of the Poisson variance, correlated over 3 pixels: about 2/27 * mean per difference.
+    # The box filter leaves 1/9 of the Poisson variance, correlated over 3 pixels. That is about 2/27 of the mean per difference.
     energy = 0.5 * (float((dx * dx).mean()) + float((dy * dy).mean()))
     return max(0.0, energy - 2.0 * mean / 27.0) / (mean * mean)
 
@@ -88,9 +86,7 @@ def sharpness(image: ArrayLike, metric: str = "normalized_variance") -> float:
         raise ValueError(f"unknown sharpness metric {metric!r}; known: {sorted(METRICS)}") from None
 
 
-# ----------------------------------------------------------------------
-# Fitting the top of a peak
-# ----------------------------------------------------------------------
+# fitting the top of a peak
 
 
 def parabola_vertex(xs: ArrayLike, ys: ArrayLike) -> float | None:
@@ -115,7 +111,7 @@ def peak_estimate(xs: ArrayLike, ys: ArrayLike) -> float:
     y = np.asarray(ys, dtype=np.float64)[order]
     best = int(np.argmax(y))
     lo, hi = max(0, best - 1), min(len(x), best + 2)
-    if hi - lo < 3:  # the best sample is at an end: widen inwards
+    if hi - lo < 3:  # the best sample is at an end, so widen inwards
         lo, hi = max(0, min(lo, len(x) - 3)), min(len(x), max(hi, 3))
     vertex = parabola_vertex(x[lo:hi], y[lo:hi]) if hi - lo >= 3 else None
     if vertex is None:
@@ -123,9 +119,7 @@ def peak_estimate(xs: ArrayLike, ys: ArrayLike) -> float:
     return float(min(max(vertex, x[lo]), x[hi - 1]))
 
 
-# ----------------------------------------------------------------------
-# Searches
-# ----------------------------------------------------------------------
+# searches
 
 
 def sweep(evaluate: Callable[[float], float], low: float, high: float, points: int) -> tuple[list[float], list[float]]:
@@ -177,7 +171,7 @@ def search_1d(
             break
         xs, ys = sweep(evaluate, low, high, fine_points)
         samples += zip(xs, ys)
-        # Fit the whole fine sweep: it spans the peak symmetrically, which cancels most of the noise.
+        # Fit the whole fine sweep. It spans the peak evenly, which cancels most of the noise.
         vertex = parabola_vertex(xs, ys)
         estimate = float(min(max(vertex, low), high)) if vertex is not None else peak_estimate(xs, ys)
         window *= float(shrink)

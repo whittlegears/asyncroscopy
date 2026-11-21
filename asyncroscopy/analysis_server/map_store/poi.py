@@ -15,8 +15,8 @@ import numpy as np
 from .runs import _batch_points, _decode
 from .pyramid import _replace_metadata
 
-POI_CELLS = 64  # the POI layer's grid is POI_CELLS x POI_CELLS cells over the map
-CELL_KINDS = {"eds_point"}  # kinds kept in spatial cells; every other kind is a highlight
+POI_CELLS = 64  # cells along each side of the POI layer's grid over the map
+CELL_KINDS = {"eds_point"}  # kinds kept in spatial cells, and every other kind is a highlight
 HIGHLIGHTS = "highlights"
 
 
@@ -165,7 +165,7 @@ class PoiStore:
         return self._list_in(key, meta, kind, box_m, limit)
 
     def _list_in(self, map_key: str, meta: dict, kind: str | None = None, box_m: list[float] | None = None, limit: int | None = None) -> list[dict]:
-        out = list(_decode(meta.get("pois", [])) or [])  # maps written before the layer kept them here
+        out = list(_decode(meta.get("pois", [])) or [])  # older maps keep their points here
         grid = self._grid(map_key, meta)
         cells = None
         if box_m is not None:
@@ -257,7 +257,7 @@ class PoiStore:
             groups.setdefault(self._group_of(grid, meta, p), []).append(p)
         stored: list[dict] = []
         seen: set = set()
-        if dedupe:  # a point whose position moved may now fall in another cell: look for its id in all of them
+        if dedupe:  # a point that moved may now fall in another cell, so look for its id in all of them
             cells = any(name != current for name in groups)
             names = ([current] if current in groups else []) + (self._cell_names(map_key, meta) if cells else [])
             seen = {p.get("id") for name in names for p in self._read_group(map_key, meta, name)}
@@ -308,7 +308,7 @@ class PoiStore:
             old = self._layer_name(meta)
             replaced = [{"layer": old, "replaced_at": time.time()}] if self._has_layer(map_key, old) else []
             staged = {**meta, "poi_layer": f"poi_{uuid.uuid4().hex[:8]}", "layers": list(_decode(meta.get("layers")) or []) + replaced}
-            for key in ("pois", "highlights", "replaced_highlights"):  # the new layer's highlights are its "highlights" group
+            for key in ("pois", "highlights", "replaced_highlights"):  # the new layer keeps its highlights in its own group
                 staged.pop(key, None)
             self.add_pois_to_layer(map_key, staged, pois)
             self._write_store_meta(map_key, staged)
@@ -324,7 +324,7 @@ class PoiStore:
         """
         with self._lock(self._points_target(map_key)):
             map_key, meta = self._ensure_points(map_key)
-            if _decode(meta.get("pois")):  # a map from before point layers keeps its points inline: rewrite them all
+            if _decode(meta.get("pois")):  # an older map keeps its points inline, so rewrite them all
                 kept = self.update_pois(map_key, lambda current: [p for p in current if p.get("kind") in CELL_KINDS]
                                         + list(change([p for p in current if p.get("kind") not in CELL_KINDS])))
                 return [p for p in kept if p.get("kind") not in CELL_KINDS]

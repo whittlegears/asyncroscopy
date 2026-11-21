@@ -1,7 +1,7 @@
 """The record of every call: the per-call tool log, the Instrument Trace, and trace_since for the operator's GUI.
 
 ``Recorder`` is the interceptor that writes one tool-log line and one trace event per device call (with
-the approval gate's fields), and tells a model to stop after the same call failed the same way twice.
+the job fields), and tells a model to stop after the same call failed the same way twice.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ class TraceTools:
         self.follow = list(cfg.trace_follow)
 
     def natives(self) -> list:
-        # The GUI follows the trace here; the agent endpoint does not offer it (it records arguments of every caller).
+        # Only the operator endpoint offers this because the trace records the arguments of every caller.
         return [self.trace_since] if self.server.endpoint_role == "operator" and self.follow else []
 
     @tool()
@@ -62,12 +62,12 @@ class Recorder(Interceptor):
 
     def __init__(self, server: MCPServer) -> None:
         self.server = server
-        # tool name -> (arguments + error signature, consecutive count, time of last failure)
+        # For each tool name, the last failure's signature, how many in a row, and when.
         self.failures: dict[str, tuple[str, int, float]] = {}
         self._lock = threading.Lock()
 
     def _via(self) -> dict[str, Any]:
-        name = self.server.jobs.via_name()  # run_job's own reserve and start
+        name = self.server.jobs.via_name()  # set while run_job does its own reserve and start
         return {"via": name} if name else {}
 
     def after_call(self, call: Call, result: Any) -> Any:

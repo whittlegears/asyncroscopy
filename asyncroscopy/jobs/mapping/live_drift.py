@@ -1,8 +1,7 @@
 """Live drift tracking during a map: a bounded image shift before each tile, from the drift measured so far.
 
-Off by default. A plan turns it on with ``"drift": {"track": true}`` (item 8 of
-docs/designs/concepts_brief.md; docs/Operation/agentic_mapping.md, "Live drift
-tracking"). The Mapper's loop calls it between the stage move and the acquisition
+Off by default. A plan turns it on with ``"drift": {"track": true}``
+(docs/Operation/agentic_mapping.md, "Live drift tracking"). The Mapper's loop calls it between the stage move and the acquisition
 of each tile, whatever the instrument; what an image shift is belongs to the
 instrument profile (``image_shift_limit_m``, ``get_image_shift``,
 ``set_image_shift``). A profile that cannot shift the image has no limit, and a
@@ -57,7 +56,7 @@ if TYPE_CHECKING:
     from .run_file import RunFile
 
 DEFAULTS = {"track": False, "tracker": "linear", "window": DEFAULT_WINDOW}
-MAX_SHIFT_FOV = 0.1  # default max_shift_m: a tenth of a tile per correction
+MAX_SHIFT_FOV = 0.1  # by default one correction moves at most a tenth of a tile
 REGISTRATION_MARGIN_PX = 3.0  # added to every registration search bound
 KEY = "drift_tracking"
 
@@ -83,7 +82,7 @@ def resolve(p: dict, profile: InstrumentProfile, tile_size_m: tuple[float, float
             f"live drift tracking (drift.track) corrects with an image shift, which the {profile.name!r} instrument profile "
             f"cannot apply ({profile.doc}). Nothing was run; resend the plan without drift.track (the stitch still fits drift after the map)"
         )
-    get_tracker(str(drift["tracker"]))  # unknown tracker: refused, with the registered ones
+    get_tracker(str(drift["tracker"]))  # raises for an unknown tracker
     if tiles < 2 or float(p["overlap"]) <= 0:
         raise ValueError("live drift tracking measures drift where neighbouring tiles overlap: it needs at least 2 tiles and overlap > 0")
     spec = importlib.util.find_spec("pyTEMlib")
@@ -104,9 +103,7 @@ def needed_commands(plan: dict, profile: InstrumentProfile) -> tuple:
     return tuple(profile.image_shift_commands) if tracking(plan) else ()
 
 
-# ----------------------------------------------------------------------
 # During the job
-# ----------------------------------------------------------------------
 def _state(job: dict) -> dict:
     return job[KEY]
 
@@ -194,7 +191,7 @@ def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: Ru
     measured = None
     confidence = None
     if image is None:
-        pass  # a dry run: nothing to register
+        pass  # a dry run has nothing to register
     elif not tiles:
         measured = np.zeros(2)  # the map's first tile is the reference
     else:
@@ -226,7 +223,7 @@ def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: Ru
     rate = tracker.rate_m_per_s()
     if rate is not None:
         state["rate_m_per_s"] = list(rate)
-    # Kept for the neighbours still to come: a row of tiles plus one is enough in either order.
+    # Later tiles register against these. A row of tiles plus one is enough to keep.
     chained = measured if measured is not None else np.asarray(tracker.predict(acquired) if tracker.observations else (0.0, 0.0))
     tiles[str(index)] = {"t": float(acquired), "p": planned.tolist(), "s": shift.tolist(), "e": [float(v) for v in chained], "measured": measured is not None}
     for key in list(tiles)[: max(0, len(tiles) - (int(plan["grid"]["cols"]) + 2))]:

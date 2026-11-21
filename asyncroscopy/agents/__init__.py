@@ -1,6 +1,6 @@
 """Code-defined LangGraph agents for asyncroscopy.
 
-``graphs.mapping`` is a fixed workflow (plan -> reserve -> approval -> run ->
+``graphs.mapping`` is a fixed workflow (plan -> reserve -> run ->
 stitch -> score -> report) where the language model only writes the plan
 and the report; ``graphs.general`` is a tool-using agent; ``graphs.team`` is a
 planner with an operator and an analyst agent, each holding only its role's

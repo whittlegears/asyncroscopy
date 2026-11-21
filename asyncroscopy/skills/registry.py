@@ -1,20 +1,30 @@
 """Find and load SKILL.md files.
 
+A skill is an instruction manual for one kind of task: how to do it on this kind of instrument, which tool or
+workflow to use, what the replies mean and what to report. It is context the agent graphs retrieve for a request
+and put in the prompt, like retrieval-augmented generation over a small library; it never runs anything itself.
+A fixed procedure (the same calls every time) is a LangGraph workflow (``asyncroscopy.agents.workflows``), and
+the skill for it says when to run that workflow and how to read what comes back.
+
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
 description, version, min_asyncroscopy, envelope_schema, tools, requires,
-keywords, acts, run) followed by instructions in Markdown. ``acts`` says whether
+keywords, acts) followed by the manual in Markdown. ``acts`` says whether
 following the skill moves or exposes the instrument; when it is left out it
 is true if any of its ``tools`` is high risk by the safety policy. A request
 that only asks about data (``read_only_request``) never gets a skill that acts.
+``unless`` lists tool patterns that make the skill
+unavailable when the endpoint offers any of them, because another skill does that job there (``map_with_workflow``
+is for an instrument without a Mapper). ``new_map: true`` marks the procedure a request for a new map gets first.
 ``matched: false`` keeps a skill out of request matching: it is reached only through another skill that
-names it (a run another skill sends the agent to). ``run`` lists a fixed procedure's tool calls, which ``run_skill`` sends one
-after another in the background (see ``asyncroscopy.agents.skill_runs``).
+names it. A skill with a ``run`` list (an older form of a fixed procedure) is listed as unavailable: write the
+procedure as a workflow instead.
 
 Agents do not have to look skills up: ``select_skills`` matches a request's
 words against each skill's keywords, name and description (no model call,
 so the same request always gets the same skills), and ``skills_text`` writes
 the chosen ones into a prompt within a size budget. The agent graphs do this
-for every request and again as the task develops (see
+for every request, and before every model call they also search all skills as
+passages for that step (``asyncroscopy.skills.index``, see
 ``asyncroscopy.agents.skill_middleware``); ``load_skill`` remains for an
 agent whose matched skill did not fit, and for MCP clients.
 
@@ -47,10 +57,9 @@ from asyncroscopy import settings
 from asyncroscopy.contracts import ENVELOPE_VERSION
 
 HERE = Path(__file__).resolve().parent
-# What has been read, by what the file system says about the file: nothing is read twice while it is unchanged.
+# What has been read, keyed by the file's size and time, so nothing is read twice while it is unchanged.
 _front_matter: dict[Path, tuple[tuple[int, int], dict, str]] = {}
 _parsed: dict[Path, tuple[tuple[int, int] | None, object]] = {}
-_listings: dict[Path, tuple[object, list, list[Path]]] = {}
 
 
 @dataclass
@@ -61,15 +70,18 @@ class Skill:
     version: str = "0.0.0"
     tools: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
+    unless: list[str] = field(default_factory=list)  # unavailable when the endpoint offers any of these
     keywords: list[str] = field(default_factory=list)  # phrases that select it for a request
     min_asyncroscopy: str | None = None
     envelope_schema: str | None = None
     problem: str | None = None  # why it cannot be used here, if it cannot
-    learned: bool = False  # drafted by an agent from a past run (promoted by an operator)
-    status: str | None = None  # a learned skill's review state: draft or promoted
+    learned: bool = False  # drafted by an agent from a past run and promoted by an operator
+    status: str | None = None  # a learned skill's review state, draft or promoted
     acts: bool = False  # following it moves or exposes the instrument
-    run: dict | None = None  # its fixed list of tool calls, for run_skill
-    matched: bool = True  # chosen for a request by its words (false: only another skill sends the agent to it)
+    matched: bool = True  # chosen for a request by its words. False means only another skill sends the agent to it
+    new_map: bool = False  # the procedure a request for a new map gets first
+    source: str = "shipped"  # shipped, path ($ASYNCROSCOPY_SKILLS_PATH), lab (written from a client) or learned
+    off: bool = False  # switched off on this endpoint (asyncroscopy.skills.lab.switch)
 
     @property
     def available(self) -> bool:
@@ -124,16 +136,8 @@ def read_front_matter(path: Path) -> tuple[dict, str]:
 
 
 def _skill_files(base: Path) -> list[Path]:
-    """Every ``*/SKILL.md`` under ``base``. The folder is listed again only when its modified time, or that of one of
-    its sub-folders (where a SKILL.md being added or removed shows), has changed."""
-    stamp = _stamp(base)
-    cached = _listings.get(base)
-    if cached is not None and cached[0] == stamp and all(_stamp(d) == s for d, s in cached[1]):
-        return cached[2]
-    folders = [p for p in sorted(base.iterdir()) if p.is_dir()]
-    found = [p / "SKILL.md" for p in folders if (p / "SKILL.md").is_file()]
-    _listings[base] = (stamp, [(d, _stamp(d)) for d in folders], found)
-    return found
+    """Every ``*/SKILL.md`` under ``base``. Listed fresh each time because folder times are not reliable on Windows."""
+    return [p / "SKILL.md" for p in sorted(base.iterdir()) if (p / "SKILL.md").is_file()]
 
 
 def _cached_skill(path: Path) -> Skill:
@@ -166,31 +170,37 @@ def _parse(path: Path) -> Skill:
         version=str(meta.get("version", "0.0.0")),
         tools=list(meta.get("tools") or []),
         requires=list(meta.get("requires") or []),
+        unless=list(meta.get("unless") or []),
         keywords=[str(k) for k in meta.get("keywords") or []],
         min_asyncroscopy=meta.get("min_asyncroscopy"),
         envelope_schema=meta.get("envelope_schema"),
         status=meta.get("status"),
         matched=bool(meta.get("matched", True)),
+        new_map=bool(meta.get("new_map", False)),
     )
-    if meta.get("run") is not None:
-        run = meta["run"]
-        steps = run.get("steps") if isinstance(run, dict) else None
-        if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) and bool(s.get("tool")) != bool(s.get("skill")) for s in steps):
-            raise ValueError(f"{path} run needs steps: a list of {{tool, args}} or {{skill, inputs}}")
-        skill.run = run
-    # Whether following the skill acts on the instrument is the skill's to say (acts: false for one that only reads);
-    # one that does not say counts as acting, as an unknown command counts as high risk.
+    # The skill says whether following it acts on the instrument.
+    # One that does not say counts as acting, just as an unknown command counts as high risk.
     skill.acts = bool(meta["acts"]) if "acts" in meta else True
     installed = _installed_version()
     if skill.min_asyncroscopy and installed and _version_tuple(installed) < _version_tuple(str(skill.min_asyncroscopy)):
         skill.problem = f"needs asyncroscopy >= {skill.min_asyncroscopy}, installed {installed}"
     elif skill.envelope_schema and _version_tuple(str(skill.envelope_schema))[:1] != _version_tuple(ENVELOPE_VERSION)[:1]:
         skill.problem = f"written for envelope schema {skill.envelope_schema}, installed {ENVELOPE_VERSION}"
+    if meta.get("run") is not None and skill.problem is None:
+        skill.problem = ("its run list is a fixed procedure, and fixed procedures are LangGraph workflows now: write it as a workflow "
+                         "(asyncroscopy/agents/workflows/graphs, or propose_workflow) and make this skill say when to run it")
     return skill
 
 
 def skill_dirs() -> list[Path]:
-    return [HERE, *settings.get().skills_path]
+    """Folders skills are read from, in order: a later one's skill replaces an earlier one's of the same name."""
+    return [HERE, *settings.get().skills_path, settings.get().lab_skills]
+
+
+def _source(base: Path) -> str:
+    if base == HERE:
+        return "shipped"
+    return "lab" if base == settings.get().lab_skills else "path"
 
 
 def learned_dir() -> Path:
@@ -199,8 +209,11 @@ def learned_dir() -> Path:
 
 
 def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
-    """Every skill found; with ``tool_names``, those whose ``requires`` are not all offered are unavailable."""
+    """Every skill found except those named in ``$ASYNCROSCOPY_SKILLS_OFF``. With ``tool_names``, skills whose
+    ``requires`` are not all offered, or that offers one of their ``unless``, are marked unavailable."""
     skills: dict[str, Skill] = {}
+    if not settings.get().skills:  # skills are switched off by $ASYNCROSCOPY_SKILLS
+        return []
     for base in skill_dirs():
         if not base.is_dir():
             continue
@@ -209,7 +222,8 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
                 skill = _cached_skill(path)
             except (ValueError, yaml.YAMLError) as exc:
                 skill = Skill(name=path.parent.name, description="(unreadable skill file)", path=path, problem=str(exc))
-            skills[skill.name] = skill  # later folders (a lab's own) replace same-named packaged skills
+            skill.source = _source(base)
+            skills[skill.name] = skill  # later folders, such as a lab's own, replace packaged skills of the same name
     learned = learned_dir()
     if learned.is_dir():
         for path in _skill_files(learned):
@@ -217,14 +231,25 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
                 skill = _cached_skill(path)
             except (ValueError, yaml.YAMLError):
                 continue
-            if skill.status == "promoted" and skill.name not in skills:  # drafts are never offered; shipped skills win
+            if skill.status == "promoted" and skill.name not in skills:  # drafts are never offered, and shipped skills win
                 skill.learned = True
+                skill.source = "learned"
                 skills[skill.name] = skill
+    off = settings.get().skills_off
+    skills = {name: skill for name, skill in skills.items() if not any(fnmatch.fnmatchcase(name, p) for p in off)}
+    from asyncroscopy.skills.lab import switched_off
+
+    for name in switched_off() & skills.keys():  # still listed, so a client can switch it on again
+        skills[name].off = True
+        skills[name].problem = skills[name].problem or "switched off on this endpoint"
     if tool_names is not None:
         for skill in skills.values():
             missing = [p for p in skill.requires if not any(fnmatch.fnmatchcase(t, p) for t in tool_names)]
+            covered = [p for p in skill.unless if any(fnmatch.fnmatchcase(t, p) for t in tool_names)]
             if missing and skill.problem is None:
                 skill.problem = f"needs tools this endpoint does not offer: {', '.join(missing)}"
+            elif covered and skill.problem is None:
+                skill.problem = f"another skill does this on an endpoint offering {', '.join(covered)}"
     return sorted(skills.values(), key=lambda s: s.name)
 
 
@@ -238,14 +263,14 @@ def load_skill(name: str, tool_names: set[str] | None = None) -> str:
     raise KeyError(f"no skill named {name!r}; available: {[s.name for s in list_skills()]}")
 
 
-# ---------------------------------------------------------------------- matching a request
+# matching a request
 STOP = frozenset(
     "a an and are as at be by do for from how i in into is it its me my of on or our please so that the their them then this to "
     "up us use using we what when where which with you your can could would should will".split()
 )
-MAX_MATCHED = 2  # skills chosen from the request; a small model follows one or two well
-PROMPT_BUDGET_CHARS = 7000  # about 1800 tokens of skill text: inside an 8k context with the tools
-MATCH_THRESHOLD = 2.0  # one keyword or name word, or four description words
+MAX_MATCHED = 2  # skills chosen from the request. A small model follows one or two well
+PROMPT_BUDGET_CHARS = 7000  # about 1800 tokens of skill text, which fits an 8k context with the tools
+MATCH_THRESHOLD = 2.0  # one keyword phrase or two words of the skill name
 
 
 def _stem(word: str) -> str:
@@ -263,20 +288,23 @@ def content_words(text: str) -> set[str]:
     return {_stem(w) for w in re.findall(r"[a-z][a-z0-9]+", text.lower()) if w not in STOP}
 
 
-# The negated word and the one after it ("without EDS spectra"): both name what is not wanted.
+# The negated word and the one after it, as in "without EDS spectra". Both name what is not wanted.
 NEGATED_WORD = re.compile(r"\b(?:without|no|not|don't|do not|skip)\s+(?:any\s+|an?\s+|the\s+)?[\w-]+(?:\s+[\w-]+)?", re.I)
 
 
 def match_score(skill: Skill, request: str) -> float:
-    """How well a skill matches a request: a keyword phrase counts 3, a word of its name 2, of its description 0.5.
+    """How well a skill matches a request. A keyword phrase counts 3, a word of its name 2 and a word of its
+    description 0.5. Without a keyword phrase one shared name word or description words alone do not match.
     Words the request negates ("without EDS", "no spectra") do not count; a skill with ``matched: false`` scores 0."""
     if not skill.matched:
         return 0.0
     asked = content_words(NEGATED_WORD.sub(" ", request))
     hits = sum(3.0 for k in skill.keywords if content_words(k) and content_words(k) <= asked)
-    hits += 2.0 * len(asked & content_words(skill.name.replace("_", " ")))
-    hits += 0.5 * len(asked & content_words(skill.description))
-    return hits
+    named = asked & content_words(skill.name.replace("_", " "))
+    # One shared word is too weak. "take an EDS spectrum" would otherwise match eds_survey.
+    if not hits and len(named) < min(2, len(content_words(skill.name.replace("_", " ")))):
+        return 0.0
+    return hits + 2.0 * len(named) + 0.5 * len(asked & content_words(skill.description))
 
 
 def usable_by(skill: Skill, agent_tools: set[str]) -> bool:
@@ -291,15 +319,15 @@ def usable_by(skill: Skill, agent_tools: set[str]) -> bool:
     return not skill.tools or any(fnmatch.fnmatchcase(t, p) for p in skill.tools for t in agent_tools)
 
 
-# A request acts on the instrument unless it is clearly read-only. The costs are not equal: taking an
-# acting request for read-only keeps the skills it needs away from the agent, while taking a read-only
-# request for acting is still held by the risk policy and the approval gate.
+# A request acts on the instrument unless it is clearly read-only. Taking an acting request
+# for read-only keeps the skills it needs away from the agent. The other mistake is safer,
+# since the endpoint's safety policy and limits still apply to every call.
 READ_CUE = re.compile(
     r"\?\s*$|^\s*(?:is|are|was|were|does|do|did|where|when|why|who|show|list|count|read)\b"
     r"|\b(?:what|which|how many|how much|is there|are there|tell me|show me|describe|list the|list all|look at|summari[sz]e|compare|explain)\b",
     re.I | re.M,
 )
-# An instruction to act, anywhere in the request (past tenses such as "acquired" describe data, not actions).
+# An instruction to act, anywhere in the request. Past tenses such as "acquired" describe data, not actions.
 ACTION = re.compile(
     r"\b(?:take|taking|acquire|acquiring|capture|capturing|measure|measuring|record|recording|collect|collecting|"
     r"move|moving|go|going|goto|drive|revisit|start|starting|resume|perform|expose|exposing|(?:un)?blank|"
@@ -309,14 +337,14 @@ ACTION = re.compile(
     r"(?:new|another|fresh)\s+(?:area|image|map|spectrum|region|measurement|scan|data))\b",
     re.I,
 )
-# An explicit instruction not to act ("do not acquire anything", "without moving", "no new data").
+# An explicit instruction not to act, such as "do not acquire anything" or "without moving".
 NO_ACTION = re.compile(
     r"\b(?:do not|don't|dont|never|without|no need to)\s+(?:\w+\s+){0,2}?"
     r"(?:acquir\w*|tak\w*|mov\w*|scan\w*|map\w*|measur\w*|imag\w*|expos\w*|touch\w*|start\w*|record\w*|collect\w*)(?:\s+anything)?"
     r"|\bno new (?:data|acquisitions?|measurements?|images?|maps?)\b",
     re.I,
 )
-# A reference to data that already exist: a key, "the latest", "the stitched map", "stored" ...
+# A reference to data that already exist, such as a key, "the latest" or "the stitched map".
 EXISTING = re.compile(
     r"\b(?:latest|last|most recent(?:ly)?|recently|stored|existing|earlier|previous|already|acquired|recorded|saved)\b"
     r"|\b[\w\-.]+\.(?:h5|hdf5|hdf|nxs|tiff?)\b|\b\w*\d\w*_map\b|\b(?:the|this|that)\s+(?:stitched\s+)?map\b",
@@ -362,7 +390,7 @@ def skills_text(names: list[str], endpoint_tools: set[str] | None = None, budget
             continue
         body = read_front_matter(skill.path)[1]
         if used + len(body) <= budget:
-            # Not "skill: <name>": qwen3:8b called the name as a tool, which Ollama drops, so the run got an empty reply.
+            # The heading leaves out the skill's name, because a model may call the name as a tool.
             parts.append(f"=== instructions (not a tool) ===\n{body}")
             used += len(body)
         else:

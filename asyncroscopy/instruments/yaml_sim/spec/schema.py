@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 PROJECT_DIR = Path(__file__).resolve().parents[4]
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
 MAX_DURATION_S = 25.0  # the MCP server stops waiting for a command after 30 s
-MAX_STEP_DURATION_S = 3600.0  # one acquisition inside a job (the agent waits for jobs, not calls)
+MAX_STEP_DURATION_S = 3600.0  # one acquisition inside a job, where the agent waits for the job and not the call
 MAX_POINTS = 1_000_000
 MAX_JOB_POINTS = 10_000_000
 SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices", "requires"}
@@ -35,7 +35,7 @@ PEAK_KEYS = {"position", "height", "fwhm", "width", "shape", "eta"}
 PEAK_SHAPES = {"gaussian", "lorentzian", "voigt"}
 SPOT_KEYS = {"count", "radius_px", "height", "x_m", "y_m", "per_um2", "radius_m"}
 SAMPLE_CELL_M = 1e-6  # spots fixed on the sample are drawn per square of this side, each from its own seed
-SAMPLE_CELLS_MAX = 40_000  # an image wider than this many cells is refused (a 200 um square)
+SAMPLE_CELLS_MAX = 40_000  # an image wider than this many cells is refused, which is a 200 um square
 JOB_KEYS = {"doc", "axes", "settings", "acquire", "settle_s", "max_points", "requires", "before_move", "after_move", "on_stop", "on_finish"}
 MAP_KEYS = {"image", "field_of_view", "stage", "before_move", "after_move", "safe", "settings", "budgets"}
 MAP_BUDGET_KEYS = {"per_tile", "per_revisit", "combine", "units", "doc"}
@@ -43,12 +43,11 @@ MAP_COMMAND = "get_map_profile"  # the command a YAML device offers when its fil
 TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs", "map"}
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
-# Commands and attributes a job device (an instrument with jobs) has already.
-# Names the instrument device has already (Tango names ignore case): its step protocol, and the Instrument base's commands and attributes.
+# Names the instrument device already has from its step protocol and the Instrument base. Tango names ignore case.
 RESERVED_NAMES = {"hold", "release_hold", "start_step", "step_status", "stop_step", "connect", "disconnect", "instrument_type", "clock_s"}
-SETTLE_STEP = "_settle"  # the step a job runs for its settle_s; "_" keeps it apart from every name a file may give
-# Verbs that make a get_/list_ command's doc read as an action: the safety policy never holds a get_
-# or list_ command, so one that indents, moves or dispenses would run unasked in approve mode.
+SETTLE_STEP = "_settle"  # the step a job runs for its settle_s. The leading underscore keeps it apart from every name a file may give
+# Verbs that make the doc of a get_ or list_ command read as an action. The safety policy classes every get_
+# and list_ command as a low-risk read, so one that indents, moves or dispenses would really run in a dry run.
 ACTION_VERBS = frozenset({
     "make", "move", "indent", "pick", "place", "aspirate", "dispense", "start", "run", "apply", "scan", "drive",
     "approach", "engage", "heat", "fire", "inject", "pump", "mill", "cut", "write", "expose", "trigger", "load", "push",
@@ -162,8 +161,8 @@ class Command:
     returns: Any = None
     returns_trees: Any = None
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
-    role: str | None = None  # a canonical role (asyncroscopy.core.names.ROLES); None: the rules decide
-    risk: str | None = None  # "low" or "high" as the file says; None: from the role (``declaration``)
+    role: str | None = None  # a canonical role from asyncroscopy.core.names.ROLES, or None to let the rules decide
+    risk: str | None = None  # low or high as the file says, or None to take it from the role
 
     def declaration(self) -> dict:
         """What the command is, for the MCP server: {"risk", "role", "stop"} as far as the file says (see the
@@ -194,7 +193,7 @@ class Acquisition:
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
     inputs: list[Quantity] = field(default_factory=list)
     units: str = "counts"
-    role: str | None = None  # None: from the kind (KIND_ROLES)
+    role: str | None = None  # None takes it from the kind through KIND_ROLES
 
 
 @dataclass
@@ -225,8 +224,8 @@ class InstrumentSpec:
     acquisitions: dict[str, Acquisition]
     jobs: dict[str, Job] = field(default_factory=dict)
     setting_requires: dict[str, list[tuple[str, ast.Expression]]] = field(default_factory=dict)
-    map: "MapSection | None" = None  # the file's map: section, if it has one (map_section() infers one otherwise)
-    warnings: list[str] = field(default_factory=list)  # loads, but probably not what was meant (printed at load)
+    map: "MapSection | None" = None  # the file's map section if it has one, otherwise map_section infers one
+    warnings: list[str] = field(default_factory=list)  # things that load but are probably not what was meant, printed at load
 
     def command_names(self) -> list[str]:
         names = [f"get_{n}" for n in self.settings] + [f"set_{n}" for n, q in self.settings.items() if q.settable]
@@ -350,6 +349,100 @@ def _role(where: str, raw: Any) -> str | None:
         raise SpecError(str(exc)) from None
 
 
+def _number_checker(where: str, kind: Any, trees: dict[str, Any], names: set[str]):
+    """Make the check that compiles one number of an acquisition."""
+
+    def number(key: str, value: Any, required: bool = True) -> None:
+        if value is None:
+            if required:
+                raise SpecError(f"{where}.{key}: required for kind {kind}")
+            return
+        trees[key] = _compile(f"{where}.{key}", value, names)
+        if trees[key] is None and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+            raise SpecError(f"{where}.{key}: a number or an expression")
+
+    return number
+
+
+def _noise_numbers(where: str, raw: dict, kind: Any, number) -> None:
+    """Check the noise an acquisition asks for."""
+    noise, units = raw.get("noise", "poisson"), raw.get("units", "counts")
+    if noise not in NOISES:
+        raise SpecError(f"{where}.noise: {noise!r} is not one of {sorted(NOISES)}")
+    if kind != "value" and units != "counts":
+        # Poisson noise, or Gaussian noise with a sigma of the square root of the signal, only makes sense for counts. On metres or newtons it buries the signal.
+        if noise == "poisson":
+            raise SpecError(f"{where}.noise: Poisson noise is for counts; for {units} give noise: gaussian with noise_sigma (in {units}), or noise: none")
+        if noise == "gaussian" and "noise_sigma" not in raw:
+            raise SpecError(f"{where}.noise_sigma: Gaussian noise on {units} needs its sigma, in {units}")
+    if "noise_sigma" in raw:
+        if noise != "gaussian":
+            raise SpecError(f"{where}.noise_sigma: only Gaussian noise has a sigma")
+        number("noise_sigma", raw["noise_sigma"])
+
+
+def _peak_numbers(where: str, i: int, peak: Any, trees: dict[str, Any], number) -> None:
+    """Check one peak of a spectrum."""
+    here = f"{where}.peaks[{i}]"
+    peak = _check_keys(here, peak, PEAK_KEYS)
+    shape = peak.get("shape", "gaussian")
+    if shape not in PEAK_SHAPES:
+        raise SpecError(f"{here}.shape: {shape!r} is not one of {sorted(PEAK_SHAPES)}")
+    if ("fwhm" in peak) == ("width" in peak):
+        raise SpecError(f"{here}: give fwhm (the full width at half maximum, in axis units)" + ("; not also width" if "fwhm" in peak else ""))
+    if "width" in peak and shape != "gaussian":
+        raise SpecError(f"{here}.width: width is a Gaussian's sigma; a {shape} peak takes fwhm")
+    if "eta" in peak and shape != "voigt":
+        raise SpecError(f"{here}.eta: only a voigt peak has eta (its Lorentzian fraction)")
+    for key in ("position", "height", "fwhm" if "fwhm" in peak else "width"):
+        number(f"peaks[{i}].{key}", peak.get(key))
+    if shape == "voigt":
+        number(f"peaks[{i}].eta", peak.get("eta", 0.5))
+        eta = peak.get("eta", 0.5)
+        if trees[f"peaks[{i}].eta"] is None and not 0 <= eta <= 1:
+            raise SpecError(f"{here}.eta: the Lorentzian fraction, from 0 to 1")
+
+
+def _spectrum_numbers(where: str, raw: dict, trees: dict[str, Any], number) -> None:
+    """Check the axis, peaks and background of a spectrum."""
+    axis = _check_keys(f"{where}.axis", raw.get("axis"), AXIS_KEYS)
+    for key in ("start", "stop", "points"):
+        number(f"axis.{key}", axis.get(key))
+    points = axis.get("points")
+    if trees["axis.points"] is None and (not isinstance(points, int) or not 2 <= points <= MAX_POINTS):
+        raise SpecError(f"{where}.axis.points: a whole number from 2 to {MAX_POINTS}, or an expression")
+    for i, peak in enumerate(raw.get("peaks") or []):
+        _peak_numbers(where, i, peak, trees, number)
+    number("background", raw.get("background", 0.0))
+
+
+def _image_numbers(where: str, raw: dict, number) -> None:
+    """Check the shape, pixel size, background and spots of an image."""
+    shape = raw.get("shape")
+    if not (isinstance(shape, list) and len(shape) == 2 and all(isinstance(v, int) and not isinstance(v, bool) and 2 <= v <= 4096 for v in shape)):
+        raise SpecError(f"{where}.shape: [rows, columns], each a whole number from 2 to 4096")
+    number("pixel_size_m", raw.get("pixel_size_m"))
+    number("background", raw.get("background", 0.0))
+    spots = _check_keys(f"{where}.spots", raw.get("spots") or {}, SPOT_KEYS)
+    for key in SPOT_KEYS & set(spots):
+        number(f"spots.{key}", spots[key])
+    on_sample = {"x_m", "y_m", "per_um2", "radius_m"} & set(spots)
+    if on_sample and not {"x_m", "y_m", "per_um2"} <= set(spots):
+        raise SpecError(f"{where}.spots: spots fixed on the sample need x_m and y_m (where the image centre is, e.g. stage_x_m) and per_um2")
+    if on_sample and "count" in spots:
+        raise SpecError(f"{where}.spots: count is for spots drawn afresh in every image; spots fixed on the sample take per_um2")
+
+
+def _value_numbers(where: str, raw: dict, number) -> None:
+    """Check each named value of a value acquisition."""
+    values = _check_keys(f"{where}.values", raw.get("values"), set(raw.get("values") or {}))
+    if not values:
+        raise SpecError(f"{where}.values: name each value and give an expression, e.g. {{temperature_k: \"setpoint_k + 0.1\"}}")
+    for key, value in values.items():
+        _check_name(f"{where}.values", key)
+        number(f"values.{key}", value)
+
+
 def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisition:
     where = f"acquisitions.{name}"
     if not name.startswith("acquire"):
@@ -366,76 +459,14 @@ def _acquisition(name: str, raw: Any, settings: dict[str, Quantity]) -> Acquisit
     if not isinstance(raw.get("units", "counts"), str):
         raise SpecError(f"{where}.units: a string, e.g. counts or V")
 
-    def number(key: str, value: Any, required: bool = True) -> None:
-        if value is None:
-            if required:
-                raise SpecError(f"{where}.{key}: required for kind {kind}")
-            return
-        trees[key] = _compile(f"{where}.{key}", value, names)
-        if trees[key] is None and (not isinstance(value, (int, float)) or isinstance(value, bool)):
-            raise SpecError(f"{where}.{key}: a number or an expression")
-
-    noise, units = raw.get("noise", "poisson"), raw.get("units", "counts")
-    if noise not in NOISES:
-        raise SpecError(f"{where}.noise: {noise!r} is not one of {sorted(NOISES)}")
-    if kind != "value" and units != "counts":
-        # Poisson noise, or Gaussian noise of sigma sqrt(signal), only makes sense for counts: on metres or newtons it buries the signal.
-        if noise == "poisson":
-            raise SpecError(f"{where}.noise: Poisson noise is for counts; for {units} give noise: gaussian with noise_sigma (in {units}), or noise: none")
-        if noise == "gaussian" and "noise_sigma" not in raw:
-            raise SpecError(f"{where}.noise_sigma: Gaussian noise on {units} needs its sigma, in {units}")
-    if "noise_sigma" in raw:
-        if noise != "gaussian":
-            raise SpecError(f"{where}.noise_sigma: only Gaussian noise has a sigma")
-        number("noise_sigma", raw["noise_sigma"])
+    number = _number_checker(where, kind, trees, names)
+    _noise_numbers(where, raw, kind, number)
     if kind == "spectrum":
-        axis = _check_keys(f"{where}.axis", raw.get("axis"), AXIS_KEYS)
-        for key in ("start", "stop", "points"):
-            number(f"axis.{key}", axis.get(key))
-        points = axis.get("points")
-        if trees["axis.points"] is None and (not isinstance(points, int) or not 2 <= points <= MAX_POINTS):
-            raise SpecError(f"{where}.axis.points: a whole number from 2 to {MAX_POINTS}, or an expression")
-        for i, peak in enumerate(raw.get("peaks") or []):
-            here = f"{where}.peaks[{i}]"
-            peak = _check_keys(here, peak, PEAK_KEYS)
-            shape = peak.get("shape", "gaussian")
-            if shape not in PEAK_SHAPES:
-                raise SpecError(f"{here}.shape: {shape!r} is not one of {sorted(PEAK_SHAPES)}")
-            if ("fwhm" in peak) == ("width" in peak):
-                raise SpecError(f"{here}: give fwhm (the full width at half maximum, in axis units)" + ("; not also width" if "fwhm" in peak else ""))
-            if "width" in peak and shape != "gaussian":
-                raise SpecError(f"{here}.width: width is a Gaussian's sigma; a {shape} peak takes fwhm")
-            if "eta" in peak and shape != "voigt":
-                raise SpecError(f"{here}.eta: only a voigt peak has eta (its Lorentzian fraction)")
-            for key in ("position", "height", "fwhm" if "fwhm" in peak else "width"):
-                number(f"peaks[{i}].{key}", peak.get(key))
-            if shape == "voigt":
-                number(f"peaks[{i}].eta", peak.get("eta", 0.5))
-                eta = peak.get("eta", 0.5)
-                if trees[f"peaks[{i}].eta"] is None and not 0 <= eta <= 1:
-                    raise SpecError(f"{here}.eta: the Lorentzian fraction, from 0 to 1")
-        number("background", raw.get("background", 0.0))
+        _spectrum_numbers(where, raw, trees, number)
     elif kind == "image":
-        shape = raw.get("shape")
-        if not (isinstance(shape, list) and len(shape) == 2 and all(isinstance(v, int) and not isinstance(v, bool) and 2 <= v <= 4096 for v in shape)):
-            raise SpecError(f"{where}.shape: [rows, columns], each a whole number from 2 to 4096")
-        number("pixel_size_m", raw.get("pixel_size_m"))
-        number("background", raw.get("background", 0.0))
-        spots = _check_keys(f"{where}.spots", raw.get("spots") or {}, SPOT_KEYS)
-        for key in SPOT_KEYS & set(spots):
-            number(f"spots.{key}", spots[key])
-        on_sample = {"x_m", "y_m", "per_um2", "radius_m"} & set(spots)
-        if on_sample and not {"x_m", "y_m", "per_um2"} <= set(spots):
-            raise SpecError(f"{where}.spots: spots fixed on the sample need x_m and y_m (where the image centre is, e.g. stage_x_m) and per_um2")
-        if on_sample and "count" in spots:
-            raise SpecError(f"{where}.spots: count is for spots drawn afresh in every image; spots fixed on the sample take per_um2")
+        _image_numbers(where, raw, number)
     else:
-        values = _check_keys(f"{where}.values", raw.get("values"), set(raw.get("values") or {}))
-        if not values:
-            raise SpecError(f"{where}.values: name each value and give an expression, e.g. {{temperature_k: \"setpoint_k + 0.1\"}}")
-        for key, value in values.items():
-            _check_name(f"{where}.values", key)
-            number(f"values.{key}", value)
+        _value_numbers(where, raw, number)
     return Acquisition(
         name=name, doc=str(raw["doc"]).strip(), kind=kind, raw=raw, trees=trees,
         requires=_requires(where, raw.get("requires"), names),
@@ -505,7 +536,7 @@ class MapBudget:
     name: str
     per_tile: tuple[Any, ast.Expression | None]
     per_revisit: tuple[Any, ast.Expression | None]
-    combine: str  # "max": the worst single image counts (a peak force); "sum": every image adds (wear, exposure)
+    combine: str  # max counts the worst single image, as for a peak force. sum adds every image, as for wear or exposure
     units: str
     doc: str
 
@@ -649,13 +680,13 @@ def action_hints(spec: InstrumentSpec) -> dict:
             role = "stage.move" if name in axes else "optics.fov" if name == fov else "setting.set"
             hints[f"set_{name}"] = {"risk": "high", "role": role, "args": [_argument(quantity, axes.get(name))]}
     for name, cmd in spec.commands.items():
-        sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # input -> the setting it sets
+        sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # maps each input to the setting it sets
         hints[name] = {**cmd.declaration(), "args": [_argument(q, axes.get(sets.get(q.name, ""))) for q in cmd.inputs]}
     if section is not None:
         hints[MAP_COMMAND] = {"risk": "low", "role": "setting.read"}
     for name, acquisition in spec.acquisitions.items():
         hints[name] = {
-            **({"primary": True} if section and name == section.image else {}),  # what a map tiles with: the main observable
+            **({"primary": True} if section and name == section.image else {}),  # the image a map tiles with
             "risk": "high",
             "role": acquisition.role or KIND_ROLES[acquisition.kind],
             "args": [_argument(q) for q in acquisition.inputs],
@@ -786,7 +817,7 @@ def load_spec(path: str | Path) -> InstrumentSpec:
         if verb:
             spec.warnings.append(
                 f"{path}: commands.{name}: its doc reads as an action ({verb!r}: {command.doc[:60]!r}), but the safety policy "
-                f"treats every get_ and list_ command as a read and never holds it for approval. If it acts, rename it "
+                f"treats every get_ and list_ command as a low-risk read (a dry run really runs it). If it acts, rename it "
                 f"(e.g. {verb}_{name[4:] if name.startswith('get_') else name[5:]}), or mark it high in the MCP config: "
                 f"mcp.safety.risk: {{\"<class_name>.{name}\": \"high\"}}"
             )

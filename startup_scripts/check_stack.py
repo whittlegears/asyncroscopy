@@ -1,18 +1,17 @@
 """Check a running asyncroscopy stack end to end, the way an agent and the GUI use it.
 
-Start the twin and both MCP endpoints first:
+Start the twin and its MCP endpoint first (the second command starts the agent endpoint, which the GUI uses too):
 
     uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
     uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
-    uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml
 
 then:
 
     uv run startup_scripts/check_stack.py
 
 Each check prints PASS or FAIL with the reason; the exit code is the number of
-failures. It moves the stage, acquires and approves its own held calls, so it
-runs only on a simulated stack: it asks the Approvals device (the stack's
+failures. It moves the stage and acquires, so it runs only on a simulated
+stack: it asks the agent endpoint (endpoint_info's ``simulated``, the stack's
 top-level ``simulated:``) first, and refuses when the answer is not true.
 """
 
@@ -20,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import socket
 import sys
@@ -88,7 +88,7 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         report("scorer adds points of interest inside the map", len(added) == 2 and all(x0 <= p["x_m"] <= x1 and y0 <= p["y_m"] <= y1 for p in added))
         poi = await structured("add_poi", {"map": map_key, "x_m": (x0 + x1) / 2, "y_m": (y0 + y1) / 2, "kind": "check", "reason": "check_stack"})
         report("agent can mark a point on the map", "id" in poi, json.dumps(poi)[:160])
-        # One wait for every kind of job: the agent endpoint's wait_for_job also waits on analysis jobs.
+        # One wait covers every kind of job. The agent endpoint's wait_for_job also waits on analysis jobs.
         again = await structured("assemble_map", {"run": run_key})
         status = {}
         deadline = time.time() + args.timeout
@@ -99,18 +99,18 @@ async def check_analysis(args: argparse.Namespace, run_key: str, agent: Client) 
         report("wait_for_job waits on an analysis job and returns its map key", "_map" in status.get("result_keys", {}).get("map", ""), json.dumps(status)[:200])
 
 
-async def simulated_stack(operator: Client) -> tuple[bool, str]:
-    """Whether the stack drives a simulator, as its Approvals device says (Approvals_get_simulated: run_servers'
-    top-level ``simulated:``, the flag the MCP endpoints read too). Anything but a clear true counts as hardware."""
+async def simulated_stack(agent: Client) -> tuple[bool, str]:
+    """Whether the stack drives a simulator, as the agent endpoint's endpoint_info says (run_servers'
+    top-level ``simulated:``). Anything but a clear true counts as hardware."""
     try:
-        result = await operator.call_tool("Approvals_get_simulated", {}, raise_on_error=False)
+        result = await agent.call_tool("endpoint_info", {}, raise_on_error=False)
     except Exception as exc:
-        return False, f"could not ask the Approvals device ({type(exc).__name__}: {exc})"
+        return False, f"could not ask endpoint_info ({type(exc).__name__}: {exc})"
     if result.is_error:
-        return False, f"Approvals_get_simulated failed: {text(result)[:200]}"
-    structured = getattr(result, "structured_content", None)
-    answer = structured.get("result") if isinstance(structured, dict) and "result" in structured else text(result).strip().lower()
-    return answer is True or answer == "true", f"Approvals_get_simulated answered {answer!r}"
+        return False, f"endpoint_info failed: {text(result)[:200]}"
+    info = getattr(result, "structured_content", None) or json.loads(text(result) or "{}")
+    answer = info.get("simulated") if isinstance(info, dict) else None
+    return answer is True, f"endpoint_info says simulated={answer!r}"
 
 
 def unreachable(*urls: str) -> list[str]:
@@ -120,108 +120,98 @@ def unreachable(*urls: str) -> list[str]:
         parts = urllib.parse.urlsplit(url)
         try:
             socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
-        except (OSError, ValueError):  # ValueError: a port out of range
+        except (OSError, ValueError):  # ValueError means a port out of range
             down.append(url)
     return down
 
 
+async def check_endpoints(agent: Client, operator: Client | None) -> str | None:
+    """Check the tools the endpoints list and give the name of the microscope. The operator endpoint is optional."""
+    agent_tools = {t.name for t in await agent.list_tools()}
+    report("agent endpoint lists tools", len(agent_tools) > 10, f"{len(agent_tools)} tools")
+    report("agent endpoint hides operator-only commands", not any(t.endswith("export_ground_truth") for t in agent_tools))
+    report("agent endpoint offers stop_all", "stop_all" in agent_tools)
+    if operator is not None:
+        operator_tools = {t.name for t in await operator.list_tools()}
+        report("operator endpoint lists tools", len(operator_tools) > 10, f"{len(operator_tools)} tools")
+    microscope = next((t.rsplit("_move_stage", 1)[0] for t in agent_tools if t.endswith("_move_stage")), None)
+    report("a microscope with move_stage is exported", microscope is not None,
+           "" if microscope else f"only {len(agent_tools)} agent tools; were the MCP servers started before run_servers.py printed ready? Restart them")
+    return microscope
+
+
+async def check_map_results(args: argparse.Namespace, agent: Client, results: dict) -> None:
+    """Read the map run and the newest image back as an agent would."""
+    data = await call(agent, "view_data", {"key": results["result_keys"]["run"], "format": "text"})
+    report("agent can read the map run back by key (view_data text)", "tiles" in text(data), text(data)[:200])
+    listed = json.loads(text(await call(agent, "list_data", {"kind": "image", "limit": 1})))
+    newest = (listed.get("data") or [{}])[0].get("key")
+    picture = await call(agent, "view_data", {"key": newest, "format": "png"}) if newest else None
+    report("agent can find the newest image (list_data) and see it (view_data png)",
+           any(getattr(block, "type", "") == "image" for block in getattr(picture, "content", []) or []), str(newest))
+    if args.analysis:
+        await check_analysis(args, results["result_keys"]["run"], agent)
+
+
+async def check_map_job(args: argparse.Namespace, agent: Client) -> None:
+    """Run a small map as one background job and check its results."""
+    plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.6e-7, "overlap": 0.2, "imsize": 128, "dwell_s": 1e-6, "per_tile": ["eds_point"], "eds_exposure_s": 0.2}
+    reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": plan, "caller": "check_stack"})})))
+    if report("Mapper reserves a plan", "reservation_id" in reserved, json.dumps(reserved.get("estimate", reserved.get("error")))):
+        started = json.loads(text(await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})))
+        job_id = started.get("job_id")
+        deadline = time.time() + args.timeout
+        status = {}
+        while job_id and time.time() < deadline:
+            # wait_for_job waits on the server side so a model needs one call and not dozens.
+            status = json.loads(text(await call(agent, "wait_for_job", {"device": "Mapper", "job_id": job_id, "max_wait_s": 25})))
+            if status.get("state") in {"done", "failed", "aborted"}:
+                break
+        report("map job finishes (via wait_for_job)", status.get("state") == "done", json.dumps(status))
+        results = json.loads(text(await call(agent, "Mapper_results", {"request": json.dumps({"job_id": job_id})})))
+        report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
+        if "run" in results.get("result_keys", {}):
+            await check_map_results(args, agent, results)
+        await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
+
+
+async def check_run_job(args: argparse.Namespace, agent: Client) -> None:
+    """Run a small map as one run_job call and wait for its run key."""
+    tile = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
+    ran = json.loads(text(await call(agent, "run_job", {"device": "Mapper", "plan": tile})))
+    status = {}
+    deadline = time.time() + args.timeout
+    while "job_id" in ran and time.time() < deadline:
+        status = json.loads(text(await call(agent, "wait_for_job", {"job_id": ran["job_id"]})))
+        if status.get("state") in {"done", "failed", "aborted"}:
+            break
+    report("run_job then wait_for_job maps and returns the run key", "run" in status.get("result_keys", {}), json.dumps(status)[:200])
+
+
 async def main(args: argparse.Namespace) -> int:
-    down = unreachable(args.agent, args.operator)
+    down = unreachable(*[url for url in (args.agent, args.operator) if url])
     if down:
         report("MCP endpoints reachable", False, f"nothing at {', '.join(down)}: start the stack (quickstart section 3) and wait for 'MCP ready'")
         return 1
     agent = Client(StreamableHttpTransport(args.agent, headers={"X-Asyncroscopy-Caller": "check_stack-agent"}))
-    operator = Client(StreamableHttpTransport(args.operator, headers={"X-Asyncroscopy-Caller": "check_stack-operator"}))
-    async with agent, operator:
-        simulated, why = await simulated_stack(operator)
+    operator = Client(StreamableHttpTransport(args.operator, headers={"X-Asyncroscopy-Caller": "check_stack-operator"})) if args.operator else None
+    async with contextlib.AsyncExitStack() as stack:
+        await stack.enter_async_context(agent)
+        if operator is not None:
+            await stack.enter_async_context(operator)
+        simulated, why = await simulated_stack(agent)
         if not report("the stack is simulated", simulated,
-                      why if simulated else f"{why}. This check moves the stage, acquires and approves its own calls: it runs only on a simulated stack"):
+                      why if simulated else f"{why}. This check moves the stage and acquires: it runs only on a simulated stack"):
             return len(FAILURES)
-        agent_tools = {t.name for t in await agent.list_tools()}
-        operator_tools = {t.name for t in await operator.list_tools()}
-        report("agent endpoint lists tools", len(agent_tools) > 10, f"{len(agent_tools)} tools")
-        report("agent endpoint hides operator-only commands", not ({"Approvals_approve", "Approvals_set_mode"} & agent_tools) and not any(t.endswith("export_ground_truth") for t in agent_tools))
-        report("operator endpoint offers approvals", {"Approvals_approve", "Approvals_set_mode", "Approvals_list_pending"} <= operator_tools)
-        microscope = next((t.rsplit("_move_stage", 1)[0] for t in agent_tools if t.endswith("_move_stage")), None)
-        if not report("a microscope with move_stage is exported", microscope is not None,
-                      "" if microscope else f"only {len(agent_tools)} agent tools; were the MCP servers started before run_servers.py printed ready? Restart them"):
+        microscope = await check_endpoints(agent, operator)
+        if microscope is None:
             return len(FAILURES)
 
         # A small map as one background job.
-        plan = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.6e-7, "overlap": 0.2, "imsize": 128, "dwell_s": 1e-6, "per_tile": ["eds_point"], "eds_exposure_s": 0.2}
-        reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": plan, "caller": "check_stack"})})))
-        if report("Mapper reserves a plan", "reservation_id" in reserved, json.dumps(reserved.get("estimate", reserved.get("error")))):
-            started = json.loads(text(await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})))
-            job_id = started.get("job_id")
-            deadline = time.time() + args.timeout
-            status = {}
-            while job_id and time.time() < deadline:
-                # wait_for_job waits on the server side, so a model needs one call, not dozens.
-                status = json.loads(text(await call(agent, "wait_for_job", {"device": "Mapper", "job_id": job_id, "max_wait_s": 25})))
-                if status.get("state") in {"done", "failed", "aborted"}:
-                    break
-            report("map job finishes (via wait_for_job)", status.get("state") == "done", json.dumps(status))
-            results = json.loads(text(await call(agent, "Mapper_results", {"request": json.dumps({"job_id": job_id})})))
-            report("map run file is registered in Tiled", "run" in results.get("result_keys", {}), json.dumps(results.get("result_keys")))
-            if "run" in results.get("result_keys", {}):
-                data = await call(agent, "view_data", {"key": results["result_keys"]["run"], "format": "text"})
-                report("agent can read the map run back by key (view_data text)", "tiles" in text(data), text(data)[:200])
-                listed = json.loads(text(await call(agent, "list_data", {"kind": "image", "limit": 1})))
-                newest = (listed.get("data") or [{}])[0].get("key")
-                picture = await call(agent, "view_data", {"key": newest, "format": "png"}) if newest else None
-                report("agent can find the newest image (list_data) and see it (view_data png)",
-                       any(getattr(block, "type", "") == "image" for block in getattr(picture, "content", []) or []), str(newest))
-                if args.analysis:
-                    await check_analysis(args, results["result_keys"]["run"], agent)
-            await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
+        await check_map_job(args, agent)
 
-        # The same as one run_job call: the wait's reply carries the results.
-        tile = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64, "dwell_s": 1e-6}
-        ran = json.loads(text(await call(agent, "run_job", {"device": "Mapper", "plan": tile})))
-        status = {}
-        deadline = time.time() + args.timeout
-        while "job_id" in ran and time.time() < deadline:
-            status = json.loads(text(await call(agent, "wait_for_job", {"job_id": ran["job_id"]})))
-            if status.get("state") in {"done", "failed", "aborted"}:
-                break
-        report("run_job then wait_for_job maps and returns the run key", "run" in status.get("result_keys", {}), json.dumps(status)[:200])
-
-        # Approval mode: hold, approve, retry once; then put back the mode the operator had.
-        mode_before = text(await call(operator, "Approvals_get_mode")).strip().strip('"')
-        await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": "approve", "who": "check_stack"})})
-        try:
-            target = {"position": [1e-8, -1e-8, 0.0, 0.0, 0.0]}
-            held = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
-            message = text(held)
-            request_id = message.split("request_id=")[1].split(")")[0] if "request_id=" in message else None
-            report("approve mode holds a high-risk agent call", held.is_error and request_id is not None, message[:120])
-            low = await call(agent, f"{microscope}_get_stage", raise_on_error=False)
-            report("approve mode lets a low-risk call through", not low.is_error)
-            if request_id:
-                pending = json.loads(text(await call(operator, "Approvals_list_pending")))
-                report("operator sees the pending request", any(p["request_id"] == request_id for p in pending))
-                await call(operator, "Approvals_approve", {"request": json.dumps({"request_id": request_id, "who": "check_stack"})})
-                retried = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
-                report("the approved call runs once", not retried.is_error, text(retried)[:120])
-                again = await call(agent, f"{microscope}_move_stage", target, raise_on_error=False)
-                report("the approval is single use", again.is_error)
-            # A held job start shows the operator the plan it would run, not just an id.
-            small = {"size_m": [2.4e-7, 2.4e-7], "fov_m": 1.6e-7, "imsize": 64}
-            reserved = json.loads(text(await call(agent, "Mapper_reserve", {"request": json.dumps({"plan": small})})))
-            if "reservation_id" in reserved:
-                held = await call(agent, "Mapper_start", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})}, raise_on_error=False)
-                pending = json.loads(text(await call(operator, "Approvals_list_pending")))
-                shown = [p for p in pending if p["action"] == "Mapper_start" and reserved["reservation_id"] in (p.get("reason") or "")]
-                report("a held map start shows the operator its plan", held.is_error and bool(shown) and "size_m" in shown[0]["reason"], (shown[0]["reason"][:120] if shown else text(held)[:120]))
-                await call(agent, "Mapper_release", {"request": json.dumps({"reservation_id": reserved["reservation_id"]})})
-        finally:
-            # Deny anything this check left pending (the single-use retry files a new request),
-            # so the operator's approvals list is not left holding test calls.
-            for leftover in json.loads(text(await call(operator, "Approvals_list_pending"))):
-                if leftover.get("caller") == "check_stack-agent":
-                    await call(operator, "Approvals_deny", {"request": json.dumps({"request_id": leftover["request_id"], "who": "check_stack", "reason": "left over from check_stack"})})
-            await call(operator, "Approvals_set_mode", {"request": json.dumps({"mode": mode_before, "who": "check_stack"})})
-        report(f"mode is back to {mode_before}", text(await call(agent, "Approvals_get_mode")) == mode_before)
+        # The same as one run_job call. The wait's reply carries the results.
+        await check_run_job(args, agent)
     print(f"\n{len(FAILURES)} failure(s)" + (": " + ", ".join(FAILURES) if FAILURES else ""))
     return len(FAILURES)
 
@@ -229,7 +219,7 @@ async def main(args: argparse.Namespace) -> int:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--agent", default="http://127.0.0.1:8000/mcp")
-    parser.add_argument("--operator", default="http://127.0.0.1:8001/mcp")
+    parser.add_argument("--operator", default="", help="Optional operator endpoint (configs/mcp_operator.yaml, e.g. http://127.0.0.1:8001/mcp) to also check.")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each job.")
     parser.add_argument("--analysis", default="", help="Analysis MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")
     sys.exit(asyncio.run(main(parser.parse_args())))

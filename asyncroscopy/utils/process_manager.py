@@ -135,7 +135,7 @@ def listening_pids(port: int) -> set[int] | None:
                 if conn.pid and conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
             }
         except (psutil.Error, OSError):
-            pass  # macOS needs root to see other processes' sockets; try the CLI tools.
+            pass  # macOS needs root to see the sockets of other processes, so try the CLI tools.
     if os.name == "nt":
         out = _run_text(_powershell(
             f"Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue"
@@ -246,7 +246,7 @@ class ProcessManager:
         self.state_file = self.state_dir / f"{self.name}.json"
         self.timeout = timeout
         self.max_output_lines = max_output_lines
-        # Also print each child's output lines, prefixed with [key] (for containers that collect stdout).
+        # Also print the output lines of each child with its key in front. Containers that collect stdout need this.
         self.echo_output = echo_output
 
         self.active_processes: list[ManagedProcess] = []
@@ -509,7 +509,7 @@ class ProcessManager:
                 return
 
             if pgid == os.getpgid(0):
-                # Never signal our own process group (that would stop this launcher).
+                # Never signal our own process group, because that would stop this launcher.
                 try:
                     os.kill(pid, signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):

@@ -32,13 +32,13 @@ from asyncroscopy.data.views import (
     spectrum_image_kind,
 )
 
-# Below WINDOW_RISE_EV an EDS peak must also stand RISE_SIGMA above a smooth curve fitted with it over
-# +-RISE_HALF_WIDTHS line widths: the detector window bends the continuum into a broad rise near 0.6 keV.
+# Below WINDOW_RISE_EV an EDS peak must also stand RISE_SIGMA above a smooth curve fitted around it.
+# The detector window bends the continuum into a broad rise near 0.6 keV.
 WINDOW_RISE_EV = 1200.0
 RISE_HALF_WIDTHS = 3.0
 RISE_SIGMA = 3.0
 SI_ESCAPE_EV = 1740.0
-# Silicon-drift EDS detector resolution, as the twin models it (twin/eds_model.py).
+# Silicon-drift EDS detector resolution, as the twin models it in twin/eds_model.py.
 EDS_FWHM_MN_KA_EV = 130.0
 MN_KA_EV = 5895.0
 
@@ -119,19 +119,25 @@ def _name_peaks(rows: list[PeakRow], x: np.ndarray, y: np.ndarray, axis: Axis, s
     rise, then candidate lines. Every peak is known before any is named, so a line can be checked against its element's other lines."""
     noted: list[PeakRow] = []
     for position, net, sigma, index, _note in rows:
-        note = _artefact(position, [row[0] for row in noted], _line_tolerance(position, axis, step))
+        if abs(position) <= ZERO_PEAK_EV:
+            note = ZERO_PEAK_NOTE
+        else:
+            note = _artefact(position, [row[0] for row in noted if row[4] != ZERO_PEAK_NOTE], _line_tolerance(position, axis, step))
         noted.append((position, net, sigma, index, note))
     indices = [row[3] for row in noted]
     noted = [
         (e, net, sig, i, WINDOW_RISE_NOTE if not note and e < WINDOW_RISE_EV and _line_sigma(y, fwhm, i, indices) <= RISE_SIGMA else note)
         for e, net, sig, i, note in noted
     ]
-    positions = [row[0] for row in noted if row[4] != WINDOW_RISE_NOTE]
+    positions = [row[0] for row in noted if row[4] not in (WINDOW_RISE_NOTE, ZERO_PEAK_NOTE)]
     top = float(np.nanmax(x)) if x.size else math.inf
     return [(e, net, sig, i, note or xray_candidates(e, _line_tolerance(e, axis, step), positions, top)) for e, net, sig, i, note in noted]
 
 
 WINDOW_RISE_NOTE = "unidentified: a broad rise of the continuum (the detector window), not an X-ray line"
+# Detectors whose axis starts below zero show a noise peak at zero energy. No element has a line that low.
+ZERO_PEAK_EV = 60.0
+ZERO_PEAK_NOTE = "the detector's zero-energy noise peak: in every spectrum, not an X-ray line and not an element"
 
 
 def _line_sigma(values: np.ndarray, fwhm_channels: Any, index: int, others: list[int]) -> float:
@@ -149,10 +155,10 @@ def _line_sigma(values: np.ndarray, fwhm_channels: Any, index: int, others: list
     u = (x - index) / reach
     centres = [index] + [j for j in others if lo <= j < hi and j != index]
     columns = [np.ones_like(u), u, u * u] + [np.exp(-0.5 * ((x - j) / (max(float(width[j]), 1.0) / 2.355)) ** 2) for j in centres]
-    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson: variance = counts
+    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson weights, where the variance equals the counts
     design = np.stack(columns, axis=1) * weight[:, None]
     if design.shape[0] <= design.shape[1]:
-        return math.inf  # too few channels to tell: keep the peak
+        return math.inf  # too few channels to tell, so keep the peak
     coefficients, *_ = np.linalg.lstsq(design, y[lo:hi] * weight, rcond=None)
     variance = float(np.linalg.pinv(design.T @ design)[3, 3])
     return float(coefficients[3]) / math.sqrt(max(variance, 1e-300))
@@ -177,7 +183,7 @@ def _artefact(energy: float, stronger: list[float], tolerance: float) -> str:
 
 def note_elements(note: str) -> set[str]:
     """The elements a peak's note says could make it: none for an escape, sum or unidentified peak."""
-    if not note or note.startswith(("possible", "unidentified")):
+    if not note or note == ZERO_PEAK_NOTE or note.startswith(("possible", "unidentified")):
         return set()
     return {c.strip().split(" ")[0] for c in note.split(",") if c.strip()}
 
@@ -217,10 +223,10 @@ def likely_elements(rows: list[tuple], share: float = 0.25) -> str:
 def _reading(rows: list[PeakRow], total: float) -> list[str]:
     likely = likely_elements(rows)
     if likely:
-        # A small model given only per-peak candidates did not conclude; the ranking says which elements the
-        # peaks point to, strongest first, and stays a reading of the peaks (a light element can still hide).
+        # The ranking says which elements the peaks point to, strongest first.
+        # It is still only a reading of the peaks, and a light element can hide.
         return [f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}"]
-    # only a window rise, escape, sum or unidentified peaks: say so, or the data rows get read as lines
+    # Say so when no peak is a real line, or the data rows get read as lines.
     return [f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
             "a longer exposure is needed to rule elements out"]
 
@@ -233,12 +239,27 @@ def _no_peaks(total: float) -> str:
             "a longer exposure is needed to rule elements out")
 
 
+def plot_label(note: str) -> str:
+    """A peak's label on the plot: its two nearest candidate lines as element and family ("Ti K / Ba L"), or "" for a
+    peak that is no element's line (the zero peak, the window rise, an escape, sum or unidentified peak)."""
+    if not note_elements(note):
+        return ""
+    names: list[str] = []
+    for candidate in note.split(","):
+        element, _, line = candidate.strip().partition(" ")
+        name = f"{element} {line[:1]}".strip()
+        if name not in names:
+            names.append(name)
+    return " / ".join(names[:2])
+
+
 XRAY = LineDomain(
     applies=lambda ds, axis: axis.units == "eV" and is_xray(ds),
     width_channels=_width_channels,
     name_peaks=_name_peaks,
     reading=_reading,
     no_peaks=_no_peaks,
+    label=plot_label,
 )
 
 

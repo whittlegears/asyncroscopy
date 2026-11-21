@@ -25,17 +25,17 @@ import numpy as np
 from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M
 
 ANGSTROM2_PER_M2 = 1e20
-CELLS_PER_FIELD = 8  # a frame's dose is kept in cells about an eighth of its field...
-MIN_PIXELS_PER_CELL = 4  # ...but at least this many pixels wide, so a small frame's cells are not mostly empty
-KEY_SPAN = 2**31  # cell (row, col) -> one int64 key; cell indices stay well inside +-KEY_HALF
+CELLS_PER_FIELD = 8  # a frame's dose is kept in cells about an eighth of its field
+MIN_PIXELS_PER_CELL = 4  # cells are at least this many pixels wide, so a small frame's cells are not mostly empty
+KEY_SPAN = 2**31  # packs a cell's row and col into one int64 key. Cell indices stay well inside KEY_HALF
 KEY_HALF = 2**30
-COARSEST_LEVEL = -30  # cells up to 2^30 times cell_m: no frame is that large
+COARSEST_LEVEL = -30  # cells up to 2^30 times cell_m, larger than any frame
 
 
 @dataclass
 class DoseParams:
     enabled: bool = False
-    cell_m: float = 20e-9  # the reference cell; finer frames use cells half as large, coarser ones twice, again and again
+    cell_m: float = 20e-9  # the reference cell. Finer frames halve it and coarser frames double it, as often as needed
     min_cell_m: float = 0.5e-9
     spot_spread_m: float = EDS_DOSE_SPREAD_M  # a parked beam's dose is counted over a square this wide
     contamination_angstrom_max: float = 0.0
@@ -84,10 +84,10 @@ class DoseMap:
         cell = self._cell_m(level)
         per_a2 = electrons_per_pixel / (pixel_m * pixel_m * ANGSTROM2_PER_M2)
         rows, cols = self._cells(level, xs, ys)
-        # One integer per cell (a 1-D unique is far faster than a unique over (row, col) pairs).
+        # One integer per cell, because a 1-D unique is far faster than a unique over row and col pairs.
         keys, hits = np.unique((rows + KEY_HALF) * KEY_SPAN + (cols + KEY_HALF), return_counts=True)
-        # Each cell gets the frame's dose times its pixels over the pixels a full cell holds: every electron is
-        # counted once (a cell the grid lines up badly with may hold a few more pixel centres than that).
+        # Each cell gets the frame's dose times its pixels over the pixels a full cell holds,
+        # so every electron is counted once.
         pixels_per_cell = (cell / pixel_m) ** 2
         cells = self.levels[level]
         for key, n in zip(keys.tolist(), hits.tolist()):

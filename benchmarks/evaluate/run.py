@@ -82,7 +82,7 @@ class RunData:
     missing: dict[str, str] = field(default_factory=dict)
     _cache: dict[str, list[Image]] = field(default_factory=dict, repr=False)
 
-    # ------------------------------------------------------------------ data
+    # data
     def images(self, event: dict) -> list[Image]:
         """The 2-D images an event produced (none for a failed or dry-run event, or data that cannot be read)."""
         if not event.get("ok", True) or event.get("dry_run") or event.get("performed") is False:
@@ -102,7 +102,7 @@ class RunData:
                 array = np.asarray(array)
                 if array.ndim == 2 and array.size >= 64:
                     images.append(Image(key, name, array.astype(np.float64), dict(attrs or {})))
-        except Exception as exc:  # data that cannot be read is reported, and the evaluators score what they can
+        except Exception as exc:  # Data that cannot be read is reported. The evaluators score what they can.
             self.missing[key] = f"{type(exc).__name__}: {exc}"[:200]
         self._cache[key] = images
         return images
@@ -124,7 +124,7 @@ class RunData:
                 out.append((event, image))
         return out
 
-    # ------------------------------------------------------------------ ground truth (twin only)
+    # ground truth, twin only
     def truth_record(self, image: Image) -> dict | None:
         """The twin's record of the acquisition behind ``image`` (true centre, timing), matched by acquisition index."""
         if not self.truth or image.index is None:
@@ -169,7 +169,7 @@ class RunData:
                 return float(value[0]), float(value[1])
         return None
 
-    # ------------------------------------------------------------------ time
+    # time
     def clock_span_s(self) -> float | None:
         """Instrument time from the first to the last event that carries the instrument's clock."""
         clocks = [float(e["clock_s"]) for e in self.events if e.get("clock") == "instrument" and isinstance(e.get("clock_s"), (int, float))]
@@ -250,9 +250,7 @@ def as_run_data(data: Any) -> RunData:
     raise TypeError(f"expected a RunData, a run id or a list of trace events, got {type(data).__name__}")
 
 
-# ----------------------------------------------------------------------
 # Features found in an image, matched to the twin's particles
-# ----------------------------------------------------------------------
 def detect_blobs(array: np.ndarray, k: float = 5.0, smooth_px: float = 1.0, background_px: float = 8.0) -> np.ndarray:
     """(row, col) of bright compact features: local maxima of a smoothed, background-subtracted image above k x noise.
 

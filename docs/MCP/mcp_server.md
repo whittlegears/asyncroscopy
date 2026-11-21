@@ -58,10 +58,7 @@ mcp:
       - Kill
       - RestartServer
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
-    # auto_routine:          # what auto mode runs without a person; default: what each device declares routine.
-    #   stem: [move_stage, acquire_scanned_image]   # given, it replaces every device's declaration
   # agent_profile: asyncroscopy/agents/profiles/default.yaml   # whose tool selection endpoint_info reports
 ```
 

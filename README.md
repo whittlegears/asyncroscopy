@@ -20,15 +20,14 @@ uv run pytest -q -m "not slow"
 
 # Digital twin (no hardware required); one terminal each
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
-uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml        # agent endpoint, 127.0.0.1:8000
-uv run startup_scripts/run_mcp.py --yaml configs/mcp_operator.yaml  # operator endpoint, 127.0.0.1:8001
-uv run python -m asyncroscopy.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml        # MCP endpoint, 127.0.0.1:8000 (the agent and SciAgentGUI both use it)
+uv run startup_scripts/run_pytemlib.py                              # pyTEMlib analysis server, 127.0.0.1:8003 (configs/pytemlib.yaml)
 
 # Then check the whole stack (digital twin only: it moves the stage and acquires)
 uv run startup_scripts/check_stack.py --analysis http://127.0.0.1:8003/mcp
 ```
 
-On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml` (the Spectra 300 agent endpoint) and `configs/mcp_operator.yaml`, and follow [docs/Operation/first_light_runbook.md](docs/Operation/first_light_runbook.md). There, `startup_scripts/preflight_hardware.py` is the read-only check; never run `check_stack.py` on hardware.
+On a real instrument use its config instead, for example `configs/Spectra300.yaml` with `configs/mcp.yaml` (the Spectra 300 MCP endpoint), and follow [docs/Operation/first_light_runbook.md](docs/Operation/first_light_runbook.md). There, `startup_scripts/preflight_hardware.py` is the read-only check; never run `check_stack.py` on hardware.
 
 **Bringing your own instrument? Follow [docs/Adding_New_Hardware/new_instrument.md](docs/Adding_New_Hardware/new_instrument.md)**, a worked example with a simulated nanoindenter.
 
@@ -40,7 +39,7 @@ On a real instrument use its config instead, for example `configs/Spectra300.yam
 | :-- | :-- |
 | A realistic, seeded digital twin (stage error, drift, scan distortion, focus, noise, EDS spectra, dose) with hidden ground truth for scoring workflows | `configs/digital_twin_mapping.yaml`, [docs/digital_twin.md](docs/digital_twin.md) |
 | Long jobs (map acquisition) as reserve / start / job_status / abort / results / release | `Mapper` device, [asyncroscopy/contracts](asyncroscopy/contracts/README.md) |
-| An approval mode (`auto` / `approve`) that holds risky agent calls for an operator, and an Instrument Trace of every call | [docs/Operation/approval_mode.md](docs/Operation/approval_mode.md) |
+| An Instrument Trace of every agent call | [docs/Operation/trace.md](docs/Operation/trace.md) |
 | Stitching, zoomable maps in Tiled, region scoring and points of interest | analysis MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
 | LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
 | Calibrating the twin to your instrument | `asyncroscopy/calibration` |
@@ -71,6 +70,8 @@ For interactive GUI-based startup:
 ```bash
 uv run startup_guis/server_gui.py
 uv run startup_guis/mcp_gui.py
+uv run startup_guis/llm_gui.py
+uv run startup_guis/pytemlib_mcp.py
 ```
 
 ## Project Structure
@@ -85,7 +86,7 @@ asyncroscopy/
 ├── instruments/       # Hardware device implementations, the digital twin, the Mapper
 ├── jobs/              # JobDevice: reserve/start/abort for long-running work
 ├── mcp/               # FastMCP server for AI agents
-├── safety/            # Risk policy and the Approvals device
+├── safety/            # Risk policy
 ├── skills/            # Skill loader and bundled skills (mapping/SKILL.md)
 ├── utils/             # The command decorator and shared helpers
 └── testing.py         # instrument_context and TestMCPServer for your own tests
@@ -99,10 +100,11 @@ asyncroscopy/
 | `DigitalTwin.yaml` | Simulated microscope for development/testing |
 | `diffraction.yaml` | DigitalTwin with diffraction simulation |
 | `digital_twin_tilt.yaml` | ASE/abTEM multislice silicon lamella tilt twin |
-| `digital_twin_mapping.yaml` | DigitalTwin with realistic instrument effects, a 2 um sample, Mapper and Approvals |
-| `mcp_dt.yaml` / `mcp_operator.yaml` | Agent MCP endpoint (port 8000) and operator endpoint for the GUI (port 8001) |
+| `digital_twin_mapping.yaml` | DigitalTwin with realistic instrument effects, a 2 um sample, and Mapper |
+| `mcp_dt.yaml` | MCP endpoint for the twin (port 8000); the agent and SciAgentGUI both use it |
+| `mcp_operator.yaml` | Optional operator endpoint (port 8001, this machine only): operator-only commands such as the twin's `export_ground_truth`, for benchmarks. Not started by default; set `mcp.operator_port` on an agent config to start it beside it |
 | `qwen-llm.yaml` | Agent server on a local Qwen3 model (laptop GPU); `gemma-llm.yaml` is the 31B workstation version |
-| `mcp.yaml` | Agent MCP endpoint for the Spectra 300 (hardware; 127.0.0.1:8000, approval gate on) |
+| `mcp.yaml` | Agent MCP endpoint for the Spectra 300 (hardware; 127.0.0.1:8000) |
 
 These are some examples of the available configs, which define the instrument class, supporting devices, Tango connection, and Tiled settings.
 

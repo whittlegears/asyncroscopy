@@ -82,9 +82,7 @@ class DigitalTwinSTAGE(STAGE):
             drift_random_walk_m=float(self.drift_random_walk),
         )
 
-    # ------------------------------------------------------------------
     # The position every STAGE client sees
-    # ------------------------------------------------------------------
     def _read_position(self) -> list[float]:
         return list(self._position)
 
@@ -112,9 +110,7 @@ class DigitalTwinSTAGE(STAGE):
         modelled = math.sqrt(float(self.stage_move_noise_std) ** 2 + backlash**2 + float(self.stage_reported_noise_std) ** 2)
         return modelled if modelled > 0 else float(self.position_error_m)
 
-    # ------------------------------------------------------------------
     # The stage model, driven by the microscope's simulated clock
-    # ------------------------------------------------------------------
     def _model_for(self, request: dict) -> StageModel:
         """The model of the microscope's session: a microscope that restarted (a new session) starts a fresh model."""
         if self._model is None or self._session != request["session"]:

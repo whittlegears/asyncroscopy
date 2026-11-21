@@ -6,7 +6,7 @@ The `Tuner` device (`asyncroscopy/jobs/tuning/tuner.py`) runs autofocus and asti
 run_job {"device": "Tuner", "plan": {"corrections": ["focus", "stigmation"], "strategy": "image_metric", "dose_budget_e_per_a2": 5000}}
 ```
 
-The agent decides when to tune and the job runs the loop. A focus sweep is dozens of set, image and score calls. Sent through an LLM, each one takes seconds and, in approve mode, each one is held. The job is approved once, as a whole.
+The agent decides when to tune and the job runs the loop. A focus sweep is dozens of set, image and score calls. Sent through an LLM, each one takes seconds. The job runs the whole loop as one start.
 
 ## Plan
 
@@ -27,7 +27,7 @@ The agent decides when to tune and the job runs the loop. A focus sweep is dozen
 
 ## Strategies
 
-- **`vendor_autofocus`**, the default (decision D2). Runs the microscope's `auto_focus` once: OptiSTEM C1A1 through AutoScript on the Spectra 300, or the twin's stand-in. It corrects C1 and A1 together. Its dose counts as `autofocus_frames` frames, a device property to calibrate at first light.
+- **`vendor_autofocus`**, the default. Runs the microscope's `auto_focus` once: OptiSTEM C1A1 through AutoScript on the Spectra 300, or the twin's stand-in. It corrects C1 and A1 together. Its dose counts as `autofocus_frames` frames, a device property to calibrate at first light.
 - **`image_metric`**. A coarse sweep over the defocus range, then two fine sweeps re-centred on the estimate, each fitted with a parabola. The score near focus is flat, so the information is in the flanks. A sweep that is symmetric about the peak cancels the misfit of the parabola. Stigmation runs the same search along each stigmator component in turn. It needs `set_stigmator` and `get_stigmator` on the microscope; the twin has them, and AutoScript does not yet. A peak at the edge of the range fails the job instead of settling there.
 - **`corrector`**. Measures C1 and A1 with the corrector's typed `measure_aberrations` (one schema, metres, whatever the backend), sends a correction bounded by `max_step_m` with `correct`, and measures again. A corrector that refuses either command fails the job; the CEOS JSON-RPC stays inside the CEOS backend. On a stack that is not simulated, this strategy is refused until `allow_corrector_writes` is set, which happens only after the first-light sign test.
 
@@ -65,6 +65,6 @@ class HillClimb(Strategy):
         return {"defocus_m": here}
 ```
 
-A strategy can also declare `needs` (`"stigmator"`, `"autofocus"`, `"corrector"`), override `check(plan, capabilities)`, and override `measurements(plan, frames_per)` when one measurement is worth several frames. A package can install a strategy without editing asyncroscopy, through the `asyncroscopy.focus_strategies` entry point. `tests/test_tuner.py` registers a 40-line example the same way and runs it on the twin.
+A strategy can also declare `needs` (`"stigmator"`, `"autofocus"`, `"corrector"`), override `check(plan, capabilities)`, and override `measurements(plan, frames_per)` when one measurement is worth several frames. A package can install a strategy without editing asyncroscopy, through the `asyncroscopy.focus_strategies` entry point. `tests/jobs/test_tuner.py` registers a 40-line example the same way and runs it on the twin.
 
 The searches and metrics in `asyncroscopy/routines/focus.py` (`search_1d`, `search_2d`, `sharpness`, `parabola_vertex`, `error_grew`) are pure functions, and a strategy can reuse them.

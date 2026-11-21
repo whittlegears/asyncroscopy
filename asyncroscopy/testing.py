@@ -49,8 +49,8 @@ def prop_path(path: str | os.PathLike) -> str:
     return rest.replace("\\", "/")
 
 
-_in_process_started = False  # Tango allows one in-process device server per interpreter...
-_process_open = 0  # ...and none while a process=True context is open
+_in_process_started = False  # Tango allows one in-process device server per interpreter
+_process_open = 0  # Tango allows none while a process=True context is open
 
 
 @contextmanager
@@ -97,7 +97,7 @@ class TestMCPServer(MCPServer):
     __test__ = False  # not a pytest test class
 
     def list_tool_risks(self) -> dict[str, str]:
-        """Tool name -> "low" or "high": what approve mode would hold, without calling anything."""
+        """Tool name -> "low" or "high", without calling anything."""
         return dict(self.tool_risks)
 
     def list_tool_descriptions(self) -> dict[str, str]:
@@ -110,7 +110,6 @@ class TestMCPServer(MCPServer):
 
 def mcp_server_for(
     devices_info: list[dict],
-    approvals_device_address: str | None = None,
     endpoint_role: str = "agent",
     risk_overrides: dict[str, str] | None = None,
     trace_path: str | Path = "",
@@ -118,8 +117,6 @@ def mcp_server_for(
 ) -> TestMCPServer:
     """The MCP server the agent would talk to, over the devices of a running ``instrument_context``.
 
-    Give ``approvals_device_address`` (an Approvals device in the same context) to exercise
-    the approval mode; without it every call runs, as on a server with no Approvals device.
     ``auth`` is the MCP config's auth section (bearer tokens; see asyncroscopy.mcp.endpoint_auth):
     serve ``server.mcp.http_app()`` and call it with tokens from startup_scripts/dev_tokens.py.
     """
@@ -133,7 +130,6 @@ def mcp_server_for(
         data_device_address="asyncroscopy/data/default",
         verbose=False,
         endpoint_role=endpoint_role,
-        approvals_device_address=approvals_device_address,
         risk_overrides=risk_overrides,
         trace_path=str(trace_path),
         database=_DeviceList(names),

@@ -147,7 +147,7 @@ class StageModel:
         backlash = np.zeros(2)
         for axis in range(2):
             if direction[axis] != 0 and self._last_direction[axis] != 0 and direction[axis] != self._last_direction[axis]:
-                # A reversal undershoots: the stage stops short by the backlash.
+                # On a reversal the stage stops short by the backlash.
                 backlash[axis] = -direction[axis] * float(p.backlash_m[axis])
             if direction[axis] != 0:
                 self._last_direction[axis] = direction[axis]

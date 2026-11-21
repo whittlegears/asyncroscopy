@@ -16,7 +16,7 @@ from typing import Any
 import h5py
 import tango
 
-# The asyncroscopy beside this script (as pytest's pythonpath gives the tests), not another checkout's install.
+# Use the asyncroscopy beside this script and not another checkout's install.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from asyncroscopy.instruments.yaml_sim.device import device_class  # noqa: E402
@@ -50,7 +50,7 @@ with instrument_context(devices):
     afm["retract_tip"]()
     outcome["set_stage_retracted"] = attempt(afm["set_stage_x_m"], 1e-4)
     outcome["stage_after_set"] = proxy.stage_x_m
-    # A dry run cannot rehearse this job's steps (they wait on step_status replies): it is refused, nothing moves.
+    # A dry run cannot rehearse this job's steps because they wait on step_status replies. It is refused and nothing moves.
     outcome["dry_run"] = server.jobs.run_job("AFMTwinJob", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}, "dry_run": True})
     outcome["stage_after_dry_run"] = proxy.stage_x_m
     ran = server.jobs.run_job("AFMTwinJob", {"axes": {"stage_x_m": {"start": 0, "stop": 2e-4, "points": 3}}})

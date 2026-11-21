@@ -8,24 +8,34 @@ from typing import Any
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.claims import ClaimCheckMiddleware
 from asyncroscopy.agents.guards import EmptyReplyMiddleware, JobWaitMiddleware, UserWordsMiddleware
+from asyncroscopy.agents.profile import AgentProfile
 from asyncroscopy.agents.skill_middleware import SkillMiddleware
 
 
 def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str], offered: set[str], tools: list,
                      memory: Callable | None = None, num_ctx: int = 8192, deadline: float | None = None,
-                     claim_check: bool | None = None, catalog: ToolCatalog | None = None) -> list[Any]:
+                     claim_check: bool | None = None, catalog: ToolCatalog | None = None,
+                     profile: AgentProfile | None = None) -> list[Any]:
     """One middleware per name, in order (the first wraps the rest). ``tool_names``: the model's tools;
     ``offered``: every tool of the endpoint; ``tools``: the LangChain tools (job_wait calls wait_for_job);
-    ``catalog``: what the endpoint's tools are (the claim check knows from it which calls acquire or move)."""
+    ``catalog``: what the endpoint's tools are (the claim check knows from it which calls acquire or move);
+    ``memory``: ``Memory.notes_for``, given the profile's notes budget; ``profile``: the agent profile, whose
+    skill limits and tool gates the skills middleware applies (none of either when None)."""
+    limits = profile.skills if profile is not None else None
+    gates = profile.tool_gates if profile is not None else ()
+    notes = memory
+    if memory is not None and limits is not None:
+        def notes(request: str) -> str:
+            return memory(request, limits.notes_chars)
     makers: dict[str, Callable[[], Any]] = {
-        # Skills that match the request and the progress, and memory notes, in the system prompt.
-        "skills": lambda: SkillMiddleware(prompt, tool_names, offered, memory=memory, num_ctx=num_ctx),
-        # A run_job map plan held to the user's words: no dose limit they never stated, the whole sample when asked.
+        # Puts matching skills and memory notes in the system prompt.
+        "skills": lambda: SkillMiddleware(prompt, tool_names, offered, memory=notes, num_ctx=num_ctx, limits=limits, gates=gates),
+        # Holds a run_job map plan to the user's words: no dose limit they never stated, the whole sample when asked.
         "user_words": lambda: UserWordsMiddleware(tools),
-        # A job of any length is one tool round.
+        # Makes a job of any length cost one tool round.
         "job_wait": lambda: JobWaitMiddleware(tools, deadline=deadline),
         "empty_reply": EmptyReplyMiddleware,
-        # Last by default, so it wraps the model call itself: a final answer is checked against the run's tool calls.
+        # Last by default, so it wraps the model call itself and checks the final answer against the run's tool calls.
         "claim_check": lambda: ClaimCheckMiddleware(tool_names, enabled=claim_check, catalog=catalog),
     }
     unknown = [n for n in names if n not in makers]

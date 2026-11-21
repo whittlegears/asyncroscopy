@@ -31,10 +31,7 @@ mcp:
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
   endpoint_role: monitor
-  # Approval mode lives in the Approvals device; switch it from the GUI.
-  # auto (default) runs every call; approve holds high-risk agent calls.
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in
     # asyncroscopy/safety/policy.py. Unknown commands are high risk.
     risk: {}

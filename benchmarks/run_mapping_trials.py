@@ -31,7 +31,7 @@ import sys
 import time
 from pathlib import Path
 
-# benchmarks/ for _common, which also puts the project on sys.path
+# Add benchmarks/ so _common can be imported. _common also puts the project on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _common import is_infra_error, out_of_box_moves, sleepwalking, warm_up
 from langchain_core.messages import HumanMessage

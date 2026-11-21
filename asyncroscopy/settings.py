@@ -65,7 +65,7 @@ class Settings:
     tiled_uri: str | None
     tiled_public_uri: str
     tiled_api_key: str | None = field(repr=False)
-    plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY: the name Tiled's own tools use
+    plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY, the name Tiled's own tools use
 
     # Agents
     model: str | None
@@ -78,14 +78,17 @@ class Settings:
     mapper: str | None
     microscope: str | None
     poll_s: float
-    approval_wait_s: float
     analysis_wait_s: float
     claim_check: bool
     auto_promote_after: int
+    learn_skills: bool  # a goal run that met its goal drafts a learned skill
 
     # Extensions
     plugins: str
     skills_path: tuple[Path, ...]
+    lab_skills: Path  # the lab's own skills, written from a client (asyncroscopy.skills.lab)
+    skills: bool  # agent skills on or off
+    skills_off: tuple[str, ...]  # skill names or globs to hide
 
     # GUIs and test switches
     qt_api: str
@@ -122,19 +125,22 @@ class Settings:
             model=env.get("ASYNCROSCOPY_MODEL") or None,
             model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER") or None,
             num_ctx=_number(env, "ASYNCROSCOPY_NUM_CTX", None, int),
-            agent_profile=env.get("ASYNCROSCOPY_AGENT_PROFILE", "default"),
+            agent_profile=env.get("ASYNCROSCOPY_AGENT_PROFILE") or "capable",  # agent_tools.DEFAULT_PROFILE_NAME
             agent_tools=tuple(p.strip() for p in env.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()),
             agent_prompt=env.get("ASYNCROSCOPY_AGENT_PROMPT") or None,
             caller=env.get("ASYNCROSCOPY_CALLER") or None,
             mapper=env.get("ASYNCROSCOPY_MAPPER") or None,
             microscope=env.get("ASYNCROSCOPY_MICROSCOPE") or None,
             poll_s=_number(env, "ASYNCROSCOPY_POLL_S", 1.0, float),
-            approval_wait_s=_number(env, "ASYNCROSCOPY_APPROVAL_WAIT_S", 1800.0, float),
             analysis_wait_s=_number(env, "ASYNCROSCOPY_ANALYSIS_WAIT_S", 3600.0, float),
             claim_check=_flag(env.get("ASYNCROSCOPY_CLAIM_CHECK"), True),
             auto_promote_after=_number(env, "ASYNCROSCOPY_AUTO_PROMOTE_AFTER", 0, int),
+            learn_skills=_flag(env.get("ASYNCROSCOPY_LEARN_SKILLS"), False),
             plugins=env.get("ASYNCROSCOPY_PLUGINS", ""),
             skills_path=tuple(Path(p) for p in env.get("ASYNCROSCOPY_SKILLS_PATH", "").split(os.pathsep) if p),
+            lab_skills=Path(env.get("ASYNCROSCOPY_LAB_SKILLS") or outputs / "lab_skills"),
+            skills=_flag(env.get("ASYNCROSCOPY_SKILLS"), False),
+            skills_off=tuple(p.strip() for p in env.get("ASYNCROSCOPY_SKILLS_OFF", "").split(",") if p.strip()),
             qt_api=env.get("ASYNCROSCOPY_QT_API", "").lower(),
             write_golden=env.get("ASYNCROSCOPY_WRITE_GOLDEN") == "1",
             write_benchmarks=env.get("ASYNCROSCOPY_WRITE_BENCHMARKS") == "1",

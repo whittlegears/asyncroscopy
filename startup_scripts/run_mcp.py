@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 import yaml
@@ -20,13 +20,13 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth  # noqa: E402
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
 
-# Tango hosts this project points at day to day; the GUI opens on the first (the digital twin)
+# Tango hosts this project points at day to day. The GUI opens on the first, the digital twin,
 # so a fresh launch never talks to the real instrument.
 HOST_PRESETS = {'Digital twin': 'localhost', 'Spectra300': '10.46.217.241'}
 
@@ -47,6 +47,8 @@ SETTINGS = [
     Setting('mcp.blocked_functions', 'yaml', {}, section='Access control', label='Blocked functions'),
 ]
 # Lines mcp_server.py prints once tools are registered, or when it cannot start.
+OPERATOR_HOST = '127.0.0.1'
+OPERATOR_BLOCKED = ('Init', 'Kill', 'RestartServer')
 STATUS_PATTERNS = [
     (re.compile(r'MCP ready: (\d+) tool'), '{0} tools', False),
     (re.compile(r'MCP ERROR: .*in use'), 'port in use', True),
@@ -55,7 +57,7 @@ STATUS_PATTERNS = [
 
 
 def is_config(raw) -> bool:
-    # A server config may carry an mcp: stub; it is listed with the server configs.
+    # A server config may carry an mcp stub. It is listed with the server configs.
     return isinstance(raw, dict) and isinstance(raw.get('mcp'), dict) and 'instrument' not in raw
 
 
@@ -72,21 +74,22 @@ class MCPConfig:
     include_only_functions: list[str] = field(default_factory=list)
     tool_log: str = ''
     endpoint_role: str = 'agent'
-    approvals_device_address: str = ''
     risk: dict[str, str] = field(default_factory=dict)
-    # mcp.safety.auto_routine: what auto mode runs without a person; None: what the devices declare.
+    # mcp.safety.auto_routine is what auto mode runs without a person. None means what the devices declare.
     auto_routine: dict[str, list[str]] | None = None
-    agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports; empty: the default
+    agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports. Empty means the default.
     trace: str = ''
-    clock_device: str = ''  # instrument whose clock_s stamps trace events; empty: this computer's time
-    trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads; empty: trace's directory
+    clock_device: str = ''  # instrument whose clock_s stamps trace events. Empty means this computer's time.
+    trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads. Empty means trace's directory.
     data_views: list[str] = field(default_factory=list)
     analysis_url: str = ''
     job_limits: dict[str, float] = field(default_factory=dict)
-    # http_host 0.0.0.0 on a stack that is not simulated (its Approvals device says) binds 127.0.0.1 unless this is true.
+    # http_host 0.0.0.0 on a stack that is not simulated binds 127.0.0.1 unless this is true. The devices' simulated property says which it is.
     allow_remote_bind: bool = False
-    # Bearer-token verification (the facility's token service); None: no token check (docs/Operation/remote_access.md).
+    # Bearer-token verification by the facility's token service. None means no token check. See docs/Operation/remote_access.md.
     auth: AuthSettings | None = None
+    # Port of the operator endpoint started beside this agent endpoint. None starts no operator endpoint.
+    operator_port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -95,20 +98,6 @@ class Config:
     tango_host: str
     tango_port: int
     mcp: MCPConfig
-
-
-def _approvals_address(mcp: dict, path) -> str:
-    """The agent endpoint's approvals device. Without one every high-risk call runs unasked, so an agent
-    endpoint must name one (mcp.safety.approvals_device_address) or say allow_ungated: true on purpose."""
-    safety = mcp.get('safety') or {}
-    address = str(safety.get('approvals_device_address') or '')
-    if not address and str(mcp.get('endpoint_role', 'agent')) == 'agent' and safety.get('allow_ungated') is not True:
-        raise ValueError(
-            f"{path}: this agent endpoint names no approvals device, so agents could move hardware with no way for a person to hold a call. "
-            "Add the Approvals device to the run_servers config and set mcp.safety.approvals_device_address: asyncroscopy/approvals/default, "
-            "or, for a simulator only, mcp.safety.allow_ungated: true."
-        )
-    return address
 
 
 def _auto_routine(mcp: dict, path) -> dict[str, list[str]] | None:
@@ -132,6 +121,17 @@ def _module_list(value, where: str) -> list[str]:
     raise ValueError(f"{where} must be a module name or a list of module names, not {value!r}")
 
 
+def _operator_port(mcp: dict, path) -> int | None:
+    port = mcp.get('operator_port')
+    if port in (None, ''):
+        return None
+    if str(mcp.get('endpoint_role', 'agent')) != 'agent':
+        raise ValueError(f"{path}: mcp.operator_port belongs on an agent endpoint, not on a {mcp.get('endpoint_role')} endpoint")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 or port == mcp.get('http_port'):
+        raise ValueError(f"{path}: mcp.operator_port must be a port from 1 to 65535 other than mcp.http_port, not {port!r}")
+    return port
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f'Config file not found: {path}')
@@ -143,7 +143,7 @@ def load_config(path: Path) -> Config:
     blocked_functions = values['mcp.blocked_functions'] or {}
     if not all(isinstance(names, list) for names in blocked_functions.values()):
         raise ConfigError(['mcp.blocked_functions must map a class (or "*") to a list of command names'])
-    # Settings the GUI has no widget for (safety, trace, auth, ...) are read straight from the YAML.
+    # Settings the GUI has no widget for, such as safety, trace and auth, are read straight from the YAML.
     mcp = raw['mcp']
     return Config(
         path=path,
@@ -161,7 +161,6 @@ def load_config(path: Path) -> Config:
             include_only_functions=values['mcp.include_only_functions'],
             tool_log=values['mcp.tool_log'] or '',
             endpoint_role=str(mcp.get('endpoint_role', 'agent')),
-            approvals_device_address=_approvals_address(mcp, path),
             risk={str(k): str(v) for k, v in ((mcp.get('safety') or {}).get('risk') or {}).items()},
             auto_routine=_auto_routine(mcp, path),
             agent_profile=str(mcp.get('agent_profile') or ''),
@@ -172,26 +171,55 @@ def load_config(path: Path) -> Config:
             analysis_url=str(mcp.get('analysis_url') or ''),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
-            # A relative public_key_file is read from the project directory (outputs/dev_tokens/... for dev tokens).
+            # A relative public_key_file is read from the project directory. Dev tokens live under outputs/dev_tokens.
             auth=AuthSettings.from_config(mcp.get('auth'), base_dir=PROJECT_DIR),
+            operator_port=_operator_port(mcp, path),
         ),
     )
 
 
 def remote_auth_problem(config: Config, simulated: Callable[[str, int, str | None], bool] | None = None) -> str | None:
     """Why this endpoint must not start: a stack that is not simulated, reachable from other machines,
-    with no mcp.auth. ``simulated``: a callable (tango_host, tango_port, approvals address) -> bool; by
-    default the stack's Approvals device is asked, as the server itself does."""
+    with no mcp.auth. ``simulated``: a callable (tango_host, tango_port, unused) -> bool; by
+    default the stack's devices are asked, as the server itself does."""
     mcp = config.mcp
     if mcp.auth is not None or mcp.transport != 'streamable-http' or is_loopback(mcp.http_host):
         return None
     if simulated is None:
         from asyncroscopy.mcp.mcp_server import stack_simulated as simulated
-    is_simulated = bool(simulated(config.tango_host, config.tango_port, mcp.approvals_device_address or None))
+    is_simulated = bool(simulated(config.tango_host, config.tango_port, None))
     from asyncroscopy.core.net import bind_host
 
     bound, _note = bind_host(mcp.http_host, mcp.allow_remote_bind, is_simulated)
     return remote_without_auth(bound, is_simulated, mcp.auth)
+
+
+def operator_config(config: Config) -> Config | None:
+    """The operator endpoint that starts beside an agent endpoint, or None when mcp.operator_port is not set.
+
+    It serves the same stack on 127.0.0.1 only and has no login. It offers what a person needs and an agent must
+    not have, such as ground-truth exports.
+    """
+    mcp = config.mcp
+    if mcp.operator_port is None:
+        return None
+    trace_dir = Path(mcp.trace).parent if mcp.trace else None
+    return replace(config, mcp=replace(
+        mcp,
+        name=f'{mcp.name}_Operator',
+        http_host=OPERATOR_HOST,
+        http_port=mcp.operator_port,
+        endpoint_role='operator',
+        blocked_functions={'*': list(OPERATOR_BLOCKED)},
+        include_only_functions=[],
+        tool_log='',
+        agent_profile='',
+        trace=(trace_dir / 'mcp_operator.jsonl').as_posix() if trace_dir else '',
+        trace_follow=[trace_dir.as_posix()] if trace_dir else [],
+        allow_remote_bind=False,
+        auth=None,
+        operator_port=None,
+    ))
 
 
 def build_command(config: Config) -> list[str]:
@@ -224,8 +252,6 @@ def build_command(config: Config) -> list[str]:
     if config.mcp.tool_log:
         command.extend(['--tool-log', config.mcp.tool_log])
     command.extend(['--endpoint-role', config.mcp.endpoint_role])
-    if config.mcp.approvals_device_address:
-        command.extend(['--approvals-device-address', config.mcp.approvals_device_address])
     if config.mcp.risk:
         command.extend(['--risk-json', json.dumps(config.mcp.risk)])
     if config.mcp.auto_routine is not None:
@@ -249,6 +275,18 @@ def build_command(config: Config) -> list[str]:
     if config.mcp.auth is not None:
         command.extend(['--auth-json', config.mcp.auth.to_json()])
     return command
+
+
+def start_operator(manager: ProcessManager, operator: Config | None, env: dict[str, str]) -> None:
+    if operator is None:
+        return
+    port = operator.mcp.http_port
+    if listening_pids(port):
+        print(f'  operator endpoint: port {port} is already in use, so none is started here')
+        return
+    manager.start_process(key=operator.mcp.name, label=f'MCP Server ({operator.mcp.name})', command=build_command(operator),
+                          env=env, stdout=None, stderr=None)
+    print(f'  operator endpoint for the GUI: http://{operator.mcp.http_host}:{port}/mcp')
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -298,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
                 stdout=None,
                 stderr=None,
             )
+            start_operator(manager, operator_config(config), env)
             print("MCP server started. Press Ctrl+C to terminate.")
             
             # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows
@@ -306,8 +345,8 @@ def main(argv: list[str] | None = None) -> int:
                     managed.process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     pass
-            # The server stopped on its own (port taken, Tango unreachable, a crash): fail, so a
-            # supervisor (systemd, Kubernetes) sees it. Its own output went straight to this stdout/stderr.
+            # The server stopped on its own, from a taken port, unreachable Tango or a crash. Fail so a
+            # supervisor such as systemd or Kubernetes sees it. Its own output went straight to this stdout/stderr.
             code = managed.process.returncode
             print(f'MCP server {config.mcp.name} exited with code {code}', file=sys.stderr)
             return code or 1

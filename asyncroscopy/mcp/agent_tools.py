@@ -18,9 +18,11 @@ from pathlib import Path
 
 import yaml
 
-# The packaged agent profiles (data files; see asyncroscopy.agents.profile).
+# The packaged agent profiles.
 PROFILES = Path(__file__).resolve().parents[1] / "agents" / "profiles"
-DEFAULT_PROFILE = PROFILES / "default.yaml"
+# The profile used when none is chosen (ASYNCROSCOPY_AGENT_PROFILE): capable, for the lab's gemma4:31b.
+DEFAULT_PROFILE_NAME = "capable"
+DEFAULT_PROFILE = PROFILES / f"{DEFAULT_PROFILE_NAME}.yaml"
 
 
 @dataclass(frozen=True)
@@ -31,7 +33,37 @@ class ToolLists:
     stem: tuple[str, ...] = ()
     generic: tuple[str, ...] = ()
     analysis_waits: tuple[str, ...] = ()
-    not_for_models: tuple[str, ...] = field(default=("list_skills", "skills_for", "endpoint_info", "action_space"))
+    not_for_models: tuple[str, ...] = field(default=("list_skills", "skills_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "endpoint_info", "action_space"))
+
+
+def profile_data(path: str | Path) -> dict:
+    """An agent profile file as data, with ``extends`` applied.
+
+    ``extends: default`` (a profile name in agents/profiles, or a path relative to this file) starts from that
+    profile. A mapping in this file is merged into the one it extends, key by key; any other value replaces it.
+    """
+    return _profile_data(str(Path(path).resolve()), ())
+
+
+def _merge(base: dict, over: dict) -> dict:
+    out = dict(base)
+    for key, value in over.items():
+        out[key] = _merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
+@cache
+def _profile_data(path: str, seen: tuple[str, ...]) -> dict:
+    if path in seen:
+        raise ValueError(f"{path}: extends goes round in a circle: {' -> '.join(seen + (path,))}")
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path}: an agent profile is a mapping")
+    parent = raw.pop("extends", None)
+    if parent is None:
+        return raw
+    parent_path = Path(path).parent / str(parent) if str(parent).endswith((".yaml", ".yml")) else PROFILES / f"{parent}.yaml"
+    return _merge(_profile_data(str(parent_path.resolve()), seen + (path,)), raw)
 
 
 def tool_lists(path: str | Path | None = None) -> ToolLists:
@@ -41,7 +73,7 @@ def tool_lists(path: str | Path | None = None) -> ToolLists:
 
 @cache
 def _tool_lists(path: str) -> ToolLists:
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    raw = profile_data(path)
     tools = raw.get("tools") or {}
     if not isinstance(tools, dict) or not all(isinstance(v, list) for v in tools.values()):
         raise ValueError(f"{path}: tools must map stem, generic, analysis_waits and not_for_models to lists of globs")
@@ -52,7 +84,7 @@ def _tool_lists(path: str) -> ToolLists:
 
 
 def _matches(name: str, pattern: str) -> bool:
-    """fnmatch ignoring case on every OS, as the approval policy and SciAgentGUI match (fnmatch.fnmatch follows the OS)."""
+    """fnmatch ignoring case on every OS, as the risk policy and SciAgentGUI match (fnmatch.fnmatch follows the OS)."""
     return fnmatch.fnmatchcase(name.lower(), pattern.lower())
 
 

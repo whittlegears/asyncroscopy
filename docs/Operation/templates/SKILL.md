@@ -21,4 +21,4 @@ acts: true   # following it moves or exposes the instrument; false for a skill t
 3. `XRDTwin_acquire_diffractogram`; it returns a data key.
 4. `view_data` with `{"key": <key>, "format": "text"}` lists the peaks with their 2theta.
 
-Report the key and the strongest peaks. If a call is held for approval, wait for the operator; never try another way around it.
+Report the key and the strongest peaks.

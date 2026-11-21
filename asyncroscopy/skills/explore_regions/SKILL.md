@@ -1,13 +1,13 @@
 ---
 name: explore_regions
 description: Find the most interesting regions of a map and image them at higher magnification, with each image linked to its region.
-version: 1.5.0
+version: 1.6.0
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
-keywords: [interesting, regions, features, explore, zoom, closer look, higher magnification]
+keywords: [interesting, regions, features, explore, closer look, higher magnification]
 requires: [score_map, Mapper*_reserve]
 acts: true
-tools: [run_job, wait_for_job, score_map, list_pois, add_poi, map_info, get_region, run_skill, wait_for_skill]
+tools: [run_job, wait_for_job, score_map, list_pois, add_poi, map_info, get_region, run_workflow, workflow_status]
 ---
 
 # Explore a map
@@ -26,8 +26,9 @@ Do as many regions as the user asks for (default three).
 
 ## A spectrum at a region
 
-The best region is the first in `summary.regions` (or `summary.added_pois`). `run_skill` with
-`{"skill": "spectrum_at_point", "inputs": {"x_m": <its x_m>, "y_m": <its y_m>}}`, then `wait_for_skill`: it moves
-there, takes the spectrum and reads its elements.
+The best region is the first in `summary.regions` (or `summary.added_pois`). The spectrum is the `spectrum_at_point`
+workflow: `run_workflow` with `{"name": "spectrum_at_point", "inputs": {"x_m": <its x_m>, "y_m": <its y_m>}}`, and
+`workflow_status` while it is `running`. It moves there, takes the spectrum, blanks the beam and reads the peaks; the
+elements are in its `outputs.peaks.elements`.
 
 Report each region: coordinates, score, reason and the key of its image, copied from `summary.revisits`. A region the job skipped (`skipped`, with the reason) has no image: say so. Never write an image key the job did not return.

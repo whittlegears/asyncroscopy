@@ -7,12 +7,12 @@ envelope_schema: 1.0.0
 keywords: [focus, autofocus, defocus, refocus, out of focus, blurry, blurred, astigmatism, stigmation, stigmate, stigmator, optistem, sharpen]
 requires: [Tuner*_reserve]
 acts: true
-tools: [run_job, wait_for_job, Tuner_abort, approval_status]
+tools: [run_job, wait_for_job, Tuner_abort]
 ---
 
 # Focus and stigmation
 
-Focusing is ONE background job on the Tuner. Never loop over `set_defocus` and `acquire_scanned_image` yourself: each call would be slow, held for approval, and nothing would put the focus back if it went wrong. The job bounds every step, counts the dose, blanks the beam between images, and restores the starting focus if it fails or is aborted.
+Focusing is ONE background job on the Tuner. Never loop over `set_defocus` and `acquire_scanned_image` yourself: each call would be slow, and nothing would put the focus back if it went wrong. The job bounds every step, counts the dose, blanks the beam between images, and restores the starting focus if it fails or is aborted.
 
 ## 1. Plan
 
@@ -28,7 +28,7 @@ Focusing is ONE background job on the Tuner. Never loop over `set_defocus` and `
 
 ## 2. Run and wait
 
-1. `run_job` with `{"device": "Tuner", "plan": {...}}`. In approve mode the operator sees the plan first.
+1. `run_job` with `{"device": "Tuner", "plan": {...}}`.
 2. `wait_for_job` with the `job_id` until the state is `done`, `failed` or `aborted`.
 3. Read `summary.tune`: `sharpness_before` and `sharpness_after`, `dose_e_per_a2`, and `defocus_after_m`.
 

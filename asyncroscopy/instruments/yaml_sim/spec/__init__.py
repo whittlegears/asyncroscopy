@@ -33,7 +33,7 @@ The file format, with every key (see examples/xrd.yaml for a working instrument)
         returns: "X-rays on"             # a string, a number, or a mapping (sent as JSON)
         duration_s: 0.5                  # optional simulated time (at most 25 s per call)
         role: beam.unblank               # optional canonical role (asyncroscopy.core.names.ROLES), for role-based controllers
-        risk: high                       # optional: low or high as the approval gate sees it (see below)
+        risk: high                       # optional: low or high, as the safety policy classes it (see below)
       move_xy:
         doc: Move the stage.
         inputs:                          # several arguments: the tool takes them by name
@@ -91,7 +91,7 @@ map of them stitches.
 A single command or acquisition call is limited to 25 s (the MCP server stops
 waiting at 30 s); a job is not, because the agent waits for it with
 wait_for_job. Jobs run on a second device (see ``device.py``) with the standard
-job envelope, so run_job, wait_for_job, abort, approval and limits all apply.
+job envelope, so run_job, wait_for_job, abort and limits all apply.
 
 Strings in ``sets``, ``returns``, ``requires``, ``duration_s`` and the numbers of an
 acquisition are expressions over the settings (and the command's input): numbers,

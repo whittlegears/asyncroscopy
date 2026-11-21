@@ -23,9 +23,7 @@ if TYPE_CHECKING:
 
 TRACE_DIR = Path("outputs/trace")
 
-# A crash of the model server itself (seen with Ollama on a 6 GB GPU on the first load after a
-# restart) says nothing about the agent; such rows are reported apart and left out of the pass rate.
-# Failures of the stack, not the agent: a crashed model server, a device that stopped answering.
+# These errors come from the stack and not the agent. Rows with them are left out of the pass rate.
 INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error",
                 "API_DeviceTimedOut", "Not able to acquire serialization")
 
@@ -58,7 +56,7 @@ def sleepwalking(tool_names: list[str], allowed: Iterable[str] | None = None, ri
     """High-risk calls outside ``allowed`` (globs): actions nobody asked for.
 
     The term is from AILA (Nat. Commun. 2025). Risk is the endpoint's own table (``risks``,
-    from endpoint_info: overrides and STEM settings counted as the approval gate counts them);
+    from endpoint_info: overrides and STEM settings counted as the endpoint counts them);
     without it nothing can be judged and nothing is reported. ``allowed`` defaults to the mapping skill's
     tools. The job device's reserve and start that run_job makes are its own: the Instrument
     Trace marks them (via "run_job"), and the workflow checks leave them out when run_job is

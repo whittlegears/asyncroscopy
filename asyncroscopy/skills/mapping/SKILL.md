@@ -6,8 +6,9 @@ min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]
 requires: [Mapper*_reserve]
+new_map: true
 acts: true
-tools: [run_job, wait_for_job, Mapper_abort, approval_status, assemble_map, score_map, map_info, get_region, list_pois, add_poi, view_data, list_data]
+tools: [run_job, wait_for_job, Mapper_abort, assemble_map, score_map, map_info, get_region, list_pois, add_poi, view_data, list_data]
 ---
 
 # Mapping a sample
@@ -43,7 +44,6 @@ If the request is unclear about the area, ask the user before starting.
 ## 2. Run the map
 
 1. `run_job` with `{"device": "Mapper", "plan": {...}}`. It checks the plan and starts the job; the reply has `job_id` and `estimate`. An `error` means the plan was refused: fix what the message says and call `run_job` again. A plan whose estimate is over the endpoint's limits (duration or dose) is refused before it starts: tell the user the estimate and ask; do not shrink it on your own. Check the estimate against the request: if it is far larger than what was asked, call `Mapper_abort` and ask the user.
-   - If it says **APPROVAL REQUIRED** with a `request_id`, the instrument is in approve mode. Call `approval_status` every few seconds. When it is `approved`, call `run_job` again with exactly the same arguments. If `denied` or `expired`, stop and tell the user.
    - An endpoint with several Mappers names them `Mapper_<key>`: use that name as `device`.
    - If the user says not to wait (they want the job id now, or will stop it), add `"wait": false`, tell them the `job_id` and stop there.
 2. `wait_for_job` with `{"job_id": ...}`: it waits until the job is `done`, `failed` or `aborted`, however long that takes, and returns once (a short map may already be `done` in the `run_job` reply). If it says the job is still running after a long wait, tell the user it is running and its `job_id`. The job does everything else itself: it stitches the tiles into a map, puts every EDS spectrum on the map as a point of interest linked to its spectrum, scores the map when `find_regions` is set, and images each region when `revisit` is set. To stop early, call `Mapper_abort` (always allowed; the beam is blanked). To continue an aborted map later, call `run_job` with `{"device": "Mapper", "resume": <its reservation_id>}` and no plan: it goes on from the next tile.

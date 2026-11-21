@@ -40,15 +40,15 @@ class Call:
     """One call of a device tool, as the interceptors see it."""
 
     tool: ToolDescriptor
-    arguments: dict[str, Any]  # as the caller gave them (logged, and fingerprinted by the approval gate)
+    arguments: dict[str, Any]  # as the caller gave them, which is what gets logged and fingerprinted
     call_args: tuple  # what the device command gets
     caller: str | None = None
     run: str | None = None
     started: float = field(default_factory=time.time)
     t0: float = field(default_factory=time.perf_counter)
-    trace: dict[str, Any] = field(default_factory=dict)  # fields every trace event of this call carries (the gate's)
+    trace: dict[str, Any] = field(default_factory=dict)  # fields every trace event of this call carries
     context: dict[str, Any] = field(default_factory=dict)  # what one interceptor leaves for a later one
-    reply: Any = None  # the device's reply, JSON-safe, as logged
+    reply: Any = None  # the device's reply as logged
 
     def duration_s(self) -> float:
         return time.perf_counter() - self.t0
@@ -56,7 +56,7 @@ class Call:
 
 class Interceptor:
     """Base class: does nothing, applies to every tool. ``order`` places it in the list (lowest first):
-    10 the preview, 20 logging and the trace, 30 job checks before the gate, 40 the approval gate,
+    10 the preview, 20 logging and the trace, 30 job checks,
     50 job stamping after it, 60 the token subject."""
 
     order = 100

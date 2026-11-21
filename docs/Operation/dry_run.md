@@ -1,6 +1,6 @@
 # Dry runs and the `simulated` flag
 
-A dry run rehearses a job on the real stack without moving anything. A team uses it before a hardware session to check the plan, the approval, and the order and bounds of every stage move.
+A dry run rehearses a job on the real stack without moving anything. A team uses it before a hardware session to check the plan and the order and bounds of every stage move.
 
 ## Starting a dry run
 
@@ -16,7 +16,7 @@ run_job(device="Mapper", plan={"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7, "dry_run
 - the operator sees it (`get_reservation` starts with `"dry_run": true`);
 - a resume keeps it.
 
-A start request whose `dry_run` disagrees with the reservation is refused, so a rehearsal never turns into a real run. A dry-run `start` goes through the approval gate like a real start: in `approve` mode it waits for a person.
+A start request whose `dry_run` disagrees with the reservation is refused, so a rehearsal never turns into a real run.
 
 ## Which job devices take a dry run
 
@@ -62,7 +62,7 @@ Each recorded call is an Instrument Trace event marked `dry_run: true`, with `pe
 
 Acquisitions are **skipped**, never faked. The Mapper takes no image or spectrum and writes no run file, and the sample is not exposed. Each step record and the summary say `acquisitions: "skipped (dry run): ..."`. Stitching, scoring and the revisits of found regions are skipped too, since there are no images. Revisits of given points still rehearse their moves. `results` adds `dry_run: {recorded, performed, failed_checks}`.
 
-On the twin, a dry-run map leaves `export_ground_truth()` unchanged: it has no new moves, no new acquisitions and the same simulated time (`tests/test_dry_run_and_clock.py`).
+On the twin, a dry-run map leaves `export_ground_truth()` unchanged: it has no new moves, no new acquisitions and the same simulated time (`tests/jobs/test_dry_run_and_clock.py`).
 
 ## The `simulated` flag
 
@@ -73,12 +73,11 @@ simulated: true    # twins and YAML instruments
 simulated: false   # Spectra300*.yaml, covalent-*.yaml, ThinkPad, Jupiter-local
 ```
 
-A config without it is treated as real hardware, and the launcher prints a note saying so. The launcher gives every device a `simulated` property with this value (a device's own `simulated` property wins). Devices read it as `self.simulated`. Twin classes default to `true`; the `Instrument`, `JobDevice` and `Approvals` bases default to `false`.
+A config without it is treated as real hardware, and the launcher prints a note saying so. The launcher gives every device a `simulated` property with this value (a device's own `simulated` property wins). Devices read it as `self.simulated`. Twin classes default to `true`; the `Instrument` and `JobDevice` bases default to `false`.
 
 When `simulated` is false:
 
-- **Approvals refuses `auto`.** `set_mode({"mode": "auto"})` fails with the reason. The device also starts in `approve` whatever `default_mode` or its mode file say. `Approvals.get_simulated()` reports the flag.
-- **The MCP endpoint binds 127.0.0.1.** If the MCP config asks for `0.0.0.0` (or `::`), the endpoint binds 127.0.0.1 and prints a `[safety]` line. To bind every interface, the MCP config must also set `mcp.allow_remote_bind: true`. The MCP server learns the flag from the stack's Approvals device (`get_simulated`) at start-up. If there is no Approvals device, or it cannot be read, the server counts the stack as not simulated.
+- **The MCP endpoint binds 127.0.0.1.** If the MCP config asks for `0.0.0.0` (or `::`), the endpoint binds 127.0.0.1 and prints a `[safety]` line. To bind every interface, the MCP config must also set `mcp.allow_remote_bind: true`. The MCP server reads the flag from the devices' `simulated` Tango property at start-up. If it cannot be read, the server counts the stack as not simulated.
 
 ## One time source
 

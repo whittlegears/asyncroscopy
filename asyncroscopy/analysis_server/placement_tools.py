@@ -32,8 +32,8 @@ from asyncroscopy.core.fileio import SequencedAppender
 
 from .frames import FrameError, frame_of, image_dataset, image_node, pixel_of, stage_of, unknown_key
 
-DEFAULT_WINDOW_M = 4e-7  # the stage's error on a typical instrument: a stage-aimed child is searched this far
-EDGE_PX = 4  # parent pixels read beyond the window, so the correlation has room at the window's edge
+DEFAULT_WINDOW_M = 4e-7  # a typical stage error, and how far a stage-aimed child is searched
+EDGE_PX = 4  # parent pixels read beyond the window, so the correlation has room at the edge
 
 
 class PlacementLog:
@@ -58,7 +58,7 @@ class PlacementLog:
             for line in handle:
                 try:
                     out.append(json.loads(line))
-                except ValueError:  # a line cut short by a crash: skipped, the rest still read
+                except ValueError:  # skip a line cut short by a crash
                     continue
         return out
 

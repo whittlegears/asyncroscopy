@@ -19,7 +19,7 @@ from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT
 from asyncroscopy.mcp.agent_tools import ToolLists
 
 from .mcp_tools import McpServer, bearer_header
-from .profile import load_profile
+from .profile import DEFAULT_PROFILE_NAME, AgentProfile, load_profile
 
 
 log = logging.getLogger(__name__)
@@ -27,31 +27,31 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AgentConfig:
-    # The agent profile (asyncroscopy/agents/profiles): what is tuned to one model. model, model_provider,
-    # num_ctx and middleware left as None take its values.
-    profile: str = "default"
+    # The agent profile holds what is tuned to one model.
+    # model, model_provider, num_ctx and middleware take its values when left as None.
+    profile: str = DEFAULT_PROFILE_NAME
     model: str | None = None
     model_provider: str | None = None
     num_ctx: int | None = None
     middleware: list[str] | None = None
     temperature: float = 0.0
     mcp_url: str = DEFAULT_MCP_URL
-    # None: the analysis server the instrument endpoint is configured with (endpoint_info), so
-    # it is set in one place, the MCP config's mcp.analysis_url; ASYNCROSCOPY_ANALYSIS_URL overrides.
+    # None means use the analysis server the instrument endpoint reports, so it is set in one place.
+    # ASYNCROSCOPY_ANALYSIS_URL overrides it.
     analysis_url: str | None = None
     caller: str = "agent"
-    # A bearer token from the facility's token service (or startup_scripts/dev_tokens.py), sent as Authorization:
-    # Bearer to the instrument and analysis endpoints. With mcp.auth the endpoint takes the caller from the
-    # token's subject and ignores the caller header. None: no token (an endpoint without mcp.auth).
+    # A bearer token from the facility's token service or startup_scripts/dev_tokens.py, sent to both endpoints.
+    # With mcp.auth the endpoint takes the caller from the token and ignores the caller header.
+    # None means no token, for an endpoint without mcp.auth.
     token: str | None = field(default=None, repr=False)
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
-    # One id per agent run, sent with every call: agents open a new MCP session per call, so the
-    # server recognises a retried run_job by caller and run id.
+    # One id per agent run, sent with every call. Agents open a new MCP session per call,
+    # so the server uses the caller and run id to spot a retried run_job.
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    # Every instrument call of this run as its reply arrives (see McpServer), so a run stopped part
-    # way still knows which jobs it started.
+    # Every instrument call of this run, added as its reply arrives.
+    # A run stopped part way still knows which jobs it started.
     ledger: list = field(default_factory=list, repr=False, compare=False)
-    # time.monotonic() after which an agent stops waiting on jobs (a goal's time budget); None: no limit.
+    # The time.monotonic value after which an agent stops waiting on jobs. None means no limit.
     deadline: float | None = None
     _info: dict | None = field(default=None, repr=False, compare=False)
 
@@ -61,6 +61,10 @@ class AgentConfig:
         self.model_provider = self.model_provider or chosen.model_provider
         self.num_ctx = int(self.num_ctx or chosen.num_ctx)
         self.middleware = list(chosen.middleware if self.middleware is None else self.middleware)
+
+    def agent_profile(self) -> AgentProfile:
+        """The agent profile: what depends on the model (asyncroscopy.agents.profile)."""
+        return load_profile(self.profile)
 
     def tool_lists(self) -> ToolLists:
         """The profile's tool selection (asyncroscopy.mcp.agent_tools)."""
@@ -102,13 +106,16 @@ class AgentConfig:
         return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **bearer_header(self.token)}
 
     def instrument(self) -> McpServer:
-        return McpServer(self.mcp_url, self._headers(), ledger=self.ledger)
+        profile = self.agent_profile()
+        return McpServer(self.mcp_url, self._headers(), ledger=self.ledger, replies=profile.replies, images=profile.images)
 
     def analysis(self) -> McpServer | None:
         """The analysis server: the configured or endpoint-reported one, else the default; None when there is none ("")."""
         if self.analysis_url == "":
             return None
-        return McpServer(self.analysis_url or DEFAULT_ANALYSIS_URL, self._headers(), ledger=self.ledger)
+        profile = self.agent_profile()
+        return McpServer(self.analysis_url or DEFAULT_ANALYSIS_URL, self._headers(), ledger=self.ledger, replies=profile.replies,
+                         images=profile.images)
 
     async def info(self) -> dict:
         """The instrument endpoint's endpoint_info (tool risks, job devices, analysis server); {} if it has none."""
@@ -117,11 +124,11 @@ class AgentConfig:
                 result = await McpServer(self.mcp_url, self._headers()).call("endpoint_info", {})
                 payload = getattr(result, "structured_content", None) if result is not None and not result.is_error else None
                 self._info = dict(payload or {})
-            except Exception:  # not cached: one transient failure must not hide the risks for the whole run
+            except Exception:  # not cached, so one passing failure does not hide the risks for the whole run
                 log.warning("endpoint_info from %s failed; going on without it", self.mcp_url, exc_info=True)
                 return {}
             if self.analysis_url is None and "analysis_url" in self._info:
-                # The MCP config's mcp.analysis_url; empty there means this instrument has no analysis server.
+                # An empty mcp.analysis_url means this instrument has no analysis server.
                 self.analysis_url = self._info["analysis_url"] or ""
         return self._info
 

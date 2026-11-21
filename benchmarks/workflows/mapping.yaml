@@ -22,7 +22,7 @@ workflows:
       - {check: tiles_at_least, n: 9}
       - {check: no_sleepwalking}
 
-  # CUJ 2 of docs/designs/agentic_sample_mapping.md: each spectrum is on the map as a point of
+  # Each spectrum is on the map as a point of
   # interest at its stage position, linked to its key (checked on the map's POI layer).
   - name: cuj2_map_with_eds_points
     request: Map a 500 nm square around the centre and take an EDS spectrum with each image.

@@ -31,11 +31,58 @@ from .sample_model import ELEMENTS, ParticleTable
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10
-HAADF_30_PERCENT_WEIGHT = 1.6e4  # -ln(0.7) / 2.25e-5: the default renderer's 30 % HAADF scattering
+HAADF_30_PERCENT_WEIGHT = 1.6e4  # The weight that scatters 30 % to HAADF in the default renderer. It is minus ln 0.7 divided by 2.25e-5.
 OPTIONS = {
     "path", "pixel_size_m", "dataset", "index", "labels_path", "center_m", "invert", "contrast_weight",
     "composition", "eds_areal_density", "support_thickness_m", "height_gradient", "seed",
 }
+
+
+def _load_npz(path: Path, dataset: str | None):
+    """Read the image and any pixel size from an npz file."""
+    pixel = None
+    with np.load(path) as data:
+        key = dataset or ("image" if "image" in data.files else next(k for k in data.files if data[k].ndim >= 2))
+        image = data[key]
+        if "pixel_size_m" in data.files:
+            pixel = float(data["pixel_size_m"])
+    return image, pixel
+
+
+def _first_h5_image_name(h5, path: Path) -> str:
+    """The name of the first dataset in the file with two or more axes."""
+    import h5py
+
+    found: list[str] = []
+    h5.visititems(lambda name, obj: found.append(name) if isinstance(obj, h5py.Dataset) and obj.ndim >= 2 else None)
+    if not found:
+        raise ValueError(f"{path} has no 2D dataset; give the specimen's dataset option")
+    return found[0]
+
+
+def _load_h5(path: Path, dataset: str | None, index: int):
+    """Read the image and any pixel size from an HDF5 file."""
+    import h5py
+
+    pixel = None
+    with h5py.File(path, "r") as h5:
+        if dataset is None:
+            dataset = _first_h5_image_name(h5, path)
+        dset = h5[dataset]
+        image = dset[index] if dset.ndim == 3 else dset[()]
+        for attrs in (dset.attrs, h5.attrs):
+            if "pixel_size_m" in attrs:
+                pixel = float(attrs["pixel_size_m"])
+                break
+    return image, pixel
+
+
+def _load_picture(path: Path) -> np.ndarray:
+    """Read an image file such as PNG or TIFF."""
+    from PIL import Image
+
+    with Image.open(path) as img:
+        return np.asarray(img)
 
 
 def load_image(path: Path, dataset: str | None = None, index: int = 0) -> tuple[np.ndarray, float | None]:
@@ -45,34 +92,13 @@ def load_image(path: Path, dataset: str | None = None, index: int = 0) -> tuple[
     if suffix == ".npy":
         image = np.load(path)
     elif suffix == ".npz":
-        with np.load(path) as data:
-            key = dataset or ("image" if "image" in data.files else next(k for k in data.files if data[k].ndim >= 2))
-            image = data[key]
-            if "pixel_size_m" in data.files:
-                pixel = float(data["pixel_size_m"])
+        image, pixel = _load_npz(path, dataset)
     elif suffix in {".h5", ".hdf5"}:
-        import h5py
-
-        with h5py.File(path, "r") as h5:
-            if dataset is None:
-                found: list[str] = []
-                h5.visititems(lambda name, obj: found.append(name) if isinstance(obj, h5py.Dataset) and obj.ndim >= 2 else None)
-                if not found:
-                    raise ValueError(f"{path} has no 2D dataset; give the specimen's dataset option")
-                dataset = found[0]
-            dset = h5[dataset]
-            image = dset[index] if dset.ndim == 3 else dset[()]
-            for attrs in (dset.attrs, h5.attrs):
-                if "pixel_size_m" in attrs:
-                    pixel = float(attrs["pixel_size_m"])
-                    break
+        image, pixel = _load_h5(path, dataset, index)
     else:
-        from PIL import Image
-
-        with Image.open(path) as img:
-            image = np.asarray(img)
+        image = _load_picture(path)
     image = np.asarray(image, dtype=np.float64)
-    if image.ndim == 3 and image.shape[-1] in (3, 4):  # RGB(A): mean of the colour channels
+    if image.ndim == 3 and image.shape[-1] in (3, 4):  # a colour image
         image = image[..., :3].mean(axis=-1)
     elif image.ndim == 3:
         image = image[index]
@@ -175,7 +201,6 @@ class RecordedSpecimen(Specimen):
             path=str(options["path"]),
         )
 
-    # ------------------------------------------------------------------
     def _image_for(self, pixel_m: float) -> np.ndarray:
         """The image, low-passed when the field's pixels are larger than the recorded ones (no aliasing)."""
         ratio = round(pixel_m / self.pixel_m, 2)

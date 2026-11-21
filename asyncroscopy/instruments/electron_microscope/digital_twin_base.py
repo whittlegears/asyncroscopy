@@ -32,17 +32,14 @@ DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 class ElectronMicroscopeTwin(ElectronMicroscope):
     """A simulated electron microscope: beam, field of view, defocus and stage state over the support devices."""
 
-    # ------------------------------------------------------------------
-    # Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
+    # Device properties. Set them in the Tango database for each deployment.
 
-    render_mode = "projected"  # which renderer this twin is; a specimen lists the modes it can be rendered in (Specimen.render_modes)
+    render_mode = "projected"  # a specimen must list this mode in its render_modes
 
-    # Specimen: where the sample comes from (docs/Operation/specimens.md). A subclass sets its own default source.
+    # A subclass sets its own default source. See docs/Operation/specimens.md.
     specimen = device_property(dtype=str, default_value="", doc="Specimen as a mapping (JSON or YAML), e.g. {source: silicon_lamella, lamella_width_nm: 620}; overrides specimen_source.")
     specimen_source = device_property(dtype=str, default_value="procedural", doc="Specimen source (the twin's own by default).")
 
-    # A twin is a simulator unless its stack config says otherwise (run_servers' simulated:).
     simulated = device_property(dtype=bool, default_value=True, doc="True when this stack drives a simulator; set from run_servers' top-level simulated:.")
 
     sample_seed = device_property(
@@ -101,10 +98,10 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
     def init_device(self) -> None:
         """Initialize the Tango device and simulation state variables."""
         Device.init_device(self)
-        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
+        self.instrument_id = self.get_name()  # saved with every dataset
         self.set_state(DevState.INIT)
 
-        self._init_device_attributes()  # the base's detector proxies and command lock
+        self._init_device_attributes()  # sets up the detector proxies and the command lock
         self._stem_mode = True
         self._manufacturer = "UTKTeam"
         self._beam_pos_x = 0.5
@@ -113,7 +110,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         self._imsize = 512
         self._fov = 200e-10  # meters
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
-        # The sample's extent in angstrom (status reports); _generate_sample sets it.
+        # The sample's extent in angstrom. _generate_sample sets it.
         self._world_bounds_ang = {
             "x_min": -1.0,
             "x_max": 1.0,
@@ -164,9 +161,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         """Build the sample from ``seed`` and set ``_world_bounds_ang``; called on connect."""
         raise NotImplementedError(f"{type(self).__name__} does not implement _generate_sample")
 
-    # ------------------------------------------------------------------
     # Attribute read methods
-    # ------------------------------------------------------------------
     def read_manufacturer(self) -> str:
         """Read method for the manufacturer attribute."""
         return self._manufacturer
@@ -253,8 +248,8 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
-            # One write of all five axes: the STAGE device checks them together and refuses the whole move
-            # (axis by axis, a refused z would leave x and y already moved).
+            # Write all five axes at once so the STAGE device checks them together.
+            # Written one by one, a refused z would leave x and y already moved.
             stage.position = [float(v) for v in target]
 
         self._stage_position = target

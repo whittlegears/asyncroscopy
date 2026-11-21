@@ -151,7 +151,7 @@ class MapStore(PoiStore):
                 arrays = {k: np.asarray(node[k].read()) for k in ("written", "stage_reported_m", "acquired_s", "row_col") if k in node}
                 info = _layout2_info(run, plan, tuple(tiles.shape), dict(tiles.metadata), arrays)
             else:
-                # One paged listing carries every tile's shape and metadata (not a request per tile).
+                # One paged listing carries every tile's shape and metadata, which avoids a request per tile.
                 children = dict(node["tiles"].items())
                 names = sorted(children)
                 info = _layout1_info(run, plan, names, [tuple(children[n].shape) for n in names], [dict(children[n].metadata) for n in names])
@@ -238,7 +238,7 @@ class MapStore(PoiStore):
             while not found and "/" in key.strip("/") and not self._local(key):
                 key = key.strip("/").rsplit("/", 1)[0]
                 found = self._own_sample(key)
-        except Exception:  # a refused path or a Tiled error: the sample is unknown, which callers report
+        except Exception:  # a refused path or a Tiled error leaves the sample unknown, and callers report that
             return {}
         return found
 
@@ -265,7 +265,7 @@ class MapStore(PoiStore):
         if meta.get("kind") != "stitched_map":
             try:
                 stitched = self.current_map(map_key)
-            except Exception:  # not a run either: no stitched map to name
+            except Exception:  # not a run either, so there is no stitched map to name
                 stitched = None
             if stitched:
                 raise ValueError(f"{map_key} is a Mapper run, not a stitched map; its newest stitched map is {stitched!r} (list_maps lists every version): pass that.")

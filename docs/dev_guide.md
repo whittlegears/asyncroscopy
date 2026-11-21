@@ -168,10 +168,9 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
   (`fileio.py`), bind-address rules (`net.py`) and the shared names (`names.py`: headers,
   envelope verbs, job states, data-key patterns, action roles, the agent graph names).
 * `trace/writer.py` writes the tool log and the Instrument Trace.
-* `safety/` decides risk and approval (`policy.py` for the name rules, `decide.py` for the one
-  approval decision, `estop.py` for the emergency stop).
+* `safety/` decides risk (`policy.py` for the name rules, `estop.py` for the emergency stop).
 * `instruments/` and `jobs/` are the devices. Each base class declares what its commands are
-  (`asyncroscopy.utils.commands.command(risk=, role=, stop=, routine=, operator_only=)`) and serves
+  (`asyncroscopy.utils.commands.command(risk=, role=, stop=, operator_only=)`) and serves
   the declarations as its `action_hints` attribute; vendor backends and twins inherit them.
 * The scanning-beam instruments share `instruments/scanning_beam.py` (`ScanningBeamInstrument`, with its twin mixin and map
   profile beside it); `ElectronMicroscope` and `ScanningElectronMicroscope` add what is their own. `instruments/common/sample.py`
@@ -191,7 +190,7 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
 * `settings.py` is the one place an `ASYNCROSCOPY_*` variable or output path is read (table in
   `docs/Operation/settings.md`); `settings.get()` reads the environment at call time, so nothing is read at import.
 
-`tests/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
+`tests/core/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
 loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`, if `mcp` loads anything from
 `instruments` or `agents`, if `jobs` loads anything from `instruments`, or if the analysis server
 loads anything from `mcp`, `agents`, `instruments` or `jobs`.

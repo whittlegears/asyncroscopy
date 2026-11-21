@@ -1,7 +1,7 @@
 """Tile grids for maps: where the tiles of a box go, in what order, and how often a point is covered.
 
 Pure numbers in metres; no instrument. The Mapper (any instrument profile) and the
-plan checks use these; see docs/designs/concepts_brief.md, decision D1.
+plan checks use these.
 """
 
 from __future__ import annotations

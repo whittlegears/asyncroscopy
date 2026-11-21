@@ -1,7 +1,6 @@
 """RecordingProxy: what ``JobDevice.proxy`` hands a dry-run job instead of a DeviceProxy.
 
-A dry run rehearses a job on the real stack without moving anything (decision D3
-of docs/designs/concepts_brief.md). It works from allow-lists, so a DeviceProxy
+A dry run rehearses a job on the real stack without moving anything. It works from allow-lists, so a DeviceProxy
 method nobody listed can never reach the instrument by accident:
 
 * reads pass through: reading a Tango attribute (``proxy.imsize``), the DeviceProxy
@@ -39,9 +38,9 @@ if TYPE_CHECKING:
     import tango
 
 DRY_RUN_PLACEHOLDER = "dry_run:not_performed"
-# The job envelope's and approval device's reads, beside the policy's read-only names.
+# Reads of the job envelope. The safety policy lists the other read commands.
 READ_COMMANDS = frozenset({"job_status", "results", "request_status"})
-# DeviceProxy methods that only read or set up the local proxy: passed through.
+# DeviceProxy methods that only read or set up the local proxy. A dry run passes them through.
 PROXY_READS = frozenset({
     "read_attribute", "read_attributes", "get_attribute_config", "get_attribute_config_ex", "attribute_query",
     "attribute_list_query", "attribute_list_query_ex", "get_attribute_list", "command_query", "command_list_query",
@@ -49,7 +48,7 @@ PROXY_READS = frozenset({
     "set_timeout_millis", "get_timeout_millis", "get_property", "get_device_db", "import_info", "get_pipe_list",
     "is_attribute_polled", "get_attribute_poll_period", "get_command_poll_period", "polling_status", "black_box",
 })
-# DeviceProxy methods that write to the device (values, configuration, polling, pipes, properties): recorded, never performed.
+# DeviceProxy methods that write to the device. A dry run records them and never performs them.
 PROXY_WRITES = frozenset({
     "write_attribute", "write_attributes", "write_read_attribute", "write_read_attributes", "write_attribute_asynch",
     "write_attributes_asynch", "write_attribute_reply", "write_attributes_reply", "set_attribute_config",
@@ -108,7 +107,7 @@ class RecordingProxy:
         if self._commands is None:
             try:
                 names = {str(n).lower() for n in self._proxy.get_command_list()}
-            except Exception:  # cannot list them: treat every unknown name as a command (recorded, the safe side)
+            except Exception:  # when commands cannot be listed every unknown name is recorded as a command, which is the safe side
                 names = None
             object.__setattr__(self, "_commands", names)
         return self._commands
@@ -137,7 +136,7 @@ class RecordingProxy:
             try:
                 hints = json.loads(self._proxy.read_attribute(ACTION_HINTS).value)
                 stops = frozenset(str(name).lower() for name, hint in hints.items() if isinstance(hint, dict) and hint.get("stop") is True)
-            except Exception:  # no such attribute, or a stand-in: only the job device's own list applies
+            except Exception:  # the device declares no stops, so only the job device's own list applies
                 stops = frozenset()
             object.__setattr__(self, "_stops", stops)
         return self._stops
@@ -156,7 +155,7 @@ class RecordingProxy:
         def write(*args, **kwargs):
             attribute = args[0] if args else kwargs.get("attr_name")
             value = args[1] if len(args) > 1 else kwargs.get("value")
-            if method in ATTRIBUTE_WRITES:  # traced as write_attribute, as they always were
+            if method in ATTRIBUTE_WRITES:  # all of these are traced as write_attribute
                 arguments = {"attribute": attribute, "value": value} if isinstance(attribute, str) else list(args)
                 self._recorder(self._address, "write_attribute", "write", arguments, False)
             else:
@@ -184,12 +183,12 @@ class RecordingProxy:
         if lowered in attributes:
             return getattr(self._proxy, name)  # reading a Tango attribute
         if commands is None:
-            return lambda *args: self._call(name, args)  # cannot tell: a command, recorded (the safe side)
+            return lambda *args: self._call(name, args)  # when unsure record it as a command, which is the safe side
         raise DryRunRefused(
             f"a dry run does not offer DeviceProxy.{name} on {self._address}: it is not an attribute, a command, "
             "or a DeviceProxy method known to only read (recording_proxy.PROXY_READS) or to write (PROXY_WRITES)"
         )
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # ``proxy.dwell_time = 1e-6`` writes a Tango attribute: recorded, not performed.
+        # Setting an attribute on the proxy writes a Tango attribute, so it is recorded and not performed.
         self._recorder(self._address, "write_attribute", "write", {"attribute": name, "value": value}, False)

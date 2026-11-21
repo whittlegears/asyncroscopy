@@ -1,7 +1,7 @@
 """Follow every Instrument Trace file of a stack at once and get its events in one order.
 
 Each process appends its own JSONL file (``outputs/trace/jobs.jsonl``, ``mcp_agent.jsonl``,
-``approvals.jsonl``, the analysis server's ``analysis.jsonl``, ...). Every line a TraceWriter writes
+the analysis server's ``analysis.jsonl``, ...). Every line a TraceWriter writes
 carries the file's ``seq`` and the Unix time it was ``written`` (see
 ``asyncroscopy.trace.writer``). This module merges the files by ``written`` (``ts`` for lines
 that have none), file name and ``seq``:
@@ -38,7 +38,7 @@ from asyncroscopy import settings
 
 GRACE_S = 0.5  # a live event is held this long after it was written, so a slower writer's line cannot be overtaken
 POLL_S = 0.2
-HEAD_BYTES = 64  # a file's first bytes: its identity where the file system reports no inode
+HEAD_BYTES = 64  # a file's first bytes, used as its identity where the file system reports no inode
 RETIRED_KEPT = 64
 CURSOR_PREFIX = "tc1."
 SIDECAR_SUFFIXES = (".seq", ".lock")
@@ -107,12 +107,12 @@ class _File:
     path: Path
     ino: int = 0
     head: bytes = b""
-    read_off: int = 0  # bytes of the file (the one ino/head names) already parsed
-    read_seq: int | None = None  # highest seq parsed: a line at or below it is a repeat
-    last_t: float = float("-inf")  # ordering time of the last line parsed (kept non-decreasing per file)
-    known: bool = False  # ino/head describe a file this follower has read
-    committed: dict[str, Any] = field(default_factory=dict)  # where the last event handed out ended (the cursor)
-    pending: deque = field(default_factory=deque)  # parsed, not yet handed out: (key, event, commit)
+    read_off: int = 0  # bytes of the file already parsed
+    read_seq: int | None = None  # highest seq parsed. A line at or below it is a repeat
+    last_t: float = float("-inf")  # ordering time of the last line parsed, which never goes down within a file
+    known: bool = False  # ino and head describe a file this follower has read
+    committed: dict[str, Any] = field(default_factory=dict)  # the cursor, where the last event handed out ended
+    pending: deque = field(default_factory=deque)  # parsed but not yet handed out, as key, event and commit
 
 
 class TraceStream:
@@ -159,7 +159,7 @@ class TraceStream:
         self.rescan_s = rescan_s
         self._expanded_at = float("-inf")
         self._files: dict[str, _File] = {}
-        self._retired: list[int] = []  # inodes of rotated files already read: never followed again under a new name
+        self._retired: list[int] = []  # inodes of rotated files already read, never followed again under a new name
         if cursor:
             self._restore(cursor)
         elif from_end:
@@ -171,7 +171,7 @@ class TraceStream:
                 f.committed = self._commit(f, st.st_size, None, float("-inf"))
                 self._files[str(path)] = f
 
-    # ------------------------------------------------------------------ public
+    # public
     def poll(self, final: bool = False, limit: int | None = None) -> list[dict[str, Any]]:
         """New matching events, in order. ``final``: hand out everything read (a finished trace), not
         only events older than ``grace_s``. ``limit``: at most this many; the rest come next time."""
@@ -205,7 +205,7 @@ class TraceStream:
         raw = json.dumps(state, separators=(",", ":")).encode("utf-8")
         return CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii")
 
-    # ------------------------------------------------------------------ files
+    # files
     @staticmethod
     def _head(path: Path) -> bytes:
         try:
@@ -243,18 +243,18 @@ class TraceStream:
             if str(path) in self._files:
                 continue
             st = _stat(path)
-            # A rotated file, renamed to a name the sources match: read under its first name. Only a rotated
-            # name can be one: the inode of a deleted rotated file may be reused by a new, unread live log.
+            # A rotated file renamed to a name the sources match is read under its first name.
+            # Only a rotated name counts, because a new live log may reuse the inode of a deleted rotated file.
             if st is not None and st.st_ino and st.st_ino in tracked and _logical(path) != path.name:
                 continue
             self._files[str(path)] = _File(path)
 
     def _scan(self) -> None:
-        if time.monotonic() - self._expanded_at >= self.rescan_s:  # stat-ing the files known is cheap; globbing every source is not
+        if time.monotonic() - self._expanded_at >= self.rescan_s:  # checking the known files is cheap but globbing every source is not
             self._find_new_files()
         for f in list(self._files.values()):
             self._scan_file(f)
-        if self._expanded_at == float("-inf"):  # a file was rotated (see _drain_rotated): look for what else rotated since
+        if self._expanded_at == float("-inf"):  # a file was rotated, so look for what else rotated since
             self._find_new_files()
             for f in list(self._files.values()):
                 self._scan_file(f)
@@ -269,14 +269,14 @@ class TraceStream:
                     if st is None:
                         return
                     if st.st_ino and st.st_ino in self._tracked_inos(but=f) and _logical(f.path) != f.path.name:
-                        # A file already read under another name was rotated onto this one (jobs.jsonl.1 -> .2,
-                        # jobs.jsonl -> .1): its owner reads what is left of it; this name takes it as read.
+                        # A file already read under another name was rotated onto this one.
+                        # Its owner reads what is left of it, and this name takes it as read.
                         f.ino, f.head, f.read_off, f.known = st.st_ino, self._head(f.path), st.st_size, True
-                        if not f.pending:  # else the cursor moves on when the old file's last events are handed out
+                        if not f.pending:  # otherwise the cursor moves on when the old file's last events are handed out
                             f.committed = self._commit(f, st.st_size, None, f.last_t)
                         return
                     continue
-                if st.st_size < f.read_off:  # truncated in place: start again from its first line
+                if st.st_size < f.read_off:  # truncated in place, so start again from its first line
                     f.read_off, f.head, f.read_seq = 0, b"", None
             if st is None:
                 return
@@ -292,7 +292,7 @@ class TraceStream:
         if f.ino:
             self._retired.append(f.ino)
             del self._retired[:-RETIRED_KEPT]
-        # The new file is read from its first line; its seq may restart if the rotation also moved the .seq sidecar.
+        # The new file is read from its first line. Its seq may restart if the rotation also moved the .seq sidecar.
         f.ino, f.head, f.read_off, f.known, f.read_seq = 0, b"", 0, False, None
 
     def _find_rotated(self, f: _File) -> Path | None:
@@ -322,7 +322,7 @@ class TraceStream:
                 handle.seek(f.read_off)
                 data = handle.read()
         except OSError:
-            return True  # gone or locked for now: the next poll tries again
+            return True  # gone or locked for now, so the next poll tries again
         if not f.known:
             f.ino, f.known = ino, True
         if len(f.head) < len(head):
@@ -336,12 +336,12 @@ class TraceStream:
             try:
                 event = json.loads(raw)
             except ValueError:
-                continue  # a damaged line (a crash mid-write): skipped, never retried
+                continue  # a line damaged by a crash is skipped and never retried
             if not isinstance(event, dict):
                 continue
             seq = event.get("seq") if isinstance(event.get("seq"), int) and not isinstance(event.get("seq"), bool) else None
             if seq is not None and f.read_seq is not None and seq <= f.read_seq:
-                continue  # already read (a copy-truncate or a re-read after rotation)
+                continue  # already read, after a copy-truncate or a re-read after rotation
             if seq is not None:
                 f.read_seq = seq
             t = event.get("written", event.get("ts"))
@@ -352,7 +352,7 @@ class TraceStream:
         f.read_off = offset
         return True
 
-    # ------------------------------------------------------------------ order and filters
+    # order and filters
     def _merge(self, final: bool, limit: int | None) -> list[dict[str, Any]]:
         cutoff = float("inf") if final else time.time() - self.grace_s
         out: list[dict[str, Any]] = []

@@ -8,7 +8,7 @@
 # twin, use configs/DigitalTwin.yaml (real and simulated scopes are separate
 # configs now). See configs/example.md for the full YAML shape.
 
-# Real hardware: approval auto mode is refused, and the MCP endpoint binds 127.0.0.1 unless
+# Real hardware: the MCP endpoint binds 127.0.0.1 unless
 # its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
 simulated: false
 
@@ -21,13 +21,6 @@ instrument:
   timeout_seconds: 120
 
 devices:
-  # The approval gate for agents on real hardware: starts in approve mode, so a person answers every
-  # high-risk call until they switch it to auto (SciAgentGUI's "Ask first" switch).
-  approvals:
-    class_name: Approvals
-    module_name: asyncroscopy.safety.approvals
-    properties:
-      default_mode: approve
   camera: { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
   data:   { module_name: asyncroscopy.data.data }
   eds:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }

@@ -36,6 +36,7 @@ import uuid
 import weakref
 from typing import Any
 
+import h5py
 import numpy as np
 from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
@@ -54,26 +55,29 @@ from pyTEMlib.image_tools import (
     stitch_quality,
 )
 
+from pyTEMlib.image_tools.image_mosaic import pair_shift
+
 from asyncroscopy.registry import Registry
 
-from .frames import image_dataset
+from .frames import FrameError, frame_of, image_dataset, image_node
 from .jobs import DEFAULT_MAX_WORKERS, JobRunner
 from .map_store import MapStore, level_shape_of, pixel_to_stage, stage_box_to_pixels
 
 PREVIEW_MAX_SIDE = 512
 MAX_STATUS_WAIT_S = 25.0  # analysis_job_status waits stay under MCP client timeouts
 PROGRESS_STEPS = 1000  # assemble_map reports progress in these units
-DEFAULT_MAX_CANVAS_PIXELS = 400_000_000_000  # level-0 pixels; memory is bounded, so this only catches wrong metadata
-SCORE_MAX_SIDE = 4096  # score_map reads the finest level no larger than this, never a giant level 0 whole
+DEFAULT_MAX_CANVAS_PIXELS = 400_000_000_000  # level 0 pixels. Memory is bounded, so this only catches wrong metadata
+SCORE_MAX_SIDE = 4096  # score_map reads the finest level no larger than this
 BLOCK = 512  # pyramid block and chunk side
+MATCH_MIN_SCORE = 0.3  # lowest correlation match_tiles accepts, the same bar the stitcher uses
+MATCH_MIN_OVERLAP_PX = 16
 
-# The scorers score_map offers, by name: pyTEMlib's baseline, and any class with ``name``, ``version``, ``description``
-# and ``score(region, metadata) -> (value, reason)`` registered under the ``asyncroscopy.scorers`` entry point or
-# named in ASYNCROSCOPY_PLUGINS (decorated with ``@SCORERS.register``).
+# The scorers score_map offers, by name. pyTEMlib's baseline is one of them.
+# Plug-ins add theirs with @SCORERS.register or the asyncroscopy.scorers entry point.
 SCORERS: Registry[type] = Registry("asyncroscopy.scorers", kind="scorer")
 SCORERS.register(BaselineScorer)
 
-# FastMCP app -> the MapTools whose tools it serves; guards against registering the tools twice.
+# Maps each FastMCP app to the MapTools it serves, so the tools are never registered twice.
 _REGISTERED: "weakref.WeakKeyDictionary[FastMCP, MapTools]" = weakref.WeakKeyDictionary()
 
 
@@ -140,6 +144,15 @@ def measured_drift_only(quality: dict) -> dict:
     if drift_measured(quality):
         return quality
     return {**{k: v for k, v in quality.items() if k != "drift"}, "drift_unmeasured": DRIFT_UNMEASURED}
+def finite_or_none(value: Any) -> Any:
+    """Return ``value`` with each number that is not finite replaced by None, which JSON can carry."""
+    if isinstance(value, dict):
+        return {k: finite_or_none(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [finite_or_none(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 def inputs_sha256(plan: dict, info, stage_sigma_m: float) -> str:
@@ -153,18 +166,21 @@ def inputs_sha256(plan: dict, info, stage_sigma_m: float) -> str:
 
 
 class MapTools:
-    def __init__(self, store: MapStore, max_canvas_pixels: int = DEFAULT_MAX_CANVAS_PIXELS, max_jobs: int = DEFAULT_MAX_WORKERS):
+    def __init__(self, store: MapStore, max_canvas_pixels: int = DEFAULT_MAX_CANVAS_PIXELS, max_jobs: int = DEFAULT_MAX_WORKERS,
+                 local_runs: str | Path | None = None):
         self.store = store
+        # Gathered runs are saved as HDF5 files in this folder. None means they go to Tiled.
+        self.local_runs = Path(local_runs) if local_runs else None
         self.max_canvas_pixels = int(max_canvas_pixels)
         self.jobs = JobRunner(max_workers=max_jobs)
-        # One job per run's map at a time: a second assemble (a retry after a timeout, a resumed
-        # Mapper) is refused as busy with the running job's id, which the caller then waits for.
+        # Only one job per run's map at a time. A second assemble is refused as busy
+        # with the running job's id, which the caller then waits for.
         self.jobs.register("assemble_map", self._check_assemble, self._run_assemble, resource=lambda plan: f"map of {plan['run']}")
         self.jobs.register("score_map", self._check_score, self._run_score, resource=lambda plan: f"scoring of {plan['map']}")
 
-    # -------------------------------------------------------------- tasks
+    # tasks
     def _check_assemble(self, plan: dict) -> dict:
-        # Constant time, whatever the run's size: the request must answer at once. The job itself
+        # This must answer at once whatever the run's size. The job itself
         # reads the tile positions and checks the canvas before reading any pixel.
         facts = self.store.check_run(plan["run"])
         return {"steps": PROGRESS_STEPS, "tiles": facts["tiles"], "layout": facts["layout"]}
@@ -186,8 +202,8 @@ class MapTools:
             run.close()
 
     def _assemble(self, run, plan: dict, progress) -> dict:
-        # Progress in PROGRESS_STEPS units that only go up: registration (both matching passes)
-        # takes the first 70 %, writing the pyramid the next 29 %, storing the map the rest.
+        # Progress only goes up. Registration takes the first 70 %,
+        # writing the pyramid the next 29 % and storing the map the rest.
         passes = {"pass": 0, "last": 0}
 
         def on_pair(done: int, total: int) -> None:
@@ -202,7 +218,7 @@ class MapTools:
         info = run.tiles.info
         self._check_canvas(stage_canvas_shape(info.stage_xy_m, info.shapes, info.pixel_sizes_m))
         sigma = plan.get("stage_sigma_m")
-        if sigma is None:  # 5 % of the field of view: a stage error a usual 15 % overlap can still absorb
+        if sigma is None:  # 5 % of the field of view, a stage error that a usual 15 % overlap can still absorb
             sigma = 0.05 * float(np.median(info.shapes[:, 1])) * float(info.pixel_sizes_m[0])
         placement = register_tiles(
             run.tiles,
@@ -215,8 +231,8 @@ class MapTools:
         )
         progress(int(0.7 * PROGRESS_STEPS), PROGRESS_STEPS)
         self._check_canvas(placement.canvas_shape)  # refinement can grow the canvas by a few pixels
-        # Every EDS point spectrum of the run, at its tile's stitched centre, linked to its key; the run's
-        # EDS points from an earlier stitch are replaced, not repeated. Every other point stays with the run.
+        # Each EDS point spectrum of the run goes at its tile's stitched centre, linked to its key.
+        # They replace the run's EDS points from an earlier stitch. Every other point stays with the run.
         eds = eds_pois(run, placement) if plan.get("eds_pois") else None
         previous = self.store.current_map(plan["run"])
         levels = pyramid_levels(placement.canvas_shape)
@@ -226,7 +242,7 @@ class MapTools:
         except BaseException:
             writer.abandon()
             raise
-        quality = measured_drift_only(stitch_quality(placement))
+        quality = measured_drift_only(finite_or_none(stitch_quality(placement)))
         metadata = {
             "levels": levels,
             "downsample": [2**k for k in range(levels)],
@@ -242,9 +258,9 @@ class MapTools:
             "pytemlib_version": __version__,
             **quality,
         }
-        if len(run.tiles) <= 10_000:  # per-tile positions are kept for small maps; large ones keep the summary only
+        if len(run.tiles) <= 10_000:  # small maps keep per-tile positions and large ones keep only the summary
             metadata["tile_positions_px"] = placement.positions_px.round(3).tolist()
-            # With the raw tiles, these rebuild the map exactly: drawn value = gain * counts + offset.
+            # With the raw tiles these rebuild the map exactly. The drawn value is gain * counts + offset.
             metadata["tile_gains"] = np.round(placement.gains, 5).tolist() if placement.gains is not None else None
             metadata["tile_offsets"] = np.round(placement.offsets, 4).tolist() if placement.offsets is not None else None
             metadata["scan_linear_applied"] = np.asarray(placement.linear).round(6).tolist()
@@ -258,16 +274,181 @@ class MapTools:
             summary["eds_pois"] = len(eds)
         return {"result_keys": {"map": key}, "summary": summary}
 
+    def match_tiles(self, image: str, neighbour: str, offset_xy_m: list[float], fov_m: float, search_m: float | None = None,
+                    min_score: float = MATCH_MIN_SCORE) -> dict[str, Any]:
+        """Check that ``image`` overlaps ``neighbour`` where it should. A tile loop calls this as each tile is taken.
+
+        ``offset_xy_m`` is where the centre of ``image`` should be from the centre of ``neighbour``, as [x, y] in
+        metres with rows along +y and columns along +x. ``fov_m`` is the width of both images. The overlap is searched
+        within ``search_m`` of that offset, by default a tenth of the field of view, with the stitcher's pair matching.
+        It is accepted when the two overlaps correlate to ``min_score``. Nothing is written.
+        """
+        if not (isinstance(fov_m, (int, float)) and math.isfinite(fov_m) and fov_m > 0):
+            raise ValueError("fov_m must be the width of the images in metres, above 0")
+        if not (isinstance(offset_xy_m, (list, tuple)) and len(offset_xy_m) >= 2 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in offset_xy_m[:2])):
+            raise ValueError("offset_xy_m must be [x, y] in metres")
+        try:
+            a = np.asarray(image_node(self.store, neighbour).read(), dtype=np.float64)
+            b = np.asarray(image_node(self.store, image).read(), dtype=np.float64)
+        except (KeyError, FrameError) as exc:
+            raise ValueError(f"an image could not be read: {exc}") from exc
+        if a.ndim != 2 or b.ndim != 2:
+            raise ValueError("match_tiles compares two single images")
+        pixel = float(fov_m) / a.shape[1]
+        predicted = np.array([float(offset_xy_m[1]) / pixel, float(offset_xy_m[0]) / pixel])
+        height = int(min(a.shape[0], predicted[0] + b.shape[0]) - max(0.0, predicted[0]))
+        width = int(min(a.shape[1], predicted[1] + b.shape[1]) - max(0.0, predicted[1]))
+        asked = {"image": image, "neighbour": neighbour, "expected_xy_m": [float(v) for v in offset_xy_m[:2]]}
+        if height < MATCH_MIN_OVERLAP_PX or width < MATCH_MIN_OVERLAP_PX:
+            return {**asked, "matched": False, "score": None, "reason": "the two images do not overlap at that offset"}
+        if not (a.std() > 0 and b.std() > 0):
+            return {**asked, "matched": False, "score": None, "reason": "an image is blank"}
+        bound = min((float(search_m) if search_m else 0.1 * float(fov_m)) / pixel, 0.6 * min(height, width))
+        shift = pair_shift(a, b, predicted, bound, (height, width), MATCH_MIN_OVERLAP_PX)
+        if shift is None:
+            return {**asked, "matched": False, "score": None, "reason": "no clear match in the overlap"}
+        dr, dc = int(round(shift[0])), int(round(shift[1]))
+        r0, r1, c0, c1 = max(0, dr), min(a.shape[0], dr + b.shape[0]), max(0, dc), min(a.shape[1], dc + b.shape[1])
+        if r1 - r0 < MATCH_MIN_OVERLAP_PX or c1 - c0 < MATCH_MIN_OVERLAP_PX:
+            return {**asked, "matched": False, "score": None, "reason": "no clear match in the overlap"}
+        one, two = a[r0:r1, c0:c1] - a[r0:r1, c0:c1].mean(), b[r0 - dr:r1 - dr, c0 - dc:c1 - dc] - b[r0 - dr:r1 - dr, c0 - dc:c1 - dc].mean()
+        norm = math.sqrt(float((one * one).sum()) * float((two * two).sum()))
+        score = float((one * two).sum() / norm) if norm > 0 else 0.0
+        found = [float(shift[1]) * pixel, float(shift[0]) * pixel]
+        result = {**asked, "matched": score >= float(min_score), "score": round(score, 4), "offset_xy_m": found,
+                  "error_xy_m": [found[0] - float(offset_xy_m[0]), found[1] - float(offset_xy_m[1])]}
+        if not result["matched"]:
+            result["reason"] = f"the overlaps correlate to {score:.2f}, under {float(min_score):.2f}"
+        return result
+
+    def collect_run(self, image_keys: list[str], plan: dict | None = None, stage_xy_m: list[list[float]] | None = None,
+                    fov_m: float | None = None) -> dict[str, Any]:
+        """Gather single images into one map run in Tiled. The run is a ``tiles`` container of placed arrays.
+
+        Each image is placed by what its acquisition recorded, read with ``frame_of``. An image that does not say
+        where it was taken is placed by the caller's reading instead. ``stage_xy_m[k]`` is the stage position image k
+        was taken at and ``fov_m`` is the width of every image, with rows along +y and columns along +x. Without them
+        such an image is refused by name before anything is written.
+
+        With ``local_runs`` set the run is an HDF5 file in that folder with the same layout, and the images are only
+        read from Tiled.
+        """
+        keys = [str(k) for k in image_keys or []]
+        if not keys:
+            raise ValueError("image_keys is empty: give the data keys of the tiles to gather")
+        if len(set(keys)) != len(keys):
+            raise ValueError("image_keys names an image twice")
+        if stage_xy_m is not None:
+            if fov_m is None or not (isinstance(fov_m, (int, float)) and math.isfinite(fov_m) and fov_m > 0):
+                raise ValueError("stage_xy_m needs fov_m, the width of every image in metres")
+            if len(stage_xy_m) != len(keys):
+                raise ValueError(f"stage_xy_m has {len(stage_xy_m)} positions for {len(keys)} images; give one [x, y] per image")
+            for k, xy in enumerate(stage_xy_m):
+                if not (isinstance(xy, (list, tuple)) and len(xy) >= 2 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in xy[:2])):
+                    raise ValueError(f"stage_xy_m[{k}] is not [x, y] in metres: {str(xy)[:80]}")
+        client = getattr(self.store, "client", None)
+        if client is None:
+            raise ValueError("gathering a run needs the Tiled server; this analysis server was started without one")
+        frames, given = [], []
+        for k, key in enumerate(keys):
+            try:
+                frame = frame_of(self.store, key)
+            except KeyError as exc:
+                raise ValueError(f"{key} cannot be a tile: {exc}") from exc
+            except FrameError as exc:
+                if stage_xy_m is None:
+                    raise ValueError(f"{key} cannot be a tile: {exc}") from exc
+                try:
+                    shape = list(image_node(self.store, key).structure().shape)[-2:]
+                except FrameError as unreadable:
+                    raise ValueError(f"{key} cannot be a tile: {unreadable}") from unreadable
+                frame = {"kind": "image", "centre_xy_m": [float(v) for v in stage_xy_m[k][:2]], "pixel_size_m": float(fov_m) / shape[1],
+                         "shape": shape, "sample": self.store.sample_of(key)}
+                given.append(str(exc))
+            if frame["kind"] != "image":
+                raise ValueError(f"{key} is a stitched map, not a tile image")
+            if stage_xy_m is not None and not frame.get("shift_recorded", True):
+                # The image records the stage but not the image shift, so use the position the caller read.
+                xy = [float(v) for v in stage_xy_m[k][:2]]
+                if math.dist(xy, frame["centre_xy_m"]) > float(frame["pixel_size_m"]):
+                    frame = {**frame, "centre_xy_m": xy}
+                    given.append(f"{key} records no image shift")
+            frames.append(frame)
+        name = f"map_{uuid.uuid4().hex[:12]}"
+        metadata = {
+            "kind": "map_run", "run_layout": 1, "id": uuid.uuid4().hex, "plan": json.dumps(plan or {}), "source": "workflow",
+            "tiles": len(keys), "created": time.time(), **(frames[0].get("sample") or {}),
+        }
+        if self.local_runs is not None:
+            name = self._write_local_run(name, metadata, keys, frames)
+        else:
+            self._write_tiled_run(client, name, metadata, keys, frames)
+        out = {"run": name, "tiles": len(keys), "pixel_size_m": float(frames[0]["pixel_size_m"])}
+        if given:
+            out["placed_by_caller"] = len(given)
+            out["note"] = (f"{len(given)} of {len(keys)} images do not record where they were taken or the image shift they were taken with "
+                           f"({given[0][:160]}); they are placed at the "
+                           "stage positions given, as full fields with rows along +y and columns along +x")
+        return out
+
+    def _write_tiled_run(self, client, name: str, metadata: dict, keys: list[str], frames: list[dict]) -> None:
+        """Write the run as a Tiled container. A partly written run is deleted."""
+        run = client.create_container(name, metadata=metadata)
+        try:
+            tiles = run.create_container("tiles")
+            for k, (key, frame) in enumerate(zip(keys, frames)):
+                tiles.write_array(self._tile_array(key), key=f"tile_{k:05d}", metadata={
+                    "index": k, "stage_reported_m": [float(v) for v in frame["centre_xy_m"]], "pixel_size_m": float(frame["pixel_size_m"]),
+                    "source_key": key,
+                })
+        except BaseException:
+            try:  # a partial run would stitch into a map with holes
+                client.delete_contents(name, recursive=True, external_only=False)
+            except Exception:
+                pass
+            raise
+
+    def _tile_array(self, key: str) -> np.ndarray:
+        array = np.asarray(image_node(self.store, key).read())
+        while array.ndim > 2:  # drop a leading frame or channel axis
+            array = array[0]
+        return array
+
+    def _write_local_run(self, name: str, metadata: dict, keys: list[str], frames: list[dict]) -> str:
+        """Write the run as ``<local_runs>/<name>.h5`` and return its path. A partly written file is removed."""
+        self.local_runs.mkdir(parents=True, exist_ok=True)
+        path = (self.local_runs / f"{name}.h5").resolve()
+        if not any(path.parent == root or root in path.parents for root in self.store.local_roots):
+            raise ValueError(f"the local runs folder {self.local_runs} is outside the directories this server may write "
+                             f"({', '.join(map(str, self.store.local_roots)) or 'none'}); start it with --local-root for that folder")
+        partial = path.with_suffix(".h5.tmp")
+        try:
+            with h5py.File(partial, "w") as h5:
+                for field, value in metadata.items():
+                    h5.attrs[field] = value
+                tiles = h5.create_group("tiles")
+                for k, (key, frame) in enumerate(zip(keys, frames)):
+                    tile = tiles.create_dataset(f"tile_{k:05d}", data=self._tile_array(key))
+                    tile.attrs["index"] = k
+                    tile.attrs["stage_reported_m"] = [float(v) for v in frame["centre_xy_m"]]
+                    tile.attrs["pixel_size_m"] = float(frame["pixel_size_m"])
+                    tile.attrs["source_key"] = key
+            partial.replace(path)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
+        return str(path)
+
     def _check_score(self, plan: dict) -> dict:
         scorer = plan.get("scorer", "baseline")
-        SCORERS.get(scorer)  # ValueError naming the registered ones
+        SCORERS.get(scorer)  # raises a ValueError that names the registered scorers
         self.store.map_metadata(plan["map"])
         return {"steps": 1}
 
     def _run_score(self, plan: dict, progress) -> dict:
         meta = self.store.map_metadata(plan["map"])
         scorer = SCORERS.get(plan.get("scorer", "baseline"))()
-        # The finest level that fits SCORE_MAX_SIDE, so scoring a map of any size reads a bounded image.
+        # Use the finest level that fits SCORE_MAX_SIDE, so scoring a map of any size reads a bounded image.
         fits = next((k for k in range(meta["levels"]) if max(level_shape_of(meta, k)) <= SCORE_MAX_SIDE), meta["levels"] - 1)
         level = max(int(plan.get("level", min(2, meta["levels"] - 1))), fits)
         image = self.store.read_level(plan["map"], level)
@@ -292,8 +473,8 @@ class MapTools:
             added.append(poi)
         progress(0)  # an abort requested while scoring stops here, before any point is written
         if tag:
-            # The same tag's earlier regions (a retried or resumed scoring) are replaced, not repeated; only the
-            # highlights are rewritten, never the run's EDS points.
+            # Earlier regions with the same tag are replaced, not repeated.
+            # Only the highlights are rewritten, never the run's EDS points.
             self.store.update_highlights(plan["map"], lambda current: [p for p in current if p.get("tag") != tag] + added)
         else:
             self.store.add_pois(plan["map"], added)
@@ -315,7 +496,7 @@ class MapTools:
         if meta.get("run"):
             try:
                 versions = self.store.list_maps(meta["run"])
-            except Exception:  # the run is gone or unreadable: the map itself is still described
+            except Exception:  # the run is gone or unreadable, but the map itself is still described
                 versions = []
             if versions:
                 info["versions"] = {"count": len(versions), "newest": versions[0]["map"], "this_is_newest": versions[0]["map"] == map_key}
@@ -328,10 +509,10 @@ class MapTools:
         ([x, x, y, y]) lists the points nearest it, closest first, each with ``distance_m`` (of any kind when none of
         the asked kinds is on the map)."""
         limit = max(0, int(limit))
-        # Models ask for kind="all" or list several kinds in one string; a filter that matches nothing reads as "no points".
+        # Models ask for kind="all" or list several kinds in one string. A filter that matches nothing would read as no points.
         kinds = {k for k in re.split(r"[\s,;|]+", kind or "") if k} - {"all", "any", "*"}
-        # Models fill an optional box with zeros: a box with no area holds no point, so it means "no box". A box
-        # shrunk to one point is a model looking for the point there (it asked for [x, x, y, y] three times over).
+        # Models fill an optional box with zeros, so a box with no area means no box.
+        # A box shrunk to one point means the model wants the point there.
         point = None
         if box_m is not None and not (len(box_m) == 4 and box_m[1] > box_m[0] and box_m[3] > box_m[2]):
             if len(box_m) == 4 and box_m[0] == box_m[1] and box_m[2] == box_m[3] and any(box_m):
@@ -367,7 +548,7 @@ class MapTools:
                        if near else "this map has no points of interest")
         return out
 
-    # -------------------------------------------------------------- tools
+    # tools
     def register(self, mcp: FastMCP) -> None:
         """Add the map tools to ``mcp``. Registering the same MapTools again is a no-op; a second MapTools is refused."""
         owner = _REGISTERED.get(mcp)
@@ -376,6 +557,16 @@ class MapTools:
         if owner is not None:
             raise RuntimeError("this FastMCP app already has map tools from another MapTools; build a new app with create_server()")
         _REGISTERED[mcp] = self
+        self._register_stitch_tools(mcp)
+        self._register_match_and_score_tools(mcp)
+        self._register_job_tools(mcp)
+        self._register_view_tools(mcp)
+        self._register_poi_tools(mcp)
+        self._register_listing_tools(mcp)
+        self._register_envelope_tool(mcp)
+
+    def _register_stitch_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that gather a run and stitch it."""
         tools = self
 
         @mcp.tool()
@@ -391,7 +582,8 @@ class MapTools:
             """Stitch a map run into a zoomable multi-resolution map, in the background. Each call makes a new map
             version; earlier versions and the run's points of interest are kept.
 
-            run: the run's Tiled key or file path (Mapper results -> result_keys.run or run_file).
+            run: the run's Tiled key or file path (Mapper results -> result_keys.run or run_file). Images taken one
+            by one are not a run yet: call collect_map_run with their keys first, and pass the run it returns.
             refine: refine stage positions by matching overlaps (turn off for blank samples).
             box_m: optional [x_min, x_max, y_min, y_max] stage box (metres) to stitch only part.
             stage_sigma_m: 1-sigma error of the reported stage positions; bounds the overlap search (default 5 % of the field of view).
@@ -414,6 +606,43 @@ class MapTools:
             return {**tools.jobs.start(reserved["reservation_id"]), "estimate": reserved["estimate"]}
 
         @mcp.tool()
+        def collect_map_run(image_keys: list[str], plan: dict | None = None, stage_xy_m: list[list[float]] | None = None,
+                            fov_m: float | None = None) -> dict[str, Any]:
+            """Gather single scanned images into one map run, so tiles taken one by one (a workflow's tile loop) can
+            be stitched with assemble_map. Not needed for a Mapper job: its results already name a run.
+
+            image_keys: the tiles' data keys, in the order they were taken.
+            plan: facts to keep with the run (size, field of view, the workflow's name).
+            stage_xy_m, fov_m: optional; the stage [x, y] each image was taken at and the width of every image
+            (metres). They place an image that does not record where it was taken; without them it is refused.
+            Returns {"run": the run's key for assemble_map, "tiles": how many}.
+            """
+            try:
+                return tools.collect_run(image_keys, plan, stage_xy_m, fov_m)
+            except ValueError as exc:
+                return {"error": {"code": "bad_request", "message": str(exc)}}
+
+    def _register_match_and_score_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that match tiles and score a map."""
+        tools = self
+
+        @mcp.tool()
+        def match_tiles(image: str, neighbour: str, offset_xy_m: list[float], fov_m: float, search_m: float | None = None,
+                        min_score: float = MATCH_MIN_SCORE) -> dict[str, Any]:
+            """Check that a tile overlaps the tile before it where it should, as soon as it is taken.
+
+            image: the new tile's data key. neighbour: the key of an overlapping tile already taken.
+            offset_xy_m: where image's centre should be from neighbour's, [x, y] metres. fov_m: the width of both images, metres.
+            search_m: how far from there to look (default a tenth of fov_m). min_score: the correlation of the two overlaps to accept.
+            Returns {"matched": true or false, "score", "offset_xy_m": where it really is, "error_xy_m"}, with "reason"
+            when it did not match (no overlap, a blank image, no clear match). Reads only; nothing is written.
+            """
+            try:
+                return tools.match_tiles(image, neighbour, offset_xy_m, fov_m, search_m, min_score)
+            except ValueError as exc:
+                return {"error": {"code": "bad_request", "message": str(exc)}}
+
+        @mcp.tool()
         def score_map(map: str, scorer: str = "baseline", top_k: int = 5, window_m: float | list[float] | None = None, level: int | None = None, tag: str | None = None) -> dict[str, Any]:
             """Rank regions of a stitched map with a scorer and add the best ones as points of interest, in the background.
 
@@ -427,7 +656,7 @@ class MapTools:
             if tag:
                 plan["tag"] = tag
             if isinstance(window_m, list):
-                # Models often write a size as [width, height]; regions are square, so use the larger side.
+                # Models often write a size as width and height. Regions are square, so use the larger side.
                 window_m = max((float(v) for v in window_m), default=None)
             if window_m:
                 plan["window_m"] = window_m
@@ -437,6 +666,10 @@ class MapTools:
             if "error" in reserved:
                 return reserved
             return tools.jobs.start(reserved["reservation_id"])
+
+    def _register_job_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that follow a stitching or scoring job."""
+        tools = self
 
         @mcp.tool()
         def analysis_job_status(job_id: str, wait_s: float = 0.0) -> dict[str, Any]:
@@ -455,6 +688,10 @@ class MapTools:
         def analysis_job_abort(job_id: str) -> dict[str, Any]:
             """Stop a running stitching or scoring job (not a map acquisition: use Mapper_abort)."""
             return tools.jobs.abort(job_id)
+
+    def _register_view_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that describe a map and show part of it."""
+        tools = self
 
         @mcp.tool()
         def map_info(map: str) -> dict[str, Any]:
@@ -492,6 +729,10 @@ class MapTools:
             info.update({"mean": float(region.mean()), "max": float(region.max())})
             return ToolResult(content=[json.dumps(info), MCPImage(data=_png(region), format="png")], structured_content=info)
 
+    def _register_poi_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that list and add points of interest."""
+        tools = self
+
         @mcp.tool()
         def list_pois(map: str, kind: str | None = None, box_m: list[float] | None = None, limit: int = 200) -> dict[str, Any]:
             """Points of interest on a map (stage x_m, y_m in metres, kind, source, score, reason, links).
@@ -503,9 +744,9 @@ class MapTools:
             matches nothing, "total_on_map" says how many points the map has.
             """
             listed = tools.list_pois(map, kind=kind, box_m=box_m, limit=limit)
-            # A small model's context is 8k tokens: 19 points with 17-digit floats, empty links and empty scorer
-            # versions took a quarter of it. Positions are given to 0.01 nm and scores to 0.01; the store keeps them
-            # exact. A scored point keeps its scorer version, so a reader can tell which scorer found it.
+            # A small model has little context, so empty fields are dropped and numbers are rounded.
+            # Positions are given to 0.01 nm and scores to 0.01. The store keeps them exact.
+            # A scored point keeps its scorer version, so a reader can tell which scorer found it.
             listed["pois"] = [{**{k: v for k, v in poi.items() if not (k in ("links", "scorer_version") and not v)},
                                **{k: round(poi[k], 11) for k in ("x_m", "y_m", "distance_m") if isinstance(poi.get(k), float)},
                                **({"score": round(poi["score"], 2)} if isinstance(poi.get("score"), float) else {})}
@@ -529,6 +770,10 @@ class MapTools:
             tools.store.add_pois(map, [poi], dedupe=id is not None)
             return poi
 
+    def _register_listing_tools(self, mcp: FastMCP) -> None:
+        """Add the tools that list scorers and tiles."""
+        tools = self
+
         @mcp.tool()
         def list_scorers() -> list[dict[str, str]]:
             """Scorers available to score_map: name, version and what they look for."""
@@ -543,6 +788,10 @@ class MapTools:
                 "total": len(info),
                 "tiles": [{"index": int(info.index[k]), "stage_xy_m": [float(v) for v in info.stage_xy_m[k]], "shape": [int(v) for v in info.shapes[k]]} for k in shown],
             }
+
+    def _register_envelope_tool(self, mcp: FastMCP) -> None:
+        """Add the generic job envelope tool."""
+        tools = self
 
         @mcp.tool()
         def jobs_envelope(verb: str, request: str) -> dict[str, Any]:

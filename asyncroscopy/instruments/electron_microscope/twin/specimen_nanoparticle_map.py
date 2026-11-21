@@ -33,6 +33,105 @@ def rattle_stdev(rattle_value: float) -> float:
     return 0.03 + 0.7 * float(rattle_value)
 
 
+def _pick_kind(rng, kind_counts: dict) -> str:
+    """Pick the kind that keeps the round and oval counts even."""
+    if kind_counts["round"] == kind_counts["oval"]:
+        return "round" if rng.random() < 0.5 else "oval"
+    return "round" if kind_counts["round"] < kind_counts["oval"] else "oval"
+
+
+def _draw_shape(rng, kind: str) -> tuple[float, float, float, float]:
+    """Draw the two axes, the centre lattice parameter and the rim change of one particle."""
+    radius = float(rng.uniform(18.0, 34.0))
+    if kind == "round":
+        axis_x = radius * float(rng.uniform(0.97, 1.03))
+        axis_y = radius * float(rng.uniform(0.97, 1.03))
+        center_lattice_parameter = float(rng.normal(ROUND_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM))
+        edge_lattice_change = -EDGE_LATTICE_CHANGE_FRACTION
+    else:
+        axis_x = radius * float(rng.uniform(1.25, 1.65))
+        axis_y = radius * float(rng.uniform(0.75, 0.95))
+        center_lattice_parameter = float(rng.normal(OVAL_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM))
+        edge_lattice_change = EDGE_LATTICE_CHANGE_FRACTION
+    return axis_x, axis_y, center_lattice_parameter, edge_lattice_change
+
+
+def _draw_outline(rng, kind: str, axis_x: float, axis_y: float, xx, yy):
+    """Draw where one particle sits and how far each nearby pixel is from its centre, or None when it cannot fit."""
+    size = xx.shape[0]
+    margin = int(max(axis_x, axis_y) * 1.2 + 4)
+    if margin * 2 >= size:
+        return None
+    cx = float(rng.uniform(margin, size - margin))
+    cy = float(rng.uniform(margin, size - margin))
+    angle = float(rng.uniform(0.0, 2.0 * np.pi))
+    x0 = max(0, int(np.floor(cx - margin)))
+    x1 = min(size, int(np.ceil(cx + margin + 1)))
+    y0 = max(0, int(np.floor(cy - margin)))
+    y1 = min(size, int(np.ceil(cy + margin + 1)))
+    cos_a = np.cos(angle)
+    sin_a = np.sin(angle)
+    dx = xx[y0:y1, x0:x1] - cx
+    dy = yy[y0:y1, x0:x1] - cy
+    xr = dx * cos_a + dy * sin_a
+    yr = -dx * sin_a + dy * cos_a
+    theta = np.arctan2(yr / max(axis_y, 1e-6), xr / max(axis_x, 1e-6))
+    blob_scale = 0.35 if kind == "round" else 1.0
+    blob = 1.0 + 0.09 * blob_scale * np.sin(3.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
+    blob += 0.07 * blob_scale * np.sin(5.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
+    normalized_radius = np.sqrt((xr / axis_x) ** 2 + (yr / axis_y) ** 2) / blob
+    return cx, cy, angle, (slice(y0, y1), slice(x0, x1)), normalized_radius
+
+
+def _paint_particle(rng, maps: dict, window, mask, normalized_radius, record_id: int, shape: tuple[float, float, float, float]) -> None:
+    """Write one particle into the id, rattle, lattice and intensity maps."""
+    axis_x, axis_y, center_lattice_parameter, edge_lattice_change = shape
+    distance_to_edge_px = (1.0 - normalized_radius) * min(axis_x, axis_y)
+    edge_rattle = np.clip(1.0 - distance_to_edge_px / AMORPHOUS_EDGE_WIDTH_PX, 0.0, 1.0) ** 0.6
+    edge_rattle = (edge_rattle * mask).astype(np.float32)
+    local_lattice = local_lattice_parameter(center_lattice_parameter, edge_lattice_change, normalized_radius)
+    local_intensity = float(rng.uniform(0.72, 1.0))
+    texture = rng.normal(0.0, 0.035, size=mask.shape).astype(np.float32)
+    particle_view = maps["particle_id"][window]
+    rattle_view = maps["rattle"][window]
+    lattice_view = maps["lattice_parameter"][window]
+    haadf_view = maps["haadf"][window]
+    particle_view[mask] = record_id
+    rattle_view[mask] = edge_rattle[mask]
+    lattice_view[mask] = local_lattice[mask]
+    haadf_view[mask] = local_intensity - 0.18 * edge_rattle[mask] + texture[mask]
+
+
+def _try_place_particle(rng, kind: str, maps: dict, xx, yy, record_id: int) -> dict | None:
+    """Draw one particle and paint it, or return None when it does not fit or overlaps another."""
+    size = xx.shape[0]
+    shape = _draw_shape(rng, kind)
+    axis_x, axis_y, center_lattice_parameter, edge_lattice_change = shape
+    outline = _draw_outline(rng, kind, axis_x, axis_y, xx, yy)
+    if outline is None:
+        return None
+    cx, cy, angle, window, normalized_radius = outline
+    mask = normalized_radius <= 1.0
+    if np.any(mask & (maps["particle_id"][window] > 0)):
+        return None
+    particle_pixels = int(np.count_nonzero(mask))
+    if particle_pixels / mask.size < 0.002:
+        return None
+    _paint_particle(rng, maps, window, mask, normalized_radius, record_id, shape)
+    return {
+        "id": record_id,
+        "kind": kind,
+        "pixel_count": particle_pixels,
+        "center_nm": [float((cx / (size - 1) - 0.5) * FOV_NM), float((cy / (size - 1) - 0.5) * FOV_NM)],
+        "axes_nm": [float(axis_x / size * FOV_NM), float(axis_y / size * FOV_NM)],
+        "angle_rad": angle,
+        "rotation_degrees": float(np.degrees(angle)),
+        "center_lattice_parameter": center_lattice_parameter,
+        "lattice_parameter": center_lattice_parameter,
+        "edge_lattice_change_fraction": edge_lattice_change,
+    }
+
+
 @register_specimen
 class NanoparticleMap(Specimen):
     """A dense field of round and oval particles, on one map of intensity, particle id, rattle and local lattice parameter."""
@@ -59,10 +158,13 @@ class NanoparticleMap(Specimen):
     def _generate(self, seed: int) -> None:
         rng = np.random.default_rng(seed)
         size = max(128, self.map_size)
-        particle_id = np.zeros((size, size), dtype=np.int16)
-        haadf = np.zeros((size, size), dtype=np.float32)
-        rattle = np.zeros((size, size), dtype=np.float32)
-        lattice_parameter_map = np.zeros((size, size), dtype=np.float32)
+        maps = {
+            "particle_id": np.zeros((size, size), dtype=np.int16),
+            "haadf": np.zeros((size, size), dtype=np.float32),
+            "rattle": np.zeros((size, size), dtype=np.float32),
+            "lattice_parameter": np.zeros((size, size), dtype=np.float32),
+        }
+        particle_id = maps["particle_id"]
         particle_records: list[dict] = []
         yy, xx = np.mgrid[:size, :size]
         coverage = 0.0
@@ -71,89 +173,22 @@ class NanoparticleMap(Specimen):
 
         while coverage < TARGET_COVERAGE and attempts < 4000:
             attempts += 1
-            if kind_counts["round"] == kind_counts["oval"]:
-                kind = "round" if rng.random() < 0.5 else "oval"
-            else:
-                kind = "round" if kind_counts["round"] < kind_counts["oval"] else "oval"
-            radius = float(rng.uniform(18.0, 34.0))
-            if kind == "round":
-                axis_x = radius * float(rng.uniform(0.97, 1.03))
-                axis_y = radius * float(rng.uniform(0.97, 1.03))
-                center_lattice_parameter = float(rng.normal(ROUND_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM))
-                edge_lattice_change = -EDGE_LATTICE_CHANGE_FRACTION
-            else:
-                axis_x = radius * float(rng.uniform(1.25, 1.65))
-                axis_y = radius * float(rng.uniform(0.75, 0.95))
-                center_lattice_parameter = float(rng.normal(OVAL_CENTER_LATTICE_MEAN_ANGSTROM, CENTER_LATTICE_STD_ANGSTROM))
-                edge_lattice_change = EDGE_LATTICE_CHANGE_FRACTION
-
-            margin = int(max(axis_x, axis_y) * 1.2 + 4)
-            if margin * 2 >= size:
+            kind = _pick_kind(rng, kind_counts)
+            record = _try_place_particle(rng, kind, maps, xx, yy, len(particle_records) + 1)
+            if record is None:
                 continue
-            cx = float(rng.uniform(margin, size - margin))
-            cy = float(rng.uniform(margin, size - margin))
-            angle = float(rng.uniform(0.0, 2.0 * np.pi))
-            x0 = max(0, int(np.floor(cx - margin)))
-            x1 = min(size, int(np.ceil(cx + margin + 1)))
-            y0 = max(0, int(np.floor(cy - margin)))
-            y1 = min(size, int(np.ceil(cy + margin + 1)))
-            cos_a = np.cos(angle)
-            sin_a = np.sin(angle)
-            dx = xx[y0:y1, x0:x1] - cx
-            dy = yy[y0:y1, x0:x1] - cy
-            xr = dx * cos_a + dy * sin_a
-            yr = -dx * sin_a + dy * cos_a
-            theta = np.arctan2(yr / max(axis_y, 1e-6), xr / max(axis_x, 1e-6))
-            blob_scale = 0.35 if kind == "round" else 1.0
-            blob = 1.0 + 0.09 * blob_scale * np.sin(3.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
-            blob += 0.07 * blob_scale * np.sin(5.0 * theta + rng.uniform(0.0, 2.0 * np.pi))
-            normalized_radius = np.sqrt((xr / axis_x) ** 2 + (yr / axis_y) ** 2) / blob
-            mask = normalized_radius <= 1.0
-            particle_view = particle_id[y0:y1, x0:x1]
-            if np.any(mask & (particle_view > 0)):
-                continue
-            particle_pixels = int(np.count_nonzero(mask))
-            if particle_pixels / mask.size < 0.002:
-                continue
-
-            record_id = len(particle_records) + 1
-            distance_to_edge_px = (1.0 - normalized_radius) * min(axis_x, axis_y)
-            edge_rattle = np.clip(1.0 - distance_to_edge_px / AMORPHOUS_EDGE_WIDTH_PX, 0.0, 1.0) ** 0.6
-            edge_rattle = (edge_rattle * mask).astype(np.float32)
-            local_lattice = local_lattice_parameter(center_lattice_parameter, edge_lattice_change, normalized_radius)
-            local_intensity = float(rng.uniform(0.72, 1.0))
-            texture = rng.normal(0.0, 0.035, size=mask.shape).astype(np.float32)
-            rattle_view = rattle[y0:y1, x0:x1]
-            lattice_view = lattice_parameter_map[y0:y1, x0:x1]
-            haadf_view = haadf[y0:y1, x0:x1]
-            particle_view[mask] = record_id
-            rattle_view[mask] = edge_rattle[mask]
-            lattice_view[mask] = local_lattice[mask]
-            haadf_view[mask] = local_intensity - 0.18 * edge_rattle[mask] + texture[mask]
-            particle_records.append(
-                {
-                    "id": record_id,
-                    "kind": kind,
-                    "pixel_count": particle_pixels,
-                    "center_nm": [float((cx / (size - 1) - 0.5) * FOV_NM), float((cy / (size - 1) - 0.5) * FOV_NM)],
-                    "axes_nm": [float(axis_x / size * FOV_NM), float(axis_y / size * FOV_NM)],
-                    "angle_rad": angle,
-                    "rotation_degrees": float(np.degrees(angle)),
-                    "center_lattice_parameter": center_lattice_parameter,
-                    "lattice_parameter": center_lattice_parameter,
-                    "edge_lattice_change_fraction": edge_lattice_change,
-                }
-            )
+            particle_records.append(record)
             kind_counts[kind] += 1
             coverage = np.count_nonzero(particle_id) / particle_id.size
 
+        haadf = maps["haadf"]
         haadf += rng.normal(0.015, 0.01, size=(size, size)).astype(np.float32)
         haadf -= float(haadf.min())
         max_val = float(haadf.max())
         self.overview_map = np.clip(haadf / max_val if max_val > 0.0 else haadf, 0.0, 1.0)
         self.particle_id_map = particle_id
-        self.rattle_map = rattle
-        self.lattice_parameter_map = lattice_parameter_map
+        self.rattle_map = maps["rattle"]
+        self.lattice_parameter_map = maps["lattice_parameter"]
         self.records = particle_records
 
     @property

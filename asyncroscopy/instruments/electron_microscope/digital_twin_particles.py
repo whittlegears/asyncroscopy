@@ -194,7 +194,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
-        # ── This view of the specimen: its atoms and the particles visible ──────────
+        # This view of the specimen gives its atoms and the particles visible.
         field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=fov, imsize=size, edge_crop=edge_crop))
         xtal = field.atoms
         self._particle_records = field.records

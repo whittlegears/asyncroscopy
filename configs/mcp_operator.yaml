@@ -1,4 +1,4 @@
-# Operator MCP endpoint for SciAgentGUI (approvals, mode switch, ground truth).
+# Operator MCP endpoint for SciAgentGUI (stop, ground truth).
 #
 # Start the Tango/device stack first, then run this on the GUI machine:
 #
@@ -7,8 +7,8 @@
 # If MCP runs on a separate computer, set tango.host to the Tango database
 # machine/IP.
 #
-# Keep http_host at 127.0.0.1: this endpoint can approve held calls and switch
-# approval mode, and it has no authentication. Run it on the GUI's machine.
+# Keep http_host at 127.0.0.1: this endpoint has operator-only tools
+# and no authentication. Run it on the GUI's machine.
 
 tango:
   host: localhost
@@ -36,12 +36,9 @@ mcp:
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
   # Operator endpoint: bound to 127.0.0.1 so only this machine (the GUI) reaches
-  # it. It offers Approvals.approve/deny/set_mode and export_ground_truth.
+  # it. It offers export_ground_truth.
   endpoint_role: operator
-  # Approval mode lives in the Approvals device; switch it from the GUI.
-  # auto (default) runs every call; approve holds high-risk agent calls.
   safety:
-    approvals_device_address: asyncroscopy/approvals/default
     # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in
     # asyncroscopy/safety/policy.py. Unknown commands are high risk.
     risk: {}

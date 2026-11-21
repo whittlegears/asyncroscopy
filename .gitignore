@@ -251,12 +251,8 @@ aws-use/
 # Isolated stacks (run_servers.py --isolated); the docs put them under outputs/stacks/, which is ignored too.
 .stack_*/
 
-# Benchmark runs: only the results that code, tests or docs cite are tracked
+# Benchmark runs are not tracked
 benchmarks/results/*
-!benchmarks/results/find_tools_qwen3_8b.md
-!benchmarks/results/mosaic_twin.md
-!benchmarks/results/multiscale_twin.md
-!benchmarks/results/tool_usage_analysis.md
-!benchmarks/results/tune_vs_acquire.json
-!benchmarks/results/tune_vs_acquire.md
-!benchmarks/results/twin_render.json
+
+# Site settings that are not shared
+configs/local/

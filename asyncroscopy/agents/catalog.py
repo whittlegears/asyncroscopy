@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-# What kind of instrument action a canonical role is (a goal's no_unrequested categories; claim checks).
+# The action category for each canonical role.
 _CATEGORIES = {
     "acquire.image": "acquire", "acquire.spectrum": "acquire", "acquire.other": "acquire",
     "stage.move": "move",
@@ -61,7 +61,7 @@ class ToolCatalog:
         return self.tools.get(name)
 
     def risk(self, name: str) -> str | None:
-        """The tool's risk as the approval gate sees it; None for a tool the endpoint does not offer."""
+        """The tool's risk ("low" or "high", as the endpoint reports it); None for a tool the endpoint does not offer."""
         tool = self.tools.get(name)
         return tool.risk if tool is not None else None
 

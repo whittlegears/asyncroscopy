@@ -51,10 +51,10 @@ class ScanningBeamProfile(InstrumentProfile):
     budget_fields = {"dose_budget_e_per_a2": DOSE_BUDGET}
     settings = BEAM_SETTINGS
     needs = {"microscope_device_address": BEAM_COMMANDS}
-    # The instrument_type values this profile drives; a plan for any other instrument is refused at reserve.
+    # The instrument_type values this profile drives. A plan for any other instrument is refused at reserve.
     instrument_types: tuple[str, ...] = ()
 
-    # Live drift tracking moves the beam with set_image_shift (the beam shift in STEM on AutoScript).
+    # Live drift tracking moves the image with set_image_shift, which uses the image shift deflector by default.
     image_shift_commands = ("set_image_shift", "get_image_shift")
 
     @property
@@ -72,14 +72,14 @@ class ScanningBeamProfile(InstrumentProfile):
         if '"zoom"' in request:
             return None  # the Mapper's zoom example
         example = dict(self.plan_example)
-        # A caller who gave a dose limit sees where it goes, with its own number. A fixed 50 here was copied by
-        # qwen3:8b into plans whose user set no limit, and every plan after that was refused as over it.
+        # A caller who gave a dose limit sees where it goes, with its own number. A fixed number here
+        # gets copied into plans whose user set no limit, and those plans are then refused.
         stated = stated_dose(request)
         if stated is not None:
             example["dose_budget_e_per_a2"] = stated
         return example
 
-    # -- beam current ----------------------------------------------------
+    # beam current
     def _parameters(self) -> tuple[dict, str | None]:
         """The microscope's get_parameters, and why it could not be read."""
         try:
@@ -111,7 +111,7 @@ class ScanningBeamProfile(InstrumentProfile):
             )
 
     def check_start(self, job: dict) -> None:
-        """A plan with a dose budget, at start and on every resume: the approval may come long after the reserve, so
+        """A plan with a dose budget, at start and on every resume: the start may come long after the reserve, so
         the current must still be usable and no higher than the one the budget was checked with (routines/beam.py)."""
         plan = job["resolved_plan"]
         if plan.get("dose_budget_e_per_a2") is None and DOSE_BUDGET not in (plan.get("budgets") or {}):
@@ -125,7 +125,7 @@ class ScanningBeamProfile(InstrumentProfile):
         except BeamCurrentRefused as exc:
             raise RuntimeError(f"the map's dose budget no longer holds at start: {exc}") from exc
 
-    # -- plan ------------------------------------------------------------
+    # plan
     def resolve(self, p: dict) -> None:
         """Refuse an instrument of another kind, and take the plan's detectors from the instrument when it names none."""
         if self.instrument_types:
@@ -165,20 +165,20 @@ class ScanningBeamProfile(InstrumentProfile):
         self.refuse_assumed_current(beam, budgets.get(DOSE_BUDGET))
         exposures = max_exposures(grid, fov)
         tile_dose = frame_dose(current, dwell, fov, imsize) * exposures
-        # A revisit adds its frame on top of whatever the tiles gave that spot; regions lie a scoring window apart,
+        # A revisit adds its frame on top of whatever the tiles gave that spot. Regions lie a scoring window apart,
         # so one spot gets at most one revisit.
         revisit_dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"]) if revisit else 0.0
-        # EDS spectra park the beam inside a tile, on top of its frames: counted where they land, conservatively added.
+        # EDS spectra park the beam inside a tile, so their dose is added on top of the tile's frames.
         spectra_dose = self._spectra_dose(p, current, fov, exposures)
         max_dose = tile_dose + revisit_dose + spectra_dose
         parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-        # Only the remedies for what adds dose here: told to "widen revisit fov_m" for a plan with no revisit, qwen3:8b added one.
+        # List only the remedies that apply to this plan. An agent told to widen a revisit the plan lacks may add one.
         remedies = ["lower dwell_s or overlap"] + (["lower eds_exposure_s"] if spectra_dose else []) + (["widen revisit fov_m"] if revisit else [])
         advice = ", ".join(remedies) + "; the budget is the user's: give dose_budget_e_per_a2 only when they set a limit"
         extra = {
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
-            # The dose estimate is only as good as the current; say when it was assumed (or is too old to rely on).
+            # The dose estimate is only as good as the current, so say when the current was assumed or is too old.
             **self.current_fields(beam),
         }
         if revisit:
@@ -225,7 +225,7 @@ class ScanningBeamProfile(InstrumentProfile):
     def image_shift_target(self, name: str, arguments: Any) -> list[float] | None:
         return [float(v) for v in list(arguments[0])[:2]] if name == "set_image_shift" else None
 
-    # -- run -------------------------------------------------------------
+    # run
     def _scan(self) -> tango.DeviceProxy:
         return self.ctx.proxy(self.setting("scan_device_address"))
 
@@ -240,7 +240,7 @@ class ScanningBeamProfile(InstrumentProfile):
         current = list(microscope.get_stage())
         job.setdefault("pose", {"z": float(plan.get("z_m", current[2])), "alpha": float(current[3]), "beta": float(current[4])})
         self._setup_extras(job, plan)
-        # The beam stays blanked between tiles: unblanked only while acquiring (see acquire_tile).
+        # The beam stays blanked between tiles. acquire_tile unblanks it only while acquiring.
         microscope.blank_beam()
 
     def _setup_extras(self, job: dict, plan: dict) -> None:
@@ -251,7 +251,7 @@ class ScanningBeamProfile(InstrumentProfile):
 
     def move(self, job: dict, x: float, y: float) -> bool:
         pose = job["pose"]
-        # A move already under way (someone else's, just before the job started) would make this one refused.
+        # A move already under way from just before the job started would make this one refused.
         if not self.ctx.wait_for_stage(job):
             return False
         self.instrument().move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
@@ -263,10 +263,10 @@ class ScanningBeamProfile(InstrumentProfile):
     def acquire_tile(self, job: dict, tile: dict) -> dict | None:
         plan = job["resolved_plan"]
         microscope = self.instrument()
-        # Unblank only for this tile's acquisitions: a beam left on during the stage move, file
+        # Unblank only for this tile's acquisitions. A beam left on during the stage move, file
         # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
-        # The tile is timed on the instrument's clock, not this computer's (on a twin with time_scale 0 the two
-        # differ by any factor): the stitch fits drift, and revisits extrapolate it, against these times.
+        # The tile is timed on the instrument's clock, not this computer's, because on a twin the two can
+        # differ by any factor. The stitch fits drift against these times and revisits extrapolate it.
         frame_start = self.ctx.clock_s()
         microscope.unblank_beam()
         try:
@@ -276,7 +276,7 @@ class ScanningBeamProfile(InstrumentProfile):
         finally:
             microscope.blank_beam()
         if extras is None:
-            return None  # aborted part way through the spectrum image; a resume redoes this tile
+            return None  # aborted part way through the spectrum image, so a resume redoes this tile
         return {"image_key": image_key, "acquired": acquired, **self._store_extras(job, plan, tile, extras)}
 
     def _tile_extras(self, job: dict, plan: dict, tile: dict, microscope) -> dict | None:

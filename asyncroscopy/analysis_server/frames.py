@@ -122,7 +122,7 @@ def frame_of(store, key: str) -> dict[str, Any]:
     shift = experiment.get("image_shift")
     if shift is not None and not (len(shift) >= 2 and all(math.isfinite(v) for v in shift[:2])):
         raise FrameError(f"{key} records an image shift that is not a number ({shift})")
-    # The frame needs the image's shape, calibration and position, not its pixels: a lazy array of zeros stands in.
+    # The frame needs only the shape, calibration and position, so a lazy array of zeros stands in for the pixels.
     dataset = image_dataset(dask.array.zeros(shape, chunks=shape), float(pixel), experiment, title=key)
     try:
         current = float(m["beam_current_pa"]) if "beam_current_pa" in m else None
@@ -178,7 +178,7 @@ def register(mcp, store) -> None:
             return {"error": {"code": "no_frame", "message": str(exc)}}
         rows, cols = frame["shape"]
         if not (-0.5 <= row <= rows - 0.5 and -0.5 <= col <= cols - 0.5):
-            # A small agent passed a point of interest's nanometres (x = -5.9, y = 379.4) as row and col.
+            # Agents sometimes pass a point's nanometres as row and col.
             return {"error": {"code": "outside", "message": (
                 f"pixel ({row:g}, {col:g}) is outside this {rows} x {cols} pixel {frame['kind']}: row and col are pixels, "
                 f"0 to {rows - 1} and 0 to {cols - 1}. A position given in nanometres or metres is already a stage "
@@ -188,7 +188,7 @@ def register(mcp, store) -> None:
         reply = {"x_m": x, "y_m": y, "inside": True, "kind": frame["kind"], **frame["sample"]}
         load = frame["sample"].get("sample_load_id")
         if load:
-            # Another load puts the sample elsewhere: before moving there, the instrument's sample record must match.
+            # Another load puts the sample elsewhere, so the instrument's sample record must match before moving there.
             reply["next_actions"] = [{"server": "instrument", "command": "get_sample", "args": {}, "expect": {"sample_load_id": load}}]
         else:
             notes.append("this dataset does not record which sample load it was taken on")
@@ -215,11 +215,11 @@ def register(mcp, store) -> None:
         features = features_of(frame, image_node(store, image).read(), n, min_size_m, max_size_m)
         note = {} if frame["shift_recorded"] else {"note": "this image does not record its image shift, so x_m, y_m assume it had none"}
         if not features and n > 0 and frame.get("beam_current_pa") == 0:
-            # Only noise: the beam must be unblanked on the instrument and the image taken again.
+            # Only noise. The beam must be unblanked and the image taken again.
             note["warnings"] = [{"code": "beam_blanked", "beam_current_pa": 0}]
             note["next_actions"] = [{"server": "instrument", "command": "unblank_beam", "args": {}}]
         elif not features and n > 0:
-            # A small agent at a 20 nm field searched for particles over and over: say why nothing was found and what would find it.
+            # Say why nothing was found and what would find it, so an agent does not repeat the same search.
             fov = frame["pixel_size_m"] * max(frame["shape"])
             note["hint"] = (f"nothing distinct in this {fov:.3g} m wide image. A feature wider than about a third of the field fills it "
                             "and cannot be told apart: to find particles, take an image whose field of view is several times their "
