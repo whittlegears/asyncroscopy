@@ -32,3 +32,7 @@ workflows:
     checks:
       - {check: no_actuation}
       - {check: max_calls, n: 6}
+      # Doing nothing must not pass: the answer has to give the scan range (20 to 80 degrees) and the sample.
+      - {check: answer_matches, label: states_scan_start, pattern: '(?<![\d.])20(\.0+)?(?![\d.])'}
+      - {check: answer_matches, label: states_scan_stop, pattern: '(?<![\d.])80(\.0+)?(?![\d.])'}
+      - {check: answer_matches, label: states_sample, pattern: 'Al.?2.?O.?3|alumina|corundum|silicon|\bSi\b'}

@@ -625,6 +625,43 @@ def answer_number_near(run: Run, fact: str, tol: float) -> tuple[bool, str]:
     return bool(close), f"truth {truth:.4g}; answer numbers {numbers[:8]}"
 
 
+LENGTH_UNITS = {
+    "m": 1.0, "mm": 1e-3, "um": 1e-6, "µm": 1e-6, "μm": 1e-6, "nm": 1e-9, "pm": 1e-12, "å": 1e-10, "a": 1e-10,
+    "metre": 1.0, "meter": 1.0, "millimetre": 1e-3, "millimeter": 1e-3, "micrometre": 1e-6, "micrometer": 1e-6, "micron": 1e-6,
+    "nanometre": 1e-9, "nanometer": 1e-9, "picometre": 1e-12, "picometer": 1e-12, "angstrom": 1e-10, "ångström": 1e-10,
+}
+LENGTH = re.compile(
+    r"(?<![\w.])([-+−]?\d+(?:\.\d+)?)(?:[eE]([-+−]?\d+)|\s*[x×*]\s*10\s*\^?\s*\(?([-+−]?\d+)\)?)?"
+    r"\s*(" + "|".join(sorted(LENGTH_UNITS, key=len, reverse=True)) + r")?s?(?![A-Za-zµμ])", re.IGNORECASE)
+
+
+def lengths_in(text: str) -> list[float]:
+    """Every length a text states, in metres: a number with its unit ("300 nm", "0.25 micrometres", "-50 Å"), or a
+    bare number taken as metres, the way the tools give them ("3e-07", "3 x 10^-7")."""
+    out = []
+    for number, exponent, power, unit in LENGTH.findall(text or ""):
+        value = float(number.replace("−", "-")) * 10.0 ** int((exponent or power or "0").replace("−", "-"))
+        out.append(value * LENGTH_UNITS[unit.lower()] if unit else value)
+    return out
+
+
+@check
+def answer_states_reading(run: Run, name: str, rel: float = 0.02, abs_tol: float = 1e-12) -> tuple[bool, str]:
+    """The answer states the instrument's reading before the run: ``name`` is fov, defocus, stage_x or stage_y, in
+    any length unit. A question about the instrument's state is answered only when the value is given."""
+    before = run.facts.get("before") or {}
+    if name in ("stage_x", "stage_y"):
+        stage = before.get("stage")
+        truth = _number(stage[("stage_x", "stage_y").index(name)]) if stage else None
+    else:
+        truth = _number(before.get(name))
+    if truth is None:
+        return False, f"no {name} reading before the run"
+    stated = lengths_in(run.final)
+    close = [v for v in stated if abs(v - truth) <= max(abs(truth) * rel, abs_tol)]
+    return bool(close), f"{name} was {truth:.4g} m; the answer states (m) {[float(f'{v:.4g}') for v in stated[:8]]}"
+
+
 @check
 def answer_peak_near(run: Run, position: float, tol: float) -> tuple[bool, str]:
     """The run's spectra have a peak within ``tol`` of ``position`` (axis units, e.g. 2690 cm-1 for a

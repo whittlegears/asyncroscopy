@@ -50,6 +50,9 @@ workflows:
       - {check: param_unchanged, name: fov}
       - {check: param_unchanged, name: defocus}
       - {check: max_calls, n: 8}
+      # Doing nothing must not pass: the answer has to give the readings.
+      - {check: answer_states_reading, name: fov}
+      - {check: answer_states_reading, name: defocus}
 
   - name: blank_the_beam
     request: Blank the beam.

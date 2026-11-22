@@ -11,6 +11,7 @@ fact was reported (a refusal, a peak position, the elements in a spectrum).
 | `run_workflows.py` | ~40 realistic workflows (images, EDS, focus, maps of several sizes up to thousands of tiles, the mapping design's CUJ 2 and CUJ 3, stitching accuracy against the twin's ground truth, navigating a large map by zoom, abort and resume, approval mode, refusals, recovery, data questions, multi-step goals, and a YAML-described diffractometer), each with fact-based checks |
 | `run_mapping_trials.py` | Repeated mapping requests (map, map with EDS, map and explore) for pass rates and out-of-box moves |
 | `run_tool_json.py` | Whether a model writes valid JSON tool arguments |
+| `benchmark.py` | Your own benchmarks: list them, check that each can fail and that its reference passes, and print the board of a kept run (no stack, no model; see below) |
 | `tune_vs_acquire.py` | How long to tune before acquiring: the Tuner with budgets from none to large, then a map until a fixed instrument time is used up, scored by `benchmarks.evaluate` (no LLM, no stack; see `docs/Operation/evaluators.md`) |
 
 Every workflow row also carries `scores`: the `benchmarks.evaluate` evaluators run on that row's
@@ -127,7 +128,43 @@ The checks, all in `benchmarks/workflow_checks.py`:
 | `stitch_accuracy` | median tile placement error below `max_median_px` against the twin's ground truth (operator endpoint's `export_ground_truth`) |
 | `approval_requested`, `approved_call_ran_once`, `denied_not_retried` | from the approvals trace |
 | `answer_matches`, `answer_number_near`, `answer_eds_consistent` | the answer reports a fact the runner measured |
+| `answer_states_reading` | the answer gives the reading `name` (fov, defocus, stage_x, stage_y) had before the run, in any length unit |
 | `answer_peak_near` | the run's spectra have a peak within `tol` of `position` (axis units), the agent read its spectrum with `view_data`, and the answer gives the position |
+
+## Your own benchmarks: bars, validity and the board
+
+A benchmark is a workflow with a bar. Put yours in `benchmarks/mine/`, one file per capability (the file name
+is the capability on the board), and pass both folders to the runner:
+
+```bash
+uv run python benchmarks/benchmark.py list                                    # every benchmark by capability (no stack)
+uv run python benchmarks/benchmark.py validate --only image_at_150nm --require-reference
+uv run python benchmarks/run_workflows.py --workflows benchmarks/mine --runners reference       # replay each reference on the twin, no model
+uv run python benchmarks/run_workflows.py --workflows benchmarks/workflows benchmarks/mine --only image_at_150nm --runners general --n bar
+uv run python benchmarks/benchmark.py report                                  # the newest kept run against the one before
+```
+
+Four more keys on a workflow:
+
+| Key | Meaning |
+|---|---|
+| `bar: {pass: 4, of: 5}` (or `"4/5"`) | It passes when at least that share of its counted trials passed. With fewer trials than `of` it is `unproven`, or `fail` once the bar is out of reach. Default 4 of 5. `--n bar` runs `of` trials of each workflow; `--n` is otherwise a number, 1 by default as before |
+| `kind: capability \| regression` | A capability is something to get working; a regression benchmark must keep passing and is named at the top of the board when it fails |
+| `held_out: true` | Not to be used for tuning the agent: `--no-held-out` leaves it out of a run |
+| `reference:` | A made-up good run (calls, readings after, answer) that must pass every check; format at the top of `benchmarks/benchmark.py` |
+
+`validate` runs no stack. A benchmark is invalid when a run that does nothing and answers "Done." passes every
+check, or when its reference fails one. A workflow whose checks need a live setup's facts (`{poi_x}`) is not
+checked. Offline, the reference shows the checks accept the outcome you mean. `--runners reference` then makes its
+calls on the running simulator with no model (one trial, row `<name>/reference`): the readings, trace and data are
+measured as for an agent's run, `{result_N}` in a later call or in the answer is what call N returned, and a pass
+shows the stack can do the task. Checks on the agent's own behaviour (`skill_loaded`) do not apply to a replay.
+
+The runner refuses a stack whose endpoint does not say it is simulated (`endpoint_info`), unless
+`--allow-hardware` is given. Each finished run is kept in `outputs/benchmarks/history/<stack>/` (`--history`; git ignores `outputs/`)
+with its board: the pass rate with a 95 % interval clustered on the benchmark, pass^k (the chance that all k
+trials of a benchmark pass), each capability's status, the failed checks and transcripts, and the paired
+change since the kept run before it of the same stack and model (`benchmarks/board.py`).
 
 To add a check, write `def my_check(run, **params) -> (bool, str)` with `@check` in that file and a
 test in `tests/scoring/test_workflow_checks.py`. A 1-D dataset your instrument saves with `axis_offset` /

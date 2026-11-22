@@ -47,6 +47,8 @@ from _common import (
     unique_caller,
     warm_up,
 )
+from board import HISTORY, KINDS, parse_bar, previous_run, save_history
+from board import report as board_report
 from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
 from asyncroscopy import settings
@@ -64,7 +66,10 @@ if TYPE_CHECKING:
 
 HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
-WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks"}
+WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks",
+                 "kind", "held_out", "bar", "reference"}
+# A reference is a made-up run that must pass the checks (benchmarks/validity.py reads it; it never touches a stack).
+REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skills", "risks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
 SURVEY_FOV_M = 6.0e-7  # gives survey_image room for two zoom steps down to atomic columns
@@ -88,6 +93,7 @@ SETUP_MAPS = {
 TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner, specialists and reporter
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
+REFERENCE = "reference"  # no model: the workflow's reference calls, made on the stack (only with --runners reference)
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
 # These evaluators are scored on every run's trace as extra columns. They never change pass or fail.
 # The default reads no data. Others read the run's images from Tiled and are set by --evaluators.
@@ -166,10 +172,24 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
                 _check_params(where, spec)
             if not wf.get("checks"):
                 raise WorkflowError(f"{where}: no checks")
+            if wf.get("kind", KINDS[0]) not in KINDS:
+                raise WorkflowError(f"{where}: kind must be one of {list(KINDS)}")
+            if not isinstance(wf.get("held_out", False), bool):
+                raise WorkflowError(f"{where}: held_out is true or false")
+            if "bar" in wf:
+                try:
+                    wf["bar"] = parse_bar(wf["bar"])
+                except ValueError as exc:
+                    raise WorkflowError(f"{where}: {exc}") from exc
+            reference = wf.get("reference")
+            if reference is not None and (not isinstance(reference, dict) or set(reference) - REFERENCE_KEYS):
+                raise WorkflowError(f"{where}: reference may set {sorted(REFERENCE_KEYS)}")
+            reference_calls(wf)
             wf.setdefault("runners", ["general"])
             wf.setdefault("timeout_s", 600)
             wf.setdefault("stack", "twin")
             wf["file"] = file.name
+            wf["capability"] = file.stem  # one file per capability: the board groups by it
             workflows.append(wf)
     return workflows
 
@@ -695,10 +715,47 @@ async def _run_chat(factory: str, config: AgentConfig, wf: dict, facts: dict, ca
         facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
 
 
+def reference_calls(wf: dict) -> list[dict]:
+    """The calls of a workflow's reference, each {tool, args, result, ok}; WorkflowError for any other shape."""
+    calls = (wf.get("reference") or {}).get("calls") or []
+    for call in calls:
+        if not isinstance(call, dict) or "tool" not in call or set(call) - {"tool", "args", "result", "ok"}:
+            raise WorkflowError(f"{wf['name']}: each reference call is {{tool: ..., args: ..., result: ..., ok: ...}}, not {call!r}")
+    return calls
+
+
+async def replay_reference(config: AgentConfig, wf: dict, run: Run) -> None:
+    """Make the reference's calls on the stack in order, with no model, and answer with the reference's answer.
+
+    It shows the task can be done on this stack and that the checks pass on what the stack really produced. A call
+    goes to the instrument endpoint when it offers the tool, else to the analysis server. ``{result_N}`` in a later
+    call's args or in the answer is the first line of call N's reply (an acquisition's key). A call the stack refuses
+    is recorded as failed and the replay goes on, so a reference that expects a refusal replays too."""
+    from asyncroscopy.agents.mcp_tools import result_text
+
+    instrument, analysis = config.instrument(), config.analysis()
+    offered = {t.name for t in await instrument.list_tools()}
+    results: dict[str, str] = {}
+    for i, call in enumerate(reference_calls(wf), 1):
+        name, args = str(call["tool"]), render(dict(call.get("args") or {}), results)
+        if name not in offered and not name[:1].islower():
+            # A device tool is <Class>_<command>, and the class is the stack's: the one tool with that command is meant.
+            same = sorted(n for n in offered if not n[:1].islower() and n.partition("_")[2] == name.partition("_")[2])
+            name = same[0] if len(same) == 1 else name
+        on_instrument = name in offered or analysis is None or not name[:1].islower()  # an unknown device tool fails there
+        reply = await (instrument if on_instrument else analysis).call(name, args)
+        text = result_text(reply)
+        run.calls.append(Call(name, args, text, bool(reply.is_error)))
+        results[f"result_{i}"] = text.partition("\n")[0].strip()
+    run.final = render(str(wf["reference"].get("answer", "")), results)
+
+
 async def _run_graph(mapping_graph: Any, runner: str, factory: str, config: AgentConfig, wf: dict, facts: dict, caller: str, started: float, run: Run, transcript: list) -> None:
     """Run the request of a workflow on the graph its runner names."""
     request = render(wf.get("request") or "", facts)
-    if runner == "mapping":
+    if runner == REFERENCE:
+        await asyncio.wait_for(replay_reference(config, wf, run), wf["timeout_s"])
+    elif runner == "mapping":
         state = await asyncio.wait_for(mapping_graph(config).build().ainvoke({"request": request}), wf["timeout_s"])
         run.final = str(state.get("report") or state.get("error") or "")
     elif runner == "team":
@@ -907,7 +964,7 @@ async def main(args: argparse.Namespace) -> int:
     if unknown:
         print(f"no workflow {unknown} on stack {args.stack!r} (names are separated by spaces, not commas); --list shows them")
         return 2
-    workflows = [wf for wf in on_stack if not args.only or wf["name"] in args.only]
+    workflows = [wf for wf in on_stack if (not args.only or wf["name"] in args.only) and not (args.no_held_out and wf.get("held_out"))]
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
         print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have: fix config: in its stacks: entry")
         return 2
@@ -917,35 +974,48 @@ async def main(args: argparse.Namespace) -> int:
     if args.list:
         for wf in workflows:
             runners = runners_for(wf, available)
-            print(f"{wf['name']:32s} {','.join(runners):22s} timeout {wf['timeout_s']:5d} s  {wf['file']}" + "")
+            bar = parse_bar(wf.get("bar"))
+            tags = f"{wf.get('kind', KINDS[0])}{', held out' if wf.get('held_out') else ''}"
+            print(f"{wf['name']:32s} {','.join(runners):22s} timeout {wf['timeout_s']:5d} s  bar {bar['pass']}/{bar['of']}  {tags:24s} {wf['file']}")
         print(f"{len(workflows)} workflows on stack {args.stack}; runners here: {sorted(available)}")
         return 0
     config = AgentConfig.from_env(model=args.model, caller="workflows")
     if not env.mcp_url:
         config.mcp_url = STACK["mcp"]
+    # A benchmark sends an agent's requests to the instrument: it runs on a simulator unless told otherwise.
+    if not (await config.info()).get("simulated") and not args.allow_hardware:
+        print(f"refusing to run: the endpoint {config.mcp_url} does not say its stack is simulated (endpoint_info). "
+              "Start a twin stack, or pass --allow-hardware to benchmark on a real instrument.")
+        return 2
     live = Live(config)
     await live.discover()
     await warm_up(config)
     baseline = await live.snapshot()
     EVALUATORS[:] = [n.strip() for n in args.evaluators.split(",") if n.strip()]
     SCORE_COLUMNS[:] = [c.strip() for c in args.score_columns.split(",") if c.strip()]
+    if args.n != "bar" and not (args.n.isdigit() and int(args.n) >= 1):
+        print(f"--n is a number of trials or 'bar', not {args.n!r}")
+        return 2
+    replaying = REFERENCE in (args.runners or [])
     results = {"model": args.model, "stack": args.stack, "git": git_head(), "n": args.n, "started": time.time(), "runners": available,
                "evaluators": EVALUATORS, "score_columns": SCORE_COLUMNS, "workflows": {}}
     out = Path(args.out or HERE / "results" / f"workflows_{args.stack}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     for wf in workflows:
-        for runner in runners_for(wf, available):
+        for runner in runners_for(wf, available) + ([REFERENCE] if replaying and wf.get("reference") else []):
             if args.runners and runner not in args.runners:
                 continue
-            if runner not in available or (runner in SINGLE_TURN and wf.get("turns")):
+            if runner != REFERENCE and (runner not in available or (runner in SINGLE_TURN and wf.get("turns"))):
                 why = f"no {runner} runner in this checkout" if runner not in available else f"{runner} takes one request; this workflow has turns"
                 results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": []}
                 continue
             rows = []
-            for i in range(args.n):
+            # A replayed reference has no model in it, so one trial; --n bar runs as many trials as the workflow's bar counts.
+            bar = {"pass": 1, "of": 1} if runner == REFERENCE else parse_bar(wf.get("bar"))
+            for i in range(1 if runner == REFERENCE else bar["of"] if args.n == "bar" else int(args.n)):
                 try:
                     await ensure_healthy(live, baseline)
-                    row = await run_once(live, wf, runner, available[runner], baseline)
+                    row = await run_once(live, wf, runner, available.get(runner, ""), baseline)
                 except Exception as exc:  # a setup or stack failure is recorded and the suite goes on
                     row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "infra_error": isinstance(exc, InfraError),
                            "seconds": 0, "checks": {}, "tool_names": [], "sleepwalking": []}
@@ -954,7 +1024,11 @@ async def main(args: argparse.Namespace) -> int:
                 verdict = "INFRA" if row.get("infra_error") else ("PASS" if row["ok"] else "FAIL")
                 print(f"{wf['name']:32s} {runner:8s} #{i + 1} {verdict} {row['seconds']:6.1f}s {failed or ''} {row.get('error') or ''}", flush=True)
             counted = [r for r in rows if not r.get("infra_error")]
-            results["workflows"][f"{wf['name']}/{runner}"] = {"passed": sum(r["ok"] for r in counted), "of": len(counted), "infra_errors": len(rows) - len(counted), "rows": rows}
+            results["workflows"][f"{wf['name']}/{runner}"] = {
+                "passed": sum(r["ok"] for r in counted), "of": len(counted), "infra_errors": len(rows) - len(counted),
+                "capability": wf["capability"], "kind": wf.get("kind", KINDS[0]), "held_out": bool(wf.get("held_out")),
+                "bar": bar, "rows": rows,
+            }
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     try:
         await live.restore(baseline)
@@ -966,6 +1040,12 @@ async def main(args: argparse.Namespace) -> int:
     out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     out.with_suffix(".md").write_text(markdown(results), encoding="utf-8")
     print(markdown(results))
+    history = Path(args.history or HISTORY)
+    board = board_report(results, previous_run(results, history))
+    kept = save_history(results, history)
+    kept.with_suffix(".md").write_text(board, encoding="utf-8")
+    print(board)
+    print(f"kept as {kept}")
     return 0
 
 
@@ -973,10 +1053,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--workflows", nargs="+", type=Path, default=[WORKFLOW_DIR], help="YAML files or directories of them.")
     parser.add_argument("--only", nargs="*", default=None, help="Workflow names to run.")
-    parser.add_argument("--runners", nargs="*", default=None, help="Runners to use (default: each workflow's own list).")
+    parser.add_argument("--runners", nargs="*", default=None,
+                        help="Runners to use (default: each workflow's own list). 'reference' replays each workflow's reference calls with no model.")
     parser.add_argument("--stack", default="twin", help="Which stack is running: a name from benchmarks/stacks.yaml (twin, large, xrd) or a workflow file's stacks:.")
     parser.add_argument("--graph", default=None, help="An extra runner: module:function returning a chat graph, run as 'custom'.")
-    parser.add_argument("--n", type=int, default=1, help="Runs per workflow and runner.")
+    parser.add_argument("--n", default="1", help="Trials per workflow and runner: a number (default 1), or 'bar' for as many as each workflow's bar counts (5 unless it sets its own).")
+    parser.add_argument("--no-held-out", action="store_true", help="Leave out workflows marked held_out: use it while tuning the agent.")
+    parser.add_argument("--allow-hardware", action="store_true", help="Run even when the endpoint's stack does not say it is simulated.")
+    parser.add_argument("--history", default=None, help="Directory finished runs are kept in (default: outputs/benchmarks/history).")
     # The agents' own default: ASYNCROSCOPY_MODEL, else the default agent profile's model.
     parser.add_argument("--model", default=settings.get().model or load_profile().model)
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
