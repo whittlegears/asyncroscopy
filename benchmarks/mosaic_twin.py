@@ -16,6 +16,7 @@ It runs the twin in this process (no Tango database, no data server), so it need
 
     uv run --no-sync python benchmarks/mosaic_twin.py
     uv run --no-sync python benchmarks/mosaic_twin.py --grid 6 --imsize 256 --out ""    # a quick look
+    uv run --no-sync python benchmarks/mosaic_twin.py --image outputs/pictures/map.png  # and save the stitched map as a picture
 
 Writes benchmarks/results/mosaic_twin.md (and .json) and exits 1 when a threshold is missed.
 """
@@ -258,6 +259,8 @@ def run(args: argparse.Namespace) -> dict:
     placement = register_tiles(tiles, stage_sigma_m=args.stage_sigma, max_drift_m_per_s=args.max_drift, scan_linear=calibration)
     levels, placement = stitch_to_arrays(tiles, placement)
     stitched_s = time.perf_counter() - started
+    if args.image:
+        save_map_picture(Path(args.image), levels[0])
     tops = np.round(placement.positions_px).astype(int)  # tile edges to the nearest pixel for the seam check
     fallback = placement.fallback if placement.fallback is not None else np.zeros(len(tiles), bool)
     detector = [r.get("detector", {}).get("gain") for r in records]
@@ -279,6 +282,18 @@ def run(args: argparse.Namespace) -> dict:
         "detector_gain_range": [min(g for g in detector if g is not None), max(g for g in detector if g is not None)] if any(g is not None for g in detector) else None,
         "matches_used": int(sum(1 for m in placement.matches if m.used)),
     }
+
+
+def save_map_picture(path: Path, stitched: np.ndarray) -> None:
+    """The stitched map as a picture, so a person can look at what the numbers describe."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    drawn = stitched[stitched > 0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(path, stitched, cmap="gray", vmin=np.percentile(drawn, 1), vmax=np.percentile(drawn, 99.8))
 
 
 def verdict(result: dict) -> dict[str, bool]:
@@ -358,6 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-drift", type=float, default=5e-11, help="most the sample drifts (m/s)")
     parser.add_argument("--calibration", default="", help="a previous result's .json: use the scan distortion that (large) map measured")
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE", help="override a twin property, e.g. --set scan_flyback_compression=0")
+    parser.add_argument("--image", default="", help="also save the stitched map as a picture here (.png)")
     parser.add_argument("--out", default=str(ROOT / "benchmarks" / "results" / "mosaic_twin.md"), help='report path; "" prints only')
     args = parser.parse_args(argv)
     if not args.stage_sigma:

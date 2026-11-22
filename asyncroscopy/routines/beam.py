@@ -28,6 +28,21 @@ import math
 from dataclasses import dataclass
 
 DEFAULT_MAX_BEAM_CURRENT_AGE_S = 900.0
+
+
+def beam_path_blocked(parameters: dict) -> str | None:
+    """Why no beam can reach a scanning detector, from a microscope's ``get_parameters``, or None.
+
+    Closed column valves stop the beam above the sample, and an inserted fluorescent screen stops it above the
+    scanning detectors: either way every frame is black, and a map would spend hours recording nothing. A backend
+    reports ``column_valves`` ("Opened" or "Closed") and ``screen`` ("Inserted" or "Retracted"); one that reports
+    neither is not judged.
+    """
+    if str(parameters.get("column_valves", "")).strip().lower() == "closed":
+        return "the column valves are closed, so no beam reaches the sample: open them (set_column_valves 'open')"
+    if str(parameters.get("screen", "")).strip().lower() == "inserted":
+        return "the fluorescent screen is inserted, so no beam reaches the scanning detectors: retract it (set_screen 'retracted')"
+    return None
 # The current a microscope assumes until it has measured one.
 DEFAULT_BEAM_CURRENT_PA = 50.0
 

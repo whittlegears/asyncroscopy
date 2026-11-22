@@ -5,9 +5,9 @@ picked at random. What they learn is turned into an answer the same way (``answe
 
 * ``raster``: autofocus once at the start and never again. All its time goes to images and spectra.
 * ``periodic``: autofocus every few images, whether it is needed or not.
-* ``kalman``: keeps an estimate of the focus each place needs and how sure it is (a two-number Kalman filter: the
-  defocus here and its slope along the row). Between autofocus runs it sets the predicted defocus, which costs
-  nothing, and it runs autofocus only when it is no longer sure enough.
+* ``surface``: remembers what defocus each autofocus run found and fits a smooth surface through those places.
+  Where the surface reaches it sets the predicted defocus, which costs nothing, and it runs autofocus only where
+  it has no measurement nearby. It is the physics-informed one: it knows a specimen's height changes smoothly.
 
 None of them chooses where to look or where a spectrum is worth taking. That is left for you.
 """
@@ -24,10 +24,8 @@ from benchmarks.hackathon.task import GRID, Answer, BudgetSpent, Microscope, cel
 
 SPECTRA_PER_IMAGE = 3  # taken straight after the image, before the sample drifts off the particles
 PERIODIC_EVERY = 4  # the periodic controller focuses every this many images
-FOCUS_TOLERANCE_M = 4.0e-8  # the kalman controller focuses when its defocus estimate is less sure than this
-SLOPE_PRIOR = 0.1  # how steep the specimen may be (height change per metre moved) before anything is known
-SLOPE_CHANGE_PER_M = 1.0e5  # how fast that slope may change with distance (per metre, per metre)
-AUTOFOCUS_ERROR_M = 2.0e-9  # how well one autofocus run finds the focus
+SURFACE_REACH_M = 1.0e-6  # the surface controller trusts its model this far from the nearest place it focused
+SURFACE_NEIGHBOURS = 10  # and fits its surface to this many of the nearest such places
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -53,45 +51,32 @@ class FocusPeriodically:
         self.images += 1
 
 
-class FocusByKalmanFilter:
-    """Tracks [the defocus this place needs, its slope along x] and their covariance.
-
-    Moving along a row carries the defocus forward by slope * distance and makes both less certain. Stepping to the
-    next row keeps the estimate but adds the unknown slope along y to its uncertainty. An autofocus run is a
-    measurement of the defocus, and through the covariance it also corrects the slope.
+class FocusFromSurface:
+    """Remembers where it ran autofocus and what defocus each place needed, and treats those as samples of one smooth
+    surface. Near a remembered place it fits a curved surface (a quadratic in x and y) to the nearest ones and sets
+    the defocus that predicts; far from all of them it runs autofocus and remembers the result.
     """
 
     def __init__(self) -> None:
-        self.state = np.zeros(2)  # [defocus (m), slope along x]
-        self.covariance = np.diag([1.0, SLOPE_PRIOR**2])  # the first image always gets an autofocus
-        self.last_xy: tuple[float, float] | None = None
-
-    def _predict(self, x_m: float, y_m: float) -> None:
-        if self.last_xy is None:
-            return
-        dx, dy = x_m - self.last_xy[0], y_m - self.last_xy[1]
-        step = np.array([[1.0, dx], [0.0, 1.0]])
-        self.state = step @ self.state
-        self.covariance = step @ self.covariance @ step.T
-        self.covariance[0, 0] += (SLOPE_PRIOR * dy) ** 2
-        self.covariance[1, 1] += (SLOPE_CHANGE_PER_M * np.hypot(dx, dy)) ** 2
-
-    def _correct(self, measured_defocus_m: float) -> None:
-        gain = self.covariance[:, 0] / (self.covariance[0, 0] + AUTOFOCUS_ERROR_M**2)
-        self.state = self.state + gain * (measured_defocus_m - self.state[0])
-        self.covariance = self.covariance - np.outer(gain, self.covariance[0, :])
+        self.places: list[tuple[float, float]] = []
+        self.defocus_m: list[float] = []
 
     def at(self, microscope: Microscope, x_m: float, y_m: float) -> None:
-        self._predict(x_m, y_m)
-        self.last_xy = (x_m, y_m)
-        if self.covariance[0, 0] > FOCUS_TOLERANCE_M**2:
-            self._correct(microscope.autofocus())
-        else:
-            microscope.set_defocus(self.state[0])
+        places = np.array(self.places).reshape(-1, 2)
+        distance = np.hypot(places[:, 0] - x_m, places[:, 1] - y_m)
+        if len(places) < 6 or distance.min() > SURFACE_REACH_M:
+            self.places.append((x_m, y_m))
+            self.defocus_m.append(microscope.autofocus())
+            return
+        nearest = np.argsort(distance)[:SURFACE_NEIGHBOURS]
+        dx, dy = (places[nearest, 0] - x_m) / SURFACE_REACH_M, (places[nearest, 1] - y_m) / SURFACE_REACH_M
+        terms = np.stack([np.ones_like(dx), dx, dy, dx * dx, dx * dy, dy * dy], axis=1)
+        fit, *_ = np.linalg.lstsq(terms, np.array(self.defocus_m)[nearest], rcond=None)
+        microscope.set_defocus(fit[0])  # the surface's value here, where dx and dy are 0
 
 
 # ----------------------------------------------------------------------------------------------------------------------
-# What all three do with the microscope
+# What all the baselines do with the microscope
 # ----------------------------------------------------------------------------------------------------------------------
 @dataclass
 class Notes:
@@ -163,8 +148,8 @@ def periodic(microscope: Microscope) -> Answer:
     return answer_from(survey(microscope, FocusPeriodically()))
 
 
-def kalman(microscope: Microscope) -> Answer:
-    return answer_from(survey(microscope, FocusByKalmanFilter()))
+def surface(microscope: Microscope) -> Answer:
+    return answer_from(survey(microscope, FocusFromSurface()))
 
 
-BASELINES = {"raster": raster, "periodic": periodic, "kalman": kalman}
+BASELINES = {"raster": raster, "periodic": periodic, "surface": surface}

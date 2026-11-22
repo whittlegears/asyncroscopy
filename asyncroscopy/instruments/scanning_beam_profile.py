@@ -27,7 +27,7 @@ import tango
 
 from asyncroscopy.jobs.mapping.plan import stated_dose
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, Setting
-from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, check_current_at_start
+from asyncroscopy.routines.beam import DEFAULT_MAX_BEAM_CURRENT_AGE_S, BeamCurrentRefused, beam_current, beam_path_blocked, check_current_at_start
 from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M, frame_dose
 from asyncroscopy.routines.grid import max_exposures
 
@@ -113,12 +113,17 @@ class ScanningBeamProfile(InstrumentProfile):
             )
 
     def check_start(self, job: dict) -> None:
-        """A plan with a dose budget, at start and on every resume: the start may come long after the reserve, so
-        the current must still be usable and no higher than the one the budget was checked with (routines/beam.py)."""
+        """At start and on every resume. The beam must be able to reach the detector (closed column valves or an
+        inserted screen would make every tile black). A plan with a dose budget also needs its current again: the
+        start may come long after the reserve, so the current must still be usable and no higher than the one the
+        budget was checked with (routines/beam.py)."""
+        parameters, _ = self._parameters()
+        blocked = beam_path_blocked(parameters)
+        if blocked:
+            raise RuntimeError(f"the map cannot start: {blocked}")
         plan = job["resolved_plan"]
         if plan.get("dose_budget_e_per_a2") is None and DOSE_BUDGET not in (plan.get("budgets") or {}):
             return
-        parameters, _ = self._parameters()
         try:
             check_current_at_start(
                 parameters, self.ctx.settings.simulated, job["estimate"].get("beam_current_pa"),

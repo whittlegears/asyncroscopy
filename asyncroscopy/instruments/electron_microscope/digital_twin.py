@@ -89,6 +89,9 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
     focus_drift_m = _prop(float, 0.0, "Largest slow swing of the hidden focus error (m) over 20 minutes to 6 hours (0: steady).")
     astigmatism_drift_m = _prop(float, 0.0, "Largest slow swing of each hidden A1 component (m) over the same times (0: steady).")
+    # A real session starts with the column valves closed and no measured beam current. With cold_start the twin does
+    # too, so a workflow that forgets to open the valves, or to measure the current, fails here as it would there.
+    cold_start = _prop(bool, False, "Start as an instrument is found: column valves closed and the beam current not yet measured.")
     autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
     autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
     # Optics and detector
@@ -188,6 +191,9 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
         self._focus_drift = FocusDrift(float(self.focus_drift_m), float(self.astigmatism_drift_m), self._rng.for_event("focus_drift"))
+        self._column_valves_open = not bool(self.cold_start)
+        self._screen_inserted = False
+        self._current_measured_s: float | None = None  # twin time of the last screen-current reading (cold_start only)
         self._stage_position = self._stage.true.copy()
         self._world_bounds_ang = self._world_bounds()
 
@@ -266,6 +272,56 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     def _get_stigmator(self) -> list[float]:
         return self._stigmator.tolist()
 
+    # ------------------------------------------------------------------
+    # The column: valves, fluorescent screen and the beam current measured on it
+    # ------------------------------------------------------------------
+    def _set_column_valves(self, state: str) -> None:
+        if str(state).lower() not in ("open", "close"):
+            raise ValueError(f"column valves take 'open' or 'close', got {state!r}")
+        self._column_valves_open = str(state).lower() == "open"
+
+    def _set_screen(self, position: str) -> None:
+        position = str(position).lower()
+        if position not in ("in", "insert", "inserted", "out", "retract", "retracted"):
+            raise ValueError(f"the screen takes 'inserted' or 'retracted', got {position!r}")
+        self._screen_inserted = position.startswith("in")
+
+    def _beam_current_pa(self) -> float:
+        """The current reaching the sample: none while the column valves are closed or the beam is blanked."""
+        return super()._beam_current_pa() if getattr(self, "_column_valves_open", True) else 0.0
+
+    def _beam_on_detector(self) -> bool:
+        """Whether the beam can reach a scanning detector: it stops at closed valves and at an inserted screen."""
+        return self._column_valves_open and not self._screen_inserted
+
+    def _get_screen_current(self) -> float:
+        """The current on the screen in pA: the beam current when the screen is inserted, 0 when it is not. A
+        reading above 0 is the measured beam current from then on."""
+        current = self._beam_current_pa() if self._screen_inserted else 0.0
+        if current > 0:
+            self._current_measured_s = self._clock.now()
+        return current
+
+    def _set_screen_current(self, current) -> None:
+        """Set the probe current (pA). The last screen reading no longer describes the beam."""
+        if not float(current) > 0:
+            raise ValueError(f"the screen current must be > 0 pA, got {current!r}")
+        self._detector_params = replace(self._detector_params, beam_current_pa=float(current))
+        self._current_measured_s = None
+
+    def _calibrate_screen_current(self) -> None:
+        """Nothing to calibrate: the twin sets the current it is told exactly."""
+
+    def _beam_current(self) -> dict:
+        """As on the instrument with cold_start: assumed ("default") until the screen has read it, then measured
+        with the reading's age. Without cold_start the twin's current always counts as measured."""
+        if not bool(self.cold_start):
+            return super()._beam_current()
+        if self._current_measured_s is None:
+            reason = "no screen-current measurement yet: insert the screen, call get_screen_current, then retract it"
+            return {"pa": float(self.default_beam_current_pa), "source": "default", "age_s": None, "reason": reason}
+        return {"pa": float(self._detector_params.beam_current_pa), "source": "measured", "age_s": round(self._clock.now() - self._current_measured_s, 1)}
+
     def set_focus_error(self, c1_m: float, a1_m: tuple[float, float] = (0.0, 0.0)) -> None:
         """Test and bench hook, not a Tango command: replace the hidden focus error, as a new specimen would."""
         self._focus_error = {"c1_m": float(c1_m), "a1_m": [float(a1_m[0]), float(a1_m[1])]}
@@ -284,6 +340,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     def _auto_focus(self) -> None:
         """Stand-in for OptiSTEM C1A1: scans autofocus_frames frames, then zeroes C1 and A1 to within autofocus_residual_m."""
         self._refuse_while_moving()
+        if not self._beam_on_detector():
+            tango.Except.throw_exception("NoBeam", "Autofocus needs an image, and no beam reaches the detector: open the column valves and retract the screen.", "auto_focus()")
         scan = self._detector_proxies.get("scan")
         imsize, dwell = (int(scan.imsize), float(scan.dwell_time)) if scan is not None else (256, 1e-6)
         blanked = self._blanked
@@ -340,7 +398,9 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             damage=self._dose.damage_factors(self._specimen.feature_centers, visible),
         )
         rng = self._rng.for_event(f"detector_{detector}", frame["index"])
-        params = self._detector_drift.at(replace(self._detector_params, beam_current_pa=self._beam_current_pa()), frame["record"]["t_start_s"])
+        # The sample is dosed by the beam that reaches it; the detector counts only what gets past the screen.
+        detected_pa = self._beam_current_pa() if self._beam_on_detector() else 0.0
+        params = self._detector_drift.at(replace(self._detector_params, beam_current_pa=detected_pa), frame["record"]["t_start_s"])
         return count(fraction, frame["dwell_s"], params, rng)
 
     def _acquire_scanned_image(
@@ -539,6 +599,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
         parameters.update(self.beam_current_fields())
         parameters["beam_blanked"] = self._blanked
+        parameters["column_valves"] = "Opened" if self._column_valves_open else "Closed"  # AutoScript's words
+        parameters["screen"] = "Inserted" if self._screen_inserted else "Retracted"
         parameters["stage_moving"] = self._stage_moving()
         parameters["simulated"] = True  # This is for clients. Job devices take the simulated property of the stack and never this.
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it

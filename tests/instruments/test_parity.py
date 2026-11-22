@@ -269,9 +269,8 @@ TWIN_LACKS = {
     "get_beam_tilt": (),
     "set_diffraction_shift": ([1e-7, 0.0],),
     "get_diffraction_shift": (),
-    "set_screen": ("inserted",),
-    "get_screen_current": (),
 }
+# The twin has the screen and its current since it models the column (tests/twin/test_twin_column.py).
 # Only the twin has export_ground_truth, stage_moving, simulated_time_s, set_stigmator and get_stigmator.
 # The objective stigmator is not wired to AutoScript yet.
 

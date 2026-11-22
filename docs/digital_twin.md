@@ -28,11 +28,18 @@ uv run startup_scripts/run_servers.py --yaml configs/digital_twin_heterogeneous.
 | Scan | `twin/scan_distortion.py` | Where each pixel really lands: drift during the frame, line jitter, flyback compression, scan rotation and shear, field-of-view calibration error. |
 | Rendering | `twin/render.py` | Pixel >= 0.2 nm: projected thickness x Z^1.7 per particle, Gaussian probe blur. Pixel < 0.2 nm: atoms built for the particles in view only, convolved with the pyTEMlib probe from the current aberrations. HAADF, ADF and BF have their own contrast. |
 | Optics | `twin/optics.py` | Aberrations from the corrector twin (if connected) plus `set_defocus`. Defocus and astigmatism blur the image, so autofocus has a real objective. With `focus_drift_m` / `astigmatism_drift_m` the hidden focus and astigmatism wander over 20 minutes to 6 hours, so a focus that was right goes wrong. |
+| Column | `digital_twin.py` | Column valves, the fluorescent screen and the beam current measured on it. Closed valves or an inserted screen give a black image, as on the instrument; `get_parameters` reports `column_valves` and `screen` in AutoScript's words. With `cold_start` the twin starts as an instrument is found: valves closed, beam current not yet measured. |
 | Detector | `twin/detector.py` | Raw counts: electrons per pixel from beam current and dwell, Poisson noise, gain, offset, read noise. No per-tile normalisation, so overlapping tiles agree in brightness, unless `detector_gain_drift` / `detector_offset_drift` make the gain and offset wander slowly with the clock (as a warming amplifier does), so tiles taken minutes apart differ. |
 | EDS | `twin/eds_model.py` | 2048-channel spectrum with an energy axis: Kramers continuum, characteristic lines from pyTEMlib's X-ray tables with energy-dependent resolution, Si escape and sum peaks, paralyzable dead time; reports real and live time. |
 | Dose | `asyncroscopy/sim/dose.py` | Where the beam has been, in cells kept only where it went and sized to each frame (about an eighth of its field), so a 50 nm frame on a large sample keeps its dose on the 50 nm it hit. Builds a carbon contamination layer that saturates, and fades particles past a critical dose. |
 
 Coordinates are metres in the sample frame. Images are indexed `[row, column]`; rows run along +y and columns along +x. The stage position is the sample point under the centre of the field of view.
+
+### What stops a map before it starts
+
+A map job checks, at start and on every resume, that the beam can reach the detector (`routines/beam.py`, `beam_path_blocked`). It reads `column_valves` and `screen` from `get_parameters` and refuses to start when the valves are closed or the screen is inserted, naming which. The same check runs on the instrument, so a workflow that forgets to open the valves fails on the twin first. Set `cold_start: true` on the twin to rehearse a session from the state the instrument is found in.
+
+The AutoScript backend reports `column_valves` but not `screen` yet, so on the instrument only closed valves are caught.
 
 ### What it does not model
 
@@ -98,6 +105,7 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 | :-- | :-- |
 | Specimen | `specimen` (a mapping such as `{source: recorded, path: ..., pixel_size_m: ...}`), or `specimen_source`, `specimen_path`, `specimen_pixel_size_m`, `specimen_labels_path`; see [specimens.md](Operation/specimens.md) |
 | Sample | `sample_seed`, `sample_size_xy`, `sample_particle_count`, `particle_radius_mean`, `particle_radius_std`, `particle_aspect_ratio`, `particle_elements` (comma list of Au, Pt, Pd, Ag, Cu, Ni, Fe, Si, C), `support_thickness`, `height_gradient_x/y`; in the `specimen` mapping: `region_count`, `region_hole_fraction`, `height_relief_m`, `height_relief_scale_m` |
+| Column | `cold_start` |
 | Focus | `focus_offset_m`, `astigmatism_offset_a_m/b_m`, `focus_drift_m`, `astigmatism_drift_m`, `autofocus_residual_m`, `autofocus_frames` |
 | Optics | `acceleration_voltage`, `convergence_angle_mrad`, `probe_current_pa` (reported as the measured `beam_current_pa`), `haadf_z_exponent`, `haadf_scattering_scale`, `atomic_pixel_threshold` |
 | Detector | `detector_gain`, `detector_offset`, `detector_read_noise`, `detector_gain_drift` (fraction), `detector_offset_drift` (counts) |

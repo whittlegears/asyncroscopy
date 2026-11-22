@@ -40,7 +40,7 @@ FOV_M = 4.0e-7  # every image is this wide
 IMSIZE = 256  # and this many pixels across
 DWELL_S = 1.0e-6
 SPECTRUM_S = 0.5  # exposure of one EDS spectrum
-BUDGET_S = 900.0  # simulated seconds a controller may spend
+BUDGET_S = 700.0  # simulated seconds a controller may spend: not enough to image every cell and focus often
 ELEMENTS = ("Au", "Pt", "Fe", "Pd")  # what the particles may be made of (the configuration's particle_elements)
 
 
