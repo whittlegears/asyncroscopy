@@ -8,7 +8,8 @@
 #   * the sample has 40 regions: each has its own particle density, film thickness, element mix and particle size,
 #     and some are holes (twin/regions.py). Where to look, and where a spectrum is worth its time, now depends on place;
 #   * particle size follows the element mix by a hidden rule that only images and spectra together reveal;
-#   * the specimen is not flat (300 nm of relief), so one focus does not serve the whole map;
+#   * the specimen is not flat (100 nm of relief over lengths of 4 to 16 um, a slope of about 0.1), so one focus
+#     does not serve the whole map;
 #   * focus and astigmatism drift over 20 minutes to 6 hours, so a long map has to decide when to focus again.
 # The regions and the rule are in export_ground_truth, which agents never see.
 #
@@ -25,7 +26,7 @@ instrument:
       subpixel_atoms: true
       region_count: 40
       region_hole_fraction: 0.15
-      height_relief_m: 3.0e-7
-      height_relief_scale_m: 2.0e-6
+      height_relief_m: 1.0e-7
+      height_relief_scale_m: 1.6e-5
     focus_drift_m: 3.0e-8
     astigmatism_drift_m: 5.0e-9

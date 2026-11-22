@@ -207,7 +207,7 @@ class SampleModel(ParticleTable, Specimen):
             "radius_mean_m": p.radius_mean_m,
             "clusters": p.cluster_count,
             "support_texture": p.support_texture,
-            "regions": p.region_count,
+            "region_count": p.region_count,
             "height_relief_m": p.height_relief_m,
             "subpixel_atoms": p.subpixel_atoms,
         }
