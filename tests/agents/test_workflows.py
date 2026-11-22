@@ -347,10 +347,12 @@ def test_a_scan_running_at_the_console_is_named_and_the_run_puts_everything_back
     reply = "Error calling tool 'Twin_acquire_scanned_image': ApplicationServerException: Another scantask is already active"
     instrument, analysis, state = twin(lambda n: reply if busy["on"] else None)
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
-    assert record["state"] == "failed" and "a scan is already running on the microscope" in record["error"] and "resume" in record["error"]
+    # The run waits for a person to stop the live scan, with everything it changed put back meanwhile.
+    assert record["state"] == "waiting" and "live scan" in record["questions"][0]["question"], record
     assert state["taken"] == 0 and state["blanked"] and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
     busy["on"] = False
-    record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path,
+                                 answers={record["questions"][0]["id"]: "continue"}))
     assert record["state"] == "done" and state["taken"] == 4 and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
 
 
@@ -1076,3 +1078,55 @@ def test_loop_progress_and_latest_image_read_only_what_is_there():
              {"tool": "Scope_acquire_spectrum", "result": "s.h5\nspectrum", "error": False},
              {"tool": "Scope_acquire_scanned_image", "result": "Error: beam blanked", "error": True}]
     assert latest_image(calls) == "a.h5" and latest_image([]) is None
+
+
+ONE_IMAGE = '''"""Take one image."""
+
+from langgraph.graph import END, START, StateGraph
+
+from asyncroscopy.agents.workflows import Steps, Workflow, WorkflowState
+
+
+def build(use: Steps) -> StateGraph:
+    graph = StateGraph(WorkflowState)
+    graph.add_node("image", use.block("run_tool", tool="*_acquire_scanned_image", arguments={"detector_list": ["haadf"]}))
+    graph.add_edge(START, "image")
+    graph.add_edge("image", END)
+    return graph
+
+
+WORKFLOW = Workflow(name="one_image", summary="Take one image.", inputs={}, budget={"max_seconds": 60, "max_tool_calls": 10}, build=build)
+'''
+
+
+def test_the_microscopes_live_scan_pauses_the_run_for_a_person(tmp_path):
+    """AutoScript refuses an acquisition while its own live scan runs; the run asks a person to stop it, then retries."""
+    from asyncroscopy.agents.workflows.authoring import load_source
+
+    workflow = load_source(ONE_IMAGE)
+    busy = {"on": True}
+
+    def acquire(args):
+        if busy["on"]:
+            return ("Error: PyDs_PythonError: autoscript_core.common.ApplicationServerException: An unexpected error occurred in the "
+                    "application server. Another scantask is already active")
+        return "stem_image_HAADF_0001.h5"
+
+    instrument = FakeServer({"Scope_acquire_scanned_image": acquire})
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
+    assert record["state"] == "waiting", record
+    question = record["questions"][0]
+    assert "live scan" in question["question"] and question["options"] == ["continue"]
+
+    # Stopping the waiting run ends it at once; resuming it asks again while the live scan still runs.
+    assert stop_workflow(record["run_id"], tmp_path)["state"] == "stopped"
+    assert read_run(record["run_id"], tmp_path)["state"] == "stopped"
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow))
+    assert record["state"] == "waiting", record
+
+    # The person stops the live scan and continues: the image is taken.
+    busy["on"] = False
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow,
+                                 answers={record["questions"][0]["id"]: "continue"}))
+    assert record["state"] == "done", record
+    assert instrument.names()[-1] == "Scope_acquire_scanned_image"

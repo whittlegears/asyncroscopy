@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -109,6 +110,17 @@ def parse_reply(text: str) -> Any:
     return value
 
 
+# What AutoScript says when the microscope's own software is scanning (its live view) as an acquisition starts.
+LIVE_SCAN = re.compile(r"scan ?task is already active|another scan (?:task )?is (?:already )?(?:active|running)", re.IGNORECASE)
+# One option: the step starts over when answered and retries the call before it reads the answer, so a "stop"
+# answer could not stop it. Stopping the run (stop_workflow) ends it instead.
+LIVE_SCAN_QUESTION = {
+    "question": "The microscope's own scan (live view) is running, so the workflow cannot take its image. "
+                "Stop the live scan in the microscope software, then choose continue (or stop the run).",
+    "options": ["continue"],
+}
+
+
 class BlockContext:
     """What a block is given to work with. It holds the two endpoints, the stop switch and the budget.
 
@@ -183,15 +195,21 @@ class BlockContext:
         if checked:
             self.check()
         name = await self.resolve(pattern, server)
-        try:
-            result = await server.call(name, arguments or {})
-            text, error = result_text(result), bool(result.is_error)
-        except Exception as exc:
-            text, error = f"{type(exc).__name__}: {exc}", True
-        self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
-        if error or text.startswith("Error"):
+        while True:
+            try:
+                result = await server.call(name, arguments or {})
+                text, error = result_text(result), bool(result.is_error)
+            except Exception as exc:
+                text, error = f"{type(exc).__name__}: {exc}", True
+            self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
+            if not (error or text.startswith("Error")):
+                return parse_reply(text)
+            # The microscope's own scan (its live view) blocks every acquisition. A person can stop it: the run
+            # asks them, waits, and tries the call again; it fails only when they choose to stop.
+            if checked and self.on_ask is not None and LIVE_SCAN.search(text):
+                self.ask(dict(LIVE_SCAN_QUESTION))
+                continue
             raise BlockFailed(f"{name} failed: {text[:600]}")
-        return parse_reply(text)
 
     async def call(self, pattern: str, arguments: dict | None = None) -> Any:
         """Call the instrument tool matching ``pattern`` and return its parsed reply.

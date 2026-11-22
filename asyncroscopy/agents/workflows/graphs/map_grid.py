@@ -89,7 +89,7 @@ def build(use: Steps) -> StateGraph:
 WORKFLOW = Workflow(
     name="map_grid",
     summary="Map a square around the current stage position as a grid of scanned-image tiles, reached by image shift (the stage stays "
-            "still) or by moving the stage, then stitch it into one map.",
+            "still) or by moving the stage, then stitch it into one map. For 'an N by N grid' give tiles_per_side=N.",
     inputs=INPUTS,
     budget={"max_seconds": 7200, "max_tool_calls": 9000},
     build=build,

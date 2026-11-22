@@ -56,14 +56,15 @@ def test_a_command_the_device_does_not_describe_is_described_from_this_installat
     assert local_docs.describe("NoSuchDevice", "place_beam") == ("", "") == local_docs.describe("AutoScriptMicroscope", "no_such_command")
 
 
-def test_a_map_is_asked_for_by_its_tile_count():
+def test_a_map_is_asked_for_by_its_tile_count(tmp_path):
     from asyncroscopy.agents.workflows.runner import run_workflow
 
     instrument, analysis, state = twin()
-    record = asyncio.run(run_workflow("map_grid", {"tiles_per_side": 3, "fov_m": 1.0e-7}, instrument=instrument, analysis=analysis, durable=False))
+    record = asyncio.run(run_workflow("map_grid", {"tiles_per_side": 3, "fov_m": 1.0e-7}, instrument=instrument, analysis=analysis, durable=False,
+                                       state_dir=tmp_path))
     assert record["state"] == "done" and state["taken"] == 9, record
     assert record["outputs"]["plan"]["rows"] == 3 and record["outputs"]["plan"]["cols"] == 3
-    by_size = asyncio.run(run_workflow("map_grid", INPUTS, instrument=twin()[0], analysis=twin()[1], durable=False))
+    by_size = asyncio.run(run_workflow("map_grid", INPUTS, instrument=twin()[0], analysis=twin()[1], durable=False, state_dir=tmp_path))
     assert by_size["outputs"]["plan"]["rows"] == 2  # without a tile count the size decides
 
 

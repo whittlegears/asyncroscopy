@@ -111,9 +111,18 @@ def list_runs(state_dir: str | Path = DEFAULT_STATE_DIR) -> list[dict]:
 
 
 def stop_workflow(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict:
-    """Ask a run to stop before its next tool call. This works from another process and the cleanup still runs."""
-    read_run(run_id, state_dir)
+    """Ask a run to stop before its next tool call. This works from another process and the cleanup still runs.
+
+    A run waiting for a person's answer is not running, so nothing would read the stop request: it is marked stopped
+    here. resume_workflow continues it later, and its question is asked again.
+    """
+    record = read_run(run_id, state_dir)
     _stop_path(Path(state_dir), run_id).write_text(str(time.time()), encoding="utf-8")
+    if record.get("state") == "waiting":
+        record.pop("questions", None)
+        record.update(state="stopped", error="stopped by the operator while it waited for an answer", ended=time.time())
+        _record_path(Path(state_dir), run_id).write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
+        return record
     return {"run_id": run_id, "stopping": True}
 
 
