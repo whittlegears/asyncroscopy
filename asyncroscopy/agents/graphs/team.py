@@ -60,6 +60,7 @@ ROLE_PROMPTS = {
 - Lengths are metres. {map_rule}
 - Do only your step. Another agent stitches and analyses data: hand on the keys (run key, job id, spectrum keys).
 - Fix a refused call from its message and call again; never repeat a failing call unchanged.
+- A value the user gave (a position, field of view, defocus, dose) that is refused as outside the instrument's limits stays refused: report it with the limit, and never move to or set a value nobody asked for (such as the nearest allowed one).
 - Finish with one short paragraph: what you did and the keys you got.""",
     "analyst": """You analyse stored data for one step of a larger task. You cannot move or acquire anything.
 - Data are keys; look with view_data (format text for numbers and peaks) and list_data; never ask for raw arrays.

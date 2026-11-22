@@ -159,6 +159,15 @@ def test_a_failure_while_the_map_runs_aborts_it_before_releasing():
         ({"box_m": [-0.5, 0.5, -0.5, 0.5], "fov_m": 0.2}, "map the sample", {"box_m": [-5e-7, 5e-7, -5e-7, 5e-7], "fov_m": 2e-7}),  # micrometres
         ({}, "map the entire sample and tell me the composition", {"per_tile": ["eds_point"]}),
         ({"box_m": [0, 1e-6, 0, 1e-8], "fov_m": 2e-7}, "map a thin strip", {"box_m": [0, 1e-6, pytest.approx(-9.5e-8), pytest.approx(1.05e-7)]}),
+        # gemma4's box for "a 600 nm square" was 492 x 592 nm: the stated size is mapped, around the model's centre.
+        ({"box_m": [1.31e-7, 6.24e-7, -3.4e-8, 5.58e-7], "fov_m": 1.6e-7}, "map a 600 nm square around the current position",
+         {"box_m": [7.75e-8, 6.775e-7, -3.8e-8, 5.62e-7]}),
+        # A dose limit the user states is kept, and a larger one the model wrote is lowered to it.
+        ({"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 1.6e-7}, "map a 600 nm square, at most 1 electron per square angstrom",
+         {"dose_budget_e_per_a2": 1.0}),
+        ({"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 1.6e-7, "dose_budget_e_per_a2": 50}, "map a 600 nm square with no more than 5 e/Å²",
+         {"dose_budget_e_per_a2": 5.0}),
+        ({"box_m": [-3e-7, 3e-7, -3e-7, 3e-7], "fov_m": 1.6e-7}, "map a 600 nm square", {"dose_budget_e_per_a2": []}),
     ],
 )
 def test_plan_completion_repairs_small_model_slips(model_plan, request_text, expect):

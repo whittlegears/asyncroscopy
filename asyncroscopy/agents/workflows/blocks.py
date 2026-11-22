@@ -130,6 +130,10 @@ class BlockContext:
         # {"tool", "arguments"}. The runner restores them when a run ends without finishing and sets them again on resume.
         self.restores: dict[str, dict] = {}
         self._names: dict[int, list[str]] = {}
+        # For a client following the run: the node running now, and the latest loop node's count
+        # ({"node", "done", "total"}, plus "level" in a multi-level map). Set by Steps.block.
+        self.step: str | None = None
+        self.loop: dict | None = None
 
     def changed(self, name: str, set_call: dict, restore_call: dict) -> None:
         """Note a setting this run changed, so the runner puts it back if the run fails, stops or waits.

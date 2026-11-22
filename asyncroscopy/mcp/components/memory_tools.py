@@ -31,9 +31,19 @@ class MemoryTools:
         asyncroscopy's own agents choose them. Sources: INSTRUMENT.md by section, LESSONS.md one lesson each,
         experiments/<page> summaries. Data keys and ids are replaced by placeholders. budget: characters, at
         most 4000. Returns notes ([{source, text}], best first) and text (them written out, "" if none)."""
+        from asyncroscopy.agents.catalog import ToolCatalog
         from asyncroscopy.agents.memory import Memory
 
-        found = Memory.from_env().notes(request, max(0, min(int(budget), MAX_BUDGET_CHARS)))
+        memory = Memory.from_env()
+        # An instrument no agent has run on yet still has notes to give: INSTRUMENT.md seeded from this endpoint's
+        # own tools, as an agent's first run would (never over a person's edits or a team's shared notes).
+        if not memory.instrument_file.exists() and memory.shared_instrument_file() is None:
+            try:
+                info = self.server.discovery.endpoint_info()
+                memory.seed_instrument(ToolCatalog.from_info(info), stem=bool(info.get("stem_devices")))
+            except Exception:  # noqa: BLE001 - notes are a help; a seeding fault must not fail the call
+                pass
+        found = memory.notes(request, max(0, min(int(budget), MAX_BUDGET_CHARS)))
         return {"notes": [{"source": source, "text": text} for source, text in found],
                 "text": "\n".join(f"[{source}] {text}" for source, text in found)}
 

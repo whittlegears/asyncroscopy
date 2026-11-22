@@ -29,7 +29,7 @@ def role_of(name, stem=True, analysis_waits=True):
 TOOL_NAMES = [
     "run_job", "Mapper_reserve", "Mapper_start", "wait_for_job", "Mapper_results", "Mapper_release", "DigitalTwin_get_stage",
     "DigitalTwin_move_stage", "DigitalTwin_acquire_scanned_image",
-    "list_skills", "skills_for", "load_skill", "list_data", "view_data", "assemble_map", "score_map", "analysis_job_status",
+    "list_skills", "skills_for", "notes_for", "load_skill", "list_data", "view_data", "assemble_map", "score_map", "analysis_job_status",
     "analysis_job_results", "map_info", "get_region", "list_pois", "add_poi", "list_devices", "DigitalTwin_State",
 ]
 
@@ -46,7 +46,7 @@ def test_tools_are_split_by_role_and_redundant_or_operator_only_tools_are_hidden
     assert roles["view_data"] == roles["add_poi"] == roles["assemble_map"] == "analyst"
     # run_job and wait_for_job cover these so no specialist gets them.
     for hidden in ("Mapper_reserve", "Mapper_start", "Mapper_results", "Mapper_release", "analysis_job_status", "analysis_job_results",
-                   "list_skills", "skills_for", "DigitalTwin_State"):
+                   "list_skills", "skills_for", "notes_for", "DigitalTwin_State"):
         assert roles[hidden] is None, hidden
     assert role_of("Mapper_abort") == "operator"  # stopping stays possible
     assert role_of("XRDTwin_acquire_diffractogram") == "operator"  # a YAML-defined instrument lands in a role too

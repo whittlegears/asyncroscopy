@@ -138,3 +138,13 @@ def test_the_team_operator_on_a_mapped_afm_gets_the_afms_own_tools(endpoint, tmp
     roles = asyncio.run(TeamGraph(config).tools_by_role())
     operator = {t.name for t in roles["operator"]}
     assert {"AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwinJob_abort", "Mapper_abort"} <= operator
+
+
+def test_tools_for_agent_programs_are_never_given_to_a_model_under_any_shipped_profile():
+    from asyncroscopy.agents.profile import PROFILES
+    from asyncroscopy.mcp.agent_tools import tool_lists
+
+    for path in sorted(PROFILES.glob("*.yaml")):
+        lists = tool_lists(path)
+        for name in ("notes_for", "skills_for", "list_skills", "endpoint_info"):
+            assert not for_model(name, ["*"], lists), (path.name, name)

@@ -37,7 +37,7 @@ def edges_of(blueprint: dict) -> list[dict]:
 
 
 def lint(blueprint: dict, tool_names: list[str] | None = None, analysis_tool_names: list[str] | None = None,
-         blocks: dict[str, Block] | None = None) -> dict:
+         blocks: dict[str, Block] | None = None, switched_off: frozenset[str] = frozenset()) -> dict:
     """Check a blueprint from ``Workflow.blueprint()`` without running it.
 
     Returns {"ok", "problems", "name", "acts", "tools", "blocks", "needs_analysis"}. ``problems`` are sentences a
@@ -45,6 +45,8 @@ def lint(blueprint: dict, tool_names: list[str] | None = None, analysis_tool_nam
 
     ``tool_names`` are the instrument endpoint's tools. When given, every tool a block calls must be among them.
     ``analysis_tool_names`` does the same for the analysis server.
+    ``switched_off`` names nodes this run's inputs switch off (``switched_off_nodes``): the servers need not offer
+    their tools, so a map without EELS runs on an instrument that has none.
     """
     problems: list[str] = []
     blocks = blocks if blocks is not None else all_blocks()
@@ -53,12 +55,28 @@ def lint(blueprint: dict, tool_names: list[str] | None = None, analysis_tool_nam
     inputs = _lint_inputs(blueprint, problems)
     nodes, used, named = _lint_nodes(blueprint, inputs, blocks, problems)
     _lint_edges(blueprint, inputs, nodes, blocks, problems)
-    tools, analysis = _lint_tools(used, named, tool_names, analysis_tool_names, problems)
+    if switched_off:
+        _, _, named = _lint_nodes({**blueprint, "nodes": {n: b for n, b in (blueprint.get("nodes") or {}).items() if n not in switched_off}},
+                                  inputs, blocks, [])
+    on = {n: b for n, b in used.items() if n not in switched_off}
+    tools, analysis = _lint_tools(on, named, tool_names, analysis_tool_names, problems)
     return {
         "ok": not problems, "problems": problems, "name": name,
         "acts": any(b.acts for b in used.values()), "tools": tools + analysis, "blocks": sorted({b.name for b in used.values()}),
         "needs_analysis": bool(analysis),
     }
+
+
+def switched_off_nodes(blueprint: dict, inputs: dict) -> frozenset[str]:
+    """The nodes whose ``on`` is false for these (checked) inputs: ``on: false`` or ``on: "{inputs.name}"`` with that
+    input false. Such a node does nothing in this run."""
+    off = set()
+    for node, body in (blueprint.get("nodes") or {}).items():
+        on = (body.get("with") or {}).get("on", True)
+        match = re.fullmatch(r"\{inputs\.(\w+)\}", on) if isinstance(on, str) else None
+        if on is False or (match and inputs.get(match.group(1)) is False):
+            off.add(node)
+    return frozenset(off)
 
 
 def _lint_heading(blueprint: dict, problems: list[str]) -> Any:

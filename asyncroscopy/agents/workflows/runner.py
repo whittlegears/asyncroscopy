@@ -41,6 +41,7 @@ from asyncroscopy.core.fileio import file_lock
 
 from ..mcp_tools import McpServer
 from .blocks import BlockContext, BlockFailed, Stopped, all_blocks
+from .checks import switched_off_nodes
 from .graph import Workflow, get_workflow, recursion_limit
 
 DEFAULT_STATE_DIR = Path("outputs/workflows")
@@ -64,7 +65,26 @@ def progress(run_id: str) -> dict | None:
     if ctx is None:
         return None
     acquisitions = sum(1 for c in ctx.calls if "acquire" in c["tool"] and not c["error"])
-    return {"tool_calls": len(ctx.calls), "acquisitions": acquisitions, "last_call": ctx.calls[-1]["tool"] if ctx.calls else None}
+    out = {"tool_calls": len(ctx.calls), "acquisitions": acquisitions, "last_call": ctx.calls[-1]["tool"] if ctx.calls else None}
+    if ctx.step:
+        out["step"] = ctx.step
+    if ctx.loop:
+        out["loop"] = dict(ctx.loop)
+    image = latest_image(ctx.calls)
+    if image:
+        out["latest_image"] = image
+    return out
+
+
+def latest_image(calls: list[dict]) -> str | None:
+    """The data key of the newest image a run acquired (its reply starts with the key), or None."""
+    for call in reversed(calls):
+        if call.get("error") or "acquire" not in call["tool"] or "image" not in call["tool"]:
+            continue
+        first = str(call.get("result") or "").strip().split("\n", 1)[0].strip()
+        if first and " " not in first and "." in first:
+            return first
+    return None
 
 
 def _record_path(state_dir: Path, run_id: str) -> Path:
@@ -144,14 +164,19 @@ async def run_workflow(
     except Exception as exc:
         record["problems"] = [f"the endpoint could not be reached to check the workflow against its tools: {type(exc).__name__}: {exc}"]
         return record
-    checked = workflow.lint(offered, offered_analysis)
-    record["problems"] = list(checked["problems"])
-    if needs_analysis and analysis is None:
-        record["problems"].append("this workflow needs an analysis server, and none is configured (mcp.analysis_url)")
+    input_problem = None
     try:
         record["inputs"] = workflow.check_inputs(inputs)
     except ValueError as exc:
-        record["problems"].append(str(exc))
+        input_problem = str(exc)
+    # A node this run switches off (eels: false) needs no tool: a map without EELS runs where there is none.
+    off = switched_off_nodes(record["blueprint"], record["inputs"]) if input_problem is None else frozenset()
+    checked = workflow.lint(offered, offered_analysis, switched_off=off)
+    record["problems"] = list(checked["problems"])
+    if needs_analysis and analysis is None:
+        record["problems"].append("this workflow needs an analysis server, and none is configured (mcp.analysis_url)")
+    if input_problem:
+        record["problems"].append(input_problem)
     if record["problems"]:
         return record
     return await _drive(record, workflow, state_dir, instrument, analysis, durable, start=True)

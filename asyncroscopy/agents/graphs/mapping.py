@@ -26,6 +26,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy import settings
 from asyncroscopy.agents.config import AgentConfig
+from asyncroscopy.agents.goals import DOSE
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from asyncroscopy.contracts import load, validate
 
@@ -249,13 +250,16 @@ class MappingGraph:
         else:
             box = None
         # Read a size stated in the request here, because small models often fall back to the whole sample.
-        # Centre it on the stage unless the model's box already has that size.
+        # The stated size is always the size mapped: gemma4 wrote a 492 x 592 nm box for "a 600 nm square".
+        # The model's centre is kept when its box is close to that size, otherwise the stage is the centre.
         size = MappingGraph._requested_size(request) if from_model else None
         if size is not None:
             width, height = size
-            if box is None or not (abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height):
+            if box is not None and abs((box[1] - box[0]) - width) <= 0.3 * width and abs((box[3] - box[2]) - height) <= 0.3 * height:
+                x, y = (box[0] + box[1]) / 2, (box[2] + box[3]) / 2
+            else:
                 x, y = stage_xy
-                box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
+            box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         if box is None:
             # The whole sample is hours of beam time, so map it only when the request asks.
             if not WHOLE_SAMPLE.search(request):
@@ -272,6 +276,13 @@ class MappingGraph:
                 mid = (box[lo] + box[hi]) / 2
                 box[lo], box[hi] = mid - fov / 2, mid + fov / 2
         plan["box_m"] = box
+        # A dose limit the user states is always in the plan, so the Mapper refuses a plan above it: gemma4 left it
+        # out of a plan for "at most 1 electron per square angstrom" and the map ran at the default dose.
+        stated = DOSE.search(request) if from_model else None
+        if stated:
+            limit = float(stated.group(1))
+            given = plan.get("dose_budget_e_per_a2")
+            plan["dose_budget_e_per_a2"] = min(limit, float(given)) if isinstance(given, (int, float)) and given > 0 else limit
         per_tile = [p for p in plan.get("per_tile") or [] if p in ("eds_point", "eds_map")]
         if not from_model:
             return MappingGraph._set_per_tile(plan, per_tile)

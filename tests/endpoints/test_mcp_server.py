@@ -608,6 +608,23 @@ class TestMCPRegistration:
         assert server.memory.notes_for("unrelated words xyz")["notes"] == []
         assert server.memory.notes_for.__fastmcp__.annotations.read_only_hint  # clients may run it without asking
 
+    def test_notes_for_seeds_instrument_notes_from_the_endpoints_own_tools_once(self, monkeypatch, tmp_path) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        info = {"stem_devices": ["Scope"], "tools": {
+            "Mapper_start": {"device": "Mapper", "command": "start", "role": "job.start"},
+            "Scope_get_stage": {"device": "Scope", "command": "get_stage", "role": "read"},
+            "run_job": {}}}
+        monkeypatch.setattr(server.discovery, "endpoint_info", lambda: info)
+        found = server.memory.notes_for("which job devices run a Mapper plan")
+        notes = tmp_path / "memory" / "INSTRUMENT.md"
+        assert notes.exists() and "Mapper" in notes.read_text(encoding="utf-8")
+        assert found["notes"] and found["notes"][0]["source"] == "INSTRUMENT.md"
+        notes.write_text("# Instrument\n\n## Limits\n\n- a person's own words\n", encoding="utf-8")
+        server.memory.notes_for("limits")
+        assert "a person's own words" in notes.read_text(encoding="utf-8")  # never written over
+
     def test_skills_for_writes_out_the_skills_a_request_matches(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)

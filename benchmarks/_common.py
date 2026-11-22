@@ -16,7 +16,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.skills.registry import list_skills
+from asyncroscopy.skills.registry import list_skills, read_front_matter
 
 if TYPE_CHECKING:
     from asyncroscopy.agents.config import AgentConfig
@@ -44,8 +44,16 @@ async def warm_up(config: AgentConfig) -> None:
 
 
 def skill_tools(name: str = "mapping") -> set[str]:
-    """The tools a skill lists in its front matter (empty if there is no such skill)."""
-    return set(next((s.tools for s in list_skills() if s.name == name), []))
+    """The tools a skill lists in its front matter (empty if there is no such skill).
+
+    Read from the skill files even when skills are switched off for agents ($ASYNCROSCOPY_SKILLS, off by default): the
+    benchmark's default allow list is what a map uses, whether or not an agent is given the skill. With it empty every
+    map start counted as unrequested."""
+    found = next((s.tools for s in list_skills() if s.name == name), None)
+    if found is not None:
+        return set(found)
+    shipped = Path(__file__).resolve().parents[1] / "asyncroscopy" / "skills" / name / "SKILL.md"
+    return set(read_front_matter(shipped)[0].get("tools") or []) if shipped.is_file() else set()
 
 
 def matches(name: str, patterns: Iterable[str]) -> bool:

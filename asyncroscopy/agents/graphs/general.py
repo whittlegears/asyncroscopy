@@ -90,7 +90,10 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     extra = (SEARCH_RULE if {"find_tools", "call_tool"} <= names else "") + (stem_rules if stem else "")
     prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
+    catalog = await agent_config.catalog()
+    # The first run on an instrument writes INSTRUMENT.md from its tools (never over a person's edits), as the team does.
+    await asyncio.to_thread(memory.seed_instrument, catalog, stem)
     middleware = build_middleware(agent_config.middleware, prompt=prompt, tool_names=names, offered=offered, tools=tools, memory=memory.notes_for,
                                   num_ctx=agent_config.num_ctx, deadline=agent_config.deadline, claim_check=configurable.get("claim_check"),
-                                  catalog=await agent_config.catalog(), profile=agent_config.agent_profile())
+                                  catalog=catalog, profile=agent_config.agent_profile())
     return create_agent(agent_config.chat_model(), tools, system_prompt=prompt, middleware=middleware)

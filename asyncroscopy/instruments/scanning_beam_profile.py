@@ -33,6 +33,8 @@ from asyncroscopy.routines.grid import max_exposures
 
 BEAM_COMMANDS = ("move_stage", "get_stage", "set_fov", "acquire_scanned_image", "blank_beam", "unblank_beam")
 DOSE_BUDGET = "dose_e_per_a2"
+# Spectrometers: never an imaging detector in a map plan's detectors.
+SPECTRUM_DETECTORS = frozenset({"eds", "edx", "eels", "cl", "wds"})
 BEAM_SETTINGS = {
     "scan_device_address": Setting(str, "asyncroscopy/scan/default", "SCAN settings device (imsize, dwell_time, scan_region)."),
     "max_beam_current_age_s": Setting(
@@ -135,6 +137,12 @@ class ScanningBeamProfile(InstrumentProfile):
                                  f"{self.ctx.settings.microscope_device_address} is a {found}: set this Mapper's instrument_profile to one for it")
         if "detectors" not in p:
             p["detectors"] = [str(self.instrument().read_attribute("default_detector").value).lower()]
+        # A spectrometer is not an imaging detector: a plan naming one there would map with no spectra at all
+        # (gemma4 wrote detectors: [haadf, eds] for "an EDS spectrum with each image").
+        spectra = [d for d in p["detectors"] if str(d).lower() in SPECTRUM_DETECTORS]
+        if spectra:
+            hint = ' For an EDS spectrum at each tile give "per_tile": ["eds_point"].' if "per_tile" in self.plan_fields else ""
+            raise ValueError(f"detectors lists imaging detectors (such as haadf); {', '.join(map(str, spectra))} records spectra, not images.{hint}")
 
     def current_xy(self) -> tuple[float, float]:
         x, y = list(self.instrument().get_stage())[:2]

@@ -228,6 +228,23 @@ def test_lint_against_the_endpoints_tools():
     assert problems == ["the instrument endpoint offers no tool matching *_move_stage, which a block of this workflow calls"]
 
 
+
+def test_a_node_switched_off_by_the_runs_inputs_needs_no_tool():
+    from asyncroscopy.agents.workflows.checks import switched_off_nodes
+
+    instrument, analysis, _ = twin()
+    names = [n for n in instrument.tools if not n.endswith("_acquire_eels_spectrum")]
+    workflow = get_workflow("map_sample")
+    blueprint = workflow.blueprint()
+    missing = "the instrument endpoint offers no tool matching *_acquire_eels_spectrum, which a block of this workflow calls"
+    assert missing in workflow.lint(names, list(analysis.tools))["problems"]  # without inputs every node counts
+    off = switched_off_nodes(blueprint, workflow.check_inputs({"size_m": 1e-6, "fov_m": 3e-7}))
+    assert "eels" in off and "eds" in off
+    assert missing not in workflow.lint(names, list(analysis.tools), switched_off=off)["problems"]
+    on = switched_off_nodes(blueprint, workflow.check_inputs({"size_m": 1e-6, "fov_m": 3e-7, "eels": True}))
+    assert "eels" not in on and missing in workflow.lint(names, list(analysis.tools), switched_off=on)["problems"]
+
+
 def test_inputs_outside_their_range_are_refused():
     workflow = get_workflow("map_grid")
     assert workflow.check_inputs({"size_m": "4e-7"})["size_m"] == 4e-7
@@ -1030,3 +1047,32 @@ def test_a_run_being_driven_is_not_resumed_a_second_time(tmp_path):
     with _run_lock(tmp_path, "busy"):  # as if another process were driving it now
         with pytest.raises(ValueError, match="being run now"):
             run(resume_workflow("busy", instrument=instrument, analysis=analysis, state_dir=tmp_path))
+
+
+def test_a_running_map_reports_its_step_its_tiles_done_of_total_and_its_newest_image(tmp_path):
+    from asyncroscopy.agents.workflows import runner
+
+    seen = []
+
+    def watch(n):
+        seen.append(runner.progress("watched"))  # before acquisition n (0-based) is taken
+
+    instrument, analysis, _ = twin(on_acquire=watch)
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, run_id="watched", state_dir=tmp_path))
+    assert record["state"] == "done"
+    assert seen[0]["step"] == "tile" and "loop" not in seen[0] and "latest_image" not in seen[0]
+    assert seen[2]["loop"] == {"node": "tile", "done": 2, "total": 4}  # two tiles taken, the third under way
+    assert seen[2]["latest_image"] == "stem_image_HAADF_0002.h5"
+    assert runner.progress("watched") is None  # a finished run is no longer live
+
+
+def test_loop_progress_and_latest_image_read_only_what_is_there():
+    from asyncroscopy.agents.workflows.graph import loop_progress
+    from asyncroscopy.agents.workflows.runner import latest_image
+
+    assert loop_progress("tile", {"index": 4, "remaining": 20, "level": 1}) == {"node": "tile", "done": 5, "total": 25, "level": 1}
+    assert loop_progress("tile", {"index": True, "remaining": 1}) is None and loop_progress("plan", {"tiles": []}) is None
+    calls = [{"tool": "Scope_acquire_scanned_image", "result": "a.h5\nimage", "error": False},
+             {"tool": "Scope_acquire_spectrum", "result": "s.h5\nspectrum", "error": False},
+             {"tool": "Scope_acquire_scanned_image", "result": "Error: beam blanked", "error": True}]
+    assert latest_image(calls) == "a.h5" and latest_image([]) is None

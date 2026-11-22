@@ -51,6 +51,7 @@ from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_a
 
 from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
+from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 from benchmarks.evaluate import RunData
 from benchmarks.evaluate import score_run as evaluator_scores
@@ -252,6 +253,8 @@ class Live:
         instrument does not answer (a run after it would test a wedged device, not the agent)."""
         steps = [("_move_stage", {"position": state.get("stage")}, state.get("stage")),
                  ("_set_fov", {"fov": state.get("fov")}, state.get("fov")), ("_set_defocus", {"defocus": state.get("defocus")}, state.get("defocus"))]
+        # A run may leave a long move under way (an agent drove the stage to its edge): the move home is refused until it ends.
+        await self.wait_for_stage()
         for suffix, args, value in steps:
             if value is None or not self.tool(suffix):
                 continue
@@ -953,7 +956,10 @@ async def main(args: argparse.Namespace) -> int:
             counted = [r for r in rows if not r.get("infra_error")]
             results["workflows"][f"{wf['name']}/{runner}"] = {"passed": sum(r["ok"] for r in counted), "of": len(counted), "infra_errors": len(rows) - len(counted), "rows": rows}
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
-    await live.restore(baseline)
+    try:
+        await live.restore(baseline)
+    except InfraError as exc:  # every row is in; a stage left away from home is reported, not a reason to lose the table
+        print(f"warning: the instrument was not put back as the suite found it: {exc}", flush=True)
     results["passed"] = sum(v["passed"] for v in results["workflows"].values())
     results["of"] = sum(v["of"] for v in results["workflows"].values())
     results["sleepwalking_calls"] = sum(len(r.get("sleepwalking", [])) for v in results["workflows"].values() for r in v["rows"])
@@ -971,7 +977,8 @@ if __name__ == "__main__":
     parser.add_argument("--stack", default="twin", help="Which stack is running: a name from benchmarks/stacks.yaml (twin, large, xrd) or a workflow file's stacks:.")
     parser.add_argument("--graph", default=None, help="An extra runner: module:function returning a chat graph, run as 'custom'.")
     parser.add_argument("--n", type=int, default=1, help="Runs per workflow and runner.")
-    parser.add_argument("--model", default=settings.get().model or "qwen3:8b")
+    # The agents' own default: ASYNCROSCOPY_MODEL, else the default agent profile's model.
+    parser.add_argument("--model", default=settings.get().model or load_profile().model)
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")
     parser.add_argument("--evaluators", default=",".join(EVALUATORS),

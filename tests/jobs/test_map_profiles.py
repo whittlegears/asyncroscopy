@@ -186,6 +186,16 @@ def test_the_sem_profile_refuses_a_stem_and_a_stem_detector_on_the_sem(monkeypat
     assert results["state"] == "failed"
 
 
+
+def test_a_spectrometer_named_as_an_imaging_detector_is_refused_with_the_field_for_spectra(mapper_proxy):
+    plan = {"box_m": [-1e-7, 1e-7, -1e-7, 1e-7], "fov_m": 1e-7, "overlap": 0.0, "imsize": 16, "stitch": False}
+    refused = call(mapper_proxy, "reserve", {"plan": {**plan, "detectors": ["haadf", "eds"]}})
+    assert refused["error"]["code"] == "plan_rejected", refused
+    assert "records spectra" in refused["error"]["message"] and '"per_tile": ["eds_point"]' in refused["error"]["message"]
+    accepted = call(mapper_proxy, "reserve", {"plan": {**plan, "detectors": ["haadf"]}})
+    assert "reservation_id" in accepted, accepted
+    call(mapper_proxy, "release", {"reservation_id": accepted["reservation_id"]})  # the Mapper is shared by later tests
+
 def test_the_image_shift_a_map_may_use_is_the_instruments_own(sem_mapper_proxy, sem_twin_proxy):
     assert sem_twin_proxy.image_shift_limit_m == pytest.approx(1e-6)
     assert device("asyncroscopy/mapper/sem").profile().image_shift_limit_m == pytest.approx(1e-6)

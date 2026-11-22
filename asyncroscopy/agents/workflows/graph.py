@@ -70,6 +70,20 @@ class WorkflowState(TypedDict, total=False):
     visits: Annotated[dict, _merge]
 
 
+def loop_progress(node: str, result: Any) -> dict | None:
+    """How far a loop node is ({"node", "done", "total"}, with "level" when it has one), from the ``index`` (0-based)
+    and ``remaining`` its block reports for each visit; None for a node that reports no count."""
+    if not isinstance(result, dict):
+        return None
+    index, remaining = result.get("index"), result.get("remaining")
+    if not (isinstance(index, int) and isinstance(remaining, int)) or isinstance(index, bool) or index < 0 or remaining < 0:
+        return None
+    out = {"node": node, "done": index + 1, "total": index + 1 + remaining}
+    if isinstance(result.get("level"), int):
+        out["level"] = result["level"]
+    return out
+
+
 class Steps:
     """Passed to a workflow's ``build``. It makes graph nodes from blocks and routers from conditions for one run.
 
@@ -99,7 +113,11 @@ class Steps:
                 raise BlockFailed(f"node {node}: {exc.args[0]}") from exc
             defaults = {k: v["default"] for k, v in chosen.inputs.items() if "default" in v}
             args = {**defaults, **args}
+            if ctx is not None:
+                ctx.step = node
             result = await chosen.run(ctx, args, outputs.get(node))
+            if ctx is not None:
+                ctx.loop = loop_progress(node, result) or ctx.loop
             missing = sorted(set(chosen.outputs) - set(result or {}))
             if missing:
                 raise BlockFailed(f"node {node}: block {chosen.name} did not give its output(s) {missing}")
@@ -224,7 +242,8 @@ class Workflow:
                 pass
         return digest.hexdigest()
 
-    def lint(self, tool_names: list[str] | None = None, analysis_tool_names: list[str] | None = None) -> dict:
+    def lint(self, tool_names: list[str] | None = None, analysis_tool_names: list[str] | None = None,
+             switched_off: frozenset[str] = frozenset()) -> dict:
         """Check the workflow without running it. Returns the result of ``checks.lint`` plus this workflow's "hash".
 
         The graph is compiled first, so anything LangGraph refuses is reported in its own words.
@@ -235,7 +254,7 @@ class Workflow:
         except Exception as exc:
             return {"ok": False, "problems": [f"the graph could not be built: {exc.args[0] if exc.args else type(exc).__name__}"],
                     "name": self.name, "hash": None, "acts": False, "tools": [], "blocks": [], "needs_analysis": False}
-        return {**lint(blueprint, tool_names, analysis_tool_names), "hash": self.hash()}
+        return {**lint(blueprint, tool_names, analysis_tool_names, switched_off=switched_off), "hash": self.hash()}
 
     def check_inputs(self, given: dict | None) -> dict:
         """Return a run's inputs, the declared defaults with ``given`` on top. Raises ValueError for a bad one."""

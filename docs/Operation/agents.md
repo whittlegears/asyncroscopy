@@ -127,7 +127,7 @@ The agent keeps notes as plain Markdown in `$ASYNCROSCOPY_AGENT_MEMORY` (default
 
 | File | What | Written by |
 | :-- | :-- | :-- |
-| `INSTRUMENT.md` | What the instrument is: devices, jobs, conventions, limits, samples | Seeded from the tool list on first use; then you |
+| `INSTRUMENT.md` | What the instrument is: devices, jobs, conventions, limits, samples | Seeded from the tool list by the first general or team run, or the first `notes_for` call; then you |
 | `LESSONS.md` | One dated line per lesson ("- 2026-10-28: ...") | A goal run that was not met; you |
 | `experiments/<date>_<run>.md` | Request, goal, steps, keys produced, outcome, issues | Every goal run |
 | `skills/<name>/SKILL.md` | Skills learned from successful runs | Goal runs that were met, with `ASYNCROSCOPY_LEARN_SKILLS` on (drafts) |
@@ -136,7 +136,7 @@ Once per run the sections that share the most words with the request are added t
 
 `$ASYNCROSCOPY_INSTRUMENT_NOTES` names a team's own instrument notes kept in its repository (for example `configs/instrument_notes/raman.md`); they are read as well, and no `INSTRUMENT.md` is seeded then.
 
-Other agent programs read the same notes through the endpoint's `notes_for(request, budget)` tool (read only, not given to models): it returns the matching sections chosen the same way, as `notes` (`source`, `text`, best first) and `text`, with keys already replaced. Angstrom uses it to add the instrument's notes to its knowledge library for each request.
+Other agent programs read the same notes through the endpoint's `notes_for(request, budget)` tool (read only, not given to models): it returns the matching sections chosen the same way, as `notes` (`source`, `text`, best first) and `text`, with keys already replaced. On an instrument with no notes yet it seeds `INSTRUMENT.md` first. Angstrom uses it to add the instrument's notes to its knowledge library for each request.
 
 Nothing an agent writes here is reviewed before another run reads it, so it is kept small and checked: a lesson is one short line with keys and ids taken out, refused if it advises getting around safety, never added twice; `LESSONS.md` keeps the newest 100 and `experiments/` the newest 200 pages.
 
