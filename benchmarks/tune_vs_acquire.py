@@ -114,18 +114,19 @@ class FocusDriftTwin(DigitalTwin):
 
     def init_device(self) -> None:
         super().init_device()
-        self._focus_drift = 0.0
+        # Not _focus_drift: the twin's own focus drift (a FocusDrift) has that name.
+        self._bench_drift_m_per_s = 0.0
         self._drift_t0 = 0.0
         self._frame_overhead_s = 0.0
         self.last_frame_focus: dict | None = None
 
     def set_focus_drift(self, rate_m_per_s: float) -> None:
         """Bench hook, not a Tango command: C1 grows by ``rate`` per simulated second from now on."""
-        self._focus_drift, self._drift_t0 = float(rate_m_per_s), self._clock.now()
+        self._bench_drift_m_per_s, self._drift_t0 = float(rate_m_per_s), self._clock.now()
 
     def _aberrations(self) -> dict:
         ab = super()._aberrations()
-        drift = getattr(self, "_focus_drift", 0.0)
+        drift = getattr(self, "_bench_drift_m_per_s", 0.0)
         if drift:
             ab["C10"] = float(ab.get("C10", 0.0)) + drift * (self._clock.now() - self._drift_t0) * 1e9
         return ab

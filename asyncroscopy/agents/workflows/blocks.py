@@ -146,6 +146,8 @@ class BlockContext:
         # ({"node", "done", "total"}, plus "level" in a multi-level map). Set by Steps.block.
         self.step: str | None = None
         self.loop: dict | None = None
+        # Whether the run's workflow has a block that acts on the instrument: two such runs never drive it at once.
+        self.acts = False
 
     def changed(self, name: str, set_call: dict, restore_call: dict) -> None:
         """Note a setting this run changed, so the runner puts it back if the run fails, stops or waits.

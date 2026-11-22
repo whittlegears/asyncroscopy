@@ -263,6 +263,7 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
     )
     config = {"configurable": {"thread_id": run_id}, "recursion_limit": recursion_limit(blueprint)}
     used = [all_blocks()[b["block"]] for b in blueprint["nodes"].values()]
+    ctx.acts = any(block.acts for block in used)
 
     def save(**changes: Any) -> None:
         record.update(changes, calls=record["calls_before"] + len(ctx.calls),
@@ -278,6 +279,14 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
             latest = read_run(run_id, state_dir)
             if latest.get("state") == "done":
                 return latest
+        # One run at a time drives the instrument: on the twin a second map found the beam blanked by the first one's
+        # tiles and failed; on an instrument the two would move the stage and the scan under each other.
+        driving = [other for other, live in LIVE.items() if other != run_id and live.acts]
+        if ctx.acts and driving:
+            record["problems"] = [f"workflow run {driving[0]} is driving the instrument; wait for it (workflow_status) or stop it "
+                                  "(stop_workflow), then start this one"]
+            record["state"] = "refused"
+            return record
         LIVE[run_id] = ctx
         try:
             return await _drive_checked(record, workflow, state_dir, ctx, config, used, save, durable, start, answers or {})

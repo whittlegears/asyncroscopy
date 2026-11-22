@@ -1130,3 +1130,21 @@ def test_the_microscopes_live_scan_pauses_the_run_for_a_person(tmp_path):
                                  answers={record["questions"][0]["id"]: "continue"}))
     assert record["state"] == "done", record
     assert instrument.names()[-1] == "Scope_acquire_scanned_image"
+
+
+def test_a_second_run_that_drives_the_instrument_is_refused_while_one_is_running(tmp_path):
+    from asyncroscopy.agents.workflows.blocks import BlockContext
+    from asyncroscopy.agents.workflows.runner import LIVE
+
+    instrument, analysis, _ = twin()
+    other = BlockContext(instrument)
+    other.acts = True
+    LIVE["mapping-now"] = other
+    try:
+        record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+        assert record["state"] == "refused" and "mapping-now is driving the instrument" in record["problems"][0]
+        assert instrument.names() == []  # nothing was sent
+        other.acts = False  # a run that only reads does not hold the instrument
+        assert run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))["state"] == "done"
+    finally:
+        LIVE.pop("mapping-now", None)
