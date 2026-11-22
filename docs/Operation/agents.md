@@ -154,6 +154,16 @@ A procedure whose calls are the same every time is a LangGraph workflow (`asyncr
 
 A workflow runs in the workflow server's process (the analysis server started with `asyncroscopy.agents.workflows.analysis_host`), so every instrument call goes through the endpoint's safety policy and trace, it can be stopped (`stop_workflow`) and resumed, and its cleanup blanks the beam whatever happens. A finished run's reply lists the tools it called (`tools_called`), so the goal checker and the claim check count its acquisitions and moves as the agent's own. A skill with the older `run:` list is listed as unavailable, with the reason.
 
+One run at a time acts on the instrument. Two maps running together undo each other: each blanks the beam and sets the image shift and field of view for its own tile, and the other's next image is taken with them. So the instrument endpoint gives turns (`take_turn`, `give_turn`, `turn_status`; `asyncroscopy/mcp/components/turns.py`), and they hold across processes: a run started from the command line and one started through the agent server queue behind each other.
+
+- A workflow with a block that acts on the instrument queues for the turn before its first call. Until its turn comes its state is `queued`, and `queue` in its record says its place and which runs are ahead. It starts by itself; `stop_workflow` takes it out of the line.
+- A workflow that only reads data or analyses (stitching, scoring) takes no turn and starts at once, beside anything else.
+- A run gives the turn back as soon as no acting block can still run, after blanking the beam. `map_grid` goes home and then stitches, so the next map starts while it is stitched. `map_4x4` goes home after its stitch, and `map_sample` stitches between its levels, so those two hold the instrument until they end.
+- While a run holds the turn, the endpoint refuses every tool that acts to any other caller, an agent included, with `instrument_busy`. Tools that only read still work, and so does every stop (blanking the beam, an abort, `stop_all`).
+- The holder renews its turn every 15 s. A run whose process died loses it 60 s after its last renewal, and a queued run that stops asking loses its place after 30 s.
+- The turn is kept by the agent endpoint's process. The operator endpoint is a separate process and is not bound by it, and a Mapper job started with `run_job` before any run took the turn is not known to it.
+- An endpoint without `take_turn` gives no turns: there a second acting run in the same process is refused, as before.
+
 ## Learned skills
 
 After a goal run the checker found **met**, the run's successful calls are turned into a draft skill: the steps in order (repeated waits collapsed) with their arguments, data keys and job ids replaced by placeholders, `tools:` limited to the tools actually used, and provenance (runs, dates, model, success count) in its front matter. One short model call names it and writes its description and keywords. The same tool sequence succeeding again raises the success count of the existing draft instead of making a new one. A run that was not met adds a lesson to `LESSONS.md` instead.

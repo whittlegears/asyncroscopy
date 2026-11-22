@@ -588,7 +588,8 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "notes_for", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"}
+        assert set(calls) == {"list_data", "view_data", "list_devices", "list_skills", "load_skill", "skills_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "notes_for", "endpoint_info", "action_space", "find_tools", "call_tool", "stop_all",
+                              "take_turn", "give_turn", "turn_status"}
 
     def test_notes_for_serves_the_matching_agent_memory_read_only(self, monkeypatch, tmp_path) -> None:
         from asyncroscopy.agents.memory import Memory

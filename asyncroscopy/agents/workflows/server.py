@@ -40,9 +40,10 @@ from .library import Library, needs_approval
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
-RECORD_KEYS = ("run_id", "workflow", "state", "problems", "error", "questions", "inputs", "outputs", "at_node", "cleanup", "unrestored",
+RECORD_KEYS = ("run_id", "workflow", "state", "queue", "problems", "error", "questions", "inputs", "outputs", "at_node", "cleanup", "unrestored",
                "calls", "tools_called", "started", "ended")
 OUTPUT_CHARS = 1500
+GOING = ("running", "queued")  # a run in one of these has a process driving it, or waiting to
 
 
 def requester() -> str | None:
@@ -92,13 +93,16 @@ def _reply(record: dict, state_dir: Path | None = None) -> dict:
     out = {k: record[k] for k in RECORD_KEYS if record.get(k) not in (None, [], {})}
     if "outputs" in out:
         out["outputs"] = _brief(out["outputs"])
-    elsewhere = state_dir if record.get("state") == "running" else None
+    elsewhere = state_dir if record.get("state") in GOING else None
     live = runner.progress(record["run_id"], elsewhere) if record.get("run_id") else None
     if live:
         out["progress"] = live
     state = out.get("state")
     if state == "running":
         out["next"] = f"still going: call workflow_status with run_id {record['run_id']} and wait_s {MAX_WAIT_S:.0f} again"
+    elif state == "queued":
+        out["next"] = (f"another run holds the instrument ('queue' says which); this one starts by itself when its turn comes. Call "
+                       f"workflow_status with run_id {record['run_id']} and wait_s {MAX_WAIT_S:.0f} again, or stop_workflow to leave the queue")
     elif state == "waiting":
         out["next"] = ("the workflow asks the user a question and does nothing until it is answered. Put each question to the user in "
                        "its own words (with its options; if it has 'show', show them that first, a data key with view_data) and end your "
@@ -179,7 +183,7 @@ class WorkflowServer:
                 return {"run_id": run_id, "state": "failed", "error": f"{type(task.exception()).__name__}: {task.exception()}"}
             return {"error": f"there is no workflow run {run_id!r}; call list_runs"}
         # A run another process drives (it holds the run's lock) is still going; one nobody drives was cut off.
-        if record["state"] == "running" and (task is None or task.done()) and not runner.driven_elsewhere(run_id, self.state_dir):
+        if record["state"] in GOING and (task is None or task.done()) and not runner.driven_elsewhere(run_id, self.state_dir):
             record["state"], record["error"] = "stopped", "the workflow server was restarted while this run was going"
         return _reply(record, self.state_dir)
 
@@ -251,11 +255,9 @@ class WorkflowServer:
             a value outside an input's range is refused, never adjusted. The workflow runs by itself, in the
             background; this waits up to wait_s (at most 100) and returns the result if it finished, otherwise
             state 'running' with a run_id for workflow_status. state 'waiting' means it asks the user a question
-            ('questions'); 'next' always says what to do. One workflow runs at a time. The result's outputs hold
-            data keys (a stitched map's key is outputs.stitch.map)."""
-            going = server._running()
-            if going:
-                return {"error": f"workflow run {going} is still going; call workflow_status with it, or stop_workflow"}
+            ('questions'); 'next' always says what to do. One workflow acts on the instrument at a time: started
+            while another is acting, this one is 'queued' and starts by itself when its turn comes. The result's
+            outputs hold data keys (a stitched map's key is outputs.stitch.map)."""
             try:
                 workflow, status = server._workflow(name)
                 instrument, analysis, info = await server.endpoints.open()

@@ -150,6 +150,8 @@ class BlockContext:
         self.tiles: dict[str, dict] = {}
         # Whether the run's workflow has a block that acts on the instrument: two such runs never drive it at once.
         self.acts = False
+        # What the run's cleanup did when it gave the instrument back before it ended; None while it has not.
+        self.cleaned: list[dict] | None = None
 
     def changed(self, name: str, set_call: dict, restore_call: dict) -> None:
         """Note a setting this run changed, so the runner puts it back if the run fails, stops or waits.
