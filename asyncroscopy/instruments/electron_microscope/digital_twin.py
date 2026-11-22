@@ -42,7 +42,7 @@ from asyncroscopy.instruments.electron_microscope.twin.detector import (
     count,
 )
 from asyncroscopy.sim.dose import DoseParams
-from asyncroscopy.instruments.electron_microscope.twin.optics import aberrations_nm
+from asyncroscopy.instruments.electron_microscope.twin.optics import FocusDrift, aberrations_nm
 from asyncroscopy.instruments.electron_microscope.twin.render import (
     DETECTOR_SCALE,
     Renderer,
@@ -87,6 +87,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     focus_offset_m = _prop(float, 0.0, "Hidden focus error (m) added to C1; not reported by get_defocus.")
     astigmatism_offset_a_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, first component (m); not reported by get_stigmator.")
     astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
+    focus_drift_m = _prop(float, 0.0, "Largest slow swing of the hidden focus error (m) over 20 minutes to 6 hours (0: steady).")
+    astigmatism_drift_m = _prop(float, 0.0, "Largest slow swing of each hidden A1 component (m) over the same times (0: steady).")
     autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
     autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
     # Optics and detector
@@ -185,6 +187,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             "c1_m": float(self.focus_offset_m),
             "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
+        self._focus_drift = FocusDrift(float(self.focus_drift_m), float(self.astigmatism_drift_m), self._rng.for_event("focus_drift"))
         self._stage_position = self._stage.true.copy()
         self._world_bounds_ang = self._world_bounds()
 
@@ -309,12 +312,14 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             except (tango.DevFailed, AttributeError, ValueError):
                 coefficients = None
         ab = aberrations_nm(coefficients, float(self.acceleration_voltage), float(self._defocus))
-        # The hidden focus error and the stigmator, neither of which the corrector sees.
+        # The hidden focus error, its slow drift and the stigmator, none of which the corrector sees.
         error = getattr(self, "_focus_error", {"c1_m": 0.0, "a1_m": [0.0, 0.0]})
         stigmator = getattr(self, "_stigmator", np.zeros(2))
-        ab["C10"] = float(ab.get("C10", 0.0)) + error["c1_m"] * 1e9
-        ab["C12a"] = float(ab.get("C12a", 0.0)) + (error["a1_m"][0] + float(stigmator[0])) * 1e9
-        ab["C12b"] = float(ab.get("C12b", 0.0)) + (error["a1_m"][1] + float(stigmator[1])) * 1e9
+        drift = getattr(self, "_focus_drift", None)
+        drift_c1, drift_a1 = drift.at(self._clock.now()) if drift is not None else (0.0, [0.0, 0.0])
+        ab["C10"] = float(ab.get("C10", 0.0)) + (error["c1_m"] + drift_c1) * 1e9
+        ab["C12a"] = float(ab.get("C12a", 0.0)) + (error["a1_m"][0] + drift_a1[0] + float(stigmator[0])) * 1e9
+        ab["C12b"] = float(ab.get("C12b", 0.0)) + (error["a1_m"][1] + drift_a1[1] + float(stigmator[1])) * 1e9
         return ab
 
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list, scan_region=None, frame=None) -> np.ndarray:
@@ -401,7 +406,8 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         """Atoms per square angstrom of each element along the beam at a sample point."""
         x, y = float(xy[0]), float(xy[1])
         density = dict(self._specimen.areal_density(x, y))
-        support = self._support_angstrom(x, y)
+        # A spectrum sees the film this region really has: none in a hole, more where it is thick.
+        support = self._support_angstrom(x, y) + float(self._specimen.support_thickness_m) / ANGSTROM * self._specimen.support_change_at(x, y)
         if support > 0:
             element = self._specimen.support_element
             density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * support

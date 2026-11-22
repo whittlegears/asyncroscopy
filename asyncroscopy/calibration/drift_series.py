@@ -47,6 +47,8 @@ def main() -> None:
             "stage_settle_tau": max(tau, 1.0),
             "stage_settle_drift": float(early_excess.max() / max(tau, 1.0)),
         },
+        args.profile,
+        device="stage",
     )
 
 

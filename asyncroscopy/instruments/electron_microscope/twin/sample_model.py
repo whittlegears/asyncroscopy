@@ -17,6 +17,7 @@ from scipy import ndimage
 
 from asyncroscopy.sim.rng import EventRng
 from .elements import ELEMENTS
+from .regions import HOLE, LARGEST_RADIUS, Regions
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10
@@ -24,6 +25,7 @@ ANGSTROM = 1e-10
 PLACEMENT_TIME_LIMIT_S = 15.0  # longest the twin spends placing particles at start-up
 TEXTURE_FINEST_M = 0.5e-9  # the finest structure of the support film's texture
 TEXTURE_WAVES = 96  # plane waves summed for the texture, spread evenly over its range of lengths
+RELIEF_WAVES = 6  # plane waves summed for the height relief, from height_relief_scale_m down to a quarter of it
 
 @dataclass
 class SampleParams:
@@ -51,6 +53,15 @@ class SampleParams:
     # Atoms are drawn at their sub-pixel positions, each spread over the four nearest pixels, rather than at the
     # pixel they fall in, so one column lands at the same place in two overlapping atomic frames.
     subpixel_atoms: bool = False
+    # Regions make the sample differ from place to place: each has its own particle density, film thickness, element
+    # mix and particle size, and region_hole_fraction of them are holes (no film, no particles). 0 keeps the sample
+    # uniform. See regions.py.
+    region_count: int = 0
+    region_hole_fraction: float = 0.15
+    # The specimen is not flat: its height varies by about this much (a standard deviation, m) over lengths near
+    # height_relief_scale_m, on top of height_gradient. Focus then changes across a map in a way one tilt cannot fit.
+    height_relief_m: float = 0.0
+    height_relief_scale_m: float = 2e-6
 
 
 def _euler_matrix(e1_deg: float, e2_deg: float, e3_deg: float) -> np.ndarray:
@@ -147,6 +158,14 @@ class SampleModel(ParticleTable, Specimen):
             raise ValueError(f"Unknown sample elements {unknown}; known: {sorted(ELEMENTS)}")
         self.params = params
         self._atoms: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+        if params.height_relief_m < 0 or params.height_relief_scale_m <= 0:
+            raise ValueError("height_relief_m must be >= 0 and height_relief_scale_m > 0")
+        # Regions and relief have their own seeded streams, so a sample without them is unchanged.
+        self.regions = (
+            Regions.draw(rng.for_event("regions"), params.region_count, params.size_xy_m / 2.0, params.elements, params.region_hole_fraction)
+            if params.region_count > 0 else None
+        )
+        self._relief_waves = self._draw_relief(rng.for_event("height_relief")) if params.height_relief_m > 0 else None
         self._generate(rng.for_event("sample"))
         self._texture_waves = self._draw_texture(rng.for_event("support_texture")) if params.support_texture > 0 else None
 
@@ -188,6 +207,8 @@ class SampleModel(ParticleTable, Specimen):
             "radius_mean_m": p.radius_mean_m,
             "clusters": p.cluster_count,
             "support_texture": p.support_texture,
+            "regions": p.region_count,
+            "height_relief_m": p.height_relief_m,
             "subpixel_atoms": p.subpixel_atoms,
         }
 
@@ -202,9 +223,31 @@ class SampleModel(ParticleTable, Specimen):
         amplitude = np.full(TEXTURE_WAVES, self.params.support_texture * np.sqrt(2.0 / TEXTURE_WAVES))
         return k * np.cos(angles), k * np.sin(angles), phases, amplitude
 
+    def _draw_relief(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        """Wave vectors (kx, ky), phases and the amplitude of the height relief: a few long waves in random
+        directions, scaled so their sum has standard deviation ``height_relief_m``."""
+        lengths = np.geomspace(self.params.height_relief_scale_m, self.params.height_relief_scale_m / 4.0, RELIEF_WAVES)
+        angles = rng.uniform(0.0, np.pi, RELIEF_WAVES)
+        phases = rng.uniform(0.0, 2.0 * np.pi, RELIEF_WAVES)
+        k = 2.0 * np.pi / lengths
+        return k * np.cos(angles), k * np.sin(angles), phases, self.params.height_relief_m * np.sqrt(2.0 / RELIEF_WAVES)
+
     def support_texture(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray | None:
-        if self._texture_waves is None:
+        if self._texture_waves is None and self.regions is None:
             return None
+        texture = self._film_waves(x_min, y_min, n, pixel_m) if self._texture_waves is not None else np.zeros((n, n))
+        if self.regions is not None:
+            xs = x_min + (np.arange(n) + 0.5) * pixel_m
+            ys = y_min + (np.arange(n) + 0.5) * pixel_m
+            film = self.regions.film[self.regions.index_on_grid(xs, ys)]
+            texture = np.where(film <= HOLE, HOLE, texture + film)  # a hole has no film, whatever the waves say
+        return np.maximum(texture, -1.0)
+
+    def support_change_at(self, x: float, y: float) -> float:
+        return float(self.regions.film[self.regions.index_at(x, y)]) if self.regions is not None else 0.0
+
+    def _film_waves(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray:
+        """The film's fine thickness variation: the sum of the texture waves this pixel size can show."""
         kx, ky, phases, amplitude = self._texture_waves
         # Waves shorter than two pixels are left out. On a grid of this pixel they would alias into a pattern that
         # depends on where the grid happens to start, so two overlapping frames would not see the same film.
@@ -214,8 +257,7 @@ class SampleModel(ParticleTable, Specimen):
         ys = y_min + (np.arange(n) + 0.5) * pixel_m
         ax = np.outer(xs, kx) + phases
         ay = np.outer(ys, ky)
-        texture = (np.cos(ay) * amplitude) @ np.cos(ax).T - (np.sin(ay) * amplitude) @ np.sin(ax).T
-        return np.maximum(texture, -1.0)
+        return (np.cos(ay) * amplitude) @ np.cos(ax).T - (np.sin(ay) * amplitude) @ np.sin(ax).T
 
     def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
         if level == "survey":
@@ -315,7 +357,8 @@ class SampleModel(ParticleTable, Specimen):
             if attempt % 1000 == 0 and time.monotonic() > deadline:
                 break
             radius = float(max(0.3e-9, rng.normal(p.radius_mean_m, p.radius_std_m)))
-            margin = min(radius, half * 0.9)
+            # A region may enlarge the particle, so with regions the margin leaves room for the largest factor.
+            margin = min(radius * (LARGEST_RADIUS if self.regions is not None else 1.0), half * 0.9)
             if clustered and rng.random() < p.cluster_fraction:
                 centre = centres[rng.integers(p.cluster_count)]
                 cx, cy = (float(v) for v in rng.normal(centre, p.cluster_radius_m))
@@ -325,6 +368,13 @@ class SampleModel(ParticleTable, Specimen):
             else:
                 cx = float(rng.uniform(-half + margin, half - margin))
                 cy = float(rng.uniform(-half + margin, half - margin))
+            region = -1  # no regions: the sample is uniform
+            if self.regions is not None:
+                region = self.regions.index_at(cx, cy)
+                # Sparse regions turn most candidates away and holes turn away all of them.
+                if rng.random() >= self.regions.density[region] / self.regions.density.max():
+                    continue
+                radius *= float(self.regions.radius[region])
             gx, gy = int(np.floor(cx / cell)), int(np.floor(cy / cell))
             reach = int(np.ceil((2 * radius + p.min_separation_m) / cell)) + 1
             clash = False
@@ -343,12 +393,12 @@ class SampleModel(ParticleTable, Specimen):
                 misses += 1
                 continue
             misses = 0
-            element = str(rng.choice(list(p.elements)))
+            element = str(rng.choice(list(p.elements), p=self.regions.element_shares[region] if region >= 0 else None))
             elong = float(rng.uniform(0.8, 1.2))
             theta = float(rng.uniform(0.0, np.pi))
             euler = tuple(float(v) for v in rng.uniform(0.0, 360.0, size=3))
             grid.setdefault((gx, gy), []).append(len(rows))
-            rows.append((len(rows), cx, cy, radius, radius * elong, radius * p.aspect_ratio, theta, element, euler))
+            rows.append((len(rows), cx, cy, radius, radius * elong, radius * p.aspect_ratio, theta, element, euler, region))
 
         n = len(rows)
         self.ids = np.array([r[0] for r in rows], dtype=np.int64)
@@ -357,6 +407,7 @@ class SampleModel(ParticleTable, Specimen):
         self.theta = np.array([r[6] for r in rows], dtype=np.float64)
         self.elements = [r[7] for r in rows]
         self.euler = [r[8] for r in rows]
+        self.region_of = np.array([r[9] for r in rows], dtype=np.int64)  # -1 everywhere on a sample without regions
         self.z = np.array([ELEMENTS[e][0] for e in self.elements], dtype=np.float64)
         self.density = np.array([ELEMENTS[e][1] for e in self.elements], dtype=np.float64)
         self.bounds = (-half, half, -half, half)
@@ -364,10 +415,19 @@ class SampleModel(ParticleTable, Specimen):
 
     def height_at(self, x: float | np.ndarray, y: float | np.ndarray) -> np.ndarray:
         gx, gy = self.params.height_gradient
-        return gx * np.asarray(x) + gy * np.asarray(y)
+        x, y = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
+        height = gx * x + gy * y
+        if self._relief_waves is not None:
+            kx, ky, phases, amplitude = self._relief_waves
+            height = height + amplitude * np.cos(x[..., None] * kx + y[..., None] * ky + phases).sum(axis=-1)
+        return height
 
     def ground_truth(self) -> dict:
         particles = self.particle_table()
         for record, euler in zip(particles, self.euler):  # each particle's lattice orientation as ZXZ Euler angles
             record["euler_deg"] = [float(v) for v in euler]
-        return {"known": True, "particles": particles}
+        if self.regions is None:
+            return {"known": True, "particles": particles}
+        for record, region in zip(particles, self.region_of):
+            record["region"] = int(region)
+        return {"known": True, "particles": particles, **self.regions.ground_truth()}

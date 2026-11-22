@@ -119,6 +119,11 @@ class Specimen:
         ``support_thickness_m``, never below -1), or None for a uniform film."""
         return None
 
+    def support_change_at(self, x: float, y: float) -> float:
+        """The support film's relative thickness change at one point, for the EDS spectrum (0: nominal, -1: a hole).
+        Only what a spectrum should see: a hole or a thicker region, not the fine texture."""
+        return 0.0
+
     def areal_density(self, x: float, y: float) -> dict[str, float]:
         """Atoms per square angstrom of each element along the beam at (x, y), support film excluded."""
         return {}

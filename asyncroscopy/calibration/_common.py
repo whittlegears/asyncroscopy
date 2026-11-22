@@ -20,6 +20,7 @@ def parse_args(description: str, extra: Callable[[argparse.ArgumentParser], obje
     parser.add_argument("--fov", type=float, default=200e-9, help="Field of view (m).")
     parser.add_argument("--imsize", type=int, default=256, help="Image size (pixels per side).")
     parser.add_argument("--dwell", type=float, default=2e-6, help="Dwell time per pixel (s).")
+    parser.add_argument("--profile", default="", help="Instrument profile (YAML) to write the measured values into; see calibration/profile.py.")
     if extra:
         extra(parser)
     return parser.parse_args()
@@ -63,7 +64,15 @@ def shift_m(reference: np.ndarray, image: np.ndarray, pixel_m: float) -> np.ndar
     return np.array([shift[1], shift[0]]) * pixel_m
 
 
-def print_yaml(title: str, values: dict) -> None:
+def print_yaml(title: str, values: dict, profile: str = "", device: str = "instrument") -> None:
+    """Print the measured twin properties, and with ``profile`` also write them into that instrument profile
+    (``device``: the twin device they belong to, instrument or stage). The script's name is their source."""
     print(f"# {title}")
     for key, value in values.items():
         print(f"    {key}: {value:.3e}" if isinstance(value, float) else f"    {key}: {value}")
+    if profile:
+        from asyncroscopy.calibration import profile as instrument_profile
+
+        measured = {key: value for key, value in values.items() if isinstance(value, float) and not key.startswith("#")}
+        instrument_profile.record(profile, measured, source=title.split(":")[0], device=device)
+        print(f"# written to {profile}")

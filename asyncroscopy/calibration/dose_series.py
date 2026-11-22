@@ -41,6 +41,7 @@ def main() -> None:
             "damage_critical_dose": float(dose[fading[0]]) if len(fading) else 0.0,
             "# background_rise_counts": float(background.max()),
         },
+        args.profile,
     )
 
 

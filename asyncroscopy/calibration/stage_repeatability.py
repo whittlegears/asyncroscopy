@@ -52,7 +52,7 @@ def measure(microscope: tango.DeviceProxy, fov: float, imsize: int, excursion: f
 def main() -> None:
     args = parse_args(__doc__, lambda p: (p.add_argument("--excursion", type=float, default=2e-6), p.add_argument("--repeats", type=int, default=8)))
     microscope, _scan = connect(args)
-    print_yaml(f"stage_repeatability: returns from {args.excursion:.1e} m", measure(microscope, args.fov, args.imsize, args.excursion, args.repeats))
+    print_yaml(f"stage_repeatability: returns from {args.excursion:.1e} m", measure(microscope, args.fov, args.imsize, args.excursion, args.repeats), args.profile, device="stage")
 
 
 if __name__ == "__main__":

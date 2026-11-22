@@ -31,6 +31,39 @@ CORRECTOR_TO_PYTEMLIB = {
 # The Spectra 300 datasheet quotes 50 pm resolution.
 IDEAL_PROBE_SIGMA_M = 0.05e-9 / 2.355
 
+FOCUS_DRIFT_PERIODS_S = (1200.0, 21600.0)  # the fastest and slowest swings of focus and astigmatism: 20 minutes to 6 hours
+FOCUS_DRIFT_WAVES = 5
+
+
+class FocusDrift:
+    """Focus (C1) and two-fold astigmatism (A1) that wander with the twin's clock, the way a column does as lens
+    currents and the room's temperature change. Each is a seeded sum of slow sine waves, like the detector's gain
+    in ``detector.DetectorDrift``. It is measured from the start: at time 0 the drift is 0, and it never moves
+    further than twice ``focus_drift_m`` (or ``astigmatism_drift_m``, per A1 component) from there. Both 0: steady.
+
+    So a focus that was right goes wrong after a while, and a long map has to decide when to focus again.
+    """
+
+    def __init__(self, focus_drift_m: float, astigmatism_drift_m: float, rng: np.random.Generator) -> None:
+        if focus_drift_m < 0 or astigmatism_drift_m < 0:
+            raise ValueError("focus and astigmatism drift must be >= 0")
+        self.swing_m = np.array([focus_drift_m, astigmatism_drift_m, astigmatism_drift_m], dtype=np.float64)  # C1, A1a, A1b
+        periods = rng.uniform(*FOCUS_DRIFT_PERIODS_S, size=(3, FOCUS_DRIFT_WAVES))
+        self._frequency = 2.0 * np.pi / periods
+        self._phase = rng.uniform(0.0, 2.0 * np.pi, size=(3, FOCUS_DRIFT_WAVES))
+        weights = rng.uniform(0.5, 1.0, size=(3, FOCUS_DRIFT_WAVES))
+        self._weight = weights / weights.sum(axis=1, keepdims=True)
+
+    def _swing(self, t_s: float) -> np.ndarray:
+        return np.sum(self._weight * np.sin(self._frequency * float(t_s) + self._phase), axis=1)
+
+    def at(self, t_s: float) -> tuple[float, list[float]]:
+        """(C1, [A1a, A1b]) in metres that the drift adds at twin time ``t_s``."""
+        if not self.swing_m.any():
+            return 0.0, [0.0, 0.0]
+        c1, a, b = self.swing_m * (self._swing(t_s) - self._swing(0.0))
+        return float(c1), [float(a), float(b)]
+
 
 def aberrations_nm(corrector_coefficients: dict | None, voltage_v: float, extra_defocus_m: float) -> dict:
     """pyTEMlib aberration dict (nm) from corrector coefficients (m) plus a defocus offset."""

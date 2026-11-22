@@ -1,0 +1,31 @@
+# Digital twin where decisions matter: the large-map twin on a sample that differs from place to place, with a
+# focus that does not stay put.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_heterogeneous.yaml
+#
+# On digital_twin_large_map.yaml every tile costs the same and is worth the same, so a fixed raster is the best plan
+# there is. Here:
+#   * the sample has 40 regions: each has its own particle density, film thickness, element mix and particle size,
+#     and some are holes (twin/regions.py). Where to look, and where a spectrum is worth its time, now depends on place;
+#   * particle size follows the element mix by a hidden rule that only images and spectra together reveal;
+#   * the specimen is not flat (300 nm of relief), so one focus does not serve the whole map;
+#   * focus and astigmatism drift over 20 minutes to 6 hours, so a long map has to decide when to focus again.
+# The regions and the rule are in export_ground_truth, which agents never see.
+#
+# Everything not set here is digital_twin_large_map.yaml's.
+extends: digital_twin_large_map.yaml
+
+instrument:
+  description: "Heterogeneous digital twin: 8 um sample in 40 regions with holes, height relief, focus drift"
+  properties:
+    specimen:
+      source: procedural
+      support_texture: 0.3
+      support_texture_scale_m: 2.0e-6
+      subpixel_atoms: true
+      region_count: 40
+      region_hole_fraction: 0.15
+      height_relief_m: 3.0e-7
+      height_relief_scale_m: 2.0e-6
+    focus_drift_m: 3.0e-8
+    astigmatism_drift_m: 5.0e-9
