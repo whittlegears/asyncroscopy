@@ -53,7 +53,7 @@ On a uniform sample with a steady focus every tile costs the same and is worth t
 | What | Set with | What it makes a controller decide |
 | :-- | :-- | :-- |
 | Regions | `specimen: {region_count: 40, region_hole_fraction: 0.15}` | Where to look. Tiles differ in how many particles they hold; holes hold none and have no film to register on. Where a spectrum is worth its time depends on the region's element mix. |
-| Height relief | `specimen: {height_relief_m: 3e-7, height_relief_scale_m: 2e-6}` | Where to focus. The height varies by about `height_relief_m` over lengths near the scale, so one focus, or one fitted tilt, does not serve a whole map. |
+| Height relief | `specimen: {height_relief_m: 1e-7, height_relief_scale_m: 1.6e-5}` | Where to focus. The height varies by about `height_relief_m` over lengths near the scale, so one focus, or one fitted tilt, does not serve a whole map. |
 | Focus drift | `focus_drift_m`, `astigmatism_drift_m` | When to focus again. Each is the largest swing to either side; the drift starts at 0 and stays within twice that. |
 
 The regions hold a rule to discover. One element per sample is the marker: the larger its share of a region's particles, the smaller that region's particles (`twin/regions.py` gives the formula). Images show sizes and spectra show shares, so only a workflow that uses both finds it. `export_ground_truth` gives the regions, the marker and each particle's region; agents never see it.
