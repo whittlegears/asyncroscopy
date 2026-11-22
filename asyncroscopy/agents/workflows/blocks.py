@@ -146,6 +146,8 @@ class BlockContext:
         # ({"node", "done", "total"}, plus "level" in a multi-level map). Set by Steps.block.
         self.step: str | None = None
         self.loop: dict | None = None
+        # The images a map has taken so far, where and how wide: data key -> {"key", "x_m", "y_m", "fov_m"}.
+        self.tiles: dict[str, dict] = {}
         # Whether the run's workflow has a block that acts on the instrument: two such runs never drive it at once.
         self.acts = False
 

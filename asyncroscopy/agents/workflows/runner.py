@@ -25,6 +25,7 @@ reservation that keeps other callers off the instrument.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -59,11 +60,63 @@ def twin_only_problem(endpoint_info: dict, hardware: bool = False) -> str | None
     return None if hardware or endpoint_info.get("simulated") is True else TWIN_ONLY
 
 
-def progress(run_id: str) -> dict | None:
-    """What a run in this process has done so far, or None when it is not running here."""
+PROGRESS_EVERY_S = 1.0  # how often a run's progress file is rewritten
+MAX_TILES_SHOWN = 600  # the most placed tiles a progress reply lists
+
+
+def progress(run_id: str, state_dir: str | Path | None = None) -> dict | None:
+    """What a run has done so far, or None when nothing is known.
+
+    A run in this process is read from memory. With ``state_dir``, one that another process drives (the agent server
+    started it, the analysis host is asked) is read from the progress file that process keeps beside the run record.
+    """
     ctx = LIVE.get(run_id)
-    if ctx is None:
+    if ctx is not None:
+        return _live_progress(ctx)
+    if state_dir is None:
         return None
+    try:
+        found = json.loads(_progress_path(Path(state_dir), run_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def driven_elsewhere(run_id: str, state_dir: str | Path) -> bool:
+    """Whether another process holds the run's lock now, so the run is still going there (``_run_lock``)."""
+    if not (Path(state_dir) / "runs" / f"{run_id}.lock").exists():
+        return False
+    try:
+        with _run_lock(Path(state_dir), run_id):
+            return False
+    except ValueError:
+        return True
+
+
+def _progress_path(state_dir: Path, run_id: str) -> Path:
+    return state_dir / "runs" / f"{run_id}.progress.json"
+
+
+def _write_progress(ctx: BlockContext, path: Path) -> None:
+    """Replace the progress file whole, so a reader never sees half of it."""
+    staged = path.with_suffix(f".{uuid.uuid4().hex[:6]}.tmp")
+    staged.write_text(json.dumps(_live_progress(ctx), default=str), encoding="utf-8")
+    try:
+        staged.replace(path)
+    except OSError:  # a reader holds the file open (Windows): this update is skipped, the next one replaces it
+        staged.unlink(missing_ok=True)
+
+
+async def _keep_progress(ctx: BlockContext, path: Path) -> None:
+    """Rewrite a run's progress file every ``PROGRESS_EVERY_S`` until cancelled. A failed write never stops the run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        with contextlib.suppress(OSError):
+            _write_progress(ctx, path)
+        await asyncio.sleep(PROGRESS_EVERY_S)
+
+
+def _live_progress(ctx: BlockContext) -> dict:
     acquisitions = sum(1 for c in ctx.calls if "acquire" in c["tool"] and not c["error"])
     out = {"tool_calls": len(ctx.calls), "acquisitions": acquisitions, "last_call": ctx.calls[-1]["tool"] if ctx.calls else None}
     if ctx.step:
@@ -73,6 +126,9 @@ def progress(run_id: str) -> dict | None:
     image = latest_image(ctx.calls)
     if image:
         out["latest_image"] = image
+    if ctx.tiles:  # the newest MAX_TILES_SHOWN, so a status reply stays small on a large map
+        out["tiles"] = list(ctx.tiles.values())[-MAX_TILES_SHOWN:]
+        out["tiles_total"] = len(ctx.tiles)
     return out
 
 
@@ -288,10 +344,17 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
             record["state"] = "refused"
             return record
         LIVE[run_id] = ctx
+        shown = _progress_path(state_dir, run_id)
+        keeper = asyncio.get_running_loop().create_task(_keep_progress(ctx, shown))
         try:
             return await _drive_checked(record, workflow, state_dir, ctx, config, used, save, durable, start, answers or {})
         finally:
             LIVE.pop(run_id, None)
+            keeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await keeper
+            with contextlib.suppress(OSError):  # the record now says how the run ended
+                shown.unlink(missing_ok=True)
 
 
 @contextlib.contextmanager
