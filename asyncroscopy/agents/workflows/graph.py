@@ -84,6 +84,26 @@ def loop_progress(node: str, result: Any) -> dict | None:
     return out
 
 
+def note_tiles(tiles: dict[str, dict], result: Any, args: dict) -> None:
+    """Add to ``tiles`` (data key -> {"key", "x_m", "y_m", "fov_m"}) the images a loop node has taken and not yet
+    noted, from the ``keys`` and ``stage_xy_m`` it reports (both cumulative) and its field of view (its ``fov_m``
+    output, else its input). A person watching the run sees each tile placed where it was taken."""
+    if not isinstance(result, dict):
+        return
+    keys, places = result.get("keys"), result.get("stage_xy_m")
+    if not (isinstance(keys, list) and isinstance(places, list)):
+        return
+    fov = result.get("fov_m", args.get("fov_m"))
+    fov = float(fov) if isinstance(fov, (int, float)) and not isinstance(fov, bool) and fov > 0 else None
+    for key, place in zip(keys, places):
+        if not isinstance(key, str) or key in tiles or not isinstance(place, (list, tuple)) or len(place) < 2:
+            continue
+        try:
+            tiles[key] = {"key": key, "x_m": float(place[0]), "y_m": float(place[1]), "fov_m": fov}
+        except (TypeError, ValueError):
+            continue
+
+
 class Steps:
     """Passed to a workflow's ``build``. It makes graph nodes from blocks and routers from conditions for one run.
 
@@ -118,6 +138,7 @@ class Steps:
             result = await chosen.run(ctx, args, outputs.get(node))
             if ctx is not None:
                 ctx.loop = loop_progress(node, result) or ctx.loop
+                note_tiles(ctx.tiles, result, args)
             missing = sorted(set(chosen.outputs) - set(result or {}))
             if missing:
                 raise BlockFailed(f"node {node}: block {chosen.name} did not give its output(s) {missing}")

@@ -4,5 +4,5 @@ which builds the component and adds its interceptors; ``natives()`` gives the to
 jobs (run_job, wait_for_job), data_tools (list_data, view_data, previews),
 discovery (find_tools, call_tool, endpoint_info, action_space), skills_tools, memory_tools (notes_for),
 trace_tools (trace_since),
-estop (stop_all).
+estop (stop_all), turns (take_turn, give_turn, turn_status).
 """

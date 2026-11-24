@@ -13,6 +13,9 @@ The runner adds these to a bare graph.
   fails, stops or waits puts it back, and a resumed run sets it again before it continues.
 - **One driver at a time.** A run is driven under a lock file, so a run still going in another process is not
   resumed a second time.
+- **One run on the instrument at a time.** A run whose workflow acts on the instrument queues for it at the
+  endpoint (``turns``), as state ``queued``, behind runs of any process, and gives it back when it has no acting
+  block left to run. A run that only reads or analyses does not queue.
 - **Questions wait.** A block that asks a person stops the run as ``waiting``. Continue it with
   ``resume_workflow(run_id, answers={question id: answer})``.
 
@@ -25,6 +28,7 @@ reservation that keeps other callers off the instrument.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import time
@@ -42,6 +46,7 @@ from asyncroscopy.core.fileio import file_lock
 from ..mcp_tools import McpServer
 from .blocks import BlockContext, BlockFailed, Stopped, all_blocks
 from .checks import switched_off_nodes
+from .turns import Turn, acting_ahead
 from .graph import Workflow, get_workflow, recursion_limit
 
 DEFAULT_STATE_DIR = Path("outputs/workflows")
@@ -59,11 +64,63 @@ def twin_only_problem(endpoint_info: dict, hardware: bool = False) -> str | None
     return None if hardware or endpoint_info.get("simulated") is True else TWIN_ONLY
 
 
-def progress(run_id: str) -> dict | None:
-    """What a run in this process has done so far, or None when it is not running here."""
+PROGRESS_EVERY_S = 1.0  # how often a run's progress file is rewritten
+MAX_TILES_SHOWN = 600  # the most placed tiles a progress reply lists
+
+
+def progress(run_id: str, state_dir: str | Path | None = None) -> dict | None:
+    """What a run has done so far, or None when nothing is known.
+
+    A run in this process is read from memory. With ``state_dir``, one that another process drives (the agent server
+    started it, the analysis host is asked) is read from the progress file that process keeps beside the run record.
+    """
     ctx = LIVE.get(run_id)
-    if ctx is None:
+    if ctx is not None:
+        return _live_progress(ctx)
+    if state_dir is None:
         return None
+    try:
+        found = json.loads(_progress_path(Path(state_dir), run_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return found if isinstance(found, dict) else None
+
+
+def driven_elsewhere(run_id: str, state_dir: str | Path) -> bool:
+    """Whether another process holds the run's lock now, so the run is still going there (``_run_lock``)."""
+    if not (Path(state_dir) / "runs" / f"{run_id}.lock").exists():
+        return False
+    try:
+        with _run_lock(Path(state_dir), run_id):
+            return False
+    except ValueError:
+        return True
+
+
+def _progress_path(state_dir: Path, run_id: str) -> Path:
+    return state_dir / "runs" / f"{run_id}.progress.json"
+
+
+def _write_progress(ctx: BlockContext, path: Path) -> None:
+    """Replace the progress file whole, so a reader never sees half of it."""
+    staged = path.with_suffix(f".{uuid.uuid4().hex[:6]}.tmp")
+    staged.write_text(json.dumps(_live_progress(ctx), default=str), encoding="utf-8")
+    try:
+        staged.replace(path)
+    except OSError:  # a reader holds the file open (Windows): this update is skipped, the next one replaces it
+        staged.unlink(missing_ok=True)
+
+
+async def _keep_progress(ctx: BlockContext, path: Path) -> None:
+    """Rewrite a run's progress file every ``PROGRESS_EVERY_S`` until cancelled. A failed write never stops the run."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        with contextlib.suppress(OSError):
+            _write_progress(ctx, path)
+        await asyncio.sleep(PROGRESS_EVERY_S)
+
+
+def _live_progress(ctx: BlockContext) -> dict:
     acquisitions = sum(1 for c in ctx.calls if "acquire" in c["tool"] and not c["error"])
     out = {"tool_calls": len(ctx.calls), "acquisitions": acquisitions, "last_call": ctx.calls[-1]["tool"] if ctx.calls else None}
     if ctx.step:
@@ -73,6 +130,9 @@ def progress(run_id: str) -> dict | None:
     image = latest_image(ctx.calls)
     if image:
         out["latest_image"] = image
+    if ctx.tiles:  # the newest MAX_TILES_SHOWN, so a status reply stays small on a large map
+        out["tiles"] = list(ctx.tiles.values())[-MAX_TILES_SHOWN:]
+        out["tiles_total"] = len(ctx.tiles)
     return out
 
 
@@ -281,17 +341,55 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
                 return latest
         # One run at a time drives the instrument: on the twin a second map found the beam blanked by the first one's
         # tiles and failed; on an instrument the two would move the stage and the scan under each other.
+        # Where the endpoint gives turns (take_turn), a run that acts queues for the instrument there instead, behind
+        # runs of any process; without them, a second acting run in this process is refused.
+        turn = Turn(instrument, what=f"{workflow.name}, run {run_id}") if ctx.acts and await Turn.offered(instrument) else None
         driving = [other for other, live in LIVE.items() if other != run_id and live.acts]
-        if ctx.acts and driving:
+        if turn is None and ctx.acts and driving:
             record["problems"] = [f"workflow run {driving[0]} is driving the instrument; wait for it (workflow_status) or stop it "
                                   "(stop_workflow), then start this one"]
             record["state"] = "refused"
             return record
         LIVE[run_id] = ctx
+        shown = _progress_path(state_dir, run_id)
+        keeper = asyncio.get_running_loop().create_task(_keep_progress(ctx, shown))
         try:
+            if turn is not None:
+                try:
+                    await turn.wait(on_queued=lambda queue: save(state="queued", queue=queue), stopped=ctx.stop_file.exists)
+                except Stopped as exc:
+                    save(state="stopped", error=str(exc), ended=time.time(), queue=None)
+                    return record
+                record["queue"] = None
+
+                async def clean_up() -> None:
+                    ctx.cleaned = await _clean_up(ctx, used)
+
+                # The turn is given back when no block that acts can still run: a map is stitched while the next one starts.
+                all_known = all_blocks()
+                turn.keep(done_acting=lambda: ctx.step is not None and not acting_ahead(blueprint, all_known, ctx.step), before_giving=clean_up)
             return await _drive_checked(record, workflow, state_dir, ctx, config, used, save, durable, start, answers or {})
         finally:
+            if turn is not None:
+                await turn.give()
             LIVE.pop(run_id, None)
+            keeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await keeper
+            with contextlib.suppress(OSError):  # the record now says how the run ended
+                shown.unlink(missing_ok=True)
+
+
+async def _clean_up(ctx: BlockContext, used: list) -> list[dict]:
+    """Call the ``always`` tools of the blocks a run uses (blanking the beam is one); returns what each did."""
+    cleanup = []
+    for pattern in sorted({p for block in used for p in block.always}):
+        try:
+            await ctx.call_always(pattern)
+            cleanup.append({"tool": pattern, "ok": True})
+        except Exception as exc:  # the operator must see a cleanup that failed
+            cleanup.append({"tool": pattern, "ok": False, "error": str(exc)[:300]})
+    return cleanup
 
 
 @contextlib.contextmanager
@@ -379,13 +477,9 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
         questions = _pending(snapshot)
         if state == "done" and questions:
             state = "waiting"
-        cleanup = []
-        for pattern in sorted({p for block in used for p in block.always}):
-            try:
-                await ctx.call_always(pattern)
-                cleanup.append({"tool": pattern, "ok": True})
-            except Exception as exc:  # the operator must see a cleanup that failed
-                cleanup.append({"tool": pattern, "ok": False, "error": str(exc)[:300]})
+        # A run that gave the instrument back early cleaned up then, while it was still its own: a blank now would
+        # land in the middle of the next run's tile.
+        cleanup = list(ctx.cleaned) if ctx.cleaned is not None else await _clean_up(ctx, used)
         if state != "done":  # the run ended part way: put back what it changed and has not put back itself
             for name, entry in ctx.restores.items():
                 restore = entry["restore"]

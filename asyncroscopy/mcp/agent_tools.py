@@ -33,7 +33,8 @@ class ToolLists:
     stem: tuple[str, ...] = ()
     generic: tuple[str, ...] = ()
     analysis_waits: tuple[str, ...] = ()
-    not_for_models: tuple[str, ...] = field(default=("list_skills", "skills_for", "notes_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "endpoint_info", "action_space"))
+    not_for_models: tuple[str, ...] = field(default=("list_skills", "skills_for", "notes_for", "skill_text", "save_skill", "delete_skill", "switch_skill", "endpoint_info", "action_space",
+                                                  "take_turn", "give_turn", "turn_status"))
 
 
 def profile_data(path: str | Path) -> dict:

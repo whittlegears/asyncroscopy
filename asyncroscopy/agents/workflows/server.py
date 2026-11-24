@@ -40,9 +40,10 @@ from .library import Library, needs_approval
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
-RECORD_KEYS = ("run_id", "workflow", "state", "problems", "error", "questions", "inputs", "outputs", "at_node", "cleanup", "unrestored",
+RECORD_KEYS = ("run_id", "workflow", "state", "queue", "problems", "error", "questions", "inputs", "outputs", "at_node", "cleanup", "unrestored",
                "calls", "tools_called", "started", "ended")
 OUTPUT_CHARS = 1500
+GOING = ("running", "queued")  # a run in one of these has a process driving it, or waiting to
 
 
 def requester() -> str | None:
@@ -87,16 +88,21 @@ def _brief(value: Any) -> Any:
     return value
 
 
-def _reply(record: dict) -> dict:
+def _reply(record: dict, state_dir: Path | None = None) -> dict:
+    """A run's record for a model. With ``state_dir`` a running run's progress is also read from another process."""
     out = {k: record[k] for k in RECORD_KEYS if record.get(k) not in (None, [], {})}
     if "outputs" in out:
         out["outputs"] = _brief(out["outputs"])
-    live = runner.progress(record["run_id"]) if record.get("run_id") else None
+    elsewhere = state_dir if record.get("state") in GOING else None
+    live = runner.progress(record["run_id"], elsewhere) if record.get("run_id") else None
     if live:
         out["progress"] = live
     state = out.get("state")
     if state == "running":
         out["next"] = f"still going: call workflow_status with run_id {record['run_id']} and wait_s {MAX_WAIT_S:.0f} again"
+    elif state == "queued":
+        out["next"] = (f"another run holds the instrument ('queue' says which); this one starts by itself when its turn comes. Call "
+                       f"workflow_status with run_id {record['run_id']} and wait_s {MAX_WAIT_S:.0f} again, or stop_workflow to leave the queue")
     elif state == "waiting":
         out["next"] = ("the workflow asks the user a question and does nothing until it is answered. Put each question to the user in "
                        "its own words (with its options; if it has 'show', show them that first, a data key with view_data) and end your "
@@ -150,7 +156,16 @@ class WorkflowServer:
     def _running(self) -> str | None:
         return next((run_id for run_id, task in self.tasks.items() if not task.done()), None)
 
-    async def _wait(self, run_id: str, wait_s: float) -> dict:
+    async def _wait(self, run_id: str, wait_s: float, with_tiles: bool = False) -> dict:
+        """The run's reply once it ends or ``wait_s`` passes. Its placed tiles are left out unless ``with_tiles``:
+        an app drawing the map wants them, a model reading the reply does not."""
+        reply = await self._wait_reply(run_id, wait_s)
+        progress = reply.get("progress")
+        if not with_tiles and isinstance(progress, dict) and "tiles" in progress:
+            reply["progress"] = {k: v for k, v in progress.items() if k != "tiles"}
+        return reply
+
+    async def _wait_reply(self, run_id: str, wait_s: float) -> dict:
         task = self.tasks.get(run_id)
         if task is not None and not task.done():
             try:
@@ -167,9 +182,10 @@ class WorkflowServer:
             if task is not None and task.exception() is not None:
                 return {"run_id": run_id, "state": "failed", "error": f"{type(task.exception()).__name__}: {task.exception()}"}
             return {"error": f"there is no workflow run {run_id!r}; call list_runs"}
-        if record["state"] == "running" and (task is None or task.done()):
+        # A run another process drives (it holds the run's lock) is still going; one nobody drives was cut off.
+        if record["state"] in GOING and (task is None or task.done()) and not runner.driven_elsewhere(run_id, self.state_dir):
             record["state"], record["error"] = "stopped", "the workflow server was restarted while this run was going"
-        return _reply(record)
+        return _reply(record, self.state_dir)
 
     def _start(self, run_id: str, make: Callable[[], Any]) -> None:
         self.tasks[run_id] = asyncio.get_running_loop().create_task(make())
@@ -239,11 +255,9 @@ class WorkflowServer:
             a value outside an input's range is refused, never adjusted. The workflow runs by itself, in the
             background; this waits up to wait_s (at most 100) and returns the result if it finished, otherwise
             state 'running' with a run_id for workflow_status. state 'waiting' means it asks the user a question
-            ('questions'); 'next' always says what to do. One workflow runs at a time. The result's outputs hold
-            data keys (a stitched map's key is outputs.stitch.map)."""
-            going = server._running()
-            if going:
-                return {"error": f"workflow run {going} is still going; call workflow_status with it, or stop_workflow"}
+            ('questions'); 'next' always says what to do. One workflow acts on the instrument at a time: started
+            while another is acting, this one is 'queued' and starts by itself when its turn comes. The result's
+            outputs hold data keys (a stitched map's key is outputs.stitch.map)."""
             try:
                 workflow, status = server._workflow(name)
                 instrument, analysis, info = await server.endpoints.open()
@@ -261,11 +275,12 @@ class WorkflowServer:
                 workflow, dict(inputs or {}), instrument=instrument, analysis=analysis, run_id=run_id, state_dir=server.state_dir)))
             return await server._wait(run_id, wait_s)
 
-        async def workflow_status(run_id: str, wait_s: float = 100.0) -> dict:
+        async def workflow_status(run_id: str, wait_s: float = 100.0, with_tiles: bool = False) -> dict:
             """How a workflow run is going, waiting up to wait_s (at most 100) for it to finish first; use the full
             wait, so a long run takes few calls. state is running, done, waiting (it asks the user a question),
-            stopped, failed or refused; 'next' says what to do."""
-            return await server._wait(str(run_id), wait_s)
+            stopped, failed or refused; 'next' says what to do. with_tiles adds where each map tile was taken, for an
+            app that draws the map as it grows; leave it out."""
+            return await server._wait(str(run_id), wait_s, bool(with_tiles))
 
         async def stop_workflow(run_id: str) -> dict:
             """Stop a running workflow before its next instrument call. Its cleanup (blanking the beam) still runs.
