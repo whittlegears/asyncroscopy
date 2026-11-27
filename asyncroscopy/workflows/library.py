@@ -235,7 +235,7 @@ class Library:
         return {**result, "draft": str(path), "status": DRAFT}
 
     def approve(self, name: str, by: str, *, login: str | None = None, instrument: str | None = None, days: float | None = None,
-                require_rehearsal: bool = False, via: str = "cli") -> dict:
+                require_rehearsal: bool = False, via: str = "cli", expected_hash: str | None = None) -> dict:
         """Record a person's approval of the draft ``name`` as it is now. Returns the approval record.
 
         ``by`` is the person's name.
@@ -244,6 +244,8 @@ class Library:
         ``days`` is how long it holds. None means until revoked.
         ``require_rehearsal`` refuses (ValueError) unless this exact code ran to the end on a digital twin at least once.
         ``via`` says where the approval was given ("cli", or the operator endpoint's name), and is kept in the record.
+        ``expected_hash`` is the hash of the code the person reviewed; when given, a draft that differs is refused
+        (ValueError), so a draft replaced after the review is never approved in its place.
 
         The draft becomes the approved workflow of that name and its hash is what is approved. Raises KeyError when
         there is no such draft, PermissionError when this login may not approve, and ValueError when the workflow
@@ -270,6 +272,9 @@ class Library:
         result = workflow.lint()
         if workflow.name != str(name) or not result["ok"]:
             raise ValueError(f"{name} does not pass its checks: {result['problems'] or 'its file and its name differ'}")
+        if expected_hash is not None and str(expected_hash) != result["hash"]:
+            raise ValueError(f"{workflow.name} has not been approved: it changed since it was reviewed (reviewed {expected_hash}, "
+                             f"now {result['hash']}). Review it again.")
         rehearsed = [r for r in self.rehearsals(workflow.name, result["hash"]) if r.get("state") == "done"]
         if require_rehearsal and not rehearsed:
             raise ValueError(f"{workflow.name} has not been approved: this exact code has never run to the end on a digital twin. "
@@ -291,12 +296,13 @@ class Library:
             self._write_rejections(rejections)
         return {"name": workflow.name, **record}
 
-    def reject(self, name: str, reason: str, *, by: str | None = None, login: str | None = None, via: str = "cli") -> dict:
+    def reject(self, name: str, reason: str, *, by: str | None = None, login: str | None = None, via: str = "cli",
+               expected_hash: str | None = None) -> dict:
         """Record a person's rejection of the workflow ``name`` as it is now, with their ``reason``. Returns the record.
 
         An approved workflow loses its approval first (``revoke``). The text is kept as a draft, which still runs on a
         twin. Raises KeyError when there is no such proposed workflow, ValueError for a shipped one or an empty
-        reason, and PermissionError when ``approvers.json`` exists and ``login`` is not in it.
+        reason or a draft whose hash is not ``expected_hash``, and PermissionError when ``approvers.json`` exists and ``login`` is not in it.
         """
         if not str(reason or "").strip():
             raise ValueError("a rejection gives the reason, so whoever wrote the workflow can fix it")
@@ -306,6 +312,9 @@ class Library:
         workflow, status = self.find(str(name))
         if status == SHIPPED:
             raise ValueError(f"{name} is shipped with the software; it is reviewed in the repository, not here")
+        if expected_hash is not None and str(expected_hash) != workflow.hash():
+            raise ValueError(f"{workflow.name} has not been rejected: it changed since it was reviewed (reviewed {expected_hash}, "
+                             f"now {workflow.hash()}). Review it again.")
         if status == APPROVED or self._file(APPROVED, workflow.name).exists():
             self.revoke(workflow.name)
         record = {"hash": workflow.hash(), "reason": str(reason).strip(), "by": str(by).strip() if by and str(by).strip() else None,

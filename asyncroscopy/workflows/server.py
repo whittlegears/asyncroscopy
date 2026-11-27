@@ -260,7 +260,8 @@ class WorkflowServer:
             "name": workflow.name, "status": status, "summary": workflow.summary, "inputs": dict(workflow.inputs), "budget": dict(workflow.budget),
             "graph": {k: v for k, v in workflow.blueprint().items() if k in ("nodes", "edges")}, "source": workflow.source(),
             "hash": current, "acts": checked["acts"], "tools": checked["tools"], "blocks": checked["blocks"], "problems": checked["problems"],
-            "request": {"text": asked.get("request"), "at": asked.get("at"), "this_code": asked.get("hash") == current} if asked else None,
+            # The agent that proposed it supplied these words: they are what it says the user asked, not the person's own record.
+            "request_as_reported_by_agent": {"text": asked.get("request"), "at": asked.get("at"), "this_code": asked.get("hash") == current} if asked else None,
             "approval": approval,
             "changed_since_approval": approval is not None and approval.get("hash") != current,
             "rejection": {**rejection, "this_code": rejection.get("hash") == current} if rejection else None,
@@ -284,8 +285,9 @@ class WorkflowServer:
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
 
-        async def approve_workflow(name: str, approver: str, instrument: str | None = None, days: float | None = None) -> dict:
-            """A person approves a draft workflow, as it is now, to run on the real instrument. approver: the person's
+        async def approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | None = None, days: float | None = None) -> dict:
+            """A person approves a draft workflow to run on the real instrument. expected_hash: the hash review_workflow
+            returned for the code the person read; refused if the draft is not that code now. approver: the person's
             name. instrument: the stack_id it is approved for (left out or "any": every instrument). days: how long the
             approval holds (left out: until revoked). Refused unless this exact code ran to the end on a digital twin."""
             try:
@@ -296,16 +298,17 @@ class WorkflowServer:
                 return {"ok": False, "status": status, "error": f"{workflow.name} is shipped with the software; there is nothing to approve"}
             try:
                 record = server.library.approve(workflow.name, approver, login=getpass.getuser(), instrument=instrument, days=days,
-                                                require_rehearsal=True, via=via)
+                                                require_rehearsal=True, via=via, expected_hash=str(expected_hash))
             except (KeyError, ValueError, PermissionError) as exc:
                 return {"ok": False, "status": status, "error": str(exc.args[0])}
             return {"ok": True, "status": APPROVED, "approval": record}
 
-        async def reject_workflow(name: str, reason: str) -> dict:
-            """A person rejects a workflow, with the reason, so it is not approved as it is. An approved one loses its
-            approval. The text is kept as a draft and still runs on a digital twin."""
+        async def reject_workflow(name: str, reason: str, expected_hash: str) -> dict:
+            """A person rejects a workflow, with the reason, so it is not approved as it is. expected_hash: the hash
+            review_workflow returned for the code the person read; refused if the workflow is not that code now. An
+            approved one loses its approval. The text is kept as a draft and still runs on a digital twin."""
             try:
-                record = server.library.reject(name, reason, login=getpass.getuser(), via=via)
+                record = server.library.reject(name, reason, login=getpass.getuser(), via=via, expected_hash=str(expected_hash))
             except KeyError as exc:
                 return {"ok": False, "error": f"there is no workflow named {name!r}" if not exc.args else str(exc.args[0])}
             except (ValueError, PermissionError) as exc:

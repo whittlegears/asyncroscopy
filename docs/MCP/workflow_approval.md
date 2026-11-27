@@ -7,9 +7,13 @@ the real instrument only after a person approves it. A person approves in one of
 - the **workflow operator endpoint**, described on this page. An app such as SciAgentGUI calls it for a person.
 
 Both write the same records in the same library (`outputs/workflows/library`: `approvals.json`,
-`rejections.json`, `approved/NAME.py`). The one difference is that the endpoint refuses an approval unless this
-exact code ran to the end (state `done`) on a digital twin at least once. The command line shows the rehearsals and
-warns when there is none, but does not refuse.
+`rejections.json`, `approved/NAME.py`). The endpoint adds two checks the command line does not make:
+
+- an approval is refused unless this exact code ran to the end (state `done`) on a digital twin at least once (the
+  command line shows the rehearsals and warns when there is none, but does not refuse);
+- `approve_workflow` and `reject_workflow` take the `expected_hash` that `review_workflow` returned for the code the
+  person read, and refuse when the workflow is not that code any more. An agent can call `propose_workflow` again
+  with the same name while the person is reading; without this check the person would approve code they never saw.
 
 ## Who can call it
 
@@ -78,12 +82,12 @@ This tool only reads. The reply:
   "graph": {"nodes": {"plan": {"block": "plan_grid", "with": {"size_m": "{inputs.size_m}", "move_by": "stage"}}},
             "edges": [["START", "plan"], ["home", "END"]]},
   "source": "the whole Python module",
-  "hash": "sha256 of the code and every block it uses",
+  "hash": "the hash of the code and every block it uses",
   "acts": true,
   "tools": ["the instrument tools its blocks call"],
   "blocks": ["plan_grid", "..."],
   "problems": [],
-  "request": {"text": "the user's own words", "at": 1795817468.2, "this_code": true},
+  "request_as_reported_by_agent": {"text": "what the agent says the user asked", "at": 1795817468.2, "this_code": true},
   "approval": null,
   "changed_since_approval": false,
   "rejection": null,
@@ -98,14 +102,16 @@ This tool only reads. The reply:
 ```
 
 - `status` is `shipped`, `approved` or `draft`. An approved workflow whose code changed is a `draft` again.
-- `request` is `null` when nobody's request was kept. `this_code` is false when the draft was replaced after the
-  request.
+- `request_as_reported_by_agent` is the `user_request` the proposing agent sent with `propose_workflow`. It is the
+  agent's account of what the user asked, not a record the person made: show it as such, never as the person's own
+  words. It is `null` when none was kept; `this_code` is false when the draft was replaced after it.
 - `approval` is the approval record (see `approve_workflow`) or `null`. `changed_since_approval` is true when
   there is an approval and the code or one of its blocks has changed since.
 - `rejection` is `{"hash", "reason", "by", "login", "at", "via", "this_code"}` or `null`.
 - `rehearsals` lists the runs on a digital twin, oldest first, at most 10. `this_code` marks the runs of the
   code as it is now. `outputs` is read from the run's record, and is `null` when that record is gone. `problems`
   are the problems that the run recorded.
+- `hash` identifies this exact code (the module and every block it uses). Pass it back as `expected_hash`.
 - `rehearsed` is true when a run of this code reached `done`.
 - `can_approve` and `why_not` say whether `approve_workflow` would accept it now. The reasons are: it is shipped,
   it is already approved, it fails its checks, or it was never rehearsed to the end.
@@ -113,9 +119,10 @@ This tool only reads. The reply:
   does that before every run.
 - Times (`at`) are Unix seconds.
 
-### `approve_workflow(name: str, approver: str, instrument: str | null = null, days: float | null = null)`
+### `approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | null = null, days: float | null = null)`
 
-This tool approves the workflow as it is now. `approver` is the person's name. `instrument` is the `stack_id` that
+This tool approves the workflow the person reviewed. `expected_hash` is the `hash` from the `review_workflow` reply
+they read; the approval record keeps it as `hash`. `approver` is the person's name. `instrument` is the `stack_id` that
 the approval is for; `null` or `"any"` means every instrument. `days` is how long the approval holds; `null` means
 until it is revoked.
 
@@ -123,6 +130,7 @@ The tool refuses (`ok: false`) when:
 
 - there is no such workflow;
 - the workflow is shipped;
+- the workflow's hash is not `expected_hash` (it changed since it was reviewed: review it again);
 - `approver` is empty;
 - `days` is not above 0;
 - the login is not in `approvers.json`;
@@ -142,12 +150,13 @@ The reply when it succeeds:
 `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
 earlier rejection.
 
-### `reject_workflow(name: str, reason: str)`
+### `reject_workflow(name: str, reason: str, expected_hash: str)`
 
-This tool rejects the workflow as it is now, with a reason. If the workflow was approved, it loses its approval. Its
+This tool rejects the workflow the person reviewed (`expected_hash`, as for `approve_workflow`), with a reason. If
+the workflow was approved, it loses its approval. Its
 text stays as a draft, and the draft still runs on a twin. `list_workflows` shows the reason as `rejected`, so the
-agent that wrote it can read it. The tool refuses when there is no such workflow, when it is shipped, when `reason`
-is empty, or when the login is not in `approvers.json`.
+agent that wrote it can read it. The tool refuses when there is no such workflow, when it is shipped, when its hash
+is not `expected_hash`, when `reason` is empty, or when the login is not in `approvers.json`.
 
 ```json
 {"ok": true, "rejection": {"name": "tiles_only", "status": "draft", "hash": "...", "reason": "...", "by": null,
@@ -157,5 +166,5 @@ is empty, or when the login is not in `approvers.json`.
 ## Tests
 
 `tests/agents/test_workflows.py::test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_only`
-drives this contract over MCP. `tests/agents/test_agent.py` checks that the agent endpoint and the swarm never get
+drives this contract over MCP, including a draft re-proposed between the review and the approval (refused). `tests/agents/test_agent.py` checks that the agent endpoint and the swarm never get
 these tools. `tests/startup/test_run_servers.py` checks the loopback rule.
