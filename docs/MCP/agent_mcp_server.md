@@ -81,9 +81,10 @@ runs without the LLM deciding each step:
 | `return_to_site(name, max_rotation_deg)` | Runs go to position → survey → centre → verify (up to 3 corrections) → record. |
 | `list_sites()` | Lists the saved sites with the outcome of each one's last visit. |
 
-The workflow (`asyncroscopy/mcp/workflows/return_to_site.py`) uses only the
-inherited instrument tools and `register_images` from the instrument MCP
-server.
+The workflow (`asyncroscopy/mcp/workflows/return_to_site.py`) needs no model.
+It connects to the instrument MCP server(s) in `--mcp-urls-json` with the
+`fastmcp` client and uses only the instrument tools and `register_images`.
+It therefore works even when no LLM is running.
 
 `return_to_site` reports `status`:
 - `match` only when the image at the original magnification matches within

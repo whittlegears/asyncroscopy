@@ -121,32 +121,62 @@ class AgentMCPServer:
 
     # -- deterministic workflows over the inherited MCP tools ---------------------------
 
-    def _workflow(self):
+    async def _workflow(self, run):
+        """Run *run(wf, inst, book)* with an MCP client of the instrument server.
+
+        The deterministic workflows need no model, so they connect to the instrument
+        MCP server directly (fastmcp client) rather than through the swarm, which only
+        loads its tools once a model has started.
+        """
+        from fastmcp import Client
+
         from asyncroscopy.mcp.workflows import return_to_site as wf
 
-        inst = wf.McpInstrument(self.swarm.call_tool, self.swarm.tool_names)
-        return wf, inst, wf.SiteBook(self.sites_path)
+        errors = []
+        for url in self.mcp_urls:
+            try:
+                async with Client(url, timeout=600) as client:
+                    names = [t.name for t in await client.list_tools()]
+                    if not any(n.endswith("_move_stage") for n in names) or "register_images" not in names:
+                        errors.append(f"{url}: no instrument tools with register_images")
+                        continue
+
+                    async def call(tool: str, args: dict):
+                        result = await client.call_tool(tool, args)
+                        if result.data is not None:
+                            return result.data
+                        return [{"text": getattr(c, "text", "")} for c in result.content] or None
+
+                    inst = wf.McpInstrument(call, names)
+                    return await run(wf, inst, wf.SiteBook(self.sites_path))
+            except Exception as exc:
+                if not errors or "no instrument tools" not in errors[-1]:
+                    errors.append(f"{url}: {type(exc).__name__}: {exc}")
+                if isinstance(exc, (KeyError, ValueError, RuntimeError)):
+                    raise
+        raise RuntimeError("no instrument MCP server available: " + "; ".join(errors))
 
     async def save_site(self, name: str, landmark: bool = False, notes: str = "") -> dict:
         """Image the current spot and save it (image key, stage, field of view) so it can be found again.
         Mark 2-3 distinctive, well-separated sites as landmarks: they re-register the specimen after a remount."""
-        wf, inst, book = self._workflow()
-        return await wf.save_site(inst, book, name, landmark, notes)
+        return await self._workflow(lambda wf, inst, book: wf.save_site(inst, book, name, landmark, notes))
 
     async def calibrate_stage_mapping(self) -> dict:
         """Measure how stage moves shift the image at the current field of view (needed once per
         magnification before return_to_site can centre anything). Takes a few small stage steps."""
-        wf, inst, book = self._workflow()
-        return {"stage_to_image": await wf.calibrate(inst, book)}
+        async def run(wf, inst, book):
+            return {"stage_to_image": await wf.calibrate(inst, book)}
+        return await self._workflow(run)
 
     async def return_to_site(self, name: str, max_rotation_deg: float = 0.0) -> dict:
         """Go back to a saved site and verify it by image registration (LangGraph workflow: go to the saved
         position, survey, centre, verify, correct up to 3 times, record). status is 'match' only when the
         native-magnification image matches within 2 pixels; 'ambiguous', 'no_match', 'not_converged' and
         'not_calibrated' mean the site was NOT confirmed. Use max_rotation_deg=10 after a remount."""
-        wf, inst, book = self._workflow()
-        state = await wf.return_to_site(inst, book, name, max_rotation_deg=max_rotation_deg)
-        return {k: state.get(k) for k in ("status", "reasons", "final_stage", "visit")}
+        async def run(wf, inst, book):
+            state = await wf.return_to_site(inst, book, name, max_rotation_deg=max_rotation_deg)
+            return {k: state.get(k) for k in ("status", "reasons", "final_stage", "visit")}
+        return await self._workflow(run)
 
     def list_sites(self) -> dict:
         """Saved sites with their stage positions and the outcome of their last visit."""

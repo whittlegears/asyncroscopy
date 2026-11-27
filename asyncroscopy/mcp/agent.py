@@ -18,7 +18,6 @@ try:
     from langchain.chat_models import init_chat_model
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import BaseTool
-    from langchain_mcp_adapters.client import MultiServerMCPClient
 
     from langgraph.graph import END, START, StateGraph
 except ImportError:
@@ -81,7 +80,7 @@ class AgentSwarm:
 
         self._agents: list[Agent] = list(startup_agents or [])
         self._tools: list[BaseTool] = []
-        self._mcp_clients: list[MultiServerMCPClient] = []
+        self._mcp_clients: list = []
         self._model = None
         self.startup_error: str | None = None
 
@@ -158,6 +157,10 @@ class AgentSwarm:
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
         """Connect to an MCP server and inherit its tools. Returns true for success."""
         try:
+            # Imported here, not at module load: a broken or version-mismatched adapter must only
+            # disable tool inheritance, not take down the whole agent server and its workflows.
+            from langchain_mcp_adapters.client import MultiServerMCPClient
+
             server_id = f"server_{len(self._mcp_clients)}"
             client = MultiServerMCPClient({server_id: {"url": url, "transport": transport}})
 
