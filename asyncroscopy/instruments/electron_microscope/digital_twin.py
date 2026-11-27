@@ -1,518 +1,407 @@
 """
-Digital twin version of AutoScriptMicroscope for HAADF-EDX.
+General-purpose STEM digital twin.
 
-Useful for testing and development without requiring AutoScript hardware.
+Runs the same commands as the real microscope against a seeded, simulated
+sample, so workflows can be rehearsed and benchmarked before they touch
+hardware. Every realistic effect (stage error, backlash, drift, scan
+distortion, focus, detector noise, EDS spectra, beam dose) is a device
+property that defaults to off, so a bare config behaves like an ideal
+instrument; ``configs/digital_twin_mapping.yaml`` turns them on with
+literature magnitudes. See docs/digital_twin.md.
 """
 
+from __future__ import annotations
+
 import json
+from dataclasses import replace
 
 import numpy as np
-import pyTEMlib.image_tools as it
-import pyTEMlib.probe_tools as pt
 import tango
-from ase import Atoms
-from ase.build import bulk
-from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, device_property
+from tango.server import device_property
 
-from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
-from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.utils.commands import command
+from asyncroscopy.data.data_writer import save_acquisition, save_acquisition_stream
+from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
+from asyncroscopy.routines.dose import ELECTRON_CHARGE
+from asyncroscopy.instruments.scanning_beam_twin import ANGSTROM, ScanningBeamTwin
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
+    DEFAULT_ACQUISITION_DIR,
+    ElectronMicroscopeTwin,
+)
+from asyncroscopy.instruments.electron_microscope.electron_microscope import check_defocus
+from asyncroscopy.instruments.electron_microscope.twin import (
+    EdsParams,
+    SampleParams,
+    ScanParams,
+    point_spectrum,
+)
+from asyncroscopy.sim.dose import DoseMap
+from asyncroscopy.instruments.electron_microscope.twin.detector import (
+    DetectorDrift,
+    DetectorParams,
+    count,
+)
+from asyncroscopy.sim.dose import DoseParams
+from asyncroscopy.instruments.electron_microscope.twin.optics import FocusDrift, aberrations_nm
+from asyncroscopy.instruments.electron_microscope.twin.render import (
+    DETECTOR_SCALE,
+    Renderer,
+    RenderParams,
+)
+from asyncroscopy.instruments.electron_microscope.twin.elements import ELEMENTS
+from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext
 
-DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
+__all__ = ["DEFAULT_ACQUISITION_DIR", "DigitalTwin"]
 
 
-class DigitalTwin(ElectronMicroscope):
-    """
-    Persistent ASE-backed sample simulation with stage-coupled viewport rendering.
-    """
+def _prop(dtype, default, doc):
+    return device_property(dtype=dtype, default_value=default, doc=doc)
+
+
+class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
+    """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
+
+    # The specimen says where the sample comes from. See docs/Operation/specimens.md. The flat sample properties below
+    # are the settings of the procedural source and the defaults of the other sources for seed, size, support and height.
+    # specimen and specimen_source belong to the base class. specimen_source is procedural for seeded particles,
+    # recorded for an image file, crystal for a polycrystalline film, or the name of a plug-in.
+    specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
+    specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
+    specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
+    # Sample. sample_seed, sample_particle_count and sample_size_xy come from the base class.
+    particle_radius_mean = _prop(float, 1.6e-9, "Mean particle radius (m).")
+    particle_radius_std = _prop(float, 0.2e-9, "Particle radius standard deviation (m).")
+    particle_aspect_ratio = _prop(float, 0.4, "Particle thickness / radius.")
+    particle_elements = _prop(str, "Au,Pt,Fe", "Comma-separated particle elements.")
+    support_thickness = _prop(float, 0.0, "Amorphous carbon support film thickness (m).")
+    sample_cluster_count = _prop(int, 0, "Number of particle clusters (0: particles spread uniformly).")
+    sample_cluster_radius = _prop(float, 0.0, "Typical cluster radius (m).")
+    sample_cluster_fraction = _prop(float, 0.0, "Fraction of particles placed in clusters (0-1).")
+    height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
+    height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
+    # A real column enforces limits. The twin refuses instead of rendering nonsense or running out of memory.
+    # min_fov, max_fov, max_image_shift, max_defocus and max_stigmator belong to the bases. Render cost grows with defocus squared.
+    # The operator does not see the focus truth below. get_defocus and get_stigmator never include it. A twin
+    # started with these set is defocused and astigmatic, and its images are blurred to match, so a
+    # focus routine has to find the correction from the images. export_ground_truth reports the residual.
+    focus_offset_m = _prop(float, 0.0, "Hidden focus error (m) added to C1; not reported by get_defocus.")
+    astigmatism_offset_a_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, first component (m); not reported by get_stigmator.")
+    astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
+    focus_drift_m = _prop(float, 0.0, "Largest slow swing of the hidden focus error (m) over 20 minutes to 6 hours (0: steady).")
+    astigmatism_drift_m = _prop(float, 0.0, "Largest slow swing of each hidden A1 component (m) over the same times (0: steady).")
+    # A real session starts with the column valves closed and no measured beam current. With cold_start the twin does
+    # too, so a workflow that forgets to open the valves, or to measure the current, fails here as it would there.
+    cold_start = _prop(bool, False, "Start as an instrument is found: column valves closed and the beam current not yet measured.")
+    autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
+    autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
+    # Optics and detector
+    acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
+    convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
+    probe_current_pa = _prop(float, DEFAULT_BEAM_CURRENT_PA, "Probe current (pA); reported as the measured beam_current_pa.")
+    haadf_z_exponent = _prop(float, 1.7, "HAADF contrast exponent n in Z^n.")
+    haadf_scattering_scale = _prop(float, 2.25e-5, "k in 1-exp(-k * sum Z^n rho t[A]).")
+    atomic_pixel_threshold = _prop(float, 0.2e-9, "Below this pixel size (m) atoms are rendered.")
+    detector_gain = _prop(float, 1.0, "Counts per detected electron.")
+    detector_offset = _prop(float, 0.0, "Detector dark offset (counts).")
+    detector_read_noise = _prop(float, 0.0, "Gaussian read noise (counts).")
+    detector_gain_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' gain, as a fraction (0: steady).")
+    detector_offset_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' offset (counts; 0: steady).")
+    # Scan
+    scan_flyback_time = _prop(float, 0.0, "Line flyback time (s).")
+    scan_line_jitter_px = _prop(float, 0.0, "Per-line x jitter standard deviation (pixels).")
+    scan_rotation_deg = _prop(float, 0.0, "Scan rotation relative to the stage (deg).")
+    scan_shear = _prop(float, 0.0, "Scan shear (x shift per unit y).")
+    scan_flyback_compression = _prop(float, 0.0, "Left-edge compression after flyback (fraction).")
+    fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
+    # The errors, dynamics and drift of the stage belong to the STAGE device DigitalTwinSTAGE. The clock belongs to the microscope.
+    time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
+    # EDS
+    eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
+    eds_solid_angle = _prop(float, 0.7, "EDS collection solid angle (sr).")
+    eds_dead_time = _prop(float, 1e-6, "EDS paralyzable dead time (s).")
+    eds_channels = _prop(int, 2048, "EDS channels.")
+    eds_energy_max = _prop(float, 20000.0, "EDS energy range upper limit (eV).")
+    # Dose
+    dose_tracking = _prop(bool, False, "Record dose and apply contamination/damage.")
+    contamination_max = _prop(float, 0.0, "Carbon contamination thickness at saturation (m).")
+    contamination_dose = _prop(float, 1e4, "Dose (e/A^2) for contamination to reach 63% of saturation.")
+    damage_critical_dose = _prop(float, 0.0, "Dose (e/A^2) beyond which particles start to fade (0 = off).")
 
     # ------------------------------------------------------------------
-    # Device properties — configure in Tango DB per deployment
+    # Model construction
     # ------------------------------------------------------------------
-    
-    sample_seed = device_property(
-        dtype=int,
-        default_value=12345,
-        doc="Seed used to generate deterministic sample geometry.",
-    )
-    sample_particle_count = device_property(
-        dtype=int,
-        default_value=40,
-        doc="Number of particles in the generated sample.",
-    )
-    sample_size_xy = device_property(
-        dtype=float,
-        default_value=6e-9,
-        doc="Absolute sample XY size in meters (must be > 0).",
-    )
-    sample_size_z = device_property(
-        dtype=float,
-        default_value=6e-9,
-        doc="Absolute sample thickness (Z) in meters (must be > 0).",
-    )
-    stage_move_noise_std = device_property(
-        dtype=float,
-        default_value=0.0,
-        doc="Gaussian move noise standard deviation in meters (applied to x,y,z).",
-    )
-    acquisition_save_directory = device_property(
-        dtype=str,
-        default_value=DEFAULT_ACQUISITION_DIR,
-        doc="Directory where simulated acquisitions are saved before the Tiled server serves them.",
-    )
-    acquisition_file_format = device_property(
-        dtype=str,
-        default_value="h5",
-        doc="Acquisition file format. HDF5 stores simulated acquisition data and metadata.",
-    )
-    data_device_address = device_property(
-        dtype=str,
-        default_value="",
-        doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
-    )
+    def _check_properties(self) -> None:
+        """Refuse impossible configuration at start-up, not with a cryptic error at the first image."""
+        rules = [
+            ("probe_current_pa", float(self.probe_current_pa) > 0, "must be > 0"),
+            ("particle_radius_mean", float(self.particle_radius_mean) > 0, "must be > 0"),
+            ("sample_size_xy", float(self.sample_size_xy) > 0, "must be > 0"),
+            ("particle_elements", any(e.strip() for e in str(self.particle_elements).split(",")), "must name at least one element"),
+            ("fov_scale_error", float(self.fov_scale_error) > -1, "must be > -1 (a fraction)"),
+            ("eds_channels", int(self.eds_channels) >= 16, "must be >= 16"),
+            ("eds_energy_max", float(self.eds_energy_max) > 0, "must be > 0"),
+            ("contamination_dose", float(self.contamination_dose) > 0, "must be > 0"),
+            ("sample_cluster_count", int(self.sample_cluster_count) >= 0, "must be >= 0"),
+            ("sample_cluster_radius", float(self.sample_cluster_radius) >= 0, "must be >= 0"),
+            ("sample_cluster_fraction", 0.0 <= float(self.sample_cluster_fraction) <= 1.0, "must be in [0, 1]"),
+        ]
+        bad = [f"{name} {why} (got {getattr(self, name)!r})" for name, ok, why in rules if not ok]
+        if bad:
+            raise ValueError("digital twin configuration: " + "; ".join(bad))
 
-    manufacturer = attribute(
-        label="DigitalTwin",
-        dtype=str,
-        doc="Simulation backend",
-    )
-
-    beam_pos = attribute(
-        label="Beam Position",
-        dtype=(float,),
-        max_dim_x=2,
-        access=AttrWriteType.READ_WRITE,
-        unit="fractional",
-        min_value=0.0,
-        max_value=1.0,
-        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]",
-    )
-
-    def init_device(self) -> None:
-        """Initialize the Tango device and simulation state variables."""
-        Device.init_device(self)
-        self.set_state(DevState.INIT)
-
-        self._stem_mode = True
-        self._detector_proxies: dict[str, tango.DeviceProxy] = {}
-        self._manufacturer = "UTKTeam"
-        self._beam_pos_x = 0.5
-        self._beam_pos_y = 0.5
-        self._defocus = 0.0
-        self._imsize = 512
-        self._fov = 200e-10  # meters
-        self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
-
-        self._sample_atoms_base = Atoms()
-        self._sample_atoms_view = Atoms()
-        self._particle_records_base: list[dict] = []
-        self._particle_records_view: list[dict] = []
-        self._world_bounds_ang = {
-            "x_min": -1.0,
-            "x_max": 1.0,
-            "y_min": -1.0,
-            "y_max": 1.0,
-            "z_min": -1.0,
-            "z_max": 1.0,
-        }
-        self._cached_pose_key: tuple | None = None
-        self._all_sample_elements: list[str] = []
-
-        self._connect()
-
-    def _connect(self):
-        """Simulate connection by connecting to detector proxies."""
-        self._connect_detector_proxies()
-        self._generate_sample(seed=int(self.sample_seed))
-        self.set_state(DevState.ON)
-
-    def _connect_detector_proxies(self) -> None:
-        """Build DeviceProxy objects for each configured detector device."""
-        addresses: dict[str, str] = {
-            "camera": self.camera_device_address,
-            "eds": self.eds_device_address,
-            "stage": self.stage_device_address,
-            "scan": self.scan_device_address,
-            "corrector": self.corrector_device_address,
-            "data": self.data_device_address,
-        }
-        for name, address in addresses.items():
-            if not address:
-                self.info_stream(f"Skipping {name}: no address configured")
-                continue
-            try:
-                proxy = tango.DeviceProxy(address)
-                proxy.set_timeout_millis(12_000)
-                self._detector_proxies[name] = proxy
-                self.info_stream(f"Connected to detector proxy: {name} @ {address}")
-            except tango.DevFailed as e:
-                self.error_stream(f"Failed to connect to {name} proxy at {address}: {e}")
-
-    def _sync_stage_from_proxy(self) -> None:
-        """Fetch the current stage position from the stage device proxy."""
-        stage = self._detector_proxies.get("stage")
-        if stage is None:
-            return
-        try:
-            self._stage_position = np.array(
-                [stage.x, stage.y, stage.z, stage.alpha, stage.beta],
-                dtype=np.float64,
-            )
-            self._update_view_cache(force=False)
-        except tango.DevFailed:
-            self.error_stream("Failed to read stage proxy position; using internal stage state.")
-
-    def _update_view_cache(self, force: bool = False) -> None:
-        """Update the viewed sample positions by applying current stage rotations and translations."""
-        pose_key = tuple(np.round(self._stage_position, 12))
-        if not force and pose_key == self._cached_pose_key:
-            return
-
-        alpha_deg, beta_deg = self._stage_position[3], self._stage_position[4]
-        stage_xyz_ang = self._stage_position[:3] * 1e10
-
-        self._sample_atoms_view = self._sample_atoms_base.copy()
-        if len(self._sample_atoms_view) > 0:
-            if alpha_deg != 0.0:
-                self._sample_atoms_view.rotate(alpha_deg, 'x', center=(0, 0, 0))
-            if beta_deg != 0.0:
-                self._sample_atoms_view.rotate(beta_deg, 'y', center=(0, 0, 0))
-            self._sample_atoms_view.translate(-stage_xyz_ang)
-
-        self._particle_records_view = []
-        for rec in self._particle_records_base:
-            dummy = Atoms("H", positions=[rec["center"]])
-            if alpha_deg != 0.0:
-                dummy.rotate(alpha_deg, 'x', center=(0, 0, 0))
-            if beta_deg != 0.0:
-                dummy.rotate(beta_deg, 'y', center=(0, 0, 0))
-            dummy.translate(-stage_xyz_ang)
-            
-            self._particle_records_view.append(
-                {
-                    "center": dummy.positions[0],
-                    "radius": rec["radius"],
-                    "btype": rec["btype"],
-                    "composition": rec["composition"],
-                }
-            )
-        self._cached_pose_key = pose_key
-
-    @staticmethod
-    def _sub_pix_gaussian(size: int = 11, sigma: float = 0.8, dx: float = 0.0, dy: float = 0.0) -> np.ndarray:
-        """Generate a 2D Gaussian kernel with sub-pixel shifts for atomic rendering."""
-        coords = np.arange(size) - (size - 1) / 2.0
-        xx, yy = np.meshgrid(coords, coords)
-        g = np.exp(-(((xx + dx) ** 2 + (yy + dy) ** 2) / (2 * sigma**2)))
-        m = np.max(g)
-        return g / m if m > 0 else g
-    # ------------------------------------------------------------------
-    # Digital twin rendering helpers.
-    # ------------------------------------------------------------------
-    def _create_pseudo_potential(
-        self,
-        xtal: Atoms,
-        pixel_size: float,
-        sigma: float,
-        bounds: tuple[float, float, float, float],
-        atom_frame: int = 11,
-    ) -> np.ndarray:
-        """Project 3D atomic coordinates into a 2D density map representing pseudo-potential."""
-        x_min, x_max, y_min, y_max = bounds
-        pixels_x = int(np.round((x_max - x_min) / pixel_size))
-        pixels_y = int(np.round((y_max - y_min) / pixel_size))
-        potential_map = np.zeros((pixels_x, pixels_y), dtype=np.float32)
-        padding = atom_frame
-        padded = np.pad(potential_map, padding, mode="constant", constant_values=0.0)
-
-        if len(xtal) == 0:
-            return potential_map
-
-        atomic_numbers = np.asarray(xtal.get_atomic_numbers(), dtype=np.float32)
-        positions = xtal.get_positions()[:, :2]
-        mask = (
-            (positions[:, 0] >= x_min)
-            & (positions[:, 0] < x_max)
-            & (positions[:, 1] >= y_min)
-            & (positions[:, 1] < y_max)
-        )
-        positions = positions[mask]
-        atomic_numbers = atomic_numbers[mask]
-
-        half = atom_frame // 2
-        for pos, atomic_number in zip(positions, atomic_numbers):
-            x_rel = (pos[0] - x_min) / pixel_size
-            y_rel = (pos[1] - y_min) / pixel_size
-            x_round = int(np.round(x_rel))
-            y_round = int(np.round(y_rel))
-            dx = x_rel - x_round
-            dy = y_rel - y_round
-
-            atom_patch = self._sub_pix_gaussian(size=atom_frame, sigma=sigma, dx=dx, dy=dy) * atomic_number
-            x0 = x_round + padding - half
-            y0 = y_round + padding - half
-            x1 = x0 + atom_frame
-            y1 = y0 + atom_frame
-            if x0 < 0 or y0 < 0 or x1 > padded.shape[0] or y1 > padded.shape[1]:
-                continue
-            padded[x0:x1, y0:y1] += atom_patch
-
-        potential = padded[padding:-padding, padding:-padding]
-        max_val = float(np.max(potential)) if potential.size else 0.0
-        if max_val > 0:
-            potential = potential / max_val
-        return potential.astype(np.float32)
-
-    @staticmethod
-    def _poisson_noise(image: np.ndarray, counts: float, rng: np.random.Generator) -> np.ndarray:
-        """Apply normalized Poisson noise based on simulated electron counts."""
-        image = image - image.min()
-        total = float(image.sum())
-        if total <= 0 or counts <= 0:
-            return np.zeros_like(image, dtype=np.float32)
-        image = image / total
-        noisy = rng.poisson(image * counts).astype(np.float32)
-        noisy -= noisy.min()
-        m = float(noisy.max())
-        if m > 0:
-            noisy /= m
-        return noisy
-
-    @staticmethod
-    def _lowfreq_noise(
-        image: np.ndarray,
-        noise_level: float,
-        freq_scale: float,
-        rng: np.random.Generator,
-    ) -> np.ndarray:
-        """Generate low-frequency spatial noise to simulate background drift or detector artifacts."""
-        size_x, size_y = image.shape
-        noise = rng.normal(0, noise_level, (size_x, size_y))
-        noise_fft = np.fft.fft2(noise)
-        x_freqs = np.fft.fftfreq(size_x)
-        y_freqs = np.fft.fftfreq(size_y)
-        freq_filter = np.outer(
-            np.exp(-np.square(x_freqs) / (2 * freq_scale**2)),
-            np.exp(-np.square(y_freqs) / (2 * freq_scale**2)),
-        )
-        filtered_noise = np.fft.ifft2(noise_fft * freq_filter).real
-        filtered_noise -= filtered_noise.min()
-        m = float(filtered_noise.max())
-        if m > 0:
-            filtered_noise /= m
-        return filtered_noise.astype(np.float32)
+    def _specimen_options(self) -> dict:
+        """The specimen_* flat properties, overridden by the ``specimen`` mapping."""
+        options = super()._specimen_options()
+        if options["source"] == "recorded":  # the flat shorthands are the recorded source's options
+            path, pixel, labels = str(self.specimen_path or "").strip(), float(self.specimen_pixel_size_m or 0.0), str(self.specimen_labels_path or "").strip()
+            options = {**{k: v for k, v in (("path", path), ("pixel_size_m", pixel), ("labels_path", labels)) if v}, **options}
+        return options
 
     def _generate_sample(self, seed: int) -> None:
-        """Procedurally generate the underlying base sample composed of bulk nanoparticles."""
-        rng = np.random.default_rng(int(seed))
-        sample_xy = float(self.sample_size_xy) * 1e10
-        sample_z = float(self.sample_size_z) * 1e10
-        if sample_xy <= 0.0 or sample_z <= 0.0:
-            raise ValueError(
-                "sample_size_xy and sample_size_z must both be > 0."
-            )
-
-        particle_radius = 16.0
-        radius_std = 2.0
-        aspect_ratio = 0.4
-        min_separation = 3.0
-        n_particles = max(1, int(self.sample_particle_count))
-        max_attempts = 500
-
-        bulk_types = {
-            "Au": bulk("Au", "fcc", a=4.08),
-            "Pt": bulk("Pt", "fcc", a=3.92),
-            "Fe": bulk("Fe", "bcc", a=2.87),
+        self._check_properties()
+        self._start_beam_twin(int(seed))
+        # The specimen is a plug-in. Everything after it is the instrument, which only asks the specimen for weights, densities, heights and features.
+        self._load_specimen(seed, SpecimenContext(rng=self._rng, sample=self._sample_params()))
+        for warning in self._specimen.warnings():
+            self.warn_stream(warning)
+        self._renderer = Renderer(
+            self._specimen,
+            RenderParams(
+                z_exponent=float(self.haadf_z_exponent),
+                haadf_scale=float(self.haadf_scattering_scale),
+                atomic_pixel_m=float(self.atomic_pixel_threshold),
+                voltage_v=float(self.acceleration_voltage),
+                convergence_mrad=float(self.convergence_angle_mrad),
+            ),
+        )
+        self._scan_params = ScanParams(
+            flyback_s=float(self.scan_flyback_time),
+            line_jitter_px=float(self.scan_line_jitter_px),
+            rotation_deg=float(self.scan_rotation_deg),
+            shear=float(self.scan_shear),
+            flyback_compression=float(self.scan_flyback_compression),
+            fov_scale_error=float(self.fov_scale_error),
+        )
+        self._set_up_detectors()
+        self._dose = self._dose_map()
+        self._stigmator = np.zeros(2, dtype=np.float64)
+        self._autofocus_runs = 0
+        self._focus_error = {
+            "c1_m": float(self.focus_offset_m),
+            "a1_m": [float(self.astigmatism_offset_a_m), float(self.astigmatism_offset_b_m)],
         }
-        bulk_names = list(bulk_types.keys())
-        desired_angles = [(0, 0, 0), (60, 0, 0), (45, 45, 45)]
+        self._focus_drift = FocusDrift(float(self.focus_drift_m), float(self.astigmatism_drift_m), self._rng.for_event("focus_drift"))
+        self._column_valves_open = not bool(self.cold_start)
+        self._screen_inserted = False
+        self._current_measured_s: float | None = None  # twin time of the last screen-current reading (cold_start only)
+        self._stage_position = self._stage.true.copy()
+        self._world_bounds_ang = self._world_bounds()
 
-        placed_centers: list[tuple[float, float, float]] = []
-        placed_particles: list[tuple[str, np.ndarray, float, tuple[float, float, float]]] = []
-        particle_records: list[dict] = []
-
-        x_min, x_max = -sample_xy * 0.5, sample_xy * 0.5
-        y_min, y_max = -sample_xy * 0.5, sample_xy * 0.5
-        z_mid = 0.0
-        for _ in range(max_attempts * n_particles):
-            if len(placed_particles) >= n_particles:
-                break
-            radius = float(np.clip(rng.normal(particle_radius, radius_std), 3.0, None))
-            margin = radius + 2.0
-            cx = float(rng.uniform(x_min + margin, x_max - margin))
-            cy = float(rng.uniform(y_min + margin, y_max - margin))
-            cz = z_mid
-
-            too_close = False
-            for px, py, pr in placed_centers:
-                if np.hypot(cx - px, cy - py) < (radius + pr + min_separation):
-                    too_close = True
-                    break
-            if too_close:
-                continue
-
-            placed_centers.append((cx, cy, radius))
-            btype = str(rng.choice(bulk_names))
-            idx = len(placed_particles)
-            angles = desired_angles[idx] if idx < len(desired_angles) else tuple(rng.uniform(0, 360, size=3))
-            center = np.array([cx, cy, cz], dtype=np.float64)
-            placed_particles.append((btype, center, radius, angles))
-
-            counts_dict: dict[str, int] = {}
-            for symbol in bulk_types[btype].get_chemical_symbols():
-                counts_dict[symbol] = counts_dict.get(symbol, 0) + 1
-            total = sum(counts_dict.values())
-            composition = {symbol: count / total for symbol, count in counts_dict.items()}
-            particle_records.append(
-                {
-                    "center": center,
-                    "radius": radius,
-                    "btype": btype,
-                    "composition": composition,
-                }
-            )
-
-        all_positions: list[np.ndarray] = []
-        all_symbols: list[str] = []
-        for btype, center, radius, angles in placed_particles:
-            this_bulk = bulk_types[btype]
-            a_lat = this_bulk.cell.lengths()[0]
-            z_radius = radius * aspect_ratio
-
-            rep = int(radius * 2 / a_lat) + 3
-            supercell = this_bulk.repeat((rep, rep, rep))
-            
-            # Center the supercell at origin
-            supercell.center(about=(0.0, 0.0, 0.0))
-            
-            # Apply rotations (Z, Y, X by corresponding euler angles)
-            if angles[2] != 0.0:
-                supercell.rotate(angles[2], 'x', center=(0, 0, 0))
-            if angles[1] != 0.0:
-                supercell.rotate(angles[1], 'y', center=(0, 0, 0))
-            if angles[0] != 0.0:
-                supercell.rotate(angles[0], 'z', center=(0, 0, 0))
-                
-            positions = supercell.get_positions()
-            
-            r_scaled = np.sqrt(
-                (positions[:, 0] / radius) ** 2
-                + (positions[:, 1] / radius) ** 2
-                + (positions[:, 2] / z_radius) ** 2
-            )
-            mask = r_scaled <= 1.0
-            selected_positions = positions[mask] + center
-            selected_symbols = [s for s, m in zip(supercell.get_chemical_symbols(), mask) if m]
-            if len(selected_positions) == 0:
-                continue
-            all_positions.append(selected_positions)
-            all_symbols.extend(selected_symbols)
-
-        if all_positions:
-            stacked_positions = np.vstack(all_positions)
-            self._sample_atoms_base = Atoms(symbols=all_symbols, positions=stacked_positions)
-        else:
-            self._sample_atoms_base = Atoms()
-
-        self._particle_records_base = particle_records
-        self._all_sample_elements = sorted({el for rec in particle_records for el in rec["composition"]})
-        self._world_bounds_ang = {
-            "x_min": x_min,
-            "x_max": x_max,
-            "y_min": y_min,
-            "y_max": y_max,
-            "z_min": -sample_z * 0.5,
-            "z_max": sample_z * 0.5,
-        }
-        self._cached_pose_key = None
-        self._update_view_cache(force=True)
-
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
-    def read_manufacturer(self) -> str:
-        """Read method for the manufacturer attribute."""
-        return self._manufacturer
-
-    def read_beam_pos(self):
-        """Read method for the beam position attribute."""
-        return [self._beam_pos_x, self._beam_pos_y]
-
-    def write_beam_pos(self, value):
-        """Write method for the beam position attribute."""
-        x, y = value[0], value[1]
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            raise ValueError(f"beam_pos values must be in [0.0, 1.0], got x={x}, y={y}")
-        self._beam_pos_x = float(x)
-        self._beam_pos_y = float(y)
-
-    def _viewport_metadata(self) -> dict:
-        fov_ang = self._fov * 1e10
-        stage_xyz_ang = self._stage_position[:3] * 1e10
-        return {
-            "stage_position": [float(v) for v in self._stage_position],
-            "beam_position": [float(self._beam_pos_x), float(self._beam_pos_y)],
-            "fov_m": float(self._fov),
-            "fov_angstrom": float(fov_ang),
-            "imsize": int(self._imsize),
-            "sample_seed": int(self.sample_seed),
-            "sample_size_xy": float(self.sample_size_xy),
-            "sample_size_z": float(self.sample_size_z),
-            "viewport_world_angstrom": {
-                "x_min": float(stage_xyz_ang[0] - fov_ang * 0.5),
-                "x_max": float(stage_xyz_ang[0] + fov_ang * 0.5),
-                "y_min": float(stage_xyz_ang[1] - fov_ang * 0.5),
-                "y_max": float(stage_xyz_ang[1] + fov_ang * 0.5),
-                "z_center": float(stage_xyz_ang[2]),
-            },
-            "world_bounds_angstrom": self._world_bounds_ang,
-            "particle_count": len(self._particle_records_base),
-        }
-
-    def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list) -> np.ndarray:
-        """Simulate STEM image acquisition using convolutions of the pseudo-potential and electron probe."""
-        self._sync_stage_from_proxy()
-        self._imsize = imsize
-        self._update_view_cache(force=False)
-
-        size = imsize
-        fov_ang = self._fov * 1e10
-        edge_crop = 20
-        beam_current = 1000.0  # pA
-        blur_noise_level = 0.1
-        pixel_size = fov_ang / size
-
-        frame_half = fov_ang * 0.5
-        edge_ang = edge_crop * pixel_size
-        frame = (-frame_half - edge_ang, frame_half + edge_ang, -frame_half - edge_ang, frame_half + edge_ang)
-        potential = self._create_pseudo_potential(
-            self._sample_atoms_view,
-            pixel_size=pixel_size,
-            sigma=1.0,
-            bounds=frame,
-            atom_frame=11,
+    def _sample_params(self) -> SampleParams:
+        return SampleParams(
+            size_xy_m=float(self.sample_size_xy),
+            particle_count=int(self.sample_particle_count),
+            radius_mean_m=float(self.particle_radius_mean),
+            radius_std_m=float(self.particle_radius_std),
+            aspect_ratio=float(self.particle_aspect_ratio),
+            elements=tuple(e.strip() for e in str(self.particle_elements).split(",") if e.strip()),
+            support_thickness_m=float(self.support_thickness),
+            height_gradient=(float(self.height_gradient_x), float(self.height_gradient_y)),
+            cluster_count=int(self.sample_cluster_count),
+            cluster_radius_m=float(self.sample_cluster_radius),
+            cluster_fraction=float(self.sample_cluster_fraction),
         )
 
-        ab = pt.get_target_aberrations("Spectra300", 200000)
-        ab["acceleration_voltage"] = 200e3
-        ab["FOV"] = fov_ang / 10.0  # nm
-        ab["convergence_angle"] = 30
-        ab["wavelength"] = it.get_wavelength(ab["acceleration_voltage"])
+    def _set_up_detectors(self) -> None:
+        self._detector_params = DetectorParams(
+            beam_current_pa=float(self.probe_current_pa),
+            gain=float(self.detector_gain),
+            offset=float(self.detector_offset),
+            read_noise=float(self.detector_read_noise),
+        )
+        self._detector_drift = DetectorDrift(float(self.detector_gain_drift), float(self.detector_offset_drift), self._rng.for_event("detector_drift"))
+        self._eds_params = EdsParams(
+            energy_max_ev=float(self.eds_energy_max),
+            channels=int(self.eds_channels),
+            fwhm_mn_ka_ev=float(self.eds_fwhm_mn_ka),
+            solid_angle_sr=float(self.eds_solid_angle),
+            dead_time_s=float(self.eds_dead_time),
+            voltage_v=float(self.acceleration_voltage),
+        )
 
-        probe, _a_k, _chi = pt.get_probe(ab, size + 2 * edge_crop, size + 2 * edge_crop, verbose=False)
-        psf_shifted = np.fft.ifftshift(probe)
-        image = np.fft.ifft2(np.fft.fft2(potential) * np.fft.fft2(psf_shifted))
-        image = np.abs(image)
-        image = image[edge_crop:-edge_crop, edge_crop:-edge_crop]
+    def _dose_map(self) -> DoseMap:
+        x_min, x_max, _, _ = self._specimen.bounds
+        return DoseMap(
+            DoseParams(
+                enabled=bool(self.dose_tracking),
+                cell_m=max((x_max - x_min) / 200.0, 2e-9),
+                contamination_angstrom_max=float(self.contamination_max) / ANGSTROM,
+                contamination_dose_e_per_a2=float(self.contamination_dose),
+                damage_critical_dose_e_per_a2=float(self.damage_critical_dose),
+            ),
+            self._specimen.bounds,
+            margin_m=(x_max - x_min) * 0.25,
+        )
 
-        scan_time = dwell_time * size * size
-        counts = scan_time * (beam_current * 1e-12) / (1.602e-19)
-        pose_seed = int(abs(hash((tuple(np.round(self._stage_position, 10)), round(self._fov, 14), size))) % (2**32))
-        rng = np.random.default_rng(pose_seed + int(self.sample_seed))
-        noisy_image = self._poisson_noise(image, counts=counts, rng=rng)
-        noisy_image += self._lowfreq_noise(noisy_image, noise_level=0.1, freq_scale=0.1, rng=rng) * blur_noise_level
-        return np.clip(noisy_image, 0.0, 1.0).astype(np.float32)
+    def _world_bounds(self) -> dict:
+        x_min, x_max, y_min, y_max = self._specimen.bounds
+        return {
+            "x_min": x_min / ANGSTROM,
+            "x_max": x_max / ANGSTROM,
+            "y_min": y_min / ANGSTROM,
+            "y_max": y_max / ANGSTROM,
+            "z_min": -float(self.sample_size_z) / ANGSTROM / 2,
+            "z_max": float(self.sample_size_z) / ANGSTROM / 2,
+        }
+
+    # ------------------------------------------------------------------
+    # Stage as commanded, true and reported
+    # ------------------------------------------------------------------
+    def _set_fov(self, fov) -> None:
+        self._fov = float(fov)
+
+    def _set_defocus(self, defocus) -> None:
+        self._defocus = float(defocus)
+
+    # ------------------------------------------------------------------
+    # Image shift, stigmator and the simulated vendor autofocus
+    # ------------------------------------------------------------------
+    def _set_stigmator(self, stigmator: list[float]) -> None:
+        self._stigmator = np.asarray(stigmator, dtype=np.float64)
+
+    def _get_stigmator(self) -> list[float]:
+        return self._stigmator.tolist()
+
+    # ------------------------------------------------------------------
+    # The column: valves, fluorescent screen and the beam current measured on it
+    # ------------------------------------------------------------------
+    def _set_column_valves(self, state: str) -> None:
+        if str(state).lower() not in ("open", "close"):
+            raise ValueError(f"column valves take 'open' or 'close', got {state!r}")
+        self._column_valves_open = str(state).lower() == "open"
+
+    def _set_screen(self, position: str) -> None:
+        position = str(position).lower()
+        if position not in ("in", "insert", "inserted", "out", "retract", "retracted"):
+            raise ValueError(f"the screen takes 'inserted' or 'retracted', got {position!r}")
+        self._screen_inserted = position.startswith("in")
+
+    def _beam_current_pa(self) -> float:
+        """The current reaching the sample: none while the column valves are closed or the beam is blanked."""
+        return super()._beam_current_pa() if getattr(self, "_column_valves_open", True) else 0.0
+
+    def _beam_on_detector(self) -> bool:
+        """Whether the beam can reach a scanning detector: it stops at closed valves and at an inserted screen."""
+        return self._column_valves_open and not self._screen_inserted
+
+    def _get_screen_current(self) -> float:
+        """The current on the screen in pA: the beam current when the screen is inserted, 0 when it is not. A
+        reading above 0 is the measured beam current from then on."""
+        current = self._beam_current_pa() if self._screen_inserted else 0.0
+        if current > 0:
+            self._current_measured_s = self._clock.now()
+        return current
+
+    def _set_screen_current(self, current) -> None:
+        """Set the probe current (pA). The last screen reading no longer describes the beam."""
+        if not float(current) > 0:
+            raise ValueError(f"the screen current must be > 0 pA, got {current!r}")
+        self._detector_params = replace(self._detector_params, beam_current_pa=float(current))
+        self._current_measured_s = None
+
+    def _calibrate_screen_current(self) -> None:
+        """Nothing to calibrate: the twin sets the current it is told exactly."""
+
+    def _beam_current(self) -> dict:
+        """As on the instrument with cold_start: assumed ("default") until the screen has read it, then measured
+        with the reading's age. Without cold_start the twin's current always counts as measured."""
+        if not bool(self.cold_start):
+            return super()._beam_current()
+        if self._current_measured_s is None:
+            reason = "no screen-current measurement yet: insert the screen, call get_screen_current, then retract it"
+            return {"pa": float(self.default_beam_current_pa), "source": "default", "age_s": None, "reason": reason}
+        return {"pa": float(self._detector_params.beam_current_pa), "source": "measured", "age_s": round(self._clock.now() - self._current_measured_s, 1)}
+
+    def set_focus_error(self, c1_m: float, a1_m: tuple[float, float] = (0.0, 0.0)) -> None:
+        """Test and bench hook, not a Tango command: replace the hidden focus error, as a new specimen would."""
+        self._focus_error = {"c1_m": float(c1_m), "a1_m": [float(a1_m[0]), float(a1_m[1])]}
+
+    def _focus_truth(self) -> dict:
+        """The column's effective C1 at the beam position (specimen height included) and its A1, in metres."""
+        ab = self._aberrations()
+        x, y = (float(v) for v in self._stage.true[:2] + self._image_shift)
+        c1 = ab.get("C10", 0.0) * 1e-9 - float(self._specimen.height_at(x, y))
+        a1 = [ab.get("C12a", 0.0) * 1e-9, ab.get("C12b", 0.0) * 1e-9]
+        return {
+            "c1_m": float(c1), "a1_m": a1, "a1_abs_m": float(np.hypot(*a1)),
+            "defocus_m": float(self._defocus), "stigmator_m": self._stigmator.tolist(),
+        }
+
+    def _auto_focus(self) -> None:
+        """Stand-in for OptiSTEM C1A1: scans autofocus_frames frames, then zeroes C1 and A1 to within autofocus_residual_m."""
+        self._refuse_while_moving()
+        if not self._beam_on_detector():
+            tango.Except.throw_exception("NoBeam", "Autofocus needs an image, and no beam reaches the detector: open the column valves and retract the screen.", "auto_focus()")
+        scan = self._detector_proxies.get("scan")
+        imsize, dwell = (int(scan.imsize), float(scan.dwell_time)) if scan is not None else (256, 1e-6)
+        blanked = self._blanked
+        self._blanked = False  # the vendor routine unblanks for its own scans
+        try:
+            for _ in range(max(0, int(self.autofocus_frames))):
+                self._scan_frame(imsize, dwell, [0.0, 0.0, 1.0, 1.0])
+        finally:
+            self._blanked = blanked
+        self._autofocus_runs += 1
+        rng = self._rng.for_event("autofocus", self._autofocus_runs)
+        residual = max(0.0, float(self.autofocus_residual_m))
+        truth = self._focus_truth()
+        self._defocus = check_defocus(self._defocus - truth["c1_m"] + rng.normal(0.0, residual), self.max_defocus)
+        self._stigmator = self._stigmator - np.asarray(truth["a1_m"]) + rng.normal(0.0, residual, size=2)
+
+    # ------------------------------------------------------------------
+    # Imaging
+    # ------------------------------------------------------------------
+    def _aberrations(self) -> dict:
+        coefficients = None
+        corrector = self._detector_proxies.get("corrector")
+        if corrector is not None:
+            try:
+                coefficients = json.loads(corrector.get_aberrations_coeff_sim())
+            except (tango.DevFailed, AttributeError, ValueError):
+                coefficients = None
+        ab = aberrations_nm(coefficients, float(self.acceleration_voltage), float(self._defocus))
+        # The hidden focus error, its slow drift and the stigmator, none of which the corrector sees.
+        error = getattr(self, "_focus_error", {"c1_m": 0.0, "a1_m": [0.0, 0.0]})
+        stigmator = getattr(self, "_stigmator", np.zeros(2))
+        drift = getattr(self, "_focus_drift", None)
+        drift_c1, drift_a1 = drift.at(self._clock.now()) if drift is not None else (0.0, [0.0, 0.0])
+        ab["C10"] = float(ab.get("C10", 0.0)) + (error["c1_m"] + drift_c1) * 1e9
+        ab["C12a"] = float(ab.get("C12a", 0.0)) + (error["a1_m"][0] + drift_a1[0] + float(stigmator[0])) * 1e9
+        ab["C12b"] = float(ab.get("C12b", 0.0)) + (error["a1_m"][1] + drift_a1[1] + float(stigmator[1])) * 1e9
+        return ab
+
+    def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list, scan_region=None, frame=None) -> np.ndarray:
+        """Render one detector channel; pass ``frame`` to share one scan between detectors."""
+        if frame is None:
+            frame = self._scan_frame(int(imsize), float(dwell_time), scan_region)
+        detector = str(detector_list[0]).upper()
+        xs, ys = frame["xs"], frame["ys"]
+        cx, cy = float(xs.mean()), float(ys.mean())
+        visible = self._specimen.in_box(float(xs.min()), float(xs.max()), float(ys.min()), float(ys.max()))
+        fraction = self._renderer.render(
+            xs,
+            ys,
+            frame["pixel_m"],
+            detector,
+            self._aberrations(),
+            support_angstrom=self._support_angstrom(cx, cy),
+            damage=self._dose.damage_factors(self._specimen.feature_centers, visible),
+        )
+        rng = self._rng.for_event(f"detector_{detector}", frame["index"])
+        # The sample is dosed by the beam that reaches it; the detector counts only what gets past the screen.
+        detected_pa = self._beam_current_pa() if self._beam_on_detector() else 0.0
+        params = self._detector_drift.at(replace(self._detector_params, beam_current_pa=detected_pa), frame["record"]["t_start_s"])
+        return count(fraction, frame["dwell_s"], params, rng)
 
     def _acquire_scanned_image(
         self,
@@ -522,203 +411,225 @@ class DigitalTwin(ElectronMicroscope):
         scan_region: list[float] = [0.0, 0.0, 1.0, 1.0],
         output_format: str = ".h5",
     ) -> str:
-        """Simulate STEM acquisition, save the data with metadata, and return its DATA/Tiled key."""
-        detector_list = [detector.upper() for detector in detector_list]
-        data_server = self._detector_proxies.get("data")
-        images = []
-        for detector in detector_list:
-            image = self._render_stem_image(int(imsize), float(dwell_time), [detector])
-            images.append(image)
-        return save_acquisition(self, data_server, "stem_image", detector_list, images, output_format=output_format)
-
-    def _acquire_camera_image(
-        self,
-        imsize: int,
-        exposure_time: float,
-        detector: str,
-        readout_area: str,
-        frame_combining: int = 1,
-        electron_counting: bool = True,
-        output_format: str = ".h5",
-    ) -> str:
-        """Simulate a single-shot camera acquisition.
-
-        DigitalTwin only models STEM-probe imaging (see _render_stem_image), not a
-        separate TEM-mode camera; reuse the same HAADF renderer as
-        acquire_scanned_image so acquire_camera_image returns a usable fake image
-        instead of the "unsupported" error from the base ElectronMicroscope class.
-        """
-        return self._acquire_scanned_image(int(imsize), float(exposure_time), ["haadf"], [0.0, 0.0, 1.0, 1.0], output_format)
-
-    def _simulate_spectrum(self, detector_name: str, exposure_time: float) -> dict[str, float]:
-        """Simulate EDS spectrum acquisition at the current beam position weighted by surrounding particles."""
-        self._sync_stage_from_proxy()
-        self._update_view_cache(force=False)
-
-        px, py = self.read_beam_pos()
-        fov_ang = self._fov * 1e10
-        beam_x = (px - 0.5) * fov_ang
-        beam_y = (py - 0.5) * fov_ang
-
-        weighted: dict[str, float] = {}
-        weight_sum = 0.0
-        for rec in self._particle_records_view:
-            cx, cy = rec["center"][:2]
-            radius = rec["radius"]
-            dist = float(np.hypot(beam_x - cx, beam_y - cy))
-            if dist <= radius:
-                w = max(1e-6, 1.0 - (dist / radius))
-                weight_sum += w
-                for element, frac in rec["composition"].items():
-                    weighted[element] = weighted.get(element, 0.0) + w * frac
-
-        spectrum_seed = int(
-            abs(
-                hash(
-                    (
-                        tuple(np.round(self._stage_position, 10)),
-                        round(px, 6),
-                        round(py, 6),
-                        round(exposure_time, 6),
-                        int(self.sample_seed),
-                    )
-                )
+        self._refuse_while_moving()
+        detectors = list(dict.fromkeys(d.upper() for d in detector_list))  # "HAADF" and "haadf" are one detector
+        unknown = [d for d in detectors if d not in DETECTOR_SCALE]
+        if unknown:
+            tango.Except.throw_exception(
+                "UnknownDetector",
+                f"The twin simulates scanning detectors {sorted(d.lower() for d in DETECTOR_SCALE)}; got {unknown}.",
+                "acquire_scanned_image()",
             )
-            % (2**32)
-        )
-        rng = np.random.default_rng(spectrum_seed)
-
-        if weight_sum <= 0.0:
-            return {
-                element: float(np.abs(rng.normal(0.0, 0.02)))
-                for element in (self._all_sample_elements or ["Au", "Pt", "Fe"])
-            }
-
-        normalized = {el: val / weight_sum for el, val in weighted.items()}
-        noisy = {}
-        for element, value in normalized.items():
-            noisy[element] = float(max(0.0, value + rng.normal(0.0, 0.01)))
-        total = sum(noisy.values())
-        if total <= 0.0:
-            return noisy
-        return {el: val / total for el, val in noisy.items()}
-
-    def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
-        """Simulate spectrum acquisition, save HDF5 data, and return its DATA/Tiled key."""
-        spectrum = self._simulate_spectrum(detector_name, exposure_time)
-        data_server = self._detector_proxies.get("data")
-        spectrum_array = np.array(list(spectrum.values()), dtype=np.float64)
+        frame = self._scan_frame(int(imsize), float(dwell_time), scan_region)
+        images = [self._render_stem_image(int(imsize), float(dwell_time), [d], scan_region, frame=frame) for d in detectors]
+        record = frame["record"]
+        attrs = {
+            "units": "counts",
+            "acquisition_index": record["index"],
+            "stage_commanded_m": record["commanded_m"],
+            "stage_reported_m": record["reported_m"],
+            "image_shift_m": self._image_shift.tolist(),
+            "fov_m": record["fov_m"],
+            "pixel_size_m": frame["pixel_m"],
+            "dwell_time_s": record["dwell_s"],
+            "scan_region": record["scan_region"],
+            "beam_current_pa": self._beam_current_pa(),
+            "sim_time_start_s": record["t_start_s"],
+            "axes": "rows=+y, columns=+x",
+        }
         return save_acquisition(
             self,
-            data_server,
-            "spectrum",
-            detector_name,
-            spectrum_array,
-            dataset_name="spectrum",
-            dataset_attrs={"elements": list(spectrum.keys())},
+            self._detector_proxies.get("data"),
+            "stem_image",
+            detectors,
+            images,
+            dataset_attrs=[dict(attrs) for _ in images],
+            output_format=output_format,
         )
 
-    def _place_beam(self, position) -> None:
-        """Place the electron beam at the specified [x, y] coordinates."""
-        x, y = position
-        self.write_beam_pos([x, y])
+    # ------------------------------------------------------------------
+    # EDS
+    # ------------------------------------------------------------------
+    def _beam_sample_xy(self, t: float) -> np.ndarray:
+        """Sample point under the beam at time t, from the fractional beam position."""
+        fov = float(self._fov) * (1.0 + self._scan_params.fov_scale_error)
+        x = (self._beam_pos_x - 0.5) * fov
+        y = (self._beam_pos_y - 0.5) * fov
+        x = x + self._scan_params.shear * y
+        if self._scan_params.rotation_deg:
+            a = np.deg2rad(self._scan_params.rotation_deg)
+            x, y = np.cos(a) * x - np.sin(a) * y, np.sin(a) * x + np.cos(a) * y
+        # The beam is placed in the frame of the scan. The image shift moves that frame with it, as on the instrument.
+        return self._stage.true_xy_at(t) + self._image_shift + np.array([x, y])
 
-    def _set_fov(self, fov) -> None:
-        """Set the field of view in meters."""
-        self._fov = float(fov)
+    def _areal_density(self, xy: np.ndarray) -> dict[str, float]:
+        """Atoms per square angstrom of each element along the beam at a sample point."""
+        x, y = float(xy[0]), float(xy[1])
+        density = dict(self._specimen.areal_density(x, y))
+        # A spectrum sees the film this region really has: none in a hole, more where it is thick.
+        support = self._support_angstrom(x, y) + float(self._specimen.support_thickness_m) / ANGSTROM * self._specimen.support_change_at(x, y)
+        if support > 0:
+            element = self._specimen.support_element
+            density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * support
+        return density
 
-    def _set_defocus(self, defocus) -> None:
-        """Set defocus in meters."""
-        self._defocus = float(defocus)
+    def _acquire_camera_image(self, *args, **kwargs):
+        self._refuse_while_moving()
+        return super()._acquire_camera_image(*args, **kwargs)
 
-    def _get_defocus(self) -> float:
-        """Get defocus in meters."""
-        return self._defocus
+    def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
+        self._refuse_while_moving()
+        real_time = float(exposure_time)
+        self._fetch_stage(real_time)
+        self._acq_index += 1
+        index = self._acq_index
+        t0 = self._clock.now()
+        xy = self._beam_sample_xy(t0 + real_time / 2.0)
+        energies, counts, live_time = point_spectrum(
+            self._areal_density(xy),
+            self._beam_current_pa(),
+            real_time,
+            self._eds_params,
+            self._rng.for_event("eds", index),
+        )
+        electrons = self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE
+        self._dose.add_point(float(xy[0]), float(xy[1]), electrons, 1e-20)
+        self._clock.advance(real_time)
+        self._record_acquisition(
+            {
+                "index": index,
+                "kind": "spectrum",
+                "t_start_s": t0,
+                "t_end_s": self._clock.now(),
+                "beam_fraction": [float(self._beam_pos_x), float(self._beam_pos_y)],
+                "beam_true_m": [float(v) for v in xy],
+                "reported_m": self._stage.reported.tolist(),
+                "true_m": self._stage.true.tolist(),
+            }
+        )
+        dispersion = float(energies[1] - energies[0])
+        return save_acquisition(
+            self,
+            self._detector_proxies.get("data"),
+            "spectrum",
+            detector_name,
+            counts,
+            dataset_name="spectrum",
+            dataset_attrs={
+                "units": "counts",
+                "energy_offset_ev": float(energies[0]),
+                "energy_dispersion_ev": dispersion,
+                "energy_axis": "channel i is at energy_offset_ev + i * energy_dispersion_ev",
+                "real_time_s": real_time,
+                "live_time_s": float(live_time),
+                "beam_position": [float(self._beam_pos_x), float(self._beam_pos_y)],
+                "stage_reported_m": self._stage.reported.tolist(),
+                "fov_m": float(self._fov),
+                "beam_current_pa": self._beam_current_pa(),
+                "axes": "rows=+y, columns=+x",
+                "acquisition_index": index,
+            },
+        )
 
-    def _get_stage(self):
-        """Return the current 5-axis stage position."""
-        self._sync_stage_from_proxy()
-        return self._stage_position
+    def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
+        """A points x points spectrum image without leaving the device, streamed to its file row by row."""
+        self._refuse_while_moving()
+        real_time = float(exposure_time)
+        self._fetch_stage(real_time * points * points)
+        self._acq_index += 1
+        index = self._acq_index
+        t0 = self._clock.now()
+        fractions = (np.arange(points) + 0.5) / points
+        attrs: dict = {}
+        spots: list[dict] = []
 
-    def _move_stage(self, position):
-        """Move the stage to the requested 5-axis vector with optional simulated precision noise."""
-        if len(position) != 5:
-            raise ValueError("Stage position must have 5 values: [x, y, z, alpha, beta]")
-        target = np.array(position, dtype=np.float64)
+        def rows():
+            for r, fy in enumerate(fractions):
+                row = []
+                for c, fx in enumerate(fractions):
+                    self._beam_pos_x, self._beam_pos_y = float(fx), float(fy)
+                    t = self._clock.now()
+                    xy = self._beam_sample_xy(t + real_time / 2.0)
+                    energies, counts, live_time = point_spectrum(
+                        self._areal_density(xy), self._beam_current_pa(), real_time, self._eds_params, self._rng.for_event("eds_image", index * points * points + r * points + c),
+                    )
+                    self._dose.add_point(float(xy[0]), float(xy[1]), self._beam_current_pa() * 1e-12 * real_time / ELECTRON_CHARGE, 1e-20)
+                    self._clock.advance(real_time)
+                    row.append(counts)
+                    spots.append({
+                        "stage_reported_m": self._stage.reported.tolist(), "fov_m": float(self._fov), "beam_position": [float(fx), float(fy)],
+                        "real_time_s": real_time, "beam_current_pa": self._beam_current_pa(), "axes": "rows=+y, columns=+x",
+                    })
+                    if "energy_offset_ev" not in attrs:
+                        attrs.update(energy_offset_ev=float(energies[0]), energy_dispersion_ev=float(energies[1] - energies[0]), live_time_s=float(live_time))
+                yield np.stack(row)
 
-        std = float(self.stage_move_noise_std)
-        if std > 0:
-            noise = np.zeros(5, dtype=np.float64)
-            noise[:3] = np.random.normal(0.0, std, size=3)
-            target = target + noise
+        attrs_fixed = {
+            "units": "counts", "energy_axis": "channel i is at energy_offset_ev + i * energy_dispersion_ev", "real_time_s": real_time,
+            "fov_m": float(self._fov), "beam_current_pa": self._beam_current_pa(), "axes": "rows=+y, columns=+x",
+            "spectrum_image_axes": "rows=+y, columns=+x, channels", "stage_reported_m": self._stage.reported.tolist(), "acquisition_index": index,
+        }
+        attrs.update(attrs_fixed)
+        key = save_acquisition_stream(self, self._detector_proxies.get("data"), "spectrum_image", "eds", "spectrum_image", rows(), points, attrs, spots)
+        self._record_acquisition({"index": index, "kind": "spectrum_image", "t_start_s": t0, "t_end_s": self._clock.now(), "points": points,
+                                  "reported_m": self._stage.reported.tolist(), "true_m": self._stage.true.tolist()})
+        return key
 
-        stage = self._detector_proxies.get("stage")
-        if stage is not None:
-            stage.x = float(target[0])
-            stage.y = float(target[1])
-            stage.z = float(target[2])
-            stage.alpha = float(target[3])
-            stage.beta = float(target[4])
-
-        self._stage_position = target
-        self._update_view_cache(force=False)
+    # ------------------------------------------------------------------
+    # Status and ground truth
+    # ------------------------------------------------------------------
+    def _viewport_metadata(self) -> dict:
+        # The base class reads _stage_position, which here is the true pose. Report what the stage reports instead.
+        metadata = super()._viewport_metadata()
+        x, y, z = (float(v) / ANGSTROM for v in self._stage.reported[:3])
+        half = self._fov / ANGSTROM / 2
+        metadata["stage_position"] = self._stage.reported.tolist()
+        metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
+        # The seed regenerates the sample, so only the operator command export_ground_truth has it. An agent must find
+        # particles by imaging.
+        metadata.pop("sample_seed", None)
+        return metadata
 
     def _get_parameters(self) -> str:
-        """Return all simulated status parameters as a JSON string.
-
-        The base class exposes this through the get_parameters Tango command,
-        which is typed DevString — returning a dict (or the inherited abstract
-        stub's None) makes the command fail with a Tango translation error.
-
-        The detector keys are deliberately split by what they mean: device_proxies
-        are the twin's connected settings devices (scan, stage, data, ... — not
-        detectors), scan_detectors is what the twin's STEM renderer actually
-        produces (a simulated HAADF signal, whatever label is requested),
-        spectrum_detectors is what acquire_spectrum accepts, and camera_detectors
-        are the names the CAMERA device validates writes against. An earlier
-        draft published the proxy keys under a "detectors" key, which told an
-        agent that "stage" and "data" were detectors it could scan with.
-        """
-        self._sync_stage_from_proxy()
-        parameters = {
-            "manufacturer": self._manufacturer,
-            "stem_mode": bool(self._stem_mode),
-            "defocus_m": float(self._defocus),
-            "device_proxies": sorted(self._detector_proxies.keys()),
-            "scan_detectors": ["haadf"],
-            "spectrum_detectors": ["eds"],
-            "camera_detectors": sorted(CAMERA._CAMERA_DETECTORS),
-            **self._viewport_metadata(),
-        }
+        parameters = json.loads(super()._get_parameters())
+        parameters["stage_position"] = self._stage.reported.tolist()
+        parameters["scan_detectors"] = sorted(d.lower() for d in DETECTOR_SCALE)
+        parameters["simulated_time_s"] = self._clock.now()
+        parameters["time_scale"] = self._clock.time_scale
+        # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
+        parameters.update(self.beam_current_fields())
+        parameters["beam_blanked"] = self._blanked
+        parameters["column_valves"] = "Opened" if self._column_valves_open else "Closed"  # AutoScript's words
+        parameters["screen"] = "Inserted" if self._screen_inserted else "Retracted"
+        parameters["stage_moving"] = self._stage_moving()
+        parameters["simulated"] = True  # This is for clients. Job devices take the simulated property of the stack and never this.
+        parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 
-    def get_viewport_metadata(self) -> str:
-        """Return JSON-formatted metadata regarding the current simulation viewport and environment state."""
-        self._sync_stage_from_proxy()
-        fov_ang = self._fov * 1e10
-        stage_xyz_ang = self._stage_position[:3] * 1e10
-        viewport = {
-            "x_min": float(stage_xyz_ang[0] - fov_ang * 0.5),
-            "x_max": float(stage_xyz_ang[0] + fov_ang * 0.5),
-            "y_min": float(stage_xyz_ang[1] - fov_ang * 0.5),
-            "y_max": float(stage_xyz_ang[1] + fov_ang * 0.5),
-            "z_center": float(stage_xyz_ang[2]),
-        }
-        metadata = {
-            "stage_position": [float(v) for v in self._stage_position],
-            "fov_m": float(self._fov),
-            "fov_angstrom": float(fov_ang),
-            "imsize": int(self._imsize),
-            "sample_seed": int(self.sample_seed),
-            "sample_size_xy": float(self.sample_size_xy),
-            "sample_size_z": float(self.sample_size_z),
-            "sample_size_xy_generated_angstrom": float(self._world_bounds_ang["x_max"] - self._world_bounds_ang["x_min"]),
-            "sample_size_z_generated_angstrom": float(self._world_bounds_ang["z_max"] - self._world_bounds_ang["z_min"]),
-            "viewport_world_angstrom": viewport,
-            "world_bounds_angstrom": self._world_bounds_ang,
-            "particle_count": len(self._particle_records_base),
-        }
-        return json.dumps(metadata)
+    @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
+    def export_ground_truth(self) -> str:
+        """Hidden truth for scoring workflows: particles, true stage pose and drift of every acquisition.
+
+        Operator only (an agent must not read a twin's answers); tests and calibration scripts call it through Tango.
+        """
+        specimen_truth = self._specimen.ground_truth()
+        stage = self._detector_proxies.get("stage")
+        return json.dumps(
+            {
+                "sample_seed": int(self.sample_seed),
+                "sample_bounds_m": list(self._specimen.bounds),
+                # Scorers compare against this particle list. It is empty when the source has none, as with a crystal
+                # film. It is also empty for a recorded image without labels, where specimen.known is false.
+                "particles": specimen_truth.get("particles", []),
+                "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
+                "moves": json.loads(stage.stage_moves()) if stage is not None else [],
+                "acquisitions": self._acquisition_records(),
+                "simulated_time_s": self._clock.now(),
+                "dose": self._dose.summary(),
+                "focus": {**self._focus_truth(), "hidden_error": self._focus_error},
+            }
+        )
+
 
 if __name__ == "__main__":
     DigitalTwin.run_server()

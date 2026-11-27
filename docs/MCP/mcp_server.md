@@ -57,6 +57,9 @@ mcp:
       - Init
       - Kill
       - RestartServer
+  safety:
+    risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
+  # agent_profile: asyncroscopy/agents/profiles/default.yaml   # whose tool selection endpoint_info reports
 ```
 
 `startup_scripts/run_mcp.py` maps this config directly to:
@@ -67,16 +70,9 @@ uv run python -m asyncroscopy.mcp.mcp_server ...
 
 ## MCP GUI
 
-`startup_guis/mcp_gui.py` is a YAML launcher for MCP. It formats the current
-selections into YAML, writes that YAML to `outputs/startup_configs/mcp_gui.yaml`,
-and runs:
-
-```bash
-uv run python startup_scripts/run_mcp.py --yaml outputs/startup_configs/mcp_gui.yaml
-```
-
-The GUI includes a generated YAML preview, terminal output, **Start**, **Stop**,
-and **Save current config**.
+`startup_guis/mcp_gui.py` is built from `run_mcp.py`'s settings; see
+[Running Servers in a GUI](../Operation/run-server-gui.md). It writes
+`outputs/startup_configs/run_mcp_gui.yaml` and runs `run_mcp.py --yaml` on it.
 
 ## Discovery
 
@@ -96,11 +92,15 @@ For MCP-only behavior, add it directly to `MCPServer`. The required native tools
 today are:
 
 - `list_devices`
-- `get_data_from_key`
+- `list_data`: stored data, newest first, with each key's kind and shape
+- `view_data`: one key as a PNG or as text (statistics, peaks, a small CSV)
 
-`get_data_from_key` reads an acquired key through the Tiled HTTP URI reported by
-the DATA device and returns dataset metadata plus a small preview. This works
+Both read through the Tiled HTTP URI reported by the DATA device, so they work
 when MCP and the microscope are on different computers without a shared mount.
+They slice on the server, never return raw arrays, and end within 20 s. The
+drawing is in `asyncroscopy/data/views.py`; modules listed under
+`mcp.data_views` in the MCP YAML are imported first, so an instrument can add its
+own data kinds there.
 
 ## Blacklisting
 
@@ -132,4 +132,10 @@ uv run python -m asyncroscopy.mcp.mcp_server \
   --data-device-address asyncroscopy/data/default \
   --blocked-classes-json '["DataBase", "DServer"]' \
   --blocked-functions-json '{"*": ["Init", "Kill", "RestartServer"]}'
+```
+
+In PowerShell (one line; PowerShell passes the JSON quotes through with `--%`):
+
+```powershell
+uv run python -m asyncroscopy.mcp.mcp_server --% --name Spectra300_MCP --tango-host localhost --tango-port 9094 --transport streamable-http --http-host 127.0.0.1 --http-port 8000 --data-device-address asyncroscopy/data/default --blocked-classes-json "[\"DataBase\", \"DServer\"]" --blocked-functions-json "{\"*\": [\"Init\", \"Kill\", \"RestartServer\"]}"
 ```

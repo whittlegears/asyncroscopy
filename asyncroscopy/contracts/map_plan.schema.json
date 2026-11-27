@@ -1,0 +1,273 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/pycroscopy/asyncroscopy/contracts/map_plan.schema.json",
+  "title": "Map plan",
+  "description": "What a Mapper job acquires. Lengths in metres, times in seconds. Give the area as box_m in stage coordinates, or as size_m around centre_m (default: the current stage position); tile centres never leave the box. A plan with revisit points or a revisit map and no area only images those (no tiles); its area is the points' (or the map's) extent.",
+  "schema_version": "1.1.0",
+  "type": "object",
+  "required": [],
+  "additionalProperties": false,
+  "properties": {
+    "dry_run": {
+      "type": "boolean",
+      "description": "Rehearse the plan without moving anything: reads pass through, stage moves and acquisitions are recorded in the trace (dry_run: true) and checked against the box, nothing is acquired, the beam is still blanked. Taken by every job device; reserved and started like a real run."
+    },
+    "box_m": {
+      "type": "array",
+      "description": "[x_min, x_max, y_min, y_max] in stage metres.",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "size_m": {
+      "type": "array",
+      "description": "[width, height] in metres; the Mapper centres the box on centre_m.",
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "centre_m": {
+      "type": "array",
+      "description": "[x, y] stage centre for size_m; defaults to the current stage position.",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "fov_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "overlap": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0.5,
+      "default": 0.15
+    },
+    "imsize": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 4096,
+      "default": 512
+    },
+    "scan_rate_hz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "SPM profile: lines per second of each frame."
+    },
+    "dwell_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1e-06
+    },
+    "detectors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "default": [
+        "haadf"
+      ]
+    },
+    "per_tile": {
+      "type": "array",
+      "description": "Extra actions at every tile. eds_point is one spectrum at the tile centre; eds_map is a coarse spectrum image and must be asked for by name.",
+      "items": {
+        "enum": [
+          "eds_point",
+          "eds_map"
+        ]
+      },
+      "default": []
+    },
+    "eds_exposure_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 1.0
+    },
+    "eds_map_points": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 64,
+      "default": 8
+    },
+    "dose_budget_e_per_a2": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Refuse the plan if any point would receive more than this (electron-beam profiles: stem, sem). The same as budgets.dose_e_per_a2."
+    },
+    "budgets": {
+      "type": "object",
+      "description": "Refuse the plan at reserve, before anything moves, if it would spend more than any of these. Every instrument has time_s (the estimated duration); the profile adds its own: dose_e_per_a2 for an electron beam, and a YAML instrument's map budgets (an AFM's tip_force_nn).",
+      "additionalProperties": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Instrument settings for the whole map (yaml profile: the settings the instrument file's map section lists, e.g. an AFM's setpoint_v).",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "string",
+          "boolean"
+        ]
+      }
+    },
+    "order": {
+      "enum": [
+        "serpentine",
+        "raster"
+      ],
+      "default": "serpentine"
+    },
+    "z_m": {
+      "type": "number",
+      "description": "Stage z for every tile; defaults to the current z."
+    },
+    "label": {
+      "type": "string"
+    },
+    "stitch": {
+      "type": "boolean",
+      "default": true,
+      "description": "Stitch the finished run into a zoomable map on the analysis server (needs a Mapper with analysis_url); EDS point spectra become points of interest."
+    },
+    "find_regions": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 50,
+      "default": 0,
+      "description": "After stitching, score the map and add the best N regions as points of interest."
+    },
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Live drift tracking (off by default): before each tile a bounded image shift cancels the drift measured so far by registering overlapping tiles; the stage still goes only to the planned tile centres. Refused at reserve on an instrument profile that cannot shift the image. Every correction is in the Instrument Trace (Mapper.drift_correction).",
+      "properties": {
+        "track": {
+          "type": "boolean",
+          "default": false,
+          "description": "Turn live drift tracking on."
+        },
+        "max_shift_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Largest change of the image shift, per axis, one correction may make (default a tenth of the tile's fov_m)."
+        },
+        "max_total_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Largest image shift, per axis, from its value before the map (default and maximum: the instrument profile's image shift limit)."
+        },
+        "tracker": {
+          "type": "string",
+          "default": "linear",
+          "description": "The drift tracker (asyncroscopy.routines.drift): linear (a line fitted on the instrument's clock), or one registered by a plug-in."
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000,
+          "default": 12,
+          "description": "Most recent measurements the linear tracker fits."
+        }
+      }
+    },
+    "revisit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fov_m": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Field of view of the higher-magnification image taken at each region: from a twentieth of the tile's fov_m up to fov_m. Required with a map; a revisit of given points or of an existing map's regions uses the instrument's current field of view when it is left out."
+        },
+        "imsize": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 8192,
+          "description": "Pixels per side of each revisit image (default: the tiles')."
+        },
+        "scan_rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "dwell_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Dwell time per pixel of each revisit image (default: the tiles'); its dose counts against dose_budget_e_per_a2."
+        },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "Stage [x, y] (metres) to image, instead of regions found by find_regions."
+        },
+        "map": {
+          "type": "string",
+          "description": "An existing stitched map whose best scored regions (top_k) are imaged, instead of mapping again."
+        },
+        "top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "How many of the map's best scored regions to image (with map; default 3)."
+        }
+      },
+      "description": "Image each region find_regions found at higher magnification (inside the plan box only); the images are linked to their points of interest."
+    },
+    "zoom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent"
+      ],
+      "description": "Zoom in from an image already taken, tier by tier, without moving the stage: at each tier the most distinct feature of the parent image (pyTEMlib find_features) is aimed at by image shift, imaged at the next fov_m and placed on the parent by matching (place_image). A tier that finds nothing, or whose image cannot be placed, ends the zoom there. Needs a Mapper with an analysis_url on an instrument that can shift the image. A plan with zoom takes no area, tiles or revisit.",
+      "properties": {
+        "parent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key of the image to start from (the coarsest)."
+        },
+        "fovs_m": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "description": "Field of view of each finer image, coarsest first, each smaller than the one before (default: each 8 times finer than the one before, from the parent image's own field of view, down to 5e-9 m: [7.5e-8, 9.4e-9] from a 600 nm image)."
+        },
+        "imsize": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 8192,
+          "description": "Pixels per side of each zoom image (default: the plan's)."
+        },
+        "dwell_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Dwell time per pixel of each zoom image (default: the plan's); its dose counts against dose_budget_e_per_a2."
+        }
+      }
+    }
+  }
+}

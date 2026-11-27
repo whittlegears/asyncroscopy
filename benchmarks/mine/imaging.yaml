@@ -1,0 +1,26 @@
+# Your own benchmarks: one file per capability (the file name is the capability on the board).
+# Same format as benchmarks/workflows/, plus kind, bar, held_out and reference (benchmarks/README.md).
+# Check a new one with: uv run python benchmarks/benchmark.py validate --only <name> --require-reference
+# Then replay its reference on a running twin, with no model: run_workflows.py --workflows benchmarks/mine --runners reference
+
+workflows:
+  - name: image_at_150nm
+    request: Set the field of view to 150 nm and take a HAADF image. Do not move the stage.
+    kind: capability            # capability: something to get working. regression: must keep passing.
+    bar: {pass: 4, of: 5}       # five trials, at least four pass
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: param_near, name: fov, value: 1.5e-7, rel: 0.02}
+      - {check: called, tool: "*_acquire_scanned_image"}
+      - {check: stage_unchanged}
+      - {check: no_sleepwalking, allow: ["*_set_fov", "*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}
+    reference:                  # a made-up good run: it must pass every check, and doing nothing must fail one
+      calls:
+        - {tool: DigitalTwin_set_fov, args: {fov: 1.5e-7}}
+        - {tool: DigitalTwin_unblank_beam}
+        - {tool: DigitalTwin_acquire_scanned_image, args: {detector_list: [haadf]}, result: image_0001}
+        - {tool: DigitalTwin_blank_beam}
+      after: {fov: 1.5e-7}
+      answer: The HAADF image at a 150 nm field of view is {result_3}.   # what call 3 returned
+      risks: {DigitalTwin_set_fov: high, DigitalTwin_acquire_scanned_image: high, DigitalTwin_move_stage: high}

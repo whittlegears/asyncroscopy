@@ -1,0 +1,26 @@
+# Digital twin for very large maps: the mapping twin's effects on an 8 um
+# sample with particle clusters, so a stitched map has structure at every zoom
+# (bright aggregates in the overview, single particles at full resolution).
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_large_map.yaml
+#
+# time_scale is 0: stage moves and frames do not wait in real time, so a
+# 40 x 40-tile map takes minutes instead of hours. Use it to rehearse large
+# maps, stitching and zooming; use digital_twin_mapping.yaml to rehearse timing.
+# Measured sizes and times are in docs/Operation/large_maps.md.
+#
+# Everything not set here is digital_twin_mapping.yaml's (extends: merges it in; null removes a device).
+extends: digital_twin_mapping.yaml
+
+instrument:
+  description: "Large-map digital twin: 8 um clustered sample, all effects, no simulated waiting"
+  properties:
+    sample_size_xy: 8.0e-6
+    sample_particle_count: 6400
+    sample_cluster_count: 60
+    sample_cluster_radius: 2.0e-7
+    sample_cluster_fraction: 0.5
+    time_scale: 0.0
+
+devices:
+  tuner: null

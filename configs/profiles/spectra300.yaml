@@ -1,0 +1,37 @@
+# An instrument profile: see asyncroscopy/calibration/profile.py for the format and how to use it.
+#
+# Nothing here has been measured on the instrument yet (no parameter has a "measured" date): the values are the
+# ones configs/digital_twin_mapping.yaml uses, from a paper, a specification or a guess. The ranges are rough
+# guesses of what S/TEMs span, to be replaced once other instruments have profiles of their own. Run the
+# calibration scripts and the trace logger with --profile configs/profiles/spectra300.yaml to fill it in.
+name: Spectra 300
+kind: probe-corrected S/TEM, 300 kV
+parameters:
+  # Stage
+  stage_move_noise_std: {device: stage, value: 1.5e-7, range: [2.0e-8, 5.0e-7], unit: m, source: "Fiedler 2023 (about +/-350 nm typical error)"}
+  stage_bias_x: {device: stage, value: 1.0e-7, range: [-3.0e-7, 3.0e-7], unit: m, source: placeholder}
+  stage_bias_y: {device: stage, value: -1.5e-7, range: [-3.0e-7, 3.0e-7], unit: m, source: placeholder}
+  stage_reported_noise_std: {device: stage, value: 1.0e-8, range: [1.0e-9, 5.0e-8], unit: m, source: placeholder}
+  stage_backlash_x: {device: stage, value: 1.5e-7, range: [2.0e-8, 1.0e-6], unit: m, source: placeholder}
+  stage_backlash_y: {device: stage, value: 2.5e-7, range: [2.0e-8, 1.0e-6], unit: m, source: placeholder}
+  stage_settle_drift: {device: stage, value: 2.0e-9, range: [2.0e-10, 2.0e-8], unit: m/s, source: placeholder}
+  stage_settle_tau: {device: stage, value: 30.0, range: [5.0, 120.0], unit: s, source: placeholder}
+  drift_rate_per_min: {device: stage, value: 5.0e-10, range: [1.0e-10, 1.0e-8], unit: m/min, source: "Thermo Fisher specification (<= 0.5 nm/min)"}
+  drift_random_walk: {device: stage, value: 2.0e-10, range: [0.0, 2.0e-9], unit: m/min, source: placeholder}
+  # Beam and detector
+  probe_current_pa: {device: instrument, value: 50.0, range: [5.0, 500.0], unit: pA, source: placeholder}
+  detector_read_noise: {device: instrument, value: 0.5, range: [0.0, 5.0], unit: counts, source: placeholder}
+  detector_gain_drift: {device: instrument, value: 0.1, range: [0.0, 0.3], unit: fraction, source: placeholder}
+  detector_offset_drift: {device: instrument, value: 2.0, range: [0.0, 10.0], unit: counts, source: placeholder}
+  # Scan
+  scan_line_jitter_px: {device: instrument, value: 0.3, range: [0.0, 1.0], unit: px, source: placeholder}
+  scan_shear: {device: instrument, value: 0.005, range: [-0.02, 0.02], unit: fraction, source: placeholder}
+  scan_rotation_deg: {device: instrument, value: 0.3, range: [-2.0, 2.0], unit: deg, source: placeholder}
+  scan_flyback_compression: {device: instrument, value: 0.05, range: [0.0, 0.15], unit: fraction, source: placeholder}
+  fov_scale_error: {device: instrument, value: 0.01, range: [-0.05, 0.05], unit: fraction, source: placeholder}
+  # Focus
+  focus_drift_m: {device: instrument, value: 3.0e-8, range: [5.0e-9, 5.0e-7], unit: m, source: placeholder}
+  astigmatism_drift_m: {device: instrument, value: 5.0e-9, range: [1.0e-9, 1.0e-7], unit: m, source: placeholder}
+  # Dose
+  contamination_dose: {device: instrument, value: 1.0e+4, range: [1.0e+3, 1.0e+6], unit: e/A^2, source: placeholder}
+  damage_critical_dose: {device: instrument, value: 1.0e+5, range: [1.0e+3, 1.0e+8], unit: e/A^2, source: placeholder}

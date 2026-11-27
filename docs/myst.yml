@@ -28,7 +28,9 @@ project:
         - file: Microscopy/modify_base_electron_microscope.md
     - title: Adding New Hardware
       children:
+        - file: Adding_New_Hardware/new_instrument.md
         - file: Adding_New_Hardware/add_detector.md
+        - file: Adding_New_Hardware/second_stack.md
     - title: MCP Server
       children:
         - file: MCP/mcp_server.md
@@ -37,10 +39,24 @@ project:
         - file: MCP/asyncroscopy_mcp.md
     - title: Operation
       children:
+        - file: Operation/quickstart.md
+        - file: Operation/agentic_mapping.md
+        - file: Operation/agents.md
+        - file: Operation/action_space.md
+        - file: Operation/large_maps.md
+        - file: Operation/autofocus.md
+        - file: Operation/remote_access.md
+        - file: Operation/dry_run.md
+        - file: Operation/trace.md
+        - file: Operation/evaluators.md
         - file: Operation/run-servers.md
         - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
+    - title: Digital Twin
+      children:
+        - file: digital_twin.md
+        - file: Operation/specimens.md
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md

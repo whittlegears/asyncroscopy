@@ -8,6 +8,10 @@
 # twin, use configs/DigitalTwin.yaml (real and simulated scopes are separate
 # configs now). See configs/example.md for the full YAML shape.
 
+# Real hardware: the MCP endpoint binds 127.0.0.1 unless
+# its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
+simulated: false
+
 instrument:
   class_name: JeolMicroscope
   file: asyncroscopy/instruments/electron_microscope/jeol.py
@@ -21,6 +25,8 @@ devices:
   data:   { module_name: asyncroscopy.data.data }
   eds:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
   scan:   { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:  { module_name: asyncroscopy.instruments.electron_microscope.hardware.stage }
 
 tango:

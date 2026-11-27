@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import json
 import os
-import signal
+import re
 import sys
 import threading
 import time
@@ -31,11 +32,16 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
+from asyncroscopy import settings
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command  # noqa: E402
+from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, read_settings  # noqa: E402
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
 # selects a different config AND runs headlessly (no prompts).
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'Spectra300.yaml'
+# The GUI opens on the digital twin so a fresh window never targets the real microscope.
+GUI_DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'DigitalTwin.yaml'
 
 
 class Style:
@@ -67,7 +73,7 @@ class DeviceConfig:
 
     @property
     def command(self) -> list[str]:
-        return ["uv", "run", "python", "-u", "-m", self.module_name, self.instance_name]
+        return python_command("-m", self.module_name, self.instance_name)
 
     @property
     def instance_name(self) -> str:
@@ -77,16 +83,17 @@ class DeviceConfig:
 @dataclass(frozen=True)
 class InstrumentConfig:
     class_name: str
-    file: Path
+    file: Path | None
     description: str = ""
     hardware_host: str | None = None
     hardware_port: int | None = None
     timeout_seconds: int | None = None
     properties: dict[str, list[str]] = field(default_factory=dict)
+    module: str | None = None
 
     @property
     def module_name(self) -> str:
-        return python_file_to_module(self.file)
+        return self.module or python_file_to_module(self.file)
 
 
 @dataclass(frozen=True)
@@ -108,19 +115,134 @@ class Config:
     reset_database_file: bool
     tiled: TiledConfig
     device_timeout_seconds: int
+    # The top level `simulated` key. Every device gets it as its `simulated` property. When absent it is False, which means real hardware.
+    simulated: bool = False
+    # tango.bind_host is the interface the Tango database listens on, when it differs from tango.host, the
+    # name clients use. In a container or pod, tango.host is a service name and bind_host is 0.0.0.0.
+    tango_bind_host: str = ""
+    # The top level `plugins` key lists modules or .py files every device imports. See asyncroscopy/plugins.py.
+    # They make a team's own @register_profile, @register_tracker and @register_strategy classes exist in each process.
+    plugins: tuple[str, ...] = ()
+    # Entries under `devices` that have `enabled` set to false. They are removed from a kept database at start.
+    disabled_devices: tuple[str, ...] = ()
 
 
-def _require(mapping, key: str, where: str):
-    if not isinstance(mapping, dict) or key not in mapping:
-        raise KeyError(f"Config section '{where}' is missing required key '{key}'")
-    return mapping[key]
+YAML_INSTRUMENT_MODULE = "asyncroscopy.instruments.yaml_sim.device"
+YAML_JOB_MODULE = "asyncroscopy.instruments.yaml_sim.job"
+
+
+def _plugins(raw: dict) -> tuple[str, ...]:
+    """The stack YAML's `plugins:` list: files resolved against the project folder and checked to exist,
+    module names checked to import, so a typo fails at load rather than as "unknown instrument profile"."""
+    from asyncroscopy.plugins import is_file_spec
+
+    entries = raw.get("plugins") or []
+    if isinstance(entries, str):
+        entries = [entries]
+    if not isinstance(entries, list):
+        raise ValueError("Config 'plugins' must be a list of module names or .py files")
+    resolved = []
+    for entry in (str(e).strip() for e in entries):
+        if not entry:
+            continue
+        if is_file_spec(entry):
+            path = _instrument_file(entry)
+            if not path.is_file():
+                raise ValueError(f"plugins entry {entry!r}: no such file {path}")
+            resolved.append(str(path.resolve()))
+        else:
+            _check_importable(entry, "plugins entry")
+            resolved.append(entry)
+    return tuple(resolved)
+
+
+def plugin_environment(plugins: Iterable[str], current: str = "") -> str:
+    """ASYNCROSCOPY_PLUGINS for the device processes: what the shell already set, then the YAML's `plugins:`."""
+    from asyncroscopy.plugins import plugin_specs
+
+    entries = plugin_specs(current)
+    entries += [p for p in plugins if p not in entries]
+    return os.pathsep.join(entries)
+
+
+def _simulated(raw: dict, path: Path) -> bool:
+    """The stack's top-level ``simulated: true|false``; a config without it is treated as real hardware."""
+    if "simulated" not in raw:
+        print(f"Note: {path.name} has no top-level 'simulated:'; treating the stack as real hardware (simulated: false).", file=sys.stderr)
+        return False
+    value = raw["simulated"]
+    if not isinstance(value, bool):
+        raise ValueError(f"{path}: simulated must be true or false, got {value!r}")
+    return value
+
+
+def _check_device_simulated(value, stack: bool, where: str, path: Path) -> None:
+    """Refuse a device-level ``simulated`` property that is not the stack's own flag (or not a boolean at all)."""
+    if value is None:
+        return
+    text = (value[0] if isinstance(value, list) and len(value) == 1 else value)
+    normalised = str(text).strip().lower()
+    if normalised not in ("true", "false"):
+        raise ValueError(f"{path}: {where}.properties.simulated must be true or false, got {value!r}")
+    if (normalised == "true") != stack:
+        raise ValueError(
+            f"{path}: {where}.properties.simulated is {normalised}, but the stack's top-level simulated is {str(stack).lower()}. "
+            "A stack is simulated or not as a whole: remove the device's own simulated property (it gets the stack's)"
+        )
+
+
+def _instrument_choices() -> tuple[str, ...]:
+    """Instrument files the GUI suggests: modules under asyncroscopy/instruments/<kind>/ that run a server."""
+    files = sorted((PROJECT_DIR / "asyncroscopy" / "instruments").glob("*/*.py"))
+    return tuple(
+        path.relative_to(PROJECT_DIR).as_posix()
+        for path in files
+        if path.name != "__init__.py" and "run_server(" in path.read_text(encoding="utf-8", errors="ignore")
+    )
+
+
+TITLE = "Asyncroscopy Server Startup"
+LAUNCHER = "startup_scripts/run_servers.py"
+SETTINGS = [
+    Setting("instrument.file", "path", section="Instrument", label="Instrument file", choices=_instrument_choices()),
+    Setting("instrument.class_name", section="Instrument", label="Instrument class", help="Blank: the class the file serves."),
+    Setting("instrument.description", section="Instrument"),
+    Setting("instrument.hardware_host", section="Instrument", label="Hardware host", help="Blank for digital twins."),
+    Setting("instrument.hardware_port", "int", section="Instrument", label="Hardware port"),
+    Setting("instrument.timeout_seconds", "int", section="Instrument", label="Hardware timeout (s)"),
+    Setting("tango.host", required=True, section="Database", label="Tango host"),
+    Setting("tango.port", "int", required=True, section="Database", label="Tango port"),
+    Setting("tango.reset_database_file", "bool", False, section="Database", label="Delete tango_database.db before start"),
+    Setting("tiled.host", required=True, section="Data server", label="Tiled host"),
+    Setting("tiled.port", "int", required=True, section="Data server", label="Tiled port"),
+    Setting("tiled.acquisition_dir", "dir", required=True, section="Data server", label="Acquisition dir"),
+    Setting("tiled.autostart", "bool", True, section="Data server", label="Start Tiled HTTP server"),
+    Setting("tiled.register_on_startup", "bool", False, section="Data server", label="Register acquisition dir on startup (slow for large folders)"),
+    Setting("device_timeout_seconds", "int", 120, section="Startup", label="Device startup timeout (s)"),
+]
+DEVICE_SPEC_KEYS = ("module_name", "class_name", "properties", "enabled", "description")
+DEVICE_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+MODULE_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+DEVICES = DeviceTable(
+    summary=lambda key, spec: spec.get("class_name") or str(spec.get("module_name", "?")).rsplit(".", 1)[-1],
+)
+
+
+def is_config(raw) -> bool:
+    return isinstance(raw, dict) and isinstance(raw.get("instrument"), dict)
 
 
 def python_file_to_module(path: Path) -> str:
     file_path = path.expanduser()
     if not file_path.is_absolute():
         file_path = PROJECT_DIR / file_path
-    relative_path = file_path.resolve().relative_to(PROJECT_DIR)
+    try:
+        relative_path = file_path.resolve().relative_to(PROJECT_DIR)
+    except ValueError:
+        raise ValueError(
+            f"instrument.file {file_path} is outside {PROJECT_DIR}; for code kept elsewhere set instrument.module_name "
+            "(and instrument.class_name) instead, and put the package's folder on PYTHONPATH (or install it with uv add --editable)"
+        ) from None
     return ".".join(relative_path.with_suffix("").parts)
 
 
@@ -131,70 +253,273 @@ def _instrument_file(raw_path: str) -> Path:
     return PROJECT_DIR / path
 
 
-def _class_name_from_file(path: Path) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            return node.name
-    raise ValueError(f"Instrument file {path} does not define a class")
+def module_source(module_name: str) -> Path:
+    """The .py file `python -m module_name` would run (finding it may import parent packages)."""
+    if not MODULE_NAME_PATTERN.match(module_name):
+        raise ValueError(f"'{module_name}' is not a valid Python module name")
+    relative = Path(*module_name.split("."))
+    for candidate in (PROJECT_DIR / relative.with_suffix(".py"), PROJECT_DIR / relative / "__main__.py"):
+        if candidate.is_file():
+            return candidate
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except ModuleNotFoundError:
+        spec = None
+    except Exception as exc:  # importing a parent package can fail in any way
+        raise ValueError(f"module '{module_name}' could not be located: {type(exc).__name__}: {exc}") from None
+    if spec is not None and spec.submodule_search_locations:  # for a package, -m runs its __main__.py
+        for location in spec.submodule_search_locations:
+            if (Path(location) / "__main__.py").is_file():
+                return Path(location) / "__main__.py"
+        raise ValueError(f"package '{module_name}' has no __main__.py to run")
+    if spec is not None and spec.origin and spec.origin.endswith(".py"):
+        return Path(spec.origin)
+    raise ValueError(f"module '{module_name}' not found")
 
 
-def _instrument_config(raw: dict) -> InstrumentConfig:
-    instrument_file = _instrument_file(_require(raw, "file", "instrument"))
-    properties = {
-        name: [str(item) for item in value] if isinstance(value, list) else [str(value)]
-        for name, value in (raw.get("properties") or {}).items()
+def _check_importable(module: str, where: str) -> None:
+    """Fail at load, not after the device timeout, when a server's module cannot be imported."""
+    try:
+        found, reason = importlib.util.find_spec(module) is not None, "not found"
+    except Exception as exc:  # running the package's __init__ can fail for its own reasons
+        found, reason = False, f"{type(exc).__name__}: {exc}"
+    if not found:
+        raise ValueError(
+            f"{where} {module!r} cannot be imported ({reason}); check the name, and put its package's "
+            "folder on PYTHONPATH (or install it with uv add --editable)"
+        )
+
+
+
+def find_device_class(path: Path, requested: str | None = None, fallback: str | None = None) -> str:
+    """The Tango device class a server file runs: the requested one, else the one passed to run_server()."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    classes = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
+    imported = [alias.asname or alias.name for node in tree.body if isinstance(node, ast.ImportFrom) for alias in node.names]
+    if requested:
+        if requested in classes or requested in imported:
+            return requested
+        raise ValueError(f"class '{requested}' is not defined in {path.name} (it defines: {', '.join(classes) or 'none'})")
+    served = {
+        node.func.value.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run_server" and isinstance(node.func.value, ast.Name)
     }
+    served &= set(classes) | set(imported)  # a call such as `device_class.run_server` names a variable, not a class
+    if len(served) == 1:
+        return served.pop()
+    if fallback in classes:
+        return fallback
+    if len(classes) == 1:
+        return classes[0]
+    raise ValueError(f"cannot tell which class in {path.name} is the device; set class_name (classes: {', '.join(classes) or 'none'})")
+
+
+def _property_values(raw, where: str) -> dict[str, list[str]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}.properties must be a mapping")
+    return {
+        name: [str(item) for item in value] if isinstance(value, list) else [str(value)]
+        for name, value in raw.items()
+    }
+
+
+def _instrument_config(raw: dict, values: dict | None = None) -> InstrumentConfig:
+    """The instrument section; ``values`` are its coerced SETTINGS (read here when not given)."""
+    if values is None:
+        values = read_settings({"instrument": raw}, [s for s in SETTINGS if s.path.startswith("instrument.")])
+    module = raw.get("module_name") or None
+    if module:
+        # This is code outside this repository. It is a module the servers' Python can import.
+        if not values["instrument.class_name"]:
+            raise KeyError("Config section 'instrument' gives module_name, so it also needs class_name")
+        _check_importable(module, "instrument.module_name")
+        instrument_file, class_name = None, values["instrument.class_name"]
+    else:
+        if not values["instrument.file"]:
+            raise ValueError("instrument needs file (a server in this project) or module_name and class_name")
+        instrument_file = _instrument_file(values["instrument.file"])
+        if not instrument_file.is_file():
+            raise ValueError(f"instrument.file: {instrument_file} not found")
+        python_file_to_module(instrument_file)  # raises, pointing at module_name, for a file outside the project
+        class_name = find_device_class(instrument_file, values["instrument.class_name"])
     return InstrumentConfig(
-        class_name=raw.get("class_name") or _class_name_from_file(instrument_file),
+        class_name=class_name,
         file=instrument_file,
-        description=raw.get("description", ""),
-        hardware_host=raw.get("hardware_host"),
-        hardware_port=int(raw["hardware_port"]) if raw.get("hardware_port") else None,
-        timeout_seconds=int(raw["timeout_seconds"]) if raw.get("timeout_seconds") else None,
-        properties=properties,
+        description=values["instrument.description"] or "",
+        hardware_host=values["instrument.hardware_host"] or None,
+        hardware_port=values["instrument.hardware_port"] or None,
+        timeout_seconds=values["instrument.timeout_seconds"] or None,
+        properties=_property_values(raw.get("properties"), "instrument"),
+        module=module,
     )
 
 
-def load_config(path: Path) -> Config:
+def device_config(key, spec) -> tuple[DeviceConfig | None, bool]:
+    """(DeviceConfig, enabled) for one devices entry; a disabled entry is only shape-checked."""
+    where = f"devices.{key}"
+    if not isinstance(key, str) or not DEVICE_NAME_PATTERN.match(key):
+        raise ValueError(f"device name {key!r} must start with a letter and use only letters, digits and _")
+    if key == "instrument":
+        raise ValueError("'instrument' is reserved for the instrument device; rename this device")
+    if not isinstance(spec, dict):
+        raise ValueError(f"{where} needs at least a module_name")
+    unknown = sorted(set(spec) - set(DEVICE_SPEC_KEYS))
+    if unknown:
+        raise ValueError(f"{where}: unknown key(s) {', '.join(unknown)}; expected {', '.join(DEVICE_SPEC_KEYS)}")
+    enabled = coerce(Setting(f"{where}.enabled", "bool"), spec.get("enabled", True))
+    if enabled is False:
+        return None, False
+    module_name = spec.get("module_name")
+    if not module_name:
+        raise ValueError(f"{where} is missing module_name")
+    try:
+        class_name = find_device_class(module_source(str(module_name)), spec.get("class_name"), fallback=key.upper())
+    except ValueError as exc:
+        raise ValueError(f"{where}: {exc}") from None
+    return DeviceConfig(
+        key=key,
+        class_name=class_name,
+        module_name=str(module_name),
+        properties=_property_values(spec.get("properties"), where),
+    ), True
+
+
+def _merge(base: dict, override: dict, replace_values: bool = False) -> dict:
+    """``override`` laid over ``base``: mappings merge key by key, anything else replaces, and null removes.
+    Under a ``properties:`` mapping each property is replaced whole (a specimen mapping is one value)."""
+    merged = dict(base)
+    for key, value in override.items():
+        if value is None:
+            merged.pop(key, None)
+        elif not replace_values and isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge(merged[key], value, replace_values=key == "properties")
+        else:
+            merged[key] = value
+    return merged
+
+
+def read_config(path: Path, _seen: tuple[Path, ...] = ()) -> dict:
+    """A stack config as a mapping, with its ``extends:`` chain merged in.
+
+    ``extends: other.yaml`` (relative to this file) starts from that config; this file's values win.
+    Sections and devices merge key by key, each property is replaced whole, and a value of null removes
+    what the base set (a device, a property). Lists are replaced, not appended to.
+    The startup GUI opens configs through this too, so the file it generates needs no base beside it.
+    """
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    resolved = path.resolve()
+    if resolved in _seen:
+        raise ValueError(f"{path}: extends goes round in a circle ({' -> '.join(p.name for p in (*_seen, resolved))})")
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError([f"{path.name} is not valid YAML: {exc}"]) from exc
+    if not isinstance(raw, dict):
+        raise ConfigError(["the config must be a YAML mapping"])
+    parent = raw.pop("extends", None)
+    if parent is None:
+        return raw
+    if not isinstance(parent, str) or not parent.strip():
+        raise ValueError(f"{path}: extends must name one config file, got {parent!r}")
+    return _merge(read_config(path.parent / parent, (*_seen, resolved)), raw)
 
-    support_devices = [
-        DeviceConfig(
-            key=key,
-            class_name=(spec or {}).get("class_name", key.upper()),
-            module_name=_require(spec or {}, "module_name", f"devices.{key}"),
-            properties={
-                property_name: [str(property_value)]
-                for property_name, property_value in ((spec or {}).get("properties") or {}).items()
-            },
-        )
-        for key, spec in _require(raw, "devices", "(top level)").items()
-    ]
-    tango_section = raw.get("tango", {})
-    tiled = _require(raw, "tiled", "(top level)")
+
+def load_config(path: Path) -> Config:
+    raw = read_config(path)
+    values = read_settings(raw, SETTINGS)
+    problems: list[str] = []
+    instrument = None
+    try:
+        instrument = _instrument_config(raw["instrument"], values)
+    except (KeyError, ValueError) as exc:
+        problems.append(str(exc.args[0]) if isinstance(exc, KeyError) and exc.args else str(exc))
+
+    devices = raw.get("devices") or {}
+    if not isinstance(devices, dict):
+        problems.append("devices must be a mapping of device name to its settings")
+        devices = {}
+    support_devices, disabled, broken = [], [], set()
+    for key, spec in devices.items():
+        try:
+            device, enabled = device_config(key, spec)
+        except ValueError as exc:
+            problems.append(str(exc))
+            broken.add(key)
+            continue
+        if enabled:
+            support_devices.append(device)
+        else:
+            disabled.append(key)
+    # The DATA device starts Tiled in get_data_proxy, so autostart without it fails after everything is up.
+    if values["tiled.autostart"] and "data" not in broken and not any(d.key == "data" for d in support_devices):
+        problems.append("tiled.autostart needs the data device; enable data or turn off tiled.autostart")
+    simulated = plugins = None
+    try:
+        simulated = _simulated(raw, path)
+        plugins = _plugins(raw)
+    except ValueError as exc:
+        problems.append(str(exc))
+    if problems:
+        raise ConfigError(problems)
+    # The stack flag reaches every device as its `simulated` property. A device may repeat it, but never
+    # contradict it. One device saying simulated on a hardware stack would lift that device's hardware rules.
+    for where, properties in [("instrument", instrument.properties), *((f"devices.{d.key}", d.properties) for d in support_devices)]:
+        _check_device_simulated(properties.get("simulated"), simulated, where, path)
+        properties["simulated"] = [str(simulated).lower()]
+    tango_section = raw.get("tango") or {}
 
     return Config(
         path=path,
-        instrument=_instrument_config(_require(raw, "instrument", "(top level)")),
+        simulated=simulated,
+        instrument=instrument,
         support_devices=support_devices,
-        tango_host=_require(tango_section, "host", "tango"),
-        tango_port=int(_require(tango_section, "port", "tango")),
-        reset_database_file=bool(tango_section.get("reset_database_file", False)),
+        tango_host=values["tango.host"],
+        tango_port=values["tango.port"],
+        reset_database_file=values["tango.reset_database_file"],
+        tango_bind_host=str(tango_section.get("bind_host") or ""),
         tiled=TiledConfig(
-            host=_require(tiled, "host", "tiled"),
-            port=int(_require(tiled, "port", "tiled")),
-            acquisition_dir=_require(tiled, "acquisition_dir", "tiled"),
-            autostart=bool(tiled.get("autostart", True)),
-            register_on_startup=bool(tiled.get("register_on_startup", False)),
+            host=values["tiled.host"],
+            port=values["tiled.port"],
+            acquisition_dir=values["tiled.acquisition_dir"],
+            autostart=values["tiled.autostart"],
+            register_on_startup=values["tiled.register_on_startup"],
         ),
-        device_timeout_seconds=int(raw.get("device_timeout_seconds", 120)),
+        device_timeout_seconds=values["device_timeout_seconds"],
+        plugins=plugins,
+        disabled_devices=tuple(disabled),
+    )
+
+
+def yaml_job_device(config: Config) -> DeviceConfig | None:
+    """The job device (``<class_name>Job``) of a YAML instrument whose file has a ``jobs:`` section, started from the same file."""
+    if config.instrument.module_name != YAML_INSTRUMENT_MODULE:
+        return None
+    from asyncroscopy.instruments.yaml_sim.spec import SpecError, load_spec, resolve_path
+
+    try:
+        if not load_spec(resolve_path(config.instrument.properties["yaml_path"][0])).jobs:
+            return None
+    except (SpecError, KeyError):
+        return None  # the instrument device starts, finds the same problem and reports it as FAULT
+    return DeviceConfig(
+        key="job",
+        class_name=f"{config.instrument.class_name}Job",
+        module_name=YAML_JOB_MODULE,
+        properties={**config.instrument.properties, "instrument_device_address": ["asyncroscopy/instrument/default"]},
+        start_after_dependencies=True,
     )
 
 
 def build_devices(config: Config) -> list[DeviceConfig]:
+    job_device = yaml_job_device(config)
     return [
         *config.support_devices,
         DeviceConfig(
@@ -203,6 +528,7 @@ def build_devices(config: Config) -> list[DeviceConfig]:
             module_name=config.instrument.module_name,
             start_after_dependencies=True,
         ),
+        *([job_device] if job_device else []),
     ]
 
 
@@ -245,14 +571,206 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Run a separate stack with its database and process state in DIR, "
-        "leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
+        help="Run a separate stack with its database and process state in DIR "
+        "(e.g. outputs/stacks/raman), leaving other stacks alone. Use distinct tango/tiled ports in the YAML.",
     )
+    parser.add_argument(
+        "--log-to-stdout",
+        action="store_true",
+        help="Copy every server's output to this launcher's stdout, each line prefixed with [device]. "
+        "For containers and supervisors that collect stdout; without it the output is kept for error reports only.",
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Stop another stack (or program) that holds this config's ports or shares its "
+        "Tango database file. Without it, the launcher refuses and says how to run beside it.",
+    )
+    add_lifecycle_args(parser)
     return parser.parse_args(argv)
 
 
+# A launcher started without --isolated scours its Tango and Tiled ports and
+# deletes the project-root Tango database file. That is right for this config's
+# own leftovers from a crashed earlier run and wrong for anyone else's stack.
+
+LAUNCHER_NAME = "run_servers.py"
+ORPHAN_MARKERS = ("tango.databaseds", "tiled", "asyncroscopy.")  # processes an earlier stack leaves behind
+
+
+@dataclass(frozen=True)
+class ProcessInfo:
+    ppid: int
+    tokens: tuple[str, ...]
+    cwd: str | None = None
+
+
+@dataclass(frozen=True)
+class OtherStack:
+    identity: tuple[str, str]  # the config path, then the isolated directory or ""
+    pid: int
+    config: str  # for messages, relative to the repository where possible
+
+
+def _normalized(path: Path) -> str:
+    text = str(path.resolve())
+    return text.lower() if os.name == "nt" else text
+
+
+def stack_identity(config_path: Path, isolated_dir: Path | None) -> tuple[str, str]:
+    return _normalized(config_path), _normalized(isolated_dir) if isolated_dir else ""
+
+
+def _flag(tokens: list[str], flag: str) -> str | None:
+    for index, token in enumerate(tokens):
+        if token == flag and index + 1 < len(tokens):
+            return tokens[index + 1]
+        if token.startswith(flag + "="):
+            return token.split("=", 1)[1]
+    return None
+
+
+def launcher_identity(info: ProcessInfo) -> tuple[str, str] | None:
+    """The (config, isolated) of a run_servers.py launcher's command line (or its ``uv run`` wrapper), else None."""
+    tokens = list(info.tokens)
+    start = next((i for i, token in enumerate(tokens) if Path(token).name == LAUNCHER_NAME), None)
+    if start is None:
+        return None
+    args = tokens[start + 1:]
+    base = Path(info.cwd) if info.cwd else PROJECT_DIR
+    config, isolated = _flag(args, "--yaml"), _flag(args, "--isolated")
+    config_path = DEFAULT_CONFIG_PATH if config is None else Path(config) if Path(config).is_absolute() else base / config
+    isolated_dir = None if isolated is None else Path(isolated) if Path(isolated).is_absolute() else base / isolated
+    return stack_identity(config_path, isolated_dir)
+
+
+def _shown(identity: tuple[str, str]) -> str:
+    config = Path(identity[0])
+    try:
+        text = config.relative_to(_normalized(PROJECT_DIR)).as_posix()
+    except ValueError:
+        text = str(config)
+    return text + (f" (isolated in {identity[1]})" if identity[1] else "")
+
+
+def process_snapshot() -> dict[int, ProcessInfo]:
+    """Every visible process: parent, command line and working directory."""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a declared dependency
+        return {}
+    snapshot = {}
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        try:
+            cwd = proc.cwd()
+        except (psutil.Error, OSError):
+            cwd = None
+        snapshot[proc.info["pid"]] = ProcessInfo(proc.info.get("ppid") or 0, tuple(proc.info.get("cmdline") or ()), cwd)
+    return snapshot
+
+
+def ancestors(pid: int, snapshot: dict[int, ProcessInfo]) -> list[int]:
+    chain, seen = [], {pid}
+    while pid in snapshot and len(chain) < 64:
+        pid = snapshot[pid].ppid
+        if pid in seen or pid <= 0:
+            break
+        seen.add(pid)
+        chain.append(pid)
+    return chain
+
+
+def running_stacks(snapshot: dict[int, ProcessInfo], mine: tuple[str, str], my_pids: set[int]) -> dict[tuple[str, str], OtherStack]:
+    """Live launchers of other stacks, one per (config, isolated), each by its outermost process (so stopping it stops the tree)."""
+    found: dict[tuple[str, str], OtherStack] = {}
+    for pid, info in snapshot.items():
+        identity = launcher_identity(info)
+        if identity is None or identity == mine or pid in my_pids:
+            continue
+        parent = snapshot.get(info.ppid)
+        if parent is not None and launcher_identity(parent) == identity:
+            continue  # the wrapper above it is the one to stop
+        found[identity] = OtherStack(identity, pid, _shown(identity))
+    return found
+
+
+def stack_conflicts(
+    snapshot: dict[int, ProcessInfo],
+    mine: tuple[str, str],
+    my_pids: set[int],
+    listeners: dict[int, set[int]],
+    share_database_file: bool,
+) -> list[tuple[str, int]]:
+    """(reason, pid to stop with --replace) for everything this start would wrongly stop or clobber.
+
+    ``listeners`` maps each port this start clears to the PIDs listening on it.
+    A listener belonging to this config's own stack (another or a crashed run of
+    it) and an orphan an earlier stack left behind are not conflicts: clearing
+    them is the launcher's job. ``share_database_file``: this start uses the
+    project-root Tango database file, which no other non-isolated stack may use.
+    """
+    stacks = running_stacks(snapshot, mine, my_pids)
+    conflicts: list[tuple[str, int]] = []
+    if share_database_file:
+        for stack in stacks.values():
+            if not stack.identity[1]:
+                conflicts.append((f"{stack.config} (launcher pid {stack.pid}) uses the same Tango database file (neither stack is --isolated)", stack.pid))
+    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # maps another stack to the pid to stop and its ports
+    for port, pids in sorted(listeners.items()):
+        for pid in sorted(pids):
+            if pid in my_pids or pid not in snapshot:
+                continue
+            owner = next((launcher_identity(snapshot[a]) for a in [pid, *ancestors(pid, snapshot)] if a in snapshot and launcher_identity(snapshot[a])), None)
+            if owner == mine:
+                continue
+            if owner is not None:
+                stack = stacks.get(owner)
+                ports = held.setdefault(owner, (stack.pid if stack else pid, []))[1]
+                if port not in ports:
+                    ports.append(port)
+                continue
+            tokens = snapshot[pid].tokens
+            if any(marker in token for token in tokens for marker in ORPHAN_MARKERS):
+                continue  # left behind by an earlier stack whose launcher is gone
+            name = Path(tokens[0]).name if tokens else "a program"
+            conflicts.append((f"port {port} is used by {name} (pid {pid}), which is not an asyncroscopy stack", pid))
+    for owner, (pid, ports) in held.items():
+        listed = ", ".join(str(p) for p in ports)
+        conflicts.append((f"{_shown(owner)} (launcher pid {pid}) is listening on port{'s' if len(ports) > 1 else ''} {listed}", pid))
+    return conflicts
+
+
+def stop_tree(pid: int) -> None:
+    """Stop a process and everything it started (--replace)."""
+    import psutil
+
+    try:
+        root = psutil.Process(pid)
+        family = [*root.children(recursive=True), root]
+    except psutil.Error:
+        return
+    for proc in family:
+        try:
+            proc.kill()
+        except psutil.Error:
+            pass
+    psutil.wait_procs(family, timeout=10)
+
+
+def explain_conflicts(conflicts: list[tuple[str, int]], config_path: Path) -> str:
+    lines = ["This start would stop or clobber something that is not this config's own stack:"]
+    lines += [f"  - {reason}" for reason, _ in conflicts]
+    lines += [
+        f"To run beside it, give {config_path.name} its own tango.port and tiled.port and start it with",
+        "  --isolated outputs/stacks/<name>   (docs/Adding_New_Hardware/second_stack.md).",
+        "To stop it and start this config instead, run again with --replace.",
+    ]
+    return "\n".join(lines)
+
+
 def instrument_cleanup_patterns(config: Config) -> set[str]:
-    return {f"{config.instrument.class_name} instrument_instance"}
+    job_device = yaml_job_device(config)
+    return {f"{config.instrument.class_name} instrument_instance", *([f"{job_device.class_name} {job_device.instance_name}"] if job_device else [])}
 
 
 def selected_instrument(devices: list[DeviceConfig]) -> DeviceConfig:
@@ -317,6 +835,7 @@ def status_line(status: str, message: str, detail: str = "") -> None:
         "OK": Style.green,
         "RUN": Style.cyan,
         "WAIT": Style.yellow,
+        "WARN": Style.yellow,
         "FAIL": Style.red,
         "SKIP": Style.dim,
     }
@@ -385,10 +904,15 @@ def wait_for_database(host: str, port: int, timeout: int) -> float:
     raise TimeoutError(f"Tango database did not become ready after {timeout}s. Last error: {last_error}")
 
 
-def wait_for_device(device_name: str, timeout: int) -> float:
+def wait_for_device(device_name: str, timeout: int, process: ManagedProcess | None = None) -> float:
     start = time.monotonic()
     last_error: Exception | None = None
     while time.monotonic() - start < timeout:
+        if process is not None and process.process.poll() is not None:
+            raise RuntimeError(
+                f"{device_name}'s server exited (code {process.process.poll()}) before it was ready; "
+                "check its module_name/class_name in the YAML and the server's output below"
+            )
         try:
             proxy = tango.DeviceProxy(device_name)
             proxy.ping()
@@ -400,9 +924,46 @@ def wait_for_device(device_name: str, timeout: int) -> float:
     raise TimeoutError(f"{device_name} did not become ready after {timeout}s. Last error: {last_error}")
 
 
-def register_devices(devices: list[DeviceConfig], instrument_properties: dict[str, list[str]]) -> None:
+def device_health(device_name: str) -> tuple[str, str]:
+    """A device that answers its ping: its State and Status, as text. A device that started but could not
+    reach its hardware (no AutoScript, a refused connection) answers too, in FAULT; reading it says so."""
+    try:
+        proxy = tango.DeviceProxy(device_name)
+        return str(proxy.state()), str(proxy.status()).strip()
+    except Exception as exc:  # It answered the ping a moment ago. Report why it cannot be read, as a fault.
+        return "FAULT", f"State/Status could not be read: {exc}"
+
+
+def report_health(device_name: str, elapsed: float, faults: dict[str, str]) -> None:
+    """Print a device's State after it answered: FAULT is recorded in ``faults`` and shown as FAIL, any other
+    state but ON as WARN, both with the device's Status."""
+    state, status = device_health(device_name)
+    if state == "FAULT":
+        faults[device_name] = status
+        print(f" {color('FAULT', Style.bold + Style.red)} answered in {elapsed:.1f}s")
+        status_line("FAIL", device_name, status)
+    elif state != "ON":
+        print(f" {color(state, Style.yellow)} answered in {elapsed:.1f}s")
+        status_line("WARN", device_name, status)
+    else:
+        print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+
+
+def register_devices(
+    devices: list[DeviceConfig], instrument_properties: dict[str, list[str]], disabled: Iterable[str] = ()
+) -> None:
     database = tango.Database()
     status_line("OK", "database", f"{database.get_db_host()}:{database.get_db_port()}")
+    instrument_name = selected_instrument(devices).device_name
+
+    # A device switched off must not linger from an earlier run in a kept database.
+    for key in disabled:
+        try:
+            database.delete_device(f"asyncroscopy/{key}/default")
+        except tango.DevFailed:
+            pass
+        database.delete_device_property(instrument_name, [f"{key}_device_address"])
+        status_line("SKIP", key, "disabled")
 
     for device in devices:
         device_info = tango.DbDevInfo()
@@ -419,9 +980,8 @@ def register_devices(devices: list[DeviceConfig], instrument_properties: dict[st
             database.put_device_property(device.device_name, {property_name: property_value})
             status_line("OK", f"property: {device.device_name} {property_name} = {property_value[0]}")
 
-    instrument = selected_instrument(devices)
     for property_name, property_value in instrument_properties.items():
-        database.put_device_property(instrument.device_name, {property_name: property_value})
+        database.put_device_property(instrument_name, {property_name: property_value})
         status_line("OK", f"property: {property_name} = {property_value[0]}")
 
 
@@ -431,15 +991,33 @@ def get_data_proxy() -> tango.DeviceProxy:
     return data
 
 
-def register_tiled_save_path() -> dict:
+def reconcile_tiled() -> dict:
+    """Register the acquisition files Tiled does not have yet (one by one; never the directory)."""
     data = get_data_proxy()
     data.set_timeout_millis(TILED_STARTUP_REGISTRATION_TIMEOUT_MILLIS)
-    return json.loads(data.register_save_path())
+    return json.loads(data.reconcile())
+
+
+def tiled_key_warning(tiled_host: str, api_key: str) -> str | None:
+    """A warning when Tiled is reachable from other machines with the well-known default API key."""
+    if tiled_host.strip().lower() in {"127.0.0.1", "localhost", "::1"} or api_key != "secret":
+        return None
+    return (
+        f"Tiled listens on {tiled_host} with the default API key 'secret': anyone on the network can read and "
+        "write data. Set ASYNCROSCOPY_TILED_API_KEY (and the same key in SciAgentGUI's Tiled settings)."
+    )
 
 
 def stop_tiled_server() -> None:
     try:
         get_data_proxy().stop_tiled_server()
+    except Exception as exc:
+        status_line("WARN", "could not stop the Tiled server", str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
+
+
+def stop_tiled_server_quietly() -> None:
+    try:
+        stop_tiled_server()
     except Exception:
         pass
 
@@ -476,6 +1054,7 @@ def print_summary(
     tiled_config: dict | None = None,
     step: int = 5,
     total: int = 5,
+    faults: dict[str, str] | None = None,
 ) -> None:
     print_section(step, total, "Startup summary")
     print(f"  {color('TANGO_HOST', Style.bold):<18} {host}:{port}")
@@ -493,36 +1072,44 @@ def print_summary(
         print()
         print(f"  {color('TILED_URI', Style.bold):<18} {tiled_config['uri']}")
         print(f"  {color('TILED_SERVING', Style.bold):<18} {tiled_config['tiled_server_serving']}")
+        if tiled_config.get("tiled_log"):
+            print(f"  {color('TILED_LOG', Style.bold):<18} {tiled_config['tiled_log']}")
     print()
+    if faults:
+        print(color(f"NOT READY: {len(faults)} device(s) are in FAULT; the servers run, but the stack is not live:", Style.bold + Style.red))
+        for name, status in faults.items():
+            print(color(f"  {name}: {status}", Style.red))
+        print(color("Fix the cause, then call Connect on the device or restart the stack.", Style.bold + Style.red))
+        return
     print(color("All asyncroscopy servers are ready.", Style.bold + Style.green))
 
 
+def manager_options(args: argparse.Namespace, port: int) -> dict:
+    """ProcessManager options for this run; --isolated keeps its state apart per port."""
+    if args.isolated is None:
+        return {}
+    isolated_dir = args.isolated.resolve()
+    return {"name": f"run_servers_{port}", "state_dir": isolated_dir / ".processes"}
+
+
 def main(argv: list[str] | None = None) -> int:
-    shutdown_requested = False
-
-    def request_shutdown(_signum, _frame) -> None:
-        # A GUI's Stop button (or a wrapper like `uv run` forwarding its own
-        # copy of the same signal) can deliver SIGTERM more than once for a
-        # single stop request. Only the first should raise: re-raising while
-        # ProcessManager.shutdown_all() is already unwinding interrupts that
-        # cleanup mid-flight and can leave child device servers orphaned.
-        nonlocal shutdown_requested
-        if shutdown_requested:
-            return
-        shutdown_requested = True
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGTERM, request_shutdown)
-    if hasattr(signal, "SIGHUP"):
-        signal.signal(signal.SIGHUP, request_shutdown)
-
+    # Line-buffer even when stdout is a pipe or file, as under a GUI, a log or CI. Then "ready"
+    # and the summary appear when they happen rather than when the launcher exits.
+    sys.stdout.reconfigure(line_buffering=True)
     args = parse_args(argv)
+    install_shutdown_handlers(args.parent_pid)
     config_path = args.yaml or DEFAULT_CONFIG_PATH
     try:
         config = load_config(config_path)
     except (FileNotFoundError, KeyError, ValueError) as exc:
         print(color(f"Config error: {exc}", Style.bold + Style.red))
         return 1
+
+    if args.cleanup:
+        with ProcessManager(**manager_options(args, config.tango_port)):
+            pass
+        status_line("OK", "cleanup", "stopped processes left by an earlier run")
+        return 0
 
     headless = args.yaml is not None
     devices = build_devices(config)
@@ -550,16 +1137,16 @@ def main(argv: list[str] | None = None) -> int:
         print()
         host = prompt_str("Tango database host", config.tango_host)
         port = prompt_int("Tango database port", config.tango_port)
-        default_tiled = urlsplit(os.environ.get("ASYNCROSCOPY_TILED_URI", f"http://{config.tiled.host}:{config.tiled.port}"))
+        default_tiled = urlsplit(settings.get().tiled_uri or f"http://{config.tiled.host}:{config.tiled.port}")
         tiled_host = prompt_str("Tiled HTTP host", default_tiled.hostname or config.tiled.host)
         tiled_port = prompt_int("Tiled HTTP port", default_tiled.port or config.tiled.port)
         acquisition_dir = prompt_str(
             "Acquisition save path",
-            os.environ.get("ASYNCROSCOPY_ACQUISITION_DIR", config.tiled.acquisition_dir),
+            settings.get().acquisition_dir or config.tiled.acquisition_dir,
         )
         should_start_tiled = prompt_bool("Start Tiled HTTP server", config.tiled.autostart)
         should_register_tiled = prompt_bool(
-            "Register acquisition directory with Tiled on startup (can be slow)",
+            "Register acquisition files Tiled is missing on startup (can be slow)",
             config.tiled.register_on_startup,
         )
         clear_first = prompt_bool("Clear old processes first", True)
@@ -583,7 +1170,10 @@ def main(argv: list[str] | None = None) -> int:
 
     total_steps = 5
     environment = make_environment(host, port, tiled_host, tiled_port, acquisition_dir)
+    if config.plugins:
+        environment["ASYNCROSCOPY_PLUGINS"] = plugin_environment(config.plugins, environment.get("ASYNCROSCOPY_PLUGINS", ""))
     ready_times: dict[str, float] = {}
+    faults: dict[str, str] = {}  # device name -> Status, for devices that answered in FAULT
     tiled_config = None
 
     log_dir: Path | None = None
@@ -596,17 +1186,33 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  {color('PROJECT', Style.bold):<18} {PROJECT_DIR}")
     print(f"  {color('CONFIG', Style.bold):<18} {config_path}")
     print(f"  {color('INSTRUMENT', Style.bold):<18} {instrument.class_name}")
+    print(f"  {color('SIMULATED', Style.bold):<18} {str(config.simulated).lower()}" + ("" if config.simulated else "  (real hardware)"))
     if log_dir is not None:
         print(f"  {color('DEBUG LOGS', Style.bold):<18} {log_dir}")
     print_inventory(devices)
 
     isolated_dir = args.isolated.resolve() if args.isolated else None
-    manager_kwargs = {}
+    manager_kwargs = {"echo_output": args.log_to_stdout, **manager_options(args, port)}
     if isolated_dir is not None:
         isolated_dir.mkdir(parents=True, exist_ok=True)
         clear_first = False
         environment["PYTANGO_DATABASE_NAME"] = str(isolated_dir / "tango_database.db")
-        manager_kwargs = {"name": f"run_servers_{port}", "state_dir": isolated_dir / ".processes"}
+
+    snapshot = process_snapshot()
+    my_pids = {os.getpid(), *ancestors(os.getpid(), snapshot)}
+    ports = ([port] if start_database else []) + ([tiled_port] if should_start_tiled else []) if clear_first else []
+    conflicts = stack_conflicts(
+        snapshot, stack_identity(config_path, isolated_dir), my_pids,
+        {p: listening_pids(p) or set() for p in ports},
+        share_database_file=isolated_dir is None and start_database,
+    )
+    if conflicts and not args.replace:
+        print(color(explain_conflicts(conflicts, config_path), Style.bold + Style.red))
+        return 1
+    if conflicts:
+        for reason, pid in conflicts:
+            print(f"  STOP  {reason} (--replace)")
+            stop_tree(pid)
 
     try:
         with ProcessManager(**manager_kwargs) as manager:
@@ -615,7 +1221,11 @@ def main(argv: list[str] | None = None) -> int:
                 ports_to_clear = [port]
                 if should_start_tiled:
                     ports_to_clear.append(tiled_port)
-                manager.scour_ports(ports_to_clear)
+                manager.scour_ports(
+                    ports_to_clear,
+                    device_servers=[(device.module_name, device.instance_name) for device in devices],
+                    tango_host=f"{host}:{port}",
+                )
             else:
                 status_line("SKIP", "old process cleanup")
                 
@@ -631,7 +1241,7 @@ def main(argv: list[str] | None = None) -> int:
                 database = manager.start_process(
                     key="database",
                     label="Tango database",
-                    command=["uv", "run", "python", "-m", "tango.databaseds.database", "2"],
+                    command=python_command("-m", "tango.databaseds.database", *(["--host", config.tango_bind_host] if config.tango_bind_host else []), "2"),
                     env=environment,
                 )
                 print("  WAIT  database readiness", end="", flush=True)
@@ -646,11 +1256,12 @@ def main(argv: list[str] | None = None) -> int:
 
             print_section(3, total_steps, "Registering devices")
             if should_register_devices:
-                register_devices(devices, registered_instrument_properties)
+                register_devices(devices, registered_instrument_properties, config.disabled_devices)
             else:
                 status_line("SKIP", "device registration")
 
             print_section(4, total_steps, "Starting device servers")
+            started = {}
             for device in regular_devices:
                 process = manager.start_process(
                     key=device.key, 
@@ -658,25 +1269,32 @@ def main(argv: list[str] | None = None) -> int:
                     command=device.command, 
                     env=environment
                 )
+                started[device.key] = process
                 status_line("RUN", device.key, f"{device.module_name}  pid={process.pid}")
 
             for device in regular_devices:
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
-                elapsed = wait_for_device(device.device_name, device_timeout)
+                elapsed = wait_for_device(device.device_name, device_timeout, started[device.key])
                 ready_times[device.key] = elapsed
-                print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+                report_health(device.device_name, elapsed, faults)
 
             if should_start_tiled:
+                configured_key = settings.get().tiled_api_key
+                warning = tiled_key_warning(tiled_host, "secret" if configured_key is None else configured_key)
+                if warning:
+                    status_line("WARN", "Tiled API key", warning)
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
                 if tiled_config["tiled_server"] != "yes":
                     raise RuntimeError(f"Tiled HTTP server failed to start: {tiled_config['tiled_server_status']}")
                 status_line("OK", "Tiled HTTP server", f"{tiled_config['uri']} serving {tiled_config['tiled_server_serving']}")
                 
                 if should_register_tiled:
-                    status_line("WAIT", "Tiled startup registration", "registering acquisition directory; this can take a while")
-                    tiled_registration = register_tiled_save_path()
-                    tiled_config.update(tiled_registration)
-                    status_line("OK", "Tiled startup registration", tiled_registration["registered_path"])
+                    status_line("WAIT", "Tiled startup registration", "registering acquisition files Tiled is missing; this can take a while")
+                    reconciled = reconcile_tiled()
+                    detail = f"{len(reconciled['registered'])} registered, {reconciled['already']} already there, {len(reconciled.get('pending', []))} still being written"
+                    if reconciled["failed"]:
+                        detail += f", {len(reconciled['failed'])} failed (first: {reconciled['failed'][0]['error']})"
+                    status_line("WARN" if reconciled["failed"] else "OK", "Tiled startup registration", detail)
                 else:
                     status_line("SKIP", "Tiled startup registration", "register_on_startup=false; files register manually")
             else:
@@ -694,9 +1312,9 @@ def main(argv: list[str] | None = None) -> int:
                     env=environment
                 )
                 print(f"  WAIT  {device.device_name:<34}", end="", flush=True)
-                elapsed = wait_for_device(device.device_name, device_timeout)
+                elapsed = wait_for_device(device.device_name, device_timeout, process)
                 ready_times[device.key] = elapsed
-                print(f" {color('OK', Style.green)} ready in {elapsed:.1f}s")
+                report_health(device.device_name, elapsed, faults)
 
             print_summary(
                 host,
@@ -706,6 +1324,7 @@ def main(argv: list[str] | None = None) -> int:
                 tiled_config,
                 step=total_steps,
                 total=total_steps,
+                faults=faults,
             )
             print()
             print(color("Leave this terminal open while you use the servers. Press Ctrl+C to stop them.", Style.dim))
@@ -713,6 +1332,11 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 while True:
                     time.sleep(0.1)
+                    # A server that dies after startup stops the stack with an error. A supervisor such as
+                    # systemd or Kubernetes then sees the failure instead of a launcher that looks healthy.
+                    stopped = next((p for p in manager.active_processes if not p.running), None)
+                    if stopped is not None:
+                        raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
             except KeyboardInterrupt:
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!
                 print()
@@ -722,6 +1346,12 @@ def main(argv: list[str] | None = None) -> int:
                 
         status_line("OK", "shutdown complete")
         return 0
+
+    except KeyboardInterrupt:
+        # Stopped during startup. The ProcessManager context has already stopped what was running.
+        stop_tiled_server_quietly()
+        status_line("OK", "stopped during startup")
+        return 130
 
     except Exception as exc:   
         # Catches actual startup crashes
@@ -741,11 +1371,7 @@ def main(argv: list[str] | None = None) -> int:
                     log_file.write_text(f"STDOUT:\n{stdout}\n\nSTDERR:\n{stderr}", encoding="utf-8")
                 print(color(f"Saved logs to {log_dir}", Style.bold + Style.yellow))
 
-        # Stop tiled on a crash
-        try:
-            stop_tiled_server() 
-        except Exception:
-            pass
+        # No stop_tiled_server call is needed here. The process manager's tree kill has already ended Tiled with the data server.
             
         return 1
 

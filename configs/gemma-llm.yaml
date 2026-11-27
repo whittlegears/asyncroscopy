@@ -3,7 +3,7 @@
 agent:
   name: Asyncroscopy_Agent_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
   http_port: 8002
   model: "gemma4:31b"
   model_provider: "ollama"
@@ -12,6 +12,11 @@ agent:
 
   mcp_urls:
     - "http://127.0.0.1:8000/mcp"
+
+  # Run workflows in this process, on a twin and on the real instrument. The real instrument needs http_host 127.0.0.1
+  # because this server has no login.
+  workflows: true
+  workflows_hardware: true
 
   startup_agents:
     - name: "base"

@@ -1,0 +1,35 @@
+# Refusals and recovery.
+
+workflows:
+  - name: field_of_view_out_of_range
+    request: Set the field of view to 1 cm.
+    runners: [general]
+    timeout_s: 180
+    checks:
+      - {check: param_unchanged, name: fov}
+      - {check: answer_matches, pattern: "range|maximum|limit|too large|cannot|can't|not possible|refus"}
+
+  - name: dose_budget_refused
+    request: Map a 600 nm square around the current position, giving the sample at most 1 electron per square angstrom.
+    runners: [general, mapping]
+    timeout_s: 480
+    checks:
+      - {check: not_called, tool: "Mapper*_start"}
+      - {check: answer_matches, pattern: "dose|budget|e/.?A|electrons? per"}
+
+  - name: stage_out_of_range
+    request: Move the stage to x = 5 mm, y = 0.
+    runners: [general]
+    timeout_s: 240
+    checks:
+      - {check: stage_unchanged, tol: 1.0e-6}
+      - {check: answer_matches, pattern: "range|limit|outside|cannot|can't|refus|not possible"}
+      - {check: no_sleepwalking, allow: ["*_move_stage"]}  # the move asked for, refused as out of range
+
+  - name: recover_from_unknown_detector
+    request: Take an image with the "haadf-wide" detector. If there is no such detector, use the HAADF detector instead.
+    runners: [general]
+    timeout_s: 300
+    checks:
+      - {check: recovered, tool: "*_acquire_scanned_image"}
+      - {check: no_sleepwalking, allow: ["*_acquire_scanned_image", "*_unblank_beam", "*_blank_beam"]}

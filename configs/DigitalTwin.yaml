@@ -1,3 +1,6 @@
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: DigitalTwin
   file: asyncroscopy/instruments/electron_microscope/digital_twin.py
@@ -13,8 +16,29 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  # Background map jobs (reserve/start/status/abort/results/release) on this microscope.
+  mapper:
+    class_name: Mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      eds_device_address: asyncroscopy/eds/default
+      data_device_address: asyncroscopy/data/default
+  # Autofocus and stigmation jobs: run_job(device="Tuner", plan={...}); see docs/Operation/autofocus.md.
+  tuner:
+    class_name: Tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      corrector_device_address: asyncroscopy/corrector/default
+      data_device_address: asyncroscopy/data/default
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin
@@ -27,7 +51,8 @@ tango:
 tiled:
   host: localhost
   port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
+  # Simulated data is kept apart from real acquisitions
+  acquisition_dir: outputs/tiled_twin
   autostart: true
   register_on_startup: false
 

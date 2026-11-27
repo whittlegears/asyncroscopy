@@ -1,19 +1,50 @@
-"""FastMCP server exposing the Tango-free agent swarm in ``asyncroscopy.mcp.agent``.
+"""FastMCP server exposing the Tango-free agent graphs: the swarm (``asyncroscopy.agents.graphs.swarm``)
+and the named graphs (``asyncroscopy.agents.run``).
 
-The swarm reaches the instruments as an MCP *client* of one or more MCP servers,
-so this process needs no pyTango. Clients (notebooks, chat UIs) reach the swarm
+The agents reach the instruments as an MCP *client* of one or more MCP servers,
+so this process needs no pyTango. Clients (notebooks, chat UIs) reach them
 here over MCP, in the same way they would reach any other tool server.
+
+It is the entry point that serves the agent layer, so it imports ``asyncroscopy.agents`` only
+when it builds the server, never at import: the MCP package stays below the agents.
 """
+
+from __future__ import annotations
 
 import argparse
 import asyncio
 import json
 import socket
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Literal
 
 from fastmcp import FastMCP
 
-from asyncroscopy.mcp.agent import DEFAULT_MCP_URL, DEFAULT_MAX_STEPS, DEFAULT_MODEL, Agent, AgentSwarm
+from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
+from asyncroscopy.core.net import is_loopback_host
+
+if TYPE_CHECKING:
+    from asyncroscopy.agents.graphs.swarm import Agent
+
+def with_images(answer: str, images: list[dict]):
+    """The answer as text, or with images as the answer followed by its image blocks (the latest MAX_COLLECTED)."""
+    if not images:
+        return answer
+    import base64
+
+    from fastmcp.tools import ToolResult
+    from fastmcp.utilities.types import Image
+
+    from asyncroscopy.agents.mcp_tools import MAX_COLLECTED
+
+    shown = images[-MAX_COLLECTED:]
+    blocks = [Image(data=base64.b64decode(image["base64"]), format=image["mime_type"].split("/")[-1]) for image in shown]
+    note = f"\n\n[{len(shown)} image(s) from {', '.join(dict.fromkeys(image['tool'] for image in shown))} follow]"
+    return ToolResult(content=[answer + note, *blocks])
+
+
+# What query_agent may run. The empty string is the swarm and the rest are the named graphs.
+GraphName = Literal["", *AGENT_GRAPHS]
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -35,61 +66,82 @@ class AgentMCPServer:
         self,
         name: str,
         mcp_urls: list[str],
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         model_provider: str = "ollama",
-        max_steps: int = DEFAULT_MAX_STEPS,
+        max_steps: int | None = None,
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
-    ):
+        workflows: bool = False,
+        workflows_hardware: bool = False,
+    ) -> None:
         """
         Args:
             name (str): Display name for this MCP server instance.
             mcp_urls (list[str]): Streamable-HTTP MCP endpoints the swarm inherits tools from.
             model (str): Model name, interpreted by ``model_provider``.
             model_provider (str): Provider passed to LangChain's ``init_chat_model``.
-            max_steps (int): LangGraph recursion limit per query.
+            max_steps (int): LangGraph recursion limit per query; None: the swarm's default.
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+            workflows (bool): Run workflows in this process and offer their tools here and to the agents.
+                They drive the first of ``mcp_urls``.
+            workflows_hardware (bool): Also allow workflows on a stack that is not simulated.
         """
+        from asyncroscopy.agents.graphs.swarm import AgentSwarm
+
         self.verbose = verbose
         self.mcp_urls = list(mcp_urls)
         self.swarm = AgentSwarm(
             model=model,
             model_provider=model_provider,
-            max_steps=max_steps,
             startup_agents=startup_agents,
             use_init_chat_model=use_init_chat_model,
             verbose=verbose,
+            **({} if max_steps is None else {"max_steps": max_steps}),
         )
+
+        self.workflows = None
+        if workflows or workflows_hardware:
+            from asyncroscopy.agents.workflows.server import Endpoints, WorkflowServer
+
+            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow"),
+                                            hardware=workflows_hardware)
 
         # Swarm must be initialized inside the server's own event loop
         @asynccontextmanager
         async def lifespan(server: FastMCP):
             await self.swarm.start(self.mcp_urls)
+            if self.workflows is not None:
+                self.swarm.add_tools(self.workflow_tools())
             yield {}
 
         self.mcp = FastMCP(name, lifespan=lifespan)
         self._query_lock = asyncio.Lock()
 
+    def workflow_tools(self) -> list:
+        """The workflow tools as LangChain tools for the agents. An agent selects them with ``*workflow*``."""
+        from langchain_core.tools import StructuredTool
+
+        return [StructuredTool.from_function(coroutine=fn, name=fn.__name__, description=fn.__doc__) for fn in self.workflows.tools()]
+
     def setup(self) -> None:
         """Register the swarm tools on the FastMCP instance."""
-        for tool_func in (
-            self.query_agent,
-            self.spawn_agent,
-            self.list_agents,
-            self.list_agent_tools,
-            self.complete,
-            self.set_max_steps,
-        ):
+        native = [self.query_agent, self.spawn_agent, self.list_agents, self.list_agent_tools, self.complete, self.set_max_steps]
+        if self.workflows is not None:  # lets a client run a workflow without a model
+            native += self.workflows.tools()
+        for tool_func in native:
             self.mcp.add_tool(tool_func)
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
         # Printed unconditionally (unlike the verbose lines above) so startup GUIs
         # can parse the count from stdout even when quiet mode is on.
-        print("MCP ready: 6 tool(s) registered", flush=True)
+        print(f"MCP ready: {len(native)} tool(s) registered", flush=True)
+        if self.workflows is not None:
+            where = "simulated stacks and the real instrument" if self.workflows.hardware else "simulated stacks only"
+            print(f"Workflows run in this process ({where}): list_workflows, run_workflow, workflow_status, stop_workflow, ...", flush=True)
 
         if self.verbose:
             print("\nAvailable agent tools:")
@@ -101,15 +153,42 @@ class AgentMCPServer:
             print("  - set_max_steps(max_steps: int) -> int")
             print(f"\nInheriting tools from MCP servers: {', '.join(self.mcp_urls)}")
 
-    async def query_agent(self, prompt: str, include_transcript: bool = True) -> str:
+    async def query_agent(self, prompt: str, include_transcript: bool = True, graph: GraphName = "", goal: bool = False,
+                          model: str = ""):
         """
-        Ask the agent swarm to carry out a request and return its response.
+        Ask the agents to carry out a request and return the response.
 
-        If `include_transcript` is true (default), the routing decisions, 
+        graph: "" uses the agent swarm; "mapping" runs the fixed map workflow
+        (plan, reserve, run, stitch, score, report); "general" runs
+        the single tool-using agent with skills; "team" runs a planner with an
+        operator and an analyst agent.
+        goal: treat the prompt as a goal (a sentence, or JSON with statement,
+        criteria and budget): the team (or general, if graph says so) works
+        until the goal is checked as met from the servers' replies, retrying
+        with feedback within the budget; the reply starts with whether it was met.
+        model: the model to run on, a name under this server's provider (Ollama by default), such as the one the
+        client has chosen; "" keeps the server's (ASYNCROSCOPY_MODEL, else the agent profile's).
+        If `include_transcript` is true (default), the routing decisions,
         tool calls, and generated text will also be included above the final answer.
+        Images the tools returned on the way (a segmentation, the atoms found) come after the answer as image blocks,
+        the latest few, so the chat shows them.
         """
+        from asyncroscopy.agents.mcp_tools import collect_images
+        from asyncroscopy.agents.run import run_goal_text, run_named_graph
+
         async with self._query_lock:
-            return await self.swarm.query(prompt, include_transcript=include_transcript)
+            if model.strip():
+                self.swarm.use_model(model.strip())
+            with collect_images() as images:
+                if goal:
+                    stripped = prompt.strip()
+                    spec = json.loads(stripped) if stripped.startswith("{") else stripped
+                    answer = (await run_goal_text(spec, graph if graph in ("team", "general") else "team", model=self.swarm.model))[0]
+                elif graph:
+                    answer = await run_named_graph(graph, prompt, model=self.swarm.model)
+                else:
+                    answer = await self.swarm.query(prompt, include_transcript=include_transcript)
+        return with_images(answer, images)
 
     def spawn_agent(self, config: str) -> str:
         """
@@ -164,18 +243,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--http-host", required=True)
     parser.add_argument("--http-port", type=int, required=True)
     parser.add_argument("--mcp-urls-json", default=json.dumps([DEFAULT_MCP_URL]))
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser.add_argument("--model", default=None, help="Model name; default: the default agent profile's model.")
     parser.add_argument("--model-provider", default="ollama")
-    parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument("--max-steps", type=int, default=None, help="Recursion limit per query; default: the swarm's.")
     parser.add_argument("--startup-agents-json", default="[]")
     parser.add_argument("--use-init-chat-model", action="store_true")
+    parser.add_argument("--workflows", action="store_true", help="Run workflows in this process and offer their tools (list_workflows, run_workflow, ...).")
+    parser.add_argument("--workflows-hardware", action="store_true",
+                        help="As --workflows, and also on a stack that does not say it is simulated (a real instrument). Needs a loopback --http-host.")
     parser.add_argument("--quiet", action="store_true")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    from asyncroscopy.agents.graphs.swarm import Agent
 
+    if args.workflows_hardware and args.transport == "streamable-http" and not is_loopback_host(args.http_host):
+        print(f"MCP ERROR: --workflows-hardware needs --http-host 127.0.0.1 (got {args.http_host}): this server has no login, "
+              "and with it anyone who can reach the port would run workflows on the real instrument.", flush=True)
+        return 1
     if args.transport == "streamable-http":
         bind_error = check_port_free(args.http_host, args.http_port)
         if bind_error:
@@ -196,6 +283,8 @@ def main(argv: list[str] | None = None) -> int:
         startup_agents=[Agent(**agent) for agent in json.loads(args.startup_agents_json)],
         use_init_chat_model=args.use_init_chat_model,
         verbose=not args.quiet,
+        workflows=args.workflows,
+        workflows_hardware=args.workflows_hardware,
     )
     if args.transport == "streamable-http":
         print(

@@ -1,11 +1,12 @@
-import json
-from typing import Optional
+import time
 
 
 from abc import abstractmethod, ABCMeta
 
 import tango
 import tango.server
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 class CombinedMeta(tango.server.DeviceMeta, ABCMeta):
     """Combines Tango DeviceMeta and ABCMeta to allow abstract methods in Devices."""
@@ -23,19 +24,42 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     )
 
     testing_mode_bool = tango.server.device_property(
-        dtype=bool, 
+        dtype=bool,
         default_value=False,
         doc="When True - used for running tests, passed in conftest.py")
-    
+
+    simulated = tango.server.device_property(
+        dtype=bool,
+        default_value=False,
+        doc="True when this stack drives a simulator, set from run_servers' top-level simulated:. "
+            "False, the default, means real hardware (safety checks key off it).",
+    )
+
     # ------------------------------------------------------------------
     # Instrument Attributes
     # ------------------------------------------------------------------
 
+    # This reads through a lambda. Tango binds the default read method of an attribute to the class declaring it,
+    # so the read_instrument_type of a subclass would never run.
     instrument_type = tango.server.attribute(
+        fget=lambda device: device.read_instrument_type(),
+        name="instrument_type",
         label="Instrument Type",
         dtype=str,
         access=tango.AttrWriteType.READ,
         doc="Instrument modality, for example 'STEM', 'SPM', 'TEM', or 'OPTIC'.",
+    )
+
+    # Tells the MCP server the risk, role, stop and routine of each command, as its @command declares them.
+    action_hints = action_hints_attribute()
+
+    clock_s = tango.server.attribute(
+        label="Instrument clock",
+        dtype=float,
+        unit="s",
+        access=tango.AttrWriteType.READ,
+        doc="The instrument's own time: simulated seconds on a digital twin, Unix time on hardware. "
+            "Jobs time drift fits and revisits with it, so they hold whatever the twin's time_scale.",
     )
 
     # ------------------------------------------------------------------
@@ -43,6 +67,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     # ------------------------------------------------------------------
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
+        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
         self.set_state(tango.DevState.INIT)
 
         self._init_device_attributes()
@@ -54,6 +79,13 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     @abstractmethod
     def read_instrument_type(self) -> str:
         pass
+
+    def read_clock_s(self) -> float:
+        return float(self.instrument_clock_s())
+
+    def instrument_clock_s(self) -> float:
+        """The time clock_s reports; a simulator overrides this with its simulated clock."""
+        return time.time()
 
     @abstractmethod
     def _init_device_attributes(self) -> None:
@@ -77,7 +109,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
     # Commands
     # ------------------------------------------------------------------
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def Connect(self) -> None:
         """
         Explicitly (re)connect to microscope hardware. Useful after a fault.
@@ -88,7 +120,7 @@ class Instrument(tango.server.Device, metaclass=CombinedMeta):
         if error:
             tango.Except.throw_exception("ConnectFailed", f"Connect failed: {error}", "Connect()")
 
-    @tango.server.command
+    @command(risk="high", role="other")
     def Disconnect(self) -> None:
         """Disconnect from microscope hardware gracefully."""
         self.set_state(tango.server.DevState.OFF)

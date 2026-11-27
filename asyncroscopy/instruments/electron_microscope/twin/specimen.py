@@ -1,0 +1,269 @@
+"""What the instrument model needs from a sample, and where samples come from.
+
+The twin is split in two. The *instrument* (stage, drift, clock, scan
+distortion, optics, detector noise, dose bookkeeping, EDS detector) never
+looks inside the sample; it asks a ``Specimen`` these questions, all in sample
+coordinates (metres, rows along +y, columns along +x):
+
+* ``projected_weight``: the Z^n-weighted mass thickness on a regular grid,
+  which the renderer turns into a detector signal and blurs with the probe;
+* ``areal_density``: atoms per square angstrom of each element under the
+  beam, which the EDS model turns into a spectrum;
+* ``height_at``: the specimen height, which adds to the defocus;
+* ``support_texture``: how the support film's thickness varies (None: a uniform film);
+* ``in_box`` / ``feature_centers``: the features the dose map may damage.
+
+A twin that renders per view (the atomistic twins: a tilted lamella, a stage that
+moves a world under the beam) asks instead through ``view(ViewRequest)``: what
+is in this one field, as ASE atoms, per-pixel maps or structured records. A
+parked beam for a multislice calculation asks ``atoms_at``, and ``set_field``
+rebuilds a specimen whose world spans the field of view. A source declares in
+``render_modes`` which twin renderers can use it; ``projected`` is
+``DigitalTwin``'s projected-weight renderer.
+
+``ground_truth`` is for evaluators only (export_ground_truth, scorers); the
+instrument never reads it. A support film (``support_element``,
+``support_thickness_m``) belongs to the specimen; contamination belongs to
+the instrument, because the beam deposits it.
+
+Sources are registered by name like the Tuner's strategies and the Mapper's
+profiles::
+
+    @register_specimen
+    class MySpecimen(Specimen):
+        source = "mine"
+
+        @classmethod
+        def from_options(cls, options, context): ...
+
+and chosen with the twin's ``specimen`` device property. Built in:
+``procedural`` (the seeded particle table, the default), ``recorded`` (an
+image file) and ``crystal`` (a polycrystalline film built from ASE unit
+cells) for ``DigitalTwin``, and ``silicon_lamella``, ``polycrystal``,
+``particles`` and ``nanoparticle_map`` for the atomistic twins; others install
+with the ``asyncroscopy.specimens`` entry point.
+docs/Operation/specimens.md explains the coupling and walks through a source.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from asyncroscopy.registry import Registry
+
+from asyncroscopy.sim.rng import EventRng
+
+if TYPE_CHECKING:
+    from ase import Atoms
+
+    from .sample_model import SampleParams
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+@dataclass(frozen=True)
+class ViewRequest:
+    """One look at a specimen. ``stage`` is [x, y, z (m), alpha, beta (deg)]; ``fov_angstrom`` is the field the view covers."""
+
+    stage: np.ndarray
+    fov_angstrom: float = 0.0
+    imsize: int = 0  # pixels across, when the view is for an image
+    edge_crop: int = 0  # pixels of padding around that image
+    local_nm: tuple[np.ndarray, np.ndarray] | None = None  # the specimen-frame point each pixel sees, when the instrument worked it out
+    rotation: np.ndarray | None = None  # the stage's tilt as a 3x3 rotation matrix, when the source needs it
+
+
+@dataclass
+class FieldView:
+    """What a specimen shows in one view: atoms, per-pixel maps and/or structured records, as the source provides."""
+
+    atoms: "Atoms | None" = None
+    maps: dict[str, np.ndarray] = field(default_factory=dict)
+    records: list[dict] = field(default_factory=list)
+    info: dict = field(default_factory=dict)
+
+
+class Specimen:
+    """A sample the twin can image. Subclasses fill in the geometry; the defaults are an empty specimen."""
+
+    source = ""  # registry name, selected by the twin's specimen property
+    render_modes: tuple[str, ...] = ("projected",)  # the twin renderers that can image it
+    support_element = "C"
+    support_thickness_m = 0.0
+    height_gradient: tuple[float, float] = (0.0, 0.0)
+    bounds: tuple[float, float, float, float] = (-1e-9, 1e-9, -1e-9, 1e-9)  # x_min, x_max, y_min, y_max in metres
+
+    @classmethod
+    def from_options(cls, options: dict, context: "SpecimenContext") -> "Specimen":
+        raise NotImplementedError
+
+    # What the instrument model reads
+    def projected_weight(self, x_min: float, y_min: float, n: int, pixel_m: float, level: str, z_exponent: float, damage: dict[int, float]) -> np.ndarray:
+        """sum(Z^n * atoms per cubic angstrom * thickness in angstrom) on an n x n grid.
+
+        Pixel (row r, column c) is centred at (x_min + (c + 0.5) * pixel_m, y_min + (r + 0.5) * pixel_m).
+        ``level`` is "survey" (pixels larger than an atom) or "atomic"; ``damage`` maps a feature index
+        (from ``in_box``) to the fraction of it left. The support film is added by the renderer.
+        """
+        return np.zeros((n, n), dtype=np.float64)
+
+    def support_texture(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray | None:
+        """The support film's relative thickness change on the same grid as ``projected_weight`` (0: the nominal
+        ``support_thickness_m``, never below -1), or None for a uniform film."""
+        return None
+
+    def support_change_at(self, x: float, y: float) -> float:
+        """The support film's relative thickness change at one point, for the EDS spectrum (0: nominal, -1: a hole).
+        Only what a spectrum should see: a hole or a thicker region, not the fine texture."""
+        return 0.0
+
+    def areal_density(self, x: float, y: float) -> dict[str, float]:
+        """Atoms per square angstrom of each element along the beam at (x, y), support film excluded."""
+        return {}
+
+    def height_at(self, x: float | np.ndarray, y: float | np.ndarray) -> np.ndarray:
+        gx, gy = self.height_gradient
+        return gx * np.asarray(x) + gy * np.asarray(y)
+
+    @property
+    def feature_centers(self) -> np.ndarray:
+        """(N, 2) centres of the features the dose map tracks, indexed as ``in_box`` returns them."""
+        return np.zeros((0, 2), dtype=np.float64)
+
+    def in_box(self, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
+        """Indices of features overlapping the box."""
+        return np.zeros(0, dtype=np.int64)
+
+    @property
+    def element_symbols(self) -> tuple[str, ...]:
+        """The elements the specimen may contain (EDS and status reports)."""
+        return ()
+
+    # What an atomistic twin reads for each view
+    def view(self, request: ViewRequest) -> FieldView:
+        """What the specimen shows in this field: atoms in the field, per-pixel maps and/or records."""
+        raise NotImplementedError(f"specimen source {self.source!r} has no per-view rendering (render modes: {self.render_modes})")
+
+    def atoms_at(self, x_nm: float, y_nm: float, request: ViewRequest, seed: int, thermal_scale: float = 1.0) -> "Atoms | None":
+        """The atoms under a parked beam at a specimen point, for a multislice calculation; None over vacuum.
+        ``seed`` is the frozen-phonon seed; ``thermal_scale`` multiplies the thermal displacement."""
+        return None
+
+    def set_field(self, fov_m: float) -> None:
+        """Tell a specimen whose world spans the field of view that the field changed."""
+
+    def regions(self) -> list:
+        """The specimen's named regions (grains, ...), for reports."""
+        return []
+
+    def particle_records(self) -> list[dict]:
+        """{"center": [x, y, z] (angstrom), "radius" (angstrom), "btype", "composition"} of each particle, for the atomistic twins' EDS."""
+        return []
+
+    def warnings(self) -> list[str]:
+        """Problems worth a warning at start-up (the twin logs them)."""
+        return []
+
+    # What evaluators read
+    def ground_truth(self) -> dict:
+        """{"known": bool, "particles": [...], ...}: what a scorer may compare against; never shown to an agent."""
+        return {"known": False, "particles": []}
+
+    def describe(self) -> dict:
+        """Short, JSON-safe summary: the source and its main settings."""
+        return {"source": self.source, "bounds_m": [float(v) for v in self.bounds]}
+
+
+@dataclass
+class SpecimenContext:
+    """What a source may take from the twin: its seed, the flat sample properties and the field of view as defaults."""
+
+    rng: EventRng
+    sample: "SampleParams | None" = None  # the twin's flat sample properties, or None for the SampleParams defaults
+    base_dir: Path = field(default_factory=Path.cwd)
+    fov_m: float | None = None  # the field of view, for a specimen whose world spans it
+
+    def resolve(self, path: str | Path) -> Path:
+        """A data path as written in a config: absolute, or relative to the working directory or the repository."""
+        p = Path(path).expanduser()
+        if p.is_absolute():
+            return p
+        for root in (self.base_dir, REPO_ROOT):
+            if (root / p).exists():
+                return root / p
+        return self.base_dir / p
+
+    def rng_for(self, options: dict) -> EventRng:
+        """A source's own seed (``seed`` option) gives another sample on the same instrument."""
+        return EventRng(int(options["seed"])) if options.get("seed") is not None else self.rng
+
+
+# Registry
+SPECIMENS: Registry[type[Specimen]] = Registry(
+    "asyncroscopy.specimens",
+    {
+        "procedural": "asyncroscopy.instruments.electron_microscope.twin.sample_model",
+        "recorded": "asyncroscopy.instruments.electron_microscope.twin.specimen_recorded",
+        "crystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_crystal",
+        "silicon_lamella": "asyncroscopy.instruments.electron_microscope.twin.specimen_silicon_lamella",
+        "polycrystal": "asyncroscopy.instruments.electron_microscope.twin.specimen_polycrystal",
+        "particles": "asyncroscopy.instruments.electron_microscope.twin.specimen_particles",
+        "nanoparticle_map": "asyncroscopy.instruments.electron_microscope.twin.specimen_nanoparticle_map",
+    },
+    kind="specimen source",
+    key="source",
+)
+register_specimen = SPECIMENS.register
+get_specimen_class = SPECIMENS.get
+specimen_sources = SPECIMENS.all
+
+
+def build_specimen(options: dict, context: SpecimenContext) -> Specimen:
+    """Build the specimen ``options["source"]`` (default procedural) describes."""
+    options = dict(options)
+    source = str(options.pop("source", "") or "procedural")
+    return get_specimen_class(source).from_options(options, context)
+
+
+def parse_specimen(text: str) -> dict:
+    """The ``specimen`` property as a dict: JSON, a YAML or Python mapping, or a bare source name.
+
+    run_servers passes a YAML mapping under ``properties:`` as Python's repr of the dict, so both
+    ``{"source": "recorded"}`` and ``{'source': 'recorded'}`` are accepted.
+    """
+    text = (text or "").strip()
+    if not text:
+        return {}
+    value = None
+    for parse in (json.loads, ast.literal_eval):
+        try:
+            value = parse(text)
+            break
+        except (ValueError, SyntaxError):
+            continue
+    if value is None:
+        import yaml
+
+        try:
+            value = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"specimen property is not JSON, YAML or a source name: {text!r} ({exc})") from exc
+    if isinstance(value, str):
+        return {"source": value}
+    if not isinstance(value, dict):
+        raise ValueError(f"specimen property must be a mapping like {{source: recorded, ...}}, got {text!r}")
+    return value
+
+
+def check_options(source: str, options: dict, accepted: Iterable[str]) -> None:
+    """Refuse an option the source does not know, naming the ones it does (a typo must not pass silently)."""
+    unknown = sorted(set(options) - set(accepted))
+    if unknown:
+        raise ValueError(f"specimen source {source!r} has no option(s) {unknown}; it takes {sorted(accepted)}")

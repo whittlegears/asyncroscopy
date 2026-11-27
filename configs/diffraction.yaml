@@ -1,8 +1,14 @@
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: DigitalTwinDiffraction
   file: asyncroscopy/instruments/electron_microscope/digital_twin_diffraction.py
   description: Thermo Fisher Spectra 300 TEM
   timeout_seconds: 120
+  properties:
+    specimen:
+      source: nanoparticle_map
 devices:
   camera:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.camera
@@ -12,8 +18,11 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
 tango:
   host: 127.0.0.1
   port: 9094
@@ -21,7 +30,8 @@ tango:
 tiled:
   host: 127.0.0.1
   port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
+  # Simulated data is kept apart from real acquisitions
+  acquisition_dir: outputs/tiled_twin
   autostart: true
   register_on_startup: false
 device_timeout_seconds: 120

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from typing import Any, TypedDict, cast
 from uuid import uuid4
 
@@ -11,8 +10,10 @@ import numpy as np
 import tango
 from scipy import ndimage
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command, device_property
-from tiled.client import from_uri
+from tango.server import Device, attribute, device_property
+
+from asyncroscopy.data import tiled_client
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 try:
     import torch
@@ -101,6 +102,9 @@ def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
 
 class SEGMENTATION(Device):
     """Segment DATA/Tiled image keys with SAM2 and save integer label images."""
+
+    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
+    action_hints = action_hints_attribute()
 
     model_size = device_property(
         dtype=str,
@@ -230,13 +234,10 @@ class SEGMENTATION(Device):
                 f"DATA device {self.data_device_address!r} did not provide a Tiled URI"
             )
 
-        client = from_uri(uri)
         try:
-            node = client[key]
-        except KeyError as exc:
-            raise FileNotFoundError(
-                f"Could not resolve data key {key!r} from Tiled server {uri!r}"
-            ) from exc
+            node = tiled_client.node_for_key(key, uri)
+        except tiled_client.DataKeyNotFound as exc:
+            raise FileNotFoundError(str(exc)) from exc
         return _read_first_array(node)
 
     def segment_image(self, image: np.ndarray) -> list[SAM2Mask]:
@@ -338,7 +339,7 @@ class SEGMENTATION(Device):
         """Return the statistics of segmented areas as JSON."""
         return json.dumps(self._area_stats)
 
-    @command(dtype_in=str, dtype_out=str)
+    @command(dtype_in=str, dtype_out=str, risk="high", role="other")
     def segment(self, data_key: str) -> str:
         """Segment a DATA/Tiled image key and return a label-image DATA key."""
         try:
@@ -349,10 +350,7 @@ class SEGMENTATION(Device):
             area_stats, _ = self.area_statistics(areas)
             labels = _label_areas(areas, prepared.shape[:2])
             key = f"segmentation_{uuid4().hex}"
-            tiled = from_uri(
-                json.loads(data_proxy.get_config())["uri"],
-                api_key=os.environ.get("ASYNCROSCOPY_TILED_API_KEY", "secret"),
-            )
+            tiled = tiled_client.connect(json.loads(data_proxy.get_config())["uri"])
             tiled.write_array(
                 labels,
                 key=key,
@@ -370,7 +368,7 @@ class SEGMENTATION(Device):
             self.error_stream(message)
             raise RuntimeError(message) from exc
 
-    @command(dtype_in=int, dtype_out=str)
+    @command(dtype_in=int, dtype_out=str, risk="low", role="setting.read")
     def get_centroid(self, area_id: int) -> str:
         """Return the centroid of a one-based segmented area ID as JSON."""
         if area_id < 1 or area_id > len(self._centroids):

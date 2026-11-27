@@ -57,6 +57,7 @@ cover/
 
 # Django stuff:
 *.log
+*.err
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -245,3 +246,13 @@ output_tango_devices_logs/
 aws-use/
 
 .processes/
+.langgraph_api/
+.pytest_tmp*/
+# Isolated stacks (run_servers.py --isolated); the docs put them under outputs/stacks/, which is ignored too.
+.stack_*/
+
+# Benchmark runs are not tracked
+benchmarks/results/*
+
+# Site settings that are not shared
+configs/local/

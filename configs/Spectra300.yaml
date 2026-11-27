@@ -1,3 +1,7 @@
+# Real hardware: the MCP endpoint binds 127.0.0.1 unless
+# its config sets allow_remote_bind: true (docs/Operation/dry_run.md).
+simulated: false
+
 instrument:
   class_name: AutoScriptMicroscope
   file: asyncroscopy/instruments/electron_microscope/auto_script.py
@@ -16,12 +20,51 @@ devices:
       hardware_host: 10.46.217.241
       hardware_port: 9095
   camera:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
+  # The CEOS server usually runs on the corrector PC: confirm its address and port before first light.
   corrector:
     class_name: CEOSCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos
+    properties:
+      ceos_host: 10.46.217.241
+      ceos_port: 9092
+      socket_timeout: 30
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
+  # Background map jobs (reserve/start/status/abort/results/release) on the Spectra 300, as on the twin
+  # (configs/digital_twin_mapping.yaml). A dose budget needs a measured beam current here: insert the
+  # screen and call get_screen_current first (docs/Operation/agentic_mapping.md, "Dose budget and beam current").
+  mapper:
+    class_name: Mapper
+    module_name: asyncroscopy.jobs.mapping.mapper
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      eds_device_address: asyncroscopy/eds/default
+      data_device_address: asyncroscopy/data/default
+      stage_device_address: asyncroscopy/stage/default
+      # The analysis server on the microscope PC stitches and scores finished maps. It has no login,
+      # so it stays on 127.0.0.1 (docs/Operation/remote_access.md), as in configs/mcp.yaml.
+      analysis_url: http://127.0.0.1:8003/mcp
+      # Goniometer readout error and drift bound for the stitch; placeholders until first light measures them.
+      stage_sigma_m: 5.0e-8
+      max_drift_m_per_s: 5.0e-11
+  # Autofocus and stigmation jobs (docs/Operation/autofocus.md). OptiSTEM C1A1 is the strategy here.
+  # The corrector strategy is refused until first light's sign test settles the CEOS
+  # correction's sign and units (then set allow_corrector_writes: true). The dose budget needs a
+  # measured beam current, as for the Mapper; autofocus_frames is a placeholder to calibrate.
+  tuner:
+    class_name: Tuner
+    module_name: asyncroscopy.jobs.tuning.tuner
+    properties:
+      microscope_device_address: asyncroscopy/instrument/default
+      scan_device_address: asyncroscopy/scan/default
+      corrector_device_address: asyncroscopy/corrector/default
+      data_device_address: asyncroscopy/data/default
+      autofocus_frames: 8
+      allow_corrector_writes: false
   scan:      { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: AutoScriptSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript
@@ -32,10 +75,20 @@ devices:
 tango:
   host: 10.46.217.241
   port: 9094
+  # Listen on every interface, so the operator and monitor endpoints on this PC reach it as localhost.
+  # Firewall 9094 to the microscope PC: Tango itself has no access control.
+  bind_host: 0.0.0.0
   reset_database_file: false
 
+# Tiled listens on 127.0.0.1 only: everything that reads or writes it runs on this PC (the device servers, both MCP
+# endpoints, which take the address from the DATA device, and the analysis server, started with
+# --tiled http://127.0.0.1:9091). Tiled runs with --public, so a LAN address would let anyone on the facility network
+# read the data. To serve other machines later: host 0.0.0.0 (still reached here on 127.0.0.1), set
+# ASYNCROSCOPY_TILED_PUBLIC_URI=http://10.46.217.241:9091 for the clients, and open 9091 only to those machines.
+# Set the same ASYNCROSCOPY_TILED_API_KEY (never the default 'secret') in the shell of run_servers, both MCP
+# endpoints and the analysis server (docs/Operation/first_light_runbook.md).
 tiled:
-  host: 10.46.217.241
+  host: 127.0.0.1
   port: 9091
   acquisition_dir: outputs/tiled_acquisitions
   autostart: true

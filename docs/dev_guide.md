@@ -156,6 +156,47 @@ Device interfaces become infrastructure. Stability protects downstream users.
 
 ---
 
+# Layering
+
+Packages depend on the ones below them, never the other way:
+
+```
+core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-  agents
+```
+
+* `core/` holds plumbing with no asyncroscopy imports: file locks and sequenced appends
+  (`fileio.py`), bind-address rules (`net.py`) and the shared names (`names.py`: headers,
+  envelope verbs, job states, data-key patterns, action roles, the agent graph names).
+* `trace/writer.py` writes the tool log and the Instrument Trace.
+* `safety/` decides risk (`policy.py` for the name rules, `estop.py` for the emergency stop).
+* `instruments/` and `jobs/` are the devices. Each base class declares what its commands are
+  (`asyncroscopy.utils.commands.command(risk=, role=, stop=, operator_only=)`) and serves
+  the declarations as its `action_hints` attribute; vendor backends and twins inherit them.
+* The scanning-beam instruments share `instruments/scanning_beam.py` (`ScanningBeamInstrument`, with its twin mixin and map
+  profile beside it); `ElectronMicroscope` and `ScanningElectronMicroscope` add what is their own. `instruments/common/sample.py`
+  is the SAMPLE device (which sample is loaded, and its dose). The Mapper's analysis goes through
+  `jobs/mapping/stitch_service.py`, so `jobs/` needs no MCP client (`stitch_mcp.py` is loaded on first use).
+* `mcp/` serves the devices: `mcp_server.py` (discovery, wrapping, interceptors), `descriptors.py`,
+  and `components/` for the native tools. It learns what an instrument is only from the devices
+  it discovers (their declarations), never by importing `instruments/`.
+* `agents/` holds everything tuned to a model: graphs (`mapping`, `general`, `team`, `goal`,
+  `swarm`), middleware, `guidance.py`, `catalog.py` (what each tool is, read from the endpoint's
+  `endpoint_info` once per run) and `profiles/` (model-specific data, the team graph's tool split
+  among it). The agent MCP server (`mcp/agent_mcp_server.py`) imports the agent layer only when it
+  starts.
+* `analysis_server/` is the analysis MCP server (`python -m asyncroscopy.analysis_server`): it stores,
+  schedules and serves pyTEMlib's `image_tools` (stitching, scoring, placement) with only `core`,
+  `contracts` and `trace` below it, never `mcp`, `agents`, `instruments` or `jobs`.
+* `settings.py` is the one place an `ASYNCROSCOPY_*` variable or output path is read (table in
+  `docs/Operation/settings.md`); `settings.get()` reads the environment at call time, so nothing is read at import.
+
+`tests/core/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
+loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`, if `mcp` loads anything from
+`instruments` or `agents`, if `jobs` loads anything from `instruments`, or if the analysis server
+loads anything from `mcp`, `agents`, `instruments` or `jobs`.
+
+---
+
 # Pull Request Checklist
 
 Before submitting a PR, ensure:

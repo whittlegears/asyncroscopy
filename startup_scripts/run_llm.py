@@ -3,25 +3,61 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import importlib.util
+import json
 import os
 import subprocess
 import sys
-import argparse
-
-import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import json
 import yaml
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
+from asyncroscopy.core.net import is_loopback_host  # noqa: E402
+from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
+
+# The agent server needs the `agent` and `ollama` extras.
+AGENT_EXTRAS = ('agent', 'ollama')
+AGENT_EXTRA_MODULES = ('langgraph', 'langchain_mcp_adapters', 'langchain_ollama')
+
+
+def agent_extras_installed() -> bool:
+    """True when the agent extras are importable here, so the child need not sync."""
+    return all(importlib.util.find_spec(name) is not None for name in AGENT_EXTRA_MODULES)
+
+
+TITLE = 'Asyncroscopy Agent Startup'
+LAUNCHER = 'startup_scripts/run_llm.py'
+SETTINGS = [
+    Setting('agent.name', required=True, section='Agent MCP server', label='Name'),
+    Setting('agent.transport', required=True, section='Agent MCP server', choices=('streamable-http',)),
+    Setting('agent.http_host', required=True, section='Agent MCP server', label='HTTP host'),
+    Setting('agent.http_port', 'int', required=True, section='Agent MCP server', label='HTTP port'),
+    Setting('agent.mcp_urls', 'list', [], section='Agent MCP server', label='Tool MCP URLs'),
+    Setting('agent.model', default='gemma4:31b', section='Model'),
+    Setting('agent.model_provider', default='ollama', section='Model', label='Provider'),
+    Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
+    Setting('agent.use_init_chat_model', 'bool', False, section='Model', label='Use init_chat_model'),
+    Setting('agent.startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
+    Setting('agent.workflows', 'bool', False, section='Workflows', label='Run workflows here',
+            help='Workflow tools (list_workflows, run_workflow, ...) in the agent process.'),
+    Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
+            help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
+]
+
+
+def is_config(raw) -> bool:
+    return isinstance(raw, dict) and isinstance(raw.get('agent'), dict)
 
 
 @dataclass(frozen=True)
@@ -38,6 +74,8 @@ class AgentConfig:
     # Kept as plain dicts so this module never imports the agent extras, which
     # keeps --help and config errors working without them installed.
     startup_agents: list[dict] = field(default_factory=list)
+    workflows: bool = False
+    workflows_hardware: bool = False
 
 
 @dataclass(frozen=True)
@@ -46,44 +84,52 @@ class Config:
     agent: AgentConfig
 
 
-def _require(mapping: dict, key: str, where: str):
-    if not isinstance(mapping, dict) or key not in mapping:
-        raise KeyError(f"Config section '{where}' is missing required key '{key}'")
-    return mapping[key]
-
-
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f'Config file not found: {path}')
-    raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
-    agent = _require(raw, 'agent', '(top level)')
+    try:
+        raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
+    values = read_settings(raw, SETTINGS)
+    problems = []
+    # Every key lives under agent, so a typo there would otherwise be silently ignored.
+    known = {setting.path.split('.', 1)[1] for setting in SETTINGS}
+    unknown = sorted(set(raw.get('agent') or {}) - known) + sorted(f'(top level) {k}' for k in set(raw) - {'agent'})
+    if unknown:
+        problems.append(f"unknown key(s) {', '.join(unknown)}; expected agent: with {', '.join(sorted(known))}")
+    if values['agent.max_steps'] is not None and values['agent.max_steps'] < 1:
+        problems.append('agent.max_steps must be at least 1')
+    if values['agent.workflows_hardware'] and not is_loopback_host(str(values['agent.http_host'] or '')):
+        problems.append('agent.workflows_hardware needs agent.http_host 127.0.0.1: the agent server has no login, so on another '
+                        'address anyone who reaches the port would run workflows on the real instrument')
+    startup_agents = values['agent.startup_agents'] or []
+    if not isinstance(startup_agents, list) or not all(isinstance(e, dict) and e.get('name') for e in startup_agents):
+        problems.append('agent.startup_agents must be a list of agents, each with a name')
+    if problems:
+        raise ConfigError(problems)
     return Config(
         path=path,
         agent=AgentConfig(
-            name=_require(agent, 'name', 'agent'),
-            transport=_require(agent, 'transport', 'agent'),
-            http_host=_require(agent, 'http_host', 'agent'),
-            http_port=int(_require(agent, 'http_port', 'agent')),
-            mcp_urls=list(agent.get('mcp_urls', [])),
-            model=agent.get('model', 'gemma4:31b'),
-            model_provider=agent.get('model_provider', 'ollama'),
-            max_steps=int(agent.get('max_steps', 10)),
-            use_init_chat_model=bool(agent.get('use_init_chat_model', False)),
-            startup_agents=[dict(entry) for entry in agent.get('startup_agents', [])],
+            name=values['agent.name'],
+            transport=values['agent.transport'],
+            http_host=values['agent.http_host'],
+            http_port=values['agent.http_port'],
+            mcp_urls=[str(url) for url in values['agent.mcp_urls']],
+            model=values['agent.model'],
+            model_provider=values['agent.model_provider'],
+            max_steps=values['agent.max_steps'],
+            use_init_chat_model=values['agent.use_init_chat_model'],
+            startup_agents=[dict(entry) for entry in startup_agents],
+            workflows=bool(values['agent.workflows']),
+            workflows_hardware=bool(values['agent.workflows_hardware']),
         ),
     )
 
 
 def build_command(config: Config) -> list[str]:
     agent = config.agent
-    command = [
-        'uv',
-        'run',
-        '--extra',
-        'agent',
-        '--extra',
-        'ollama',
-        'python',
+    command = python_command(
         '-m',
         'asyncroscopy.mcp.agent_mcp_server',
         '--name',
@@ -104,9 +150,17 @@ def build_command(config: Config) -> list[str]:
         str(agent.max_steps),
         '--startup-agents-json',
         json.dumps(agent.startup_agents),
-    ]
+        extras=AGENT_EXTRAS,
+        # Install the extras only if they are missing. Otherwise skip uv's sync
+        # so this child cannot race other launchers re-syncing the same venv.
+        sync=not agent_extras_installed(),
+    )
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
+    if agent.workflows_hardware:
+        command.append('--workflows-hardware')
+    elif agent.workflows:
+        command.append('--workflows')
     return command
 
 
@@ -119,12 +173,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help='Query the swarm in this terminal instead of serving it over MCP.',
     )
+    add_lifecycle_args(parser)
     return parser.parse_args(argv)
 
 
 def run_interactive(config: Config) -> int:
     """Run the swarm in this process and prompt it from stdin, without serving MCP."""
-    from asyncroscopy.mcp.agent import Agent, AgentSwarm
+    from asyncroscopy.agents.graphs.swarm import Agent, AgentSwarm
 
     swarm = AgentSwarm(
         model=config.agent.model,
@@ -145,12 +200,21 @@ def run_interactive(config: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    stop_on_termination()  # `kill <launcher>` must also stop the server it started
     args = parse_args(argv)
+    install_shutdown_handlers(args.parent_pid)
     try:
         config = load_config(args.yaml)
     except (FileNotFoundError, KeyError, ValueError, TypeError) as exc:
         print(f'Config error: {exc}', file=sys.stderr)
         return 1
+    # Its own state file, so a cleanup never touches the server stack or another agent.
+    state_name = f"run_llm_{config.agent.name}_{config.agent.http_port}"
+    if args.cleanup:
+        with ProcessManager(name=state_name):
+            pass
+        print('Stopped processes left by an earlier run.')
+        return 0
 
     if args.interactive:
         return run_interactive(config)
@@ -166,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
 
     try:
-        with ProcessManager() as manager:
+        with ProcessManager(name=state_name) as manager:
             managed: ManagedProcess = manager.start_process(
                 key="agent_mcp",
                 label=f"Agent MCP Server ({config.agent.name})",
@@ -183,6 +247,10 @@ def main(argv: list[str] | None = None) -> int:
                     managed.process.wait(timeout=0.1)
                 except subprocess.TimeoutExpired:
                     pass
+            # The server stopped on its own. Fail so a supervisor sees it, as run_mcp.py does.
+            code = managed.process.returncode
+            print(f"Agent MCP server exited with code {code}", file=sys.stderr)
+            return code or 1
 
     except KeyboardInterrupt:
         print("\nShutting down agent MCP server...")

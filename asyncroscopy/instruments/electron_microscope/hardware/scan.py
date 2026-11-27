@@ -5,11 +5,15 @@ It does NOT talk to AutoScript directly — the STEMMicroscope device
 reads these attributes via DeviceProxy before acquiring.
 """
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, command
+from tango.server import Device, attribute
+
+from asyncroscopy.utils.commands import action_hints_attribute, command
 
 
 class SCAN(Device):
     """SCAN detector settings device."""
+
+    action_hints = action_hints_attribute()
 
     # ------------------------------------------------------------------
     # Attributes
@@ -31,6 +35,8 @@ class SCAN(Device):
         dtype=int,
         access=AttrWriteType.READ_WRITE,
         unit="px",
+        min_value=1,
+        max_value=8192,
         doc="Acquisition width in pixels (should match an AutoScript ImageSize preset)",
     )
 
@@ -84,7 +90,7 @@ class SCAN(Device):
     def read_scan_region(self) -> list[float]:
         return self._scan_region
 
-    def write_scan_region(self, value) -> None:
+    def write_scan_region(self, value: list[float]) -> None:
         self._scan_region = self._validate_scan_region(value)
 
     def read_output_format(self) -> str:
@@ -117,11 +123,11 @@ class SCAN(Device):
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
-    @command(dtype_in=float)
+    @command(dtype_in=float, risk="high", role="setting.set", routine=True)
     def set_dwell_time(self, dwell_time: float) -> None:
         self.write_dwell_time(dwell_time)
 
-    @command(dtype_out=float)
+    @command(dtype_out=float, risk="low", role="setting.read")
     def get_dwell_time(self) -> float:
         return self.read_dwell_time()
 

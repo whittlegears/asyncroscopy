@@ -1,0 +1,26 @@
+# The mapping twin imaging a recorded specimen: an image file laid on the sample plane.
+# The instrument (stage error, drift, scan distortion, noise, dose, defocus blur) is
+# digital_twin_mapping.yaml's (extends: merges it in); only the specimen differs. See docs/Operation/specimens.md.
+# Point path at your own HAADF image (.png, .tif, .npy, .npz or .h5) and give its pixel size; the
+# example is a 400 nm stand-in rendered by the twin, with its particles as labels (ground truth, EDS).
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_recorded.yaml
+extends: digital_twin_mapping.yaml
+
+instrument:
+  description: "Mapping digital twin: a recorded HAADF image as the specimen"
+  properties:
+    specimen:
+      source: recorded
+      path: configs/specimens/recorded_example_haadf.png
+      pixel_size_m: 1.5625e-9
+      labels_path: configs/specimens/recorded_example_labels.json  # leave out: ground truth unknown
+    # The image already holds the support film's signal, and sets the sample's size.
+    support_thickness: 0.0
+    sample_size_xy: null
+    # The procedural particles' settings do not apply to an image.
+    sample_particle_count: null
+    particle_radius_mean: null
+    particle_radius_std: null
+    particle_aspect_ratio: null
+    particle_elements: null

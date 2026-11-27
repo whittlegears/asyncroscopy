@@ -1,0 +1,26 @@
+# Stacks the workflow benchmark can run on. A stack is a run_servers config and the
+# addresses of what it serves; workflows name one with `stack:`. A team adds its own
+# instrument here, or in its own workflow file under a top-level `stacks:` key with the
+# same fields, without editing the benchmark:
+#
+#   stacks:
+#     raman:
+#       config: configs/yaml_sim_raman.yaml       # the run_servers config it is started with
+#       mcp: http://127.0.0.1:8100/mcp            # agent endpoint (default 8000)
+#       operator: http://127.0.0.1:8101/mcp       # operator endpoint, for approval workflows (default 8001)
+#       tiled: http://127.0.0.1:9191              # Tiled server, where truth is read from the data (default 9091)
+#
+# `config` must exist in this checkout; running a stack whose config is missing is an error.
+# The addresses default to the twin's ports (8000, 8001, 9091); give the ones yours uses.
+stacks:
+  twin:
+    config: configs/digital_twin_mapping.yaml
+  large:
+    config: configs/digital_twin_large_map.yaml
+  xrd:
+    config: configs/yaml_sim_xrd.yaml
+  raman:
+    config: configs/yaml_sim_raman.yaml
+    mcp: http://127.0.0.1:8100/mcp
+    operator: http://127.0.0.1:8101/mcp
+    tiled: http://127.0.0.1:9191

@@ -1,0 +1,140 @@
+"""Whether a beam current may be used for a dose budget: one rule for every job (Tuner, Mapper).
+
+A microscope reports its current in ``get_parameters`` as ``beam_current_pa`` with
+``beam_current_source`` ("measured" from the fluorescent screen, or "default": an assumed
+nominal value) and, when measured, ``beam_current_age_s``. On a simulated stack any
+current the twin reports is usable. On hardware:
+
+* a missing ``beam_current_source`` counts as "default" (a backend that does not say where
+  its number came from has not measured it);
+* a "default" current is refused: a dose budget computed from an assumed current is not a
+  budget;
+* a measured current is refused when it reports no age, or is older than ``max_age_s``;
+* a current that is not a finite number > 0 is refused everywhere (it would make every
+  dose zero and so pass any budget).
+
+``DEFAULT_MAX_BEAM_CURRENT_AGE_S`` is 15 minutes. The gun's emission drifts: a cold FEG's
+(X-CFEG) falls steadily between flashes, and a Schottky FEG's (X-FEG) wanders more slowly.
+A screen reading older than a quarter of an hour is not evidence of the current now. The
+AutoScript backend already drops its reading when anything that sets the current changes
+(monochromator focus, spot size, apertures, optical mode, high tension), so the age limit
+only has to cover drift. Lengthen it per device (``max_beam_current_age_s``) once first
+light has measured how far this gun drifts in that time.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+DEFAULT_MAX_BEAM_CURRENT_AGE_S = 900.0
+
+
+def beam_path_blocked(parameters: dict) -> str | None:
+    """Why no beam can reach a scanning detector, from a microscope's ``get_parameters``, or None.
+
+    Closed column valves stop the beam above the sample, and an inserted fluorescent screen stops it above the
+    scanning detectors: either way every frame is black, and a map would spend hours recording nothing. A backend
+    reports ``column_valves`` ("Opened" or "Closed") and ``screen`` ("Inserted" or "Retracted"); one that reports
+    neither is not judged.
+    """
+    if str(parameters.get("column_valves", "")).strip().lower() == "closed":
+        return "the column valves are closed, so no beam reaches the sample: open them (set_column_valves 'open')"
+    if str(parameters.get("screen", "")).strip().lower() == "inserted":
+        return "the fluorescent screen is inserted, so no beam reaches the scanning detectors: retract it (set_screen 'retracted')"
+    return None
+# The current a microscope assumes until it has measured one.
+DEFAULT_BEAM_CURRENT_PA = 50.0
+
+
+class BeamCurrentRefused(ValueError):
+    """The reported current may not be used for a dose budget on this stack; the message says why."""
+
+
+@dataclass(frozen=True)
+class BeamCurrent:
+    pa: float
+    source: str  # "measured" or "default"
+    age_s: float | None
+    simulated: bool
+    refused: str | None  # why it may not be used for a dose budget, or None when it may
+
+    def estimate(self) -> dict:
+        """The fields a job's estimate reports about the current it used."""
+        out = {"beam_current_pa": self.pa, "beam_current_source": self.source}
+        if self.age_s is not None:
+            out["beam_current_age_s"] = self.age_s
+        if self.refused:
+            out["beam_current_reason"] = self.refused
+        return out
+
+
+def _number(value) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
+    """The current a dose estimate should use, and (in ``refused``) why a budget may not rely on it."""
+    parameters = parameters if isinstance(parameters, dict) else {}
+    reported = _number(parameters.get("beam_current_pa"))
+    age = _number(parameters.get("beam_current_age_s"))
+    if "beam_current_pa" not in parameters or parameters.get("beam_current_pa") is None:
+        pa, source = float(default_pa), "default"
+        refused = f"the microscope reports no beam_current_pa; {default_pa:g} pA is assumed"
+    else:
+        pa = reported if reported is not None else float("nan")
+        source = "measured" if parameters.get("beam_current_source") == "measured" else "default"
+        refused = None
+        if source == "default":
+            refused = parameters.get("beam_current_reason") or (
+                "the microscope reports an assumed current" if "beam_current_source" in parameters
+                else "the microscope does not say the current was measured (no beam_current_source)"
+            )
+    if not (math.isfinite(pa) and pa > 0):
+        # Never usable, simulated or not, because a zero or negative current makes every dose zero.
+        return BeamCurrent(pa, source, age, simulated, f"beam_current_pa {parameters.get('beam_current_pa')!r} is not a current > 0")
+    if simulated:
+        return BeamCurrent(pa, source, age, simulated, None)
+    if refused is None:
+        if age is None:
+            refused = "the measured current reports no age (beam_current_age_s), so it cannot be shown to be current"
+        elif age < 0 or age > float(max_age_s):
+            refused = f"the screen-current measurement is {age:g} s old, beyond the {float(max_age_s):g} s this stack accepts"
+    return BeamCurrent(pa, source, age, simulated, refused)
+
+
+def usable_beam_current(parameters: dict, simulated: bool, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
+    """The current, for a dose budget; raises ``BeamCurrentRefused`` with the reason when it may not be used."""
+    current = beam_current(parameters, simulated, max_age_s, default_pa)
+    if current.refused:
+        what = "is assumed" if current.source == "default" else "cannot be used for a dose budget"
+        raise BeamCurrentRefused(
+            f"the beam current {what} ({current.pa:g} pA, {current.source}): {current.refused}. "
+            "Insert the screen, call get_screen_current, retract the screen, then reserve again"
+        )
+    return current
+
+
+# How far the current may rise between reserve and start before the dose budget no longer holds.
+START_CURRENT_TOLERANCE = 0.05
+
+
+def check_current_at_start(parameters: dict, simulated: bool, budgeted_pa: float | None, max_age_s: float = DEFAULT_MAX_BEAM_CURRENT_AGE_S, default_pa: float = DEFAULT_BEAM_CURRENT_PA) -> BeamCurrent:
+    """The current, checked again when a job with a dose budget starts or resumes; raises ``BeamCurrentRefused``.
+
+    The start may come long after the reserve: the current must still be usable for a budget, and no more
+    than ``START_CURRENT_TOLERANCE`` above ``budgeted_pa``, the current the budget was checked with.
+    """
+    current = usable_beam_current(parameters, simulated, max_age_s, default_pa)
+    budgeted = _number(budgeted_pa)
+    if budgeted is None or budgeted <= 0:
+        raise BeamCurrentRefused(f"the reservation does not say which beam current its dose budget was checked with ({budgeted_pa!r}); reserve again")
+    if current.pa > budgeted * (1 + START_CURRENT_TOLERANCE):
+        raise BeamCurrentRefused(f"the beam current is now {current.pa:g} pA, above the {budgeted:g} pA the dose budget was checked with; reserve again")
+    return current

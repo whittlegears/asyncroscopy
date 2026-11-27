@@ -1,0 +1,23 @@
+# The mapping twin imaging a crystal specimen: a polycrystalline gold film built from ASE unit
+# cells (grains show in an overview, atomic columns below 0.2 nm pixels). The instrument is
+# digital_twin_mapping.yaml's (extends: merges it in); only the specimen differs. See docs/Operation/specimens.md.
+#
+#   uv run startup_scripts/run_servers.py --yaml configs/digital_twin_crystal.yaml
+extends: digital_twin_mapping.yaml
+
+instrument:
+  description: "Mapping digital twin: a polycrystalline Au film as the specimen"
+  properties:
+    specimen:
+      source: crystal
+      element: Au
+      thickness_m: 8.0e-9
+      thickness_variation: 0.15
+      grain_count: 60
+      mosaic_spread_mrad: 20
+    # The procedural particles' settings do not apply to a film.
+    sample_particle_count: null
+    particle_radius_mean: null
+    particle_radius_std: null
+    particle_aspect_ratio: null
+    particle_elements: null

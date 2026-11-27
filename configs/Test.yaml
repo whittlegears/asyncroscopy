@@ -1,3 +1,6 @@
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: DigitalTwin
   file: asyncroscopy/instruments/electron_microscope/digital_twin.py
@@ -13,6 +16,8 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
     class_name: TestStage
     module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage

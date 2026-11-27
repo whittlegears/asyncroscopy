@@ -5,16 +5,21 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 #
 # If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+# machine/IP.
+#
+# http_host is 127.0.0.1 so only this machine can reach the endpoint: it has no
+# authentication, so anyone who can reach it can drive the instrument. To let
+# other machines connect, set http_host to this machine's LAN address (or
+# 0.0.0.0) on a trusted network only. See docs/Operation/quickstart.md.
 
 tango:
   host: localhost
   port: 9094
 
 mcp:
-  name: Spectra300_MCP
+  name: DigitalTwin_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
@@ -26,9 +31,41 @@ mcp:
       - Init
       - Kill
       - RestartServer
+    # Not for agents (none ever called them).
+    # The devices call each other directly; operators have the GUI and mcp_operator.yaml.
+    # DATA.get_config stays: SciAgentGUI reads the Tiled address with it.
+    DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+    # run_job and the Mapper_* replies carry the plan.
+    Mapper: [get_reservation]
+    Tuner: [get_reservation]
   # Optional Tango command allowlist. Leave empty to include all non-blocked
   # commands. Entries may be "command" or "Class.command".
-  # list_devices and get_data_from_key are always included.
+  # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
+  # The analysis server (asyncroscopy.analysis_server: stitching, scoring). With it, wait_for_job also
+  # waits on assemble_map and score_map jobs and returns their results, so an
+  # agent needs one wait tool for every job. Empty: wait_for_job is for this
+  # server's job devices only.
+  analysis_url: http://127.0.0.1:8003/mcp
+  # run_job refuses a plan whose estimate is over these (the agent tells the user the
+  # estimate and asks); raise them here for long runs. Empty: no limit beyond the job
+  # device's own. 
+  job_limits:
+    max_duration_s: 14400
+    # The highest dose a plan may put on any spot. EDS point spectra count: a parked 50 pA beam gives about
+    # 30 000 e/A^2 per second of exposure on its 10 nm spot (EDS_DOSE_SPREAD_M), so a 1 s EDS map
+    # needs this much headroom. A plan's own dose_budget_e_per_a2 (what a user asks for) is still enforced.
+    max_dose_e_per_a2: 50000
+  # Agent endpoint: operator-only commands (export_ground_truth,
+  # export_ground_truth) are never offered here. The GUI uses mcp_operator.yaml.
+  endpoint_role: agent
+  safety:
+    # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in
+    # asyncroscopy/safety/policy.py. Unknown commands are high risk.
+    risk: {}
+  # Instrument Trace: one JSON line per tool call. Empty disables it.
+  trace: outputs/trace/mcp_agent.jsonl
+  # The instrument whose clock_s (simulated time on the twin) stamps each trace event. Empty: this computer's time.
+  clock_device: asyncroscopy/instrument/default

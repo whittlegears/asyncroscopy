@@ -1,3 +1,6 @@
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: PolycrystallineGoldDigitalTwin
   file: asyncroscopy/instruments/electron_microscope/polycrystalline_gold_digital_twin.py
@@ -6,16 +9,18 @@ instrument:
   properties:
     corrector_device_address: asyncroscopy/corrector/default
     sample_seed: 20260811
-    volume_size_xy_nm: 200
-    volume_thickness_nm: 10
-    grain_size_angstrom: 10
-    empty_grain_fraction: 0.15
-    lattice_constant_angstrom: 4.08
-    zone_axis_max_index: 2
-    zone_axis_max_deviation_deg: 2.0
+    specimen:
+      source: polycrystal
+      volume_size_xy_nm: 200
+      volume_thickness_nm: 10
+      grain_size_angstrom: 10
+      empty_grain_fraction: 0.15
+      lattice_constant_angstrom: 4.08
+      zone_axis_max_index: 2
+      zone_axis_max_deviation_deg: 2.0
     acceleration_voltage_ev: 200000
     convergence_angle_mrad: 30
-    beam_current_pa: 100
+    probe_current_pa: 100
     blur_noise_level: 0.5
 
 devices:
@@ -33,9 +38,11 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
 
 tango:
   host: 127.0.0.1
@@ -45,7 +52,8 @@ tango:
 tiled:
   host: 127.0.0.1
   port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
+  # Simulated data is kept apart from real acquisitions
+  acquisition_dir: outputs/tiled_twin
   autostart: true
   register_on_startup: false
 

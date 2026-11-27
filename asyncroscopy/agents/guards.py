@@ -1,0 +1,559 @@
+"""Keeping a small model's context and attention on the task: in-tool job waits, a context guard, a repeat guard.
+
+A local model has a short context (qwen3:8b with ``num_ctx`` 8192 tokens). Live
+runs showed what happens without care: a map's "done" replies and a dozen
+waits filled the context, Ollama silently dropped the oldest messages (the
+user's request among them), and the model repeated one call 36 times.
+
+* ``JobWaitMiddleware``: when the model calls ``wait_for_job`` (or ``run_job``
+  returns a job that is still running), the tool keeps waiting on the server in
+  a loop until the job is done, failed or aborted, a cap (the estimate's
+  duration x 1.5 + 120 s, else ``default_cap_s``, never past ``deadline``) or a
+  stop; it reports progress through ``on_progress`` and returns ONE reply. A
+  job of any length costs one tool round.
+* ``fit_messages``: the messages a model call sees, within a character budget:
+  the first and the latest request always, the latest tool reply in full (up to
+  ``LATEST_REPLY_CHARS``), older replies as one-line digests that keep the keys
+  they named, and the oldest finished tool rounds dropped whole if still over.
+* ``repeats``: how many times the last tool round repeated the one before it
+  exactly (same tool, arguments and reply). The skill middleware tells the
+  model after one repeat and stops the run honestly after two.
+* ``EmptyReplyMiddleware``: a reply with neither text nor a tool call (qwen3
+  with reasoning off sometimes sends one after a tool reply, which ended runs
+  with no answer) is asked for again once; a second empty reply ends the run
+  with an answer that says so and gives the last tool reply.
+
+Token counts are estimated as characters / ``CHARS_PER_TOKEN``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import re
+import sys
+import time
+from collections.abc import Awaitable, Iterable
+from typing import Any, Callable
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse, ToolCallRequest
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.types import Command
+
+from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
+from asyncroscopy.agents.goals import MAP_KEY, content_text
+
+CHARS_PER_TOKEN = 3.5
+OUTPUT_RESERVE_TOKENS = 1500  # left for the model's answer and tool call
+LATEST_REPLY_CHARS = 6000
+DIGEST_CHARS = 160
+OLD_TEXT_CHARS = 600
+KEY = re.compile(f"{DATA_KEY_IN_TEXT.pattern}|{MAP_KEY.pattern}")
+
+
+def context_chars(num_ctx: int) -> int:
+    """Characters a model call may use (system prompt, tool schemas and messages) for a context of ``num_ctx`` tokens."""
+    return int(max(2048, num_ctx - OUTPUT_RESERVE_TOKENS) * CHARS_PER_TOKEN)
+
+
+def tools_chars(tools: Iterable[BaseTool] | None) -> int:
+    """Characters the tool schemas take in the prompt."""
+    total = 0
+    for tool in tools or []:
+        schema = getattr(tool, "args_schema", None)
+        if schema is not None and not isinstance(schema, dict):
+            try:
+                schema = schema.model_json_schema()
+            except Exception:
+                schema = {}
+        total += len(getattr(tool, "name", "")) + len(getattr(tool, "description", "") or "") + len(json.dumps(schema or {}, default=str))
+    return total
+
+
+def _text(message) -> str:
+    return content_text(getattr(message, "content", ""))
+
+
+def _size(message) -> int:
+    calls = getattr(message, "tool_calls", None) or []
+    return len(_text(message)) + sum(len(json.dumps(c.get("args", {}), default=str)) + len(c.get("name", "")) for c in calls) + 20
+
+
+def _digest(message: ToolMessage) -> str:
+    text = " ".join(_text(message).split())
+    keys = sorted(set(KEY.findall(text)))[:5]
+    head = text[:DIGEST_CHARS] + (" ..." if len(text) > DIGEST_CHARS else "")
+    return f"[earlier reply, shortened: {head}]" + (f" keys: {', '.join(keys)}" if keys else "")
+
+
+def fit_messages(messages: list, budget_chars: int) -> list:
+    """The messages, shortened to fit ``budget_chars``; the first and latest requests always stay whole."""
+    humans = [i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"]
+    first, last_human = (humans[0], humans[-1]) if humans else (None, None)
+    tool_indexes = [i for i, m in enumerate(messages) if getattr(m, "type", "") == "tool"]
+    latest_tool = tool_indexes[-1] if tool_indexes else None
+    last_ai = max((i for i, m in enumerate(messages) if getattr(m, "type", "") == "ai"), default=None)
+    out = []
+    for i, m in enumerate(messages):
+        kind = getattr(m, "type", "")
+        if kind == "tool":
+            text = _text(m)
+            if i == latest_tool:
+                content = text if len(text) <= LATEST_REPLY_CHARS else text[:LATEST_REPLY_CHARS] + " ... (cut; ask again with less)"
+            else:
+                content = _digest(m)
+            out.append(ToolMessage(content, tool_call_id=m.tool_call_id, name=getattr(m, "name", None), status=getattr(m, "status", "success")))
+        elif kind == "ai" and i != last_ai and len(_text(m)) > OLD_TEXT_CHARS:
+            out.append(AIMessage(_text(m)[:OLD_TEXT_CHARS] + " ...", tool_calls=list(getattr(m, "tool_calls", None) or [])))
+        else:
+            out.append(m)
+    # If still over, drop the oldest finished tool rounds. Never drop a request.
+    while sum(_size(m) for m in out) > budget_chars:
+        drop = None
+        for i, m in enumerate(out):
+            if getattr(m, "type", "") == "ai" and getattr(m, "tool_calls", None) and (first is None or i > first):
+                ids = {c.get("id") for c in m.tool_calls}
+                replies = [j for j in range(i + 1, len(out)) if getattr(out[j], "type", "") == "tool" and out[j].tool_call_id in ids]
+                if replies and max(replies) < len(out) - 2:  # never the latest round
+                    drop = [i, *replies]
+                break
+        if drop is None:
+            break
+        out = [m for j, m in enumerate(out) if j not in set(drop)]
+    if first is not None and messages[first] not in out:  # never happens, but the request must survive
+        out.insert(0, messages[first])
+    if last_human is not None and messages[last_human] not in out:
+        out.append(messages[last_human])
+    return out
+
+
+def tool_rounds(messages: list) -> list[tuple[str, str, str]]:
+    """(tool, arguments, reply) of every tool call with its reply, in order."""
+    replies = {getattr(m, "tool_call_id", None): _text(m) for m in messages if getattr(m, "type", "") == "tool"}
+    rounds = []
+    for m in messages:
+        for call in getattr(m, "tool_calls", None) or []:
+            if call.get("id") in replies:
+                rounds.append((call.get("name", ""), json.dumps(call.get("args", {}), sort_keys=True, default=str), replies[call["id"]]))
+    return rounds
+
+
+CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message
+EMPTY_REPLY = "empty_reply"  # the name of EmptyReplyMiddleware's request for a reply
+
+
+def is_request(message: BaseMessage) -> bool:
+    """A message from the user: a human message that is not a guard's own turn (the claim check's correction,
+    the request for a reply after an empty one)."""
+    return getattr(message, "type", "") == "human" and getattr(message, "name", None) not in (CLAIM_CHECK, EMPTY_REPLY)
+
+
+def _this_request(messages: list) -> list:
+    """The messages since the user's latest message: earlier turns are other requests."""
+    last = max((i for i, m in enumerate(messages) if is_request(m)), default=0)
+    return messages[last:]
+
+
+def repeats(messages: list) -> int:
+    """How many times in a row the latest tool round repeated the one before (0: it did not)."""
+    rounds = tool_rounds(_this_request(messages))
+    count = 0
+    for i in range(len(rounds) - 1, 0, -1):
+        if rounds[i] != rounds[i - 1]:
+            break
+        count += 1
+    return count
+
+
+def cycles(messages: list) -> int:
+    """How many earlier tool rounds, in a row or not, the latest one repeats exactly: a model cycling
+    over the same few calls loops as surely as one repeating a single call. Going back to a place
+    once is normal, so callers allow more of these than of repeats in a row."""
+    rounds = tool_rounds(_this_request(messages))
+    # Normal protocols repeat an action that takes no arguments, such as blanking the beam.
+    if not rounds or rounds[-1][1] == "{}":
+        return 0
+    return rounds[:-1].count(rounds[-1])
+
+
+def looping(messages: list) -> int:
+    """0: no loop; 1: point the repeat out; 2: stop the run."""
+    in_row, anywhere = repeats(messages), cycles(messages)
+    return 2 if in_row >= 2 or anywhere >= 3 else 1 if in_row == 1 or anywhere == 2 else 0
+
+
+def _job_key(args: dict) -> str:
+    """A run_job call's device and plan, written the same way whatever order the model put the fields in."""
+    plan = args.get("plan")
+    if isinstance(plan, str):
+        plan = _json(plan) if _json(plan) is not None else plan
+    return json.dumps({"device": args.get("device"), "plan": plan}, sort_keys=True, default=str)
+
+
+def finished_job(messages: list, args: dict) -> dict | None:
+    """The reply of a run_job with this same device and plan that already finished since the user's latest
+    request, or None. A small model whose context was trimmed ran the same 600 nm map three times; on an
+    instrument that is three times the dose for nothing."""
+    if not args.get("plan"):
+        return None  # a resume names its job, and is the user's call
+    key = _job_key(args)
+    messages = _this_request(messages)
+    replies = {getattr(m, "tool_call_id", None): _json(_text(m)) for m in messages if getattr(m, "type", "") == "tool"}
+    for m in messages:
+        for call in getattr(m, "tool_calls", None) or []:
+            reply = replies.get(call.get("id"))
+            if call.get("name") == "run_job" and isinstance(reply, dict) and reply.get("state") == "done" and _job_key(call.get("args") or {}) == key:
+                return reply
+    return None
+
+
+ALREADY_DONE = ("This exact plan already ran in this request and finished (job {job_id}); its results are below. Answer from "
+                "them. Run it again only if the user asks for a second, separate one. Results: {results}")
+
+
+# waiting inside one tool call
+def _json(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _progress(job_id: str, status: dict, waited: float) -> None:
+    done = status.get("progress") or {}
+    print(f"[wait] job {job_id} {status.get('state')} {done.get('done', '?')}/{done.get('total', '?')} after {waited:.0f} s", file=sys.stderr, flush=True)
+
+
+class JobWaitMiddleware(AgentMiddleware):
+    """Waits for a job inside one tool call: the model sees one reply when the job ends (see the module docstring)."""
+
+    def __init__(self, tools: Iterable[BaseTool], default_cap_s: float = 3600.0, deadline: float | None = None,
+                 on_progress: Callable[[str, dict, float], None] | None = _progress, stop: Callable[[], bool] | None = None) -> None:
+        super().__init__()
+        self.wait_tool = next((t for t in tools if getattr(t, "name", "") == "wait_for_job"), None)
+        self.default_cap_s = default_cap_s
+        self.deadline = deadline  # the time.monotonic value after which no wait goes on
+        self.on_progress = on_progress
+        self.stop = stop
+        self.estimates: dict[str, float] = {}  # estimated duration in seconds for each job id, from run_job replies
+
+    def _cap(self, job_id: str) -> float:
+        estimate = self.estimates.get(job_id)
+        cap = estimate * 1.5 + 120.0 if estimate else self.default_cap_s
+        if self.deadline is not None:
+            cap = min(cap, max(0.0, self.deadline - time.monotonic()))
+        return cap
+
+    def _follow(self, request, result) -> tuple[dict, str] | None:
+        """(the reply's status, its job id) when this call left a job running that we should wait for."""
+        name = request.tool_call.get("name")
+        if self.wait_tool is None or name not in ("run_job", "wait_for_job") or not isinstance(result, ToolMessage):
+            return None
+        if name == "run_job" and str((request.tool_call.get("args") or {}).get("wait", True)).strip().lower() in ("false", "0", "no"):
+            return None  # the user wants the job id now, to stop it or to come back later
+        if getattr(result, "status", "success") == "error":
+            return None
+        status = _json(_text(result))
+        if not isinstance(status, dict) or not isinstance(status.get("job_id"), str):
+            return None
+        estimate = (status.get("estimate") or {}).get("duration_s") if isinstance(status.get("estimate"), dict) else None
+        if isinstance(estimate, (int, float)):
+            self.estimates[status["job_id"]] = float(estimate)
+        return (status, status["job_id"]) if status.get("state") in ACTIVE_JOB_STATES else None
+
+    def _wait_request(self, request, job_id: str):
+        call = {**request.tool_call, "name": "wait_for_job", "args": {"job_id": job_id}}
+        return request.override(tool=self.wait_tool, tool_call=call)
+
+    def _final(self, request, first: dict, status: dict, waited: float, checks: int, reason: str = "") -> ToolMessage:
+        merged = {**first, **status, "waited_s": round(waited, 1), "checks": checks}
+        if status.get("state") in ACTIVE_JOB_STATES:
+            merged["note"] = reason or (f"still {status.get('state')} after waiting {waited:.0f} s; the job goes on. "
+                                        "Tell the user it is running (with its job_id), or call wait_for_job again later.")
+        elif status.get("state") != "done":
+            merged.pop("note", None)
+        return ToolMessage(json.dumps(merged, default=str), tool_call_id=request.tool_call.get("id"), name=request.tool_call.get("name"))
+
+    def _stopped(self) -> bool:
+        return bool(self.stop and self.stop())
+
+    def _already_done(self, request) -> ToolMessage | None:
+        """A run_job repeating a plan that already finished in this request: its earlier results, without running it."""
+        call = request.tool_call
+        if call.get("name") != "run_job":
+            return None
+        reply = finished_job(list((getattr(request, "state", None) or {}).get("messages", [])), call.get("args") or {})
+        if reply is None:
+            return None
+        results = {k: reply[k] for k in ("result_keys", "summary") if k in reply}
+        text = ALREADY_DONE.format(job_id=reply.get("job_id"), results=json.dumps(results, default=str)[:3000])
+        return ToolMessage(json.dumps({"error": {"code": "already_done", "message": text}}), tool_call_id=call.get("id"), name="run_job", status="error")
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
+        done = self._already_done(request)
+        if done is not None:
+            return done
+        result = await handler(request)
+        followed = self._follow(request, result)
+        if followed is None:
+            return result
+        first, job_id = followed
+        status, began, checks = first, time.monotonic(), 1
+        cap = self._cap(job_id)
+        while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
+            reply = await handler(self._wait_request(request, job_id))
+            checks += 1
+            parsed = _json(_text(reply)) if isinstance(reply, ToolMessage) else None
+            if not isinstance(parsed, dict) or getattr(reply, "status", "success") == "error":
+                return self._final(request, first, status, time.monotonic() - began, checks,
+                                   f"waiting failed: {_text(reply)[:300]}; the job may still be running: call wait_for_job again")
+            status = parsed
+            if self.on_progress:
+                self.on_progress(job_id, status, time.monotonic() - began)
+            if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
+                await asyncio.sleep(1.0)  # the server returned before its own wait ended, so do not spin
+        return self._final(request, first, status, time.monotonic() - began, checks)
+
+    def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
+        done = self._already_done(request)
+        if done is not None:
+            return done
+        result = handler(request)
+        followed = self._follow(request, result)
+        if followed is None:
+            return result
+        first, job_id = followed
+        status, began, checks = first, time.monotonic(), 1
+        cap = self._cap(job_id)
+        while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
+            reply = handler(self._wait_request(request, job_id))
+            checks += 1
+            parsed = _json(_text(reply)) if isinstance(reply, ToolMessage) else None
+            if not isinstance(parsed, dict) or getattr(reply, "status", "success") == "error":
+                return self._final(request, first, status, time.monotonic() - began, checks,
+                                   f"waiting failed: {_text(reply)[:300]}; the job may still be running: call wait_for_job again")
+            status = parsed
+            if self.on_progress:
+                self.on_progress(job_id, status, time.monotonic() - began)
+            if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
+                time.sleep(1.0)
+        return self._final(request, first, status, time.monotonic() - began, checks)
+
+
+STOP_TEXT = ("I stopped: the same call ({name}) gave the same result three times, so trying it again "
+             "would not change anything. Here is what I have so far: {reply}")
+REPEAT_NOTE = ("\n\nYou already called {name} with these arguments and got this result. Do not call it again: "
+               "answer the user from it, or do something different.")
+
+
+def stop_message(messages: list) -> AIMessage:
+    name, _args, reply = tool_rounds(messages)[-1]
+    return AIMessage(STOP_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))
+
+
+# An empty reply is often a tool call that Ollama dropped.
+# The call named something that is not a tool, or its arguments were not JSON.
+ASK_AGAIN = ("Your last reply was empty. The latest tool reply ({name}) is above: make the next tool call the "
+             "request needs, or give your final answer from what the tools returned. A call to a name that is not one "
+             "of your tools (the instructions you follow are not tools) or with arguments that are not plain JSON is "
+             "dropped: call only listed tools, and write every value as a number or a quoted string.")
+EMPTY_TEXT = "I stopped: the model gave no reply twice after {name}. The last tool reply was: {reply}"
+
+
+def _empty(response) -> AIMessage | None:
+    """The reply's last AI message when it has neither text nor a tool call."""
+    result = response.result if isinstance(response, ModelResponse) else [response]
+    ai = next((m for m in reversed(result) if isinstance(m, AIMessage)), None)
+    return ai if ai is not None and not ai.tool_calls and not _text(ai).strip() else None
+
+
+class EmptyReplyMiddleware(AgentMiddleware):
+    """Asks once more when the model replies with nothing; a second empty reply becomes an honest answer.
+
+    Put it before the claim check in the middleware list, so the reply it asks for is checked too."""
+
+    def _again(self, request):
+        rounds = tool_rounds(request.messages)
+        name = rounds[-1][0] if rounds else "the request"
+        ask = HumanMessage(ASK_AGAIN.format(name=name), name=EMPTY_REPLY)
+        return ask, request.override(messages=[*request.messages, ask])
+
+    def _settle(self, request, ask, retry):
+        result = retry.result if isinstance(retry, ModelResponse) else [retry]
+        if _empty(retry) is not None:
+            rounds = tool_rounds(request.messages)
+            name, _args, reply = rounds[-1] if rounds else ("the request", "", "")
+            result = [m for m in result if not isinstance(m, AIMessage)] + [AIMessage(EMPTY_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))]
+        return ModelResponse(result=[ask, *result], structured_response=getattr(retry, "structured_response", None))
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
+        response = handler(request)
+        if _empty(response) is None:
+            return response
+        ask, again = self._again(request)
+        return self._settle(request, ask, handler(again))
+
+    async def awrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[ModelResponse]]) -> ModelCallResult:
+        response = await handler(request)
+        if _empty(response) is None:
+            return response
+        ask, again = self._again(request)
+        return self._settle(request, ask, await handler(again))
+
+
+# ---------------------------------------------------------------------- a map plan held to the user's words
+USER_LIMITS = ("dose_budget_e_per_a2",)
+NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
+DROPPED = "{field} {value} left out of the plan: the user set no such limit (their words hold no {value}). Give a limit only when the user states one."
+# per_tile measurements by kind, and the words that ask for them (mapping skill: "nothing about EDS ... no per_tile").
+PER_TILE_WORDS = {"eds": re.compile(r"\beds\b|spectr|\belement|composition|chemi|x-?ray", re.IGNORECASE)}
+UNASKED = 'per_tile "{kind}" left out of the plan: the user asked for no spectra. Add per-tile measurements only when the user asks for them.'
+STAGE_CENTRE = re.compile(r"\bcent(?:re|er)(?:d)?\s+(?:of|on)\s+(?:the|its)\s+stage\b|\bstage(?:'s)?\s+cent(?:re|er)\b", re.IGNORECASE)
+CENTRED = '"centre_m": [0, 0] added: the user asked for the centre of the stage, and size_m alone maps around wherever the stage is now.'
+
+
+def _stated(value: Any, words: str) -> bool:
+    try:
+        target = float(value)
+    except (TypeError, ValueError):
+        return False
+    return any(abs(float(n) - target) <= 1e-9 * max(1.0, abs(target)) for n in NUMBER.findall(words))
+
+
+def held_to_words(args: dict, words: str) -> tuple[dict, list[str]]:
+    """``run_job`` arguments with the plan held to the user's words, and a sentence for each change: a limit in
+    USER_LIMITS they do not state taken out, a per_tile measurement they did not ask for taken out, and the stage's
+    centre added when they asked for it and the plan gives only a size. A plan given as a JSON string stays a string."""
+    plan = args.get("plan")
+    parsed = _json(plan) if isinstance(plan, str) else plan
+    if not isinstance(parsed, dict):
+        return args, []
+    kept, notes = dict(parsed), []
+    for field in USER_LIMITS:
+        if field in kept and not _stated(kept[field], words):
+            notes.append(DROPPED.format(field=field, value=kept.pop(field)))
+    if isinstance(kept.get("per_tile"), list):
+        asked = [k for k in kept["per_tile"] if not any(str(k).startswith(kind) and not said.search(words) for kind, said in PER_TILE_WORDS.items())]
+        notes += [UNASKED.format(kind=k) for k in kept["per_tile"] if k not in asked]
+        if asked:
+            kept["per_tile"] = asked
+        else:
+            kept.pop("per_tile")
+    if "size_m" in kept and "box_m" not in kept and "centre_m" not in kept and STAGE_CENTRE.search(words):
+        kept["centre_m"] = [0.0, 0.0]
+        notes.append(CENTRED)
+    if not notes:
+        return args, []
+    return {**args, "plan": json.dumps(kept) if isinstance(plan, str) else kept}, notes
+
+
+WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|complete) sample\b|\bsample (?:completely|entirely)\b|\ball of the sample\b", re.IGNORECASE)
+NOT_WHOLE = ("not the whole sample: the user asked for all of it, and this plan maps only a box around the stage. Read the "
+             "sample's bounds first (the microscope's get_parameters: world_bounds_angstrom, x 1e-10 for metres) and give "
+             '"box_m": [x_min, x_max, y_min, y_max] in metres instead of size_m.')
+WRONG_BOX = ('not the whole sample: the user asked for all of it, and {tool} gives its bounds as "box_m": {box} (metres). '
+             "Use exactly that box_m, with no size_m or centre_m.")
+
+
+def _plan(args: dict) -> dict | None:
+    plan = args.get("plan")
+    parsed = _json(plan) if isinstance(plan, str) else plan
+    return parsed if isinstance(parsed, dict) else None
+
+
+def sample_box(reply: str) -> list[float] | None:
+    """The sample's bounds [x_min, x_max, y_min, y_max] in metres from a get_parameters reply (world_bounds_angstrom)."""
+    parsed = _json(reply)
+    bounds = parsed.get("world_bounds_angstrom") if isinstance(parsed, dict) else None
+    try:
+        return [float(bounds[k]) * 1e-10 for k in ("x_min", "x_max", "y_min", "y_max")]
+    except (TypeError, KeyError, ValueError):
+        return None
+
+
+def whole_sample_refusal(plan: dict, box: list[float] | None, tool: str) -> str | None:
+    """Why a plan does not map the whole sample whose bounds are ``box`` (None: the instrument gave none), or None."""
+    given = plan.get("box_m")
+    if box is None:
+        return None if given else NOT_WHOLE
+    span = max(box[1] - box[0], box[3] - box[2])
+    if isinstance(given, list) and len(given) == 4 and all(isinstance(v, (int, float)) and abs(v - b) <= 1e-3 * span for v, b in zip(given, box)):
+        return None
+    return WRONG_BOX.format(tool=tool, box=json.dumps([float(f"{v:.6g}") for v in box]))
+
+
+class UserWordsMiddleware(AgentMiddleware):
+    """Holds a ``run_job`` map plan to what the user said: a dose limit they never stated and EDS they never asked
+    for are taken out, "the centre of the stage" is put in (the reply says so), and when they asked for the whole sample a plan that does not map the sample's bounds is refused
+    before it reaches the server, with the bounds to copy (read from the microscope's get_parameters).
+
+    qwen3:8b, asked to "map a sample completely down to the angstrom", put "dose_budget_e_per_a2": 100 in the plan
+    and asked the user to lower a limit they never set; with that gone, it mapped a 60 nm box, grew it only until
+    the server stopped refusing it, and answered that the sample was mapped completely; told to read the bounds,
+    it wrote [0, 1e-06, 0, 1e-06] instead of reading them."""
+
+    def __init__(self, tools: Iterable[BaseTool] = ()) -> None:
+        super().__init__()
+        self.parameters_tool = next((t for t in tools if getattr(t, "name", "").endswith("_get_parameters")), None)
+
+    @staticmethod
+    def _words(request) -> str:
+        messages = list((getattr(request, "state", None) or {}).get("messages", []))
+        return " ".join(_text(m) for m in messages if is_request(m))
+
+    def _bounds_request(self, request):
+        if self.parameters_tool is None:
+            return None
+        call = {**request.tool_call, "name": self.parameters_tool.name, "args": {}, "id": f"{request.tool_call.get('id')}-bounds"}
+        return request.override(tool=self.parameters_tool, tool_call=call)
+
+    def _refusal(self, request, plan: dict, reply) -> ToolMessage | None:
+        box = sample_box(_text(reply)) if isinstance(reply, ToolMessage) else None
+        why = whole_sample_refusal(plan, box, self.parameters_tool.name if self.parameters_tool else "the microscope")
+        if why is None:
+            return None
+        return ToolMessage(json.dumps({"error": {"code": "not_the_whole_sample", "message": why}}),
+                           tool_call_id=request.tool_call.get("id"), name="run_job", status="error")
+
+    def _whole_sample_plan(self, request) -> dict | None:
+        call = request.tool_call
+        plan = _plan(call.get("args") or {}) if call.get("name") == "run_job" else None
+        return plan if plan is not None and WHOLE_SAMPLE.search(self._words(request)) else None
+
+    def _held(self, request):
+        call = request.tool_call
+        if call.get("name") != "run_job":
+            return request, []
+        args, notes = held_to_words(call.get("args") or {}, self._words(request))
+        return (request.override(tool_call={**call, "args": args}) if notes else request), notes
+
+    @staticmethod
+    def _noted(result, notes: list[str]):
+        if not notes or not isinstance(result, ToolMessage):
+            return result
+        note = " ".join(notes)
+        parsed = _json(_text(result))
+        content = json.dumps({**parsed, "note": note}, default=str) if isinstance(parsed, dict) else f"{_text(result)}\n{note}"
+        return result.model_copy(update={"content": content})
+
+    def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:
+        plan = self._whole_sample_plan(request)
+        if plan is not None:
+            bounds = self._bounds_request(request)
+            refusal = self._refusal(request, plan, handler(bounds) if bounds is not None else None)
+            if refusal is not None:
+                return refusal
+        checked, notes = self._held(request)
+        return self._noted(handler(checked), notes)
+
+    async def awrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]]) -> ToolMessage | Command:
+        plan = self._whole_sample_plan(request)
+        if plan is not None:
+            bounds = self._bounds_request(request)
+            refusal = self._refusal(request, plan, await handler(bounds) if bounds is not None else None)
+            if refusal is not None:
+                return refusal
+        checked, notes = self._held(request)
+        return self._noted(await handler(checked), notes)

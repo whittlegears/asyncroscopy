@@ -15,7 +15,7 @@ uv run startup_scripts/run_servers.py
 
 uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
 uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
-uv run startup_scripts/run_servers.py --yaml configs/ThinkPad-utkarsh-covalent-setup.yaml
+uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
 ```
 
 GUI:
@@ -27,40 +27,41 @@ uv run python startup_guis/server_gui.py
 - Press **Enter** at prompts to accept the value in brackets.
 - Leave the terminal open while you work. Press **Ctrl+C** to stop the managed
   processes and the managed Tiled server.
-- Start MCP in a second terminal or on another computer:
+- Start MCP in a second terminal (on a twin, or on another computer):
 
 ```bash
 uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
+On the Spectra 300, follow [first_light_runbook.md](first_light_runbook.md): it
+adds the read-only pre-flight (`startup_scripts/preflight_hardware.py`) and the
+analysis server, in that order.
+
 ## What It Starts
 
 | Order | Device(s) | Tango name |
 |-------|-----------|------------|
-| 1 | support devices | `asyncroscopy/{camera,corrector,data,eds,scan,stage}/default` |
+| 1 | support devices: every key under `devices:` in the YAML | `asyncroscopy/<key>/default`; for `configs/Spectra300.yaml`: `asyncroscopy/{aperture,camera,corrector,data,eds,mapper,tuner,scan,stage}/default` |
 | 2 | Tiled HTTP server | started through the `data` device |
 | 3 | instrument | `asyncroscopy/instrument/default` |
 
-The instrument starts last because it depends on the support devices. The runner
+The instrument starts last because it depends on the support devices. "All
+asyncroscopy servers are ready" means every device answered a ping, not that
+the instrument reached the hardware: a device that failed to connect to
+AutoScript is in FAULT. On hardware, run `startup_scripts/preflight_hardware.py`
+next; it reads every device's State and Status. The runner
 writes support-device addresses and hardware connection values into Tango
 database properties before the instrument starts.
 
 ## Server GUI
 
-`startup_guis/server_gui.py` is a small YAML launcher for the server stack. It
-does not start servers directly. It formats the current selections into YAML,
-writes that YAML to `outputs/startup_configs/server_gui.yaml`, and runs:
+`startup_guis/server_gui.py` is built from this script's settings and the loaded
+YAML's devices; see [Running Servers in a GUI](run-server-gui.md). It writes
+`outputs/startup_configs/run_servers_gui.yaml` and runs:
 
 ```bash
-uv run python startup_scripts/run_servers.py --yaml outputs/startup_configs/server_gui.yaml
+uv run python startup_scripts/run_servers.py --yaml outputs/startup_configs/run_servers_gui.yaml
 ```
-
-The GUI includes:
-
-- YAML preview generated from the current selections.
-- Terminal output from the running process.
-- **Start** and **Stop** controls.
-- **Save current config** to write a YAML file you can reuse later.
 
 ## Configs
 
@@ -79,7 +80,10 @@ Each server config has:
 - `tiled:` for the DATA-managed Tiled HTTP server.
 - `device_timeout_seconds:` for device readiness waits.
 
-Device `class_name` defaults to the upper-cased key (`scan` becomes `SCAN`).
+Device `class_name` defaults to the class the module passes to `run_server()`
+(otherwise the upper-cased key). Set `enabled: false` on a device to keep it in the
+file without starting it. Unknown keys, missing modules and classes a module does not
+define are refused before anything starts.
 `instrument.hardware_host`, `instrument.hardware_port`, and
 `instrument.timeout_seconds` become instrument device properties.
 
@@ -100,8 +104,16 @@ uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 If MCP runs on a different computer, edit `configs/mcp.yaml`:
 
 - `tango.host` should point to the machine running the Tango database.
-- `mcp.http_host` should be `127.0.0.1` for local-only clients or `0.0.0.0` when
-  other machines need to connect.
+- `mcp.http_host` should be `127.0.0.1` for local-only clients. Every shipped
+  MCP config defaults to `127.0.0.1`.
+- On a hardware stack (`simulated: false`), a LAN address or `0.0.0.0` needs
+  both `mcp.allow_remote_bind: true` and an `mcp.auth` section (bearer tokens,
+  [remote_access.md](remote_access.md)). Without `allow_remote_bind` the endpoint
+  binds `127.0.0.1` instead; with it but without `mcp.auth`, `run_mcp.py` refuses
+  to start. On a simulated stack a remote bind is allowed without tokens, so use
+  it only on a trusted network.
+- If you start the optional operator endpoint (`configs/mcp_operator.yaml`), never
+  open it to other machines: it serves operator-only commands and has no login.
 
 ## Prompts
 
@@ -122,8 +134,13 @@ Interactive mode is used only when `--yaml` is omitted. The defaults come from
 
 ## Startup Stages
 
-1. **Clearing old processes** frees the database/Tiled ports and kills old device
-   server process groups.
+1. **Clearing old processes** stops whatever is LISTENING on the database and
+   Tiled ports (clients connected to them are left alone), and stops leftover
+   device servers this config starts: processes running exactly
+   `-m <module> <key>_instance` for one of its devices, and only those whose
+   `TANGO_HOST` matches this launch when the OS lets it be read. Other
+   asyncroscopy stacks are not touched. It uses psutil, falling back to
+   `Get-NetTCPConnection`/`Get-CimInstance` on Windows and `lsof`/`ps` elsewhere.
 2. **Starting Tango database** starts or waits for the database server.
 3. **Registering devices** writes device entries and instrument properties.
 4. **Starting device servers** starts support devices, Tiled, and then the
@@ -132,12 +149,27 @@ Interactive mode is used only when `--yaml` is omitted. The defaults come from
 
 ## Manual Fallback
 
-The runner automates this database-mode flow:
+The runner automates this database-mode flow. It starts each child with
+`uv run --no-sync python -u ...` (uv located through the `UV` variable that
+`uv run` sets, or `PATH`), or with the launcher's own Python when uv cannot be
+found:
 
 ```bash
 TANGO_HOST=localhost:9094 uv run python -m tango.databaseds.database 2
 
 export TANGO_HOST=localhost:9094
+uv run python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan_instance
+uv run python -m asyncroscopy.instruments.electron_microscope.auto_script instrument_instance
+```
+
+In PowerShell:
+
+```powershell
+$env:TANGO_HOST = "localhost:9094"
+uv run python -m tango.databaseds.database 2
+
+# in each further terminal
+$env:TANGO_HOST = "localhost:9094"
 uv run python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan_instance
 uv run python -m asyncroscopy.instruments.electron_microscope.auto_script instrument_instance
 ```

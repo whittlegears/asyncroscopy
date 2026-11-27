@@ -40,16 +40,34 @@ class AutoScriptAPERTURE(APERTURE):
         doc="Port of the AutoScript microscope server",
     )
 
+    simulated = device_property(
+        dtype=bool,
+        default_value=False,
+        doc="True when this stack drives a simulator, set from run_servers' top-level simulated:. "
+        "False (real hardware): an aperture device without AutoScript is in FAULT.",
+    )
+
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         super().init_device()
-        self._microscope = None
+        self._connect_autoscript()
 
+    def _connect_autoscript(self) -> None:
+        """Connect the AutoScript client; without it (no package, or a refused connection) the device is in FAULT
+        with the reason as its Status, except on a simulated stack where a missing package is only a warning."""
+        self._microscope = None
         if not _AUTOSCRIPT_AVAILABLE:
-            self.warn_stream("AutoScript not available")
+            reason = "autoscript_tem_microscope_client is not installed in this environment"
+            if self.simulated:
+                self.warn_stream(f"AutoScript not available ({reason}); the stack is simulated")
+                return
+            # On hardware an aperture device that cannot reach AutoScript must not look ready.
+            self.set_state(DevState.FAULT)
+            self.set_status(f"Not connected to AutoScript: {reason}")
+            self.error_stream(f"AutoScript APERTURE not available: {reason}")
             return
 
         try:
@@ -63,6 +81,7 @@ class AutoScriptAPERTURE(APERTURE):
         except Exception as exc:
             self._microscope = None
             self.set_state(DevState.FAULT)
+            self.set_status(f"Not connected to AutoScript at {self.hardware_host}:{self.hardware_port}: {exc}")
             self.error_stream(f"AutoScript APERTURE connection failed: {exc}")
 
     # ------------------------------------------------------------------

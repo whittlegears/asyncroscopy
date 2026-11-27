@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import os
+from asyncroscopy import settings
 
 # Default to PyQt6 for modern systems. Set ASYNCROSCOPY_QT_API=pyqt5 on older
 # Windows 10 machines where Qt6 cannot load because the OS build is too old.
-QT_API_ENV = os.environ.get('ASYNCROSCOPY_QT_API', '').lower()
+QT_API_ENV = settings.get().qt_api
 
 try:
     if QT_API_ENV == 'pyqt5':
         raise ImportError('PyQt5 requested by ASYNCROSCOPY_QT_API')
-    from PyQt6.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, pyqtSignal as pyqtSignal
+    from PyQt6.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, QTimer as QTimer, pyqtSignal as pyqtSignal
     from PyQt6.QtGui import (
         QColor as QColor,
         QFont as QFont,
@@ -70,7 +70,7 @@ try:
         return app.palette().color(PALETTE_WINDOW_ROLE)
 
 except ImportError:
-    from PyQt5.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, pyqtSignal as pyqtSignal
+    from PyQt5.QtCore import QObject as QObject, QPointF as QPointF, Qt as Qt, QTimer as QTimer, pyqtSignal as pyqtSignal
     from PyQt5.QtGui import (
         QColor as QColor,
         QFont as QFont,

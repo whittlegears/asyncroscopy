@@ -5,7 +5,9 @@
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 #
 # If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+# machine/IP. The Spectra 300 stack is not simulated (simulated: false), so
+# http_host 0.0.0.0 alone still binds 127.0.0.1: when other machines must
+# connect, set http_host: 0.0.0.0 and allow_remote_bind: true together.
 
 tango:
   host: 10.46.217.241
@@ -14,7 +16,8 @@ tango:
 mcp:
   name: Spectra300_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
+  # allow_remote_bind: true   # only with http_host 0.0.0.0 and mcp.auth set
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
@@ -26,3 +29,36 @@ mcp:
       - Init
       - Kill
       - RestartServer
+    # The same agent-hidden commands as the twin's endpoint (configs/mcp_dt.yaml); tests/agents/test_agent_configs.py
+    # checks that every agent configuration blocks at least these.
+    DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
+    Mapper: [get_reservation]
+    Tuner: [get_reservation]
+    # Until first light's sign test settles the CEOS correction's sign and units, the corrector is written only by
+    # the Tuner (allow_corrector_writes) or a person; set_aberrations_coeff_sim only stores a dict on hardware.
+    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau, set_aberrations_coeff_sim]
+    # After Disconnect even the e-stop cannot blank the beam.
+    AutoScriptMicroscope: [Disconnect]
+  include_only_functions: []
+  tool_log: ""
+  # The analysis server (asyncroscopy.analysis_server: stitching, scoring) on the MCP host, so
+  # wait_for_job also waits on assemble_map and score_map jobs; agents read this
+  # address from the endpoint (endpoint_info). Empty: no analysis server.
+  analysis_url: http://127.0.0.1:8003/mcp
+  # Risk overrides: {"Class.command" or tool-name glob: low|high}.
+  safety:
+    risk: {}
+  # Bearer tokens from the facility's token service (docs/Operation/remote_access.md). Required before this
+  # hardware endpoint binds beyond 127.0.0.1; run_mcp.py refuses to start it otherwise.
+  # auth:
+  #   jwks_url: https://tokens.example.org/.well-known/jwks.json
+  #   issuer: https://tokens.example.org
+  #   audience: asyncroscopy:spectra300
+  # run_job refuses a plan whose estimate is over these (the agent must ask the user).
+  job_limits:
+    max_duration_s: 14400
+    max_dose_e_per_a2: 5000
+  # Agent endpoint: operator-only commands are never offered here. The GUI uses this endpoint too (stop_all, jobs).
+  endpoint_role: agent
+  # Instrument Trace: one JSON line per tool call. The clock is this computer's on hardware.
+  trace: outputs/trace/mcp_agent.jsonl

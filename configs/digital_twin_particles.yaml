@@ -1,3 +1,6 @@
+# A simulator: the MCP endpoint may bind 0.0.0.0 (docs/Operation/dry_run.md).
+simulated: true
+
 instrument:
   class_name: DigitalTwinParticles
   file: asyncroscopy/instruments/electron_microscope/digital_twin_particles.py
@@ -6,7 +9,9 @@ instrument:
   properties:
     sample_seed: 12345
     sample_particle_count: 40
-    world_imsize: 128
+    specimen:
+      source: particles
+      world_imsize: 128
 
 devices:
   data:
@@ -15,9 +20,11 @@ devices:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
+  sample:
+    module_name: asyncroscopy.instruments.common.sample
   stage:
-    class_name: TestStage
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
+    class_name: DigitalTwinSTAGE
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_digital_twin
 
 tango:
   host: 127.0.0.1
@@ -27,7 +34,8 @@ tango:
 tiled:
   host: 127.0.0.1
   port: 9091
-  acquisition_dir: outputs/tiled_acquisitions
+  # Simulated data is kept apart from real acquisitions
+  acquisition_dir: outputs/tiled_twin
   autostart: true
   register_on_startup: false
 

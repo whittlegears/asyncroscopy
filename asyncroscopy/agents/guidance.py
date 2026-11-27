@@ -1,0 +1,164 @@
+"""Prose for a model from the instrument and analysis servers' structured replies.
+
+The MCP servers answer with facts: a job's ``state``, the ``next_actions`` to take ({"tool", "args"}; an
+action on another server also names it, {"server": "instrument", "tool" or "command", "args"}, where
+"command" is a device command whose tool name carries the device's prefix),
+``resume_with`` (the call that continues an aborted job) and ``warnings`` ({"code", ...}). Agent
+programs can act on those directly. A small model does better with a sentence telling it what to do
+and what not to, so the agent graphs turn the fields into the notes below before the model sees a
+reply (``asyncroscopy.agents.mcp_tools`` applies ``render`` to every tool reply and error).
+
+The wording was chosen from benchmark runs with qwen3:8b; change it here, not in the server. Whether the notes
+replace the structured fields or sit beside them is the agent profile's ``replies``: a small model does better
+with the sentence alone, a capable model keeps the facts too.
+"""
+
+from __future__ import annotations
+
+import json
+
+# What the model is told when a wait ends before the job does, for each job state.
+WAIT_NOTES = {
+    "queued": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
+    "running": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
+    "aborting": "Abort in progress: call wait_for_job again to see the job stop.",
+    "paused_suspended": "Paused by a safety condition ({reason}); it resumes by itself when the condition clears. Call wait_for_job again, or abort if the user asked to stop.",
+    "paused": "Paused by a person, with the instrument waiting safely; it goes on when they continue it. Call wait_for_job again; do not start it yourself or start another job.",
+}
+# The note for a finished job. Without it a small model may stitch a finished map again or run it again.
+DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
+             "reply and its result_keys; nothing needs running or stitching again.")
+# A finished map whose stitch failed: told "a map is already stitched", qwen3:8b answered "the stitched map is available".
+STITCH_FAILED_NOTE = ("Done: every tile was taken, but the stitch failed, so there is no map key: {error} "
+                      "Tell the user the map is not stitched, and name the run file that result_keys gives as run.")
+# Tiles with no image match to any neighbour sit where the stage reported them (2633 of 2704 angstrom tiles on empty film).
+STAGE_PLACED_NOTE = ("{fallback} of {tiles} tiles matched no neighbour, so they sit where the stage reported them: seams between "
+                     "them can be off by the stage's error. Tell the user the map is a rough layout there.")
+STRUCTURED = ("next_actions", "resume_with", "warnings")
+# Notes for analysis server replies whose next step is on the instrument endpoint.
+UNKNOWN_ANALYSIS_JOB_NOTE = ("not a stitching or scoring job: a job id from Mapper_start belongs to the instrument, "
+                             "so use wait_for_job or Mapper_job_status there")
+BUSY_ANALYSIS_JOB_NOTE = "wait for job {job_id} (analysis_job_status) instead of starting another"
+SAMPLE_LOAD_NOTE = "before moving there, check the instrument's get_sample gives this sample_load_id: another load puts the sample elsewhere"
+BEAM_BLANKED_HINT = "this image was taken with the beam blanked (beam_current_pa 0), so it shows only noise: unblank_beam and take it again"
+
+
+def stage_placed(summary: dict) -> tuple[int, int] | None:
+    """(tiles that matched no neighbour, tiles) when most of a stitched map's tiles sit where the stage reported them."""
+    stitching = summary.get("stitching") if isinstance(summary.get("stitching"), dict) else {}
+    fallback, tiles = stitching.get("fallback_tiles"), stitching.get("tiles")
+    if isinstance(fallback, int) and isinstance(tiles, int) and tiles and fallback * 2 > tiles:
+        return fallback, tiles
+    return None
+
+
+def _codes(reply: dict) -> dict[str, dict]:
+    return {w["code"]: w for w in reply.get("warnings") or [] if isinstance(w, dict) and w.get("code")}
+
+
+def _call_text(action: dict) -> str:
+    return json.dumps({"device": action["args"].get("device"), "resume": action["args"].get("resume")})
+
+
+def render_reply(tool: str, args: dict, reply: dict, keep_facts: bool = False) -> dict:
+    """``reply`` with its structured fields turned into the notes a model reads. The fields are removed, or kept
+    beside the notes with ``keep_facts`` (the profile's ``replies: facts_and_notes``)."""
+    if not any(k in reply for k in STRUCTURED):
+        return reply
+    out = dict(reply) if keep_facts else {k: v for k, v in reply.items() if k not in STRUCTURED}
+    codes = _codes(reply)
+    actions = [a for a in reply.get("next_actions") or [] if isinstance(a, dict)]
+    state = reply.get("state")
+    resume = reply.get("resume_with")
+    if isinstance(resume, dict):
+        text = f"run_job with {_call_text(resume)} and no plan: it goes on from the next step"
+        out["to_resume"] = text if state == "aborted" else f"once wait_for_job says aborted, {text}"
+    if "finished" in codes:
+        summary = reply.get("summary") if isinstance(reply.get("summary"), dict) else {}
+        out["note"] = STITCH_FAILED_NOTE.format(error=summary["stitch_error"]) if summary.get("stitch_error") else DONE_NOTE
+        placed = stage_placed(summary)
+        if placed:
+            out["placement"] = STAGE_PLACED_NOTE.format(fallback=placed[0], tiles=placed[1])
+    elif "results_unreadable" in codes:
+        out["note"] = f"done, but its results could not be read: {codes['results_unreadable'].get('detail', '')}"
+    elif any(a.get("tool") == "wait_for_job" for a in actions) and state in WAIT_NOTES:
+        job_id = next(a["args"].get("job_id") for a in actions if a.get("tool") == "wait_for_job")
+        abort = next((a["tool"] for a in actions if str(a.get("tool", "")).endswith("_abort")), None)
+        if tool == "run_job" and abort is not None:
+            out["note"] = f"The job runs in the background: give the user its job_id. {abort} stops it; wait_for_job waits for it."
+        elif tool == "run_job" and state in ("queued", "running"):
+            phases = (reply.get("estimate") or {}).get("phases")
+            out["note"] = (f"Still running, which is normal: call wait_for_job with {{\"job_id\": \"{job_id}\"}} now. The job does every phase "
+                           f"of its plan itself{' (' + ', '.join(phases) + ')' if phases else ''}; other calls for it meanwhile repeat or spoil its work.")
+        else:
+            out["note"] = WAIT_NOTES[state].format(reason=(reply.get("suspended") or {}).get("reason", ""))
+    _render_analysis(reply, actions, codes, out)
+    return out
+
+
+def _render_analysis(reply: dict, actions: list[dict], codes: dict[str, dict], out: dict) -> None:
+    """The notes for the analysis server's structured fields (``out`` is changed in place)."""
+    error = reply.get("error") if isinstance(reply.get("error"), dict) else {}
+    on_instrument = [a for a in actions if a.get("server") == "instrument"]
+    if error.get("code") == "unknown_job" and any(a.get("tool") == "wait_for_job" for a in on_instrument):
+        out["note"] = UNKNOWN_ANALYSIS_JOB_NOTE
+    elif error.get("code") == "busy":
+        waits = [a for a in actions if a.get("tool") == "analysis_job_status"]
+        if waits:
+            out["note"] = BUSY_ANALYSIS_JOB_NOTE.format(job_id=waits[0].get("args", {}).get("job_id"))
+    if any(a.get("command") == "get_sample" for a in on_instrument):
+        out["note"] = "; ".join(n for n in (out.get("note"), SAMPLE_LOAD_NOTE) if n)
+    if "beam_blanked" in codes and any(a.get("command") == "unblank_beam" for a in on_instrument):
+        out["hint"] = BEAM_BLANKED_HINT
+
+
+def render_error(text: str, keep_facts: bool = False) -> str:
+    """An error's text with a structured error the server sent (beam_blanked) turned into the sentence a model reads.
+    With ``keep_facts`` the server's error is kept and the sentence follows it."""
+    start = text.find("{")
+    if start < 0:
+        return text
+    try:
+        body, end = json.JSONDecoder().raw_decode(text[start:])
+    except ValueError:
+        return text
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, dict) or error.get("code") != "beam_blanked":
+        return text
+    if keep_facts:
+        return f"{text}\n{_blanked_prose(body)}"
+    return text[:start] + _blanked_prose(body) + text[start + end:]
+
+
+def _blanked_prose(body: dict) -> str:
+    """The sentence for a beam_blanked error: unblank, retake, and do not use the noise-only file."""
+    actions = [a.get("tool") for a in body.get("next_actions") or [] if isinstance(a, dict)]
+    unblank = actions[0] if actions else "the beam unblank command"
+    retake = actions[1] if len(actions) > 1 else "the acquisition"
+    key = next((w.get("key") for w in body.get("warnings") or [] if isinstance(w, dict) and w.get("code") == "noise_only_file"), "")
+    # The retake comes first and the key last, because a model given the key first views and reports the noise.
+    return (f"Not acquired: the beam is blanked. Next call {unblank}, then {retake} again with the same arguments, and use the key "
+            f"that call returns. (The noise-only file {key} was saved; do not view or report it.)")
+
+
+def render(tool: str, args: dict | None, text: str, error: bool = False, replies: str = "notes") -> str:
+    """A tool reply's text (or an error's) as the model should read it; anything unstructured is returned unchanged.
+
+    ``replies`` is the agent profile's: "notes" puts the sentences in place of the structured fields (for a small
+    model), "facts_and_notes" keeps the fields and adds the sentences.
+    """
+    keep = replies == "facts_and_notes"
+    if error:
+        return render_error(text, keep_facts=keep)
+    try:
+        reply = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    if not isinstance(reply, dict):
+        return text
+    rendered = render_reply(tool, args or {}, reply, keep_facts=keep)
+    return text if rendered is reply else json.dumps(rendered)
+
+
+__all__ = ["BEAM_BLANKED_HINT", "BUSY_ANALYSIS_JOB_NOTE", "DONE_NOTE", "SAMPLE_LOAD_NOTE", "UNKNOWN_ANALYSIS_JOB_NOTE", "WAIT_NOTES",
+           "render", "render_error", "render_reply"]
