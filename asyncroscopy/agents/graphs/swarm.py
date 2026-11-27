@@ -30,6 +30,20 @@ from asyncroscopy import settings
 from asyncroscopy.agents.profile import load_profile
 
 DEFAULT_MAX_STEPS = 10
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+
+
+def ollama_host() -> str:
+    """The Ollama server: OLLAMA_HOST, the variable the Ollama client behind ChatOllama reads, else localhost:11434.
+    A value without a scheme gets http://, and one without a port gets 11434, as the Ollama client does."""
+    host = settings.get().ollama_host or DEFAULT_OLLAMA_HOST
+    if "://" not in host:
+        host = f"http://{host}"
+    scheme, _, rest = host.partition("://")
+    address = rest.split("/", 1)[0]
+    if not address.rsplit("]", 1)[-1].count(":"):
+        rest = rest.replace(address, f"{address}:11434", 1)
+    return f"{scheme}://{rest}".rstrip("/")
 
 
 @dataclass
@@ -281,8 +295,10 @@ class AgentSwarm:
 
         return True
 
-    async def ensure_ollama_running(self, host: str = "http://localhost:11434", timeout: int = 10) -> None:
-        """Check if Ollama server is running, offloaded to prevent blocking the event loop."""
+    async def ensure_ollama_running(self, host: str | None = None, timeout: int = 10) -> None:
+        """Check if Ollama server is running, offloaded to prevent blocking the event loop. ``host``: the server
+        (default: ``ollama_host()``, the same one ChatOllama talks to)."""
+        host = host or ollama_host()
 
         def _sync_check():
             tags_url = f"{host.rstrip('/')}/api/tags"

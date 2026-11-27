@@ -71,6 +71,7 @@ class Settings:
     model: str | None
     model_provider: str | None
     num_ctx: int | None
+    ollama_host: str | None  # OLLAMA_HOST, the name the Ollama client itself reads
     agent_profile: str
     agent_tools: tuple[str, ...]
     agent_prompt: str | None
@@ -125,6 +126,7 @@ class Settings:
             model=env.get("ASYNCROSCOPY_MODEL") or None,
             model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER") or None,
             num_ctx=_number(env, "ASYNCROSCOPY_NUM_CTX", None, int),
+            ollama_host=env.get("OLLAMA_HOST", "").strip() or None,
             agent_profile=env.get("ASYNCROSCOPY_AGENT_PROFILE") or "capable",  # agent_tools.DEFAULT_PROFILE_NAME
             agent_tools=tuple(p.strip() for p in env.get("ASYNCROSCOPY_AGENT_TOOLS", "").split(",") if p.strip()),
             agent_prompt=env.get("ASYNCROSCOPY_AGENT_PROMPT") or None,

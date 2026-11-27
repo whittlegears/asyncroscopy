@@ -11,12 +11,13 @@ MCP is started separately with `startup_scripts/run_mcp.py`; see
 ## TL;DR
 
 ```bash
-uv run startup_scripts/run_servers.py
-
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
 uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
 uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml
+uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
+uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml --interactive   # prompt for each setting
 ```
+
+`--yaml` is required: the launcher never picks an instrument for you (`run_mcp.py` the same).
 
 GUI:
 
@@ -24,7 +25,7 @@ GUI:
 uv run python startup_guis/server_gui.py
 ```
 
-- Press **Enter** at prompts to accept the value in brackets.
+- With `--interactive`, press **Enter** at prompts to accept the value in brackets.
 - Leave the terminal open while you work. Press **Ctrl+C** to stop the managed
   processes and the managed Tiled server.
 - Start MCP in a second terminal (on a twin, or on another computer):

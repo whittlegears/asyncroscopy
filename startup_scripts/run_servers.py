@@ -37,11 +37,11 @@ from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, l
 from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
-# Default config used in interactive mode (no --yaml). Passing --yaml <file>
-# selects a different config AND runs headlessly (no prompts).
-DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'Spectra300.yaml'
-# The GUI opens on the digital twin so a fresh window never targets the real microscope.
-GUI_DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'DigitalTwin.yaml'
+# The launcher needs --yaml: it never picks an instrument for you. The GUI opens on the digital twin, so a fresh
+# window never targets the real microscope.
+DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'DigitalTwin.yaml'
+YAML_REQUIRED = ("--yaml is required: name the stack's config, e.g. configs/DigitalTwin.yaml for the digital twin "
+                 "or configs/Spectra300.yaml for the Spectra 300.")
 
 
 class Style:
@@ -557,8 +557,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         metavar="PATH",
-        help="YAML config to start from. When given, runs headlessly (no prompts). "
-        "When omitted, uses the bundled default config and prompts interactively.",
+        help="YAML config to start from (required). Runs headlessly unless --interactive is given.",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Prompt for each setting, showing the config's value as the default.",
     )
     parser.add_argument(
         "--debug",
@@ -639,7 +643,9 @@ def launcher_identity(info: ProcessInfo) -> tuple[str, str] | None:
     args = tokens[start + 1:]
     base = Path(info.cwd) if info.cwd else PROJECT_DIR
     config, isolated = _flag(args, "--yaml"), _flag(args, "--isolated")
-    config_path = DEFAULT_CONFIG_PATH if config is None else Path(config) if Path(config).is_absolute() else base / config
+    if config is None:  # it refused to start
+        return None
+    config_path = Path(config) if Path(config).is_absolute() else base / config
     isolated_dir = None if isolated is None else Path(isolated) if Path(isolated).is_absolute() else base / isolated
     return stack_identity(config_path, isolated_dir)
 
@@ -1098,7 +1104,10 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
-    config_path = args.yaml or DEFAULT_CONFIG_PATH
+    if args.yaml is None:
+        print(color(f"Config error: {YAML_REQUIRED}", Style.bold + Style.red))
+        return 1
+    config_path = args.yaml
     try:
         config = load_config(config_path)
     except (FileNotFoundError, KeyError, ValueError) as exc:
@@ -1111,7 +1120,7 @@ def main(argv: list[str] | None = None) -> int:
         status_line("OK", "cleanup", "stopped processes left by an earlier run")
         return 0
 
-    headless = args.yaml is not None
+    headless = not args.interactive
     devices = build_devices(config)
     instrument = selected_instrument(devices)
     instrument_config = config.instrument

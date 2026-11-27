@@ -37,6 +37,11 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         default_value=DEFAULT_OVERVIEW_IMAGE_SIZE,
         doc='Fixed HAADF overview image size in pixels.',
     )
+    acceleration_voltage = device_property(
+        dtype=float,
+        default_value=200e3,
+        doc='Acceleration voltage (V) of the abTEM probe for diffraction simulations.',
+    )
     convergence_angle_mrad = device_property(
         dtype=float,
         default_value=5.0,
@@ -97,7 +102,7 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             ) from exc
 
         potential = abtem.Potential(atoms, sampling=0.08, slice_thickness=1.0)
-        probe = abtem.Probe(energy=200e3, semiangle_cutoff=float(self.convergence_angle_mrad))
+        probe = abtem.Probe(energy=float(self.acceleration_voltage), semiangle_cutoff=float(self.convergence_angle_mrad))
         probe.grid.match(potential)
         exit_wave = probe.multislice(potential)
         pattern = exit_wave.diffraction_patterns(max_angle=DIFFRACTION_MAX_ANGLE_MRAD).compute()

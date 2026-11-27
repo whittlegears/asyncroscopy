@@ -53,7 +53,7 @@ def test_every_variable_is_in_the_table_once_and_the_table_names_no_other():
     table = (ROOT / "docs/Operation/settings.md").read_text(encoding="utf-8")
     documented = re.findall(r"^\| `([A-Z_]+)` \|", table, re.M)
     assert len(documented) == len(set(documented))
-    read = set(re.findall(r'"((?:ASYNCROSCOPY|TILED)_[A-Z_]+)"', (ROOT / "asyncroscopy/settings.py").read_text(encoding="utf-8")))
+    read = set(re.findall(r'"((?:ASYNCROSCOPY|TILED|OLLAMA)_[A-Z_]+)"', (ROOT / "asyncroscopy/settings.py").read_text(encoding="utf-8")))
     read.add("ASYNCROSCOPY_OUTPUTS")
     assert read == set(documented)
 
@@ -86,3 +86,15 @@ def test_empty_and_unset_keep_their_old_meanings():
 def test_secrets_stay_out_of_the_repr():
     text = repr(Settings.from_env({"ASYNCROSCOPY_MCP_TOKEN": "hunter2", "ASYNCROSCOPY_TILED_API_KEY": "key123", "ASYNCROSCOPY_INTEGRITY_KEY": "aa"}))
     assert "hunter2" not in text and "key123" not in text
+
+
+def test_the_ollama_server_is_read_from_ollama_host_as_the_ollama_client_reads_it(monkeypatch):
+    pytest.importorskip("langchain")
+    from asyncroscopy.agents.graphs.swarm import ollama_host
+
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    assert ollama_host() == "http://localhost:11434"
+    for given, expected in (("gpu-box", "http://gpu-box:11434"), ("10.0.0.7:11500", "http://10.0.0.7:11500"),
+                            ("https://ollama.example/", "https://ollama.example:11434"), ("http://[::1]:11434", "http://[::1]:11434")):
+        monkeypatch.setenv("OLLAMA_HOST", given)
+        assert ollama_host() == expected, given

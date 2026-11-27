@@ -1,4 +1,5 @@
 import pytest
+import yaml
 
 from asyncroscopy.utils import process_manager
 from startup_scripts import run_pytemlib, run_mcp, run_servers, run_llm
@@ -137,7 +138,7 @@ def test_load_mcp_config():
     config = run_mcp.load_config(run_mcp.PROJECT_DIR / "configs" / "mcp.yaml")
 
     assert config.mcp.name == "Spectra300_MCP"
-    assert config.tango_host == "10.46.217.241"
+    assert config.tango_host == "localhost"  # the instrument's address is written only in configs/Spectra300.yaml
     assert config.tango_port == 9094
     assert config.mcp.http_host == "127.0.0.1"  # This is a hardware endpoint. Other machines reach it only with allow_remote_bind.
     assert config.mcp.allow_remote_bind is False
@@ -363,8 +364,8 @@ def test_launcher_identity_reads_yaml_and_isolated_in_either_form(tmp_path):
     info = run_servers.ProcessInfo(1, ("uv", "run", "startup_scripts/run_servers.py", "--yaml=configs/a.yaml", "--isolated", "outputs/stacks/a"), str(tmp_path))
     assert run_servers.launcher_identity(info) == run_servers.stack_identity(tmp_path / "configs" / "a.yaml", tmp_path / "outputs" / "stacks" / "a")
     assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))) is None
-    default = run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "startup_scripts/run_servers.py")))
-    assert default == run_servers.stack_identity(run_servers.DEFAULT_CONFIG_PATH, None)
+    # Without --yaml a launcher refuses to start, so it holds no stack.
+    assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "startup_scripts/run_servers.py"))) is None
 
 
 def test_a_launcher_stops_its_servers_on_sigterm_once():
@@ -516,3 +517,13 @@ def test_run_pytemlib_starts_only_the_analysis_server_and_refuses_the_old_workfl
     path.write_text("pytemlib: {workflows: true}", encoding="utf-8")
     with pytest.raises(run_pytemlib.ConfigError, match="unknown key"):
         run_pytemlib.load_config(path)
+
+
+def test_the_launchers_need_a_yaml_and_never_pick_the_instrument_themselves(capsys):
+    assert run_mcp.main([]) == 1
+    assert "--yaml is required" in capsys.readouterr().err
+    assert run_servers.main([]) == 1
+    assert "--yaml is required" in capsys.readouterr().out
+    assert run_servers.DEFAULT_CONFIG_PATH.name == "DigitalTwin.yaml"  # only what the GUI opens first
+    spectra = yaml.safe_load((run_mcp.PROJECT_DIR / "configs" / "Spectra300.yaml").read_text(encoding="utf-8"))
+    assert run_mcp.HOST_PRESETS == {"Digital twin": "localhost", "Spectra300": spectra["tango"]["host"]}

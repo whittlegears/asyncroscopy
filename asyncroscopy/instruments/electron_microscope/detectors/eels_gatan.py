@@ -14,6 +14,10 @@ from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.detectors.eels import EELSBase
 
 
+NO_HOST = ("the device property hardware_host is not set: give it in the stack YAML (devices.eels.properties.hardware_host, as configs/Spectra300.yaml does); "
+           "there is no default address")
+
+
 class EELS(EELSBase):
     """Gatan DigitalMicrograph-backed EELS detector."""
 
@@ -23,8 +27,9 @@ class EELS(EELSBase):
 
     hardware_host = device_property(
         dtype=str,
-        default_value="10.46.217.242",
-        doc="Hostname or IP of the Gatan server",
+        default_value="",
+        doc="Hostname or IP of the Gatan server. Required: there is no default, so a device never reaches an "
+        "instrument its stack YAML does not name.",
     )
 
     hardware_port = device_property(
@@ -46,6 +51,8 @@ class EELS(EELSBase):
         self._eels_proxy_factory = Proxy
 
         try:
+            if not self.hardware_host:
+                raise ValueError(NO_HOST)
             if not self._call_eels("check_server"):
                 raise ConnectionError("EELS server did not respond")
             self.info_stream(

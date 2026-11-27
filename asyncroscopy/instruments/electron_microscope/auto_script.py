@@ -54,6 +54,10 @@ SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
 SCREEN_SETTLE_S = 1.0
 
 
+NO_HOST = ("the device property hardware_host is not set: give it in the stack YAML (instrument.hardware_host, as configs/Spectra300.yaml does); "
+           "there is no default address")
+
+
 class AutoScriptMicroscope(ElectronMicroscope):
     """
     Manages the AutoScript connection and exposes acquisition commands.
@@ -66,8 +70,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
-        doc="Hostname or IP of the AutoScript microscope server",
+        default_value="",
+        doc="Hostname or IP of the AutoScript microscope server. Required: there is no default, so a device never "
+        "reaches an instrument its stack YAML does not name.",
     )
     hardware_port = device_property(
         dtype=int,
@@ -223,6 +228,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self.warn_stream(f"AutoScript not available: {self._connect_error}")
             return
         try:
+            if not self.hardware_host:
+                raise ValueError(NO_HOST)
             self._microscope = TemMicroscopeClient()
             self._microscope.connect(self.hardware_host, self.hardware_port)
             self.info_stream(f"Connected to AutoScript at {self.hardware_host}:{self.hardware_port}")

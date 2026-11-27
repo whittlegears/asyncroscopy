@@ -152,10 +152,8 @@ def test_edits_write_only_what_changed(gui, tmp_path):
 
 
 def test_mcp_gui_opens_on_the_digital_twin_host_and_says_so(gui, tmp_path):
-    window = gui(run_mcp)  # default config, mcp.yaml, names the real instrument's host
-    assert yaml.safe_load(run_mcp.DEFAULT_CONFIG_PATH.read_text())["tango"]["host"] != "localhost"
+    window = gui(run_mcp)  # default config, mcp.yaml
     assert window.current_config()["tango"]["host"] == "localhost"
-    assert "Digital twin preset" in window.output.toPlainText()
     raw = yaml.safe_load((CONFIGS / "mcp_dt.yaml").read_text())
     raw["tango"]["host"] = "10.0.0.5"
     assert gui(run_mcp, write(tmp_path, raw)).current_config()["tango"]["host"] == "10.0.0.5"  # An explicit file is used as written.

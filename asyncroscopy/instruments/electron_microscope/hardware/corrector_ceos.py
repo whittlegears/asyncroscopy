@@ -13,13 +13,18 @@ from tango.server import device_property
 from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR, FIRST_ORDER
 
 
+NO_HOST = ("the device property ceos_host is not set: give it in the stack YAML (devices.corrector.properties.ceos_host, as configs/Spectra300.yaml does); "
+           "there is no default address")
+
+
 class CEOSCorrector(CORRECTOR):
     """Forward the common corrector API to a physical CEOS server."""
 
     ceos_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
-        doc="Hostname or IP address of the CEOS hardware server",
+        default_value="",
+        doc="Hostname or IP address of the CEOS hardware server. Required: there is no default, so a device never "
+        "reaches a corrector its stack YAML does not name.",
     )
     ceos_port = device_property(
         dtype=int,
@@ -38,6 +43,11 @@ class CEOSCorrector(CORRECTOR):
         super().init_device()
 
     def _connect_backend(self) -> None:
+        if not self.ceos_host:
+            self._last_status = f"Connection failed: {NO_HOST}"
+            self.set_state(DevState.FAULT)
+            self.error_stream(NO_HOST)
+            return
         try:
             with socket.create_connection(
                 (self.ceos_host, int(self.ceos_port)),
@@ -80,6 +90,10 @@ class CEOSCorrector(CORRECTOR):
         }
         self._message_id += 1
         netstring = self._encode_netstring(payload)
+        if not self.ceos_host:
+            self._last_status = f"Error: {NO_HOST}"
+            self.set_state(DevState.FAULT)
+            tango.Except.throw_exception("CeosCommError", NO_HOST, "CEOSCorrector._call()")
         try:
             with socket.create_connection(
                 (self.ceos_host, int(self.ceos_port)),

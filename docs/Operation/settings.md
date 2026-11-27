@@ -27,6 +27,7 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_MODEL` | Model tag or provider model name | the agent profile's |
 | `ASYNCROSCOPY_MODEL_PROVIDER` | `ollama`, or any `init_chat_model` provider | the agent profile's |
 | `ASYNCROSCOPY_NUM_CTX` | Ollama context window | the agent profile's |
+| `OLLAMA_HOST` | Ollama server (the name the Ollama client reads): ChatOllama and the agent server's check that Ollama is running | `http://localhost:11434` |
 | `ASYNCROSCOPY_AGENT_PROFILE` | Agent profile: a name in `agents/profiles`, or a YAML path | `capable` (gemma4:31b) |
 | `ASYNCROSCOPY_AGENT_TOOLS` | General agent's tool globs, comma-separated | the STEM set, else every tool |
 | `ASYNCROSCOPY_AGENT_PROMPT` | General agent's system prompt template | built in |

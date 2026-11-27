@@ -4,13 +4,15 @@
 #
 #   uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 #
-# If MCP runs on a separate computer, set tango.host to the Tango database
-# machine/IP. The Spectra 300 stack is not simulated (simulated: false), so
-# http_host 0.0.0.0 alone still binds 127.0.0.1: when other machines must
-# connect, set http_host: 0.0.0.0 and allow_remote_bind: true together.
+# tango.host is localhost: run this on the PC that hosts the Tango database. If MCP
+# runs on a separate computer, set tango.host to that machine (its address is the
+# tango: section of configs/Spectra300.yaml).
+# The Spectra 300 stack is not simulated (simulated: false), so http_host 0.0.0.0
+# alone still binds 127.0.0.1: when other machines must connect, set
+# http_host: 0.0.0.0 and allow_remote_bind: true together.
 
 tango:
-  host: 10.46.217.241
+  host: localhost
   port: 9094
 
 mcp:

@@ -29,6 +29,9 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
 
     render_mode = "particle_potential"
     specimen_source = device_property(dtype=str, default_value="particles", doc="Specimen source (particles, or a plug-in in the particle_potential render mode).")
+    acceleration_voltage = device_property(dtype=float, default_value=200e3,
+                                           doc="Acceleration voltage (V) of the simulated probe: its wavelength. The probe's "
+                                               "aberrations are pyTEMlib's Spectra300 target values whatever the voltage.")
 
     # ------------------------------------------------------------------
     # Attributes
@@ -127,8 +130,9 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         pixel_size       = fov / size
 
         # ── Probe aberrations (unchanged) ─────────────────────────────────────────
-        ab = pt.get_target_aberrations("Spectra300", 200000)
-        ab['acceleration_voltage'] = 200e3
+        voltage = float(self.acceleration_voltage)
+        ab = pt.get_target_aberrations("Spectra300", voltage)
+        ab['acceleration_voltage'] = voltage
         ab['FOV']                  = fov / 10   # nm
         ab['convergence_angle']    = 30         # mrad
         ab['wavelength']           = it.get_wavelength(ab['acceleration_voltage'])

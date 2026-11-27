@@ -31,6 +31,10 @@ def changes_z_or_tilt(current, target: tuple) -> bool:
     return False
 
 
+NO_HOST = ("the device property hardware_host is not set: give it in the stack YAML (devices.stage.properties.hardware_host, as configs/Spectra300.yaml does); "
+           "there is no default address")
+
+
 class AutoScriptSTAGE(STAGE):
     """AutoScript-backed STAGE device.
 
@@ -44,8 +48,9 @@ class AutoScriptSTAGE(STAGE):
     # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
-        doc="Hostname or IP of the AutoScript microscope server",
+        default_value="",
+        doc="Hostname or IP of the AutoScript microscope server. Required: there is no default, so a device never "
+        "reaches an instrument its stack YAML does not name.",
     )
     hardware_port = device_property(
         dtype=int,
@@ -87,6 +92,8 @@ class AutoScriptSTAGE(STAGE):
             return
 
         try:
+            if not self.hardware_host:
+                raise ValueError(NO_HOST)
             self._microscope = TemMicroscopeClient()
             self._microscope.connect(self.hardware_host, self.hardware_port)
             self.info_stream(f"Connected AutoScript STAGE at {self.hardware_host}:{self.hardware_port}")

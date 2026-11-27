@@ -505,6 +505,30 @@ class TestAutoScriptConnectionErrors:
         assert device._microscope is None
         assert "10.0.0.1:9095 failed" in device._connect_error
 
+    def test_an_unset_hardware_host_is_refused_by_name_and_nothing_is_dialled(self, monkeypatch) -> None:
+        import asyncroscopy.instruments.electron_microscope.auto_script as module
+
+        dialled = []
+
+        class Client:
+            def connect(self, host, port):
+                dialled.append((host, port))
+
+        monkeypatch.setattr(module, "_AUTOSCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(module, "TemMicroscopeClient", Client)
+        device = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        device._tango_properties = {}
+        device.testing_mode_bool = False
+        device.hardware_host, device.hardware_port = "", 9095
+        device._connect_error = None
+        device.info_stream = device.error_stream = device.warn_stream = lambda *a: None
+
+        AutoScriptMicroscope._connect_hardware(device)
+
+        assert dialled == [] and device._microscope is None
+        assert "hardware_host is not set" in device._connect_error
+        assert AutoScriptMicroscope.hardware_host.default_value == ""
+
     def test_missing_package_records_the_reason(self, monkeypatch) -> None:
         import asyncroscopy.instruments.electron_microscope.auto_script as module
 

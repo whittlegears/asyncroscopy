@@ -24,11 +24,27 @@ from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, l
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
+# The config the GUI opens first. The launcher itself needs --yaml: it never picks an instrument for you.
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'mcp.yaml'
+YAML_REQUIRED = ('--yaml is required: name the MCP config of the stack to serve, e.g. configs/mcp_dt.yaml for the '
+                 'digital twin or configs/mcp.yaml for the Spectra 300.')
 
-# Tango hosts this project points at day to day. The GUI opens on the first, the digital twin,
-# so a fresh launch never talks to the real instrument.
-HOST_PRESETS = {'Digital twin': 'localhost', 'Spectra300': '10.46.217.241'}
+
+def host_presets() -> dict[str, str]:
+    """Tango hosts this project points at day to day. The GUI opens on the first, the digital twin, so a fresh launch
+    never talks to the real instrument. The Spectra 300's address is read from its stack YAML, the one place it is
+    written; without that file there is no such preset."""
+    presets = {'Digital twin': 'localhost'}
+    try:
+        host = (yaml.safe_load((PROJECT_DIR / 'configs' / 'Spectra300.yaml').read_text(encoding='utf-8')) or {})['tango']['host']
+    except (OSError, yaml.YAMLError, KeyError, TypeError):
+        return presets
+    if host:
+        presets['Spectra300'] = str(host)
+    return presets
+
+
+HOST_PRESETS = host_presets()
 
 TITLE = 'Asyncroscopy MCP Startup'
 LAUNCHER = 'startup_scripts/run_mcp.py'
@@ -291,7 +307,7 @@ def start_operator(manager: ProcessManager, operator: Config | None, env: dict[s
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--yaml', type=Path, default=DEFAULT_CONFIG_PATH, metavar='PATH', help='MCP YAML config to start from.')
+    parser.add_argument('--yaml', type=Path, default=None, metavar='PATH', help='MCP YAML config to start from (required).')
     add_lifecycle_args(parser)
     return parser.parse_args(argv)
 
@@ -300,6 +316,9 @@ def main(argv: list[str] | None = None) -> int:
     stop_on_termination()  # `kill <launcher>` must also stop the server it started
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
+    if args.yaml is None:
+        print(f'Config error: {YAML_REQUIRED}', file=sys.stderr)
+        return 1
     try:
         config = load_config(args.yaml)
     except (FileNotFoundError, KeyError, ValueError) as exc:

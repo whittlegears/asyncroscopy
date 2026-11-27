@@ -6,6 +6,8 @@
 # Author: Gerd Duscher, UTK
 # July 30th 2026 
 """
+import os
+
 import DigitalMicrograph as DM
 import Pyro5.api
 import numpy as np
@@ -103,9 +105,13 @@ class EELSServer:
 
 
 def main():
-    # Manually set the host IP and port here
-    HOST_IP = "10.46.217.242"  # Or your network IP like "192.168.1.50"
-    PORT = 9091
+    # The address this server listens on: this Gatan PC's own IP, the one the EELS device's hardware_host names
+    # (configs/Spectra300eels.yaml). There is no default, so it never listens on an address nobody chose.
+    HOST_IP = os.environ.get("ASYNCROSCOPY_EELS_SERVER_HOST", "").strip()
+    PORT = int(os.environ.get("ASYNCROSCOPY_EELS_SERVER_PORT", "9091"))
+    if not HOST_IP:
+        raise SystemExit("Set ASYNCROSCOPY_EELS_SERVER_HOST to this PC's IP (the EELS device's hardware_host) "
+                         "before starting the EELS server.")
 
     daemon = Pyro5.server.Daemon(host=HOST_IP, port=PORT)
 
