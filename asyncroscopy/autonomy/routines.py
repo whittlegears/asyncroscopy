@@ -243,3 +243,183 @@ def find_regions(image, n: int = 5, tile: int | None = None, min_separation_tile
         if len(picked) >= n:
             break
     return picked
+
+
+# ----------------------------------------------------------------------------
+# Zone axis
+# ----------------------------------------------------------------------------
+
+def laue_offset(pattern, disk_fraction: float = 0.08) -> dict:
+    """How far a diffraction pattern is from on-zone.
+
+    The direct beam is the brightest blob; the *Laue offset* is the vector from
+    it to the intensity-weighted centroid of everything outside the central
+    disk, as a fraction of the pattern size. On zone the diffracted intensity
+    is balanced around the direct beam (offset ~ 0); off zone it piles up on
+    the Laue circle on one side. Smaller is better.
+    """
+    from scipy import ndimage
+
+    p = np.asarray(pattern, dtype=np.float64)
+    p = np.clip(p - np.median(p), 0, None)
+    h, w = p.shape
+    smooth = ndimage.gaussian_filter(p, max(1.0, min(h, w) / 64))
+    cy, cx = np.unravel_index(int(np.argmax(smooth)), smooth.shape)
+    yy, xx = np.mgrid[:h, :w]
+    r = np.hypot(yy - cy, xx - cx)
+    outer = r > disk_fraction * min(h, w)
+    weights = np.log1p(p * 1e3) * outer
+    total = weights.sum()
+    if total <= 0:
+        return {"offset": 1.0, "dx": 0.0, "dy": 0.0, "beam": [float(cx), float(cy)]}
+    dx = float((weights * (xx - cx)).sum() / total) / w
+    dy = float((weights * (yy - cy)).sum() / total) / h
+    return {"offset": float(np.hypot(dx, dy)), "dx": dx, "dy": dy, "beam": [float(cx), float(cy)]}
+
+
+def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resilient: Resilient, *,
+                    axes: tuple[str, ...] = ("alpha",), step_deg: float = 0.1, max_offset_deg: float = 1.0,
+                    max_iterations: int = 4, tolerance: float = 0.003, step: Step = direct_step,
+                    tracker: "Callable[[], dict] | None" = None) -> dict:
+    """Tilt onto the zone axis using the Laue offset of camera diffraction patterns.
+
+    The Laue offset is a 2-vector that tilting moves roughly linearly near the
+    zone. So instead of a blind search, this measures how it responds to each
+    tilt axis (± *step_deg*), then takes Newton steps on the part of the offset
+    those axes control. With one axis, the component the other axis would fix
+    is ignored, so it cannot drag the answer sideways. Each step is re-measured
+    and the response refreshed (Broyden update).
+
+    Safety: the tilt never moves more than *max_offset_deg* from the start on
+    any axis; the start tilt is restored unless the controllable offset ends
+    up smaller than at the start. *tracker*, when given, re-centres the region
+    after every tilt.
+    """
+    t0 = time.time()
+    index = {"alpha": 3, "beta": 4}
+    for a in axes:
+        if a not in index:
+            raise ValueError("axes must be alpha and/or beta")
+    n = len(axes)
+    start = [float(v) for v in resilient.call(instrument, "get_stage")]
+    trials: list[dict] = []
+    tracked: list[dict] = []
+
+    def tilt_to(offset, why):
+        offset = np.clip(np.asarray(offset, dtype=float), -max_offset_deg, max_offset_deg)
+        pos = list(start)
+        for a, o in zip(axes, offset):
+            pos[index[a]] = start[index[a]] + float(o)
+
+        def do():
+            resilient.call(instrument, "move_stage", pos)
+            if tracker is not None:
+                tracked.append(tracker())
+        step("tilt", {"offset_deg": offset.tolist(), "why": why}, do)
+        return offset
+
+    def laue(offset, why) -> np.ndarray:
+        key = step("acquire_diffraction", {"offset_deg": list(map(float, offset)), "why": why},
+                   lambda: resilient.call(instrument, "acquire_camera_image"))
+        lo = laue_offset(fetch_array(key))
+        v = np.array([lo["dx"], lo["dy"]])
+        trials.append({"offset_deg": list(map(float, offset)), "why": why, "laue": v.tolist(), "key": key})
+        return v
+
+    def controllable(v: np.ndarray, j: np.ndarray) -> float:
+        """Norm of the part of v that the tilt axes can change (projection onto range(J))."""
+        q, _ = np.linalg.qr(j)
+        return float(np.linalg.norm(q.T @ v))
+
+    status, reasons = "failed", []
+    current = np.zeros(n)
+    try:
+        l0 = laue(current, "start")
+        cols = []
+        for k in range(n):
+            e = np.zeros(n)
+            e[k] = step_deg
+            lp = laue(tilt_to(e, f"probe +{axes[k]}"), f"probe +{axes[k]}")
+            lm = laue(tilt_to(-e, f"probe -{axes[k]}"), f"probe -{axes[k]}")
+            cols.append((lp - lm) / (2 * step_deg))
+        jac = np.column_stack(cols)                              # d(laue)/d(tilt), 2 x n
+        if np.linalg.matrix_rank(jac, tol=1e-6) < n:
+            raise RuntimeError("diffraction does not respond to the tilt axes (no crystal under the beam, "
+                               "or the probe step is too small)")
+        baseline = controllable(l0, jac)
+        current = tilt_to(np.zeros(n), "back to start")
+        best = (baseline, np.zeros(n))
+        lv = l0
+        for it in range(max_iterations):
+            delta = -np.linalg.lstsq(jac, lv, rcond=None)[0]
+            target = np.clip(current + delta, -max_offset_deg, max_offset_deg)
+            current = tilt_to(target, f"newton {it}")
+            new = laue(current, f"newton {it}")
+            score = controllable(new, jac)
+            if score < best[0]:
+                best = (score, current.copy())
+            dl = new - lv
+            if np.linalg.norm(delta) > 1e-9:                     # Broyden update of the response
+                jac = jac + np.outer(dl - jac @ delta, delta) / float(delta @ delta)
+            lv = new
+            if score <= tolerance or np.linalg.norm(delta) < step_deg / 20:
+                break
+        # Verify at the best tilt with a fresh pattern.
+        current = tilt_to(best[1], "verify best")
+        verified = controllable(laue(current, "verify best"), jac)
+        if verified < baseline and np.any(best[1]):
+            status = "improved"
+        else:
+            current = tilt_to(np.zeros(n), "restore start (no verified gain)")
+            status = "no_improvement"
+            reasons.append(f"controllable Laue offset {verified:.4f} not below start {baseline:.4f}")
+    except BaseException as exc:
+        reasons.append(f"{type(exc).__name__}: {exc}")
+        try:
+            current = tilt_to(np.zeros(n), "restore start after error")
+        except Exception as restore_exc:
+            reasons.append(f"could not restore the start tilt: {restore_exc}")
+        if "abort" in str(exc).lower():
+            raise
+        baseline = verified = float("nan")
+        jac = np.zeros((2, n))
+    final = [float(v) for v in resilient.call(instrument, "get_stage")]
+    return {"routine": "align_zone_axis", "status": status, "reasons": reasons, "axes": list(axes),
+            "start_tilt_deg": [start[index[a]] for a in axes], "final_tilt_deg": [final[index[a]] for a in axes],
+            "baseline_laue_offset": baseline, "verified_laue_offset": verified,
+            "response_per_deg": np.asarray(jac).tolist(), "trials": trials, "tracking": tracked[-3:],
+            "recoveries": list(resilient.events), "duration_s": time.time() - t0}
+
+
+def image_shift_tracker(imager: Imager, *, pixel_size_m: float, tracking_sign=(1.0, 1.0),
+                        max_correction_m: float | None = None) -> Callable[[], dict]:
+    """Keep the region centred during a tilt series, as in the alpha-tilt notebook.
+
+    Takes a HAADF reference now; each call re-images, registers against the
+    reference, and moves the image shift by the measured offset (times
+    *tracking_sign*, per axis, which absorbs the scan-to-image-shift handedness).
+    A registration that is not a confident match is not applied.
+    """
+    from asyncroscopy.atlas.registration import MatchCriteria, center_crop, judge, locate, offset_from_center
+
+    r = imager.resilient
+    _, reference = imager.acquire()
+    template = center_crop(reference, 0.6)
+    sign = np.asarray(tracking_sign, dtype=float)
+    limit = max_correction_m if max_correction_m is not None else 0.25 * pixel_size_m * reference.shape[1]
+
+    def track() -> dict:
+        _, image = imager.acquire()
+        loc = locate(template, image)
+        verdict = judge(loc, MatchCriteria(min_ncc=0.3, max_ambiguity=0.9, max_sigma_px=3.0))
+        dx, dy = offset_from_center(loc, image.shape)
+        correction = sign * np.array([dx, dy]) * pixel_size_m
+        applied = False
+        if verdict.ok and float(np.hypot(*correction)) <= limit:
+            shift = np.asarray(r.call(imager.instrument, "get_image_shift"), dtype=float) + correction
+            r.call(imager.instrument, "set_image_shift", shift.tolist())
+            applied = True
+        return {"offset_px": [dx, dy], "verdict": verdict.status, "applied": applied,
+                "correction_m": correction.tolist()}
+
+    return track

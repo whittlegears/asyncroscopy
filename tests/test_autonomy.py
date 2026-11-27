@@ -174,3 +174,79 @@ def test_whole_session_on_twin(tilt, corrector, tmp_path):
     assert statuses["focus"] == "improved" and statuses["aberrations"] == "corrected"
     assert report["final"]["relative_change"]["edge_sharpness"] > 0.2
     assert report["site_id"] in atlas.sites
+
+
+# -- zone axis ---------------------------------------------------------------------------
+
+def spot_pattern(tilt_x=0.0, tilt_y=0.0, size=96):
+    """Direct beam plus a square net of spots; off zone, intensity shifts to one side (Laue circle)."""
+    yy, xx = np.mgrid[:size, :size]
+    c = size / 2
+    img = 30 * np.exp(-((yy - c) ** 2 + (xx - c) ** 2) / 8)
+    for i in range(-3, 4):
+        for j in range(-3, 4):
+            if i == j == 0:
+                continue
+            gx, gy = c + 10 * i, c + 10 * j
+            w = np.exp(-((i - tilt_x * 6) ** 2 + (j - tilt_y * 6) ** 2) / 8)
+            img += w * np.exp(-((yy - gy) ** 2 + (xx - gx) ** 2) / 2)
+    return img
+
+
+def test_laue_offset_is_small_on_zone_and_points_off_zone():
+    from asyncroscopy.autonomy.routines import laue_offset
+    on, off = laue_offset(spot_pattern()), laue_offset(spot_pattern(tilt_x=0.4))
+    assert on["offset"] < 0.01 < off["offset"] and off["dx"] > 0
+
+
+class FakeTiltScope:
+    """Stage alpha/beta; the crystal is on zone at alpha=-0.3, beta=0.2 degrees."""
+
+    def __init__(self):
+        self.stage = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+    def command_inout(self, cmd, arg=None):
+        if cmd == "get_stage":
+            return list(self.stage)
+        if cmd == "move_stage":
+            self.stage = list(arg)
+            return None
+        if cmd == "acquire_camera_image":
+            return "k"
+        raise AssertionError(cmd)
+
+    def pattern(self, _key):
+        return spot_pattern(tilt_x=self.stage[3] + 0.3, tilt_y=self.stage[4] - 0.2)
+
+
+def test_align_zone_axis_finds_the_zone_in_two_axes():
+    from asyncroscopy.autonomy.routines import align_zone_axis
+    scope = FakeTiltScope()
+    res = align_zone_axis(scope, scope.pattern, Resilient(), axes=("alpha", "beta"), step_deg=0.15,
+                          max_offset_deg=1.0, max_iterations=12)
+    assert res["status"] == "improved", res["reasons"]
+    assert abs(scope.stage[3] + 0.3) < 0.08 and abs(scope.stage[4] - 0.2) < 0.08
+    assert res["verified_laue_offset"] < res["baseline_laue_offset"]
+
+
+def read_camera(path):
+    with h5py.File(Path(path), "r") as h5:
+        g = h5["image"]
+        return (g if isinstance(g, h5py.Dataset) else g[next(iter(g))])[()]
+
+
+def test_zone_axis_on_tilt_twin_multislice(tilt_twin_proxy, camera_proxy):
+    pytest.importorskip("abtem")
+    from asyncroscopy.autonomy.routines import align_zone_axis
+
+    camera_proxy.imsize = 128
+    tilt_twin_proxy.move_stage([0.0, 0.0, 0.0, 0.0, 0.0])
+    try:
+        res = align_zone_axis(tilt_twin_proxy, read_camera, Resilient(), axes=("alpha",), step_deg=0.15,
+                              max_offset_deg=0.6, max_iterations=6)
+        on_zone = -np.degrees(3.0173e-3)                       # the twin's crystal tilt at this position
+        assert res["status"] == "improved", res["reasons"]
+        assert abs(res["final_tilt_deg"][0] - on_zone) < 0.06
+        assert res["verified_laue_offset"] < res["baseline_laue_offset"]
+    finally:
+        tilt_twin_proxy.move_stage([0.0, 0.0, 0.0, 0.0, 0.0])

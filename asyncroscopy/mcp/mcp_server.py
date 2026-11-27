@@ -924,6 +924,11 @@ class MCPServer:
             return routines.measure_and_correct(ctx.corrector, thresholds_m=args["thresholds_m"],
                                                 resilient=ctx.imager.resilient,
                                                 max_correction_m=args.get("max_correction_m"), step=step)
+        if routine == "align_zone_axis":
+            return routines.align_zone_axis(ctx.imager.instrument, ctx.imager.fetch_array, ctx.imager.resilient,
+                                            axes=tuple(args.get("axes") or ("alpha",)),
+                                            step_deg=float(args.get("step_deg", 0.1)),
+                                            max_offset_deg=float(args.get("max_offset_deg", 1.0)), step=step)
         if routine == "session":
             return run_session(ctx, SessionPlan.from_json(args.get("plan")), step,
                                provenance={"requested_by": origin})
@@ -969,7 +974,16 @@ class MCPServer:
             focus_max_offset_m, correct, thresholds_m, polish ({aberration: step_m}), score, save_site."""
             return server.run_autonomy("session", {"plan": plan or {}})
 
-        return [autonomy_focus, autonomy_correct_aberrations, autonomy_run_session]
+        @tool()
+        def autonomy_align_zone_axis(axes: list[str] | None = None, step_deg: float = 0.1,
+                                     max_offset_deg: float = 1.0) -> dict:
+            """Tilt the stage (alpha, or alpha and beta) onto the crystal zone axis by minimising the Laue
+            offset of camera diffraction patterns. Never tilts more than max_offset_deg from the start; restores
+            the start tilt unless a verified re-measurement is closer to zone."""
+            return server.run_autonomy("align_zone_axis", {"axes": axes or ["alpha"], "step_deg": step_deg,
+                                                           "max_offset_deg": max_offset_deg})
+
+        return [autonomy_focus, autonomy_correct_aberrations, autonomy_align_zone_axis, autonomy_run_session]
 
     # ------------------------------------------------------------------
     # Supervision: one queue, the specimen atlas, recipes
@@ -1027,7 +1041,7 @@ class MCPServer:
         sup = Supervisor(config, microscope=microscope, instrument_name=instrument[1] or "unknown",
                          instrument_kind=kind, detectors=detectors)
         # Autonomous routines can be recipe steps too ("autonomy.focus", ...).
-        for routine in ("focus", "correct_aberrations", "session"):
+        for routine in ("focus", "correct_aberrations", "align_zone_axis", "session"):
             sup.native[f"autonomy.{routine}"] = (
                 lambda args, step, r=routine: self._autonomy_body(r, args, step, args.get("_origin", "recipe")))
         for name, (dev, cls, cmd, direct) in self._tool_meta.items():

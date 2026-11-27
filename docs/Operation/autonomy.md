@@ -12,8 +12,9 @@ one instruction.
 | `focus` | Trust-region search over defocus or stage z. | See below. |
 | `tune_aberration` | Image-based tuning of one aberration through the corrector. Uses the notebook-12 quadratic response surface. | See below. |
 | `measure_and_correct` | Corrector workflow: measure a tableau, correct what is over threshold, measure again. | A correction that makes an aberration larger is undone, and that aberration is left alone. A correction larger than `max_correction_m` is refused. |
+| `align_zone_axis` | Tilts onto the zone axis using the Laue offset of camera diffraction patterns: the vector from the direct beam to the centroid of the diffracted intensity. It probes each tilt axis by ± one step, takes Newton steps on the part of the offset those axes control, updates the response after each step, and keeps re-centring the region with image shift (the alpha-tilt notebook's tracking). | Tilt limit; verified or the start tilt is restored; a crystal that doesn't respond to tilt is reported instead of chased. |
 | `find_regions` | Ranks the tiles of a survey image by structure (contrast × entropy). Spreads the picks out. | Read-only. |
-| `run_session` | Health → region → aberrations → focus → final image → atlas record. | Each stage reports its status. A required device that stays down stops the session before anything moves. |
+| `run_session` | Health → region → aberrations → focus → zone axis (optional) → final image → atlas record. | Each stage reports its status. A required device that stays down stops the session before anything moves. |
 
 `focus` and `tune_aberration` share the same safety net:
 - **Hard limit:** the setting never moves more than `max_offset` from where it
@@ -38,10 +39,11 @@ All routines share these behaviours:
 |---|---|
 | `autonomy_focus(mode, step_m, max_offset_m, score)` | |
 | `autonomy_correct_aberrations(thresholds_m, max_correction_m)` | |
-| `autonomy_run_session(plan)` | `plan` keys: `name`, `find_region`, `focus_mode`, `focus_step_m`, `focus_max_offset_m`, `correct`, `thresholds_m`, `polish`, `score`, `save_site`. |
+| `autonomy_align_zone_axis(axes, step_deg, max_offset_deg)` | |
+| `autonomy_run_session(plan)` | `plan` keys: `name`, `find_region`, `focus_mode`, `focus_step_m`, `focus_max_offset_m`, `correct`, `thresholds_m`, `polish`, `zone_axis`, `zone_axis_axes`, `score`, `save_site`. |
 
-They are also recipe steps: `autonomy.focus`, `autonomy.correct_aberrations`
-and `autonomy.session`. A session can therefore be saved, rehearsed on the
+They are also recipe steps: `autonomy.focus`, `autonomy.correct_aberrations`,
+`autonomy.align_zone_axis` and `autonomy.session`. A session can therefore be saved, rehearsed on the
 twin, and then run on the microscope.
 
 ## Which metric to optimise
@@ -62,6 +64,13 @@ Measured on the tilt twin across ±90 nm defocus (64 px, shot noise):
     12 nm of true focus.
   - **Whole session:** focus improves, aberrations are corrected, and edge
     sharpness rises by more than 20 %.
+- **Tilt twin, zone axis on abTEM multislice diffraction:**
+  - **Alpha only:** lands within 0.03° of the on-zone tilt, using 8 patterns
+    in 9 s.
+  - **Alpha and beta:** within 0.02° on both, using 10 patterns in 10.5 s.
+  - **Why not a plain search:** a search on |Laue offset| stopped 0.11° away.
+    The component that the other axis would fix makes the minimum shallow,
+    which is why the routine solves for the controllable part instead.
 - **Gold twin, live through MCP** (corrector detuned to C1 25 nm and A1 7 nm,
   with the corrector link dropped before the start):
   - The session recovered the link at the health stage.

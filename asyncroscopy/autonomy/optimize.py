@@ -152,7 +152,8 @@ def search(apply: Callable[[np.ndarray], None], measure: Callable[[], dict], sco
                 break
             previous_best = scs.max()
             s = measure_at(proposal, f"model {it}")
-            radius = min(radius * 1.20, cfg.step * 2) if s > previous_best * cfg.improve_factor else radius * 0.65
+            improved = s > previous_best + (cfg.improve_factor - 1) * abs(previous_best)
+            radius = min(radius * 1.20, cfg.step * 2) if improved else radius * 0.65
             if radius < min_step:
                 break
             if should_stop and should_stop():
@@ -165,7 +166,8 @@ def search(apply: Callable[[np.ndarray], None], measure: Callable[[], dict], sco
         # Verify: a fresh baseline and repeats at the best point, so noise is not progress.
         fresh_base = np.mean([measure_at(np.zeros(n), "verify baseline") for _ in range(cfg.verify_repeats)])
         verified = np.mean([measure_at(best, "verify best") for _ in range(cfg.verify_repeats)])
-        if not np.any(best) or verified <= fresh_base * (1 + cfg.min_gain):
+        # Relative to |baseline|, so the test also holds for scores that are negative by design.
+        if not np.any(best) or verified - fresh_base <= cfg.min_gain * abs(fresh_base):
             go(np.zeros(n), "restore start (no verified gain)")
             return SearchResult("no_improvement", best.tolist(), float(baseline), best_score, float(verified),
                                 current.tolist(), trials,

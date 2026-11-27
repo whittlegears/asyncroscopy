@@ -12,6 +12,8 @@ by hand, and returns one report a teammate can read later:
    of named aberrations.
 4. **focus**: image-based trust-region polish on defocus (or stage z). It
    keeps a change only if a verified re-measurement shows a gain.
+   **zone axis** (optional): tilt to minimise the Laue offset of camera
+   diffraction patterns, keeping the region centred with image shift.
 5. **image**: a final acquisition, scored against the first one.
 6. **record**: the final image is saved as an atlas site with the session
    report as provenance, so the result can be revisited and verified later.
@@ -31,7 +33,8 @@ import numpy as np
 
 from asyncroscopy.autonomy.metrics import all_metrics
 from asyncroscopy.autonomy.optimize import Step, direct_step
-from asyncroscopy.autonomy.routines import Imager, Resilient, find_regions, focus, measure_and_correct, tune_aberration
+from asyncroscopy.autonomy.routines import (Imager, align_zone_axis, find_regions, focus, image_shift_tracker,
+                                            measure_and_correct, tune_aberration)
 from asyncroscopy.health.monitor import HealthMonitor, recover
 
 
@@ -49,6 +52,11 @@ class SessionPlan:
     max_correction_m: dict[str, float] = field(default_factory=lambda: {"C1": 200e-9, "A1": 100e-9,
                                                                         "B2": 1e-6, "A2": 1e-6})
     polish: dict[str, float] = field(default_factory=dict)   # aberration -> step (m) for image-based tuning
+    zone_axis: bool = False                  # tilt onto the zone axis (needs a camera diffraction mode)
+    zone_axis_axes: list[str] = field(default_factory=lambda: ["alpha"])
+    zone_axis_step_deg: float = 0.1
+    zone_axis_max_offset_deg: float = 1.0
+    track_during_tilt: bool = True
     score: str = "edge_sharpness"
     save_site: bool = True
     required_devices: list[str] = field(default_factory=list)
@@ -161,6 +169,23 @@ def run_session(ctx: SessionContext, plan: SessionPlan | None = None, step: Step
                         max_offset_m=plan.focus_max_offset_m, score=plan.score, step=step)
             _done(entry, res["status"], result={k: v for k, v in res.items() if k != "trials"},
                   trials=len(res["trials"]))
+        except Exception as exc:
+            _done(entry, "failed", error=f"{type(exc).__name__}: {exc}")
+    else:
+        _done(entry, "skipped")
+
+    # 4b. zone axis -------------------------------------------------------------
+    entry = _stage(report, "zone_axis")
+    if plan.zone_axis:
+        try:
+            tracker = None
+            if plan.track_during_tilt and ctx.mic is not None and ctx.mic.current_fov():
+                size = ctx.mic.current_imsize() or first[1].shape[0]
+                tracker = image_shift_tracker(ctx.imager, pixel_size_m=ctx.mic.current_fov() / size)
+            res = align_zone_axis(ctx.imager.instrument, ctx.imager.fetch_array, resilient,
+                                  axes=tuple(plan.zone_axis_axes), step_deg=plan.zone_axis_step_deg,
+                                  max_offset_deg=plan.zone_axis_max_offset_deg, step=step, tracker=tracker)
+            _done(entry, res["status"], result={k: v for k, v in res.items() if k != "trials"})
         except Exception as exc:
             _done(entry, "failed", error=f"{type(exc).__name__}: {exc}")
     else:
