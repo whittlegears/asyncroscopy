@@ -58,7 +58,7 @@ class McpToolSource:
             async def run(_tool_name: str = spec.name, **kwargs) -> str:
                 return _result_text(await client.call_tool(_tool_name, kwargs, raise_on_error=False))
 
-            schema = dict(spec.inputSchema or {"type": "object", "properties": {}})
+            schema = dict(getattr(spec, "input_schema", None) or getattr(spec, "inputSchema", None) or {"type": "object", "properties": {}})
             schema.setdefault("type", "object")
             schema.setdefault("properties", {})
             tools.append(StructuredTool.from_function(coroutine=run, name=spec.name,
