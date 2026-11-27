@@ -642,7 +642,9 @@ class MCPServer:
                 value = self._numpy_to_python(proxy.command_inout(getter))
                 return f"\nReadback after timeout: {getter} = {value}"
             except Exception as read_exc:
-                return f"\nReadback after timeout: {getter} also failed ({describe_error(read_exc)})"
+                return (f"\nReadback after timeout: {getter} also failed ({describe_error(read_exc)}). "
+                        "The device is probably still running the earlier command. "
+                        f"Call {getter} again and check the state before you retry.")
         except Exception:
             return ""
 
