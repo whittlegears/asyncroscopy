@@ -496,6 +496,10 @@ class TestAgentMCPServerTools:
         assert names[:len(native)] == native
         assert names[len(native):] == [fn.__name__ for fn in server.workflows.tools()]
         assert {"list_workflows", "get_workflow", "run_workflow", "workflow_status"} <= set(names)
+        # A person's approval tools are never on the agent endpoint, nor given to the swarm's agents.
+        operator_only = {"review_workflow", "approve_workflow", "reject_workflow"}
+        assert not operator_only & set(names)
+        assert not operator_only & {tool.name for tool in server.workflow_tools()}
 
     def test_spawn_agent_tool_delegates_to_swarm(self) -> None:
         server = self._server()

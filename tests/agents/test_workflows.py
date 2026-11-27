@@ -1155,3 +1155,99 @@ def test_run_workflow_refuses_an_input_it_does_not_take_before_opening_the_instr
             return await call(client, "run_workflow", name="map_grid", inputs={**INPUTS, "dwell_s": 1e-6})
     reply = run(go())
     assert reply["state"] == "refused" and "not ['dwell_s']" in reply["problems"][0] and instrument.log == []
+
+
+def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_only(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    instrument, analysis, state = twin()
+    on_twin = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state", library=library)
+    assert not {"review_workflow", "approve_workflow", "reject_workflow"} & {fn.__name__ for fn in on_twin.tools()}
+
+    operator = AgentMCPServer(name="Workflow_Operator_MCP", mcp_urls=[], verbose=False, endpoint_role="operator")
+    assert operator.swarm is None
+    operator.workflows = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state", library=library,
+                                        name="Workflow_Operator_MCP")
+    operator.setup()
+
+    async def as_the_agent(tool, **arguments):
+        async with Client(on_twin.mcp) as client:
+            return await call(client, tool, **arguments)
+
+    async def as_the_person(tool, **arguments):
+        async with Client(operator.mcp) as client:
+            if tool == "tools":
+                return sorted(t.name for t in await client.list_tools())
+            return await call(client, tool, **arguments)
+
+    assert run(as_the_person("tools")) == ["action_space", "approve_workflow", "endpoint_info", "reject_workflow", "review_workflow"]
+    info = run(as_the_person("endpoint_info"))
+    assert info["role"] == "operator" and info["serves"] == "workflow_approvals" and info["tools"] == ["review_workflow", "approve_workflow", "reject_workflow"]
+    space = run(as_the_person("action_space"))
+    assert space["endpoint"] == {"name": "Workflow_Operator_MCP", "role": "operator"}
+    assert {(a["tool"], a["risk"], a["effect"], a["device"]) for a in space["actions"]} == {
+        ("review_workflow", "low", "observe", None), ("approve_workflow", "high", "act", None), ("reject_workflow", "high", "act", None)}
+
+    assert run(as_the_agent("propose_workflow", user_request=ASKED, source=TEMPLATE))["ok"]
+    review = run(as_the_person("review_workflow", name="tiles_only"))
+    assert review["ok"] and review["status"] == "draft" and review["source"] == TEMPLATE and review["request"]["text"] == ASKED
+    assert review["request"]["at"] > 0 and review["request"]["this_code"] and set(review["graph"]) == {"nodes", "edges"}
+    assert review["rehearsals"] == [] and not review["rehearsed"] and not review["can_approve"] and "never run to the end" in review["why_not"]
+    assert review["approval"] is None and review["changed_since_approval"] is False and review["inputs"] == dict(library.workflow("tiles_only").inputs)
+
+    refused = run(as_the_person("approve_workflow", name="tiles_only", approver="sam"))
+    assert not refused["ok"] and "never run to the end on a digital twin" in refused["error"] and library.find("tiles_only")[1] == "draft"
+    assert not run(as_the_person("approve_workflow", name="map_grid", approver="sam"))["ok"]  # shipped: nothing to approve
+    assert "no workflow named" in run(as_the_person("review_workflow", name="nothing_here"))["error"]
+
+    assert run(as_the_agent("run_workflow", name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
+    review = run(as_the_person("review_workflow", name="tiles_only"))
+    (rehearsal,) = review["rehearsals"]
+    assert rehearsal["state"] == "done" and rehearsal["this_code"] and rehearsal["at"] > 0 and rehearsal["inputs"]["size_m"] == 5e-7
+    assert rehearsal["outputs"] and rehearsal["problems"] == [] and review["can_approve"] and review["why_not"] is None
+
+    approved = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", instrument="tango://scope-a:9094", days=30))
+    assert approved["ok"] and approved["status"] == "approved"
+    record = approved["approval"]
+    assert record["by"] == "Sam Reed" and record["via"] == "Workflow_Operator_MCP" and record["instrument"] == "tango://scope-a:9094"
+    assert record["rehearsed"]["run_id"] == rehearsal["run_id"] and record["expires"] and record["login"]
+    assert library.find("tiles_only")[1] == "approved" and library.approval("tiles_only") == {k: v for k, v in record.items() if k != "name"}
+    review = run(as_the_person("review_workflow", name="tiles_only"))
+    assert review["status"] == "approved" and not review["changed_since_approval"] and "already approved" in review["why_not"]
+
+    approved_file = tmp_path / "library" / "approved" / "tiles_only.py"
+    approved_file.write_text(TEMPLATE.replace("max_visits=400", "max_visits=399"), encoding="utf-8")
+    review = run(as_the_person("review_workflow", name="tiles_only"))
+    assert review["status"] == "draft" and review["changed_since_approval"] and not review["rehearsed"] and not review["rehearsals"][0]["this_code"]
+    approved_file.write_text(TEMPLATE, encoding="utf-8")
+
+    assert "gives the reason" in run(as_the_person("reject_workflow", name="tiles_only", reason="  "))["error"]
+    rejected = run(as_the_person("reject_workflow", name="tiles_only", reason="the square is too large for this sample"))
+    assert rejected["ok"] and rejected["rejection"]["status"] == "draft" and rejected["rejection"]["reason"] == "the square is too large for this sample"
+    assert library.find("tiles_only")[1] == "draft" and library.approval("tiles_only") is None
+    listed = {w["name"]: w for w in run(as_the_agent("list_workflows"))["workflows"]}["tiles_only"]
+    assert listed["status"] == "draft" and listed["rejected"] == "the square is too large for this sample"
+    review = run(as_the_person("review_workflow", name="tiles_only"))
+    assert review["rejection"]["this_code"] and review["rejection"]["via"] == "Workflow_Operator_MCP"
+    assert not run(as_the_person("reject_workflow", name="map_grid", reason="not wanted"))["ok"]
+    # An approval after a rejection replaces it.
+    assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam"))["ok"] and library.rejection("tiles_only") is None
+
+    # An approvers list holds here too: the login is the account the operator endpoint runs under.
+    library.revoke("tiles_only")
+    (tmp_path / "library" / "approvers.json").write_text('["somebody-else"]', encoding="utf-8")
+    assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam"))["error"]
+    assert "approvers.json" in run(as_the_person("reject_workflow", name="tiles_only", reason="no"))["error"]
+
+
+def test_the_workflow_operator_endpoint_binds_to_loopback_only(capsys):
+    from asyncroscopy.mcp.agent_mcp_server import main
+
+    assert main(["--name", "W", "--transport", "streamable-http", "--http-host", "0.0.0.0", "--http-port", "8004", "--endpoint-role", "operator"]) == 1
+    assert "needs --http-host 127.0.0.1" in capsys.readouterr().out

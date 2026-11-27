@@ -12,7 +12,10 @@ blocks. get_workflow shows that code and list_blocks shows the blocks.
 The agent sends what it wrote with propose_workflow, along with the person's own words for the task. The text is
 checked and kept as a draft by ``authoring.py`` and ``library.py``. ``view.py`` shows it with every other workflow.
 A draft runs on a digital twin only. On an instrument only a shipped workflow or one a person has approved will
-run. Approving is done on the command line and never through a tool.
+run. A person approves or rejects on the command line, or through ``operator_tools`` (review_workflow,
+approve_workflow, reject_workflow), which only the workflow operator endpoint serves
+(``agent_mcp_server --endpoint-role operator``, ``docs/MCP/workflow_approval.md``). They are never in ``tools``, so
+no agent is given them.
 
 Workflows run on a real instrument only when ``hardware`` is set. The server that hosts these tools then has to
 bind to loopback because it has no login.
@@ -21,6 +24,7 @@ bind to loopback because it has no login.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -36,7 +40,7 @@ from . import runner
 from .authoring import RULES, TEMPLATE, TEMPLATE_PARALLEL
 from .blocks import describe_blocks
 from .graph import Workflow
-from .library import Library, needs_approval
+from .library import APPROVED, SHIPPED, Library, needs_approval
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
@@ -219,6 +223,96 @@ class WorkflowServer:
         self._start(run_id, lambda: self._rehearsed(info, again, runner.resume_workflow(
             run_id, instrument=instrument, analysis=analysis, state_dir=self.state_dir, find=self.library.workflow, answers=answers)))
         return await self._wait(run_id, wait_s)
+
+    def review(self, name: str) -> dict:
+        """Everything a person needs to decide on the workflow ``name``. Read only. Raises LookupError for no such workflow."""
+        workflow, status = self._workflow(name)
+        checked = workflow.lint()
+        current = checked["hash"]
+        approval = self.library.approval(workflow.name)
+        rejection = self.library.rejection(workflow.name)
+        asked = self.library.request(workflow.name)
+        rehearsals = []
+        for entry in self.library.rehearsals(workflow.name):
+            shown = {k: entry.get(k) for k in ("run_id", "state", "at", "calls", "inputs", "error")}
+            shown["problems"] = list(entry.get("problems") or [])
+            shown["this_code"] = entry.get("hash") == current
+            try:
+                run = runner.read_run(str(entry.get("run_id")), self.state_dir)
+            except (KeyError, OSError, ValueError):
+                run = None
+            shown["outputs"] = _brief(run.get("outputs") or {}) if run is not None else None
+            if run is not None and run.get("problems"):
+                shown["problems"] = list(dict.fromkeys([*shown["problems"], *run["problems"]]))
+            rehearsals.append(shown)
+        rehearsed = any(r["this_code"] and r["state"] == "done" for r in rehearsals)
+        if status == SHIPPED:
+            refusal = f"{workflow.name} is shipped with the software; there is nothing to approve"
+        elif status == APPROVED:
+            refusal = f"{workflow.name} is already approved, as it is now"
+        elif not checked["ok"]:
+            refusal = f"{workflow.name} does not pass its checks: {checked['problems']}"
+        elif not rehearsed:
+            refusal = f"{workflow.name} has never run to the end on a digital twin as it is now; run it there first"
+        else:
+            refusal = None
+        return {
+            "name": workflow.name, "status": status, "summary": workflow.summary, "inputs": dict(workflow.inputs), "budget": dict(workflow.budget),
+            "graph": {k: v for k, v in workflow.blueprint().items() if k in ("nodes", "edges")}, "source": workflow.source(),
+            "hash": current, "acts": checked["acts"], "tools": checked["tools"], "blocks": checked["blocks"], "problems": checked["problems"],
+            "request": {"text": asked.get("request"), "at": asked.get("at"), "this_code": asked.get("hash") == current} if asked else None,
+            "approval": approval,
+            "changed_since_approval": approval is not None and approval.get("hash") != current,
+            "rejection": {**rejection, "this_code": rejection.get("hash") == current} if rejection else None,
+            "rehearsals": rehearsals, "rehearsed": rehearsed,
+            "can_approve": refusal is None, "why_not": refusal,
+        }
+
+    def operator_tools(self) -> list:
+        """The tools a person uses to review, approve and reject workflows. Only the workflow operator endpoint
+        (``agent_mcp_server --endpoint-role operator``) serves them; no agent is given them."""
+        server = self
+        via = self.mcp.name
+
+        async def review_workflow(name: str) -> dict:
+            """Everything a person needs to decide whether a workflow may run on the real instrument: its status, the
+            user's request and when it was made, the summary, inputs, graph and source, every rehearsal on a digital
+            twin (when, state, outputs, problems), any approval or rejection, and whether it changed since it was
+            approved. Reads only."""
+            try:
+                return {"ok": True, **server.review(name)}
+            except LookupError as exc:
+                return {"ok": False, "error": str(exc)}
+
+        async def approve_workflow(name: str, approver: str, instrument: str | None = None, days: float | None = None) -> dict:
+            """A person approves a draft workflow, as it is now, to run on the real instrument. approver: the person's
+            name. instrument: the stack_id it is approved for (left out or "any": every instrument). days: how long the
+            approval holds (left out: until revoked). Refused unless this exact code ran to the end on a digital twin."""
+            try:
+                workflow, status = server._workflow(name)
+            except LookupError as exc:
+                return {"ok": False, "error": str(exc)}
+            if status == SHIPPED:
+                return {"ok": False, "status": status, "error": f"{workflow.name} is shipped with the software; there is nothing to approve"}
+            try:
+                record = server.library.approve(workflow.name, approver, login=getpass.getuser(), instrument=instrument, days=days,
+                                                require_rehearsal=True, via=via)
+            except (KeyError, ValueError, PermissionError) as exc:
+                return {"ok": False, "status": status, "error": str(exc.args[0])}
+            return {"ok": True, "status": APPROVED, "approval": record}
+
+        async def reject_workflow(name: str, reason: str) -> dict:
+            """A person rejects a workflow, with the reason, so it is not approved as it is. An approved one loses its
+            approval. The text is kept as a draft and still runs on a digital twin."""
+            try:
+                record = server.library.reject(name, reason, login=getpass.getuser(), via=via)
+            except KeyError as exc:
+                return {"ok": False, "error": f"there is no workflow named {name!r}" if not exc.args else str(exc.args[0])}
+            except (ValueError, PermissionError) as exc:
+                return {"ok": False, "error": str(exc.args[0])}
+            return {"ok": True, "rejection": record}
+
+        return [review_workflow, approve_workflow, reject_workflow]
 
     async def _open(self, run_id: str, caller: str | None):
         return await (self.endpoints.open(run_id, caller=caller) if caller else self.endpoints.open(run_id))

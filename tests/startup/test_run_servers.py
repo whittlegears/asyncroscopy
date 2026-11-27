@@ -257,6 +257,22 @@ def test_run_llm_passes_the_workflow_switches_and_keeps_hardware_on_loopback(tmp
         run_llm.load_config(path)
 
 
+def test_run_llm_starts_the_workflow_operator_endpoint_on_loopback_only(tmp_path):
+    from asyncroscopy.mcp.agent_mcp_server import parse_args
+
+    config = run_llm.load_config(run_llm.PROJECT_DIR / "configs" / "workflow_operator.yaml")
+    assert (config.agent.endpoint_role, config.agent.http_host, config.agent.http_port) == ("operator", "127.0.0.1", 8004)
+    command = run_llm.build_command(config)
+    assert command[command.index("--endpoint-role") + 1] == "operator"
+    assert parse_args(command[command.index("--name"):]).endpoint_role == "operator"
+    assert "--endpoint-role" not in run_llm.build_command(run_llm.load_config(run_llm.PROJECT_DIR / "configs" / "gemma-llm.yaml"))
+    for text, problem in (("http_host: 0.0.0.0, endpoint_role: operator", "127.0.0.1"), ("http_host: 127.0.0.1, endpoint_role: approver", "agent or operator")):
+        path = tmp_path / "operator.yaml"
+        path.write_text(f"agent: {{name: W, transport: streamable-http, {text}, http_port: 8004}}", encoding="utf-8")
+        with pytest.raises(run_llm.ConfigError, match=problem):
+            run_llm.load_config(path)
+
+
 def test_run_llm_skips_sync_when_extras_installed(fake_uv, monkeypatch):
     monkeypatch.setattr(run_llm, "agent_extras_installed", lambda: True)
     config = run_llm.load_config(run_llm.PROJECT_DIR / "configs" / "gemma-llm.yaml")

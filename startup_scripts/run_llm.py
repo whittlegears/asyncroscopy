@@ -54,6 +54,8 @@ SETTINGS = [
                  'On a simulated stack only, unless the next setting is on.'),
     Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
             help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
+    Setting('agent.endpoint_role', default='agent', section='Agent MCP server', label='Endpoint role', choices=('agent', 'operator'),
+            help='operator: only the workflow review, approve and reject tools, for a person (no swarm, no model). Needs HTTP host 127.0.0.1.'),
 ]
 
 
@@ -77,6 +79,7 @@ class AgentConfig:
     startup_agents: list[dict] = field(default_factory=list)
     workflows: bool = True
     workflows_hardware: bool = False
+    endpoint_role: str = "agent"
 
 
 @dataclass(frozen=True)
@@ -104,6 +107,11 @@ def load_config(path: Path) -> Config:
     if values['agent.workflows_hardware'] and not is_loopback_host(str(values['agent.http_host'] or '')):
         problems.append('agent.workflows_hardware needs agent.http_host 127.0.0.1: the agent server has no login, so on another '
                         'address anyone who reaches the port would run workflows on the real instrument')
+    if values['agent.endpoint_role'] not in ('agent', 'operator'):
+        problems.append(f"agent.endpoint_role must be agent or operator, not {values['agent.endpoint_role']!r}")
+    elif values['agent.endpoint_role'] == 'operator' and not is_loopback_host(str(values['agent.http_host'] or '')):
+        problems.append('agent.endpoint_role operator needs agent.http_host 127.0.0.1: it approves workflows for the real instrument '
+                        'and has no login')
     startup_agents = values['agent.startup_agents'] or []
     if not isinstance(startup_agents, list) or not all(isinstance(e, dict) and e.get('name') for e in startup_agents):
         problems.append('agent.startup_agents must be a list of agents, each with a name')
@@ -124,6 +132,7 @@ def load_config(path: Path) -> Config:
             startup_agents=[dict(entry) for entry in startup_agents],
             workflows=bool(values['agent.workflows']) or bool(values['agent.workflows_hardware']),
             workflows_hardware=bool(values['agent.workflows_hardware']),
+            endpoint_role=str(values['agent.endpoint_role']),
         ),
     )
 
@@ -156,6 +165,8 @@ def build_command(config: Config) -> list[str]:
         # so this child cannot race other launchers re-syncing the same venv.
         sync=not agent_extras_installed(),
     )
+    if agent.endpoint_role != 'agent':
+        command += ['--endpoint-role', agent.endpoint_role]
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
     if agent.workflows_hardware:

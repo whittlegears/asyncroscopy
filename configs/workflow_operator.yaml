@@ -1,0 +1,16 @@
+# Workflow operator endpoint: the tools a person uses to review, approve and reject workflows
+# (review_workflow, approve_workflow, reject_workflow). No swarm and no model; no agent is given these tools.
+#
+#   uv run startup_scripts/run_llm.py --yaml configs/workflow_operator.yaml
+#
+# Run it on the GUI's machine, from the same directory as the agent MCP server (configs/gemma-llm.yaml), so both
+# read the same workflow library (outputs/workflows/library) and runs (outputs/workflows).
+# Keep http_host at 127.0.0.1: approving lets a workflow run on the real instrument, and this endpoint has no login.
+# The contract is docs/MCP/workflow_approval.md.
+
+agent:
+  name: Workflow_Operator_MCP
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8004
+  endpoint_role: operator

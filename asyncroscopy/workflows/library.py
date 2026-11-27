@@ -9,21 +9,28 @@ A workflow has one of three statuses.
   person who asked for it in ``requests.json``.
 
 A shipped or approved workflow may run on a real instrument when the operator allows hardware. A draft runs on a
-digital twin only. Only a person can approve, on the command line with
-``python -m asyncroscopy.workflows approve NAME``. No tool a model can call approves anything.
+digital twin only. Only a person can approve or reject, on the command line with
+``python -m asyncroscopy.workflows approve NAME``, or through the workflow operator endpoint
+(``asyncroscopy.mcp.agent_mcp_server --endpoint-role operator``; ``docs/MCP/workflow_approval.md``), which an app
+such as the GUI calls for a person and which no agent is given. No tool a model can call approves anything.
 
 An approval can carry these.
 
 * **Rehearsals.** Every run of a draft on a digital twin is saved in ``rehearsals.json``. The person approving sees
-  the runs of this exact code. None is required.
+  the runs of this exact code. The command line requires none; the operator endpoint requires one that ran to the
+  end (``require_rehearsal``).
 * **An instrument.** ``instrument`` limits the approval to one stack, named by the endpoint's ``stack_id``. Left
   out, it holds on every instrument.
 * **An end date.** ``days`` makes the approval expire.
 * **Approvers.** If the library has ``approvers.json``, a list of login names, only those logins may approve.
   Without it anyone who can run the command on this host may. The record keeps the login and the name given.
 
+A person can also **reject** a draft with a reason. The rejection is kept in ``rejections.json`` with the hash it
+was given for, the draft stays a draft (it still runs on a twin), and an approval later replaces it. Rejecting an
+approved workflow revokes its approval first.
+
 The files under ``root`` are ``drafts/NAME.py``, ``approved/NAME.py``, ``approvals.json``, ``rehearsals.json``,
-``requests.json`` and optionally ``approvers.json``.
+``requests.json``, ``rejections.json`` and optionally ``approvers.json``.
 """
 
 from __future__ import annotations
@@ -81,7 +88,8 @@ class Library:
         if workflow.name in all_workflows() or record.get("state") not in ("done", "failed", "stopped"):
             return
         entry = {"hash": record.get("hash"), "run_id": record.get("run_id"), "state": record.get("state"), "at": record.get("ended") or time.time(),
-                 "calls": record.get("calls"), "inputs": record.get("inputs") or {}, "error": record.get("error")}
+                 "calls": record.get("calls"), "inputs": record.get("inputs") or {}, "error": record.get("error"),
+                 "problems": list(record.get("problems") or [])}
         every = self._read("rehearsals.json", dict) or {}
         every[workflow.name] = [*(every.get(workflow.name) or []), entry][-KEPT_REHEARSALS:]
         self.root.mkdir(parents=True, exist_ok=True)
@@ -99,6 +107,14 @@ class Library:
 
     def approval(self, name: str) -> dict | None:
         return self._approvals().get(str(name))
+
+    def rejection(self, name: str) -> dict | None:
+        """The person's rejection of ``name`` as {"hash", "reason", "by", "login", "at", "via"}, or None."""
+        return (self._read("rejections.json", dict) or {}).get(str(name))
+
+    def _write_rejections(self, rejections: dict) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        (self.root / "rejections.json").write_text(json.dumps(rejections, indent=1, sort_keys=True), encoding="utf-8")
 
     def request(self, name: str) -> dict | None:
         """What the person asked for when the draft ``name`` was proposed, as {"request", "at"}, or None."""
@@ -178,6 +194,9 @@ class Library:
                     asked = self.request(path.stem)
                     if asked:
                         entry["requested"] = asked.get("request")
+                    rejected = self.rejection(path.stem)
+                    if rejected and rejected.get("hash") == workflow.hash():
+                        entry["rejected"] = rejected.get("reason")
                 out.append(entry)
         return out
 
@@ -215,13 +234,16 @@ class Library:
         (self.root / "requests.json").write_text(json.dumps(requests, indent=1, sort_keys=True), encoding="utf-8")
         return {**result, "draft": str(path), "status": DRAFT}
 
-    def approve(self, name: str, by: str, *, login: str | None = None, instrument: str | None = None, days: float | None = None) -> dict:
+    def approve(self, name: str, by: str, *, login: str | None = None, instrument: str | None = None, days: float | None = None,
+                require_rehearsal: bool = False, via: str = "cli") -> dict:
         """Record a person's approval of the draft ``name`` as it is now. Returns the approval record.
 
         ``by`` is the person's name.
         ``login`` is the account giving it, checked against ``approvers.json`` when that file exists.
         ``instrument`` is the ``stack_id`` it is approved for. None or "any" means every instrument.
         ``days`` is how long it holds. None means until revoked.
+        ``require_rehearsal`` refuses (ValueError) unless this exact code ran to the end on a digital twin at least once.
+        ``via`` says where the approval was given ("cli", or the operator endpoint's name), and is kept in the record.
 
         The draft becomes the approved workflow of that name and its hash is what is approved. Raises KeyError when
         there is no such draft, PermissionError when this login may not approve, and ValueError when the workflow
@@ -249,6 +271,9 @@ class Library:
         if workflow.name != str(name) or not result["ok"]:
             raise ValueError(f"{name} does not pass its checks: {result['problems'] or 'its file and its name differ'}")
         rehearsed = [r for r in self.rehearsals(workflow.name, result["hash"]) if r.get("state") == "done"]
+        if require_rehearsal and not rehearsed:
+            raise ValueError(f"{workflow.name} has not been approved: this exact code has never run to the end on a digital twin. "
+                             "Run it on the twin first (run_workflow on a simulated stack); a run that ends in 'done' is what approval needs.")
         now = time.time()
         approved = self._file(APPROVED, workflow.name)
         approved.parent.mkdir(parents=True, exist_ok=True)
@@ -259,9 +284,34 @@ class Library:
                   "instrument": str(instrument).strip() if instrument and str(instrument).strip() else ANY_INSTRUMENT,
                   "expires": now + float(days) * 86400.0 if days is not None else None,
                   "rehearsed": {k: rehearsed[-1].get(k) for k in ("run_id", "at", "calls", "inputs")} if rehearsed else None,
-                  "request": (self.request(workflow.name) or {}).get("request")}
+                  "request": (self.request(workflow.name) or {}).get("request"), "via": str(via)}
         self._write_approvals({**self._approvals(), workflow.name: record})
+        rejections = self._read("rejections.json", dict) or {}
+        if rejections.pop(workflow.name, None) is not None:
+            self._write_rejections(rejections)
         return {"name": workflow.name, **record}
+
+    def reject(self, name: str, reason: str, *, by: str | None = None, login: str | None = None, via: str = "cli") -> dict:
+        """Record a person's rejection of the workflow ``name`` as it is now, with their ``reason``. Returns the record.
+
+        An approved workflow loses its approval first (``revoke``). The text is kept as a draft, which still runs on a
+        twin. Raises KeyError when there is no such proposed workflow, ValueError for a shipped one or an empty
+        reason, and PermissionError when ``approvers.json`` exists and ``login`` is not in it.
+        """
+        if not str(reason or "").strip():
+            raise ValueError("a rejection gives the reason, so whoever wrote the workflow can fix it")
+        allowed = self.approvers()
+        if allowed is not None and str(login or "") not in allowed:
+            raise PermissionError(f"{login or 'an unnamed login'} is not in this library's approvers.json; those who may reject: {allowed}")
+        workflow, status = self.find(str(name))
+        if status == SHIPPED:
+            raise ValueError(f"{name} is shipped with the software; it is reviewed in the repository, not here")
+        if status == APPROVED or self._file(APPROVED, workflow.name).exists():
+            self.revoke(workflow.name)
+        record = {"hash": workflow.hash(), "reason": str(reason).strip(), "by": str(by).strip() if by and str(by).strip() else None,
+                  "login": login, "at": time.time(), "via": str(via)}
+        self._write_rejections({**(self._read("rejections.json", dict) or {}), workflow.name: record})
+        return {"name": workflow.name, "status": DRAFT, **record}
 
     def revoke(self, name: str) -> dict:
         """Withdraw an approval. The workflow becomes a draft again and its text is kept.

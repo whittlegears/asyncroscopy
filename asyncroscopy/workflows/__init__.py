@@ -12,7 +12,8 @@ the endpoint's risk policy, limits and trace apply to every call.
 
 An agent can also write a workflow and send it as text. ``authoring.py`` checks that the text only wires blocks
 together before any of it runs. ``library.py`` keeps it as a draft until a person approves it with
-``python -m asyncroscopy.workflows approve NAME``. Only shipped and approved workflows run on an instrument.
+``python -m asyncroscopy.workflows approve NAME``, or through the workflow operator endpoint
+(``docs/MCP/workflow_approval.md``), which no agent is given. Only shipped and approved workflows run on an instrument.
 """
 
 from .blocks import Block, BlockContext, BlockFailed, Stopped, Unreachable, all_blocks, describe_blocks, get_block, register_block

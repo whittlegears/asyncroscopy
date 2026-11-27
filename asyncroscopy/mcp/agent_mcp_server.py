@@ -7,6 +7,12 @@ here over MCP, in the same way they would reach any other tool server.
 
 It is the entry point that serves the agent layer, so it imports ``asyncroscopy.agents`` only
 when it builds the server, never at import: the MCP package stays below the agents.
+
+With ``--endpoint-role operator`` the same module serves the workflow operator endpoint instead: no swarm and no
+model, only the tools a person uses to review, approve and reject workflows (``WorkflowServer.operator_tools``),
+with ``endpoint_info`` and ``action_space`` saying so. It mirrors the instrument's operator endpoint
+(``mcp_server --endpoint-role operator``): a separate process, bound to loopback because it has no login, that an
+app calls for a person and never hands to a model. ``docs/MCP/workflow_approval.md`` is its contract.
 """
 
 from __future__ import annotations
@@ -45,6 +51,10 @@ def with_images(answer: str, images: list[dict]):
 
 # What query_agent may run. The empty string is the swarm and the rest are the named graphs.
 GraphName = Literal["", *AGENT_GRAPHS]
+ENDPOINT_ROLES = ("agent", "operator")
+# The workflow operator endpoint's tools as action-space entries: (tool, role, risk, effect).
+OPERATOR_ACTIONS = (("review_workflow", "setting.read", "low", "observe"), ("approve_workflow", "other", "high", "act"),
+                    ("reject_workflow", "other", "high", "act"))
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -74,6 +84,7 @@ class AgentMCPServer:
         verbose: bool = True,
         workflows: bool = True,
         workflows_hardware: bool = False,
+        endpoint_role: str = "agent",
     ) -> None:
         """
         Args:
@@ -89,11 +100,25 @@ class AgentMCPServer:
                 This is the one process workflows run in. They drive the first of ``mcp_urls``.
                 False: no workflow tools.
             workflows_hardware (bool): Also allow workflows on a stack that is not simulated.
+            endpoint_role (str): "agent" (default) serves the swarm and the workflow tools. "operator" serves only
+                the workflow review, approve and reject tools, for a person; no swarm and no model.
         """
-        from asyncroscopy.agents.graphs.swarm import AgentSwarm
-
+        if endpoint_role not in ENDPOINT_ROLES:
+            raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
         self.verbose = verbose
         self.mcp_urls = list(mcp_urls)
+        self.endpoint_role = endpoint_role
+        if endpoint_role == "operator":
+            from asyncroscopy.workflows.server import Endpoints, WorkflowServer
+
+            self.swarm = None
+            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="workflow-operator"), name=name)
+            self.mcp = FastMCP(name)
+            self._query_lock = asyncio.Lock()
+            return
+
+        from asyncroscopy.agents.graphs.swarm import AgentSwarm
+
         self.swarm = AgentSwarm(
             model=model,
             model_provider=model_provider,
@@ -127,8 +152,32 @@ class AgentMCPServer:
 
         return [StructuredTool.from_function(coroutine=fn, name=fn.__name__, description=fn.__doc__) for fn in self.workflows.tools()]
 
+    def endpoint_info(self) -> dict:
+        """For apps, not models: this is the workflow operator endpoint. role 'operator'; serves 'workflow_approvals';
+        the library and run folder it reads; the tools it offers."""
+        return {"role": self.endpoint_role, "serves": "workflow_approvals", "library": str(self.workflows.library.root.resolve()),
+                "state_dir": str(self.workflows.state_dir.resolve()), "tools": [fn.__name__ for fn in self.workflows.operator_tools()]}
+
+    def action_space(self) -> dict:
+        """For apps, not models: the workflow operator controls, in the instrument endpoints' action-space shape."""
+        from asyncroscopy.core.names import ROLES
+        from asyncroscopy.mcp.action_space import SCHEMA_VERSION, _purpose
+
+        docs = {fn.__name__: fn.__doc__ or "" for fn in self.workflows.operator_tools()}
+        actions = [{"tool": tool, "device": None, "command": None, "role": role, "role_source": "declared",
+                    "purpose": _purpose(docs[tool], None), "risk": risk, "effect": effect}
+                   for tool, role, risk, effect in OPERATOR_ACTIONS]
+        return {"schema_version": SCHEMA_VERSION, "endpoint": {"name": self.mcp.name, "role": self.endpoint_role}, "roles": dict(ROLES),
+                "instruments": [], "actions": actions, "state": [], "jobs": [], "warnings": []}
+
     def setup(self) -> None:
         """Register the swarm tools on the FastMCP instance."""
+        if self.endpoint_role == "operator":
+            native = [*self.workflows.operator_tools(), self.endpoint_info, self.action_space]
+            for tool_func in native:
+                self.mcp.add_tool(tool_func)
+            print(f"MCP workflow operator endpoint ready: {len(native)} tool(s) registered", flush=True)
+            return
         native = [self.query_agent, self.spawn_agent, self.list_agents, self.list_agent_tools, self.complete, self.set_max_steps]
         if self.workflows is not None:  # lets a client run a workflow without a model
             native += self.workflows.tools()
@@ -254,6 +303,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                              "(list_workflows, run_workflow, ...).")
     parser.add_argument("--workflows-hardware", action="store_true",
                         help="Also run workflows on a stack that does not say it is simulated (a real instrument). Needs a loopback --http-host.")
+    parser.add_argument("--endpoint-role", choices=ENDPOINT_ROLES, default="agent",
+                        help="agent (default): the swarm and the workflow tools. operator: only the workflow review, approve and reject "
+                             "tools, for a person; needs a loopback --http-host.")
     parser.add_argument("--quiet", action="store_true")
     return parser.parse_args(argv)
 
@@ -262,6 +314,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     from asyncroscopy.agents.graphs.swarm import Agent
 
+    if args.endpoint_role == "operator" and args.transport == "streamable-http" and not is_loopback_host(args.http_host):
+        print(f"MCP ERROR: --endpoint-role operator needs --http-host 127.0.0.1 (got {args.http_host}): it approves workflows for the "
+              "real instrument and has no login.", flush=True)
+        return 1
     if args.workflows_hardware and args.transport == "streamable-http" and not is_loopback_host(args.http_host):
         print(f"MCP ERROR: --workflows-hardware needs --http-host 127.0.0.1 (got {args.http_host}): this server has no login, "
               "and with it anyone who can reach the port would run workflows on the real instrument.", flush=True)
@@ -288,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
         verbose=not args.quiet,
         workflows=args.workflows,
         workflows_hardware=args.workflows_hardware,
+        endpoint_role=args.endpoint_role,
     )
     if args.transport == "streamable-http":
         print(
