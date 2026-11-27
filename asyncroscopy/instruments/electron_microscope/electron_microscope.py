@@ -533,6 +533,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "this vendor backend is missing the override"
         )
 
+    @refuses("get_beam_tilt")
     @abstractmethod
     def _get_beam_tilt(self):
         raise NotImplementedError(
@@ -540,6 +541,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "this vendor backend is missing the override"
         )
 
+    @refuses("set_beam_tilt")
     @abstractmethod
     def _set_beam_tilt(self,tilt):
         raise NotImplementedError(
@@ -547,6 +549,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "this vendor backend is missing the override"
         )
 
+    @refuses("get_diffraction_shift")
     @abstractmethod
     def _get_diffraction_shift(self):
         raise NotImplementedError(
@@ -554,6 +557,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "this vendor backend is missing the override"
         )
 
+    @refuses("set_diffraction_shift")
     @abstractmethod
     def _set_diffraction_shift(self, tilt):
         raise NotImplementedError(
@@ -561,6 +565,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "this vendor backend is missing the override"
         )
 
+    @refuses("auto_focus")
     @abstractmethod
     def _auto_focus(self):
         raise NotImplementedError(
