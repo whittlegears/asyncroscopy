@@ -272,11 +272,16 @@ def test_the_holder_renews_its_turn_and_notes_when_it_was_lost():
         turn = Turn(Endpoint(shared, "a"), what="map", lease_s=60, renew_s=0.02)
         await turn.wait()
         turn.keep()
-        await asyncio.sleep(0.1)
-        renewals = sum(1 for entry in shared["log"] if entry == ("a", "take_turn"))
+        deadline = asyncio.get_running_loop().time() + 5.0
+        renewals = 0
+        while renewals < 3 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.02)
+            renewals = sum(1 for entry in shared["log"] if entry == ("a", "take_turn"))
         shared["queue"].give("a")
         shared["queue"].take("thief")  # as if the lease had run out and another run had taken the turn
-        await asyncio.sleep(0.06)
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while "lost" not in (turn.lost or "") and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.02)
         lost = turn.lost
         await turn.give()
         return renewals, lost
