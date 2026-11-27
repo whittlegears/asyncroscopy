@@ -100,7 +100,8 @@ def autoscript_device(client: FakeAutoScriptClient, save_dir: Path):
     """An AutoScriptMicroscope connected to the fake client, with the Spectra 300 stack's settings devices."""
     device = _UnregisteredAutoScript.__new__(_UnregisteredAutoScript)
     device._tango_properties = {}
-    for name, value in {**SOFTWARE_LIMITS, "default_beam_current_pa": 50.0, "default_scan_detector": "haadf"}.items():
+    for name, value in {**SOFTWARE_LIMITS, "max_diffraction_shift": AutoScriptMicroscope.max_diffraction_shift.default_value,
+                        "default_beam_current_pa": 50.0, "default_scan_detector": "haadf"}.items():
         if hasattr(AutoScriptMicroscope, name):
             setattr(device, name, value)
     device._microscope = client
@@ -361,6 +362,17 @@ def test_autoscript_refused_shift_or_tilt_raises(autoscript, command, value):
     """A write the instrument refuses must reach the caller as an error, not be logged and dropped."""
     with pytest.raises(REFUSED):
         autoscript.call(command, value)
+
+
+def test_autoscript_diffraction_shift_beyond_max_diffraction_shift_is_refused_before_the_instrument(autoscript):
+    autoscript.client.optics.projector_mode = "Diffraction"
+    autoscript.device.max_diffraction_shift = 5e-3
+    for shift in ([6e-3, 0.0], [0.0, float("nan")]):
+        with pytest.raises(REFUSED, match="max_diffraction_shift"):
+            autoscript.call("set_diffraction_shift", shift)
+    assert autoscript.client.writes("optics.deflectors") == []
+    hint = autoscript.device.argument_hints()["set_diffraction_shift"]["args"][0]
+    assert (hint["min"], hint["max"]) == (-5e-3, 5e-3)
 
 
 def test_autoscript_diffraction_shift_outside_diffraction_is_refused(autoscript):

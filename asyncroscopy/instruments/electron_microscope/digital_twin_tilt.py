@@ -100,6 +100,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         self._beam_tilt_command = np.zeros(2, dtype=np.float64)
         self._beam_tilt = np.zeros(2, dtype=np.float64)
         self._diffraction_shift = np.zeros(2, dtype=np.float64)
+        self._projector_mode = "Imaging"
         self._rotation_center_jitter_nm = np.zeros(3, dtype=np.float64)
         self._tilt_wobble_nm = np.zeros(3, dtype=np.float64)
         self._tilt_drift_nm = np.zeros(2, dtype=np.float64)
@@ -574,13 +575,26 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         """The beam tilt as set. The tilt the beam really has (with its error) is hidden truth."""
         return self._beam_tilt_command
 
+    def _set_projector_mode(self, mode: str) -> None:
+        modes = {m.lower(): m for m in ("Imaging", "Diffraction")}
+        if str(mode).lower() not in modes:
+            raise ValueError(f"projector mode must be one of {sorted(modes.values())}, got {mode!r}; nothing was changed")
+        self._projector_mode = modes[str(mode).lower()]
+
+    def _refuse_outside_diffraction(self, what: str) -> None:
+        """As AutoScript: the diffraction shift exists in diffraction mode only."""
+        if self._projector_mode != "Diffraction":
+            raise ValueError(f"{what} needs the projector in Diffraction mode; it is in {self._projector_mode} mode")
+
     def _set_diffraction_shift(self, shift) -> None:
+        self._refuse_outside_diffraction("the diffraction shift")
         value = np.asarray(shift, dtype=np.float64)
         if value.shape != (2,):
             raise ValueError("Diffraction shift must be [x, y] in radians")
         self._diffraction_shift = value
 
     def _get_diffraction_shift(self):
+        self._refuse_outside_diffraction("reading the diffraction shift")
         return self._diffraction_shift
 
     def _auto_focus(self) -> None:
@@ -625,6 +639,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             {
                 "sample": "bulk silicon FIB lamella",
                 "beam_blanked": self._blanked,
+                "projector_mode": self._projector_mode,
                 "stage_command": self._stage_command.tolist(),
                 "image_shift_m": self._image_shift.tolist(),
                 "beam_tilt_mrad": (self._beam_tilt_command * 1e3).tolist(),

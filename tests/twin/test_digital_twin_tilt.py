@@ -295,3 +295,16 @@ def test_tango_commands_cover_tilt_workflow(
     assert camera_path.exists()
     with h5py.File(stem_path, "r") as h5:
         assert h5["stem_data"].shape == (16, 16, 16, 16)
+
+
+def test_the_diffraction_shift_needs_diffraction_mode_as_on_autoscript(tmp_path: Path):
+    twin = twin_for_path(tmp_path)
+    for call in (lambda: twin._set_diffraction_shift([1e-3, 0.0]), twin._get_diffraction_shift):
+        with pytest.raises(ValueError, match="Diffraction mode"):
+            call()
+    twin._set_projector_mode("diffraction")
+    twin._set_diffraction_shift([1e-3, 0.0])
+    assert list(twin._get_diffraction_shift()) == pytest.approx([1e-3, 0.0])
+    assert json.loads(twin._get_parameters())["projector_mode"] == "Diffraction"
+    with pytest.raises(ValueError, match="projector mode must be"):
+        twin._set_projector_mode("Spectroscopy")

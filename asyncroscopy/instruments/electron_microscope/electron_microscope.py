@@ -40,6 +40,7 @@ DETECTOR_ADDRESSES = {
 # The defaults of the limit properties are what the base enforces when a deployment sets none.
 SPECTRUM_DETECTORS = ("eds", "eels")
 DEFAULT_MAX_DEFOCUS = 1e-5
+DEFAULT_MAX_DIFFRACTION_SHIFT = 1e-2  # rad; a conservative software limit, not a vendor figure
 DEFAULT_MAX_STIGMATOR = 1e-6
 DEFAULT_MAX_SPECTRUM_IMAGE_POINTS = 64
 
@@ -117,6 +118,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
     # These limits are checked before any backend sees a value. action_hints tells clients the same ranges.
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
+    max_diffraction_shift = device_property(dtype=float, default_value=DEFAULT_MAX_DIFFRACTION_SHIFT, doc="Largest |diffraction shift| component accepted (rad). Set from the instrument.")
     max_camera_series_frames = device_property(dtype=int, default_value=100, doc="Most frames acquire_camera_series accepts.")
     max_camera_series_bytes = device_property(dtype=int, default_value=1 << 30, doc="Largest series acquire_camera_series accepts: frames x size^2 x camera_bytes_per_pixel (bytes).")
     # The vendor API does not report a camera's bytes per pixel, so it is configured. 0 (not set): acquire_camera_series is refused.
@@ -166,7 +168,8 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "get_beam_tilt": {"returns": {"type": "array", "items": "number", "elements": ["x", "y"], **self._beam_tilt_units()}},
             "set_beam_tilt": {"args": [{"name": "tilt", "type": "array", "items": "number", "elements": ["x", "y"], **self._beam_tilt_units()}]},
             "get_diffraction_shift": {"returns": {"type": "array", "items": "number", "elements": ["x", "y"], "units": "rad"}},
-            "set_diffraction_shift": {"args": [{"name": "shift", "type": "array", "items": "number", "elements": ["x", "y"], "units": "rad"}]},
+            "set_diffraction_shift": {"args": [{"name": "shift", "type": "array", "items": "number", "elements": ["x", "y"], "units": "rad",
+                                                "min": -float(self.max_diffraction_shift), "max": float(self.max_diffraction_shift)}]},
         }
 
     def _beam_tilt_units(self) -> dict:
@@ -291,8 +294,12 @@ class ElectronMicroscope(ScanningBeamInstrument):
     @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift in radians.', risk="high", role="setting.set")
     @hardware_call()
     def set_diffraction_shift(self, shift: list[float]) -> None:
-        """Set the diffraction shift to [x, y] in radians. Refused outside diffraction mode."""
-        self._set_diffraction_shift(shift)
+        """Set the diffraction shift to [x, y] in radians, each within max_diffraction_shift. Refused outside diffraction mode."""
+        values = [float(v) for v in shift]
+        limit = float(self.max_diffraction_shift)
+        if len(values) != 2 or not all(math.isfinite(v) and abs(v) <= limit for v in values):
+            raise ValueError(f"diffraction shift must be [x, y] in radians, each within +/-{limit} (max_diffraction_shift), got {list(shift)}; nothing was changed")
+        self._set_diffraction_shift(values)
 
     @command(dtype_in=DevString, doc_in=":param position: 'inserted' or 'retracted'.", risk="high", role="setting.set")
     @hardware_call()
