@@ -222,6 +222,18 @@ class AgentSwarm:
         """JSON list of MCP tools inherited over MCP, e.g. [{"name": "..."}, ...]."""
         return json.dumps([{"name": t.name} for t in self._tools])
 
+    @property
+    def tool_names(self) -> list[str]:
+        """Names of the MCP tools inherited from the connected servers."""
+        return [t.name for t in self._tools]
+
+    async def call_tool(self, name: str, args: dict):
+        """Call one inherited MCP tool directly (used by the deterministic workflows)."""
+        for tool in self._tools:
+            if tool.name == name:
+                return await tool.ainvoke(args)
+        raise KeyError(f"no inherited MCP tool {name!r}")
+
     def set_max_steps(self, max_steps: int) -> int:
         """Set the LangGraph recursion limit used per query and return the new value."""
         if max_steps < 1:

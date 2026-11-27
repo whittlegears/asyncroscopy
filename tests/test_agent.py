@@ -494,6 +494,10 @@ class TestAgentMCPServerTools:
             "list_agent_tools",
             "complete",
             "set_max_steps",
+            "save_site",
+            "calibrate_stage_mapping",
+            "return_to_site",
+            "list_sites",
         ]
 
     def test_spawn_agent_tool_delegates_to_swarm(self) -> None:

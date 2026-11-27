@@ -41,6 +41,7 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
+        sites_path: str = "outputs/sites.json",
     ):
         """
         Args:
@@ -52,8 +53,10 @@ class AgentMCPServer:
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+            sites_path (str): JSON notes file for saved sites (shared with the return-to-site skill).
         """
         self.verbose = verbose
+        self.sites_path = sites_path
         self.mcp_urls = list(mcp_urls)
         self.swarm = AgentSwarm(
             model=model,
@@ -75,21 +78,26 @@ class AgentMCPServer:
 
     def setup(self) -> None:
         """Register the swarm tools on the FastMCP instance."""
-        for tool_func in (
+        tool_funcs = (
             self.query_agent,
             self.spawn_agent,
             self.list_agents,
             self.list_agent_tools,
             self.complete,
             self.set_max_steps,
-        ):
+            self.save_site,
+            self.calibrate_stage_mapping,
+            self.return_to_site,
+            self.list_sites,
+        )
+        for tool_func in tool_funcs:
             self.mcp.add_tool(tool_func)
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
         # Printed unconditionally (unlike the verbose lines above) so startup GUIs
         # can parse the count from stdout even when quiet mode is on.
-        print("MCP ready: 6 tool(s) registered", flush=True)
+        print(f"MCP ready: {len(tool_funcs)} tool(s) registered", flush=True)
 
         if self.verbose:
             print("\nAvailable agent tools:")
@@ -110,6 +118,43 @@ class AgentMCPServer:
         """
         async with self._query_lock:
             return await self.swarm.query(prompt, include_transcript=include_transcript)
+
+    # -- deterministic workflows over the inherited MCP tools ---------------------------
+
+    def _workflow(self):
+        from asyncroscopy.mcp.workflows import return_to_site as wf
+
+        inst = wf.McpInstrument(self.swarm.call_tool, self.swarm.tool_names)
+        return wf, inst, wf.SiteBook(self.sites_path)
+
+    async def save_site(self, name: str, landmark: bool = False, notes: str = "") -> dict:
+        """Image the current spot and save it (image key, stage, field of view) so it can be found again.
+        Mark 2-3 distinctive, well-separated sites as landmarks: they re-register the specimen after a remount."""
+        wf, inst, book = self._workflow()
+        return await wf.save_site(inst, book, name, landmark, notes)
+
+    async def calibrate_stage_mapping(self) -> dict:
+        """Measure how stage moves shift the image at the current field of view (needed once per
+        magnification before return_to_site can centre anything). Takes a few small stage steps."""
+        wf, inst, book = self._workflow()
+        return {"stage_to_image": await wf.calibrate(inst, book)}
+
+    async def return_to_site(self, name: str, max_rotation_deg: float = 0.0) -> dict:
+        """Go back to a saved site and verify it by image registration (LangGraph workflow: go to the saved
+        position, survey, centre, verify, correct up to 3 times, record). status is 'match' only when the
+        native-magnification image matches within 2 pixels; 'ambiguous', 'no_match', 'not_converged' and
+        'not_calibrated' mean the site was NOT confirmed. Use max_rotation_deg=10 after a remount."""
+        wf, inst, book = self._workflow()
+        state = await wf.return_to_site(inst, book, name, max_rotation_deg=max_rotation_deg)
+        return {k: state.get(k) for k in ("status", "reasons", "final_stage", "visit")}
+
+    def list_sites(self) -> dict:
+        """Saved sites with their stage positions and the outcome of their last visit."""
+        from asyncroscopy.mcp.workflows.return_to_site import SiteBook
+
+        book = SiteBook(self.sites_path)
+        return {name: {"stage": s["stage"], "fov_m": s["fov_m"], "landmark": s.get("landmark", False),
+                       "last_visit": (s.get("visits") or [None])[-1]} for name, s in book.data["sites"].items()}
 
     def spawn_agent(self, config: str) -> str:
         """

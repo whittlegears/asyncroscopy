@@ -9,6 +9,13 @@ Stage coordinates are a starting guess, not an address. Backlash, drift and,
 above all, a remount move a feature by more than a field of view. You are back
 at a site only when `register_images` says `match`.
 
+If the agent MCP server is available (`agent_mcp_server`), its `save_site`,
+`calibrate_stage_mapping`, `return_to_site` and `list_sites` tools run exactly
+this procedure as a deterministic LangGraph workflow
+(`asyncroscopy/mcp/workflows/return_to_site.py`) and write the same notes
+file. Prefer them. Follow the steps below by hand when only the instrument MCP
+server is connected.
+
 Tool names are prefixed with the instrument's Tango class, for example
 `DigitalTwin_move_stage`. Below, `<I>` stands for that prefix. Everything a
 site needs is in your own notes, a JSON file you keep (default
