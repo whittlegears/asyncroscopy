@@ -65,7 +65,7 @@ Without `auth`, nothing changes: no token is asked for, and the caller is the se
 3. Keep the MCP servers and Tiled on 127.0.0.1. Put a proxy in front that terminates TLS, forwards `/mcp` to 8000 and `/analysis/mcp` to 8003, and passes the bearer token through.
 4. Leave the operator endpoint (8001) unforwarded unless the facility decides operators may use it remotely; if so, give it `auth` too (operator-only commands then need `instrument:approve`).
 
-The analysis server (`asyncroscopy.analysis_server`, port 8003) does not verify tokens yet; keep it on 127.0.0.1 behind the proxy.
+The analysis server (`pyTEMlib.analysis_server`, port 8003) does not verify tokens yet; keep it on 127.0.0.1 behind the proxy.
 
 ## Clients
 

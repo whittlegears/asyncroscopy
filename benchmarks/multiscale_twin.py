@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> dict:
     from asyncroscopy.testing import instrument_context
     from pyTEMlib.image_tools import register_to_parent
 
-    from asyncroscopy.analysis_server.frames import image_dataset
+    from pyTEMlib.analysis_server.frames import image_dataset
 
     def register_child(child, child_pixel_m, parent, parent_pixel_m, predicted_px, window_px, **kwargs):
         return register_to_parent(image_dataset(child, child_pixel_m), image_dataset(parent, parent_pixel_m), predicted_px, window_px, **kwargs)

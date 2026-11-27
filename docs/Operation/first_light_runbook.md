@@ -238,7 +238,7 @@ failed to connect is in FAULT and still counts as ready. Step 6 checks that.
 **Terminal 2: the analysis server.**
 
 ```powershell
-uv run --no-sync python -m asyncroscopy.analysis_server --tiled http://127.0.0.1:9091 --api-key $env:ASYNCROSCOPY_TILED_API_KEY --port 8003
+uv run --no-sync python -m pyTEMlib.analysis_server --tiled http://127.0.0.1:9091 --api-key $env:ASYNCROSCOPY_TILED_API_KEY --port 8003
 ```
 
 It prints `asyncroscopy analysis server at http://127.0.0.1:8003/mcp (Tiled: http://127.0.0.1:9091; ...)`. Leave

@@ -232,7 +232,7 @@ def free_port() -> int:
 def test_the_pipeline_over_the_real_mcp_wire_format(mapper_proxy, mapping_twin_proxy, tmp_path_factory, monkeypatch):
     import uvicorn
 
-    from asyncroscopy.analysis_server import create_server
+    from pyTEMlib.analysis_server import create_server
 
     # The run file is under the test's temporary folders, so let this server read that drive.
     mcp, _tools = create_server(include_basic=False, local_roots=[Path(Path.cwd().anchor)])

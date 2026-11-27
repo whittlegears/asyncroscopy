@@ -52,8 +52,7 @@ def test_core_imports_nothing_from_asyncroscopy():
     assert [m for m in loaded_by("asyncroscopy.core", "asyncroscopy.") if not m.startswith("asyncroscopy.core")] == []
 
 
-def test_the_analysis_server_uses_only_the_lower_layers():
-    """asyncroscopy.analysis_server stores, schedules and serves pyTEMlib's algorithms with core, contracts and trace;
-    it never loads the instrument endpoint, the agents or the device layer."""
-    forbidden = "asyncroscopy.mcp,asyncroscopy.agents,asyncroscopy.instruments,asyncroscopy.jobs"
-    assert loaded_by("asyncroscopy.analysis_server", forbidden) == []
+def test_the_analysis_server_is_pytemlibs_and_loads_nothing_of_asyncroscopy():
+    """The analysis server asyncroscopy launches (pyTEMlib.analysis_server) runs without asyncroscopy; asyncroscopy only
+    starts it and calls it over MCP."""
+    assert loaded_by("pyTEMlib.analysis_server", "asyncroscopy") == []

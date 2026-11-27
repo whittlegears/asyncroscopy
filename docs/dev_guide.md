@@ -184,16 +184,17 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
   `endpoint_info` once per run) and `profiles/` (model-specific data, the team graph's tool split
   among it). The agent MCP server (`mcp/agent_mcp_server.py`) imports the agent layer only when it
   starts.
-* `analysis_server/` is the analysis MCP server (`python -m asyncroscopy.analysis_server`): it stores,
-  schedules and serves pyTEMlib's `image_tools` (stitching, scoring, placement) with only `core`,
-  `contracts` and `trace` below it, never `mcp`, `agents`, `instruments` or `jobs`.
+* The analysis MCP server is pyTEMlib's (`python -m pyTEMlib.analysis_server`, started by
+  `startup_scripts/run_pytemlib.py`): it stores, schedules and serves pyTEMlib's `image_tools`
+  (stitching, scoring, placement). asyncroscopy only starts it and calls it over MCP; it keeps
+  asyncroscopy's headers, job envelope and log format (`tests/analysis/test_analysis_server_contract.py`).
 * `settings.py` is the one place an `ASYNCROSCOPY_*` variable or output path is read (table in
   `docs/Operation/settings.md`); `settings.get()` reads the environment at call time, so nothing is read at import.
 
 `tests/core/test_layering.py` imports each package in a fresh interpreter and fails if a lower package
 loads anything from `asyncroscopy.mcp` or `asyncroscopy.agents`, if `mcp` loads anything from
 `instruments` or `agents`, if `jobs` loads anything from `instruments`, or if the analysis server
-loads anything from `mcp`, `agents`, `instruments` or `jobs`.
+(`pyTEMlib.analysis_server`) loads anything from asyncroscopy.
 
 ---
 

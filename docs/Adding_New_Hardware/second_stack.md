@@ -19,7 +19,7 @@ with the Raman example's ready configs as a working reference:
 | Acquisition folder (holds Tiled's catalog) | `outputs/tiled_twin` (real instruments use `outputs/tiled_acquisitions`) | `outputs/raman_acquisitions` | `tiled.acquisition_dir`; two Tiled servers must not share one |
 | Agent MCP endpoint | 8000 | 8100 | `mcp.http_port` in the agent MCP config |
 | Operator MCP endpoint (optional) | 8001 | 8101 | `mcp.http_port` in the operator MCP config |
-| Map analysis (`asyncroscopy.analysis_server`) | 8003 | none | `mcp.analysis_url`: empty, or a second analysis server on its own port pointed at your Tiled (`--tiled http://localhost:9191 --port 8103`) |
+| Map analysis (`pyTEMlib.analysis_server`) | 8003 | none | `mcp.analysis_url`: empty, or a second analysis server on its own port pointed at your Tiled (`--tiled http://localhost:9191 --port 8103`) |
 | A Mapper's own analysis server (a second **twin**, or any stack with a Mapper) | `http://127.0.0.1:8003/mcp` | no Mapper | `devices.mapper.properties.analysis_url` in the stack config, as well as `mcp.analysis_url`: left at 8003, the second stack's maps are stitched by the first stack's pyTEMlib, which reads the first stack's Tiled, with no error |
 | Job state and traces | `outputs/jobs`, `outputs/trace/*.jsonl` | `outputs/stacks/raman/jobs`, `outputs/trace/raman_*.jsonl` | `state_directory` and `trace_path` instrument properties; `mcp.trace` |
 

@@ -29,7 +29,7 @@ dependencies = [
     "pytango==10.1.2",
     "scifireaders>=0.12.4,<0.13",
     "ase>=3.27.0",
-    "pyTEMlib>=0.2024.1.0",
+    "pyTEMlib[server]>=0.2024.1.0",
     "sidpy>=0.12.8,<0.13",
     "fastmcp>=0.1.0,<5",
     "anyio>=4.0.0",
@@ -127,11 +127,12 @@ autoscript-tem-microscope-client = { path = "stubs/AutoScript_v_1.18/autoscript_
 autoscript-tem-toolkit = { path = "stubs/AutoScript_v_1.18/autoscript_tem_toolkit-1.18.0-py3-none-any.whl" }
 thermoscientific-logging = { path = "stubs/AutoScript_v_1.18/thermoscientific_logging-1.4.0-py3-none-any.whl" }
 pyjem = { path = "stubs/PyJEM_v_1.3.0.3564/PyJEM-1.3.0.3564-py3-none-any.whl" }
-# The stitcher, field-of-view scorer and image placement (pyTEMlib.image_tools) live in a
-# pyTEMlib fork branch (whittlegears/pyTEMlib, branch refactor/sidpy-tools) until they are
+# The analysis server (pyTEMlib.analysis_server: stitching, scoring, placements, notes), the
+# stitcher, field-of-view scorer and image placement (pyTEMlib.image_tools) live in a pyTEMlib
+# fork branch (whittlegears/pyTEMlib, branch claude/audit-hardcoded-values-3wt5b7) until they are
 # merged upstream (pycroscopy/pyTEMlib); then this line goes and a PyPI pyTEMlib release is used.
 # Pinned to a commit so every fresh `uv sync` gets the same code.
-pytemlib = { git = "https://github.com/whittlegears/pyTEMlib.git", rev = "9fe12302fe86ed7056a0aa5fc563aaf05273d224" }
+pytemlib = { git = "https://github.com/whittlegears/pyTEMlib.git", rev = "76c39508932040b2bb18636923162c2b07da6f26" }
 torch = [
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
