@@ -8,6 +8,7 @@ these a workflow can be checked before anything runs. A block's ``run`` reaches 
 from __future__ import annotations
 
 import fnmatch
+import importlib
 import json
 import re
 import time
@@ -29,6 +30,42 @@ class BlockFailed(RuntimeError):
 
 class Stopped(RuntimeError):
     """The run was stopped or ran out of budget before this call was sent."""
+
+
+class Unreachable(BlockFailed):
+    """A tool call never reached its endpoint: the connection was refused or timed out before the request was sent.
+
+    The call was not delivered, so it cannot have acted, and the runner tries the node again (``graph.TRANSPORT_RETRY``).
+    """
+
+
+def _undelivered_errors() -> tuple[type[BaseException], ...]:
+    """The transport errors that mean a request was never sent: httpx's, and those of httpx2, the copy the MCP client
+    of fastmcp 4 uses, when it is installed."""
+    found: list[type[BaseException]] = []
+    for name in ("httpx", "httpx2"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        found += [module.ConnectError, module.ConnectTimeout, module.PoolTimeout]
+    return tuple(found)
+
+
+UNDELIVERED = _undelivered_errors()
+
+
+def undelivered(exc: BaseException) -> bool:
+    """Whether ``exc``, or an exception it was raised from, says the request never reached the endpoint."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, UNDELIVERED):
+            return True
+        if isinstance(exc, BaseExceptionGroup):
+            return all(undelivered(inner) for inner in exc.exceptions)
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 @dataclass(frozen=True)
@@ -188,7 +225,13 @@ class BlockContext:
     async def tool_names(self, server: McpServer | None = None) -> list[str]:
         server = server or self.instrument
         if id(server) not in self._names:
-            self._names[id(server)] = sorted(t.name for t in await server.list_tools())
+            try:
+                listed = await server.list_tools()
+            except Exception as exc:
+                if undelivered(exc):
+                    raise Unreachable(f"the endpoint's tools could not be listed: {type(exc).__name__}: {exc}") from exc
+                raise
+            self._names[id(server)] = sorted(t.name for t in listed)
         return self._names[id(server)]
 
     async def resolve(self, pattern: str, server: McpServer | None = None) -> str:
@@ -207,6 +250,9 @@ class BlockContext:
                 text, error = result_text(result), bool(result.is_error)
             except Exception as exc:
                 text, error = f"{type(exc).__name__}: {exc}", True
+                if undelivered(exc):
+                    self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": True})
+                    raise Unreachable(f"{name} did not reach the endpoint: {text[:600]}") from exc
             self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
             if not (error or text.startswith("Error")):
                 return parse_reply(text)
@@ -218,9 +264,11 @@ class BlockContext:
             raise BlockFailed(f"{name} failed: {text[:600]}")
 
     async def call(self, pattern: str, arguments: dict | None = None) -> Any:
-        """Call the instrument tool matching ``pattern`` and return its parsed reply.
+        """Call the instrument tool matching ``pattern`` and return its parsed reply. Every block's tool call goes
+        through here (or ``call_always`` / ``analyse``).
 
-        Raises Stopped or BlockFailed.
+        Raises Stopped (stopped, or out of budget), Unreachable (never delivered; the node is tried again) or
+        BlockFailed (the tool refused or failed, with its reply).
         """
         return await self._send(self.instrument, pattern, arguments, checked=True)
 

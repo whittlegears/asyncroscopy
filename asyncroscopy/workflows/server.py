@@ -257,12 +257,23 @@ class WorkflowServer:
             state 'running' with a run_id for workflow_status. state 'waiting' means it asks the user a question
             ('questions'); 'next' always says what to do. One workflow acts on the instrument at a time: started
             while another is acting, this one is 'queued' and starts by itself when its turn comes. The result's
-            outputs hold data keys (a stitched map's key is outputs.stitch.map)."""
+            outputs hold data keys (a stitched map's key is outputs.stitch.map). Inputs are checked against the
+            workflow's declared inputs (an unknown name, a wrong type or a value out of range is refused) before
+            anything is opened or run."""
             try:
                 workflow, status = server._workflow(name)
-                instrument, analysis, info = await server.endpoints.open()
             except LookupError as exc:
                 return {"state": "refused", "problems": [str(exc)]}
+            if inputs is not None and not isinstance(inputs, dict):
+                return {"state": "refused", "workflow": workflow.name, "problems": [f"inputs must be an object of name: value, not {inputs!r}"],
+                        "next": "nothing was run. Fix what problems names and call run_workflow again"}
+            try:
+                workflow.check_inputs(inputs)
+            except ValueError as exc:
+                return {"state": "refused", "workflow": workflow.name, "problems": [str(exc)],
+                        "next": "nothing was run. Fix the inputs that problems names (get_workflow's inputs say what each takes) and call run_workflow again"}
+            try:
+                instrument, analysis, info = await server.endpoints.open()
             except Exception as exc:
                 return {"state": "refused", "problems": [f"the instrument endpoint could not be reached: {type(exc).__name__}: {exc}"]}
             problem = server._refusal(info, workflow.name, status)

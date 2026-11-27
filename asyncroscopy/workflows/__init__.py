@@ -15,12 +15,13 @@ together before any of it runs. ``library.py`` keeps it as a draft until a perso
 ``python -m asyncroscopy.workflows approve NAME``. Only shipped and approved workflows run on an instrument.
 """
 
-from .blocks import Block, BlockContext, BlockFailed, Stopped, all_blocks, describe_blocks, get_block, register_block
+from .blocks import Block, BlockContext, BlockFailed, Stopped, Unreachable, all_blocks, describe_blocks, get_block, register_block
 from .graph import Steps, Workflow, WorkflowState, all_workflows, get_workflow, register_workflow
 from .library import Library
 from .checks import lint
 
 __all__ = [
-    "Block", "BlockContext", "BlockFailed", "Library", "Steps", "Stopped", "Workflow", "WorkflowState", "all_blocks", "all_workflows",
+    "Block", "BlockContext", "BlockFailed", "Library", "Steps", "Stopped", "Unreachable", "Workflow", "WorkflowState", "all_blocks",
+    "all_workflows",
     "describe_blocks", "get_block", "get_workflow", "lint", "register_block", "register_workflow",
 ]

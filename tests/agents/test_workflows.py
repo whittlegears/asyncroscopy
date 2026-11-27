@@ -1106,3 +1106,52 @@ def test_a_second_run_that_drives_the_instrument_is_refused_while_one_is_running
         assert run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))["state"] == "done"
     finally:
         LIVE.pop("mapping-now", None)
+
+
+# A call that never reached the endpoint is tried again; nothing else is
+def test_a_call_that_never_reached_the_endpoint_is_retried_and_an_instrument_error_is_not(tmp_path, monkeypatch):
+    import httpx
+    from langgraph.types import RetryPolicy
+
+    from asyncroscopy.workflows import graph as graph_module
+    from asyncroscopy.workflows.blocks import Unreachable, undelivered
+
+    monkeypatch.setattr(graph_module, "TRANSPORT_RETRY", RetryPolicy(max_attempts=3, initial_interval=0.01, jitter=False,
+                                                                     retry_on=graph_module.TRANSPORT_RETRY.retry_on))
+    try:
+        raise RuntimeError("Client failed to connect") from httpx.ConnectError("refused")
+    except RuntimeError as exc:
+        assert undelivered(exc)
+    assert not undelivered(RuntimeError("Error: the stage refused")) and not undelivered(httpx.ReadTimeout("no answer"))
+
+    instrument, analysis, state = twin()
+    real, dropped = instrument.call, []
+
+    async def flaky(name, arguments=None):
+        if name == "Twin_acquire_scanned_image" and not dropped:
+            dropped.append(name)
+            raise RuntimeError("Client failed to connect: All connection attempts failed") from httpx.ConnectError("refused")
+        return await real(name, arguments)
+
+    instrument.call = flaky
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path / "a"))
+    assert dropped and record["state"] == "done" and state["taken"] == 4 and state["blanked"]
+
+    instrument, analysis, state = twin(on_acquire=lambda n: "Error: detector not inserted")
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path / "b"))
+    acquisitions = [n for n in instrument.names() if n == "Twin_acquire_scanned_image"]
+    assert record["state"] == "failed" and len(acquisitions) == 1 and state["blanked"]
+    from asyncroscopy.workflows import BlockFailed
+    assert issubclass(Unreachable, BlockFailed)
+
+
+def test_run_workflow_refuses_an_input_it_does_not_take_before_opening_the_instrument(tmp_path):
+    from fastmcp import Client
+
+    server, instrument, _ = served(tmp_path)
+
+    async def go():
+        async with Client(server.mcp) as client:
+            return await call(client, "run_workflow", name="map_grid", inputs={**INPUTS, "dwell_s": 1e-6})
+    reply = run(go())
+    assert reply["state"] == "refused" and "not ['dwell_s']" in reply["problems"][0] and instrument.log == []

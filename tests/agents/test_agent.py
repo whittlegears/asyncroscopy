@@ -480,19 +480,22 @@ class TestAgentMCPServerTools:
         return server
 
     def test_setup_registers_all_tools(self) -> None:
+        native = ["query_agent", "spawn_agent", "list_agents", "list_agent_tools", "complete", "set_max_steps"]
+        server = self._server(workflows=False)
+        registered = []
+        server.mcp.add_tool = registered.append
+        server.setup()
+        assert [tool.__name__ for tool in registered] == native
+
+        # Workflows are on by default: their tools follow the swarm's.
         server = self._server()
         registered = []
         server.mcp.add_tool = registered.append
         server.setup()
-
-        assert [tool.__name__ for tool in registered] == [
-            "query_agent",
-            "spawn_agent",
-            "list_agents",
-            "list_agent_tools",
-            "complete",
-            "set_max_steps",
-        ]
+        names = [tool.__name__ for tool in registered]
+        assert names[:len(native)] == native
+        assert names[len(native):] == [fn.__name__ for fn in server.workflows.tools()]
+        assert {"list_workflows", "get_workflow", "run_workflow", "workflow_status"} <= set(names)
 
     def test_spawn_agent_tool_delegates_to_swarm(self) -> None:
         server = self._server()

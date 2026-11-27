@@ -31,6 +31,7 @@ names that hash, so changing either makes it a different workflow.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import importlib
 import inspect
@@ -44,10 +45,17 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END as GRAPH_END
 from langgraph.graph import START as GRAPH_START
 from langgraph.graph import StateGraph
+from langgraph.types import RetryPolicy
 
-from .blocks import Block, BlockContext, BlockFailed, all_blocks
+from .blocks import Block, BlockContext, BlockFailed, Unreachable, all_blocks
 from .checks import END, START, edges_of, lint
 from .values import check_inputs, evaluate, fill
+
+# A node whose tool call never reached the endpoint (connection refused, connect or pool timeout) is tried again; the
+# call was not delivered, so it cannot have acted. Nothing else is retried: a refusal, an instrument error, a bad input,
+# a stop or a timeout while the endpoint was answering (it may have acted) ends the run, to be looked at and resumed.
+TRANSPORT_RETRY = RetryPolicy(max_attempts=4, initial_interval=2.0, backoff_factor=2.0, max_interval=30.0, jitter=True,
+                              retry_on=lambda exc: isinstance(exc, Unreachable))
 
 
 def _function(runnable: Any) -> Any:
@@ -221,8 +229,13 @@ class Workflow:
         return {"name": self.name, "summary": self.summary, "inputs": dict(self.inputs), "budget": dict(self.budget), "nodes": nodes, "edges": edges}
 
     def compile(self, ctx: BlockContext, checkpointer: Any = None):
-        """Compile the graph for one run. Lint first, because this assumes the workflow has no problems."""
-        return self._built(ctx).compile(checkpointer=checkpointer)
+        """Compile the graph for one run, every node with ``TRANSPORT_RETRY`` unless the module gave it a policy.
+        Lint first, because this assumes the workflow has no problems."""
+        graph = self._built(ctx)
+        for node, spec in list(graph.nodes.items()):
+            if spec.retry_policy is None:
+                graph.nodes[node] = dataclasses.replace(spec, retry_policy=TRANSPORT_RETRY)
+        return graph.compile(checkpointer=checkpointer)
 
     def source(self) -> str:
         """The text of the whole module that ``build`` is written in."""
