@@ -11,7 +11,7 @@ import math
 import time
 from pathlib import Path
 
-from tango import AttrWriteType, DevState
+from tango import AttrWriteType, DevState, DevVarFloatArray
 from tango.server import Device, attribute, device_property
 
 from asyncroscopy.utils.commands import action_hints_attribute, command
@@ -305,6 +305,24 @@ class STAGE(Device):
             self.set_state(DevState.ON)
         self.set_status(f"holder {name or 'none'}")
         return self.get_holder()
+
+    @command(dtype_in=DevVarFloatArray, doc_in=":param delta: [dx, dy, dz, dalpha, dbeta]; m for x, y, z and degrees for the tilts.",
+             risk="high", operator_only=True, role="stage.move")
+    def move_relative(self, delta: list[float]) -> None:
+        """Move the stage by delta from where it is. The target is checked against the stage and holder limits first."""
+        if getattr(self, "_frozen", None):
+            raise ValueError(f"the stage did not move: {self._frozen}")
+        step = [float(v) for v in delta]
+        if len(step) != 5 or not all(math.isfinite(v) for v in step):
+            raise ValueError(f"delta must be five finite numbers [dx, dy, dz, dalpha, dbeta], got {list(delta)}; the stage did not move")
+        here = [float(v) for v in self.read_position()]
+        target = [h + d for h, d in zip(here, step)]
+        self._check_limits(target)
+        self._move_relative(step, target)
+
+    def _move_relative(self, delta: list[float], target: list[float]) -> None:
+        """Move by ``delta`` (already checked: ``target`` is where it ends). A backend without its own relative move goes to ``target``."""
+        self._write_position(target)
 
     @staticmethod
     def _pair(value, name: str) -> tuple[float, float]:

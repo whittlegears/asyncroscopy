@@ -16,7 +16,12 @@ member names, types and units of AutoScript 1.18 (the client in ``stubs/``):
 - ``acquisition``: ``acquire_stem_images_advanced``, ``acquire_camera_image_advanced``;
 - ``analysis.eds.acquire_spectrum``;
 - ``detectors.screen``: ``position``, ``insert``, ``retract``, ``measure_current`` (A);
-- ``auto_functions``: ``run_opti_stem``, ``run_objective_auto_stigmator``;
+- ``auto_functions``: ``run_opti_stem`` (a RunOptiStemResults), ``run_objective_auto_stigmator``,
+  ``run_stem_auto_focus`` and ``run_beam_tilt_auto_focus`` (their Results: defocus and astigmatism in m);
+- ``specimen.stage.relative_move_safe`` and ``stop_jogging``; ``acquisition.acquire_camera_series_advanced``;
+  ``analysis.eels.acquire_spectra`` and ``acquire_spectrum_image``; ``optics.beam_stopper`` (insert,
+  half_insert, retract); ``optics.camera_length.value`` (set from ``available_values``);
+  ``detectors.get_scanning_detector`` (insert, retract);
 - ``detectors``: ``scanning_detectors``, ``camera_detectors``, ``eds_detectors``,
   ``eels_detectors`` and ``get_camera_detector`` (``exposure_time_limits``, Flucam only, and
   ``get_supported_image_sizes``), with the DetectorType / CameraType names of a Spectra 300;
@@ -51,7 +56,8 @@ from typing import Any
 
 import numpy as np
 from autoscript_core.common import ApplicationServerException
-from autoscript_tem_microscope_client.structures import CameraImageSize, CameraLengthData, Limits, MagnificationData, Point, StagePosition
+from autoscript_tem_microscope_client.structures import (CameraImageSize, CameraLengthData, Limits, MagnificationData, Point, RunBeamTiltAutoFocusResults,
+                                                          RunOptiStemResults, RunStemAutoFocusResults, StagePosition)
 
 HARDWARE_LIMITS = {
     "stage_x": (-1.0e-3, 1.0e-3),  # m
@@ -137,6 +143,16 @@ class _Stage(_Node):
         p = position if isinstance(position, StagePosition) else StagePosition(*position)
         self._rec("absolute_move_safe", "call", [p.x, p.y, p.z, p.a, p.b])
         self._move(p)
+
+    def relative_move_safe(self, relative_position: StagePosition | list[float]) -> None:
+        """AutoScript sets the tilt to zero first, then moves by the delta (m and rad)."""
+        d = relative_position if isinstance(relative_position, StagePosition) else StagePosition(*relative_position)
+        self._rec("relative_move_safe", "call", [d.x, d.y, d.z, d.a, d.b])
+        old = self._position
+        self._move(StagePosition(old.x + d.x, old.y + d.y, old.z + d.z, old.a + (d.a or 0.0), None if d.b is None else old.b + d.b))
+
+    def stop_jogging(self) -> None:
+        self._rec("stop_jogging", "call")
 
     def _move(self, p: StagePosition) -> None:
         for axis in "xyz":
@@ -321,7 +337,13 @@ class _Detectors(_Node):
     @property
     def eels_detectors(self) -> list[str]:
         self._rec("eels_detectors", "get")
-        return []
+        return ["Zebra"]  # EelsDetectorType's one value
+
+    def get_scanning_detector(self, detector_name: str) -> _ScanningDetector:
+        self._rec("get_scanning_detector", "call", detector_name)
+        if detector_name not in self.SCANNING:
+            raise ApplicationServerException(f"no scanning detector {detector_name!r}")
+        return _ScanningDetector(self._record, f"{self._path}.scanning[{detector_name}]")
 
     def get_camera_detector(self, detector_name: str) -> _Camera:
         self._rec("get_camera_detector", "call", detector_name)
@@ -360,8 +382,8 @@ class _Optics(_Node):
             "deflectors": sub(_Deflectors, "deflectors"),
             "stigmators": sub(_Stigmators, "stigmators"),
             "aperture_mechanisms": sub(_Apertures, "aperture_mechanisms"),
-            "beam_stopper": _ReadOnly(record, f"{path}.beam_stopper", insertion_state="Retracted"),
-            "camera_length": _ReadOnly(record, f"{path}.camera_length", value=CAMERA_LENGTHS[2], available_values=list(CAMERA_LENGTHS)),
+            "beam_stopper": sub(_BeamStopper, "beam_stopper"),
+            "camera_length": sub(_CameraLength, "camera_length"),
             "magnification": _ReadOnly(record, f"{path}.magnification", value=MagnificationData(nominal=1.0e5, calibrated=1.02e5, label="100 kx"),
                                        available_values=[MagnificationData(nominal=1.0e5, calibrated=1.02e5, label="100 kx")]),
         }.items():
@@ -448,6 +470,13 @@ class _Acquisition(_Node):
         _open_blanker(self._optics)
         return [FakeAdornedImage(np.zeros((size, size), dtype=np.uint16)) for _ in settings.detector_types]
 
+    def acquire_camera_series_advanced(self, settings: Any, length: int) -> list[FakeAdornedImage]:
+        self._rec("acquire_camera_series_advanced", "call", {"camera_detector": settings.camera_detector, "size": settings.size,
+                                                             "exposure_time": settings.exposure_time, "length": length})
+        _refuse_outside("camera_exposure", _number(settings.exposure_time, "camera exposure"), "camera exposure")
+        _open_blanker(self._optics)
+        return [FakeAdornedImage(np.zeros((int(settings.size), int(settings.size)), dtype=np.uint16)) for _ in range(int(length))]
+
     def acquire_camera_image_advanced(self, settings: Any) -> FakeAdornedImage:
         self._rec("acquire_camera_image_advanced", "call", {"camera_detector": settings.camera_detector, "size": settings.size,
                                                             "exposure_time": settings.exposure_time})
@@ -473,6 +502,77 @@ class _Eds(_Node):
         self._rec("acquire_spectrum_image", "call", {"dwell_time": settings.dwell_time, "size": settings.size})
         _open_blanker(self._optics)
         return _FakeSpectrumImage()
+
+
+class _Eels(_Node):
+    def __init__(self, record: _Recorder, path: str, optics: _Optics) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "_optics", optics)
+
+    def acquire_spectra(self, settings: Any) -> list[FakeAdornedImage]:
+        self._rec("acquire_spectra", "call", {"eels_detector": settings.eels_detector,
+                                              "exposure_time": [e.exposure_time for e in settings.eels_exposure_settings]})
+        _open_blanker(self._optics)
+        return [FakeAdornedImage(np.zeros(2048, dtype=np.float32)) for _ in settings.eels_exposure_settings]
+
+    def acquire_spectrum_image(self, settings: Any) -> _FakeSpectrumImage:
+        self._rec("acquire_spectrum_image", "call", {"eels_detector": settings.eels_detector, "size": settings.size})
+        _open_blanker(self._optics)
+        return _FakeSpectrumImage()
+
+
+class _BeamStopper(_Node):
+    def __init__(self, record: _Recorder, path: str) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "_state", "Retracted")
+
+    @property
+    def insertion_state(self) -> str:
+        self._rec("insertion_state", "get")
+        return self._state
+
+    def insert(self) -> None:
+        self._rec("insert", "call")
+        object.__setattr__(self, "_state", "Inserted")
+
+    def half_insert(self) -> None:
+        self._rec("half_insert", "call")
+        object.__setattr__(self, "_state", "HalfInserted")
+
+    def retract(self) -> None:
+        self._rec("retract", "call")
+        object.__setattr__(self, "_state", "Retracted")
+
+
+class _CameraLength(_Node):
+    def __init__(self, record: _Recorder, path: str) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "_value", CAMERA_LENGTHS[2])
+
+    @property
+    def value(self) -> CameraLengthData:
+        self._rec("value", "get")
+        return self._value
+
+    @value.setter
+    def value(self, value: CameraLengthData) -> None:
+        self._rec("value", "set", getattr(value, "label", value))
+        if not any(value.label == v.label for v in CAMERA_LENGTHS):
+            raise ApplicationServerException(f"camera length {value!r} is not in available_values")
+        object.__setattr__(self, "_value", value)
+
+    @property
+    def available_values(self) -> list[CameraLengthData]:
+        self._rec("available_values", "get")
+        return list(CAMERA_LENGTHS)
+
+
+class _ScanningDetector(_Node):
+    def insert(self) -> None:
+        self._rec("insert", "call")
+
+    def retract(self) -> None:
+        self._rec("retract", "call")
 
 
 class _FakeSpectrumImage:
@@ -512,10 +612,23 @@ class _AutoFunctions(_Node):
         super().__init__(record, path)
         object.__setattr__(self, "_optics", optics)
 
-    def run_opti_stem(self, settings: Any = None) -> None:
+    def run_opti_stem(self, settings: Any = None) -> RunOptiStemResults:
         self._rec("run_opti_stem", "call", getattr(settings, "method", None))
         if self._optics._state["optical_mode"] != "Stem":
             raise ApplicationServerException("OptiSTEM runs in STEM mode only")
+        return RunOptiStemResults(quality="Improved")
+
+    def run_stem_auto_focus(self, settings: Any) -> RunStemAutoFocusResults:
+        self._rec("run_stem_auto_focus", "call", {"scanning_detector": settings.scanning_detector, "accuracy_level": settings.accuracy_level})
+        if self._optics._state["optical_mode"] != "Stem":
+            raise ApplicationServerException("the STEM autofocus runs in STEM mode only")
+        return RunStemAutoFocusResults(astigmatism=2e-9, defocus=-4e-9)
+
+    def run_beam_tilt_auto_focus(self, settings: Any) -> RunBeamTiltAutoFocusResults:
+        self._rec("run_beam_tilt_auto_focus", "call", {"camera_detector": settings.camera_detector})
+        if self._optics._state["optical_mode"] != "Tem":
+            raise ApplicationServerException("the beam-tilt autofocus runs in TEM mode only")
+        return RunBeamTiltAutoFocusResults(astigmatism=3e-9, defocus=5e-9, drift=Point(1e-10, -2e-10))
 
     def run_objective_auto_stigmator(self, settings: Any) -> None:
         self._rec("run_objective_auto_stigmator", "call", getattr(settings, "camera_detector", None))
@@ -555,6 +668,7 @@ class FakeAutoScriptClient:
         self.acquisition = _Acquisition(record, "acquisition", self.optics)
         self.analysis = _Node(record, "analysis")
         object.__setattr__(self.analysis, "eds", _Eds(record, "analysis.eds", self.optics))
+        object.__setattr__(self.analysis, "eels", _Eels(record, "analysis.eels", self.optics))
         self.detectors = _Detectors(record, "detectors", self.optics.monochromator)
         self.auto_functions = _AutoFunctions(record, "auto_functions", self.optics)
         self.vacuum = _ReadOnly(record, "vacuum", state="Ready")

@@ -24,7 +24,7 @@ import json
 from abc import abstractmethod
 
 import tango
-from tango import AttrWriteType, DevDouble, DevFloat, DevString, DevVarFloatArray
+from tango import AttrWriteType, DevDouble, DevFloat, DevString, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, device_property
 
 from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, unsupported
@@ -60,6 +60,21 @@ def check_stigmator(stigmator: list[float], max_stigmator: float) -> list[float]
     if any(abs(v) > float(max_stigmator) for v in value):
         raise ValueError(f"stigmator must be within +/-{float(max_stigmator)} m per component, got {value}")
     return value
+
+
+def _request(text: str) -> dict:
+    """A command's JSON request object ({} for an empty string)."""
+    found = json.loads(text) if str(text or "").strip() else {}
+    if not isinstance(found, dict):
+        raise ValueError(f"the request must be a JSON object, got {text!r}")
+    return found
+
+
+def _positive(value, name: str) -> float:
+    number = float("nan") if value is None else float(value)
+    if not (math.isfinite(number) and number > 0):
+        raise ValueError(f"{name} must be a positive number of seconds, got {value!r}; nothing was acquired")
+    return number
 
 
 class ElectronMicroscope(ScanningBeamInstrument):
@@ -102,6 +117,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
     # These limits are checked before any backend sees a value. action_hints tells clients the same ranges.
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
+    max_camera_series_frames = device_property(dtype=int, default_value=100, doc="Most frames acquire_camera_series accepts.")
     max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")
 
     stem_mode = attribute(
@@ -300,11 +316,84 @@ class ElectronMicroscope(ScanningBeamInstrument):
         """Get the screen current in pA."""
         return self._get_screen_current()
 
-    @command(risk="high", role="optics.focus", routine=True)
+    @command(dtype_out=str, risk="high", role="optics.focus", routine=True)
     @hardware_call()
-    def auto_focus(self) -> None:
-        """Run the microscope's autofocus routine."""
-        self._auto_focus()
+    def auto_focus(self) -> str:
+        """Run the microscope's autofocus routine. Returns JSON of what the routine reports (on AutoScript in STEM,
+        OptiSTEM's quality: Bad, Improved or Good); {} from a routine that reports nothing."""
+        return json.dumps(self._auto_focus() or {})
+
+    # Operator only until reviewed: an agent is not given these (docs/Microscopy/modify_auto_script_microscope.md lists them).
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON of RunStemAutoFocusSettings fields to set (scanning_detector, size, dwell_time, auto_stigmate, accuracy_level); {} for the defaults.',
+             risk="high", operator_only=True, role="optics.focus")
+    @hardware_call()
+    def run_stem_auto_focus(self, request: str) -> str:
+        """Run the vendor STEM autofocus (STEM mode). Returns JSON {"defocus_m", "astigmatism_m"}, as the routine measured them."""
+        return json.dumps(self._run_stem_auto_focus(_request(request)))
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON of RunBeamTiltAutoFocusSettings fields to set (camera_detector, size, exposure_time, focus_method, auto_stigmate, ...); {} for the defaults.',
+             risk="high", operator_only=True, role="optics.focus")
+    @hardware_call()
+    def run_beam_tilt_auto_focus(self, request: str) -> str:
+        """Run the vendor beam-tilt autofocus (TEM mode). Returns JSON {"defocus_m", "astigmatism_m", "drift_m": [x, y]}."""
+        return json.dumps(self._run_beam_tilt_auto_focus(_request(request)))
+
+    @command(dtype_in=int, dtype_out=str, doc_in=":param length: Number of camera frames (1 to the max_camera_series_frames property).",
+             risk="high", operator_only=True, role="acquire.image")
+    @hardware_call()
+    def acquire_camera_series(self, length: int) -> str:
+        """Acquire a series of camera images with the CAMERA device's settings and return its DATA/Tiled key."""
+        length = int(length)
+        if not 1 <= length <= int(self.max_camera_series_frames):
+            raise ValueError(f"length must be between 1 and {int(self.max_camera_series_frames)} (max_camera_series_frames), got {length}; nothing was acquired")
+        camera = self._detector_proxies.get('camera')
+        return self._acquire_camera_series(camera.imsize, camera.exposure_time, camera.camera_detector, camera.readout_area, camera.frame_combining, length)
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"detector": an EELS detector from get_detectors, "exposure_time_s": seconds}.',
+             risk="high", operator_only=True, role="acquire.spectrum")
+    @hardware_call()
+    def acquire_eels_spectra(self, request: str) -> str:
+        """Acquire EELS spectra with the vendor's EELS detector and return their DATA/Tiled key."""
+        fields = _request(request)
+        return self._acquire_eels_spectra(str(fields.get("detector", "")), _positive(fields.get("exposure_time_s"), "exposure_time_s"))
+
+    @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"detector": an EELS detector, "exposure_time_s": seconds per point, "size": points per side}.',
+             risk="high", operator_only=True, role="acquire.other")
+    @hardware_call()
+    def acquire_eels_spectrum_image(self, request: str) -> str:
+        """Acquire an EELS spectrum image over the whole field and return its key."""
+        fields = _request(request)
+        size = int(fields.get("size", 0))
+        if not 2 <= size <= int(self.max_spectrum_image_points):
+            raise ValueError(f"size must be between 2 and {int(self.max_spectrum_image_points)}, got {size}; nothing was acquired")
+        return self._acquire_eels_spectrum_image(str(fields.get("detector", "")), _positive(fields.get("exposure_time_s"), "exposure_time_s"), size)
+
+    @command(dtype_in=DevString, doc_in=":param mode: 'Imaging' or 'Diffraction'.", risk="high", operator_only=True, role="setting.set")
+    @hardware_call()
+    def set_projector_mode(self, mode: str) -> None:
+        """Set the projector to imaging or diffraction."""
+        self._set_projector_mode(str(mode))
+
+    @command(dtype_in=DevString, doc_in=":param label: A camera length's label, from get_parameters' camera_lengths.", risk="high", operator_only=True, role="setting.set")
+    @hardware_call()
+    def set_camera_length(self, label: str) -> None:
+        """Set the camera length to one the microscope offers in this optical state, by its label."""
+        self._set_camera_length(str(label))
+
+    @command(dtype_in=DevString, doc_in=":param state: 'inserted', 'half_inserted' or 'retracted'.", risk="high", operator_only=True, role="setting.set")
+    @hardware_call()
+    def set_beam_stopper(self, state: str) -> None:
+        """Insert, half insert or retract the beam stopper."""
+        self._set_beam_stopper(str(state))
+
+    @command(dtype_in=DevVarStringArray, doc_in=":param request: [detector, state]: a scanning detector from get_detectors and 'inserted' or 'retracted'.",
+             risk="high", operator_only=True, role="setting.set")
+    @hardware_call()
+    def set_scanning_detector(self, request: list[str]) -> None:
+        """Insert or retract a scanning detector."""
+        if len(request) != 2:
+            raise ValueError(f"set_scanning_detector takes [detector, state], got {list(request)}")
+        self._set_scanning_detector(str(request[0]), str(request[1]))
 
     
     def _acquire_camera_image(
@@ -351,6 +440,33 @@ class ElectronMicroscope(ScanningBeamInstrument):
 
     def _detectors(self) -> dict:
         unsupported(self, "get_detectors")
+
+    def _run_stem_auto_focus(self, fields: dict) -> dict:
+        unsupported(self, "run_stem_auto_focus")
+
+    def _run_beam_tilt_auto_focus(self, fields: dict) -> dict:
+        unsupported(self, "run_beam_tilt_auto_focus")
+
+    def _acquire_camera_series(self, imsize: int, exposure_time: float, detector: str, readout_area: str, frame_combining: int, length: int) -> str:
+        unsupported(self, "acquire_camera_series")
+
+    def _acquire_eels_spectra(self, detector: str, exposure_time: float) -> str:
+        unsupported(self, "acquire_eels_spectra")
+
+    def _acquire_eels_spectrum_image(self, detector: str, exposure_time: float, size: int) -> str:
+        unsupported(self, "acquire_eels_spectrum_image")
+
+    def _set_projector_mode(self, mode: str) -> None:
+        unsupported(self, "set_projector_mode")
+
+    def _set_camera_length(self, label: str) -> None:
+        unsupported(self, "set_camera_length")
+
+    def _set_beam_stopper(self, state: str) -> None:
+        unsupported(self, "set_beam_stopper")
+
+    def _set_scanning_detector(self, detector: str, state: str) -> None:
+        unsupported(self, "set_scanning_detector")
 
     @abstractmethod
     def _get_defocus(self):

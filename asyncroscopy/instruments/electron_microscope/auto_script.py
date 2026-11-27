@@ -31,6 +31,21 @@ from asyncroscopy.instruments.electron_microscope.electron_microscope import Ele
 from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
 
+# The settings fields each vendor focus routine takes, from the 1.18 stub's RunStemAutoFocusSettings and
+# RunBeamTiltAutoFocusSettings. reset_beam_blanker_afterwards is left at AutoScript's default: the beam is left blanked.
+STEM_AUTO_FOCUS_FIELDS = ("scanning_detector", "size", "dwell_time", "auto_stigmate", "accuracy_level")
+BEAM_TILT_AUTO_FOCUS_FIELDS = ("camera_detector", "size", "exposure_time", "focus_method", "auto_stigmate", "use_three_image_method",
+                               "maximum_focus_change", "maximum_iterations", "maximum_astigmatism_change", "iterate_to_defocus")
+
+
+def _settings(cls, fields: dict, allowed: tuple[str, ...]):
+    """``cls`` with the ``fields`` given; a field it does not take is refused before the instrument."""
+    unknown = sorted(set(fields) - set(allowed))
+    if unknown:
+        raise ValueError(f"{cls.__name__} takes {list(allowed)}, not {unknown}; nothing was run")
+    return cls(**fields)
+
+
 # AutoScript imports — only available on the microscope PC.
 # Wrapped in try/except so the device can still be imported and tested
 # on a development machine without AutoScript installed.
@@ -40,7 +55,9 @@ try:
     from autoscript_tem_microscope_client.enumerations import RegionCoordinateSystem, ExposureTimeType
     from autoscript_tem_microscope_client.structures import Region, Rectangle
     from autoscript_tem_microscope_client.structures import StemAcquisitionSettings, EdsAcquisitionSettings, EdsSpectrumImageSettings, RunOptiStemSettings, CameraAcquisitionSettings
-    from autoscript_tem_microscope_client.structures import RunObjectiveAutoStigmatorSettings
+    from autoscript_tem_microscope_client.structures import RunObjectiveAutoStigmatorSettings, RunStemAutoFocusSettings, RunBeamTiltAutoFocusSettings
+    from autoscript_tem_microscope_client.structures import EelsAcquisitionSettings, EelsExposureSettings, EelsSpectrumImageSettings
+    from autoscript_tem_microscope_client.enumerations import ProjectorMode
 
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
@@ -796,13 +813,95 @@ class AutoScriptMicroscope(ElectronMicroscope):
         stage_proxy.position = target  # the STAGE device refuses a move outside its limits
 
     def _auto_focus(self):
-        """Run the vendor autofocus: OptiSTEM C1A1 in STEM, the objective auto-stigmator (Flucam) in TEM."""
+        """Run the vendor autofocus: OptiSTEM C1A1 in STEM (returning its quality), the objective auto-stigmator
+        (Flucam) in TEM, which reports nothing."""
         if self._is_stem():
             settings = RunOptiStemSettings(method="C1A1")
-            self._microscope.auto_functions.run_opti_stem(settings)
+            results = self._microscope.auto_functions.run_opti_stem(settings)
+            return {"routine": "run_opti_stem C1A1", "quality": None if results is None else results.quality}
         else:
             settings = RunObjectiveAutoStigmatorSettings(camera_detector="Flucam")
             self._microscope.auto_functions.run_objective_auto_stigmator(settings)
+
+    def _run_stem_auto_focus(self, fields: dict) -> dict:
+        if not self._is_stem():
+            raise ValueError("run_stem_auto_focus runs in STEM mode only (AutoScript); nothing was run")
+        results = self._microscope.auto_functions.run_stem_auto_focus(_settings(RunStemAutoFocusSettings, fields, STEM_AUTO_FOCUS_FIELDS))
+        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism)}
+
+    def _run_beam_tilt_auto_focus(self, fields: dict) -> dict:
+        if self._is_stem():
+            raise ValueError("run_beam_tilt_auto_focus runs in TEM mode only (AutoScript); nothing was run")
+        results = self._microscope.auto_functions.run_beam_tilt_auto_focus(_settings(RunBeamTiltAutoFocusSettings, fields, BEAM_TILT_AUTO_FOCUS_FIELDS))
+        drift = None if results.drift is None else [float(results.drift.x), float(results.drift.y)]
+        return {"defocus_m": float(results.defocus), "astigmatism_m": float(results.astigmatism), "drift_m": drift}
+
+    def _acquire_camera_series(self, imsize: int, exposure_time: float, detector: str, readout_area: str, frame_combining: int, length: int) -> str:
+        camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)
+        fixed_readout_area = {"full": "Full", "half": "Half", "quarter": "Quarter"}.get(readout_area.lower(), readout_area)
+        settings = CameraAcquisitionSettings(camera_detector=camera_detector, size=imsize, exposure_time=exposure_time,
+                                             fixed_readout_area=fixed_readout_area, frame_combining=frame_combining)
+        with self._beam_restored():
+            frames = self._microscope.acquisition.acquire_camera_series_advanced(settings, int(length))
+        series = np.stack([np.asarray(frame.data) for frame in frames])
+        attrs = {"length": int(length), "exposure_time": float(exposure_time), "readout_area": str(fixed_readout_area), "frame_combining": int(frame_combining)}
+        return save_acquisition(self, self._detector_proxies.get("data"), "camera_series", camera_detector, series, dataset_name="camera_series", dataset_attrs=attrs)
+
+    def _eels_detector(self, detector: str) -> str:
+        offered = [str(d) for d in self._microscope.detectors.eels_detectors]
+        if detector not in offered:
+            raise ValueError(f"no EELS detector {detector!r} on this microscope; it offers {offered} (get_detectors); nothing was acquired")
+        return detector
+
+    def _acquire_eels_spectra(self, detector: str, exposure_time: float) -> str:
+        settings = EelsAcquisitionSettings(eels_detector=self._eels_detector(detector), eels_exposure_settings=[EelsExposureSettings(exposure_time=exposure_time)])
+        with self._beam_restored():
+            spectra = self._microscope.analysis.eels.acquire_spectra(settings)
+        spectra = list(spectra)
+        return save_acquisition(self, self._detector_proxies.get("data"), "spectrum", [detector] * len(spectra), [np.asarray(s.data) for s in spectra],
+                                dataset_name="spectrum", dataset_attrs={"exposure_time": float(exposure_time)})
+
+    def _acquire_eels_spectrum_image(self, detector: str, exposure_time: float, size: int) -> str:
+        """Like the EDS spectrum image: the client's file is kept as it is, and its key is the file's path."""
+        settings = EelsSpectrumImageSettings(eels_detector=self._eels_detector(detector), eels_exposure_settings=[EelsExposureSettings(exposure_time=exposure_time)],
+                                             size=int(size))
+        with self._beam_restored():
+            spectrum_image = self._microscope.analysis.eels.acquire_spectrum_image(settings)
+        path = acquisition_filename(self, "spectrum_image", "eels", self._detector_proxies.get("data"), extension="emd")
+        spectrum_image.save(str(path))
+        return record_vendor_file(self, path, self._frame_attrs(size, float(exposure_time), [0.0, 0.0, 1.0, 1.0]))
+
+    def _set_projector_mode(self, mode: str) -> None:
+        modes = {m.lower(): m for m in (ProjectorMode.IMAGING, ProjectorMode.DIFFRACTION)}
+        if mode.lower() not in modes:
+            raise ValueError(f"projector mode must be one of {sorted(modes.values())}, got {mode!r}; nothing was changed")
+        self._microscope.optics.projector_mode = modes[mode.lower()]
+
+    def _set_camera_length(self, label: str) -> None:
+        available = list(self._microscope.optics.camera_length.available_values)
+        chosen = [value for value in available if value.label == label]
+        if not chosen:
+            raise ValueError(f"no camera length {label!r} in this optical state; available: {[v.label for v in available]}; nothing was changed")
+        self._microscope.optics.camera_length.value = chosen[0]
+
+    def _set_beam_stopper(self, state: str) -> None:
+        stopper = self._microscope.optics.beam_stopper
+        moves = {"inserted": stopper.insert, "half_inserted": stopper.half_insert, "retracted": stopper.retract}
+        if state.lower() not in moves:
+            raise ValueError(f"beam stopper state must be one of {sorted(moves)}, got {state!r}; nothing was changed")
+        moves[state.lower()]()
+
+    def _set_scanning_detector(self, detector: str, state: str) -> None:
+        offered = [str(d) for d in self._microscope.detectors.scanning_detectors]
+        if detector not in offered:
+            raise ValueError(f"no scanning detector {detector!r} on this microscope; it offers {offered}; nothing was changed")
+        if state.lower() not in ("inserted", "retracted"):
+            raise ValueError(f"state must be 'inserted' or 'retracted', got {state!r}; nothing was changed")
+        found = self._microscope.detectors.get_scanning_detector(detector)
+        if state.lower() == "inserted":
+            found.insert()
+        else:
+            found.retract()
 
     # The shift and tilt setters let the errors of AutoScript through. A write the instrument refuses must
     # reach the caller and the job that sent it. It must not be logged while the command reports success.

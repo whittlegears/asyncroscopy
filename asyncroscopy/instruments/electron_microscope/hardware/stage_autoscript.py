@@ -10,12 +10,14 @@ from tango import DevState
 from tango.server import device_property
 
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
+from asyncroscopy.utils.commands import command
 # AutoScript imports — only available on the microscope PC.
 # Wrapped in try/except so the device can still be imported and tested
 # on a development machine without AutoScript installed.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import StageAxis
+    from autoscript_tem_microscope_client.structures import StagePosition
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
@@ -177,6 +179,21 @@ class AutoScriptSTAGE(STAGE):
             stage.absolute_move_safe(position)
         else:
             stage.absolute_move(position)
+
+    def _move_relative(self, delta: list[float], target: list[float]) -> None:
+        """relative_move_safe: AutoScript sets the tilt to zero first, then moves by delta (m, and rad for the tilts)."""
+        dx, dy, dz, da, db = delta
+        beta = math.radians(db) if self._read_beta_tilt_enabled() else None
+        if beta is None and db != 0.0:
+            raise ValueError(f"stage dbeta = {db:.6g}, but the fitted holder has no beta tilt: give 0; the stage did not move")
+        self._microscope.specimen.stage.relative_move_safe(StagePosition(dx, dy, dz, math.radians(da), beta))
+
+    @command(risk="low", stop=True, role="safe_stop")
+    def stop_jogging(self) -> None:
+        """Stop jogging on all stage axes (AutoScript stop_jogging). A move started with move_stage runs to its end."""
+        if self._microscope is None:
+            raise RuntimeError("not connected to AutoScript, so jogging could not be stopped; stop it at the microscope's stage controls")
+        self._microscope.specimen.stage.stop_jogging()
 
     def _read_beta_tilt_enabled(self) -> bool:
         """Return True if the stage supports beta tilt, False otherwise."""

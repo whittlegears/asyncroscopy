@@ -269,6 +269,8 @@ TWIN_LACKS = {
     "set_diffraction_shift": ([1e-3, 0.0],),
     "get_diffraction_shift": (),
 }
+# The operator-only AutoScript actions (NEW_OPERATOR_ONLY below), get_detectors' camera details and the stage's
+# hardware_limits are AutoScript only too; the twin refuses the actions with UnsupportedCommand.
 # The twin has the screen and its current since it models the column (tests/twin/test_twin_column.py).
 # Only the twin has export_ground_truth, stage_moving, simulated_time_s, set_stigmator and get_stigmator.
 # The objective stigmator is not wired to AutoScript yet.
@@ -421,7 +423,7 @@ def test_autoscript_says_which_readings_it_cannot_give(autoscript):
 def test_autoscript_lists_its_detectors_and_refuses_one_it_does_not_have(autoscript):
     detectors = json.loads(autoscript.call("get_detectors"))
     assert detectors["scanning"] == ["BF", "DF2", "DF4", "HAADF", "BF-S", "DF-S"] and detectors["camera"] == ["BM-Ceta", "Flucam"]
-    assert detectors["eds"] == ["SuperX"] and detectors["eels"] == []
+    assert detectors["eds"] == ["SuperX"] and detectors["eels"] == ["Zebra"]
     assert detectors["cameras"]["Flucam"]["exposure_time_limits_s"] == [1e-3, 60.0]
     assert "Flucam only" in detectors["cameras"]["BM-Ceta"]["exposure_time_limits_s"]["unavailable"]
     assert {"size": 4096, "fixed_readout_area": "Full"} in detectors["cameras"]["BM-Ceta"]["image_sizes"]
@@ -434,3 +436,103 @@ def test_the_twin_lists_the_detectors_it_renders(twin):
     detectors = json.loads(twin.call("get_detectors"))
     parameters = json.loads(twin.call("get_parameters"))
     assert detectors["scanning"] == parameters["scan_detectors"] and detectors["camera"] == parameters["camera_detectors"] == []
+
+
+# AutoScript actions added for review: operator only until a person says otherwise
+NEW_OPERATOR_ONLY = ("run_stem_auto_focus", "run_beam_tilt_auto_focus", "acquire_camera_series", "acquire_eels_spectra",
+                     "acquire_eels_spectrum_image", "set_projector_mode", "set_camera_length", "set_beam_stopper", "set_scanning_detector")
+
+
+def test_the_new_actuating_commands_are_operator_only_and_the_twin_refuses_them(twin):
+    from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
+    from asyncroscopy.utils.commands import declared_hints
+
+    hints = declared_hints(AutoScriptMicroscope)
+    assert all(hints[name]["operator_only"] is True and hints[name]["risk"] == "high" for name in NEW_OPERATOR_ONLY)
+    assert declared_hints(STAGE)["move_relative"]["operator_only"] is True
+    stop = declared_hints(AutoScriptSTAGE)["stop_jogging"]
+    assert stop["risk"] == "low" and stop["stop"] is True and "operator_only" not in stop  # a stop stays with the agent and the e-stop
+    for name, argument in (("run_stem_auto_focus", "{}"), ("set_projector_mode", "Diffraction"), ("set_beam_stopper", "inserted")):
+        with pytest.raises(tango.DevFailed, match="does not support"):
+            twin.call(name, argument)
+
+
+def test_autoscript_auto_focus_returns_optistem_quality(autoscript):
+    assert json.loads(autoscript.call("auto_focus")) == {"routine": "run_opti_stem C1A1", "quality": "Improved"}
+
+
+def test_autoscript_stem_and_beam_tilt_autofocus_return_what_they_measured(autoscript):
+    assert json.loads(autoscript.call("run_stem_auto_focus", '{"accuracy_level": "Fine"}')) == {"defocus_m": -4e-9, "astigmatism_m": 2e-9}
+    assert autoscript.client.writes("auto_functions.run_stem_auto_focus")[-1]["value"]["accuracy_level"] == "Fine"
+    with pytest.raises(REFUSED, match="takes"):
+        autoscript.call("run_stem_auto_focus", '{"reset_beam_blanker_afterwards": true}')  # not a field it may set
+    with pytest.raises(REFUSED, match="TEM mode only"):
+        autoscript.call("run_beam_tilt_auto_focus", "{}")
+    autoscript.client.optics.optical_mode = "Tem"
+    assert json.loads(autoscript.call("run_beam_tilt_auto_focus", '{"camera_detector": "Flucam"}')) == {
+        "defocus_m": 5e-9, "astigmatism_m": 3e-9, "drift_m": [1e-10, -2e-10]}
+    with pytest.raises(REFUSED, match="STEM mode only"):
+        autoscript.call("run_stem_auto_focus", "{}")
+    assert len(autoscript.client.writes("auto_functions.run_stem_auto_focus")) == 1
+
+
+def test_autoscript_camera_series_uses_the_camera_settings_and_is_bounded(autoscript):
+    autoscript.device._detector_proxies["camera"] = SimpleNamespace(imsize=64, exposure_time=0.01, camera_detector="BM-Ceta", readout_area="Half",
+                                                                   frame_combining=1)
+    autoscript.device.max_camera_series_frames = 10
+    key = autoscript.call("acquire_camera_series", 3)
+    with h5py.File(key, "r") as h5:
+        assert h5["camera_series"].shape == (3, 64, 64) and h5["camera_series"].attrs["length"] == 3
+    assert autoscript.client.writes("acquisition.acquire_camera_series_advanced")[-1]["value"]["length"] == 3
+    for length in (0, 11):
+        with pytest.raises(REFUSED, match="nothing was acquired"):
+            autoscript.call("acquire_camera_series", length)
+    assert len(autoscript.client.writes("acquisition.acquire_camera_series_advanced")) == 1
+
+
+def test_autoscript_eels_needs_a_detector_the_microscope_has(autoscript):
+    autoscript.device.max_spectrum_image_points = 64
+    key = autoscript.call("acquire_eels_spectra", '{"detector": "Zebra", "exposure_time_s": 0.1}')
+    with h5py.File(key, "r") as h5:
+        assert h5["spectrum"].ndim == 1
+    assert autoscript.call("acquire_eels_spectrum_image", '{"detector": "Zebra", "exposure_time_s": 0.01, "size": 8}').endswith(".emd")
+    for request in ('{"detector": "GIF", "exposure_time_s": 0.1}', '{"detector": "Zebra"}', '{"detector": "Zebra", "exposure_time_s": 0.01, "size": 1}'):
+        with pytest.raises(REFUSED, match="nothing was acquired"):
+            autoscript.call("acquire_eels_spectrum_image" if "size" in request else "acquire_eels_spectra", request)
+    assert len(autoscript.client.writes("analysis.eels")) == 2
+
+
+def test_autoscript_imaging_set_up_takes_only_what_the_microscope_offers(autoscript):
+    autoscript.call("set_projector_mode", "diffraction")
+    assert autoscript.client.optics.projector_mode == "Diffraction"
+    autoscript.call("set_camera_length", "185 mm")
+    assert autoscript.client.optics.camera_length.value.label == "185 mm"
+    autoscript.call("set_beam_stopper", "half_inserted")
+    assert autoscript.client.optics.beam_stopper.insertion_state == "HalfInserted"
+    autoscript.call("set_scanning_detector", ["DF4", "retracted"])
+    assert autoscript.client.writes("detectors.scanning[DF4]")[-1]["path"] == "detectors.scanning[DF4].retract"
+    before = len(autoscript.client.writes())
+    for command, argument in (("set_projector_mode", "Spectroscopy"), ("set_camera_length", "2 m"), ("set_beam_stopper", "ajar"),
+                              ("set_scanning_detector", ["ADF", "inserted"]), ("set_scanning_detector", ["DF4", "out"])):
+        with pytest.raises(REFUSED, match="nothing was changed"):
+            autoscript.call(command, argument)
+    assert len(autoscript.client.writes()) == before
+
+
+def test_a_relative_stage_move_is_checked_against_the_limits_then_uses_relative_move_safe():
+    from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
+
+    client = FakeAutoScriptClient()
+    device = AutoScriptSTAGE.__new__(AutoScriptSTAGE)
+    device._tango_properties = {}
+    device._microscope, device._frozen, device._holder = client, None, ""
+    device._limits = {"x": (-1e-5, 1e-5), "y": (-1e-5, 1e-5), "z": (-1e-5, 1e-5), "alpha": (-30.0, 30.0), "beta": (-20.0, 20.0)}
+    device.high_tilt_deg, device.high_tilt_max_abs_z_m = 90.0, 1.0
+    STAGE.move_relative(device, [2e-6, 0.0, 0.0, 5.0, 0.0])
+    (call,) = client.writes("specimen.stage.relative_move_safe")
+    assert call["value"][:3] == [2e-6, 0.0, 0.0] and call["value"][3] == pytest.approx(math.radians(5.0))
+    with pytest.raises(ValueError, match="outside the stage limits"):
+        STAGE.move_relative(device, [9e-6, 0.0, 0.0, 0.0, 0.0])  # 2 + 9 um is past the 10 um limit
+    assert len(client.writes("specimen.stage.relative_move_safe")) == 1
+    AutoScriptSTAGE.stop_jogging(device)
+    assert client.writes("specimen.stage.stop_jogging")

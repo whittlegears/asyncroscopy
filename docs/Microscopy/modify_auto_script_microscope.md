@@ -85,3 +85,34 @@ deprecated and go in 1.21), and defocus from `optics.focusing.stem.objective.def
   holder)` when it connects. They narrow the configured `x_limits_m`, `y_limits_m`, `z_limits_m` and tilt limits,
   so a move is checked against the instrument's own limits as well; `get_holder` shows them as `hardware_limits`.
   When the two do not overlap on an axis, every move is refused until the configuration is fixed.
+
+## Operator-only actions waiting for review
+
+These commands were added from the AutoScript 1.18 stub (settings classes and enumeration values exactly as the
+stub names them). Each is declared `operator_only=True`, so only the operator endpoint offers it and no agent is
+given it, until a person has reviewed it on the instrument and decides to lift that. All are risk `high`. On the
+twins and JEOL each one raises UnsupportedCommand; no twin pretends to run them.
+
+| Command | Device | AutoScript call | Role |
+| :-- | :-- | :-- | :-- |
+| `run_stem_auto_focus(request)` | microscope | `auto_functions.run_stem_auto_focus(RunStemAutoFocusSettings)`; STEM only; returns `defocus_m`, `astigmatism_m` | `optics.focus` |
+| `run_beam_tilt_auto_focus(request)` | microscope | `auto_functions.run_beam_tilt_auto_focus(RunBeamTiltAutoFocusSettings)`; TEM only; returns `defocus_m`, `astigmatism_m`, `drift_m` | `optics.focus` |
+| `acquire_camera_series(length)` | microscope | `acquisition.acquire_camera_series_advanced(CameraAcquisitionSettings, length)`, with the CAMERA device's settings; at most `max_camera_series_frames` | `acquire.image` |
+| `acquire_eels_spectra(request)` | microscope | `analysis.eels.acquire_spectra(EelsAcquisitionSettings)`; the detector must be in `eels_detectors` | `acquire.spectrum` |
+| `acquire_eels_spectrum_image(request)` | microscope | `analysis.eels.acquire_spectrum_image(EelsSpectrumImageSettings)`; saved as the vendor file, like the EDS one | `acquire.other` |
+| `set_projector_mode(mode)` | microscope | `optics.projector_mode` = `ProjectorMode.IMAGING` or `DIFFRACTION` | `setting.set` |
+| `set_camera_length(label)` | microscope | `optics.camera_length.value` = the `available_values` entry with that label | `setting.set` |
+| `set_beam_stopper(state)` | microscope | `optics.beam_stopper.insert()`, `half_insert()` or `retract()` | `setting.set` |
+| `set_scanning_detector([detector, state])` | microscope | `detectors.get_scanning_detector(name).insert()` or `retract()` | `setting.set` |
+| `move_relative(delta)` | STAGE | the target (here + delta) is checked against the stage and holder limits first; AutoScript then uses `specimen.stage.relative_move_safe` (tilt to zero first), the twin moves to the target | `stage.move` |
+
+The focus routines take only the settings fields the stub lists for them (others are refused);
+`reset_beam_blanker_afterwards` is not offered, so AutoScript's default, a blanked beam afterwards, holds.
+
+Two changes are not operator only:
+
+- `stop_jogging()` on the AutoScript STAGE device calls `specimen.stage.stop_jogging()`. It is a stop (risk low,
+  role `safe_stop`), so agents keep it and `stop_all` calls it. It stops jogging only; a move under way runs to its
+  end, as `stop_all`'s `not_stopped` says.
+- `auto_focus` now returns JSON: on AutoScript in STEM, `{"routine": "run_opti_stem C1A1", "quality": ...}` from
+  `RunOptiStemResults.quality` (Bad, Improved or Good); `{}` where the routine reports nothing (TEM, the twins).

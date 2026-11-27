@@ -79,15 +79,15 @@ class Estop:
         """Emergency stop. On every device at once: blanks beams, closes shutters, switches lasers, lamps
         and X-rays off, aborts running jobs and lifts probes; then blanks and closes once more. Never switches off
         high tension, a gun or a filament (blanking is enough to stop, and those take hours to recover). A device that cannot be stopped is reported, not skipped. A stage move already under way
-        is not stopped (there is no stage stop to call) and is listed in "not_stopped". Returns what each step did."""
+        is not stopped (no call stops a stage move; stop_jogging stops only jogging) and is listed in "not_stopped". Returns what each step did."""
         server = self.server
         targets, missing = self.targets()
         report = estop.stop_all(targets, who=f"stop_all ({server.caller() or 'unknown caller'})", missing=missing,
                                 describe=_failed, wait_s=estop.STOP_ALL_WAIT_S)
-        # There is no stage stop to call, and a stage move runs to its end.
+        # No call stops a stage move, so it runs to its end.
         # Say so, so that stopped is not read as covering the stage too.
         not_stopped = [
-            f"{prefix}: a stage move already under way is not stopped (no stage stop exists; AutoScript 1.18 has none); "
+            f"{prefix}: a stage move already under way is not stopped (AutoScript 1.18 can stop only jogging, with stop_jogging); "
             "stop it at the microscope's stage controls if it must not finish"
             for prefix, device in sorted(server.devices.items())
             if device.stem and any(t.action_role == "stage.move" and t.device == prefix for t in server.descriptors.values())
