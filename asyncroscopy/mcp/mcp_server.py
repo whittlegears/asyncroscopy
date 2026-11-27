@@ -744,7 +744,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices, *self._health_tools()]
+        native_tools = [self.get_data_from_key, self.list_devices, *self._health_tools(), *self._autonomy_tools()]
         if self.supervision_config.enabled:
             native_tools += self._setup_supervision()
         for native_tool in native_tools:
@@ -874,6 +874,104 @@ class MCPServer:
         return result
 
     # ------------------------------------------------------------------
+    # Autonomous routines (focus, aberrations, whole sessions)
+    # ------------------------------------------------------------------
+
+    def _device_for_role(self, role: str) -> str:
+        for dev, cls, _cmd, _fn in self._tool_meta.values():
+            if self._role_of(dev, cls) == role:
+                return dev
+        return ""
+
+    def _autonomy_context(self):
+        from asyncroscopy.atlas.tango_backend import TangoMicroscope
+        from asyncroscopy.autonomy.routines import Imager, Resilient
+        from asyncroscopy.autonomy.session import SessionContext
+
+        instrument = self._device_for_role("instrument")
+        if not instrument:
+            raise RuntimeError("no instrument device (asyncroscopy/instrument/...) is registered")
+        inst = DeviceProxy(instrument)
+        inst.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+        corrector_dev = self._device_for_role("corrector")
+        corrector = None
+        if corrector_dev:
+            corrector = DeviceProxy(corrector_dev)
+            corrector.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+        scan_dev = self._device_for_role("scan")
+        scan = DeviceProxy(scan_dev) if scan_dev else None
+        monitor = self.health_monitor()
+        allowed = tuple(self.supervision_config.recovery_auto)
+        imager = Imager(inst, self._fetch_image_array, Resilient(monitor, allowed),
+                        detector=self.supervision_config.detector)
+        mic = TangoMicroscope(inst, scan, self._fetch_image_array, detector=self.supervision_config.detector)
+        atlas = self.supervisor.atlas if self.supervisor else None
+        return SessionContext(imager, mic=mic, corrector=corrector, monitor=monitor, atlas=atlas)
+
+    def _autonomy_body(self, routine: str, args: dict, step, origin: str = "agent"):
+        """Run one routine with *step* (direct, or the queue's child step)."""
+        from asyncroscopy.autonomy import routines
+        from asyncroscopy.autonomy.session import SessionPlan, run_session
+
+        ctx = self._autonomy_context()
+        if routine == "focus":
+            return routines.focus(ctx.imager, mode=args.get("mode", "defocus"),
+                                  step_m=float(args.get("step_m", 10e-9)), max_offset_m=args.get("max_offset_m"),
+                                  score=args.get("score", "edge_sharpness"), step=step)
+        if routine == "correct_aberrations":
+            if ctx.corrector is None:
+                raise RuntimeError("no corrector device is registered")
+            return routines.measure_and_correct(ctx.corrector, thresholds_m=args["thresholds_m"],
+                                                resilient=ctx.imager.resilient,
+                                                max_correction_m=args.get("max_correction_m"), step=step)
+        if routine == "session":
+            return run_session(ctx, SessionPlan.from_json(args.get("plan")), step,
+                               provenance={"requested_by": origin})
+        raise ValueError(f"unknown routine {routine!r}")
+
+    def run_autonomy(self, routine: str, args: dict, origin: str = "agent") -> dict:
+        from asyncroscopy.autonomy.session import jsonable
+
+        if self.supervisor is None:
+            return jsonable(self._autonomy_body(routine, args, lambda name, a, fn: fn(), origin))
+        result = self.supervisor._composite(f"autonomy.{routine}", f"autonomy: {routine}", args, origin, None,
+                                            lambda step: self._autonomy_body(routine, args, step, origin),
+                                            wait=True)
+        return jsonable(result)
+
+    def _autonomy_tools(self) -> list[Callable]:
+        server = self
+
+        @tool()
+        def autonomy_focus(mode: str = "defocus", step_m: float = 10e-9, max_offset_m: float | None = None,
+                           score: str = "edge_sharpness") -> dict:
+            """Find best focus by defocus ('defocus') or stage height ('stage_z') with a trust-region search.
+            The result is verified by re-measuring; if there is no real gain the start setting is restored and
+            status is 'no_improvement'. The setting never moves more than max_offset_m (default 6 x step_m)."""
+            return server.run_autonomy("focus", {"mode": mode, "step_m": step_m, "max_offset_m": max_offset_m,
+                                                 "score": score})
+
+        @tool()
+        def autonomy_correct_aberrations(thresholds_m: dict[str, float] | None = None,
+                                         max_correction_m: dict[str, float] | None = None) -> dict:
+            """Measure aberrations with the corrector, correct those above threshold (metres), measure again.
+            A correction that makes an aberration larger is undone and that aberration is left alone.
+            Default thresholds: C1 2 nm, A1 2 nm, B2 30 nm, A2 30 nm."""
+            th = thresholds_m or {"C1": 2e-9, "A1": 2e-9, "B2": 30e-9, "A2": 30e-9}
+            return server.run_autonomy("correct_aberrations", {"thresholds_m": th,
+                                                               "max_correction_m": max_correction_m})
+
+        @tool()
+        def autonomy_run_session(plan: dict | None = None) -> dict:
+            """Run a whole imaging session from one instruction: device health (with automatic recovery),
+            optional region finding, focus, aberration correction, a final image, and an atlas record.
+            plan keys (all optional): name, find_region, focus_mode (defocus|stage_z|none), focus_step_m,
+            focus_max_offset_m, correct, thresholds_m, polish ({aberration: step_m}), score, save_site."""
+            return server.run_autonomy("session", {"plan": plan or {}})
+
+        return [autonomy_focus, autonomy_correct_aberrations, autonomy_run_session]
+
+    # ------------------------------------------------------------------
     # Supervision: one queue, the specimen atlas, recipes
     # ------------------------------------------------------------------
 
@@ -928,6 +1026,10 @@ class MCPServer:
 
         sup = Supervisor(config, microscope=microscope, instrument_name=instrument[1] or "unknown",
                          instrument_kind=kind, detectors=detectors)
+        # Autonomous routines can be recipe steps too ("autonomy.focus", ...).
+        for routine in ("focus", "correct_aberrations", "session"):
+            sup.native[f"autonomy.{routine}"] = (
+                lambda args, step, r=routine: self._autonomy_body(r, args, step, args.get("_origin", "recipe")))
         for name, (dev, cls, cmd, direct) in self._tool_meta.items():
             sup.register_tool(ToolEntry(name=name, role=f"{self._role_of(dev, cls)}.{cmd}", fn=direct, device=dev))
         self.supervisor = sup

@@ -543,7 +543,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"get_data_from_key", "list_devices", "system_health", "recover_device"}
+        assert set(calls) == {"get_data_from_key", "list_devices", "system_health", "recover_device", "autonomy_focus", "autonomy_correct_aberrations", "autonomy_run_session"}
 
 
 class TestMCPCommandTimeout:

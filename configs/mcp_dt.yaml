@@ -38,7 +38,7 @@ mcp:
   # checked against the policy below, and the operator API/page is served at
   # http://<http_host>:<http_port>/supervision/ui (SciAgentGUI uses the same API).
   supervision:
-    enabled: true
+    enabled: false                    # opt-in: when true, agent device calls go through the shared queue
     dir: outputs/supervision          # history.jsonl, atlas/, recipes/
     specimen_id: digital-twin-sample
     instrument_kind: auto             # twin | real | auto (twin when the instrument class is a DigitalTwin)
