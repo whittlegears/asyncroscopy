@@ -41,6 +41,7 @@ from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.mcp.tool_log import ToolCallLog
+from asyncroscopy.supervision.service import SupervisionConfig, Supervisor, ToolEntry
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
 # plain string. Their tool wrappers additionally fetch the array back from Tiled and
@@ -84,6 +85,7 @@ class MCPServer:
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
         tool_log_path: str | None = None,
+        supervision: dict | None = None,
     ):
         """
         Args:
@@ -98,6 +100,9 @@ class MCPServer:
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
+            supervision (dict, optional): ``mcp.supervision`` config. When enabled, every device
+                tool call goes through one action queue shared with the operator, under the
+                control policy, and the operator HTTP API is served at ``/supervision``.
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -113,6 +118,11 @@ class MCPServer:
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
+        self.supervision_config = SupervisionConfig.from_config(supervision)
+        self.supervisor: Supervisor | None = None
+        # tool name -> (device name, device class, command, direct callable taking keyword args)
+        self._tool_meta: dict[str, tuple[str, str, str, Callable]] = {}
+        self._device_of: dict[tuple[str, str], str] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -512,6 +522,14 @@ class MCPServer:
         unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
         def _run(arguments: dict, *call_args):
+            supervisor = self.supervisor
+            if supervisor is None:
+                return _execute(arguments, *call_args)
+            # Agent calls share one queue with the operator, under the control policy.
+            return supervisor.run_tool(unique_name, lambda: _execute(arguments, *call_args), arguments,
+                                       origin="agent")
+
+        def _execute(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
@@ -568,6 +586,9 @@ class MCPServer:
             def wrapper():
                 return _run({})
 
+            def direct(**_kwargs):
+                return _execute({})
+
             params = []
             
         elif py_type is dict:
@@ -579,6 +600,10 @@ class MCPServer:
                     arg_input = kwargs
                 return _run({"arg": arg_input}, arg_input)
 
+            def direct(**kwargs):
+                arg_input = kwargs["arg"] if set(kwargs) == {"arg"} and isinstance(kwargs["arg"], dict) else kwargs
+                return _execute({"arg": arg_input}, arg_input)
+
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
             
@@ -588,6 +613,10 @@ class MCPServer:
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
                 return _run({param_name: self._numpy_to_python(arg)}, arg)
+
+            def direct(**kwargs):
+                arg = kwargs.get(param_name, kwargs.get("arg"))
+                return _execute({param_name: self._numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -600,6 +629,8 @@ class MCPServer:
         wrapper.__name__ = unique_name
         wrapper.__qualname__ = unique_name
 
+        device_name = self._device_of.get((dev_class, command_name), "")
+        self._tool_meta[unique_name] = (device_name, dev_class, command_name, direct)
         return wrapper
 
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
@@ -669,6 +700,7 @@ class MCPServer:
                 if dev_class not in tools:
                     tools[dev_class] = {}
                 tools[dev_class][command_name] = (func, cmd)
+                self._device_of[(dev_class, command_name)] = device_name
         return tools
 
     def setup(self, print_summary: bool = True):
@@ -696,6 +728,8 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices]
+        if self.supervision_config.enabled:
+            native_tools += self._setup_supervision()
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -736,6 +770,147 @@ class MCPServer:
                     print("")
                 print("")
 
+    # ------------------------------------------------------------------
+    # Supervision: one queue, the specimen atlas, recipes
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _role_of(device_name: str, dev_class: str) -> str:
+        parts = device_name.split("/")
+        return parts[1].lower() if len(parts) == 3 and parts[1] else dev_class.lower()
+
+    def _fetch_image_array(self, key: str) -> np.ndarray | None:
+        return self._find_first_2d_array(self._resolve_tiled_node(key), prefer_key="image")
+
+    def _setup_supervision(self) -> list[Callable]:
+        """Create the supervisor, register every device tool with it, and return the agent's tools."""
+        from asyncroscopy.atlas.tango_backend import TangoMicroscope
+        from asyncroscopy.supervision.http import register_operator_api
+
+        config = self.supervision_config
+        instrument = next(((dev, cls) for dev, cls, _cmd, _fn in self._tool_meta.values()
+                           if self._role_of(dev, cls) == "instrument"), ("", ""))
+        scan_device = next((dev for dev, cls, _c, _f in self._tool_meta.values()
+                            if self._role_of(dev, cls) == "scan"), "")
+        if not scan_device:
+            scan_device = instrument[0].replace("/instrument/", "/scan/") if instrument[0] else ""
+        kind = config.instrument_kind
+        if kind == "auto":
+            kind = "twin" if "twin" in instrument[1].lower() else "real"
+
+        def microscope():
+            if not instrument[0]:
+                return None
+            inst = DeviceProxy(instrument[0])
+            inst.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+            scan = None
+            if scan_device:
+                try:
+                    scan = DeviceProxy(scan_device)
+                    scan.ping()
+                except Exception:
+                    scan = None
+            return TangoMicroscope(inst, scan, self._fetch_image_array, detector=config.detector)
+
+        def detectors() -> set[str]:
+            if not instrument[0]:
+                return set()
+            params = json.loads(DeviceProxy(instrument[0]).get_parameters())
+            names = set()
+            for key in ("scan_detectors", "spectrum_detectors", "camera_detectors", "detectors"):
+                value = params.get(key)
+                if isinstance(value, list):
+                    names.update(str(v).lower() for v in value)
+            return names
+
+        sup = Supervisor(config, microscope=microscope, instrument_name=instrument[1] or "unknown",
+                         instrument_kind=kind, detectors=detectors)
+        for name, (dev, cls, cmd, direct) in self._tool_meta.items():
+            sup.register_tool(ToolEntry(name=name, role=f"{self._role_of(dev, cls)}.{cmd}", fn=direct, device=dev))
+        self.supervisor = sup
+        register_operator_api(self.mcp, sup)
+        if self.verbose:
+            print(f"Supervision on: {kind} instrument {instrument[1] or '?'}; queue history "
+                  f"{sup.queue.history_path}; atlas {sup.atlas.root}; operator API at /supervision")
+        return self._supervision_tools(sup)
+
+    @staticmethod
+    def _supervision_tools(sup: Supervisor) -> list[Callable]:
+        """Agent-facing tools. None of them can approve, resume, take over, or change policy."""
+
+        @tool()
+        def supervision_queue_status(limit: int = 30) -> dict:
+            """Show the shared action queue: who requested each action (agent, operator, recipe),
+            the site it targets, and whether it is queued, awaiting approval, running or finished.
+            Also says whether the operator has paused the queue or taken over control."""
+            snap = sup.queue.snapshot(limit)
+            return snap
+
+        @tool()
+        def supervision_action(action_id: str) -> dict:
+            """Show one action from the queue, including its result or error."""
+            return sup.queue.get(action_id).to_json()
+
+        @tool()
+        def atlas_list_sites() -> dict:
+            """List the saved sites in the specimen atlas with their predicted stage positions on the
+            current mount and the outcome of their last return visit."""
+            return sup.atlas.summary()
+
+        @tool()
+        def atlas_get_site(site_id: str) -> dict:
+            """Show one atlas site: native settings, provenance and every visit."""
+            return sup.atlas.get(site_id).to_json()
+
+        @tool()
+        def atlas_save_site(name: str, notes: str = "", landmark: bool = False, fov_m: float | None = None,
+                            imsize: int | None = None) -> dict:
+            """Image the current position at native settings and save it as an atlas site, with the
+            instrument settings and the run it came from. Mark well-separated, distinctive sites as
+            landmarks so the specimen can be re-registered after a remount."""
+            return sup.save_site(name, origin="agent", notes=notes, landmark=landmark, fov_m=fov_m, imsize=imsize)
+
+        @tool()
+        def atlas_return_to_site(site_id: str) -> dict:
+            """Return to a saved site and verify it: move to the predicted position, survey at lower
+            magnification, register against the original image, correct, and re-register at native
+            settings. The result's status is 'match' only when the registration is unambiguous and
+            within tolerance; any other status ('ambiguous', 'no_match', 'not_converged') means the
+            site was NOT confirmed, and you must not treat the current position as that site."""
+            return sup.return_to_site(site_id, origin="agent")
+
+        @tool()
+        def atlas_calibrate_stage_mapping(fov_m: float | None = None, imsize: int | None = None) -> dict:
+            """Measure how stage moves shift the image at the current position (needed for accurate
+            corrections). Takes a few small stage steps around the current position."""
+            return sup.calibrate_mapping(origin="agent", fov_m=fov_m, imsize=imsize)
+
+        @tool()
+        def atlas_reacquire_landmarks() -> dict:
+            """After the specimen was remounted: find every landmark site with a wide survey and a
+            rotation search, then fit how the specimen moved so other sites can be predicted."""
+            return sup.reacquire_landmarks(origin="agent")
+
+        @tool()
+        def recipe_list() -> dict:
+            """List saved recipes and whether each version has been rehearsed on a digital twin."""
+            return {"recipes": sup.recipes.list()}
+
+        @tool()
+        def recipe_check(name: str) -> dict:
+            """Check whether a recipe can start here: required tools and detectors, and twin rehearsal."""
+            return sup.check_recipe(name)
+
+        @tool()
+        def recipe_run(name: str, params: dict | None = None) -> dict:
+            """Run a saved recipe through the shared queue. On a real instrument, the recipe version must
+            first have run successfully on a digital twin."""
+            return sup.run_recipe(name, params, origin="agent")
+
+        return [supervision_queue_status, supervision_action, atlas_list_sites, atlas_get_site, atlas_save_site,
+                atlas_return_to_site, atlas_calibrate_stage_mapping, atlas_reacquire_landmarks, recipe_list,
+                recipe_check, recipe_run]
+
     def start(self, transport: Transport | None = None, **kwargs):
         """
         Synchronizes with Tango DB and begins serving the MCP protocol.
@@ -763,6 +938,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
+    parser.add_argument("--supervision-json", default="", help="mcp.supervision config as JSON; off when empty.")
     return parser.parse_args(argv)
 
 
@@ -808,6 +984,7 @@ def main(argv: list[str] | None = None) -> int:
         data_device_address=args.data_device_address,
         verbose=not args.quiet,
         tool_log_path=args.tool_log or None,
+        supervision=json.loads(args.supervision_json) if args.supervision_json else None,
     )
     if args.transport == "streamable-http":
         print(

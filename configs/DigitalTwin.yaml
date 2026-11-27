@@ -14,7 +14,8 @@ devices:
   scan:
     module_name: asyncroscopy.instruments.electron_microscope.hardware.scan
   stage:
-    module_name: asyncroscopy.instruments.electron_microscope.hardware.stage
+    class_name: TestStage
+    module_name: asyncroscopy.instruments.electron_microscope.hardware.TestStage
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin

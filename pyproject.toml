@@ -84,6 +84,9 @@ package-dir = { "" = "." }
 [tool.setuptools.packages.find]
 include = ["asyncroscopy*"]
 
+[tool.setuptools.package-data]
+"asyncroscopy.supervision" = ["*.html"]
+
 [tool.uv.sources]
 autoscript-core = { path = "stubs/AutoScript_v_1.18/autoscript_core-1.4.0-py3-none-any.whl" }
 autoscript-tem-microscope-client = { path = "stubs/AutoScript_v_1.18/autoscript_tem_microscope_client-1.18.0-py3-none-any.whl" }
