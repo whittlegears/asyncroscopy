@@ -44,6 +44,8 @@ SETTINGS = [
     Setting('agent.http_host', required=True, section='Agent MCP server', label='HTTP host'),
     Setting('agent.http_port', 'int', required=True, section='Agent MCP server', label='HTTP port'),
     Setting('agent.mcp_urls', 'list', [], section='Agent MCP server', label='Tool MCP URLs'),
+    Setting('agent.allowed_hosts', 'list', [], section='Agent MCP server', label='Allowed hosts',
+            help='Names besides the HTTP host and localhost that requests may give as Host or Origin, such as a proxy\'s.'),
     Setting('agent.model', default='gemma4:31b', section='Model'),
     Setting('agent.model_provider', default='ollama', section='Model', label='Provider'),
     Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
@@ -80,6 +82,7 @@ class AgentConfig:
     workflows: bool = True
     workflows_hardware: bool = False
     endpoint_role: str = "agent"
+    allowed_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -133,6 +136,7 @@ def load_config(path: Path) -> Config:
             workflows=bool(values['agent.workflows']) or bool(values['agent.workflows_hardware']),
             workflows_hardware=bool(values['agent.workflows_hardware']),
             endpoint_role=str(values['agent.endpoint_role']),
+            allowed_hosts=[str(host) for host in values['agent.allowed_hosts'] or []],
         ),
     )
 
@@ -169,6 +173,8 @@ def build_command(config: Config) -> list[str]:
         command += ['--endpoint-role', agent.endpoint_role]
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
+    if agent.allowed_hosts:
+        command += ['--allowed-hosts-json', json.dumps(agent.allowed_hosts)]
     if agent.workflows_hardware:
         command.append('--workflows-hardware')
     elif not agent.workflows:

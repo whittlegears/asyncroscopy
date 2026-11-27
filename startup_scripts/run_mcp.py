@@ -106,6 +106,9 @@ class MCPConfig:
     auth: AuthSettings | None = None
     # Port of the operator endpoint started beside this agent endpoint. None starts no operator endpoint.
     operator_port: int | None = None
+    # Names (besides the bind host, localhost and, on 0.0.0.0, this computer) that a request's Host and Origin may give,
+    # such as the name a proxy or another machine reaches the endpoint by. Anything else is refused (asyncroscopy.mcp.host_guard).
+    allowed_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,14 @@ def _module_list(value, where: str) -> list[str]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return list(value)
     raise ValueError(f"{where} must be a module name or a list of module names, not {value!r}")
+
+
+def _host_list(value, path) -> list[str]:
+    if value in (None, ''):
+        return []
+    if isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value):
+        return [item.strip() for item in value]
+    raise ValueError(f"{path}: mcp.allowed_hosts must be a list of host names or addresses, not {value!r}")
 
 
 def _operator_port(mcp: dict, path) -> int | None:
@@ -190,6 +201,7 @@ def load_config(path: Path) -> Config:
             # A relative public_key_file is read from the project directory. Dev tokens live under outputs/dev_tokens.
             auth=AuthSettings.from_config(mcp.get('auth'), base_dir=PROJECT_DIR),
             operator_port=_operator_port(mcp, path),
+            allowed_hosts=_host_list(mcp.get('allowed_hosts'), path),
         ),
     )
 
@@ -235,6 +247,7 @@ def operator_config(config: Config) -> Config | None:
         allow_remote_bind=False,
         auth=None,
         operator_port=None,
+        allowed_hosts=[],
     ))
 
 
@@ -290,6 +303,8 @@ def build_command(config: Config) -> list[str]:
         command.append('--allow-remote-bind')
     if config.mcp.auth is not None:
         command.extend(['--auth-json', config.mcp.auth.to_json()])
+    if config.mcp.allowed_hosts:
+        command.extend(['--allowed-hosts-json', json.dumps(config.mcp.allowed_hosts)])
     return command
 
 

@@ -58,6 +58,23 @@ Without `auth`, nothing changes: no token is asked for, and the caller is the se
 
 **Refusal to start.** A stack that is not simulated (its devices' `simulated` property is false, or cannot be read) whose MCP endpoint would bind beyond 127.0.0.1 (`http_host: 0.0.0.0` with `allow_remote_bind: true`, or a network address) must have `auth`: `run_mcp.py` refuses to start it, and so does the server when started directly. Twins may still bind every interface without tokens. The recommended hardware setup keeps `http_host: 127.0.0.1` and lets the proxy be the only thing on the network.
 
+## Host and Origin checks
+
+Every MCP HTTP endpoint (`run_mcp.py`'s agent, operator and monitor endpoints; `run_llm.py`'s agent server and
+workflow operator endpoint) answers only requests whose `Host` header, and `Origin` header when there is one, names
+the bind host, `localhost`, `127.0.0.1` or `::1`; with `http_host: 0.0.0.0`, also this computer's own name and
+addresses. Anything else gets HTTP 403 before the MCP handler sees it, so a web page whose domain is made to resolve to
+127.0.0.1 (DNS rebinding) cannot drive the instrument from a browser on this machine (`asyncroscopy/mcp/host_guard.py`).
+
+A proxy, or a machine that reaches the endpoint by another name, needs that name listed:
+
+```yaml
+mcp:            # run_mcp.py; for run_llm.py the same key goes under agent:
+  allowed_hosts: [instrument.lab.example]
+```
+
+The operator endpoint that `mcp.operator_port` starts takes none of these: it answers this computer only.
+
 ## What an instrument owner configures
 
 1. Ask the facility for the token service's JWKS URL and issuer, and an audience name for this instrument; agree the scopes (`instrument:read`, `instrument:operate`, `instrument:approve` unless the facility names them otherwise; map them with `mcp.auth.roles`).

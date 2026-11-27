@@ -28,6 +28,7 @@ from fastmcp import FastMCP
 
 from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
 from asyncroscopy.core.net import is_loopback_host
+from asyncroscopy.mcp import host_guard
 
 if TYPE_CHECKING:
     from asyncroscopy.agents.graphs.swarm import Agent
@@ -270,7 +271,7 @@ class AgentMCPServer:
         """Set the LangGraph recursion limit used per query, returning the new value."""
         return self.swarm.set_max_steps(max_steps)
 
-    def start(self, transport: str | None = None, **kwargs) -> None:
+    def start(self, transport: str | None = None, allowed_hosts: list[str] | None = None, **kwargs) -> None:
         """
         Register the swarm tools and begin serving the MCP protocol.
 
@@ -280,9 +281,13 @@ class AgentMCPServer:
         Args:
             transport: Transport protocol ("stdio", "http", "sse", or "streamable-http").
                 Defaults to None, which uses stdio for local piping to agents.
+            allowed_hosts: Over HTTP, hosts besides the bind host and this computer that a request's Host and Origin
+                may name (``asyncroscopy.mcp.host_guard``).
             **kwargs: Additional keyword arguments to pass to the MCP server.
         """
         self.setup()
+        if transport not in (None, "stdio"):
+            kwargs["middleware"] = [*kwargs.get("middleware", []), *host_guard.middleware(kwargs.get("host", ""), allowed_hosts or [])]
         self.mcp.run(transport=transport, **kwargs)
 
 
@@ -307,6 +312,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="agent (default): the swarm and the workflow tools. operator: only the workflow review, approve and reject "
                              "tools, for a person; needs a loopback --http-host.")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--allowed-hosts-json", default="[]", help="Hosts besides the bind host and this computer that requests may name in Host or Origin.")
     return parser.parse_args(argv)
 
 
@@ -352,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
             f"with tools inherited from {', '.join(server.mcp_urls)}",
             flush=True,
         )
-        server.start(transport="streamable-http", host=args.http_host, port=args.http_port)
+        server.start(transport="streamable-http", host=args.http_host, port=args.http_port, allowed_hosts=json.loads(args.allowed_hosts_json))
     else:
         server.start(transport=args.transport)
     return 0

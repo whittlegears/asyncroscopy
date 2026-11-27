@@ -10,7 +10,8 @@
 # http_host is 127.0.0.1 so only this machine can reach the endpoint: it has no
 # authentication, so anyone who can reach it can drive the instrument. To let
 # other machines connect, set http_host to this machine's LAN address (or
-# 0.0.0.0) on a trusted network only. See docs/Operation/quickstart.md.
+# 0.0.0.0) on a trusted network only. See docs/Operation/quickstart.md. A name other
+# than this machine's own (a proxy's) goes in mcp.allowed_hosts (docs/Operation/remote_access.md).
 
 tango:
   host: localhost

@@ -33,7 +33,7 @@ from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_typ
 from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, tool_name
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
-from asyncroscopy.mcp import endpoint_auth, local_docs
+from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
 from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, skills_tools, trace_tools, turns
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
@@ -683,9 +683,14 @@ class MCPServer:
                     print("")
                 print("")
 
-    def start(self, transport: Transport | None = None, **kwargs: Any) -> None:
-        """Synchronize with the Tango database and serve the MCP protocol ("stdio", "http", "sse" or "streamable-http")."""
+    def start(self, transport: Transport | None = None, allowed_hosts: list[str] | None = None, **kwargs: Any) -> None:
+        """Synchronize with the Tango database and serve the MCP protocol ("stdio", "http", "sse" or "streamable-http").
+
+        Over HTTP only requests whose Host and Origin are the bind host, this computer or ``allowed_hosts`` reach it
+        (``asyncroscopy.mcp.host_guard``)."""
         self.setup()
+        if transport not in (None, "stdio"):
+            kwargs["middleware"] = [*kwargs.get("middleware", []), *host_guard.middleware(kwargs.get("host", ""), allowed_hosts or [])]
         self.mcp.run(transport=transport, **kwargs)
 
 
@@ -716,6 +721,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
     parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated; otherwise such a stack binds 127.0.0.1.")
     parser.add_argument("--auth-json", default="", help="The MCP config's auth section (bearer-token verification); empty: none.")
+    parser.add_argument("--allowed-hosts-json", default="[]", help="Hosts besides the bind host and this computer that requests may name in Host or Origin.")
     return parser.parse_args(argv)
 
 
@@ -784,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.transport == "streamable-http":
         print(f"Starting {args.name} at http://{args.http_host}:{args.http_port}/mcp for Tango DB {args.tango_host}:{args.tango_port}", flush=True)
-        server.start(transport="streamable-http", host=args.http_host, port=args.http_port)
+        server.start(transport="streamable-http", host=args.http_host, port=args.http_port, allowed_hosts=json.loads(args.allowed_hosts_json))
     else:
         server.start(transport=args.transport)
     return 0
