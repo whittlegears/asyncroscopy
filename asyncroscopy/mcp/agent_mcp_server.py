@@ -71,7 +71,10 @@ class AgentMCPServer:
         @asynccontextmanager
         async def lifespan(server: FastMCP):
             await self.swarm.start(self.mcp_urls)
-            yield {}
+            try:
+                yield {}
+            finally:
+                await self.swarm.close()
 
         self.mcp = FastMCP(name, lifespan=lifespan)
         self._query_lock = asyncio.Lock()

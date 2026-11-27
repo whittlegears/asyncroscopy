@@ -133,13 +133,14 @@ class AgentSwarm:
             self.startup_error = f"{type(e).__name__}: {e}"
             self._error(f"[SYSTEM]: Failed to start the model: {self.startup_error}")
             self._error("[SYSTEM]: Serving MCP anyway; query_agent will report this error.")
-            return False
 
+        # Inherit tools even without a model: list_agent_tools and the deterministic
+        # workflows don't need one, and the model may come back later.
         for url in mcp_urls or [DEFAULT_MCP_URL]:
             if not await self.connect_mcp(url):
                 print(f"[SYSTEM]: Failed to connect to MCP Server at {url}.")
 
-        return True
+        return self._model is not None
 
     def _log(self, message: str) -> None:
         """Print a progress line when verbose, otherwise stay silent."""
@@ -155,20 +156,19 @@ class AgentSwarm:
     # ----------------------------------------------------------------------
 
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
-        """Connect to an MCP server and inherit its tools. Returns true for success."""
-        try:
-            # Imported here, not at module load: a broken or version-mismatched adapter must only
-            # disable tool inheritance, not take down the whole agent server and its workflows.
-            from langchain_mcp_adapters.client import MultiServerMCPClient
+        """Connect to an MCP server and inherit its tools. Returns true for success.
 
-            server_id = f"server_{len(self._mcp_clients)}"
-            client = MultiServerMCPClient({server_id: {"url": url, "transport": transport}})
+        Tools are loaded with the fastmcp client (see ``asyncroscopy.mcp.mcp_tools``);
+        *transport* is kept for compatibility and inferred from the URL by fastmcp.
+        """
+        try:
+            from asyncroscopy.mcp.mcp_tools import McpToolSource
 
             print(f"\n[SYSTEM]: Connecting to MCP Server at {url}...")
+            source = McpToolSource(url)
+            tools = await source.open()
 
-            tools = await client.get_tools()
-
-            self._mcp_clients.append(client)
+            self._mcp_clients.append(source)
             self._tools.extend(tools)
             print(f"[SYSTEM]: Connected. Inherited {len(tools)} tools.")
         except Exception as e:
@@ -176,6 +176,15 @@ class AgentSwarm:
             return False
 
         return True
+
+    async def close(self) -> None:
+        """Close the MCP connections opened by connect_mcp."""
+        for source in self._mcp_clients:
+            try:
+                await source.close()
+            except Exception:
+                pass
+        self._mcp_clients.clear()
 
     async def ensure_ollama_running(self, host: str = "http://localhost:11434", timeout: int = 10) -> None:
         """Check if Ollama server is running, offloaded to prevent blocking the event loop."""
