@@ -297,7 +297,8 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
                     axes: tuple[str, ...] = ("alpha",), step_deg: float = 0.1, max_offset_deg: float = 1.0,
                     max_iterations: int = 6, tolerance: float = 0.0, tilt_tolerance_deg: float = 0.02,
                     coarse_step_deg: float | None = 0.1, refine_repeats: int = 4, damping: float = 0.8,
-                    bisect_iterations: int = 3, landing_attempts: int = 3, approach_deg: float = 0.1,
+                    bisect_iterations: int = 3, landing_attempts: int = 4, landing_repeats: int = 8,
+                    approach_deg: float = 0.1,
                     step: Step = direct_step,
                     tracker: "Callable[[], dict] | None" = None) -> dict:
     """Tilt onto the zone axis using the Laue offset of camera diffraction patterns.
@@ -433,7 +434,7 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
             for attempt in range(landing_attempts):
                 tilt_to(center - approach_deg, "approach")
                 current = tilt_to(center, f"land {attempt + 1}")
-                lv = laue(current, f"land {attempt + 1}", refine_repeats)
+                lv = laue(current, f"land {attempt + 1}", landing_repeats)
                 sem = noise.get("sem")
                 landing_tol = max(float(np.linalg.svd(jac, compute_uv=False).min()) * tilt_tolerance_deg,
                                   2.0 * float(np.linalg.norm(sem)) if sem is not None else 0.0)
