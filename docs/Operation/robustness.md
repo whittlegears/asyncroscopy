@@ -11,7 +11,7 @@ the agent, the operator, and the person at the terminal.
 |---|---|---|
 | Vendor link drops; the device goes to FAULT. Example: the corrector link. | The failed MCP call's error, `system_health`, the doctor | `recover_device` runs the device's own `reconnect`, then `Init`. |
 | A command times out | The MCP error, which includes a **readback** of the state the command was changing, for example `get_stage` after `move_stage` | The agent checks `system_health` before retrying. |
-| A device server hangs | `system_health` | Restart the server through its admin device. This needs **operator approval** because it restarts every device in that server. `recover_device` queues the restart as an approval-gated action. |
+| A device server hangs | `system_health` | Restart the server through its admin device. This restarts every device in that server, so it is never done by an agent: `recover_device` stops and tells the operator to run `python -m asyncroscopy.health --fix --allow-restart`. |
 | A device server process exits or crashes | `system_health`, the doctor. Devices of a stopped server are still checked. | `run_servers.py` **restarts it automatically**, with backoff. After 5 exits in 10 minutes it stops and prints the server's last stderr lines. Disable with `--no-watchdog`. |
 
 A failed device call now explains itself to the agent:
@@ -22,17 +22,15 @@ Health: asyncroscopy/corrector/default is fault (Link to corrector lost ...)
 The link behind asyncroscopy/corrector/default is down. Call recover_device('asyncroscopy/corrector/default').
 ```
 
-The MCP tools are always available, with or without supervision:
+Two MCP tools are always available:
 
 - `system_health`: reachability, state, latency and host server for every device.
 - `recover_device(device)`: runs the recovery ladder and re-checks after each
   step.
 
-With supervision on, recovery runs in the shared action queue:
-- Each step is recorded as a child action.
-- The steps the agent may take alone are set by `mcp.supervision.recovery_auto`.
-  The default is `reconnect` and `init`.
-- A server restart waits for the operator.
+The steps an agent may take alone are `reconnect` and `init`
+(`MCPServer(recovery_auto=...)`). A server restart is always left to the
+operator.
 
 ## Doctor
 
@@ -41,7 +39,7 @@ The doctor turns `troubleshooting.md` into checks. It covers:
 - the Tango database
 - every defined device
 - the Tiled server and save path
-- the MCP supervision API
+- the MCP server
 
 ```bash
 uv run python -m asyncroscopy.health                         # read-only checklist
@@ -88,5 +86,5 @@ It checks each operation:
 - With `--acquire`: one acquisition.
 
 It then lists **feature readiness**: which features this backend can run,
-including imaging, the specimen atlas, focus, autofocus, beam blanking (needed
+including imaging, return-to-site, focus, autofocus, beam blanking (needed
 by STOP), spectroscopy and beam tilt.

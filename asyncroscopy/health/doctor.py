@@ -126,15 +126,10 @@ def run_checks(tango_host: str, tango_port: int, *, fix: bool = False, allow_res
 
     if mcp_url:
         base = mcp_url.rstrip("/")
-        ok, detail = _http_ok(base + "/supervision/capabilities")
-        if ok:
-            checks.append(Check(OK, "MCP supervision API", f"{base}/supervision · {detail}"))
-        else:
-            port_ok, _ = _http_ok(base + "/mcp")
-            checks.append(Check(WARN if port_ok else FAIL, "MCP server", f"{base} · {detail}",
-                                "Start it with uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml; "
-                                "enable mcp.supervision for the queue and atlas." if not port_ok else
-                                "MCP is up but supervision is off (mcp.supervision.enabled)."))
+        port_ok, detail = _http_ok(base + "/mcp")
+        checks.append(Check(OK if port_ok else FAIL, "MCP server", f"{base}/mcp · {detail}",
+                            "" if port_ok else "Start it with uv run startup_scripts/run_mcp.py --yaml "
+                                               "configs/mcp_dt.yaml."))
     return checks
 
 

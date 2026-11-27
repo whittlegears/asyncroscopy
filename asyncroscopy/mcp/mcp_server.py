@@ -42,7 +42,6 @@ from fastmcp.utilities.types import Image as MCPImage
 from asyncroscopy.data.data_reader import describe_tiled_node
 from asyncroscopy.health.monitor import HealthMonitor, diagnose, hint_for, recover
 from asyncroscopy.mcp.tool_log import ToolCallLog
-from asyncroscopy.supervision.service import SupervisionConfig, Supervisor, ToolEntry
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
 # plain string. Their tool wrappers additionally fetch the array back from Tiled and
@@ -101,7 +100,8 @@ class MCPServer:
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
         tool_log_path: str | None = None,
-        supervision: dict | None = None,
+        detector: str = "haadf",
+        recovery_auto: tuple[str, ...] = ("reconnect", "init"),
     ):
         """
         Args:
@@ -116,9 +116,9 @@ class MCPServer:
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
-            supervision (dict, optional): ``mcp.supervision`` config. When enabled, every device
-                tool call goes through one action queue shared with the operator, under the
-                control policy, and the operator HTTP API is served at ``/supervision``.
+            detector (str, optional): Scanning detector the autonomy routines image with.
+            recovery_auto (tuple, optional): Recovery steps ``recover_device`` may run without an
+                operator ("reconnect", "init"); restarting a whole device server is never automatic.
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -134,8 +134,8 @@ class MCPServer:
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
-        self.supervision_config = SupervisionConfig.from_config(supervision)
-        self.supervisor: Supervisor | None = None
+        self.detector = detector
+        self.recovery_auto = tuple(recovery_auto)
         # tool name -> (device name, device class, command, direct callable taking keyword args)
         self._tool_meta: dict[str, tuple[str, str, str, Callable]] = {}
         self._device_of: dict[tuple[str, str], str] = {}
@@ -538,12 +538,7 @@ class MCPServer:
         unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
         def _run(arguments: dict, *call_args):
-            supervisor = self.supervisor
-            if supervisor is None:
-                return _execute(arguments, *call_args)
-            # Agent calls share one queue with the operator, under the control policy.
-            return supervisor.run_tool(unique_name, lambda: _execute(arguments, *call_args), arguments,
-                                       origin="agent")
+            return _execute(arguments, *call_args)
 
         def _execute(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -745,8 +740,7 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices, *self._health_tools(), *self._autonomy_tools()]
-        if self.supervision_config.enabled:
-            native_tools += self._setup_supervision()
+        native_tools.append(self._register_images_tool())
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -854,28 +848,33 @@ class MCPServer:
             if len(matches) != 1:
                 raise ValueError(f"unknown device {device!r}; devices: {', '.join(known)}")
             device = matches[0]
-        sup = self.supervisor
-        allowed = tuple(self.supervision_config.recovery_auto) if sup else ("reconnect", "init")
-        if sup is None:
-            return recover(monitor, device, allowed=allowed)
-
-        def body(step):
-            return recover(monitor, device, allowed=allowed, step=step)
-
-        result = sup._composite("recovery.recover_device", f"recover {device}", {"device": device}, origin,
-                                None, body, wait=True)
-        if result.get("status") == "needs_approval" and result.get("next_rung") == "restart_server":
-            item = sup.queue.submit("recovery.restart_server",
-                                    lambda: recover(monitor, device, allowed=("restart_server",),
-                                                    start_at="restart_server"),
-                                    args={"device": device}, origin=origin,
-                                    label=f"restart the server hosting {device}", force_approval=True)
-            result["queued_for_approval"] = item.action.id
+        result = recover(monitor, device, allowed=self.recovery_auto)
+        if result.get("status") == "needs_approval":
+            result["operator_action"] = (
+                "The next recovery step needs an operator. Ask them to run "
+                "`python -m asyncroscopy.health --fix --allow-restart` on the instrument PC, or to restart "
+                "the stack with run_servers.py. Do not retry the failing command until it is healthy.")
         return result
 
     # ------------------------------------------------------------------
     # Autonomous routines (focus, aberrations, whole sessions)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _role_of(device_name: str, dev_class: str) -> str:
+        """Role from the device name (asyncroscopy/<role>/<instance>), else the class name."""
+        parts = device_name.split("/")
+        return parts[1].lower() if len(parts) == 3 and parts[1] else dev_class.lower()
+
+    def _fetch_image_array(self, key: str) -> np.ndarray | None:
+        """A DATA/Tiled key (or a local HDF5 path, as the twins write without a DATA device) to its 2-D image."""
+        import os
+        if os.path.isfile(key):
+            import h5py
+            with h5py.File(key, "r") as h5:
+                group = h5["image"]
+                return np.asarray(group if isinstance(group, h5py.Dataset) else group[next(iter(group))])
+        return self._find_first_2d_array(self._resolve_tiled_node(key), prefer_key="image")
 
     def _device_for_role(self, role: str) -> str:
         for dev, cls, _cmd, _fn in self._tool_meta.values():
@@ -884,7 +883,7 @@ class MCPServer:
         return ""
 
     def _autonomy_context(self):
-        from asyncroscopy.atlas.tango_backend import TangoMicroscope
+        from asyncroscopy.imaging.tango_backend import TangoMicroscope
         from asyncroscopy.autonomy.routines import Imager, Resilient
         from asyncroscopy.autonomy.session import SessionContext
 
@@ -901,15 +900,12 @@ class MCPServer:
         scan_dev = self._device_for_role("scan")
         scan = DeviceProxy(scan_dev) if scan_dev else None
         monitor = self.health_monitor()
-        allowed = tuple(self.supervision_config.recovery_auto)
-        imager = Imager(inst, self._fetch_image_array, Resilient(monitor, allowed),
-                        detector=self.supervision_config.detector)
-        mic = TangoMicroscope(inst, scan, self._fetch_image_array, detector=self.supervision_config.detector)
-        atlas = self.supervisor.atlas if self.supervisor else None
-        return SessionContext(imager, mic=mic, corrector=corrector, monitor=monitor, atlas=atlas)
+        imager = Imager(inst, self._fetch_image_array, Resilient(monitor, self.recovery_auto), detector=self.detector)
+        mic = TangoMicroscope(inst, scan, self._fetch_image_array, detector=self.detector)
+        return SessionContext(imager, mic=mic, corrector=corrector, monitor=monitor)
 
     def _autonomy_body(self, routine: str, args: dict, step, origin: str = "agent"):
-        """Run one routine with *step* (direct, or the queue's child step)."""
+        """Run one routine; *step* wraps each instrument operation (direct by default)."""
         from asyncroscopy.autonomy import routines
         from asyncroscopy.autonomy.session import SessionPlan, run_session
 
@@ -937,12 +933,7 @@ class MCPServer:
     def run_autonomy(self, routine: str, args: dict, origin: str = "agent") -> dict:
         from asyncroscopy.autonomy.session import jsonable
 
-        if self.supervisor is None:
-            return jsonable(self._autonomy_body(routine, args, lambda name, a, fn: fn(), origin))
-        result = self.supervisor._composite(f"autonomy.{routine}", f"autonomy: {routine}", args, origin, None,
-                                            lambda step: self._autonomy_body(routine, args, step, origin),
-                                            wait=True)
-        return jsonable(result)
+        return jsonable(self._autonomy_body(routine, args, lambda name, a, fn: fn(), origin))
 
     def _autonomy_tools(self) -> list[Callable]:
         server = self
@@ -969,7 +960,7 @@ class MCPServer:
         @tool()
         def autonomy_run_session(plan: dict | None = None) -> dict:
             """Run a whole imaging session from one instruction: device health (with automatic recovery),
-            optional region finding, focus, aberration correction, a final image, and an atlas record.
+            optional region finding, aberration correction, focus, optional zone axis, and a final image.
             plan keys (all optional): name, find_region, focus_mode (defocus|stage_z|none), focus_step_m,
             focus_max_offset_m, correct, thresholds_m, polish ({aberration: step_m}), score, save_site."""
             return server.run_autonomy("session", {"plan": plan or {}})
@@ -986,149 +977,65 @@ class MCPServer:
         return [autonomy_focus, autonomy_correct_aberrations, autonomy_align_zone_axis, autonomy_run_session]
 
     # ------------------------------------------------------------------
-    # Supervision: one queue, the specimen atlas, recipes
+    # Image registration (used by the return-to-site skill)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _role_of(device_name: str, dev_class: str) -> str:
-        parts = device_name.split("/")
-        return parts[1].lower() if len(parts) == 3 and parts[1] else dev_class.lower()
-
-    def _fetch_image_array(self, key: str) -> np.ndarray | None:
-        return self._find_first_2d_array(self._resolve_tiled_node(key), prefer_key="image")
-
-    def _setup_supervision(self) -> list[Callable]:
-        """Create the supervisor, register every device tool with it, and return the agent's tools."""
-        from asyncroscopy.atlas.tango_backend import TangoMicroscope
-        from asyncroscopy.supervision.http import register_operator_api
-
-        config = self.supervision_config
-        instrument = next(((dev, cls) for dev, cls, _cmd, _fn in self._tool_meta.values()
-                           if self._role_of(dev, cls) == "instrument"), ("", ""))
-        scan_device = next((dev for dev, cls, _c, _f in self._tool_meta.values()
-                            if self._role_of(dev, cls) == "scan"), "")
-        if not scan_device:
-            scan_device = instrument[0].replace("/instrument/", "/scan/") if instrument[0] else ""
-        kind = config.instrument_kind
-        if kind == "auto":
-            kind = "twin" if "twin" in instrument[1].lower() else "real"
-
-        def microscope():
-            if not instrument[0]:
-                return None
-            inst = DeviceProxy(instrument[0])
-            inst.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-            scan = None
-            if scan_device:
-                try:
-                    scan = DeviceProxy(scan_device)
-                    scan.ping()
-                except Exception:
-                    scan = None
-            return TangoMicroscope(inst, scan, self._fetch_image_array, detector=config.detector)
-
-        def detectors() -> set[str]:
-            if not instrument[0]:
-                return set()
-            params = json.loads(DeviceProxy(instrument[0]).get_parameters())
-            names = set()
-            for key in ("scan_detectors", "spectrum_detectors", "camera_detectors", "detectors"):
-                value = params.get(key)
-                if isinstance(value, list):
-                    names.update(str(v).lower() for v in value)
-            return names
-
-        sup = Supervisor(config, microscope=microscope, instrument_name=instrument[1] or "unknown",
-                         instrument_kind=kind, detectors=detectors)
-        # Autonomous routines can be recipe steps too ("autonomy.focus", ...).
-        for routine in ("focus", "correct_aberrations", "align_zone_axis", "session"):
-            sup.native[f"autonomy.{routine}"] = (
-                lambda args, step, r=routine: self._autonomy_body(r, args, step, args.get("_origin", "recipe")))
-        for name, (dev, cls, cmd, direct) in self._tool_meta.items():
-            sup.register_tool(ToolEntry(name=name, role=f"{self._role_of(dev, cls)}.{cmd}", fn=direct, device=dev))
-        self.supervisor = sup
-        register_operator_api(self.mcp, sup)
-        if self.verbose:
-            print(f"Supervision on: {kind} instrument {instrument[1] or '?'}; queue history "
-                  f"{sup.queue.history_path}; atlas {sup.atlas.root}; operator API at /supervision")
-        return self._supervision_tools(sup)
-
-    @staticmethod
-    def _supervision_tools(sup: Supervisor) -> list[Callable]:
-        """Agent-facing tools. None of them can approve, resume, take over, or change policy."""
+    def _register_images_tool(self) -> Callable:
+        server = self
 
         @tool()
-        def supervision_queue_status(limit: int = 30) -> dict:
-            """Show the shared action queue: who requested each action (agent, operator, recipe),
-            the site it targets, and whether it is queued, awaiting approval, running or finished.
-            Also says whether the operator has paused the queue or taken over control."""
-            snap = sup.queue.snapshot(limit)
-            return snap
+        def register_images(reference_key: str, image_key: str, reference_fov_m: float | None = None,
+                            image_fov_m: float | None = None, max_rotation_deg: float = 0.0,
+                            stage_to_image: list[list[float]] | None = None) -> dict:
+            """Find the reference image's centre in a new image and say whether the match can be trusted.
 
-        @tool()
-        def supervision_action(action_id: str) -> dict:
-            """Show one action from the queue, including its result or error."""
-            return sup.queue.get(action_id).to_json()
+            Both images are DATA/Tiled keys from earlier acquisitions. Give both fields of view when the
+            new image is a lower-magnification survey; the reference is rescaled to it. Use
+            max_rotation_deg (e.g. 10) after the specimen was remounted.
 
-        @tool()
-        def atlas_list_sites() -> dict:
-            """List the saved sites in the specimen atlas with their predicted stage positions on the
-            current mount and the outcome of their last return visit."""
-            return sup.atlas.summary()
+            Returns status 'match', 'ambiguous' or 'no_match' with reasons, the offset of the reference
+            centre from the new image's centre (pixels, and metres when image_fov_m is given; x right,
+            y down), ncc, ambiguity (second-best position relative to the best: repetitive structure),
+            sigma_px (position uncertainty) and rotation_deg. Only 'match' means the same place.
+            With stage_to_image (a 2x2 matrix measured by stepping the stage, image metres per stage
+            metre) it also returns stage_correction_m: the stage move that centres the reference."""
+            return server.register_images(reference_key, image_key, reference_fov_m, image_fov_m,
+                                          max_rotation_deg, stage_to_image)
 
-        @tool()
-        def atlas_get_site(site_id: str) -> dict:
-            """Show one atlas site: native settings, provenance and every visit."""
-            return sup.atlas.get(site_id).to_json()
+        return register_images
 
-        @tool()
-        def atlas_save_site(name: str, notes: str = "", landmark: bool = False, fov_m: float | None = None,
-                            imsize: int | None = None) -> dict:
-            """Image the current position at native settings and save it as an atlas site, with the
-            instrument settings and the run it came from. Mark well-separated, distinctive sites as
-            landmarks so the specimen can be re-registered after a remount."""
-            return sup.save_site(name, origin="agent", notes=notes, landmark=landmark, fov_m=fov_m, imsize=imsize)
+    def register_images(self, reference_key: str, image_key: str, reference_fov_m: float | None = None,
+                        image_fov_m: float | None = None, max_rotation_deg: float = 0.0,
+                        stage_to_image: list[list[float]] | None = None) -> dict:
+        from asyncroscopy.imaging.registration import (MatchCriteria, center_crop, judge, locate,
+                                                       offset_from_center, rotation_range)
+        from asyncroscopy.imaging.stage_mapping import StageMapping
 
-        @tool()
-        def atlas_return_to_site(site_id: str) -> dict:
-            """Return to a saved site and verify it: move to the predicted position, survey at lower
-            magnification, register against the original image, correct, and re-register at native
-            settings. The result's status is 'match' only when the registration is unambiguous and
-            within tolerance; any other status ('ambiguous', 'no_match', 'not_converged') means the
-            site was NOT confirmed, and you must not treat the current position as that site."""
-            return sup.return_to_site(site_id, origin="agent")
-
-        @tool()
-        def atlas_calibrate_stage_mapping(fov_m: float | None = None, imsize: int | None = None) -> dict:
-            """Measure how stage moves shift the image at the current position (needed for accurate
-            corrections). Takes a few small stage steps around the current position."""
-            return sup.calibrate_mapping(origin="agent", fov_m=fov_m, imsize=imsize)
-
-        @tool()
-        def atlas_reacquire_landmarks() -> dict:
-            """After the specimen was remounted: find every landmark site with a wide survey and a
-            rotation search, then fit how the specimen moved so other sites can be predicted."""
-            return sup.reacquire_landmarks(origin="agent")
-
-        @tool()
-        def recipe_list() -> dict:
-            """List saved recipes and whether each version has been rehearsed on a digital twin."""
-            return {"recipes": sup.recipes.list()}
-
-        @tool()
-        def recipe_check(name: str) -> dict:
-            """Check whether a recipe can start here: required tools and detectors, and twin rehearsal."""
-            return sup.check_recipe(name)
-
-        @tool()
-        def recipe_run(name: str, params: dict | None = None) -> dict:
-            """Run a saved recipe through the shared queue. On a real instrument, the recipe version must
-            first have run successfully on a digital twin."""
-            return sup.run_recipe(name, params, origin="agent")
-
-        return [supervision_queue_status, supervision_action, atlas_list_sites, atlas_get_site, atlas_save_site,
-                atlas_return_to_site, atlas_calibrate_stage_mapping, atlas_reacquire_landmarks, recipe_list,
-                recipe_check, recipe_run]
+        reference = self._fetch_image_array(reference_key)
+        image = self._fetch_image_array(image_key)
+        if reference is None or image is None:
+            raise ValueError("both keys must name acquisitions with a 2-D image")
+        reference = np.asarray(reference, dtype=np.float64)
+        image = np.asarray(image, dtype=np.float64)
+        scale = 1.0
+        if reference_fov_m and image_fov_m:
+            scale = (reference_fov_m / reference.shape[1]) / (image_fov_m / image.shape[1])
+        survey = scale < 0.95
+        template = reference if survey else center_crop(reference, 0.6)
+        loc = locate(template, image, rotations_deg=rotation_range(max_rotation_deg), scale=scale)
+        verdict = judge(loc, MatchCriteria())
+        dx, dy = offset_from_center(loc, image.shape)
+        out = {"status": verdict.status, "reasons": verdict.reasons, "offset_px": [dx, dy],
+               "ncc": loc.ncc, "ambiguity": loc.ambiguity, "sigma_px": loc.sigma_px,
+               "consistency": loc.consistency, "rotation_deg": loc.rotation_deg, "scale": scale}
+        if image_fov_m:
+            px = image_fov_m / image.shape[1]
+            out["offset_m"] = [dx * px, dy * px]
+            out["sigma_m"] = loc.sigma_px * px
+            if stage_to_image is not None:
+                mapping = StageMapping(stage_to_image=stage_to_image, calibrated=True)
+                out["stage_correction_m"] = list(mapping.stage_delta_for_image_offset((dx * px, dy * px)))
+        return out
 
     def start(self, transport: Transport | None = None, **kwargs):
         """
@@ -1157,7 +1064,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
-    parser.add_argument("--supervision-json", default="", help="mcp.supervision config as JSON; off when empty.")
     return parser.parse_args(argv)
 
 
@@ -1203,7 +1109,6 @@ def main(argv: list[str] | None = None) -> int:
         data_device_address=args.data_device_address,
         verbose=not args.quiet,
         tool_log_path=args.tool_log or None,
-        supervision=json.loads(args.supervision_json) if args.supervision_json else None,
     )
     if args.transport == "streamable-http":
         print(

@@ -1,7 +1,7 @@
 """Image-quality metrics used to tune focus and aberrations.
 
 These are the team's notebook metrics (``notebooks/12_*`` and ``14_*``), moved
-here unchanged so every routine, recipe and agent tool scores images the same
+here unchanged so every routine, workflow and agent tool scores images the same
 way.
 
 Not every metric suits every job. Measured on the tilt twin across defocus

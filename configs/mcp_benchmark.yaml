@@ -36,30 +36,4 @@ mcp:
   # list_devices and get_data_from_key are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
-  tool_log: ""
-  # One action queue for the operator and the agent, the specimen atlas, and
-  # recipes. When enabled, every device tool the agent calls is queued and
-  # checked against the policy below, and the operator API/page is served at
-  # http://<http_host>:<http_port>/supervision/ui (SciAgentGUI uses the same API).
-  supervision:
-    enabled: true                     # benchmarks record every agent action in the queue history
-    dir: outputs/supervision          # history.jsonl, atlas/, recipes/
-    specimen_id: digital-twin-sample
-    instrument_kind: auto             # twin | real | auto (twin when the instrument class is a DigitalTwin)
-    operator_token: ""                # set to require "Authorization: Bearer <token>" on the operator API
-    agent_wait_s: 50                  # agent calls wait this long in the queue before getting a "still queued" reply
-    detector: haadf
-    stop_commands:                    # run directly by STOP, never through the queue
-      - instrument.blank_beam
-    policy:
-      forbid: []
-      require_approval:
-        - "*set_column_valves"
-        - "*set_screen"
-      stage_limits:                   # metres / degrees
-        x: [-1.0e-6, 1.0e-6]
-        y: [-1.0e-6, 1.0e-6]
-        alpha: [-35, 35]
-      max_step_xy_m: null
-      arg_limits: {}
-      require_twin_validation: true
+  tool_log: "outputs/benchmark/tool_calls.jsonl"   # scored runs attach a summary of the agent's calls

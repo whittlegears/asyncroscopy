@@ -21,7 +21,7 @@ What it checks:
   DATA/Tiled key or file path. The beam is used.
 
 It ends with **feature readiness**: which asyncroscopy features this backend
-can run (imaging, the specimen atlas, recipes that move the stage, EDS,
+can run (imaging, return-to-site, stage navigation, EDS,
 autofocus, ...), so an adopter knows what works before the first session.
 """
 
@@ -41,11 +41,11 @@ PASS, FAIL, WARN, SKIP, UNSUPPORTED = "PASS", "FAIL", "WARN", "SKIP", "UNSUPPORT
 FEATURES = {
     "imaging": ["acquire_scanned_image", "set_fov", "get_fov"],
     "stage navigation": ["get_stage", "move_stage"],
-    "specimen atlas (verified return-to-site)": ["get_stage", "move_stage", "set_fov", "get_fov",
+    "return-to-site (register_images skill)": ["get_stage", "move_stage", "set_fov", "get_fov",
                                                  "acquire_scanned_image"],
     "focus control": ["get_defocus", "set_defocus"],
     "autofocus": ["auto_focus"],
-    "beam blanking / supervision STOP": ["blank_beam", "unblank_beam"],
+    "beam blanking": ["blank_beam", "unblank_beam"],
     "point spectroscopy (EDS/EELS)": ["place_beam", "acquire_spectrum"],
     "beam tilt / image shift": ["get_beam_tilt", "set_beam_tilt", "get_image_shift", "set_image_shift"],
     "status for agents (get_parameters)": ["get_parameters"],

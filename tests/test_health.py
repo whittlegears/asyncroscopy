@@ -128,27 +128,15 @@ def test_timeout_reports_readback_and_next_step(monkeypatch, tmp_path, corrector
     assert "system_health" in text
 
 
-def test_recover_device_queues_server_restart_for_operator(monkeypatch, tmp_path):
-    from asyncroscopy.supervision.service import SupervisionConfig, Supervisor
-
+def test_recover_device_never_restarts_a_server_on_its_own(monkeypatch, tmp_path):
     fake = FakeServer()
     server = _server(monkeypatch, tmp_path)
     monkeypatch.setattr(server, "health_monitor",
                         lambda: HealthMonitor(["vendor/dev/1"], proxy=fake.proxy))
-    server.supervision_config = SupervisionConfig(enabled=True, dir=str(tmp_path))
-    server.supervisor = Supervisor(server.supervision_config)
     monkeypatch.setattr("asyncroscopy.health.monitor.HealthMonitor.wait_healthy",
                         lambda self, d, timeout_s=0, poll_s=0: self.check(d))
 
     result = server.recover_device("dev/1", origin="agent")
     assert result["status"] == "needs_approval" and result["next_rung"] == "restart_server"
-    q = server.supervisor.queue
-    pending = q.get(result["queued_for_approval"])
-    assert pending.status == "awaiting_approval" and pending.origin == "agent"
+    assert "--allow-restart" in result["operator_action"]
     assert not fake.restarted                       # nothing disruptive without the operator
-    assert q.approve(pending.id, by="operator")
-    import time
-    t0 = time.time()
-    while q.get(pending.id).status != "done" and time.time() - t0 < 5:
-        time.sleep(0.02)
-    assert fake.restarted

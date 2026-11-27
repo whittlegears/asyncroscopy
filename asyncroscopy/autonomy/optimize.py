@@ -18,7 +18,7 @@ What this module adds for unattended use:
 * **always restores** a known setting: on success the best one, on any error
   or abort the start one (when it can still talk to the instrument);
 * every trial is recorded, and every instrument operation runs through a
-  *step* callback, so the supervision queue records, pauses and aborts it.
+  *step* callback, so a caller can record, rate-limit or abort them.
 """
 
 from __future__ import annotations

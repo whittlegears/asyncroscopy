@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """One command from a fresh checkout to an agent-ready digital microscope.
 
-    uv run startup_scripts/quickstart.py                 # twin stack + MCP (supervision on) + checks
+    uv run startup_scripts/quickstart.py                 # twin stack + MCP + checks
     uv run startup_scripts/quickstart.py --demo          # ...and run one autonomous session through MCP
     uv run startup_scripts/quickstart.py --stack benchmark --demo   # tilt/diffraction twin (needs --extra diffraction)
 
@@ -11,7 +11,6 @@ differently), waits until each is ready, runs the doctor, optionally drives
 one autonomous session as an agent would, and prints where to connect:
 
 * agents (Claude Code, SciAgentGUI, notebooks): http://localhost:<port>/mcp
-* the operator page (queue, atlas, recipes, STOP): http://localhost:<port>/supervision/ui
 
 Ctrl+C (or SIGTERM) stops everything it started.
 """
@@ -63,14 +62,12 @@ def wait_for(proc: subprocess.Popen, log: Path, markers: tuple[str, ...], failur
     raise TimeoutError(f"not ready after {timeout:.0f} s; see {log}")
 
 
-def mcp_config(base: Path, port: int, supervision_dir: Path, tango: tuple[str, int]) -> Path:
+def mcp_config(base: Path, port: int, tool_log: Path, tango: tuple[str, int]) -> Path:
     data = yaml.safe_load(base.read_text(encoding="utf-8"))
     data["tango"] = {"host": tango[0], "port": tango[1]}
     data["mcp"]["http_port"] = port
     data["mcp"]["http_host"] = "127.0.0.1"
-    sup = data["mcp"].setdefault("supervision", {})
-    sup["enabled"] = True
-    sup["dir"] = str(supervision_dir)
+    data["mcp"]["tool_log"] = str(tool_log)
     out = Path(tempfile.mkdtemp(prefix="asyncroscopy-quickstart-")) / "mcp.yaml"
     out.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return out
@@ -130,9 +127,8 @@ def main(argv: list[str] | None = None) -> int:
                      ("Startup failed",), timeout=600)
             print("  device stack ready")
 
-            sup_dir = a.logs / "supervision"
             mcp_log = a.logs / "mcp.log"
-            cfg = mcp_config(PROJECT_DIR / mcp_yaml, a.port, sup_dir, tango)
+            cfg = mcp_config(PROJECT_DIR / mcp_yaml, a.port, a.logs / "tool_calls.jsonl", tango)
             with mcp_log.open("w") as fh:
                 mcp = manager.start_process("mcp", "run_mcp", [sys.executable, "-u",
                                             str(PROJECT_DIR / "startup_scripts" / "run_mcp.py"), "--yaml", str(cfg)],
@@ -157,8 +153,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"  status {session['status']} in {session.get('duration_s')} s")
                     for s in session["stages"]:
                         print(f"    {s['stage']:12s} {s['status']}")
-                    if session.get("site_id"):
-                        print(f"  recorded as atlas site {session['site_id']}")
+                    final = session.get("final") or {}
+                    print(f"  final image {final.get('key')} at stage {final.get('stage')}")
                 else:
                     print("  session failed:", session)
                 (a.logs / "demo.json").write_text(json.dumps(out, indent=2, default=str), encoding="utf-8")
@@ -166,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"""
 Ready.
   Agents (Claude Code, SciAgentGUI, notebooks):  {base}/mcp
-  Operator page (queue, atlas, recipes, STOP):   {base}/supervision/ui
+  Tool-call log:  {a.logs / 'tool_calls.jsonl'}
   Health check:   uv run python -m asyncroscopy.health --mcp-url {base}
   Benchmarks:     uv run python -m asyncroscopy.bench baseline   (benchmark stack)
 Press Ctrl+C to stop everything.""", flush=True)

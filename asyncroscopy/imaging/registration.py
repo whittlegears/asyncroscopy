@@ -2,7 +2,7 @@
 
 Coordinates from the stage are only a starting guess: backlash, drift, and
 above all unloading and remounting the specimen move a site by far more than a
-field of view. Before calling a revisit a match, the old image has to be found
+field of view. Before calling a return visit a match, the old image has to be found
 again in a new one, and the match has to be good enough to trust.
 
 :func:`locate` finds a template (usually a crop of the stored reference image)

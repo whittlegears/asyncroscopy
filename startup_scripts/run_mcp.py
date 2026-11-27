@@ -35,7 +35,6 @@ class MCPConfig:
     blocked_functions: dict[str, list[str]]
     include_only_functions: list[str] = field(default_factory=list)
     tool_log: str = ''
-    supervision: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -73,7 +72,6 @@ def load_config(path: Path) -> Config:
             blocked_functions={key: list(value) for key, value in _require(mcp, 'blocked_functions', 'mcp').items()},
             include_only_functions=list(mcp.get('include_only_functions', [])),
             tool_log=str(mcp.get('tool_log') or ''),
-            supervision=dict(mcp.get('supervision') or {}),
         ),
     )
 
@@ -110,8 +108,6 @@ def build_command(config: Config) -> list[str]:
         command.append('--quiet')
     if config.mcp.tool_log:
         command.extend(['--tool-log', config.mcp.tool_log])
-    if config.mcp.supervision:
-        command.extend(['--supervision-json', json.dumps(config.mcp.supervision)])
     return command
 
 

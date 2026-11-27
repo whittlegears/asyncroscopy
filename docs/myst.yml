@@ -42,7 +42,6 @@ project:
         - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
-        - file: Operation/supervision_and_atlas.md
         - file: Operation/robustness.md
         - file: Operation/autonomy.md
         - file: Operation/benchmark.md

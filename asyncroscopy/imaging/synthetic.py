@@ -1,7 +1,7 @@
 """A fast synthetic microscope for testing and benchmarking return-to-site.
 
 It is not a physics model. It exists to answer one question quickly and with
-ground truth: *after the specimen is unloaded and remounted, does the atlas
+ground truth: *after the specimen is unloaded and remounted, does registration
 find the saved sites, how close does it get, and does it ever confidently
 pick the wrong spot?*
 
@@ -18,7 +18,7 @@ What it models:
 * shot noise and a slow background.
 
 ``true_error_nm`` compares the current stage position to where a site
-*actually* is now, which the atlas itself never gets to see.
+*actually* is now, which the code under test never gets to see.
 """
 
 from __future__ import annotations
@@ -120,9 +120,9 @@ class SyntheticMicroscope:
         return {"backend": "synthetic", "fov_m": self.fov_m, "imsize": self.imsize,
                 "stage": self.get_stage(), "counts": self.counts}
 
-    # -- benchmark helpers (the atlas never calls these) ---------------------------
+    # -- test helpers (the code under test never calls these) ----------------------
     def true_stage_to_image(self) -> np.ndarray:
-        """The J the atlas should measure: stage move d shifts features by -A @ d."""
+        """The J a calibration should measure: stage move d shifts features by -A @ d."""
         return -self.A
 
     def remount(self, rotation_deg: float, translation_m: tuple[float, float]) -> None:

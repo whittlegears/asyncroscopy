@@ -14,7 +14,7 @@ one instruction.
 | `measure_and_correct` | Corrector workflow: measure a tableau, correct what is over threshold, measure again. | A correction that makes an aberration larger is undone, and that aberration is left alone. A correction larger than `max_correction_m` is refused. |
 | `align_zone_axis` | Tilts onto the zone axis using the Laue offset of camera diffraction patterns: the vector from the direct beam to the centroid of the diffracted intensity. It probes each tilt axis by ± one step, takes Newton steps on the part of the offset those axes control, updates the response after each step, and keeps re-centring the region with image shift (the alpha-tilt notebook's tracking). | Tilt limit; verified or the start tilt is restored; a crystal that doesn't respond to tilt is reported instead of chased. |
 | `find_regions` | Ranks the tiles of a survey image by structure (contrast × entropy). Spreads the picks out. | Read-only. |
-| `run_session` | Health → region → aberrations → focus → zone axis (optional) → final image → atlas record. | Each stage reports its status. A required device that stays down stops the session before anything moves. |
+| `run_session` | Health → region → aberrations → focus → zone axis (optional) → final image. The report ends with the final image key, stage position and settings. | Each stage reports its status. A required device that stays down stops the session before anything moves. |
 
 `focus` and `tune_aberration` share the same safety net:
 - **Hard limit:** the setting never moves more than `max_offset` from where it
@@ -26,9 +26,8 @@ one instruction.
 All routines share these behaviours:
 - They use only the standard device commands. A vendor backend that passes
   `python -m asyncroscopy.conformance` can run them.
-- Every instrument operation goes through the supervision queue when
-  supervision is on, so it shows up as a child action that can be paused,
-  stepped, aborted and limited.
+- Every instrument operation goes through a `step` callback, so a caller
+  (a LangGraph node, a notebook) can log, rate-limit or abort it.
 - If a device fails as unreachable, link-down or timeout, its automatic
   recovery steps run (reconnect, Init), the operation is retried once, and the
   recovery is recorded in the result.
@@ -40,11 +39,10 @@ All routines share these behaviours:
 | `autonomy_focus(mode, step_m, max_offset_m, score)` | |
 | `autonomy_correct_aberrations(thresholds_m, max_correction_m)` | |
 | `autonomy_align_zone_axis(axes, step_deg, max_offset_deg)` | |
-| `autonomy_run_session(plan)` | `plan` keys: `name`, `find_region`, `focus_mode`, `focus_step_m`, `focus_max_offset_m`, `correct`, `thresholds_m`, `polish`, `zone_axis`, `zone_axis_axes`, `score`, `save_site`. |
+| `autonomy_run_session(plan)` | `plan` keys: `name`, `find_region`, `focus_mode`, `focus_step_m`, `focus_max_offset_m`, `correct`, `thresholds_m`, `polish`, `zone_axis`, `zone_axis_axes`, `score`, `stage_to_image`. |
 
-They are also recipe steps: `autonomy.focus`, `autonomy.correct_aberrations`,
-`autonomy.align_zone_axis` and `autonomy.session`. A session can therefore be saved, rehearsed on the
-twin, and then run on the microscope.
+Every routine is also a plain Python function in `asyncroscopy.autonomy`, so
+a LangGraph workflow in the agent swarm, or a notebook, can call it directly.
 
 ## Which metric to optimise
 

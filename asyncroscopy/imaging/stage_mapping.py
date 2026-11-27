@@ -6,9 +6,8 @@ features by ``J @ d`` metres (image x right, y down). To bring a feature at
 image offset ``o`` from the centre to the centre, ``J @ d = -o``, so
 ``d = -J^-1 @ o``.
 
-A mapped coordinate is only a *starting guess* for
-:mod:`asyncroscopy.atlas.revisit`, which reacquires and registers before it
-calls anything a match.
+A mapped coordinate is only a *starting guess*: re-image and register
+(``register_images``) before treating a position as a previously visited site.
 
 :func:`calibrate` measures ``J`` on the instrument with two known stage steps.
 :func:`fit_rigid` estimates how a remounted specimen moved (rotation and

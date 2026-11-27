@@ -33,9 +33,9 @@ uv run python -m asyncroscopy.bench setup --task zone_axis --seed 7 --state run.
 uv run python -m asyncroscopy.bench score --state run.json --team "team name" --board leaderboard.jsonl
 ```
 
-`score` adds a row to the leaderboard. Supervision is on in the benchmark MCP
-config, so the row also gets a summary of the queue history for the run: how
-many actions, how many instrument steps, and how many refusals.
+`score` adds a row to the leaderboard. The benchmark MCP config turns on the
+MCP server's tool-call log, so the row also gets a summary of the agent's
+calls: how many, how many failed, and the time spent on the instrument.
 
 ## Baseline on the live benchmark stack
 

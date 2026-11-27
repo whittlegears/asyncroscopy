@@ -717,7 +717,7 @@ def main(argv: list[str] | None = None) -> int:
             
             watchdog = None
             if not args.no_watchdog:
-                supervised = [d.key for d in [*regular_devices, *dependency_devices]]
+                watched = [d.key for d in [*regular_devices, *dependency_devices]]
 
                 def report(event: dict) -> None:
                     if event["event"] == "restarted":
@@ -742,7 +742,7 @@ def main(argv: list[str] | None = None) -> int:
                     except Exception:
                         return False
 
-                watchdog = Watchdog(manager, supervised, on_event=report, owned_elsewhere=owned_elsewhere)
+                watchdog = Watchdog(manager, watched, on_event=report, owned_elsewhere=owned_elsewhere)
                 print(color("Watchdog on: device servers that exit are restarted (--no-watchdog to disable).",
                             Style.dim))
 

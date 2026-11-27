@@ -9,7 +9,7 @@ def test_twin_is_conformant_with_writes_and_acquire(twin_proxy, scan_proxy):
     scan_proxy.imsize = 32
     rep = run(twin_proxy, "twin", writes=True, acquire=True)
     assert rep.ok, [r for r in rep.results if r.level == FAIL]
-    assert rep.features["specimen atlas (verified return-to-site)"]["status"] == "yes"
+    assert rep.features["return-to-site (register_images skill)"]["status"] == "yes"
     assert rep.features["beam tilt / image shift"]["status"] == "no"     # twin leaves these out, cleanly
 
 

@@ -156,24 +156,21 @@ def test_correction_that_makes_things_worse_is_undone_and_frozen():
     assert c.ab["C1"][0] == pytest.approx(20e-9)          # left where it started
 
 
-def test_whole_session_on_twin(tilt, corrector, tmp_path):
-    from asyncroscopy.atlas.store import Atlas
-    from asyncroscopy.atlas.tango_backend import TangoMicroscope
+def test_whole_session_on_twin(tilt, corrector):
+    from asyncroscopy.imaging.tango_backend import TangoMicroscope
 
     access, proxy = corrector
     tilt.set_defocus(40e-9)
     mic = TangoMicroscope(tilt, None, read_h5)
     imager = Imager(tilt, read_h5, Resilient(HealthMonitor([access])))
-    atlas = Atlas(tmp_path)
     plan = SessionPlan(name="lamella check", find_region=False, focus_step_m=15e-9, focus_max_offset_m=90e-9,
                        score="edge_sharpness", thresholds_m={"C1": 2e-9, "A1": 2e-9})
-    report = run_session(SessionContext(imager, mic=mic, corrector=proxy, monitor=HealthMonitor([access]),
-                                        atlas=atlas), plan)
+    report = run_session(SessionContext(imager, mic=mic, corrector=proxy, monitor=HealthMonitor([access])), plan)
     assert report["status"] == "completed", report["failed_stages"]
     statuses = {s["stage"]: s["status"] for s in report["stages"]}
     assert statuses["focus"] == "improved" and statuses["aberrations"] == "corrected"
     assert report["final"]["relative_change"]["edge_sharpness"] > 0.2
-    assert report["site_id"] in atlas.sites
+    assert report["final"]["key"] and len(report["final"]["stage"]) == 5   # what return-to-site needs
 
 
 # -- zone axis ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""One instruction, a whole imaging session: health, region, focus, aberrations, image, record.
+"""One instruction, a whole imaging session: health, region, aberrations, focus, zone axis, image.
 
 ``run_session`` chains the routines into the sequence an operator would do
 by hand, and returns one report a teammate can read later:
@@ -15,8 +15,9 @@ by hand, and returns one report a teammate can read later:
    **zone axis** (optional): tilt to minimise the Laue offset of camera
    diffraction patterns, keeping the region centred with image shift.
 5. **image**: a final acquisition, scored against the first one.
-6. **record**: the final image is saved as an atlas site with the session
-   report as provenance, so the result can be revisited and verified later.
+The report ends with the final image's DATA/Tiled key, the stage position and
+the instrument settings, which is what the return-to-site skill needs to
+come back to this spot later.
 
 Every stage records its status and duration. A failed optional stage is
 reported and skipped; a failed required stage ends the session in a known
@@ -58,7 +59,7 @@ class SessionPlan:
     zone_axis_max_offset_deg: float = 1.0
     track_during_tilt: bool = True
     score: str = "edge_sharpness"
-    save_site: bool = True
+    stage_to_image: list[list[float]] | None = None   # measured 2x2 mapping for centring the chosen region
     required_devices: list[str] = field(default_factory=list)
 
     @classmethod
@@ -73,7 +74,6 @@ class SessionContext:
     mic: Any = None                  # TangoMicroscope-like (get_stage/move_stage/acquire/current_fov/settings)
     corrector: Any = None
     monitor: HealthMonitor | None = None
-    atlas: Any = None                # asyncroscopy.atlas.store.Atlas
 
 
 def _stage(report: dict, name: str):
@@ -90,7 +90,8 @@ def run_session(ctx: SessionContext, plan: SessionPlan | None = None, step: Step
                 provenance: dict | None = None) -> dict:
     plan = plan or SessionPlan()
     t0 = time.time()
-    report: dict[str, Any] = {"name": plan.name, "plan": asdict(plan), "stages": [], "status": "running"}
+    report: dict[str, Any] = {"name": plan.name, "plan": asdict(plan), "stages": [], "status": "running",
+                              "requested": dict(provenance or {})}
     resilient = ctx.imager.resilient
 
     # 1. health ---------------------------------------------------------------
@@ -127,7 +128,9 @@ def run_session(ctx: SessionContext, plan: SessionPlan | None = None, step: Step
             regions = find_regions(survey, n=3)
             here = ctx.mic.get_stage()
             best = regions[0]
-            mapping = ctx.atlas.mapping if ctx.atlas is not None else None
+            from asyncroscopy.imaging.stage_mapping import StageMapping
+            mapping = (StageMapping(stage_to_image=plan.stage_to_image, calibrated=True)
+                       if plan.stage_to_image is not None else None)
             px = survey_fov / survey.shape[1]
             if mapping is not None:
                 x, y = mapping.pixel_to_stage(here[:2], best["col"], best["row"], survey.shape, px)
@@ -200,21 +203,12 @@ def run_session(ctx: SessionContext, plan: SessionPlan | None = None, step: Step
     report["final"] = {"key": key, "metrics": final, "relative_change": gain}
     _done(entry, "ok", key=key)
 
-    # 6. record ------------------------------------------------------------------
-    entry = _stage(report, "record")
-    if plan.save_site and ctx.atlas is not None and ctx.mic is not None:
-        try:
-            fov = ctx.mic.current_fov()
-            site = ctx.atlas.add_site(plan.name, image, ctx.mic.get_stage(), fov,
-                                      notes=f"{plan.name}: {plan.score} {gain.get(plan.score, 0):+.1%}",
-                                      settings=ctx.mic.settings(),
-                                      provenance={**(provenance or {}), "session": _summary(report)})
-            report["site_id"] = site.id
-            _done(entry, "ok", site_id=site.id)
-        except Exception as exc:
-            _done(entry, "failed", error=f"{type(exc).__name__}: {exc}")
-    else:
-        _done(entry, "skipped")
+    try:
+        report["final"].update(stage=ctx.mic.get_stage() if ctx.mic is not None else None,
+                               fov_m=ctx.mic.current_fov() if ctx.mic is not None else None,
+                               settings=ctx.mic.settings() if ctx.mic is not None else None)
+    except Exception as exc:
+        report["final"]["stage_error"] = f"{type(exc).__name__}: {exc}"
 
     report["recoveries"] = list(resilient.events)
     failed = [s["stage"] for s in report["stages"] if s["status"] == "failed"]
@@ -222,11 +216,6 @@ def run_session(ctx: SessionContext, plan: SessionPlan | None = None, step: Step
     report["failed_stages"] = failed
     report["duration_s"] = round(time.time() - t0, 3)
     return report
-
-
-def _summary(report: dict) -> dict:
-    return {"name": report["name"], "stages": [{k: s.get(k) for k in ("stage", "status", "duration_s")}
-                                               for s in report["stages"]]}
 
 
 def jsonable(value: Any) -> Any:

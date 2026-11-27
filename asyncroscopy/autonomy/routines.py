@@ -6,8 +6,8 @@ Each routine:
   ``set_defocus``/``get_defocus``, ``move_stage``/``get_stage``, and the
   CORRECTOR API ``acquire_tableau``/``correct_aberration``), so it runs the
   same on a twin and on a vendor backend that passes the conformance check;
-* runs every instrument operation through a *step* callback (the supervision
-  queue records, pauses and aborts them, and applies the hard limits);
+* runs every instrument operation through a *step* callback, so a caller can
+  record, rate-limit or abort them;
 * survives a dropped device link: a failure diagnosed as ``unreachable``,
   ``link_down`` or ``timeout`` triggers the automatic recovery rungs
   (reconnect, Init) and one retry, and is recorded in the result;
@@ -507,7 +507,7 @@ def image_shift_tracker(imager: Imager, *, pixel_size_m: float, tracking_sign=(1
     *tracking_sign*, per axis, which absorbs the scan-to-image-shift handedness).
     A registration that is not a confident match is not applied.
     """
-    from asyncroscopy.atlas.registration import MatchCriteria, center_crop, judge, locate, offset_from_center
+    from asyncroscopy.imaging.registration import MatchCriteria, center_crop, judge, locate, offset_from_center
 
     r = imager.resilient
     _, reference = imager.acquire()

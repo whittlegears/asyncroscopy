@@ -12,8 +12,8 @@ Score an agent (hackathon flow)::
 
 ``setup`` prints the task instructions to hand to the agent. ``score``
 reads ground truth from the twin and appends a row to the leaderboard file.
-If supervision is on, the run's action history (who did what, how many
-instrument calls) is attached from the queue's ``history.jsonl``.
+The MCP server's tool-call log (``tool_log`` in ``configs/mcp_benchmark.yaml``)
+is summarised into the row: how many calls the agent made and how many failed.
 """
 
 from __future__ import annotations
@@ -102,14 +102,15 @@ def leaderboard_markdown(rows: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _history_summary(path: Path, since: float) -> dict:
-    from asyncroscopy.supervision.queue import load_history
+def _calls_summary(path: Path, since: float) -> dict:
+    from asyncroscopy.mcp.tool_log import read_tool_log
 
-    actions = [a for a in load_history(path).values() if a.get("created", 0) >= since]
-    top = [a for a in actions if not a.get("parent_id")]
-    return {"actions": len(top), "instrument_steps": len(actions),
-            "by_origin": {o: sum(a["origin"] == o for a in top) for o in ("agent", "operator", "recipe")},
-            "refused": sum(a["status"] in ("refused", "rejected", "denied") for a in actions)}
+    rows = read_tool_log(path, start=since)
+    tools: dict[str, int] = {}
+    for r in rows:
+        tools[r["tool"]] = tools.get(r["tool"], 0) + 1
+    return {"calls": len(rows), "failed": sum(not r["ok"] for r in rows),
+            "instrument_time_s": round(sum(r["duration_s"] for r in rows), 3), "by_tool": tools}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -133,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--state", type=Path, default=Path("bench_state.json"))
     c.add_argument("--team", required=True)
     c.add_argument("--board", type=Path, default=Path("leaderboard.jsonl"))
-    c.add_argument("--history", type=Path, default=Path("outputs/supervision/history.jsonl"))
+    c.add_argument("--tool-log", type=Path, default=Path("outputs/benchmark/tool_calls.jsonl"))
     a = ap.parse_args(argv)
     os.environ["TANGO_HOST"] = a.tango_host
     env = connect(a.instrument, a.corrector, a.data)
@@ -157,8 +158,8 @@ def main(argv: list[str] | None = None) -> int:
     result = TASKS[saved["task"]].score(env, saved["state"])
     row = {"task": saved["task"], "seed": saved["seed"], "team": a.team,
            "duration_s": time.time() - saved["started"], **result}
-    if a.history.exists():
-        row["history"] = _history_summary(a.history, saved["started"])
+    if a.tool_log.exists():
+        row["calls"] = _calls_summary(a.tool_log, saved["started"])
     with a.board.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, default=str) + "\n")
     print(json.dumps(row, indent=2, default=str))

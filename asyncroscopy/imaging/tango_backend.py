@@ -1,4 +1,4 @@
-"""The atlas' :class:`~asyncroscopy.atlas.revisit.Microscope` on top of Tango devices."""
+"""A small get/move/acquire adapter on top of an ``ElectronMicroscope`` Tango device."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 
 
 class TangoMicroscope:
-    """Drives an ``ElectronMicroscope`` Tango device (twin or real) for the atlas.
+    """Drives an ``ElectronMicroscope`` Tango device (twin or real) for the autonomy routines.
 
     *fetch_array(key)* turns the DATA/Tiled key an acquisition returns into
     the 2-D image array (the MCP server already knows how to do that).
