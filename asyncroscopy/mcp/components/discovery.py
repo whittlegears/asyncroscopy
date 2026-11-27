@@ -56,6 +56,9 @@ class Discovery:
                       for name, t in sorted(tools.items())},
             # The general agent's own tool selection, so other harnesses can match it.
             "agent_tools": self.agent_tool_globs(),
+            # Devices whose declarations could not be read: only the operator endpoint offers more than State and Status.
+            "devices_without_hints": sorted(p for p, d in server.devices.items() if d.hints_unreadable),
+            "discovery_warnings": list(server.discovery_warnings),
         }
 
     @tool()

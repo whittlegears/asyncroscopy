@@ -88,22 +88,25 @@ class DeviceInfo:
     plan_example: str | None = None
     in_types: dict[str, Any] = field(default_factory=dict)  # Tango input type of each command
     hints: dict[str, dict] = field(default_factory=dict)  # action_hints entry of each command
+    hints_unreadable: bool = False  # it has action_hints that could not be read: agents get only State and Status
 
     def kinds(self) -> set[str]:
         return {k for k in ("stem", "probe", "envelope") if getattr(self, k)}
 
 
-def read_hints(proxy: Any) -> tuple[dict[str, dict], str | None]:
-    """A device's ``action_hints`` ({command: {...}}) and a warning when it has one that cannot be read."""
+def read_hints(proxy: Any) -> tuple[dict[str, dict] | None, str | None]:
+    """A device's ``action_hints`` ({command: {...}}; {} for a device without the attribute) and None with a
+    warning when they cannot be read. None is not "nothing declared": the declarations that keep a command
+    from agents (``operator_only``) are unknown, so the server must not offer that device's commands to agents."""
     try:
         names = {a.lower() for a in proxy.get_attribute_list()}
         if ACTION_HINTS not in names:
             return {}, None
         raw = json.loads(str(proxy.read_attribute(ACTION_HINTS).value) or "{}")
     except Exception as exc:
-        return {}, f"could not read its {ACTION_HINTS} ({type(exc).__name__}: {exc})"
+        return None, f"could not read its {ACTION_HINTS} ({type(exc).__name__}: {exc})"
     if not isinstance(raw, dict):
-        return {}, f"its {ACTION_HINTS} is not a JSON object"
+        return None, f"its {ACTION_HINTS} is not a JSON object"
     return {str(c): h for c, h in raw.items() if isinstance(h, dict)}, None
 
 

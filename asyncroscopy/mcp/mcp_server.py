@@ -27,10 +27,10 @@ from fastmcp import FastMCP
 from fastmcp.server.server import Transport
 from fastmcp.tools import Tool, tool
 from pydantic import Field
-from tango import CmdArgType, CommandInfo, Database, DeviceProxy
+from tango import CmdArgType, CommandInfo, Database, DeviceProxy, DispLevel
 from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_type, is_int_type, is_scalar_type, is_str_type
 
-from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, tool_name
+from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, tool_name
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, local_docs
@@ -305,15 +305,16 @@ class MCPServer:
             names = [c.cmd_name for c in commands]
             hints, problem = read_hints(dev)
             if problem:
-                self.discovery_warnings.append(f"{prefix}: {problem}")
+                held = "" if self.endpoint_role == "operator" else "; this endpoint offers only its State and Status until it is fixed and the server restarted"
+                self.discovery_warnings.append(f"{prefix}: {problem}{held}")
             device = self.add_device(prefix, dev, dev_class, stem=is_stem_device(names), probe=is_probe_device(names),
-                                     envelope=is_envelope_device(names), hints=hints)
+                                     envelope=is_envelope_device(names), hints=hints or {}, hints_unreadable=hints is None)
             if device.envelope:
                 device.job_kind = self._attribute(dev, "job_kind")
                 device.plan_example = self._attribute(dev, "plan_example") or None
             for cmd in commands:
                 command_name = cmd.cmd_name
-                if not self._offers_command(prefix, dev_class, command_name, hints):
+                if not self._offers_command(prefix, dev_class, command_name, hints, getattr(cmd, "disp_level", None)):
                     continue
                 try:
                     func = getattr(dev, command_name)
@@ -359,11 +360,20 @@ class MCPServer:
         suffix = member if members.count(member) == 1 else family if families.count(family) == 1 else "_".join(parts)
         return f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
 
-    def _offers_command(self, prefix: str, dev_class: str, command_name: str, hints: dict) -> bool:
-        """Whether this endpoint's role and its block and allow lists let it serve the command."""
-        declared_operator = hints.get(command_name, {}).get("operator_only") is True
-        if self.endpoint_role != "operator" and (declared_operator or operator_only(dev_class, command_name)):
-            return False
+    def _offers_command(self, prefix: str, dev_class: str, command_name: str, hints: dict | None, disp_level: Any = None) -> bool:
+        """Whether this endpoint's role and its block and allow lists let it serve the command.
+
+        ``hints``: the device's action_hints, None when they could not be read; then only the operator endpoint
+        serves more than State and Status. ``disp_level``: the command's Tango display level; EXPERT is
+        operator only (``asyncroscopy.utils.commands.command(operator_only=True)`` sets it), whatever the hints say.
+        """
+        if self.endpoint_role != "operator":
+            if hints is None:
+                return command_name in TANGO_READS
+            if disp_level == DispLevel.EXPERT:
+                return False
+            if hints.get(command_name, {}).get("operator_only") is True or operator_only(dev_class, command_name):
+                return False
         if self.endpoint_role == "monitor":
             name = tool_name(prefix, command_name).lower()
             marked_high = any(level == "high" and fnmatchcase(name, pattern.lower()) for pattern, level in self.config.risk_overrides.items())

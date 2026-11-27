@@ -27,7 +27,9 @@ device's ``action_hints`` attribute (``action_hints_attribute``) instead of
 guessing from the command's name:
 
 - ``risk``: "low" or "high" (as the safety policy classes it);
-- ``operator_only``: only the operator endpoint offers it;
+- ``operator_only``: only the operator endpoint offers it. It also sets the command's Tango display level
+  to EXPERT, which every client reads from ``command_list_query`` without reading ``action_hints``, so the
+  MCP server keeps it from agents even when the attribute cannot be read;
 - ``stop``: a no-argument command the emergency stop calls;
 - ``routine``: auto mode runs it without a person;
 - ``role``: its canonical action role (``asyncroscopy.core.names.ROLES``).
@@ -39,6 +41,7 @@ import inspect
 import json
 from typing import Any, Callable
 
+from tango import DispLevel
 from tango.server import attribute
 from tango.server import command as tango_command
 
@@ -73,6 +76,8 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
 
     def decorate(func: Callable[..., Any]) -> Any:
         options = dict(kwargs)  # a decorator reused on several functions must not share their docs
+        if declared.get("operator_only") is True:
+            options["display_level"] = DispLevel.EXPERT
         if not options.get("doc_out"):
             options["doc_out"] = summary(func)
         # The MCP server names the tool's argument from the param line of doc_in.

@@ -75,7 +75,10 @@ class CAMERA(Device):
 Declare on the base class: every vendor backend and twin that subclasses it inherits the
 declarations and redeclares nothing (`declared_hints` merges them along the class hierarchy). A
 `role` from the read roles (`setting.read`, `stage.read`, `data.read`, `job.status`,
-`job.results`) also tells the server the command only observes. `operator_only=True` keeps a command off agent endpoints. A device
+`job.results`) also tells the server the command only observes. `operator_only=True` keeps a command off agent endpoints; it also sets the command's Tango display level to
+EXPERT, which the server reads from `command_list_query` and keeps from agents on its own. A device whose
+`action_hints` exist but cannot be read at discovery is held: agent and monitor endpoints offer only its State and
+Status, and `endpoint_info` lists it under `devices_without_hints` with the reason in `discovery_warnings`. A device
 that works out more about its commands (units and ranges at its own limits, as the
 `ElectronMicroscope` base does with `min_fov`, `max_fov` and `max_defocus`) passes
 `action_hints_attribute(extra=lambda device: device.argument_hints())`.
