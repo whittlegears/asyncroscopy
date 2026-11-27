@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from asyncroscopy.agents.workflows import get_workflow
-from asyncroscopy.agents.workflows.runner import resume_workflow, run_workflow
+from asyncroscopy.workflows import get_workflow
+from asyncroscopy.workflows.runner import resume_workflow, run_workflow
 from asyncroscopy.analysis_server.map_tools import MapTools
 
 from test_workflows import run, twin

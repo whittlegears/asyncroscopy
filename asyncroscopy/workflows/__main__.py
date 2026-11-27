@@ -1,21 +1,21 @@
 """Command line for workflows.
 
-    python -m asyncroscopy.agents.workflows blocks                       # list every block
-    python -m asyncroscopy.agents.workflows list                         # list workflows and their status
-    python -m asyncroscopy.agents.workflows view [--open]                # draw every workflow on one HTML page
-    python -m asyncroscopy.agents.workflows show map_grid                # print a workflow's Python
-    python -m asyncroscopy.agents.workflows lint map_grid [--endpoint]   # check a graph, with --endpoint also the live tools
-    python -m asyncroscopy.agents.workflows run map_grid --input size_m=6e-7
-    python -m asyncroscopy.agents.workflows run map_grid --hardware      # run on a real instrument
-    python -m asyncroscopy.agents.workflows status <run_id> | stop <run_id> | resume <run_id> | runs
+    python -m asyncroscopy.workflows blocks                       # list every block
+    python -m asyncroscopy.workflows list                         # list workflows and their status
+    python -m asyncroscopy.workflows view [--open]                # draw every workflow on one HTML page
+    python -m asyncroscopy.workflows show map_grid                # print a workflow's Python
+    python -m asyncroscopy.workflows lint map_grid [--endpoint]   # check a graph, with --endpoint also the live tools
+    python -m asyncroscopy.workflows run map_grid --input size_m=6e-7
+    python -m asyncroscopy.workflows run map_grid --hardware      # run on a real instrument
+    python -m asyncroscopy.workflows status <run_id> | stop <run_id> | resume <run_id> | runs
 
 For a workflow written outside the repository:
 
-    python -m asyncroscopy.agents.workflows propose my_workflow.py       # check it and keep it as a draft
-    python -m asyncroscopy.agents.workflows show my_workflow             # read it
-    python -m asyncroscopy.agents.workflows approve my_workflow          # let it run on an instrument
-    python -m asyncroscopy.agents.workflows approve my_workflow --instrument any --days 90
-    python -m asyncroscopy.agents.workflows revoke my_workflow           # make it a draft again
+    python -m asyncroscopy.workflows propose my_workflow.py       # check it and keep it as a draft
+    python -m asyncroscopy.workflows show my_workflow             # read it
+    python -m asyncroscopy.workflows approve my_workflow          # let it run on an instrument
+    python -m asyncroscopy.workflows approve my_workflow --instrument any --days 90
+    python -m asyncroscopy.workflows revoke my_workflow           # make it a draft again
 
 A draft runs on a digital twin only. An approval covers the code of the workflow and its blocks as they are now.
 Use --instrument STACK_ID to limit it to one instrument and --days N to make it expire.
@@ -30,7 +30,7 @@ import json
 import sys
 from pathlib import Path
 
-from ..config import AgentConfig
+from asyncroscopy.agents.config import AgentConfig
 from . import describe_blocks
 from .library import DEFAULT_LIBRARY, Library
 from .runner import list_runs, read_run, resume_workflow, run_workflow, stop_workflow, twin_only_problem
@@ -71,7 +71,7 @@ def _find(library: Library, name: str):
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m asyncroscopy.agents.workflows", description=__doc__,
+    parser = argparse.ArgumentParser(prog="python -m asyncroscopy.workflows", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=list(COMMANDS))
     parser.add_argument("target", nargs="?", help="a workflow name, a run id, or (propose) a workflow file")

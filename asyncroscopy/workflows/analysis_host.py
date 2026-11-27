@@ -1,6 +1,6 @@
 """The pyTEMlib analysis MCP server with the workflow tools beside its own, in one process.
 
-    python -m asyncroscopy.agents.workflows.analysis_host --tiled http://localhost:9091 --port 8003
+    python -m asyncroscopy.workflows.analysis_host --tiled http://localhost:9091 --port 8003
 
 It takes every option of ``python -m asyncroscopy.analysis_server`` and starts that same server with the workflow
 tools in ``OFFERED`` added. A chat client that has the analysis server's tools can then run a workflow.
@@ -38,7 +38,7 @@ READ_ONLY = frozenset({"list_workflows", "get_workflow", "workflow_status", "lis
 
 def parser(env: settings.Settings):
     out = analysis_cli.parser(env)
-    out.prog = "python -m asyncroscopy.agents.workflows.analysis_host"
+    out.prog = "python -m asyncroscopy.workflows.analysis_host"
     out.add_argument("--workflows-mcp-url", default="", metavar="URL",
                      help="The instrument's agent endpoint the workflows drive (empty: $ASYNCROSCOPY_MCP_URL, else the default endpoint).")
     out.add_argument("--workflows-hardware", action="store_true",

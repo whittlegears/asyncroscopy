@@ -57,7 +57,7 @@ def test_a_command_the_device_does_not_describe_is_described_from_this_installat
 
 
 def test_a_map_is_asked_for_by_its_tile_count(tmp_path):
-    from asyncroscopy.agents.workflows.runner import run_workflow
+    from asyncroscopy.workflows.runner import run_workflow
 
     instrument, analysis, state = twin()
     record = asyncio.run(run_workflow("map_grid", {"tiles_per_side": 3, "fov_m": 1.0e-7}, instrument=instrument, analysis=analysis, durable=False,

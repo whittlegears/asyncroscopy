@@ -10,10 +10,10 @@ from types import SimpleNamespace
 import pytest
 from fastmcp.exceptions import ToolError
 
-from asyncroscopy.agents.workflows import get_workflow, turns
-from asyncroscopy.agents.workflows.blocks import all_blocks
-from asyncroscopy.agents.workflows.runner import read_run, run_workflow, stop_workflow
-from asyncroscopy.agents.workflows.turns import Turn, acting_ahead
+from asyncroscopy.workflows import get_workflow, turns
+from asyncroscopy.workflows.blocks import all_blocks
+from asyncroscopy.workflows.runner import read_run, run_workflow, stop_workflow
+from asyncroscopy.workflows.turns import Turn, acting_ahead
 from asyncroscopy.mcp.components.turns import TurnGuard, TurnQueue
 from asyncroscopy.mcp.interceptors import Call
 

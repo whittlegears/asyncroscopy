@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from asyncroscopy.agents.goals import trace_from_messages
-from asyncroscopy.agents.workflows import get_workflow
-from asyncroscopy.agents.workflows.runner import run_workflow
+from asyncroscopy.workflows import get_workflow
+from asyncroscopy.workflows.runner import run_workflow
 
 PEAKS = ("peaks: Au M 2.12 keV\nelements most consistent with these peaks: Au 100%\ndata (sums of 11 channels):\n1,2,3")
 
@@ -164,7 +164,7 @@ def test_a_runs_instrument_calls_carry_the_caller_that_asked_for_it(tmp_path, mo
     # The instrument's trace, the benchmarks and the evaluators credit the agent that started the run.
     from fastmcp import Client
 
-    from asyncroscopy.agents.workflows import server as workflow_server
+    from asyncroscopy.workflows import server as workflow_server
 
     instrument, analysis, _ = scope()
     opened = []
@@ -189,7 +189,7 @@ def test_a_runs_instrument_calls_carry_the_caller_that_asked_for_it(tmp_path, mo
 
 
 def test_a_run_that_fails_after_zooming_puts_the_field_back_and_a_resume_zooms_again(tmp_path):
-    from asyncroscopy.agents.workflows.runner import resume_workflow
+    from asyncroscopy.workflows.runner import resume_workflow
 
     instrument, analysis, state = scope()
     good = instrument.tools["Twin_acquire_spectrum"]

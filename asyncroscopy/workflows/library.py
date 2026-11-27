@@ -10,7 +10,7 @@ A workflow has one of three statuses.
 
 A shipped or approved workflow may run on a real instrument when the operator allows hardware. A draft runs on a
 digital twin only. Only a person can approve, on the command line with
-``python -m asyncroscopy.agents.workflows approve NAME``. No tool a model can call approves anything.
+``python -m asyncroscopy.workflows approve NAME``. No tool a model can call approves anything.
 
 An approval can carry these.
 
@@ -43,7 +43,7 @@ KEPT_REHEARSALS = 10  # per workflow, newest last
 
 def needs_approval(name: str) -> str:
     return (f"{name} is a draft: nobody has approved it, so it runs on a digital twin only. A person approves it once with "
-            f"`python -m asyncroscopy.agents.workflows approve {name}`, after reading it (`python -m asyncroscopy.agents.workflows view` "
+            f"`python -m asyncroscopy.workflows approve {name}`, after reading it (`python -m asyncroscopy.workflows view` "
             "shows it with every other workflow).")
 
 
@@ -114,11 +114,11 @@ class Library:
         wanted = record.get("instrument") or ANY_INSTRUMENT
         if wanted != ANY_INSTRUMENT and wanted != stack_id:
             return (f"{name} is approved for the instrument {wanted}, not this one ({stack_id or 'which does not say what it is'}). "
-                    f"A person approves it for this one with `python -m asyncroscopy.agents.workflows approve {name}`.")
+                    f"A person approves it for this one with `python -m asyncroscopy.workflows approve {name}`.")
         expires = record.get("expires")
         if expires is not None and (now if now is not None else time.time()) > float(expires):
             return (f"the approval of {name} ended on {time.strftime('%Y-%m-%d', time.localtime(float(expires)))}. "
-                    f"A person approves it again with `python -m asyncroscopy.agents.workflows approve {name}`.")
+                    f"A person approves it again with `python -m asyncroscopy.workflows approve {name}`.")
         return None
 
     def _load(self, path: Path) -> Workflow | None:

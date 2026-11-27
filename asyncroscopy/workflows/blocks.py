@@ -18,7 +18,7 @@ from typing import Any
 
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 
-from ..mcp_tools import McpServer, result_text
+from asyncroscopy.agents.mcp_tools import McpServer, result_text
 
 TYPES = {"number": (int, float), "integer": (int,), "string": (str,), "boolean": (bool,), "list": (list,), "object": (dict,), "any": (object,)}
 

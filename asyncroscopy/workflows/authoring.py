@@ -29,7 +29,8 @@ from .checks import NAME
 
 GRAPH_NAMES = {"END", "START", "StateGraph"}
 OUR_NAMES = {"Steps", "Workflow", "WorkflowState"}
-OUR_MODULES = {"asyncroscopy.agents.workflows", "asyncroscopy.agents.workflows.graph", "graph"}
+# The package was asyncroscopy.agents.workflows before; drafts kept in a library with that import still load.
+OUR_MODULES = {"asyncroscopy.workflows", "asyncroscopy.workflows.graph", "graph", "asyncroscopy.agents.workflows", "asyncroscopy.agents.workflows.graph"}
 GRAPH_CALLS = {"add_node", "add_edge", "add_conditional_edges"}
 WORKFLOW_KEYS = {"name", "summary", "inputs", "budget", "build"}
 MAX_SOURCE_CHARS = 20_000
@@ -38,7 +39,7 @@ TEMPLATE = '''"""Take every tile of a square grid, moving the stage, and stop th
 
 from langgraph.graph import END, START, StateGraph
 
-from asyncroscopy.agents.workflows import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "size_m": {"type": "number", "default": 6.0e-7, "min": 1.0e-7, "max": 5.0e-6, "doc": "Side of the square, metres."},
@@ -77,7 +78,7 @@ TEMPLATE_PARALLEL = '''"""Image, ask a person, then zoom in and take an EDS and 
 
 from langgraph.graph import END, START, StateGraph
 
-from asyncroscopy.agents.workflows import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "fov_m": {"type": "number", "default": 2.0e-8, "min": 5.0e-9, "max": 5.0e-6, "doc": "Field of view for the spectra, metres."},
@@ -322,7 +323,7 @@ def check_source(source: str) -> list[str]:
             if module in OUR_MODULES and names <= OUR_NAMES and not renamed:
                 continue
             say(statement, "only these imports are accepted: from langgraph.graph import END, START, StateGraph and "
-                           "from asyncroscopy.agents.workflows import Steps, Workflow, WorkflowState")
+                           "from asyncroscopy.workflows import Steps, Workflow, WorkflowState")
         elif isinstance(statement, ast.FunctionDef) and statement.name == "build":
             seen["build"] += 1
             _check_build(statement, constants, say)

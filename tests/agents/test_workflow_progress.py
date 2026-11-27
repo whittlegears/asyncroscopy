@@ -11,9 +11,9 @@ import sys
 import textwrap
 import time
 
-from asyncroscopy.agents.workflows import runner
-from asyncroscopy.agents.workflows.runner import run_workflow
-from asyncroscopy.agents.workflows.server import WorkflowServer
+from asyncroscopy.workflows import runner
+from asyncroscopy.workflows.runner import run_workflow
+from asyncroscopy.workflows.server import WorkflowServer
 
 from tests.agents.test_workflows import INPUTS, twin
 
@@ -69,7 +69,7 @@ def test_a_run_another_process_drives_is_still_going_with_its_progress(tmp_path)
     holder = subprocess.Popen([sys.executable, "-c", textwrap.dedent(f"""
         import sys, time
         from pathlib import Path
-        from asyncroscopy.agents.workflows.runner import _run_lock
+        from asyncroscopy.workflows.runner import _run_lock
         with _run_lock(Path({str(tmp_path)!r}), "r2"):
             print("held", flush=True)
             sys.stdin.readline()

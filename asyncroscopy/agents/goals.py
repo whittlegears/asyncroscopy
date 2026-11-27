@@ -287,7 +287,7 @@ def workflow_calls(reply: Any) -> list[Call]:
     """The calls a workflow run reports in its reply (run_workflow, workflow_status), or none for any other reply.
 
     The reply's ``tools_called`` has one entry per tool with how often it succeeded and failed and its last
-    successful arguments and result (``asyncroscopy.agents.workflows.runner.tools_called``): one call per tool
+    successful arguments and result (``asyncroscopy.workflows.runner.tools_called``): one call per tool
     that succeeded, with those, and one failed call per tool that only failed.
     """
     value = _json(reply) if isinstance(reply, str) else reply

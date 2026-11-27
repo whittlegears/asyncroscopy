@@ -104,7 +104,7 @@ class AgentMCPServer:
 
         self.workflows = None
         if workflows or workflows_hardware:
-            from asyncroscopy.agents.workflows.server import Endpoints, WorkflowServer
+            from asyncroscopy.workflows.server import Endpoints, WorkflowServer
 
             self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow"),
                                             hardware=workflows_hardware)

@@ -1,6 +1,6 @@
 """One page for a person that shows every workflow with its graph, its purpose, who asked for it and its status.
 
-    python -m asyncroscopy.agents.workflows view            # writes outputs/workflows/workflows.html
+    python -m asyncroscopy.workflows view            # writes outputs/workflows/workflows.html
     http://127.0.0.1:8003/workflows                         # the same page served live by analysis_host
 
 The page is one HTML file that loads nothing from the network. Each graph is drawn as SVG from the workflow's
@@ -127,7 +127,7 @@ def _card(library: Library, entry: dict) -> str:
         done = [r for r in runs if r.get("state") == "done"]
         facts.append(f'<p><b>Rehearsed on a digital twin</b>: {len(done)} finished run(s) of this exact code'
                      + (f', last {esc(_when(done[-1].get("at")))}' if done else "; it has never run to the end anywhere") + ".</p>")
-        facts.append(f'<p><b>To approve it</b>, after reading the code below, run:</p><pre class="command">python -m asyncroscopy.agents.workflows approve {esc(name)}</pre>')
+        facts.append(f'<p><b>To approve it</b>, after reading the code below, run:</p><pre class="command">python -m asyncroscopy.workflows approve {esc(name)}</pre>')
     elif status == APPROVED:
         record = library.approval(name) or {}
         ends = f', until {esc(str(entry.get("approval_ends")))}' if entry.get("approval_ends") else ", until revoked"

@@ -498,7 +498,7 @@ def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
     options = {a.dest for a in server._actions if a.option_strings and a.dest != "help"}
     declared = {s.path.split(".", 1)[1] for s in run_pytemlib.SETTINGS}
     # With workflows on the launcher starts the module that adds the workflow tools.
-    from asyncroscopy.agents.workflows.analysis_host import parser as host_parser
+    from asyncroscopy.workflows.analysis_host import parser as host_parser
 
     host = {a.dest for a in host_parser(settings.get())._actions if a.option_strings and a.dest != "help"}
     assert host - options == {"workflows_hardware", "workflows_mcp_url"}
@@ -507,12 +507,12 @@ def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
 
 def test_run_pytemlib_starts_the_server_with_workflow_tools_only_when_asked(tmp_path):
     from asyncroscopy import settings
-    from asyncroscopy.agents.workflows.analysis_host import parser as host_parser
+    from asyncroscopy.workflows.analysis_host import parser as host_parser
 
     plain = run_pytemlib.build_command(pytemlib_config())
     assert "asyncroscopy.analysis_server" in plain and not [a for a in plain if "workflows" in a]
     command = run_pytemlib.build_command(pytemlib_config(workflows=True, workflows_hardware=True, workflows_mcp_url="http://127.0.0.1:8000/mcp", local_runs="outputs/maps"))
-    module = "asyncroscopy.agents.workflows.analysis_host"
+    module = "asyncroscopy.workflows.analysis_host"
     args = host_parser(settings.get()).parse_args(command[command.index(module) + 1:])
     assert (args.workflows_hardware, args.workflows_mcp_url, args.local_runs) == (True, "http://127.0.0.1:8000/mcp", "outputs/maps")
     path = tmp_path / "p.yaml"

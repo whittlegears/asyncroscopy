@@ -43,7 +43,7 @@ from langgraph.types import Command, interrupt
 
 from asyncroscopy.core.fileio import file_lock
 
-from ..mcp_tools import McpServer
+from asyncroscopy.agents.mcp_tools import McpServer
 from .blocks import BlockContext, BlockFailed, Stopped, all_blocks
 from .checks import switched_off_nodes
 from .turns import Turn, acting_ahead

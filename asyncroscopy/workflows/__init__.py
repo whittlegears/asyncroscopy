@@ -6,13 +6,13 @@ outputs and tools. A workflow is a module under ``graphs/`` that builds a ``Stat
 checkpoints, a stop switch and a cleanup that always runs. Blocks reach the instrument only through MCP tools, so
 the endpoint's risk policy, limits and trace apply to every call.
 
-    python -m asyncroscopy.agents.workflows blocks
-    python -m asyncroscopy.agents.workflows lint map_grid
-    python -m asyncroscopy.agents.workflows run map_grid --input size_m=6e-7
+    python -m asyncroscopy.workflows blocks
+    python -m asyncroscopy.workflows lint map_grid
+    python -m asyncroscopy.workflows run map_grid --input size_m=6e-7
 
 An agent can also write a workflow and send it as text. ``authoring.py`` checks that the text only wires blocks
 together before any of it runs. ``library.py`` keeps it as a draft until a person approves it with
-``python -m asyncroscopy.agents.workflows approve NAME``. Only shipped and approved workflows run on an instrument.
+``python -m asyncroscopy.workflows approve NAME``. Only shipped and approved workflows run on an instrument.
 """
 
 from .blocks import Block, BlockContext, BlockFailed, Stopped, all_blocks, describe_blocks, get_block, register_block

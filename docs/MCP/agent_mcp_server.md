@@ -58,7 +58,7 @@ agent:
       tools: ["list_devices"]
 ```
 
-`workflows: true` (optional, under `agent:`) runs workflows (`asyncroscopy/agents/workflows`, for example the `map_grid` map) in the agent's own process: `list_workflows`, `run_workflow`, `workflow_status`, `stop_workflow` and the rest are offered by this server and to the swarm's agents (give an agent `tools: ["*workflow*"]`). A map then needs three processes: the instrument's MCP endpoint, this agent server, and the pyTEMlib MCP server that stitches (`startup_scripts/run_pytemlib.py`). Workflows drive the first of `mcp_urls`. `workflows_hardware: true` also runs them on a stack that is not simulated; it needs `http_host: 127.0.0.1`, because this server has no login.
+`workflows: true` (optional, under `agent:`) runs workflows (`asyncroscopy/workflows`, for example the `map_grid` map) in the agent's own process: `list_workflows`, `run_workflow`, `workflow_status`, `stop_workflow` and the rest are offered by this server and to the swarm's agents (give an agent `tools: ["*workflow*"]`). A map then needs three processes: the instrument's MCP endpoint, this agent server, and the pyTEMlib MCP server that stitches (`startup_scripts/run_pytemlib.py`). Workflows drive the first of `mcp_urls`. `workflows_hardware: true` also runs them on a stack that is not simulated; it needs `http_host: 127.0.0.1`, because this server has no login.
 
 `mcp_urls` is the only link to the instrument stack. `use_init_chat_model: true` initializes through LangChain's `init_chat_model` using `model` and `model_provider` instead of a local Ollama model.
 

@@ -29,7 +29,7 @@ DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
 TRANSPORTS = ('streamable-http', 'sse')
 # The host and port below must match the server's own defaults.
 SERVER_MODULE = 'asyncroscopy.analysis_server'
-WORKFLOWS_MODULE = 'asyncroscopy.agents.workflows.analysis_host'  # the same server with the workflow tools added
+WORKFLOWS_MODULE = 'asyncroscopy.workflows.analysis_host'  # the same server with the workflow tools added
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8003
 API_KEY_VARIABLE = 'ASYNCROSCOPY_TILED_API_KEY'  # the server reads the key from this variable

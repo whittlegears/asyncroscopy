@@ -20,7 +20,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from ..mcp_tools import McpServer, result_text
+from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from .blocks import Block, Stopped
 from .checks import edges_of
 

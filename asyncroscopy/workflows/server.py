@@ -30,8 +30,8 @@ from fastmcp import FastMCP
 
 from asyncroscopy.core.names import CALLER_HEADER
 
-from ..config import AgentConfig
-from ..mcp_tools import McpServer
+from asyncroscopy.agents.config import AgentConfig
+from asyncroscopy.agents.mcp_tools import McpServer
 from . import runner
 from .authoring import RULES, TEMPLATE, TEMPLATE_PARALLEL
 from .blocks import describe_blocks

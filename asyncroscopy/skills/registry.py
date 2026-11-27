@@ -3,7 +3,7 @@
 A skill is an instruction manual for one kind of task: how to do it on this kind of instrument, which tool or
 workflow to use, what the replies mean and what to report. It is context the agent graphs retrieve for a request
 and put in the prompt, like retrieval-augmented generation over a small library; it never runs anything itself.
-A fixed procedure (the same calls every time) is a LangGraph workflow (``asyncroscopy.agents.workflows``), and
+A fixed procedure (the same calls every time) is a LangGraph workflow (``asyncroscopy.workflows``), and
 the skill for it says when to run that workflow and how to read what comes back.
 
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
@@ -188,7 +188,7 @@ def _parse(path: Path) -> Skill:
         skill.problem = f"written for envelope schema {skill.envelope_schema}, installed {ENVELOPE_VERSION}"
     if meta.get("run") is not None and skill.problem is None:
         skill.problem = ("its run list is a fixed procedure, and fixed procedures are LangGraph workflows now: write it as a workflow "
-                         "(asyncroscopy/agents/workflows/graphs, or propose_workflow) and make this skill say when to run it")
+                         "(asyncroscopy/workflows/graphs, or propose_workflow) and make this skill say when to run it")
     return skill
 
 

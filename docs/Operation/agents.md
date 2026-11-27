@@ -144,7 +144,7 @@ Nothing an agent writes here is reviewed before another run reads it, so it is k
 
 A skill (`asyncroscopy/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
 
-A procedure whose calls are the same every time is a LangGraph workflow (`asyncroscopy/agents/workflows/graphs/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
+A procedure whose calls are the same every time is a LangGraph workflow (`asyncroscopy/workflows/graphs/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
 
 | Workflow | What it does | Manual |
 | :-- | :-- | :-- |
@@ -152,7 +152,7 @@ A procedure whose calls are the same every time is a LangGraph workflow (`asyncr
 | `spectrum_on_feature` | Survey image, find the most distinct feature, spectrum on it, read the peaks, put the field of view back | `find_feature_then_measure` |
 | `spectrum_at_best_region` | The best region of a scored map, then `spectrum_on_feature` there | `best_region_spectrum` |
 
-A workflow runs in the workflow server's process (the analysis server started with `asyncroscopy.agents.workflows.analysis_host`), so every instrument call goes through the endpoint's safety policy and trace, it can be stopped (`stop_workflow`) and resumed, and its cleanup blanks the beam whatever happens. A finished run's reply lists the tools it called (`tools_called`), so the goal checker and the claim check count its acquisitions and moves as the agent's own. A skill with the older `run:` list is listed as unavailable, with the reason.
+A workflow runs in the workflow server's process (the analysis server started with `asyncroscopy.workflows.analysis_host`), so every instrument call goes through the endpoint's safety policy and trace, it can be stopped (`stop_workflow`) and resumed, and its cleanup blanks the beam whatever happens. A finished run's reply lists the tools it called (`tools_called`), so the goal checker and the claim check count its acquisitions and moves as the agent's own. A skill with the older `run:` list is listed as unavailable, with the reason.
 
 One run at a time acts on the instrument. Two maps running together undo each other: each blanks the beam and sets the image shift and field of view for its own tile, and the other's next image is taken with them. So the instrument endpoint gives turns (`take_turn`, `give_turn`, `turn_status`; `asyncroscopy/mcp/components/turns.py`), and they hold across processes: a run started from the command line and one started through the agent server queue behind each other.
 

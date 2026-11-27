@@ -10,9 +10,9 @@ import pytest
 
 from langgraph.graph import END, START, StateGraph
 
-from asyncroscopy.agents.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
-from asyncroscopy.agents.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
-from asyncroscopy.agents.workflows.values import evaluate
+from asyncroscopy.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
+from asyncroscopy.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
+from asyncroscopy.workflows.values import evaluate
 
 
 class FakeServer:
@@ -194,7 +194,7 @@ def test_a_node_knows_its_name_from_the_graph_and_langgraph_knows_where_a_condit
 
 
 def test_a_workflow_in_the_old_shape_is_told_the_new_one():
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE, check_source
+    from asyncroscopy.workflows.authoring import TEMPLATE, check_source
 
     old = TEMPLATE.replace('use.block("plan_grid", ', 'use.block("plan", "plan_grid", ').replace(
         'use.when("tile.remaining > 0", then="tile", otherwise="home", max_visits=400))',
@@ -230,7 +230,7 @@ def test_lint_against_the_endpoints_tools():
 
 
 def test_a_node_switched_off_by_the_runs_inputs_needs_no_tool():
-    from asyncroscopy.agents.workflows.checks import switched_off_nodes
+    from asyncroscopy.workflows.checks import switched_off_nodes
 
     instrument, analysis, _ = twin()
     names = [n for n in instrument.tools if not n.endswith("_acquire_eels_spectrum")]
@@ -449,12 +449,12 @@ def test_a_restore_that_fails_is_named_in_the_record(tmp_path):
 def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
     import inspect
 
-    from asyncroscopy.agents.workflows import graph as graph_module
+    from asyncroscopy.workflows import graph as graph_module
 
     before = get_workflow("map_grid").hash()
     real = inspect.getsource
     monkeypatch.setattr(graph_module.inspect, "getsource",
-                        lambda obj: real(obj) + ("\n# _expose changed" if getattr(obj, "__name__", "") == "asyncroscopy.agents.workflows.shipped_blocks" else ""))
+                        lambda obj: real(obj) + ("\n# _expose changed" if getattr(obj, "__name__", "") == "asyncroscopy.workflows.shipped_blocks" else ""))
     assert get_workflow("map_grid").hash() != before
 
 
@@ -468,7 +468,7 @@ class FakeEndpoints:
 
 
 def served(tmp_path, simulated=True, **kwargs):
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows.server import WorkflowServer
 
     instrument, analysis, state = twin(**kwargs)
     server = WorkflowServer(FakeEndpoints(instrument, analysis, simulated), state_dir=tmp_path / "state")
@@ -543,7 +543,7 @@ def test_a_failed_run_is_resumed_over_mcp_and_a_changed_workflow_is_not(tmp_path
     instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
     record = run(run_workflow("changing", {}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
     assert record["state"] == "failed"
-    from asyncroscopy.agents.workflows import graph as registry
+    from asyncroscopy.workflows import graph as registry
 
     registry._WORKFLOWS["changing"] = two_tiles("changing", when="tile.remaining > 1")
     try:
@@ -557,8 +557,8 @@ def test_a_failed_run_is_resumed_over_mcp_and_a_changed_workflow_is_not(tmp_path
 def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_purpose(tmp_path):
     from fastmcp import Client
 
-    from asyncroscopy.agents.workflows.runner import twin_only_problem
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows.runner import twin_only_problem
+    from asyncroscopy.workflows.server import WorkflowServer
 
     assert twin_only_problem({"simulated": None}) and twin_only_problem({}) and not twin_only_problem({"simulated": True})
     assert twin_only_problem({"simulated": False}, hardware=True) is None
@@ -575,8 +575,8 @@ def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_pur
 # Workflow tools on the pyTEMlib analysis server
 def test_the_analysis_server_can_carry_the_workflow_tools_for_a_chat_client(tmp_path):
     from fastmcp import Client
-    from asyncroscopy.agents.workflows import analysis_host
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows import analysis_host
+    from asyncroscopy.workflows.server import WorkflowServer
     from asyncroscopy.analysis_server import create_server
 
     instrument, analysis, state = twin()
@@ -628,7 +628,7 @@ ASKED = "Please create a workflow that takes the tiles of a square and stops, wi
 
 
 def test_an_agent_written_workflow_is_held_to_graph_wiring_before_any_of_it_runs(tmp_path):
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE, NotAWorkflow, check_source, load_source
+    from asyncroscopy.workflows.authoring import TEMPLATE, NotAWorkflow, check_source, load_source
 
     assert check_source(TEMPLATE) == []
     workflow = load_source(TEMPLATE)  # the example shown to models must itself pass
@@ -660,9 +660,9 @@ def test_an_agent_written_workflow_is_held_to_graph_wiring_before_any_of_it_runs
 def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_approves_it_once(tmp_path):
     from fastmcp import Client
 
-    from asyncroscopy.agents.workflows import Library
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
 
     library = Library(tmp_path / "library")
     instrument, analysis, state = twin()
@@ -749,9 +749,9 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
 def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_honoured(tmp_path):
     from fastmcp import Client
 
-    from asyncroscopy.agents.workflows import Library
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
 
     library = Library(tmp_path / "library")
     assert library.propose(TEMPLATE, request=ASKED)["ok"] and library.request("tiles_only")["request"] == ASKED
@@ -787,10 +787,10 @@ def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_h
 
 
 def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
-    from asyncroscopy.agents.workflows import Library
-    from asyncroscopy.agents.workflows.__main__ import main
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE
-    from asyncroscopy.agents.workflows.view import graph_svg, render_html
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.__main__ import main
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.view import graph_svg, render_html
 
     library = Library(tmp_path / "library")
     # Text written by a model is escaped on the page.
@@ -801,7 +801,7 @@ def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
     assert "<script" not in page and "<img" not in page and "&lt;script&gt;alert(1)&lt;/script&gt;" in page and "&lt;img src=x" in page
     waiting, shipped = page.index("Waiting for a person's approval (1)"), page.index(f"Shipped with the software ({len(SHIPPED)})")
     assert waiting < page.index('id="tiles_only"') < page.index("Approved (0)") < shipped < page.index('id="map_grid"')
-    assert "python -m asyncroscopy.agents.workflows approve tiles_only" in page and "it has never run to the end anywhere" in page
+    assert "python -m asyncroscopy.workflows approve tiles_only" in page and "it has never run to the end anywhere" in page
     assert "graph = StateGraph(WorkflowState)" in page and page.count("<svg") == len(SHIPPED) + 1  # each shipped workflow and the draft
     drawing = graph_svg(get_workflow("map_grid").blueprint())
     for text in ("plan_grid", "acquire_tile", "return_start", "collect_run", "stitch_map", "tile.remaining &gt; 0<tspan", ">at most 2000 times<", "otherwise", ">start<", ">end<"):
@@ -819,8 +819,8 @@ def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
 def test_the_page_is_served_beside_the_tools_for_a_browser(tmp_path):
     from starlette.testclient import TestClient
 
-    from asyncroscopy.agents.workflows import analysis_host
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows import analysis_host
+    from asyncroscopy.workflows.server import WorkflowServer
     from asyncroscopy.analysis_server import create_server
 
     instrument, analysis, _ = twin()
@@ -833,8 +833,8 @@ def test_the_page_is_served_beside_the_tools_for_a_browser(tmp_path):
 
 
 def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):
-    from asyncroscopy.agents.workflows.__main__ import main
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.__main__ import main
+    from asyncroscopy.workflows.authoring import TEMPLATE
 
     source = tmp_path / "mine.py"
     source.write_text(TEMPLATE, encoding="utf-8")
@@ -890,8 +890,8 @@ def spectra_endpoint(**replies):
 
 
 def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_person(tmp_path):
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL, check_source, load_source
-    from asyncroscopy.agents.workflows.runner import check_answers
+    from asyncroscopy.workflows.authoring import TEMPLATE_PARALLEL, check_source, load_source
+    from asyncroscopy.workflows.runner import check_answers
 
     assert check_source(TEMPLATE_PARALLEL) == []
     workflow = load_source(TEMPLATE_PARALLEL)  # the second example shown to models must also pass
@@ -936,7 +936,7 @@ def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_perso
 
 
 def test_a_branch_that_fails_is_the_only_one_repeated_on_resume(tmp_path):
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL, load_source
+    from asyncroscopy.workflows.authoring import TEMPLATE_PARALLEL, load_source
 
     workflow = load_source(TEMPLATE_PARALLEL)
 
@@ -986,9 +986,9 @@ def test_lint_knows_the_tools_a_workflow_names_and_refuses_what_it_cannot_check(
 def test_the_agent_relays_a_workflows_question_and_the_users_answer(tmp_path):
     from fastmcp import Client
 
-    from asyncroscopy.agents.workflows import Library
-    from asyncroscopy.agents.workflows.authoring import TEMPLATE_PARALLEL
-    from asyncroscopy.agents.workflows.server import WorkflowServer
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE_PARALLEL
+    from asyncroscopy.workflows.server import WorkflowServer
 
     instrument = spectra_endpoint()
     server = WorkflowServer(FakeEndpoints(instrument, None, True), state_dir=tmp_path / "state", library=Library(tmp_path / "library"))
@@ -1015,7 +1015,7 @@ def test_the_agent_relays_a_workflows_question_and_the_users_answer(tmp_path):
 
 
 def test_a_loop_of_three_nodes_runs_up_to_its_bound_without_hitting_the_recursion_limit(tmp_path):
-    from asyncroscopy.agents.workflows.blocks import Block, register_block, all_blocks
+    from asyncroscopy.workflows.blocks import Block, register_block, all_blocks
 
     async def count(ctx, args, previous):
         return {"n": (previous or {}).get("n", 0) + 1}
@@ -1040,7 +1040,7 @@ def test_a_loop_of_three_nodes_runs_up_to_its_bound_without_hitting_the_recursio
 
 
 def test_a_run_being_driven_is_not_resumed_a_second_time(tmp_path):
-    from asyncroscopy.agents.workflows.runner import _run_lock
+    from asyncroscopy.workflows.runner import _run_lock
 
     instrument, analysis, state = twin()
     instrument.tools["Twin_acquire_scanned_image"] = lambda a: "Error: no beam"
@@ -1052,7 +1052,7 @@ def test_a_run_being_driven_is_not_resumed_a_second_time(tmp_path):
 
 
 def test_a_running_map_reports_its_step_its_tiles_done_of_total_and_its_newest_image(tmp_path):
-    from asyncroscopy.agents.workflows import runner
+    from asyncroscopy.workflows import runner
 
     seen = []
 
@@ -1069,8 +1069,8 @@ def test_a_running_map_reports_its_step_its_tiles_done_of_total_and_its_newest_i
 
 
 def test_loop_progress_and_latest_image_read_only_what_is_there():
-    from asyncroscopy.agents.workflows.graph import loop_progress
-    from asyncroscopy.agents.workflows.runner import latest_image
+    from asyncroscopy.workflows.graph import loop_progress
+    from asyncroscopy.workflows.runner import latest_image
 
     assert loop_progress("tile", {"index": 4, "remaining": 20, "level": 1}) == {"node": "tile", "done": 5, "total": 25, "level": 1}
     assert loop_progress("tile", {"index": True, "remaining": 1}) is None and loop_progress("plan", {"tiles": []}) is None
@@ -1084,7 +1084,7 @@ ONE_IMAGE = '''"""Take one image."""
 
 from langgraph.graph import END, START, StateGraph
 
-from asyncroscopy.agents.workflows import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows import Steps, Workflow, WorkflowState
 
 
 def build(use: Steps) -> StateGraph:
@@ -1101,7 +1101,7 @@ WORKFLOW = Workflow(name="one_image", summary="Take one image.", inputs={}, budg
 
 def test_the_microscopes_live_scan_pauses_the_run_for_a_person(tmp_path):
     """AutoScript refuses an acquisition while its own live scan runs; the run asks a person to stop it, then retries."""
-    from asyncroscopy.agents.workflows.authoring import load_source
+    from asyncroscopy.workflows.authoring import load_source
 
     workflow = load_source(ONE_IMAGE)
     busy = {"on": True}
@@ -1133,8 +1133,8 @@ def test_the_microscopes_live_scan_pauses_the_run_for_a_person(tmp_path):
 
 
 def test_a_second_run_that_drives_the_instrument_is_refused_while_one_is_running(tmp_path):
-    from asyncroscopy.agents.workflows.blocks import BlockContext
-    from asyncroscopy.agents.workflows.runner import LIVE
+    from asyncroscopy.workflows.blocks import BlockContext
+    from asyncroscopy.workflows.runner import LIVE
 
     instrument, analysis, _ = twin()
     other = BlockContext(instrument)
