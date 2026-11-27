@@ -35,6 +35,7 @@ project:
         - file: MCP/agent_mcp_server.md
         - file: MCP/building_an_mcp.md
         - file: MCP/asyncroscopy_mcp.md
+        - file: MCP/sciagentgui_integration.md
     - title: Operation
       children:
         - file: Operation/run-servers.md
