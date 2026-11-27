@@ -10,7 +10,6 @@ import pyTEMlib.image_tools as image_tools
 import pyTEMlib.probe_tools as probe_tools
 from tango.server import device_property
 
-from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
 from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
@@ -159,17 +158,13 @@ class PolycrystallineGoldDigitalTwin(ParticleSpectrumMixin, ElectronMicroscopeTw
         attrs = [metadata.copy() for _image in images]
         return save_acquisition(self, self._detector_proxies.get("data"), "stem_image", detector_list, images, dataset_attrs=attrs, file_attrs=metadata, output_format=output_format)
 
-    @command(dtype_out=str, risk="low", role="setting.read")
-    def get_volume_metadata(self) -> str:
-        """The rendered sample's metadata as JSON: grains, atom count, defocus and corrector aberrations."""
-        metadata = {**self._sample_metadata, "last_rendered_atom_count": self._last_rendered_atom_count, "raw_potential_cache_hits": self._raw_potential_cache_hits, "defocus_m": self._get_defocus(), "corrector_aberrations": self._corrector_coefficients()}
-        return json.dumps(metadata)
-
-    @command(dtype_out=str, risk="low", role="setting.read")
-    def get_region_parameters(self) -> str:
-        """The sample's regions (grain orientation, thickness, ...) as a JSON list."""
-        return json.dumps([asdict(parameter) for parameter in self._specimen.regions()])
-
+    def _ground_truth(self) -> dict:
+        """The rendered sample (grains, atom count) and its regions (grain orientation, thickness, ...): hidden truth."""
+        return {**super()._ground_truth(),
+                "volume": {**self._sample_metadata, "last_rendered_atom_count": self._last_rendered_atom_count,
+                           "raw_potential_cache_hits": self._raw_potential_cache_hits, "defocus_m": self._get_defocus(),
+                           "corrector_aberrations": self._corrector_coefficients()},
+                "regions": [asdict(parameter) for parameter in self._specimen.regions()]}
 
 if __name__ == "__main__":
     PolycrystallineGoldDigitalTwin.run_server()

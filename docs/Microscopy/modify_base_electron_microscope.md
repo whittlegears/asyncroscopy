@@ -64,7 +64,7 @@ If you're editing this class, you're usually doing one of these:
    - acquisition — `acquire_scanned_image`, `acquire_spectrum`,
      `acquire_camera_image`,
      `acquire_scanned_data_advanced`
-   - beam / optics — `place_beam`, `place_beam_list`, `blank_beam`,
+   - beam / optics — `place_beam`, `place_beam_at`, `blank_beam`,
      `unblank_beam`, `set_defocus` / `get_defocus`, `set_image_shift`,
      `set_column_valves`
    - stage — `get_stage`, `move_stage`
@@ -95,9 +95,8 @@ If you're editing this class, you're usually doing one of these:
    Acquisition commands return a Tiled key string; the actual save happens in
    the vendor helper via `save_acquisition` (`asyncroscopy/data/data_writer.py`)
    and registration via the DATA device (`asyncroscopy/data/data.py`). See
-   [data_integration.md](../Tiled_server/data_integration.md). The legacy
-   `get_image_data_cached` (returns `DevEncoded`) is the only remaining
-   byte-over-Tango path.
+   [data_integration.md](../Tiled_server/data_integration.md). No command sends
+   image bytes over Tango.
 
 6. **Improving robustness**
    (Connection failures, missing proxies, vendor-API errors, simulation

@@ -9,6 +9,7 @@ from tango import DevState
 from tango.server import device_property
 
 from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR, FIRST_ORDER
+from asyncroscopy.utils.commands import command
 
 
 DEFAULT_ABERRATIONS = {
@@ -42,7 +43,23 @@ class DigitalTwinCorrector(CORRECTOR):
 
     def init_device(self) -> None:
         self._response_id = 1
+        self._simulation_aberrations: dict[str, list[float]] = {}
         super().init_device()
+
+    # The twin's hidden aberrations. Operator only: an agent must measure them, as on hardware. The twin microscopes read
+    # and write them device to device, over Tango, to render with the corrector's state.
+    @command(dtype_in=str, risk="high", operator_only=True, role="setting.set")
+    def set_aberrations_coeff_sim(self, json_aberrations_string: str) -> None:
+        """Set the simulated column's aberrations (JSON {name: [values in metres]}); names left out keep their defaults."""
+        coefficients = json.loads(json_aberrations_string)
+        if not isinstance(coefficients, dict):
+            raise ValueError("Simulation aberrations must be a JSON object")
+        self._set_simulation_aberrations(coefficients)
+
+    @command(dtype_out=str, risk="low", operator_only=True, role="setting.read")
+    def get_aberrations_coeff_sim(self) -> str:
+        """The simulated column's aberrations, JSON {name: [values in metres]}: the twin's hidden truth."""
+        return json.dumps(self._simulation_aberrations)
 
     def _connect_backend(self) -> None:
         if not getattr(self, "_simulation_aberrations", None):
@@ -59,8 +76,9 @@ class DigitalTwinCorrector(CORRECTOR):
     def _get_info(self) -> str:
         return self._response(
             {
-                "manufacturer": "CEOS",
+                "manufacturer": "asyncroscopy digital twin",
                 "model": "DigitalTwinCorrector",
+                "emulates": "CEOS corrector API",
                 "connected": True,
                 "simulation": True,
             }

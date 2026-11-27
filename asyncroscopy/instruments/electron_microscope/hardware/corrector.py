@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import math
 from abc import abstractmethod
-from typing import Any
 
 import tango
 from tango import AttrWriteType, DevState, DevString, DevVarDoubleStringArray
@@ -63,7 +62,6 @@ class CORRECTOR(Device):
         Device.init_device(self)
         self.set_state(DevState.INIT)
         self._last_status = "Initialising"
-        self._simulation_aberrations: dict[str, Any] = {}
         self._connect_backend()
 
     def read_status_message(self) -> str:
@@ -115,23 +113,6 @@ class CORRECTOR(Device):
     @command(risk="high", role="other")
     def reconnect(self) -> None:
         self._connect_backend()
-
-    @command(dtype_in=str, risk="high", role="setting.set")
-    def set_aberrations_coeff_sim(self, json_aberrations_string: str) -> None:
-        coefficients = json.loads(json_aberrations_string)
-        if not isinstance(coefficients, dict):
-            raise ValueError("Simulation aberrations must be a JSON object")
-        self._set_simulation_aberrations(coefficients)
-
-    @command(dtype_out=str, risk="low", role="setting.read")
-    def get_aberrations_coeff_sim(self) -> str:
-        return json.dumps(self._get_simulation_aberrations())
-
-    def _set_simulation_aberrations(self, coefficients: dict[str, Any]) -> None:
-        self._simulation_aberrations = coefficients
-
-    def _get_simulation_aberrations(self) -> dict[str, Any]:
-        return self._simulation_aberrations
 
     @abstractmethod
     def _connect_backend(self) -> None:

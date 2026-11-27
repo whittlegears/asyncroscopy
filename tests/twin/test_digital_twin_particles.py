@@ -53,3 +53,38 @@ def test_particle_twin_stage_tilt_recooks_projection(
 def test_particle_twin_fov_round_trip(particles_twin_proxy):
     particles_twin_proxy.set_fov(18e-9)
     assert particles_twin_proxy.get_fov() == pytest.approx(18e-9)
+
+
+def test_particle_twin_keeps_its_truth_for_the_operator_and_its_beam_position_read_only(particles_twin_proxy):
+    import json
+
+    from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
+    from asyncroscopy.utils.commands import declared_hints
+
+    parameters = json.loads(particles_twin_proxy.get_parameters())
+    assert "particle_count" not in parameters and "sample_seed" not in parameters
+    truth = json.loads(particles_twin_proxy.export_ground_truth())
+    assert truth["particle_count"] >= 0 and "sample_seed" in truth
+    assert declared_hints(DigitalTwinParticles)["export_ground_truth"]["operator_only"] is True
+    with pytest.raises(tango.DevFailed):
+        particles_twin_proxy.beam_pos = [0.2, 0.3]  # only place_beam moves the beam, with its checks
+    particles_twin_proxy.place_beam([0.25, 0.75])
+    assert list(particles_twin_proxy.beam_pos) == pytest.approx([0.25, 0.75])
+
+
+@pytest.mark.parametrize("twin_class", ["DigitalTwin", "DigitalTwinParticles", "PolycrystallineGoldDigitalTwin"])
+def test_a_twin_without_a_camera_model_refuses_a_camera_image(twin_class):
+    """It used to return a HAADF scan labelled as a camera image; now it says it has no camera."""
+    from asyncroscopy.instruments.electron_microscope import digital_twin, digital_twin_particles, polycrystalline_gold_digital_twin
+
+    module = {"DigitalTwin": digital_twin, "DigitalTwinParticles": digital_twin_particles,
+              "PolycrystallineGoldDigitalTwin": polycrystalline_gold_digital_twin}[twin_class]
+    cls = getattr(module, twin_class)
+    twin = cls.__new__(cls)
+    with pytest.raises(tango.DevFailed, match="no camera model"):
+        cls._acquire_camera_image(twin, 64, 0.1, "BM-Ceta", "Full", 1, ".h5")
+
+
+def test_a_twin_without_a_blanker_refuses_to_blank(particles_twin_proxy):
+    with pytest.raises(tango.DevFailed, match="does not support blank_beam"):
+        particles_twin_proxy.blank_beam()

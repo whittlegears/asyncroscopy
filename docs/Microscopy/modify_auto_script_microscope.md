@@ -18,10 +18,11 @@ If you're editing this class, you're usually doing one of these:
 
 1. **Adding or modifying an attribute**
    Expose device state clients can read. The live-state reads
-   (`fov`, `defocus`, `camera_length`, `acceleration_voltage`, `beam_state`)
-   pull from `self._microscope` and must return `nan`/`False` when it is `None`
-   (testing mode) — guard every such read. `register_stage` is the matching
-   command: it pushes the live stage position onto the STAGE child device.
+   (`camera_length`, `acceleration_voltage`) pull from `self._microscope` and
+   must return `nan` when it is `None` (testing mode) — guard every such read.
+   Field of view, defocus, the blanker and the stage are read with commands
+   (`get_fov`, `get_defocus`, `get_parameters`' `beam_blanked`, `get_stage`),
+   not duplicated as attributes.
    The public stage vector is `[x, y, z, alpha, beta]`, with x/y/z in meters
    and alpha/beta in degrees. Convert tilts to radians only when sending values
    to AutoScript.

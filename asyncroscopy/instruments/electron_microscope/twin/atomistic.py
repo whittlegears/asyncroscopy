@@ -114,5 +114,5 @@ class ParticleSpectrumMixin:
             dataset_attrs={"elements": list(spectrum.keys())},
         )
 
-    def _viewport_metadata(self) -> dict:
-        return {**super()._viewport_metadata(), "particle_count": len(self._particle_records_base)}
+    def _ground_truth(self) -> dict:
+        return {**super()._ground_truth(), "particle_count": len(self._particle_records_base)}

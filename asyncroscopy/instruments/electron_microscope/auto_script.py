@@ -27,9 +27,8 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
-from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.instruments.scanning_beam import hardware_call, unsupported
+from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
 
 # AutoScript imports — only available on the microscope PC.
@@ -134,34 +133,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
     # Attributes
     # ------------------------------------------------------------------
-    # not finishded
-    manufacturer = attribute(
-        label="Thermofisher",
-        dtype=bool,
-        access=AttrWriteType.READ,
-        doc="This microscope uses AutoScript for control and acquisition",
-    )
-
-    fov = attribute(
-        label="Field of View",
-        dtype=float,
-        access=AttrWriteType.READ,
-        unit = "m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
-        doc="Current field of view in metres",
-    )
-
-    defocus = attribute(
-        label="Defocus",
-        dtype=float,
-        access=AttrWriteType.READ,
-        unit = "m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
-        doc="Current defocus in metres (e.g. 2e-8 for 20 nm)",
-    )
-
     camera_length = attribute(
         label="Camera Length",
         dtype=float,
@@ -170,13 +141,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         # min_value= TODO: set these
         # max_value= TODO: set these
         doc="Current camera length in meters",
-    )
-
-    beam_state = attribute(
-        label="Beam State",
-        dtype=bool,
-        access=AttrWriteType.READ,
-        doc="Current beam state, either 'blanked' or 'unblanked'",
     )
 
     acceleration_voltage = attribute(
@@ -270,22 +234,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # Attribute read methods
     # ------------------------------------------------------------------
 
-    def read_manufacturer(self) -> bool:
-        # TODO: query self._microscope.optics.mode when AutoScript available
-        return self._manufacturer
-
-    def read_fov(self) -> float:
-        """Field of view in meters (STEM mode only)."""
-        if self._microscope is None:
-            return float("nan")
-        return self._get_fov()
-
-    def read_defocus(self) -> float:
-        """Defocus in meters."""
-        if self._microscope is None:
-            return float("nan")
-        return self._get_defocus()
-
     def read_acceleration_voltage(self) -> float:
         """Accelerating voltage in volts."""
         if self._microscope is None:
@@ -297,36 +245,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if self._microscope is None:
             return float("nan")
         return self._microscope.optics.camera_length.value.calibrated
-
-    def read_beam_state(self) -> bool:
-        """Beam blanked state: True when blanked, False when unblanked."""
-        if self._microscope is None:
-            return False
-        return self._microscope.optics.blanker.is_beam_blanked
-
-    # ------------------------------------------------------------------
-    # Commands pertaining to setting children attributes, e.g. stage position, scan parameters, EDS settings, etc. --> iuser accesses it in a jupyter notebook using the device proxy
-    # ------------------------------------------------------------------
-
-    @command(dtype_out=tango.DevVarFloatArray, risk="high", role="other")
-    @hardware_call()
-    def register_stage(self) -> np.ndarray:
-        """Read the live stage position from the instrument: [x, y, z, alpha, beta], x/y/z in metres, tilts in degrees.
-
-        Nothing is written back: the AutoScript STAGE device reads the same hardware, and a write there
-        is a stage move. A STAGE device that reports another position (a cached settings device) is logged.
-        """
-        position = self._get_stage()
-        stage = self._detector_proxies.get("stage")
-        if stage is not None:
-            try:
-                reported = np.asarray(stage.position, dtype=float)
-                if reported.shape != position.shape or not np.allclose(reported[:3], position[:3], atol=1e-9, equal_nan=True):
-                    self.warn_stream(f"STAGE device reports {reported.tolist()}, the instrument {position.tolist()}")
-            except (tango.DevFailed, AttributeError, TypeError, ValueError) as error:
-                self.warn_stream(f"could not compare with the STAGE device: {error}")
-        return position
-
 
     # ------------------------------------------------------------------
     # Internal acquisition helpers

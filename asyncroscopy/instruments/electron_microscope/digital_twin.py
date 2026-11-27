@@ -19,7 +19,6 @@ import numpy as np
 import tango
 from tango.server import device_property
 
-from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition, save_acquisition_stream
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
@@ -473,10 +472,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * support
         return density
 
-    def _acquire_camera_image(self, *args, **kwargs):
-        self._refuse_while_moving()
-        return super()._acquire_camera_image(*args, **kwargs)
-
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
         self._refuse_while_moving()
         real_time = float(exposure_time)
@@ -585,9 +580,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         half = self._fov / ANGSTROM / 2
         metadata["stage_position"] = self._stage.reported.tolist()
         metadata["viewport_world_angstrom"] = {"x_min": x - half, "x_max": x + half, "y_min": y - half, "y_max": y + half, "z_center": z}
-        # The seed regenerates the sample, so only the operator command export_ground_truth has it. An agent must find
-        # particles by imaging.
-        metadata.pop("sample_seed", None)
         return metadata
 
     def _get_parameters(self) -> str:
@@ -606,15 +598,11 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 
-    @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
-    def export_ground_truth(self) -> str:
-        """Hidden truth for scoring workflows: particles, true stage pose and drift of every acquisition.
-
-        Operator only (an agent must not read a twin's answers); tests and calibration scripts call it through Tango.
-        """
+    def _ground_truth(self) -> dict:
+        """The particles, the true stage pose and the drift of every acquisition (export_ground_truth)."""
         specimen_truth = self._specimen.ground_truth()
         stage = self._detector_proxies.get("stage")
-        return json.dumps(
+        return (
             {
                 "sample_seed": int(self.sample_seed),
                 "sample_bounds_m": list(self._specimen.bounds),

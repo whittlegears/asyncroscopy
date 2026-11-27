@@ -39,8 +39,8 @@ mcp:
     # The twin's classes as well as the hardware's, as in configs/mcp_dt.yaml, so an agent rehearsing
     # here has the tools it will have there. Until first light's sign test settles the CEOS correction's sign and units,
     # the corrector is written only by the Tuner (allow_corrector_writes) or a person.
-    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau, set_aberrations_coeff_sim]
-    DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau, set_aberrations_coeff_sim]
+    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
+    DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
     # After Disconnect even the e-stop cannot blank the beam.
     AutoScriptMicroscope: [Disconnect]
     JeolMicroscope: [Disconnect]

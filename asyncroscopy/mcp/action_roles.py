@@ -55,7 +55,7 @@ def role_for(dev_class: str, command: str, *, envelope: bool = False, probe: boo
     if reads:
         if w & _STAGE:
             return "stage.read"
-        if "data" in w and "image" in w:  # such as get_image_data_cached
+        if "data" in w and "image" in w:  # such as get_image_data
             return "data.read"
         return "setting.read"
     if words and words[0].startswith("acquire"):

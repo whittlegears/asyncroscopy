@@ -57,15 +57,12 @@ DEVICE_TIMEOUT_MS = 5000
 NET_TIMEOUT_S = 5.0
 MCP_TIMEOUT_S = 15.0
 
-# Attributes this script may read. Reads never act but the list makes clear what the script touches.
-READ_ATTRIBUTES = frozenset({"beam_state"})
 BAD_STATES = frozenset({"FAULT", "UNKNOWN"})
 
 
 class ProxyLike(Protocol):
     def set_timeout_millis(self, timeout: int) -> None: ...
     def command_inout(self, name: str) -> Any: ...
-    def read_attribute(self, name: str) -> Any: ...
 
 
 class NotReadOnly(RuntimeError):
@@ -84,11 +81,6 @@ class ReadOnlyDevice:
         if not is_read_only(self._class, name):
             raise NotReadOnly(f"{self._class}.{name} is not a read-only command; the pre-flight never sends it")
         return self._proxy.command_inout(name)
-
-    def attribute(self, name: str) -> Any:
-        if name not in READ_ATTRIBUTES:
-            raise NotReadOnly(f"{self._class}.{name} is not in the pre-flight's list of attributes to read")
-        return self._proxy.read_attribute(name).value
 
     def state(self) -> str:
         return str(self.command("State")).rsplit(".", 1)[-1].upper()
@@ -331,11 +323,11 @@ def check_microscope(config: Any, devices: dict[str, ReadOnlyDevice], report: Re
             report.add("PASS", "beam current", f"{parameters.get('beam_current_pa'):.2f} pA, measured {parameters.get('beam_current_age_s')} s ago")
         else:
             report.add("WARN", "beam current", f"not measured: {parameters.get('beam_current_reason', 'no reason given')}. Dose budgets are refused until it is.")
-    try:
-        blanked = bool(microscope.attribute("beam_state"))
+    if "beam_blanked" not in parameters:
+        report.add("FAIL", "beam blanked", "get_parameters gave no beam_blanked, so whether the beam is blanked is not known")
+    else:
+        blanked = bool(parameters["beam_blanked"])
         report.add("PASS" if blanked else "WARN", "beam blanked", "yes" if blanked else "NO: the beam is on the sample")
-    except Exception as exc:
-        report.add("FAIL", "beam blanked", _error(exc))
 
 
 def check_ceos(config: Any, probes: Probes, report: Report) -> None:

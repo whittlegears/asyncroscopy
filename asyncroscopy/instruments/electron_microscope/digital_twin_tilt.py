@@ -629,45 +629,47 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         return float(self._fov)
 
     def _get_parameters(self) -> str:
+        """The instrument's state. What the specimen is (the lamella, its lattice, rotation and tilt, and their
+        gradients) and where the stage rotates about are hidden truth, in export_ground_truth only."""
         self._sync_stage_from_proxy()
-        specimen = self._specimen.params
         return json.dumps(
             {
                 "sample": "bulk silicon FIB lamella",
                 "stage_command": self._stage_command.tolist(),
                 "stage_actual": self._stage_position.tolist(),
-                "rotation_center_nm": [
-                    float(self.rotation_center_x_nm),
-                    float(self.rotation_center_y_nm),
-                    float(self.rotation_center_z_nm),
-                ],
                 "image_shift_m": self._image_shift.tolist(),
                 "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
                 "convergence_angle_mrad": float(self.convergence_angle_mrad),
                 "diffraction_image_size": int(self.diffraction_image_size),
                 "diffraction_max_angle_mrad": float(self.diffraction_max_angle_mrad),
-                "lamella_width_nm": specimen.lamella_width_nm,
-                "lamella_height_nm": specimen.lamella_height_nm,
-                "lamella_thickness_nm": specimen.lamella_thickness_nm,
-                "silicon_lattice_parameter_angstrom": specimen.silicon_lattice_parameter_angstrom,
-                "lattice_parameter_gradient_x_percent": specimen.lattice_parameter_gradient_x_percent,
-                "lattice_parameter_gradient_y_percent": specimen.lattice_parameter_gradient_y_percent,
-                "crystal_rotation_deg": specimen.crystal_rotation_deg,
-                "crystal_rotation_gradient_x_deg": specimen.crystal_rotation_gradient_x_deg,
-                "crystal_rotation_gradient_y_deg": specimen.crystal_rotation_gradient_y_deg,
-                "crystal_tilt_x_mrad": specimen.crystal_tilt_x_mrad,
-                "crystal_tilt_y_mrad": specimen.crystal_tilt_y_mrad,
-                "crystal_tilt_gradient_x_mrad": specimen.crystal_tilt_gradient_x_mrad,
-                "crystal_tilt_gradient_y_mrad": specimen.crystal_tilt_gradient_y_mrad,
                 "electron_energy_ev": float(self.electron_energy_ev),
                 "potential_sampling_angstrom": float(self.potential_sampling_angstrom),
                 "potential_slice_thickness_angstrom": float(self.potential_slice_thickness_angstrom),
                 "multislice_supercell": self._multislice_supercell(),
-                "frozen_phonon_sigma_angstrom": specimen.frozen_phonon_sigma_angstrom,
                 "randomness_scale": float(self.randomness_scale),
             }
         )
 
+    def _ground_truth(self) -> dict:
+        specimen = self._specimen.params
+        return {
+            **super()._ground_truth(),
+            "rotation_center_nm": [float(self.rotation_center_x_nm), float(self.rotation_center_y_nm), float(self.rotation_center_z_nm)],
+            "lamella_width_nm": specimen.lamella_width_nm,
+            "lamella_height_nm": specimen.lamella_height_nm,
+            "lamella_thickness_nm": specimen.lamella_thickness_nm,
+            "silicon_lattice_parameter_angstrom": specimen.silicon_lattice_parameter_angstrom,
+            "lattice_parameter_gradient_x_percent": specimen.lattice_parameter_gradient_x_percent,
+            "lattice_parameter_gradient_y_percent": specimen.lattice_parameter_gradient_y_percent,
+            "crystal_rotation_deg": specimen.crystal_rotation_deg,
+            "crystal_rotation_gradient_x_deg": specimen.crystal_rotation_gradient_x_deg,
+            "crystal_rotation_gradient_y_deg": specimen.crystal_rotation_gradient_y_deg,
+            "crystal_tilt_x_mrad": specimen.crystal_tilt_x_mrad,
+            "crystal_tilt_y_mrad": specimen.crystal_tilt_y_mrad,
+            "crystal_tilt_gradient_x_mrad": specimen.crystal_tilt_gradient_x_mrad,
+            "crystal_tilt_gradient_y_mrad": specimen.crystal_tilt_gradient_y_mrad,
+            "frozen_phonon_sigma_angstrom": specimen.frozen_phonon_sigma_angstrom,
+        }
 
 if __name__ == "__main__":
     DigitalTwinTilt.run_server()

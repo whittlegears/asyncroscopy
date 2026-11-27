@@ -54,6 +54,7 @@ class FakeProxy:
 PARAMETERS = {
     "optical_mode": "Stem", "projector_mode": "Imaging", "acceleration_voltage": 300000.0, "column_valves": "Closed",
     "beam_current_pa": 50.0, "beam_current_source": "default", "beam_current_reason": "no screen-current measurement since connecting",
+    "beam_blanked": True,
 }
 
 
@@ -88,7 +89,7 @@ class Stack:
         device_class = key.upper()
         if key == "instrument":
             device_class = "AutoScriptMicroscope"
-            replies = {"get_stage": [1e-6, -2e-6, 0.0, 0.0, 0.0], "get_parameters": json.dumps(PARAMETERS), "attr:beam_state": True}
+            replies = {"get_stage": [1e-6, -2e-6, 0.0, 0.0, 0.0], "get_parameters": json.dumps(PARAMETERS)}
         state = self.states.get(key, "ON")
         return FakeProxy(device_class, self.log, state=state, status=f"{key} status text", replies=replies)
 
@@ -137,7 +138,8 @@ def test_a_healthy_stack_passes_and_only_reads(stack):
     sent = [(cls, name) for cls, name in stack.log if name != "set_timeout_millis" and not name.startswith("read:")]
     assert sent and all(is_read_only(cls, name) for cls, name in sent), sent
     assert not [entry for entry in stack.log if "FORBIDDEN" in entry[1]]
-    assert {name for _cls, name in stack.log if name.startswith("read:")} == {"read:beam_state"}
+    assert not [name for _cls, name in stack.log if name.startswith("read:")]  # it reads no attribute
+    assert rows["beam blanked"][0] == "PASS"  # from get_parameters' beam_blanked
 
 
 @pytest.mark.parametrize("command", ["move_stage", "unblank_beam", "blank_beam", "set_mode", "acquire_scanned_image", "Init"])
@@ -147,8 +149,7 @@ def test_read_only_device_refuses_any_command_that_acts_before_sending_it(comman
     with pytest.raises(preflight.NotReadOnly):
         device.command(command)
     assert (("AutoScriptMicroscope", command)) not in log
-    with pytest.raises(preflight.NotReadOnly):
-        device.attribute("position")
+    assert not hasattr(device, "attribute")  # it reads no attribute at all
 
 
 def test_a_faulted_device_fails_and_its_status_is_printed(stack):

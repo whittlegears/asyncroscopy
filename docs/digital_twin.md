@@ -137,4 +137,11 @@ Each acquisition's record is appended to `<acquisition_save_directory>/ground_tr
 - `DigitalTwinParticles`: `particles`, voxel-backed oriented particles.
 - `PolycrystallineGoldDigitalTwin`: `polycrystal` grains, driven by the corrector twin.
 
+Every twin has the operator-only `export_ground_truth()`; the specialised twins return what they hide there (the seed and
+particle count; the tilt twin's lamella, lattice, crystal rotation and tilt and its rotation centre; the gold twin's
+grains and regions), never in `get_parameters()`. Only `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
+model: on the other twins `acquire_camera_image()` raises UnsupportedCommand. The atomistic twins have no blanker:
+`blank_beam()` (and so the e-stop's blank) raises UnsupportedCommand there, and `stop_all` reports it as not stopped.
+The corrector twin's hidden aberrations (`get_aberrations_coeff_sim`, `set_aberrations_coeff_sim`) are operator only.
+
 To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer (implement `_generate_sample`). Every command, and what it is (risk, role, stop), comes from the `ElectronMicroscope` base: a twin declares nothing. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.

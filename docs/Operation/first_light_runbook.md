@@ -411,7 +411,7 @@ microscopes under `not_stopped`; stop the stage at the microscope's own controls
 * Anything in `benchmarks/`, and `startup_scripts/run_llm.py` or any agent against `configs/mcp.yaml`, until
   section B of the review is fixed.
 * Anything that moves the stage before the holder limits are set (step 3.4): `move_stage`, `Mapper` jobs, the
-  calibration scripts, `register_stage`.
+  calibration scripts.
 * `calibrate_screen_current`, `set_screen_current`, `Disconnect`, 4D-STEM acquisition (no limits yet, review B3),
   and the CEOS write commands.
 * `uv sync` without `--frozen`, or `uv run` without `--no-sync`.

@@ -44,3 +44,12 @@ def test_raw_sample_potential_is_reused_for_an_unchanged_view():
 
     assert second is first
     assert sample._raw_potential_cache_hits == 1
+
+
+def test_gold_twin_keeps_its_grains_out_of_the_agents_reach():
+    from asyncroscopy.instruments.electron_microscope.polycrystalline_gold_digital_twin import PolycrystallineGoldDigitalTwin
+    from asyncroscopy.utils.commands import declared_hints
+
+    hints = declared_hints(PolycrystallineGoldDigitalTwin)
+    assert "get_volume_metadata" not in hints and "get_region_parameters" not in hints
+    assert hints["export_ground_truth"]["operator_only"] is True

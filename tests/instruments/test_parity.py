@@ -28,7 +28,6 @@ import h5py
 import pytest
 import tango
 from autoscript_core.common import ApplicationServerException
-from autoscript_tem_microscope_client.structures import StagePosition
 
 from asyncroscopy import settings
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
@@ -385,16 +384,8 @@ def test_autoscript_refuses_an_unknown_valve_or_screen_word(autoscript, command,
     assert [c for c in autoscript.client.writes() if c["path"].startswith(("vacuum", "detectors.screen"))] == []
 
 
-def test_autoscript_register_stage_reads_the_instrument_and_moves_nothing(autoscript):
-    client = autoscript.client
-    # The operator moved the stage at the console so only the instrument knows.
-    object.__setattr__(client.specimen.stage, "_position", StagePosition(3e-7, -4e-7, 1e-7, math.radians(2.0), 0.0))
-    position = autoscript.device.register_stage()
-    assert [float(v) for v in position] == pytest.approx([3e-7, -4e-7, 1e-7, 2.0, 0.0], abs=1e-12)
-    assert client.writes("specimen.stage.absolute_move") == []
-
-
-def test_autoscript_defocus_attribute_is_documented_in_metres():
-    attr = AutoScriptMicroscope.defocus
-    assert getattr(attr, "unit", "m") == "m"
-    assert "micrometer" not in (attr.__doc__ or "").lower()
+def test_autoscript_has_no_attributes_that_duplicate_commands():
+    """fov, defocus and beam_state duplicated get_fov, get_defocus and get_parameters; manufacturer raised when read;
+    register_stage duplicated get_stage. One way to read each."""
+    for name in ("fov", "defocus", "beam_state", "manufacturer", "register_stage"):
+        assert not hasattr(AutoScriptMicroscope, name), name

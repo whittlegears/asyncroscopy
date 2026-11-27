@@ -10,7 +10,6 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
-from tango import AttrWriteType
 from tango.server import attribute, device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
@@ -44,17 +43,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         doc="Simulation backend",
     )
 
-    beam_pos = attribute(
-        label="Beam Position",
-        dtype=(float,),        # 1D array of floats
-        max_dim_x=2,           # exactly 2 elements: [x, y]
-        access=AttrWriteType.READ_WRITE,
-        unit="fractional",
-        min_value=0.0,
-        max_value=1.0,
-        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]",
-    )
-
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
@@ -76,8 +64,8 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         if stage is not None:
             self._stage_position = np.asarray([stage.x, stage.y, stage.z, stage.alpha, stage.beta], dtype=np.float64)
 
-    def _viewport_metadata(self) -> dict:
-        return {**super()._viewport_metadata(), "particle_count": len(self._particle_records)}
+    def _ground_truth(self) -> dict:
+        return {**super()._ground_truth(), "particle_count": len(self._particle_records)}
 
 
     # ------------------------------------------------------------------
@@ -86,25 +74,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
 
     def read_manufacturer(self) -> str:
         return self._manufacturer
-
-
-    def read_beam_pos(self) -> list[float]:
-        """Return beam position as [x, y] fractional coordinates."""
-        return [self._beam_pos_x, self._beam_pos_y]
-
-    # --- Write Method ---
-
-    def write_beam_pos(self, value: list[float]) -> None:
-        """Set beam position from [x, y] fractional coordinates."""
-        x, y = value[0], value[1]
-
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            raise ValueError(
-                f"beam_pos values must be in [0.0, 1.0], got x={x}, y={y}"
-            )
-
-        self._beam_pos_x = x
-        self._beam_pos_y = y
 
 
     # ------------------------------------------------------------------
@@ -285,13 +254,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             dataset_attrs={"elements": elements, "exposure_time": float(exposure_time)},
         )
 
-
-    def _place_beam(self, position) -> None:
-        """
-        sets resting beam position, [0:1]
-        """
-        x, y = position
-        self.write_beam_pos([x, y])
 
 
     def _set_fov(self, fov) -> None:

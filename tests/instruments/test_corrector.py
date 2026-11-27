@@ -10,7 +10,8 @@ def test_digital_twin_corrector_reports_ceos_compatible_info(corrector_proxy):
     payload = json.loads(corrector_proxy.get_info())
 
     assert payload["jsonrpc"] == "2.0"
-    assert payload["result"]["manufacturer"] == "CEOS"
+    # It speaks the CEOS API but does not claim to be a CEOS corrector.
+    assert payload["result"]["manufacturer"] == "asyncroscopy digital twin" and payload["result"]["emulates"] == "CEOS corrector API"
     assert payload["result"]["simulation"] is True
     assert corrector_proxy.state() == tango.DevState.ON
 
@@ -39,6 +40,15 @@ def test_simulation_coefficients_are_absolute_and_validate_shape(corrector_proxy
     coefficients["C1"] = [1.0, 2.0]
     with pytest.raises(tango.DevFailed):
         corrector_proxy.set_aberrations_coeff_sim(json.dumps(coefficients))
+
+
+def test_only_the_twin_corrector_has_simulated_aberrations_and_only_for_the_operator():
+    from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
+    from asyncroscopy.utils.commands import declared_hints
+
+    names = ("set_aberrations_coeff_sim", "get_aberrations_coeff_sim")
+    assert not set(names) & set(declared_hints(CEOSCorrector))
+    assert all(declared_hints(DigitalTwinCorrector)[name]["operator_only"] is True for name in names)
 
 
 def test_ceos_netstring_codec_round_trip():

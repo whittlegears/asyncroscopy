@@ -136,8 +136,8 @@ def test_rendered_output_matches_the_golden_statistics(tango_ctx, monkeypatch):
     material, local_x, local_y = tilt._beam_material()
     assert material == "silicon"
     run["tilt_atoms"] = {"digest": _atoms_digest(tilt._silicon_atoms(local_x, local_y, 7))}
-    stage = tilt._get_parameters()
-    assert json.loads(stage)["lamella_width_nm"] == 620.0
+    assert tilt._ground_truth()["lamella_width_nm"] == 620.0
+    assert "lamella_width_nm" not in json.loads(tilt._get_parameters())  # the specimen is hidden truth
 
     particles, _stage = _device(tango_ctx, "asyncroscopy/atomistic/particles")
     particles._acquire_scanned_image(64, 1e-5, ["haadf"], [0.0, 0.0, 1.0, 1.0])

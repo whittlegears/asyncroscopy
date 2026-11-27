@@ -304,18 +304,6 @@ class ScanningBeamInstrument(Instrument):
             )
         self._place_beam(position)
 
-    @command(dtype_in=DevVarFloatArray, dtype_out=None, doc_in=':param positions: Flat list [x0, y0, x1, y1, ...] of fractional beam positions.', risk="high", role="beam.place", routine=True)
-    @hardware_call()
-    def place_beam_list(self, positions: list[float]) -> None:
-        """Place beam at multiple positions sequentially."""
-        if len(positions) % 2 != 0:
-            raise ValueError('Input must contain pairs of (x, y) values.')
-
-        for i in range(0, len(positions), 2):
-            x = float(positions[i])
-            y = float(positions[i + 1])
-            self._place_beam([x, y])
-
     @command(risk="low", role="beam.blank", stop=True)
     @hardware_call(serialized=False)  # never waits for a running command because blanking is the safe state
     def blank_beam(self) -> None:

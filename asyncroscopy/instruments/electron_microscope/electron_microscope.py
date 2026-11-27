@@ -19,12 +19,11 @@ Image commands return a string supplied by the concrete microscope
 implementation, typically a DATA/Tiled unique id.
 """
 
-import json
 import math
 from abc import abstractmethod
 
 import tango
-from tango import AttrWriteType, DevDouble, DevEncoded, DevFloat, DevString, DevVarFloatArray
+from tango import AttrWriteType, DevDouble, DevFloat, DevString, DevVarFloatArray
 from tango.server import attribute, device_property
 
 from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, unsupported
@@ -211,20 +210,6 @@ class ElectronMicroscope(ScanningBeamInstrument):
             camera.frame_combining,
             camera.output_format,
         )
-
-    @command(dtype_in=int, dtype_out=DevEncoded, doc_in=':param index: Index of a cached image.', risk="low", role="data.read")
-    def get_image_data_cached(self, index: int) -> tuple[str, bytes]:
-        """Retrieve cached image by index."""
-        if not hasattr(self, '_cached_images'):
-            tango.Except.throw_exception('NoCache', 'Call acquire_scanned_image() first', 'get_image_data()')
-        if index >= len(self._cached_images):
-            tango.Except.throw_exception('InvalidIndex', f'Index {index} out of range', 'get_image_data()')
-
-        cached_image = self._cached_images[index]
-        img_data = cached_image.data if hasattr(cached_image, 'data') else cached_image
-
-        meta = {'shape': list(img_data.shape), 'dtype': str(img_data.dtype)}
-        return json.dumps(meta), img_data.tobytes()
 
     @command(dtype_in=str, doc_in=":param state: 'open' or 'close'.", risk="high", role="setting.set")
     @hardware_call()

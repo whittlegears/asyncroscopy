@@ -22,6 +22,8 @@ from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+from asyncroscopy.instruments.scanning_beam import unsupported
+from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
@@ -88,11 +90,11 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         label="Beam Position",
         dtype=(float,),
         max_dim_x=2,
-        access=AttrWriteType.READ_WRITE,
+        access=AttrWriteType.READ,
         unit="fractional",
         min_value=0.0,
         max_value=1.0,
-        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]",
+        doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]. Read only: place_beam moves it.",
     )
 
     def init_device(self) -> None:
@@ -170,13 +172,16 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         """Read method for the beam position attribute."""
         return [self._beam_pos_x, self._beam_pos_y]
 
-    def write_beam_pos(self, value: list[float]) -> None:
-        """Write method for the beam position attribute."""
-        x, y = value[0], value[1]
-        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-            raise ValueError(f"beam_pos values must be in [0.0, 1.0], got x={x}, y={y}")
-        self._beam_pos_x = float(x)
-        self._beam_pos_y = float(y)
+    @command(dtype_out=str, risk="high", operator_only=True, role="data.read")
+    def export_ground_truth(self) -> str:
+        """Hidden truth for scoring: what the sample is, which an agent must find by measuring.
+
+        Operator only (an agent must not read a twin's answers); tests and calibration scripts call it through Tango."""
+        return json.dumps(self._ground_truth(), default=float)
+
+    def _ground_truth(self) -> dict:
+        """What export_ground_truth returns. A twin adds the truth it keeps."""
+        return {"sample_seed": int(self.sample_seed)}
 
     def _viewport_metadata(self) -> dict:
         fov_ang = self._fov * 1e10
@@ -187,7 +192,6 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
             "fov_m": float(self._fov),
             "fov_angstrom": float(fov_ang),
             "imsize": int(self._imsize),
-            "sample_seed": int(self.sample_seed),
             "sample_size_xy": float(self.sample_size_xy),
             "sample_size_z": float(self.sample_size_z),
             "viewport_world_angstrom": {
@@ -207,17 +211,17 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         detector: str,
         readout_area: str,
         frame_combining: int = 1,
-        electron_counting: bool = True,
         output_format: str = ".h5",
     ) -> str:
-        """A single-shot camera image: a twin without a camera model images with its scan (a HAADF image), so
-        acquire_camera_image returns a usable image instead of the base ElectronMicroscope's "unsupported"."""
-        return self._acquire_scanned_image(int(imsize), float(exposure_time), [str(self.default_scan_detector)], [0.0, 0.0, 1.0, 1.0], output_format)
+        """A twin without a camera model has no camera image to give. A scan returned as one would be mislabelled."""
+        unsupported(self, "acquire_camera_image (this twin has no camera model; the diffraction and tilt twins have one)")
 
     def _place_beam(self, position) -> None:
-        """Place the electron beam at the specified [x, y] coordinates."""
-        x, y = position
-        self.write_beam_pos([x, y])
+        """Park the beam at [x, y], fractions of the field (place_beam checks them first)."""
+        x, y = (float(v) for v in list(position)[:2])
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+            raise ValueError(f"beam position values must be in [0.0, 1.0], got x={x}, y={y}")
+        self._beam_pos_x, self._beam_pos_y = x, y
 
     def _set_fov(self, fov) -> None:
         """Set the field of view in meters."""
