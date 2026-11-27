@@ -328,14 +328,16 @@ class ElectronMicroscope(ScanningBeamInstrument):
              risk="high", operator_only=True, role="optics.focus")
     @hardware_call()
     def run_stem_auto_focus(self, request: str) -> str:
-        """Run the vendor STEM autofocus (STEM mode). Returns JSON {"defocus_m", "astigmatism_m"}, as the routine measured them."""
+        """Run the vendor STEM autofocus (STEM mode). Returns JSON {"defocus_m", "astigmatism_m"}, as the routine measured them,
+        and "beam_blanked", the blanker read after it."""
         return json.dumps(self._run_stem_auto_focus(_request(request)))
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON of RunBeamTiltAutoFocusSettings fields to set (camera_detector, size, exposure_time, focus_method, auto_stigmate, ...); {} for the defaults.',
              risk="high", operator_only=True, role="optics.focus")
     @hardware_call()
     def run_beam_tilt_auto_focus(self, request: str) -> str:
-        """Run the vendor beam-tilt autofocus (TEM mode). Returns JSON {"defocus_m", "astigmatism_m", "drift_m": [x, y]}."""
+        """Run the vendor beam-tilt autofocus (TEM mode). Returns JSON {"defocus_m", "astigmatism_m", "drift_m": [x, y]} and
+        "beam_blanked", the blanker read after it."""
         return json.dumps(self._run_beam_tilt_auto_focus(_request(request)))
 
     @command(dtype_in=int, dtype_out=str, doc_in=":param length: Number of camera frames (1 to the max_camera_series_frames property).",

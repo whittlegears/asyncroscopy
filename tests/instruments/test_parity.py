@@ -463,15 +463,17 @@ def test_autoscript_auto_focus_returns_optistem_quality(autoscript):
 
 
 def test_autoscript_stem_and_beam_tilt_autofocus_return_what_they_measured(autoscript):
-    assert json.loads(autoscript.call("run_stem_auto_focus", '{"accuracy_level": "Fine"}')) == {"defocus_m": -4e-9, "astigmatism_m": 2e-9}
+    assert json.loads(autoscript.call("run_stem_auto_focus", '{"accuracy_level": "Fine"}')) == {"defocus_m": -4e-9, "astigmatism_m": 2e-9,
+                                                                                               "beam_blanked": False}
     assert autoscript.client.writes("auto_functions.run_stem_auto_focus")[-1]["value"]["accuracy_level"] == "Fine"
     with pytest.raises(REFUSED, match="takes"):
         autoscript.call("run_stem_auto_focus", '{"reset_beam_blanker_afterwards": true}')  # not a field it may set
     with pytest.raises(REFUSED, match="TEM mode only"):
         autoscript.call("run_beam_tilt_auto_focus", "{}")
     autoscript.client.optics.optical_mode = "Tem"
+    autoscript.client.optics.blanker.blank()
     assert json.loads(autoscript.call("run_beam_tilt_auto_focus", '{"camera_detector": "Flucam"}')) == {
-        "defocus_m": 5e-9, "astigmatism_m": 3e-9, "drift_m": [1e-10, -2e-10]}
+        "defocus_m": 5e-9, "astigmatism_m": 3e-9, "drift_m": [1e-10, -2e-10], "beam_blanked": True}
     with pytest.raises(REFUSED, match="STEM mode only"):
         autoscript.call("run_stem_auto_focus", "{}")
     assert len(autoscript.client.writes("auto_functions.run_stem_auto_focus")) == 1
