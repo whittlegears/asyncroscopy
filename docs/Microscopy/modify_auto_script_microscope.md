@@ -20,6 +20,8 @@ If you're editing this class, you're usually doing one of these:
    Expose device state clients can read. The live-state reads
    (`camera_length`, `acceleration_voltage`) pull from `self._microscope` and
    must return `nan` when it is `None` (testing mode) — guard every such read.
+   An action never passes silently without a client: reach it through `self._client("<command>")`,
+   which raises NotConnected (so `blank_beam`, and with it `stop_all`, report the beam not blanked in testing mode).
    Field of view, defocus, the blanker and the stage are read with commands
    (`get_fov`, `get_defocus`, `get_parameters`' `beam_blanked`, `get_stage`),
    not duplicated as attributes.

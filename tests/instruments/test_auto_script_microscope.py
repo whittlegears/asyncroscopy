@@ -479,12 +479,22 @@ class TestAutoScriptConnectionErrors:
             AutoScriptMicroscope.get_parameters(self._device(None))
         assert excinfo.value.args[0].reason == "NotConnected"
 
-    def test_testing_mode_keeps_dry_run_no_ops(self) -> None:
+    def test_testing_mode_refuses_the_actions_it_cannot_take(self) -> None:
         from types import SimpleNamespace
 
         # A plain stand in is used because assigning a device property on a bare Tango device crashes.
-        device = SimpleNamespace(_microscope=None, _connect_error=None, testing_mode_bool=True)
-        AutoScriptMicroscope._blank_beam(device)  # There is no client by design. The call still does nothing and raises no NotConnected.
+        device = SimpleNamespace(_microscope=None, _connect_error=None, testing_mode_bool=True, _blank_count=0)
+        device._client = lambda what: AutoScriptMicroscope._client(device, what)
+        for call in (lambda: AutoScriptMicroscope._blank_beam(device), lambda: AutoScriptMicroscope._set_column_valves(device, "close"),
+                     lambda: AutoScriptMicroscope._place_beam(device, [0.5, 0.5])):
+            with pytest.raises(tango.DevFailed) as excinfo:
+                call()
+            assert excinfo.value.args[0].reason == "NotConnected" and "testing mode" in excinfo.value.args[0].desc
+        assert device._blank_count == 0
+
+    def test_testing_mode_blank_reports_not_blanked(self, auto_script_proxy) -> None:
+        with pytest.raises(tango.DevFailed, match="did not reach the instrument"):
+            auto_script_proxy.blank_beam()
 
     def test_silent_setters_now_raise_when_disconnected(self) -> None:
         with pytest.raises(tango.DevFailed):
@@ -565,3 +575,21 @@ def test_a_hardware_frame_records_what_the_dose_ledger_needs():
     microscope._get_fov = lambda: (_ for _ in ()).throw(RuntimeError("optics not answering"))
     failed = microscope._frame_attrs(256, 4e-6, [0.0, 0.0, 1.0, 1.0])
     assert "optics not answering" in failed["frame_attrs_error"] and exposure_of(failed) is None
+
+
+def test_stop_all_on_a_testing_mode_microscope_reports_the_beam_not_blanked(tango_ctx):
+    from asyncroscopy.mcp.mcp_server import MCPServer
+
+    class Exported:
+        value_string = [tango_ctx.get_device_access("asyncroscopy/autoscriptmicroscope/default")]
+
+        def get_device_exported(self, pattern):
+            return self
+
+    server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", database=Exported(), verbose=False)
+    server.setup(print_summary=False)
+    report = server.estop.stop_all()
+    assert report["stopped"] is False
+    blanks = [s for s in report["steps"] if s["tool"].endswith("_blank_beam")]
+    assert blanks and not any(s["ok"] for s in blanks)
+    assert any("did not reach the instrument" in s.get("error", "") for s in blanks)

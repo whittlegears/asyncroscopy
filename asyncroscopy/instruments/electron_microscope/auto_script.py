@@ -238,6 +238,15 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return int(1000 * float(self.stage_timeout_seconds))
         return super()._proxy_timeout_ms(name)
 
+    def _client(self, what: str):
+        """The AutoScript client; without one (testing mode has none by design) NotConnected, never a silent pass:
+        a blank, valve or beam command that reached no instrument must not read as done."""
+        if self._microscope is None:
+            reason = getattr(self, "_connect_error", None) or ("testing mode has no AutoScript client" if getattr(self, "testing_mode_bool", False)
+                                                              else "the device has not connected")
+            tango.Except.throw_exception("NotConnected", f"Not connected to AutoScript ({reason}), so {what} did not reach the instrument.", f"{what}()")
+        return self._microscope
+
     def _check_connected(self, command_name: str) -> None:
         """Raise NotConnected instead of an AttributeError when there is no client (testing mode has none by design)."""
         if self._microscope is not None or getattr(self, "testing_mode_bool", False):
@@ -478,10 +487,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         sets resting beam position, [0:1]
         """
-        if self._microscope is not None:
-            x = float(position[0])
-            y = float(position[1])
-            self._microscope.optics.paused_scan_beam_position = [x, y]
+        self._client("place_beam").optics.paused_scan_beam_position = [float(position[0]), float(position[1])]
 
     def _is_stem(self) -> bool:
         """True in STEM mode. AutoScript's OpticalMode.STEM is "Stem"; compare without case, in one place."""
@@ -503,18 +509,17 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """Open or close the column valves; any state but 'open' or 'close' is refused before the instrument."""
         if state not in ("open", "close"):
             raise ValueError(f"column valve state must be 'open' or 'close', got {state!r}; nothing was changed")
-        if self._microscope is not None:
-            if state == "open":
-                self._microscope.vacuum.column_valves.open()
-            else:
-                self._microscope.vacuum.column_valves.close()
+        valves = self._client("set_column_valves").vacuum.column_valves
+        if state == "open":
+            valves.open()
+        else:
+            valves.close()
 
     def _blank_beam(self) -> None:
         """Blank the beam (the blank_beam command, and the e-stop's). It takes no command lock and uses its own
         AutoScript connection, so it does not wait for a running acquisition or stage move; it also tells a running
         4D-STEM scan to stop."""
-        if self._microscope is None:  # Testing mode has no client by design. In any other mode _check_connected refuses first.
-            return
+        self._client("blank_beam")
         self._blank_count += 1
         self._blank_now()
 
