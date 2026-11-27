@@ -24,6 +24,9 @@ class ManagedProcess:
     command: list[str] | None = None  # The command that was run
     stdout_lines: deque = field(default_factory=lambda: deque(maxlen=1000))  # Stdout buffer
     stderr_lines: deque = field(default_factory=lambda: deque(maxlen=1000))  # Stderr buffer
+    env: dict | None = None  # Environment it was started with (for restarts)
+    cwd: Path | str | None = None  # Working directory it was started in (for restarts)
+    popen_kwargs: dict = field(default_factory=dict)  # Extra Popen arguments (for restarts)
 
     @property
     def pid(self) -> int:
@@ -105,6 +108,9 @@ class ProcessManager:
             command=command,
             stdout_lines=deque(maxlen=self.max_output_lines),
             stderr_lines=deque(maxlen=self.max_output_lines),
+            env=env,
+            cwd=cwd,
+            popen_kwargs=dict(kwargs),
         )
         self.active_processes.append(managed)
         self.history.append(managed)
@@ -412,3 +418,76 @@ class ProcessManager:
                 self._kill_stale_pid(int(pid_str.strip()))
                 stopped += 1
         return stopped
+
+
+class Watchdog:
+    """Restarts managed processes that exit while they are supposed to be running.
+
+    A device server that crashes (vendor library segfault, killed by the OS,
+    an unhandled exception at the top level) is relaunched with the same
+    command and environment, so its Tango devices come back under the same
+    names and clients reconnect on their next call. Restarts back off and stop
+    after ``max_restarts`` within ``window_s``, so a server that dies at
+    start-up is reported instead of restarted forever.
+
+    Call :meth:`poll` regularly (the launcher's idle loop does). It returns the
+    events of that poll; ``on_event`` also receives them.
+    """
+
+    def __init__(self, manager: "ProcessManager", keys: list[str] | None = None, *, max_restarts: int = 5,
+                 window_s: float = 600.0, backoff_s: float = 2.0, on_event=None):
+        self.manager = manager
+        self.keys = set(keys) if keys is not None else None
+        self.max_restarts = max_restarts
+        self.window_s = window_s
+        self.backoff_s = backoff_s
+        self.on_event = on_event
+        self.restarts: dict[str, list[float]] = {}
+        self.given_up: set[str] = set()
+        self._next_try: dict[str, float] = {}
+
+    def _emit(self, event: dict) -> dict:
+        if self.on_event is not None:
+            try:
+                self.on_event(event)
+            except Exception:
+                pass
+        return event
+
+    def poll(self, now: float | None = None) -> list[dict]:
+        now = time.monotonic() if now is None else now
+        events = []
+        for managed in list(self.manager.active_processes):
+            if managed.running or (self.keys is not None and managed.key not in self.keys):
+                continue
+            key = managed.key
+            if key in self.given_up:
+                continue
+            if now < self._next_try.get(key, 0.0):
+                continue
+            recent = [t for t in self.restarts.get(key, []) if now - t <= self.window_s]
+            code = managed.process.poll()
+            tail = list(managed.stderr_lines)[-5:]
+            if len(recent) >= self.max_restarts:
+                self.given_up.add(key)
+                events.append(self._emit({"event": "gave_up", "key": key, "exit_code": code,
+                                          "restarts": len(recent), "stderr_tail": tail}))
+                continue
+            self.manager.active_processes.remove(managed)
+            try:
+                new = self.manager.start_process(managed.key, managed.label, managed.command,
+                                                 env=managed.env, cwd=managed.cwd, **managed.popen_kwargs)
+            except Exception as exc:
+                self.manager.active_processes.append(managed)
+                events.append(self._emit({"event": "restart_failed", "key": key, "error": str(exc)}))
+                self._next_try[key] = now + self.backoff_s * (2 ** len(recent))
+                recent.append(now)
+                self.restarts[key] = recent
+                continue
+            recent.append(now)
+            self.restarts[key] = recent
+            self._next_try[key] = now + self.backoff_s * (2 ** (len(recent) - 1))
+            events.append(self._emit({"event": "restarted", "key": key, "exit_code": code, "pid": new.pid,
+                                      "restarts_in_window": len(recent), "stderr_tail": tail}))
+        return events
+

@@ -40,6 +40,7 @@ from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.health.monitor import HealthMonitor, diagnose, hint_for, recover
 from asyncroscopy.mcp.tool_log import ToolCallLog
 from asyncroscopy.supervision.service import SupervisionConfig, Supervisor, ToolEntry
 
@@ -58,6 +59,21 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # 60 s per MCP HTTP request, so 30 s lets slow commands finish while still failing
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
+
+# After a command times out, read back the state it was changing, so the
+# caller knows what actually happened instead of guessing (idea from AMADEUS).
+READBACK = {
+    "move_stage": "get_stage",
+    "set_fov": "get_fov",
+    "set_defocus": "get_defocus",
+    "set_image_shift": "get_image_shift",
+    "set_beam_tilt": "get_beam_tilt",
+    "set_diffraction_shift": "get_diffraction_shift",
+    "set_screen_current": "get_screen_current",
+    "set_eds_exposure_time": "get_eds_exposure_time",
+    "correct_aberration": "get_info",
+}
+READBACK_TIMEOUT_MILLIS = 3_000
 
 # From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
@@ -538,6 +554,7 @@ class MCPServer:
                 if self.tool_log is not None:
                     self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
                 message = describe_error(exc)
+                message += self._diagnosis(dev_class, command_name, exc)
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
                     message += (
@@ -727,7 +744,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices]
+        native_tools = [self.get_data_from_key, self.list_devices, *self._health_tools()]
         if self.supervision_config.enabled:
             native_tools += self._setup_supervision()
         for native_tool in native_tools:
@@ -769,6 +786,92 @@ class MCPServer:
                                 print(f"{stripped}")
                     print("")
                 print("")
+
+    # ------------------------------------------------------------------
+    # Failure diagnosis and recovery
+    # ------------------------------------------------------------------
+
+    def _diagnosis(self, dev_class: str, command_name: str, exc: Exception) -> str:
+        """Extra lines for a failed call: what kind of failure, the state read back, what to do next."""
+        try:
+            kind = diagnose(exc)
+            device = self._device_of.get((dev_class, command_name), "")
+            lines = []
+            if kind == "timeout" and command_name in READBACK and device:
+                lines.append(self._readback(device, READBACK[command_name]))
+            if kind != "device_error" and device:
+                if kind != "timeout":
+                    health = HealthMonitor([device], timeout_ms=READBACK_TIMEOUT_MILLIS).check(device)
+                    lines.append(f"Health: {device} is "
+                                 + ("healthy" if health.healthy else f"{health.problem} ({health.detail})"))
+                hint = hint_for(kind, device)
+                if hint:
+                    lines.append(hint)
+            return "".join("\n" + line for line in lines if line)
+        except Exception:
+            return ""          # diagnosis must never hide the original error
+
+    @staticmethod
+    def _readback(device: str, getter: str) -> str:
+        try:
+            proxy = DeviceProxy(device)
+            proxy.set_timeout_millis(READBACK_TIMEOUT_MILLIS)
+            value = proxy.command_inout(getter)
+            if isinstance(value, np.ndarray):
+                value = value.tolist()
+            return f"Readback after timeout: {getter} = {value}"
+        except Exception as exc:
+            return f"Readback after timeout: {getter} failed too ({describe_error(exc)})"
+
+    def health_monitor(self) -> HealthMonitor:
+        return HealthMonitor(database=self.database)
+
+    def _health_tools(self) -> list[Callable]:
+        server = self
+
+        @tool()
+        def system_health() -> dict:
+            """Check every instrument device: reachable or not, its state (ON, FAULT, ...), latency and the
+            server that hosts it. Use this when a command fails, before retrying it."""
+            devices = [h.to_json() for h in server.health_monitor().check_all()]
+            problems = [d for d in devices if not d["healthy"]]
+            return {"healthy": not problems, "problems": problems, "devices": devices}
+
+        @tool()
+        def recover_device(device: str) -> dict:
+            """Try to bring a faulted or unreachable device back: its own reconnect command, then Init, re-checking
+            health after each. Restarting the whole device server needs operator approval; if that is the next
+            step, it is queued for the operator and this returns status 'needs_approval'."""
+            return server.recover_device(device, origin="agent")
+
+        return [system_health, recover_device]
+
+    def recover_device(self, device: str, origin: str = "agent") -> dict:
+        monitor = self.health_monitor()
+        known = monitor.devices()
+        if device not in known:
+            matches = [d for d in known if device.lower() in d.lower()]
+            if len(matches) != 1:
+                raise ValueError(f"unknown device {device!r}; devices: {', '.join(known)}")
+            device = matches[0]
+        sup = self.supervisor
+        allowed = tuple(self.supervision_config.recovery_auto) if sup else ("reconnect", "init")
+        if sup is None:
+            return recover(monitor, device, allowed=allowed)
+
+        def body(step):
+            return recover(monitor, device, allowed=allowed, step=step)
+
+        result = sup._composite("recovery.recover_device", f"recover {device}", {"device": device}, origin,
+                                None, body, wait=True)
+        if result.get("status") == "needs_approval" and result.get("next_rung") == "restart_server":
+            item = sup.queue.submit("recovery.restart_server",
+                                    lambda: recover(monitor, device, allowed=("restart_server",),
+                                                    start_at="restart_server"),
+                                    args={"device": device}, origin=origin,
+                                    label=f"restart the server hosting {device}", force_approval=True)
+            result["queued_for_approval"] = item.action.id
+        return result
 
     # ------------------------------------------------------------------
     # Supervision: one queue, the specimen atlas, recipes

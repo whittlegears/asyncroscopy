@@ -42,6 +42,7 @@ project:
         - file: Operation/troubleshooting.md
         - file: Operation/process_manager.md
         - file: Operation/supervision_and_atlas.md
+        - file: Operation/robustness.md
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md

@@ -126,7 +126,7 @@ def test_load_mcp_config():
     assert config.mcp.http_host == "0.0.0.0"
     assert config.mcp.http_port == 8000
     assert config.mcp.blocked_classes == ["DataBase", "DServer"]
-    assert config.mcp.blocked_functions == {"*": ["Init", "Kill", "RestartServer"]}
+    assert config.mcp.blocked_functions == {"*": ["Init", "Kill", "RestartServer", "inject_link_drop"]}
 
 
 def test_run_mcp_builds_server_command():

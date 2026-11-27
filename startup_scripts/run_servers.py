@@ -31,7 +31,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, Watchdog  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
 # selects a different config AND runs headlessly (no prompts).
@@ -239,6 +239,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Stream each server's output (stdout+stderr) live to a per-device log "
         "file under output_tango_devices_logs/<timestamp>/ for troubleshooting.",
+    )
+    parser.add_argument(
+        "--no-watchdog",
+        action="store_true",
+        help="Do not restart device servers that exit after startup.",
     )
     parser.add_argument(
         "--isolated",
@@ -710,9 +715,29 @@ def main(argv: list[str] | None = None) -> int:
             print()
             print(color("Leave this terminal open while you use the servers. Press Ctrl+C to stop them.", Style.dim))
             
+            watchdog = None
+            if not args.no_watchdog:
+                supervised = [d.key for d in [*regular_devices, *dependency_devices]]
+
+                def report(event: dict) -> None:
+                    if event["event"] == "restarted":
+                        status_line("WARN", event["key"], f"exited (code {event['exit_code']}); restarted pid="
+                                                          f"{event['pid']} [{event['restarts_in_window']} in window]")
+                    elif event["event"] == "gave_up":
+                        status_line("FAIL", event["key"], f"keeps exiting (code {event['exit_code']}); not restarting. "
+                                                          + " | ".join(event["stderr_tail"][-2:]))
+                    else:
+                        status_line("FAIL", event["key"], f"restart failed: {event.get('error')}")
+
+                watchdog = Watchdog(manager, supervised, on_event=report)
+                print(color("Watchdog on: device servers that exit are restarted (--no-watchdog to disable).",
+                            Style.dim))
+
             try:
                 while True:
                     time.sleep(0.1)
+                    if watchdog is not None:
+                        watchdog.poll()
             except KeyboardInterrupt:
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!
                 print()

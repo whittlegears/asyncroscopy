@@ -215,3 +215,29 @@ def test_stop_processes_on_port(tmp_path, monkeypatch):
         assert count == 2
         assert 1001 in killed_pids
         assert 1002 in killed_pids
+
+def test_watchdog_restarts_crashed_server_and_gives_up_on_crash_loop(tmp_path):
+    import sys
+    import time as _time
+
+    from asyncroscopy.utils.process_manager import Watchdog
+
+    manager = ProcessManager(name="wd", state_dir=tmp_path)
+    keeper = manager.start_process("stage", "TestStage", [sys.executable, "-c", "import time; time.sleep(30)"])
+    crasher = manager.start_process("corrector", "Corrector", [sys.executable, "-c", "raise SystemExit(3)"])
+    crasher.process.wait(5)
+    events = []
+    wd = Watchdog(manager, ["stage", "corrector"], max_restarts=2, backoff_s=0.0, on_event=events.append)
+    try:
+        for _ in range(40):
+            wd.poll()
+            if "corrector" in wd.given_up:
+                break
+            _time.sleep(0.1)
+        kinds = [(e["event"], e["key"]) for e in events]
+        assert kinds.count(("restarted", "corrector")) == 2
+        assert kinds[-1] == ("gave_up", "corrector") and events[-1]["exit_code"] == 3
+        assert all(key != "stage" for _, key in kinds)          # healthy server left alone
+        assert keeper.running
+    finally:
+        manager.shutdown_all()

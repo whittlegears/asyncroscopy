@@ -6,7 +6,7 @@ import copy
 import json
 
 from tango import DevState
-from tango.server import device_property
+from tango.server import command, device_property
 
 from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR
 
@@ -34,15 +34,33 @@ class DigitalTwinCorrector(CORRECTOR):
 
     def init_device(self) -> None:
         self._response_id = 1
+        self._link_up = True
         super().init_device()
 
     def _connect_backend(self) -> None:
         if not getattr(self, "_simulation_aberrations", None):
             self._simulation_aberrations = copy.deepcopy(DEFAULT_ABERRATIONS)
+        self._link_up = True
         self._last_status = "Digital twin ready"
         self.set_state(DevState.ON)
+        self.set_status("Digital twin ready")
+
+    @command
+    def inject_link_drop(self) -> None:
+        """Test hook: simulate losing the link to the corrector PC.
+
+        The device goes to FAULT and every backend command fails until
+        ``reconnect`` (or ``Init``) re-establishes the link, as with a real
+        CEOS link that drops mid-session. Block this command in MCP configs.
+        """
+        self._link_up = False
+        self._last_status = "Link to corrector lost (simulated)"
+        self.set_state(DevState.FAULT)
+        self.set_status("Link to corrector lost (simulated); call reconnect")
 
     def _response(self, result) -> str:
+        if not getattr(self, "_link_up", True):
+            raise ConnectionError("link to the corrector is down (simulated); call reconnect")
         payload = {"jsonrpc": "2.0", "id": self._response_id, "result": result}
         self._response_id += 1
         self._last_status = "OK"
@@ -89,6 +107,8 @@ class DigitalTwinCorrector(CORRECTOR):
         )
 
     def _correct_aberration(self, name: str, values: list[float]) -> str:
+        if not getattr(self, "_link_up", True):   # fail before touching state, like a real dropped link
+            raise ConnectionError("link to the corrector is down (simulated); call reconnect")
         if name not in self._simulation_aberrations:
             raise ValueError(f"Unknown aberration {name!r}")
         current = self._simulation_aberrations[name]

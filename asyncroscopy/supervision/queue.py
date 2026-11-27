@@ -203,7 +203,7 @@ class ActionQueue:
 
     def submit(self, tool: str, fn: Callable[[], Any], *, args: dict | None = None, origin: str = "agent",
                label: str | None = None, site_id: str | None = None, run_id: str | None = None,
-               aliases: list[str] | None = None) -> _Item:
+               aliases: list[str] | None = None, force_approval: bool = False) -> _Item:
         """Queue *fn* as one top-level action. Returns a handle; see :meth:`wait`.
 
         Hard-limit violations are refused here, before queueing, and recorded.
@@ -228,10 +228,10 @@ class ActionQueue:
                 item.done.set()
                 self._publish(action)
                 return item
-            if decision.needs_approval:
+            if decision.needs_approval or force_approval:
                 action.status = "awaiting_approval"
                 action.requires_approval = True
-                action.approval_reason = decision.reason
+                action.approval_reason = decision.reason or "this step needs operator approval"
             self._pending.append(item)
             self._publish(action)
             self._cv.notify_all()

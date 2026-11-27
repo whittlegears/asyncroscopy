@@ -30,7 +30,7 @@ from asyncroscopy.supervision.recipes import (
     substitute,
 )
 
-DEFAULT_PASSTHROUGH = ["*_get_*", "*_read_*", "list_devices", "get_data_from_key"]
+DEFAULT_PASSTHROUGH = ["*_get_*", "*_read_*", "list_devices", "get_data_from_key", "system_health"]
 
 
 @dataclass
@@ -47,6 +47,8 @@ class SupervisionConfig:
     stop_commands: list[str] = field(default_factory=lambda: ["instrument.blank_beam"])
     detector: str = "haadf"
     policy: dict = field(default_factory=dict)
+    # Recovery rungs the agent may run without asking; anything further is queued for approval.
+    recovery_auto: list[str] = field(default_factory=lambda: ["reconnect", "init"])
 
     @classmethod
     def from_config(cls, data: dict | None) -> SupervisionConfig:
