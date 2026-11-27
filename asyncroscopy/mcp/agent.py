@@ -133,14 +133,13 @@ class AgentSwarm:
             self.startup_error = f"{type(e).__name__}: {e}"
             self._error(f"[SYSTEM]: Failed to start the model: {self.startup_error}")
             self._error("[SYSTEM]: Serving MCP anyway; query_agent will report this error.")
+            return False
 
-        # Inherit tools even without a model: list_agent_tools and the deterministic
-        # workflows don't need one, and the model may come back later.
         for url in mcp_urls or [DEFAULT_MCP_URL]:
             if not await self.connect_mcp(url):
                 print(f"[SYSTEM]: Failed to connect to MCP Server at {url}.")
 
-        return self._model is not None
+        return True
 
     def _log(self, message: str) -> None:
         """Print a progress line when verbose, otherwise stay silent."""
@@ -158,8 +157,8 @@ class AgentSwarm:
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
         """Connect to an MCP server and inherit its tools. Returns true for success.
 
-        Tools are loaded with the fastmcp client (see ``asyncroscopy.mcp.mcp_tools``);
-        *transport* is kept for compatibility and inferred from the URL by fastmcp.
+        The fastmcp client in asyncroscopy.mcp.mcp_tools loads the tools.
+        It infers the transport from the URL. The transport argument stays for compatibility.
         """
         try:
             from asyncroscopy.mcp.mcp_tools import McpToolSource
@@ -233,18 +232,6 @@ class AgentSwarm:
     def tools(self) -> str:
         """JSON list of MCP tools inherited over MCP, e.g. [{"name": "..."}, ...]."""
         return json.dumps([{"name": t.name} for t in self._tools])
-
-    @property
-    def tool_names(self) -> list[str]:
-        """Names of the MCP tools inherited from the connected servers."""
-        return [t.name for t in self._tools]
-
-    async def call_tool(self, name: str, args: dict):
-        """Call one inherited MCP tool directly (used by the deterministic workflows)."""
-        for tool in self._tools:
-            if tool.name == name:
-                return await tool.ainvoke(args)
-        raise KeyError(f"no inherited MCP tool {name!r}")
 
     def set_max_steps(self, max_steps: int) -> int:
         """Set the LangGraph recursion limit used per query and return the new value."""

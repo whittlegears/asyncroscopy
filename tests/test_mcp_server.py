@@ -543,7 +543,7 @@ class TestMCPRegistration:
 
         server.setup(print_summary=False)
 
-        assert set(calls) == {"get_data_from_key", "list_devices", "system_health", "recover_device", "autonomy_focus", "autonomy_correct_aberrations", "autonomy_align_zone_axis", "autonomy_run_session", "register_images"}
+        assert set(calls) == {"get_data_from_key", "list_devices"}
 
 
 class TestMCPCommandTimeout:
@@ -667,3 +667,90 @@ class TestMCPSpectrumPreview:
         assert server._augment_with_preview("get_stage", "[0.0,0.0]") == "[0.0,0.0]"
         assert server._augment_with_preview("acquire_spectrum", "") == ""
         assert server._augment_with_preview("acquire_spectrum", 42) == 42
+
+
+def _dev_failed(reason: str) -> tango.DevFailed:
+    error = tango.DevError()
+    error.reason = reason
+    error.desc = f"{reason} happened"
+    return tango.DevFailed(error)
+
+
+class TestMCPFailureDiagnosis:
+    setter_info = type(
+        "CommandInfo",
+        (),
+        {
+            "in_type": tango.CmdArgType.DevString,
+            "out_type": tango.CmdArgType.DevString,
+            "in_type_desc": "",
+            "out_type_desc": "",
+        },
+    )
+
+    def _server(self, monkeypatch, getter_value=None, getter_error=None):
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        timeouts = []
+
+        class FakeProxy:
+            def __init__(self, name):
+                assert name == "asyncroscopy/twin/default"
+
+            def set_timeout_millis(self, millis):
+                timeouts.append(millis)
+
+            def command_inout(self, command):
+                assert command == "get_stage"
+                if getter_error is not None:
+                    raise getter_error
+                return getter_value
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FakeProxy)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        server._device_names[("Twin", "get_stage")] = "asyncroscopy/twin/default"
+        return server, timeouts
+
+    def _call(self, server, error):
+        def setter(arg):
+            raise error
+
+        wrapper = server._create_wrapper(setter, self.setter_info, "move_stage", "Twin")
+        with pytest.raises(RuntimeError) as info:
+            wrapper("[1, 2]")
+        return str(info.value)
+
+    def test_timeout_appends_readback_and_keeps_error(self, monkeypatch) -> None:
+        server, timeouts = self._server(monkeypatch, getter_value=np.array([1.0, 0.5]))
+        message = self._call(server, _dev_failed("API_DeviceTimedOut"))
+
+        assert message.startswith("API_DeviceTimedOut: API_DeviceTimedOut happened")
+        assert "Readback after timeout: get_stage = [1.0, 0.5]" in message
+        assert timeouts == [3000]
+
+    def test_readback_failure_is_reported(self, monkeypatch) -> None:
+        server, _ = self._server(monkeypatch, getter_error=_dev_failed("API_DeviceTimedOut"))
+        message = self._call(server, _dev_failed("API_DeviceTimedOut"))
+
+        assert "Readback after timeout: get_stage also failed" in message
+
+    def test_unreachable_device_says_do_not_retry(self, monkeypatch) -> None:
+        server, timeouts = self._server(monkeypatch, getter_value="unused")
+        message = self._call(server, _dev_failed("API_DeviceNotExported"))
+
+        assert message.startswith("API_DeviceNotExported")
+        assert "device server is not answering" in message
+        assert "Do not retry" in message
+        assert timeouts == []
+
+    def test_other_errors_get_no_diagnosis(self, monkeypatch) -> None:
+        server, _ = self._server(monkeypatch, getter_value="unused")
+        message = self._call(server, ValueError("bad position"))
+
+        assert message == "ValueError: bad position"
+
+    def test_diagnosis_failure_adds_nothing(self, monkeypatch) -> None:
+        server, _ = self._server(monkeypatch, getter_value="unused")
+        server._device_names = None  # any lookup now raises inside the diagnosis
+        message = self._call(server, _dev_failed("API_DeviceTimedOut"))
+
+        assert message == "API_DeviceTimedOut: API_DeviceTimedOut happened"

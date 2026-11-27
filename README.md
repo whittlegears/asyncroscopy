@@ -9,22 +9,6 @@
 
 ## Quick Start
 
-One command from a fresh checkout to an agent-ready digital microscope. It
-starts the twin stack and the MCP bridge, checks everything, and runs one
-autonomous session as an agent would:
-
-```bash
-uv sync
-uv run startup_scripts/quickstart.py --demo
-# agents:   http://127.0.0.1:8000/mcp
-```
-
-`--stack benchmark` (after `uv sync --extra diffraction`) starts the tilt and
-diffraction twin used by the agent benchmark (`python -m asyncroscopy.bench`).
-To check a running stack at any time, run `python -m asyncroscopy.health`.
-
-### Step by step
-
 ```bash
 # Install all dependencies
 uv sync
@@ -75,17 +59,8 @@ uv run startup_guis/mcp_gui.py
 asyncroscopy/
 ├── data/              # Data management device
 ├── instruments/       # Hardware device implementations
-├── mcp/               # FastMCP server for AI agents
-├── imaging/           # Image registration and stage mapping (register_images tool)
-├── autonomy/          # Focus, aberrations, zone axis, whole sessions
-├── health/            # Health checks, failure diagnosis, recovery, doctor
-├── bench/             # Agent benchmark refereed by the digital twin
-└── conformance.py     # Conformance check for new vendor backends
+└── mcp/               # FastMCP server for AI agents
 ```
-
-Guides in `docs/Operation/`: `robustness.md`, `autonomy.md` and `benchmark.md`.
-Agent skills live in `skills/`. For example, `skills/return-to-site/SKILL.md`
-teaches an agent to come back to a saved spot, verified by `register_images`.
 
 ## Configuration Files (`configs/`)
 

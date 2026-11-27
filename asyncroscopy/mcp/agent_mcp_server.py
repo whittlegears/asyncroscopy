@@ -41,7 +41,6 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
-        sites_path: str = "outputs/sites.json",
     ):
         """
         Args:
@@ -53,10 +52,8 @@ class AgentMCPServer:
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
-            sites_path (str): JSON notes file for saved sites (shared with the return-to-site skill).
         """
         self.verbose = verbose
-        self.sites_path = sites_path
         self.mcp_urls = list(mcp_urls)
         self.swarm = AgentSwarm(
             model=model,
@@ -71,36 +68,28 @@ class AgentMCPServer:
         @asynccontextmanager
         async def lifespan(server: FastMCP):
             await self.swarm.start(self.mcp_urls)
-            try:
-                yield {}
-            finally:
-                await self.swarm.close()
+            yield {}
 
         self.mcp = FastMCP(name, lifespan=lifespan)
         self._query_lock = asyncio.Lock()
 
     def setup(self) -> None:
         """Register the swarm tools on the FastMCP instance."""
-        tool_funcs = (
+        for tool_func in (
             self.query_agent,
             self.spawn_agent,
             self.list_agents,
             self.list_agent_tools,
             self.complete,
             self.set_max_steps,
-            self.save_site,
-            self.calibrate_stage_mapping,
-            self.return_to_site,
-            self.list_sites,
-        )
-        for tool_func in tool_funcs:
+        ):
             self.mcp.add_tool(tool_func)
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
         # Printed unconditionally (unlike the verbose lines above) so startup GUIs
         # can parse the count from stdout even when quiet mode is on.
-        print(f"MCP ready: {len(tool_funcs)} tool(s) registered", flush=True)
+        print("MCP ready: 6 tool(s) registered", flush=True)
 
         if self.verbose:
             print("\nAvailable agent tools:")
@@ -121,73 +110,6 @@ class AgentMCPServer:
         """
         async with self._query_lock:
             return await self.swarm.query(prompt, include_transcript=include_transcript)
-
-    # -- deterministic workflows over the inherited MCP tools ---------------------------
-
-    async def _workflow(self, run):
-        """Run *run(wf, inst, book)* with an MCP client of the instrument server.
-
-        The deterministic workflows need no model, so they connect to the instrument
-        MCP server directly (fastmcp client) rather than through the swarm, which only
-        loads its tools once a model has started.
-        """
-        from fastmcp import Client
-
-        from asyncroscopy.mcp.workflows import return_to_site as wf
-
-        errors = []
-        for url in self.mcp_urls:
-            try:
-                async with Client(url, timeout=600) as client:
-                    names = [t.name for t in await client.list_tools()]
-                    if not any(n.endswith("_move_stage") for n in names) or "register_images" not in names:
-                        errors.append(f"{url}: no instrument tools with register_images")
-                        continue
-
-                    async def call(tool: str, args: dict):
-                        result = await client.call_tool(tool, args)
-                        if result.data is not None:
-                            return result.data
-                        return [{"text": getattr(c, "text", "")} for c in result.content] or None
-
-                    inst = wf.McpInstrument(call, names)
-                    return await run(wf, inst, wf.SiteBook(self.sites_path))
-            except Exception as exc:
-                if not errors or "no instrument tools" not in errors[-1]:
-                    errors.append(f"{url}: {type(exc).__name__}: {exc}")
-                if isinstance(exc, (KeyError, ValueError, RuntimeError)):
-                    raise
-        raise RuntimeError("no instrument MCP server available: " + "; ".join(errors))
-
-    async def save_site(self, name: str, landmark: bool = False, notes: str = "") -> dict:
-        """Image the current spot and save it (image key, stage, field of view) so it can be found again.
-        Mark 2-3 distinctive, well-separated sites as landmarks: they re-register the specimen after a remount."""
-        return await self._workflow(lambda wf, inst, book: wf.save_site(inst, book, name, landmark, notes))
-
-    async def calibrate_stage_mapping(self) -> dict:
-        """Measure how stage moves shift the image at the current field of view (needed once per
-        magnification before return_to_site can centre anything). Takes a few small stage steps."""
-        async def run(wf, inst, book):
-            return {"stage_to_image": await wf.calibrate(inst, book)}
-        return await self._workflow(run)
-
-    async def return_to_site(self, name: str, max_rotation_deg: float = 0.0) -> dict:
-        """Go back to a saved site and verify it by image registration (LangGraph workflow: go to the saved
-        position, survey, centre, verify, correct up to 3 times, record). status is 'match' only when the
-        native-magnification image matches within 2 pixels; 'ambiguous', 'no_match', 'not_converged' and
-        'not_calibrated' mean the site was NOT confirmed. Use max_rotation_deg=10 after a remount."""
-        async def run(wf, inst, book):
-            state = await wf.return_to_site(inst, book, name, max_rotation_deg=max_rotation_deg)
-            return {k: state.get(k) for k in ("status", "reasons", "final_stage", "visit")}
-        return await self._workflow(run)
-
-    def list_sites(self) -> dict:
-        """Saved sites with their stage positions and the outcome of their last visit."""
-        from asyncroscopy.mcp.workflows.return_to_site import SiteBook
-
-        book = SiteBook(self.sites_path)
-        return {name: {"stage": s["stage"], "fov_m": s["fov_m"], "landmark": s.get("landmark", False),
-                       "last_visit": (s.get("visits") or [None])[-1]} for name, s in book.data["sites"].items()}
 
     def spawn_agent(self, config: str) -> str:
         """

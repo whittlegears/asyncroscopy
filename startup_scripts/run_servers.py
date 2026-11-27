@@ -31,7 +31,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, Watchdog  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
 # selects a different config AND runs headlessly (no prompts).
@@ -241,11 +241,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "file under output_tango_devices_logs/<timestamp>/ for troubleshooting.",
     )
     parser.add_argument(
-        "--no-watchdog",
-        action="store_true",
-        help="Do not restart device servers that exit after startup.",
-    )
-    parser.add_argument(
         "--isolated",
         type=Path,
         default=None,
@@ -447,6 +442,20 @@ def stop_tiled_server() -> None:
         get_data_proxy().stop_tiled_server()
     except Exception:
         pass
+
+
+def report_exited_processes(processes: Iterable[ManagedProcess], reported: set[str]) -> None:
+    """Print a FAIL line once for each process that exited. Do not restart it.
+
+    An unattended restart would initialise the instrument hardware again.
+    """
+    for managed in processes:
+        if managed.key in reported or managed.running:
+            continue
+        reported.add(managed.key)
+        tail = " | ".join(line.strip() for line in list(managed.stderr_lines)[-2:])
+        status_line("FAIL", managed.key, f"exited with code {managed.process.poll()}  {tail}".strip())
+        print(color("  A device server stopped. Stop this stack with Ctrl+C and start it again.", Style.red))
 
 
 def print_debug_output(processes: Iterable[ManagedProcess]) -> None:
@@ -715,45 +724,12 @@ def main(argv: list[str] | None = None) -> int:
             print()
             print(color("Leave this terminal open while you use the servers. Press Ctrl+C to stop them.", Style.dim))
             
-            watchdog = None
-            if not args.no_watchdog:
-                watched = [d.key for d in [*regular_devices, *dependency_devices]]
-
-                def report(event: dict) -> None:
-                    if event["event"] == "restarted":
-                        status_line("WARN", event["key"], f"exited (code {event['exit_code']}); restarted pid="
-                                                          f"{event['pid']} [{event['restarts_in_window']} in window]")
-                    elif event["event"] == "conflict":
-                        status_line("FAIL", event["key"], f"exited and will NOT be restarted: {event['reason']}. "
-                                                          "Is another run_servers.py still running? Stop it first.")
-                    elif event["event"] == "gave_up":
-                        status_line("FAIL", event["key"], f"keeps exiting (code {event['exit_code']}); not restarting. "
-                                                          + " | ".join(event["stderr_tail"][-2:]))
-                    else:
-                        status_line("FAIL", event["key"], f"restart failed: {event.get('error')}")
-
-                server_of = {d.key: d.server_name for d in [*regular_devices, *dependency_devices]}
-
-                def owned_elsewhere(key: str) -> bool:
-                    # The admin device answers only if some process serves this server right now.
-                    try:
-                        tango.DeviceProxy(f"dserver/{server_of[key]}").ping()
-                        return True
-                    except Exception:
-                        return False
-
-                watchdog = Watchdog(manager, watched, on_event=report, owned_elsewhere=owned_elsewhere)
-                print(color("Watchdog on: device servers that exit are restarted (--no-watchdog to disable).",
-                            Style.dim))
-
             try:
+                reported: set[str] = set()
                 while True:
+                    report_exited_processes(manager.active_processes, reported)
                     time.sleep(0.1)
-                    if watchdog is not None:
-                        watchdog.poll()
             except KeyboardInterrupt:
-                if watchdog is not None:
-                    watchdog.stop()       # never restart what shutdown is stopping
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!
                 print()
                 print(color("Shutdown requested. Stopping Tiled server...", Style.yellow))

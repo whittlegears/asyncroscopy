@@ -33,7 +33,7 @@ def _result_text(result: Any) -> str:
         if kind == "text" and data is None:
             parts.append(block.text)
         elif kind == "image":
-            parts.append(f"[image: {getattr(block, 'mimeType', 'image')}]")
+            parts.append(f"[image: {getattr(block, 'mime_type', None) or 'image'}]")
     return "\n".join(parts) if parts else ""
 
 

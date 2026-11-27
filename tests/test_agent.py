@@ -58,11 +58,6 @@ def setup_llm_stubs():
     lc_agents.create_agent = MagicMock()
     langchain.agents = lc_agents
 
-    lc_mcp = types.ModuleType("langchain_mcp_adapters")
-    lc_mcp_client = types.ModuleType("langchain_mcp_adapters.client")
-    lc_mcp_client.MultiServerMCPClient = MagicMock()
-    lc_mcp.client = lc_mcp_client
-
     lg = types.ModuleType("langgraph")
     lg_graph = types.ModuleType("langgraph.graph")
     lg_graph.END = "__end__"
@@ -77,8 +72,6 @@ def setup_llm_stubs():
         "langchain": langchain,
         "langchain.chat_models": langchain.chat_models,
         "langchain.agents": langchain.agents,
-        "langchain_mcp_adapters": lc_mcp,
-        "langchain_mcp_adapters.client": lc_mcp_client,
         "langgraph": lg,
         "langgraph.graph": lg_graph,
     })
@@ -494,10 +487,6 @@ class TestAgentMCPServerTools:
             "list_agent_tools",
             "complete",
             "set_max_steps",
-            "save_site",
-            "calibrate_stage_mapping",
-            "return_to_site",
-            "list_sites",
         ]
 
     def test_spawn_agent_tool_delegates_to_swarm(self) -> None:

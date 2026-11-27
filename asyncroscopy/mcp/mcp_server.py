@@ -40,7 +40,6 @@ from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
-from asyncroscopy.health.monitor import HealthMonitor, diagnose, hint_for, recover
 from asyncroscopy.mcp.tool_log import ToolCallLog
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
@@ -59,25 +58,27 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 # inside the client's window with a readable Tango error rather than an HTTP timeout.
 COMMAND_TIMEOUT_MILLIS = 30_000
 
-# After a command times out, read back the state it was changing, so the
-# caller knows what actually happened instead of guessing.
-READBACK = {
+# From this many identical failures in a row, tell the model to stop and report.
+REPEAT_FAILURE_WARN_AT = 2
+# Identical failures further apart than this don't count as a loop.
+REPEAT_FAILURE_WINDOW_S = 120.0
+
+# A setter that times out may have partly moved the hardware.
+# The server reads back the matching getter once, so the agent knows the real state.
+READBACK_GETTERS = {
     "move_stage": "get_stage",
     "set_fov": "get_fov",
     "set_defocus": "get_defocus",
     "set_image_shift": "get_image_shift",
     "set_beam_tilt": "get_beam_tilt",
-    "set_diffraction_shift": "get_diffraction_shift",
-    "set_screen_current": "get_screen_current",
-    "set_eds_exposure_time": "get_eds_exposure_time",
-    "correct_aberration": "get_info",
 }
 READBACK_TIMEOUT_MILLIS = 3_000
-
-# From this many identical failures in a row, tell the model to stop and report.
-REPEAT_FAILURE_WARN_AT = 2
-# Identical failures further apart than this don't count as a loop.
-REPEAT_FAILURE_WINDOW_S = 120.0
+UNREACHABLE_REASONS = {
+    "API_DeviceNotExported",
+    "API_CantConnectToDevice",
+    "API_ConnectionFailed",
+    "API_ServerNotRunning",
+}
 
 
 def describe_error(exc: Exception) -> str:
@@ -100,8 +101,6 @@ class MCPServer:
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
         tool_log_path: str | None = None,
-        detector: str = "haadf",
-        recovery_auto: tuple[str, ...] = ("reconnect", "init"),
     ):
         """
         Args:
@@ -116,9 +115,6 @@ class MCPServer:
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
-            detector (str, optional): Scanning detector the autonomy routines image with.
-            recovery_auto (tuple, optional): Recovery steps ``recover_device`` may run without an
-                operator ("reconnect", "init"); restarting a whole device server is never automatic.
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -133,12 +129,9 @@ class MCPServer:
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
+        # (dev_class, command_name) -> Tango device name, filled by _find_tools
+        self._device_names: dict[tuple[str, str], str] = {}
         self.tools: dict[str, dict[str, Callable]] = {}
-        self.detector = detector
-        self.recovery_auto = tuple(recovery_auto)
-        # tool name -> (device name, device class, command, direct callable taking keyword args)
-        self._tool_meta: dict[str, tuple[str, str, str, Callable]] = {}
-        self._device_of: dict[tuple[str, str], str] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -538,9 +531,6 @@ class MCPServer:
         unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
 
         def _run(arguments: dict, *call_args):
-            return _execute(arguments, *call_args)
-
-        def _execute(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
             try:
                 normalized = self._normalize_command_result(out_type, func(*call_args))
@@ -549,13 +539,13 @@ class MCPServer:
                 if self.tool_log is not None:
                     self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, error=exc)
                 message = describe_error(exc)
-                message += self._diagnosis(dev_class, command_name, exc)
                 repeats = self._note_failure(unique_name, arguments, message)
                 if repeats >= REPEAT_FAILURE_WARN_AT:
                     message += (
                         f"\nThis call has failed {repeats} times in a row. "
                         "Do not call it again with the same arguments; report the error to the user."
                     )
+                message += self._diagnose_failure(exc, dev_class, command_name)
                 raise RuntimeError(message) from exc
             with self._failures_lock:
                 self._failures.pop(unique_name, None)
@@ -598,9 +588,6 @@ class MCPServer:
             def wrapper():
                 return _run({})
 
-            def direct(**_kwargs):
-                return _execute({})
-
             params = []
             
         elif py_type is dict:
@@ -612,10 +599,6 @@ class MCPServer:
                     arg_input = kwargs
                 return _run({"arg": arg_input}, arg_input)
 
-            def direct(**kwargs):
-                arg_input = kwargs["arg"] if set(kwargs) == {"arg"} and isinstance(kwargs["arg"], dict) else kwargs
-                return _execute({"arg": arg_input}, arg_input)
-
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
             
@@ -625,10 +608,6 @@ class MCPServer:
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
                 return _run({param_name: self._numpy_to_python(arg)}, arg)
-
-            def direct(**kwargs):
-                arg = kwargs.get(param_name, kwargs.get("arg"))
-                return _execute({param_name: self._numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -641,9 +620,31 @@ class MCPServer:
         wrapper.__name__ = unique_name
         wrapper.__qualname__ = unique_name
 
-        device_name = self._device_of.get((dev_class, command_name), "")
-        self._tool_meta[unique_name] = (device_name, dev_class, command_name, direct)
         return wrapper
+
+    def _diagnose_failure(self, exc: Exception, dev_class: str, command_name: str) -> str:
+        """Extra lines for a failed call. Returns an empty string if the diagnosis itself fails."""
+        try:
+            reasons = {e.reason for e in exc.args} if isinstance(exc, tango.DevFailed) else set()
+            if reasons & UNREACHABLE_REASONS:
+                return (
+                    "\nThe device server is not answering. "
+                    "Do not retry. Report this to the operator."
+                )
+            getter = READBACK_GETTERS.get(command_name)
+            device = self._device_names.get((dev_class, getter))
+            timed_out = "API_DeviceTimedOut" in reasons or isinstance(exc, TimeoutError)
+            if not timed_out or device is None:
+                return ""
+            try:
+                proxy = DeviceProxy(device)
+                proxy.set_timeout_millis(READBACK_TIMEOUT_MILLIS)
+                value = self._numpy_to_python(proxy.command_inout(getter))
+                return f"\nReadback after timeout: {getter} = {value}"
+            except Exception as read_exc:
+                return f"\nReadback after timeout: {getter} also failed ({describe_error(read_exc)})"
+        except Exception:
+            return ""
 
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
         """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
@@ -712,7 +713,7 @@ class MCPServer:
                 if dev_class not in tools:
                     tools[dev_class] = {}
                 tools[dev_class][command_name] = (func, cmd)
-                self._device_of[(dev_class, command_name)] = device_name
+                self._device_names[(dev_class, command_name)] = device_name
         return tools
 
     def setup(self, print_summary: bool = True):
@@ -739,8 +740,7 @@ class MCPServer:
                 for command_name in command_names:
                     print(f"    - {command_name}")
 
-        native_tools = [self.get_data_from_key, self.list_devices, *self._health_tools(), *self._autonomy_tools()]
-        native_tools.append(self._register_images_tool())
+        native_tools = [self.get_data_from_key, self.list_devices]
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -780,262 +780,6 @@ class MCPServer:
                                 print(f"{stripped}")
                     print("")
                 print("")
-
-    # ------------------------------------------------------------------
-    # Failure diagnosis and recovery
-    # ------------------------------------------------------------------
-
-    def _diagnosis(self, dev_class: str, command_name: str, exc: Exception) -> str:
-        """Extra lines for a failed call: what kind of failure, the state read back, what to do next."""
-        try:
-            kind = diagnose(exc)
-            device = self._device_of.get((dev_class, command_name), "")
-            lines = []
-            if kind == "timeout" and command_name in READBACK and device:
-                lines.append(self._readback(device, READBACK[command_name]))
-            if kind != "device_error" and device:
-                if kind != "timeout":
-                    health = HealthMonitor([device], timeout_ms=READBACK_TIMEOUT_MILLIS).check(device)
-                    lines.append(f"Health: {device} is "
-                                 + ("healthy" if health.healthy else f"{health.problem} ({health.detail})"))
-                hint = hint_for(kind, device)
-                if hint:
-                    lines.append(hint)
-            return "".join("\n" + line for line in lines if line)
-        except Exception:
-            return ""          # diagnosis must never hide the original error
-
-    @staticmethod
-    def _readback(device: str, getter: str) -> str:
-        try:
-            proxy = DeviceProxy(device)
-            proxy.set_timeout_millis(READBACK_TIMEOUT_MILLIS)
-            value = proxy.command_inout(getter)
-            if isinstance(value, np.ndarray):
-                value = value.tolist()
-            return f"Readback after timeout: {getter} = {value}"
-        except Exception as exc:
-            return f"Readback after timeout: {getter} failed too ({describe_error(exc)})"
-
-    def health_monitor(self) -> HealthMonitor:
-        return HealthMonitor(database=self.database)
-
-    def _health_tools(self) -> list[Callable]:
-        server = self
-
-        @tool()
-        def system_health() -> dict:
-            """Check every instrument device: reachable or not, its state (ON, FAULT, ...), latency and the
-            server that hosts it. Use this when a command fails, before retrying it."""
-            devices = [h.to_json() for h in server.health_monitor().check_all()]
-            problems = [d for d in devices if not d["healthy"]]
-            return {"healthy": not problems, "problems": problems, "devices": devices}
-
-        @tool()
-        def recover_device(device: str) -> dict:
-            """Try to bring a faulted or unreachable device back: its own reconnect command, then Init, re-checking
-            health after each. Restarting the whole device server needs operator approval; if that is the next
-            step, it is queued for the operator and this returns status 'needs_approval'."""
-            return server.recover_device(device, origin="agent")
-
-        return [system_health, recover_device]
-
-    def recover_device(self, device: str, origin: str = "agent") -> dict:
-        monitor = self.health_monitor()
-        known = monitor.devices()
-        if device not in known:
-            matches = [d for d in known if device.lower() in d.lower()]
-            if len(matches) != 1:
-                raise ValueError(f"unknown device {device!r}; devices: {', '.join(known)}")
-            device = matches[0]
-        result = recover(monitor, device, allowed=self.recovery_auto)
-        if result.get("status") == "needs_approval":
-            result["operator_action"] = (
-                "The next recovery step needs an operator. Ask them to run "
-                "`python -m asyncroscopy.health --fix --allow-restart` on the instrument PC, or to restart "
-                "the stack with run_servers.py. Do not retry the failing command until it is healthy.")
-        return result
-
-    # ------------------------------------------------------------------
-    # Autonomous routines (focus, aberrations, whole sessions)
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _role_of(device_name: str, dev_class: str) -> str:
-        """Role from the device name (asyncroscopy/<role>/<instance>), else the class name."""
-        parts = device_name.split("/")
-        return parts[1].lower() if len(parts) == 3 and parts[1] else dev_class.lower()
-
-    def _fetch_image_array(self, key: str) -> np.ndarray | None:
-        """A DATA/Tiled key (or a local HDF5 path, as the twins write without a DATA device) to its 2-D image."""
-        import os
-        if os.path.isfile(key):
-            import h5py
-            with h5py.File(key, "r") as h5:
-                group = h5["image"]
-                return np.asarray(group if isinstance(group, h5py.Dataset) else group[next(iter(group))])
-        return self._find_first_2d_array(self._resolve_tiled_node(key), prefer_key="image")
-
-    def _device_for_role(self, role: str) -> str:
-        for dev, cls, _cmd, _fn in self._tool_meta.values():
-            if self._role_of(dev, cls) == role:
-                return dev
-        return ""
-
-    def _autonomy_context(self):
-        from asyncroscopy.imaging.tango_backend import TangoMicroscope
-        from asyncroscopy.autonomy.routines import Imager, Resilient
-        from asyncroscopy.autonomy.session import SessionContext
-
-        instrument = self._device_for_role("instrument")
-        if not instrument:
-            raise RuntimeError("no instrument device (asyncroscopy/instrument/...) is registered")
-        inst = DeviceProxy(instrument)
-        inst.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-        corrector_dev = self._device_for_role("corrector")
-        corrector = None
-        if corrector_dev:
-            corrector = DeviceProxy(corrector_dev)
-            corrector.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
-        scan_dev = self._device_for_role("scan")
-        scan = DeviceProxy(scan_dev) if scan_dev else None
-        monitor = self.health_monitor()
-        imager = Imager(inst, self._fetch_image_array, Resilient(monitor, self.recovery_auto), detector=self.detector)
-        mic = TangoMicroscope(inst, scan, self._fetch_image_array, detector=self.detector)
-        return SessionContext(imager, mic=mic, corrector=corrector, monitor=monitor)
-
-    def _autonomy_body(self, routine: str, args: dict, step, origin: str = "agent"):
-        """Run one routine; *step* wraps each instrument operation (direct by default)."""
-        from asyncroscopy.autonomy import routines
-        from asyncroscopy.autonomy.session import SessionPlan, run_session
-
-        ctx = self._autonomy_context()
-        if routine == "focus":
-            return routines.focus(ctx.imager, mode=args.get("mode", "defocus"),
-                                  step_m=float(args.get("step_m", 10e-9)), max_offset_m=args.get("max_offset_m"),
-                                  score=args.get("score", "edge_sharpness"), step=step)
-        if routine == "correct_aberrations":
-            if ctx.corrector is None:
-                raise RuntimeError("no corrector device is registered")
-            return routines.measure_and_correct(ctx.corrector, thresholds_m=args["thresholds_m"],
-                                                resilient=ctx.imager.resilient,
-                                                max_correction_m=args.get("max_correction_m"), step=step)
-        if routine == "align_zone_axis":
-            return routines.align_zone_axis(ctx.imager.instrument, ctx.imager.fetch_array, ctx.imager.resilient,
-                                            axes=tuple(args.get("axes") or ("alpha",)),
-                                            step_deg=float(args.get("step_deg", 0.1)),
-                                            max_offset_deg=float(args.get("max_offset_deg", 1.0)), step=step)
-        if routine == "session":
-            return run_session(ctx, SessionPlan.from_json(args.get("plan")), step,
-                               provenance={"requested_by": origin})
-        raise ValueError(f"unknown routine {routine!r}")
-
-    def run_autonomy(self, routine: str, args: dict, origin: str = "agent") -> dict:
-        from asyncroscopy.autonomy.session import jsonable
-
-        return jsonable(self._autonomy_body(routine, args, lambda name, a, fn: fn(), origin))
-
-    def _autonomy_tools(self) -> list[Callable]:
-        server = self
-
-        @tool()
-        def autonomy_focus(mode: str = "defocus", step_m: float = 10e-9, max_offset_m: float | None = None,
-                           score: str = "edge_sharpness") -> dict:
-            """Find best focus by defocus ('defocus') or stage height ('stage_z') with a trust-region search.
-            The result is verified by re-measuring; if there is no real gain the start setting is restored and
-            status is 'no_improvement'. The setting never moves more than max_offset_m (default 6 x step_m)."""
-            return server.run_autonomy("focus", {"mode": mode, "step_m": step_m, "max_offset_m": max_offset_m,
-                                                 "score": score})
-
-        @tool()
-        def autonomy_correct_aberrations(thresholds_m: dict[str, float] | None = None,
-                                         max_correction_m: dict[str, float] | None = None) -> dict:
-            """Measure aberrations with the corrector, correct those above threshold (metres), measure again.
-            A correction that makes an aberration larger is undone and that aberration is left alone.
-            Default thresholds: C1 2 nm, A1 2 nm, B2 30 nm, A2 30 nm."""
-            th = thresholds_m or {"C1": 2e-9, "A1": 2e-9, "B2": 30e-9, "A2": 30e-9}
-            return server.run_autonomy("correct_aberrations", {"thresholds_m": th,
-                                                               "max_correction_m": max_correction_m})
-
-        @tool()
-        def autonomy_run_session(plan: dict | None = None) -> dict:
-            """Run a whole imaging session from one instruction: device health (with automatic recovery),
-            optional region finding, aberration correction, focus, optional zone axis, and a final image.
-            plan keys (all optional): name, find_region, focus_mode (defocus|stage_z|none), focus_step_m,
-            focus_max_offset_m, correct, thresholds_m, polish ({aberration: step_m}), score, save_site."""
-            return server.run_autonomy("session", {"plan": plan or {}})
-
-        @tool()
-        def autonomy_align_zone_axis(axes: list[str] | None = None, step_deg: float = 0.1,
-                                     max_offset_deg: float = 1.0) -> dict:
-            """Tilt the stage (alpha, or alpha and beta) onto the crystal zone axis by minimising the Laue
-            offset of camera diffraction patterns. Never tilts more than max_offset_deg from the start; restores
-            the start tilt unless a verified re-measurement is closer to zone."""
-            return server.run_autonomy("align_zone_axis", {"axes": axes or ["alpha"], "step_deg": step_deg,
-                                                           "max_offset_deg": max_offset_deg})
-
-        return [autonomy_focus, autonomy_correct_aberrations, autonomy_align_zone_axis, autonomy_run_session]
-
-    # ------------------------------------------------------------------
-    # Image registration (used by the return-to-site skill)
-    # ------------------------------------------------------------------
-
-    def _register_images_tool(self) -> Callable:
-        server = self
-
-        @tool()
-        def register_images(reference_key: str, image_key: str, reference_fov_m: float | None = None,
-                            image_fov_m: float | None = None, max_rotation_deg: float = 0.0,
-                            stage_to_image: list[list[float]] | None = None) -> dict:
-            """Find the reference image's centre in a new image and say whether the match can be trusted.
-
-            Both images are DATA/Tiled keys from earlier acquisitions. Give both fields of view when the
-            new image is a lower-magnification survey; the reference is rescaled to it. Use
-            max_rotation_deg (e.g. 10) after the specimen was remounted.
-
-            Returns status 'match', 'ambiguous' or 'no_match' with reasons, the offset of the reference
-            centre from the new image's centre (pixels, and metres when image_fov_m is given; x right,
-            y down), ncc, ambiguity (second-best position relative to the best: repetitive structure),
-            sigma_px (position uncertainty) and rotation_deg. Only 'match' means the same place.
-            With stage_to_image (a 2x2 matrix measured by stepping the stage, image metres per stage
-            metre) it also returns stage_correction_m: the stage move that centres the reference."""
-            return server.register_images(reference_key, image_key, reference_fov_m, image_fov_m,
-                                          max_rotation_deg, stage_to_image)
-
-        return register_images
-
-    def register_images(self, reference_key: str, image_key: str, reference_fov_m: float | None = None,
-                        image_fov_m: float | None = None, max_rotation_deg: float = 0.0,
-                        stage_to_image: list[list[float]] | None = None) -> dict:
-        from asyncroscopy.imaging.registration import (MatchCriteria, center_crop, judge, locate,
-                                                       offset_from_center, rotation_range)
-        from asyncroscopy.imaging.stage_mapping import StageMapping
-
-        reference = self._fetch_image_array(reference_key)
-        image = self._fetch_image_array(image_key)
-        if reference is None or image is None:
-            raise ValueError("both keys must name acquisitions with a 2-D image")
-        reference = np.asarray(reference, dtype=np.float64)
-        image = np.asarray(image, dtype=np.float64)
-        scale = 1.0
-        if reference_fov_m and image_fov_m:
-            scale = (reference_fov_m / reference.shape[1]) / (image_fov_m / image.shape[1])
-        survey = scale < 0.95
-        template = reference if survey else center_crop(reference, 0.6)
-        loc = locate(template, image, rotations_deg=rotation_range(max_rotation_deg), scale=scale)
-        verdict = judge(loc, MatchCriteria())
-        dx, dy = offset_from_center(loc, image.shape)
-        out = {"status": verdict.status, "reasons": verdict.reasons, "offset_px": [dx, dy],
-               "ncc": loc.ncc, "ambiguity": loc.ambiguity, "sigma_px": loc.sigma_px,
-               "consistency": loc.consistency, "rotation_deg": loc.rotation_deg, "scale": scale}
-        if image_fov_m:
-            px = image_fov_m / image.shape[1]
-            out["offset_m"] = [dx * px, dy * px]
-            out["sigma_m"] = loc.sigma_px * px
-            if stage_to_image is not None:
-                mapping = StageMapping(stage_to_image=stage_to_image, calibrated=True)
-                out["stage_correction_m"] = list(mapping.stage_delta_for_image_offset((dx * px, dy * px)))
-        return out
 
     def start(self, transport: Transport | None = None, **kwargs):
         """

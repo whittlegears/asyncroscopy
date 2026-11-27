@@ -69,30 +69,3 @@ agent:
 `spawn_agent` takes `name`, `system_prompt`, and optionally `tools` (glob patterns matched against inherited tool names, e.g. `["*spectrum"]`), `model`, and `description`.
 
 `query_agent` returns the whole run by default: supervisor routing, each tool call and its result, and the generated text, followed by `FINAL ANSWER:`. Pass `include_transcript=False` to get just the answer.
-## Deterministic workflows: return to a saved site
-
-Besides `query_agent`, the agent MCP server exposes a LangGraph workflow that
-runs without the LLM deciding each step:
-
-| Tool | What it does |
-|---|---|
-| `save_site(name, landmark, notes)` | Images the current spot and saves the image key, stage position and field of view. |
-| `calibrate_stage_mapping()` | Measures how stage moves shift the image at the current field of view. Needed once per magnification. |
-| `return_to_site(name, max_rotation_deg)` | Runs go to position → survey → centre → verify (up to 3 corrections) → record. |
-| `list_sites()` | Lists the saved sites with the outcome of each one's last visit. |
-
-The workflow (`asyncroscopy/mcp/workflows/return_to_site.py`) needs no model.
-It connects to the instrument MCP server(s) in `--mcp-urls-json` with the
-`fastmcp` client and uses only the instrument tools and `register_images`.
-It therefore works even when no LLM is running.
-
-`return_to_site` reports `status`:
-- `match` only when the image at the original magnification matches within
-  2 pixels.
-- `ambiguous`, `no_match`, `not_converged` or `not_calibrated` otherwise.
-  These are recorded and reported, never retried.
-
-Sites and visits live in a JSON notes file (`sites_path`, default
-`outputs/sites.json`). It is the same file `skills/return-to-site/SKILL.md`
-uses, so an agent following the skill by hand and the workflow share their
-memory.

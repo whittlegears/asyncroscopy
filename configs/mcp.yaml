@@ -26,4 +26,3 @@ mcp:
       - Init
       - Kill
       - RestartServer
-      - inject_link_drop          # digital-twin fault injection; tests only

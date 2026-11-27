@@ -89,17 +89,6 @@ class DigitalTwin(ElectronMicroscope):
         doc="Beam position as [x, y] fractional coordinates, each in range [0.0, 1.0]",
     )
 
-    specimen_mount = attribute(
-        label="Specimen mount",
-        dtype=(float,),
-        max_dim_x=3,
-        access=AttrWriteType.READ_WRITE,
-        unit="m, m, deg",
-        doc="Simulated specimen mounting as [dx, dy, rotation]: where the specimen sits in the holder. "
-            "Writing a new value simulates unloading and remounting the specimen (it is shifted in x/y and "
-            "rotated about the optical axis). [0, 0, 0] is the original mount.",
-    )
-
     def init_device(self) -> None:
         """Initialize the Tango device and simulation state variables."""
         Device.init_device(self)
@@ -114,7 +103,6 @@ class DigitalTwin(ElectronMicroscope):
         self._imsize = 512
         self._fov = 200e-10  # meters
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
-        self._mount = np.zeros(3, dtype=np.float64)  # dx (m), dy (m), rotation (deg)
 
         self._sample_atoms_base = Atoms()
         self._sample_atoms_view = Atoms()
@@ -177,25 +165,15 @@ class DigitalTwin(ElectronMicroscope):
 
     def _update_view_cache(self, force: bool = False) -> None:
         """Update the viewed sample positions by applying current stage rotations and translations."""
-        pose_key = (*np.round(self._stage_position, 12), *np.round(self._mount, 12))
+        pose_key = tuple(np.round(self._stage_position, 12))
         if not force and pose_key == self._cached_pose_key:
             return
 
         alpha_deg, beta_deg = self._stage_position[3], self._stage_position[4]
         stage_xyz_ang = self._stage_position[:3] * 1e10
-        mount_rot = float(self._mount[2])
-        mount_shift_ang = np.array([self._mount[0] * 1e10, self._mount[1] * 1e10, 0.0])
-
-        def mount(atoms: Atoms) -> None:
-            # Remounting places the specimen at a new angle and position in the holder.
-            if mount_rot != 0.0:
-                atoms.rotate(mount_rot, 'z', center=(0, 0, 0))
-            if mount_shift_ang.any():
-                atoms.translate(mount_shift_ang)
 
         self._sample_atoms_view = self._sample_atoms_base.copy()
         if len(self._sample_atoms_view) > 0:
-            mount(self._sample_atoms_view)
             if alpha_deg != 0.0:
                 self._sample_atoms_view.rotate(alpha_deg, 'x', center=(0, 0, 0))
             if beta_deg != 0.0:
@@ -205,7 +183,6 @@ class DigitalTwin(ElectronMicroscope):
         self._particle_records_view = []
         for rec in self._particle_records_base:
             dummy = Atoms("H", positions=[rec["center"]])
-            mount(dummy)
             if alpha_deg != 0.0:
                 dummy.rotate(alpha_deg, 'x', center=(0, 0, 0))
             if beta_deg != 0.0:
@@ -470,17 +447,6 @@ class DigitalTwin(ElectronMicroscope):
         self._beam_pos_x = float(x)
         self._beam_pos_y = float(y)
 
-    def read_specimen_mount(self):
-        """Read method for the specimen_mount attribute."""
-        return [float(v) for v in self._mount]
-
-    def write_specimen_mount(self, value):
-        """Write method for the specimen_mount attribute: simulate unloading and remounting."""
-        if len(value) != 3:
-            raise ValueError("specimen_mount must be [dx_m, dy_m, rotation_deg]")
-        self._mount = np.array([float(v) for v in value], dtype=np.float64)
-        self._update_view_cache(force=True)
-
     def _viewport_metadata(self) -> dict:
         fov_ang = self._fov * 1e10
         stage_xyz_ang = self._stage_position[:3] * 1e10
@@ -668,10 +634,6 @@ class DigitalTwin(ElectronMicroscope):
     def _get_defocus(self) -> float:
         """Get defocus in meters."""
         return self._defocus
-
-    def _get_fov(self) -> float:
-        """Get the field of view in meters."""
-        return float(self._fov)
 
     def _get_stage(self):
         """Return the current 5-axis stage position."""
