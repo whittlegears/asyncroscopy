@@ -8,7 +8,7 @@ import numpy as np
 import tango
 from ase import Atoms
 from ase.build import bulk
-from tango.server import device_property
+from tango.server import command, device_property
 
 from asyncroscopy.data.data_writer import (
     acquisition_filename,
@@ -437,6 +437,29 @@ class DigitalTwinTilt(DigitalTwin):
         else:
             material = "vacuum"
         return material, float(local_x[row, column]), float(local_y[row, column])
+
+    @command(dtype_out=str)
+    def get_ground_truth(self) -> str:
+        """Benchmark referee: what the twin knows and an agent must find out. Block this in MCP configs.
+
+        Returns JSON with the true focus (defocus that removes the blur) and the
+        stage alpha/beta that put the crystal under the beam on its zone axis.
+        """
+        self._sync_stage_from_proxy()
+        material, local_x, local_y = self._beam_material()
+        _a, rotation_deg, tilt_x_mrad, tilt_y_mrad = self._lattice_fields(local_x, local_y)
+        true_focus = self._stage_position[2] + (
+            float(self.focus_drift_nm_per_degree) * np.sin(np.radians(self._stage_position[3])) * 1e-9
+        )
+        return json.dumps({
+            "material_under_beam": material,
+            "true_focus_m": float(true_focus),
+            "defocus_m": float(self._defocus),
+            "on_zone_alpha_deg": float(-np.degrees(float(tilt_x_mrad) * 1e-3)),
+            "on_zone_beta_deg": float(-np.degrees(float(tilt_y_mrad) * 1e-3)),
+            "stage": [float(v) for v in self._stage_position],
+            "local_xy_nm": [local_x, local_y],
+        })
 
     def _silicon_atoms(self, local_x_nm: float, local_y_nm: float, event_index: int):
         lattice_parameter, rotation_deg, tilt_x_mrad, tilt_y_mrad = self._lattice_fields(

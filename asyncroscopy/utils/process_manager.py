@@ -434,14 +434,20 @@ class Watchdog:
     events of that poll; ``on_event`` also receives them.
     """
 
+    CONFLICT_MARKERS = ("already running", "address already in use", "already exported")
+
     def __init__(self, manager: "ProcessManager", keys: list[str] | None = None, *, max_restarts: int = 5,
-                 window_s: float = 600.0, backoff_s: float = 2.0, on_event=None):
+                 window_s: float = 600.0, backoff_s: float = 2.0, on_event=None, owned_elsewhere=None):
         self.manager = manager
         self.keys = set(keys) if keys is not None else None
         self.max_restarts = max_restarts
         self.window_s = window_s
         self.backoff_s = backoff_s
         self.on_event = on_event
+        # owned_elsewhere(key) -> True when another process already serves that key's devices
+        # (another launcher, a manual start). Restarting would only collide with it.
+        self.owned_elsewhere = owned_elsewhere
+        self.stopped = False
         self.restarts: dict[str, list[float]] = {}
         self.given_up: set[str] = set()
         self._next_try: dict[str, float] = {}
@@ -454,7 +460,13 @@ class Watchdog:
                 pass
         return event
 
+    def stop(self) -> None:
+        """Stand down for good (the launcher is shutting down)."""
+        self.stopped = True
+
     def poll(self, now: float | None = None) -> list[dict]:
+        if self.stopped:
+            return []
         now = time.monotonic() if now is None else now
         events = []
         for managed in list(self.manager.active_processes):
@@ -468,6 +480,21 @@ class Watchdog:
             recent = [t for t in self.restarts.get(key, []) if now - t <= self.window_s]
             code = managed.process.poll()
             tail = list(managed.stderr_lines)[-5:]
+            text = " ".join(list(managed.stderr_lines)[-20:] + list(managed.stdout_lines)[-20:]).lower()
+            conflict = next((m for m in self.CONFLICT_MARKERS if m in text), None)
+            owner = False
+            if conflict is None and self.owned_elsewhere is not None:
+                try:
+                    owner = bool(self.owned_elsewhere(key))
+                except Exception:
+                    owner = False
+            if conflict or owner:
+                self.given_up.add(key)
+                events.append(self._emit({"event": "conflict", "key": key, "exit_code": code,
+                                          "reason": f"exited with '{conflict}'" if conflict else
+                                                    "another process already serves these devices",
+                                          "stderr_tail": tail}))
+                continue
             if len(recent) >= self.max_restarts:
                 self.given_up.add(key)
                 events.append(self._emit({"event": "gave_up", "key": key, "exit_code": code,

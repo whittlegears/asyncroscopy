@@ -44,6 +44,7 @@ project:
         - file: Operation/supervision_and_atlas.md
         - file: Operation/robustness.md
         - file: Operation/autonomy.md
+        - file: Operation/benchmark.md
     - title: Tiled Server
       children:
         - file: Tiled_server/data_integration.md

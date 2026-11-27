@@ -723,13 +723,26 @@ def main(argv: list[str] | None = None) -> int:
                     if event["event"] == "restarted":
                         status_line("WARN", event["key"], f"exited (code {event['exit_code']}); restarted pid="
                                                           f"{event['pid']} [{event['restarts_in_window']} in window]")
+                    elif event["event"] == "conflict":
+                        status_line("FAIL", event["key"], f"exited and will NOT be restarted: {event['reason']}. "
+                                                          "Is another run_servers.py still running? Stop it first.")
                     elif event["event"] == "gave_up":
                         status_line("FAIL", event["key"], f"keeps exiting (code {event['exit_code']}); not restarting. "
                                                           + " | ".join(event["stderr_tail"][-2:]))
                     else:
                         status_line("FAIL", event["key"], f"restart failed: {event.get('error')}")
 
-                watchdog = Watchdog(manager, supervised, on_event=report)
+                server_of = {d.key: d.server_name for d in [*regular_devices, *dependency_devices]}
+
+                def owned_elsewhere(key: str) -> bool:
+                    # The admin device answers only if some process serves this server right now.
+                    try:
+                        tango.DeviceProxy(f"dserver/{server_of[key]}").ping()
+                        return True
+                    except Exception:
+                        return False
+
+                watchdog = Watchdog(manager, supervised, on_event=report, owned_elsewhere=owned_elsewhere)
                 print(color("Watchdog on: device servers that exit are restarted (--no-watchdog to disable).",
                             Style.dim))
 
@@ -739,6 +752,8 @@ def main(argv: list[str] | None = None) -> int:
                     if watchdog is not None:
                         watchdog.poll()
             except KeyboardInterrupt:
+                if watchdog is not None:
+                    watchdog.stop()       # never restart what shutdown is stopping
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!
                 print()
                 print(color("Shutdown requested. Stopping Tiled server...", Style.yellow))

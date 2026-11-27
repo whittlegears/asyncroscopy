@@ -241,3 +241,29 @@ def test_watchdog_restarts_crashed_server_and_gives_up_on_crash_loop(tmp_path):
         assert keeper.running
     finally:
         manager.shutdown_all()
+
+
+def test_watchdog_never_fights_another_owner(tmp_path):
+    import sys
+    import time as _time
+
+    from asyncroscopy.utils.process_manager import Watchdog
+
+    manager = ProcessManager(name="wd2", state_dir=tmp_path)
+    dup = manager.start_process("data", "DATA", [sys.executable, "-c",
+                                "import sys; print('This server is already running, exiting!', file=sys.stderr); "
+                                "raise SystemExit(255)"])
+    owned = manager.start_process("scan", "SCAN", [sys.executable, "-c", "raise SystemExit(1)"])
+    dup.process.wait(5)
+    owned.process.wait(5)
+    _time.sleep(0.2)                                  # let the stderr reader catch up
+    events = []
+    wd = Watchdog(manager, backoff_s=0.0, on_event=events.append, owned_elsewhere=lambda key: key == "scan")
+    try:
+        wd.poll()
+        assert {(e["event"], e["key"]) for e in events} == {("conflict", "data"), ("conflict", "scan")}
+        assert wd.given_up == {"data", "scan"}
+        wd.stop()
+        assert wd.poll() == []
+    finally:
+        manager.shutdown_all()

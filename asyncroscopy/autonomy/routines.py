@@ -249,29 +249,45 @@ def find_regions(image, n: int = 5, tile: int | None = None, min_separation_tile
 # Zone axis
 # ----------------------------------------------------------------------------
 
-def laue_offset(pattern, disk_fraction: float = 0.08) -> dict:
+def _block_reduce(p: np.ndarray, max_side: int = 256) -> np.ndarray:
+    f = int(np.ceil(max(p.shape) / max_side))
+    if f <= 1:
+        return p
+    h, w = (p.shape[0] // f) * f, (p.shape[1] // f) * f
+    return p[:h, :w].reshape(h // f, f, w // f, f).mean(axis=(1, 3))
+
+
+def laue_offset(pattern, disk_fraction: float = 0.08, max_side: int = 256) -> dict:
     """How far a diffraction pattern is from on-zone.
 
     The direct beam is the brightest blob; the *Laue offset* is the vector from
-    it to the intensity-weighted centroid of everything outside the central
-    disk, as a fraction of the pattern size. On zone the diffracted intensity
-    is balanced around the direct beam (offset ~ 0); off zone it piles up on
-    the Laue circle on one side. Smaller is better.
+    it to the centroid of the significant diffracted intensity outside the
+    central disk, as a fraction of the pattern size. On zone the diffracted
+    intensity is balanced around the direct beam (offset ~ 0); off zone it
+    piles up on the Laue circle on one side. Smaller is better.
+
+    It is independent of camera size (patterns are block-averaged to at most
+    *max_side* pixels) and of the detector noise floor (only intensity more
+    than 3 robust standard deviations above the background counts), so a
+    1024-pixel camera with read noise gives the same answer as a clean
+    128-pixel one.
     """
     from scipy import ndimage
 
-    p = np.asarray(pattern, dtype=np.float64)
-    p = np.clip(p - np.median(p), 0, None)
+    p = _block_reduce(np.asarray(pattern, dtype=np.float64), max_side)
     h, w = p.shape
-    smooth = ndimage.gaussian_filter(p, max(1.0, min(h, w) / 64))
-    cy, cx = np.unravel_index(int(np.argmax(smooth)), smooth.shape)
+    smooth = ndimage.gaussian_filter(p, 1.0)
+    background = float(np.median(smooth))
+    noise = 1.4826 * float(np.median(np.abs(smooth - background))) + 1e-12
+    signal = np.clip(smooth - background - 3.0 * noise, 0.0, None)
+    cy, cx = np.unravel_index(int(np.argmax(ndimage.gaussian_filter(p, max(1.0, min(h, w) / 64)))), p.shape)
     yy, xx = np.mgrid[:h, :w]
-    r = np.hypot(yy - cy, xx - cx)
-    outer = r > disk_fraction * min(h, w)
-    weights = np.log1p(p * 1e3) * outer
+    outer = np.hypot(yy - cy, xx - cx) > disk_fraction * min(h, w)
+    weights = np.sqrt(signal) * outer
     total = weights.sum()
     if total <= 0:
-        return {"offset": 1.0, "dx": 0.0, "dy": 0.0, "beam": [float(cx), float(cy)]}
+        return {"offset": float("nan"), "dx": 0.0, "dy": 0.0, "beam": [float(cx), float(cy)],
+                "note": "no diffracted intensity above the noise floor"}
     dx = float((weights * (xx - cx)).sum() / total) / w
     dy = float((weights * (yy - cy)).sum() / total) / h
     return {"offset": float(np.hypot(dx, dy)), "dx": dx, "dy": dy, "beam": [float(cx), float(cy)]}
@@ -279,7 +295,10 @@ def laue_offset(pattern, disk_fraction: float = 0.08) -> dict:
 
 def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resilient: Resilient, *,
                     axes: tuple[str, ...] = ("alpha",), step_deg: float = 0.1, max_offset_deg: float = 1.0,
-                    max_iterations: int = 4, tolerance: float = 0.003, step: Step = direct_step,
+                    max_iterations: int = 6, tolerance: float = 0.0, tilt_tolerance_deg: float = 0.02,
+                    coarse_step_deg: float | None = 0.1, refine_repeats: int = 4, damping: float = 0.8,
+                    bisect_iterations: int = 3, landing_attempts: int = 3, approach_deg: float = 0.1,
+                    step: Step = direct_step,
                     tracker: "Callable[[], dict] | None" = None) -> dict:
     """Tilt onto the zone axis using the Laue offset of camera diffraction patterns.
 
@@ -304,6 +323,7 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
     start = [float(v) for v in resilient.call(instrument, "get_stage")]
     trials: list[dict] = []
     tracked: list[dict] = []
+    noise: dict = {}
 
     def tilt_to(offset, why):
         offset = np.clip(np.asarray(offset, dtype=float), -max_offset_deg, max_offset_deg)
@@ -318,13 +338,18 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
         step("tilt", {"offset_deg": offset.tolist(), "why": why}, do)
         return offset
 
-    def laue(offset, why) -> np.ndarray:
-        key = step("acquire_diffraction", {"offset_deg": list(map(float, offset)), "why": why},
-                   lambda: resilient.call(instrument, "acquire_camera_image"))
-        lo = laue_offset(fetch_array(key))
-        v = np.array([lo["dx"], lo["dy"]])
-        trials.append({"offset_deg": list(map(float, offset)), "why": why, "laue": v.tolist(), "key": key})
-        return v
+    def laue(offset, why, repeats: int = 1) -> np.ndarray:
+        """Mean Laue vector of *repeats* patterns at the current tilt (more patterns, no extra moves)."""
+        vs = []
+        for _ in range(max(1, repeats)):
+            key = step("acquire_diffraction", {"offset_deg": list(map(float, offset)), "why": why},
+                       lambda: resilient.call(instrument, "acquire_camera_image"))
+            lo = laue_offset(fetch_array(key))
+            vs.append([lo["dx"], lo["dy"]])
+            trials.append({"offset_deg": list(map(float, offset)), "why": why, "laue": vs[-1], "key": key})
+        arr = np.array(vs)
+        noise["sem"] = arr.std(axis=0, ddof=1) / np.sqrt(len(arr)) if len(arr) > 1 else noise.get("sem")
+        return arr.mean(axis=0)
 
     def controllable(v: np.ndarray, j: np.ndarray) -> float:
         """Norm of the part of v that the tilt axes can change (projection onto range(J))."""
@@ -333,41 +358,122 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
 
     status, reasons = "failed", []
     current = np.zeros(n)
+    scans: list[dict] = []
     try:
-        l0 = laue(current, "start")
-        cols = []
-        for k in range(n):
-            e = np.zeros(n)
-            e[k] = step_deg
-            lp = laue(tilt_to(e, f"probe +{axes[k]}"), f"probe +{axes[k]}")
-            lm = laue(tilt_to(-e, f"probe -{axes[k]}"), f"probe -{axes[k]}")
-            cols.append((lp - lm) / (2 * step_deg))
-        jac = np.column_stack(cols)                              # d(laue)/d(tilt), 2 x n
+        l0 = laue(current, "start", refine_repeats)
+        def probe(center: np.ndarray) -> np.ndarray:
+            # Keep both probes inside the tilt limit, so the finite difference is symmetric.
+            center = np.clip(center, -max_offset_deg + step_deg, max_offset_deg - step_deg)
+            cols = []
+            for k in range(n):
+                e = np.zeros(n)
+                e[k] = step_deg
+                lp = laue(tilt_to(center + e, f"probe +{axes[k]}"), f"probe +{axes[k]}")
+                lm = laue(tilt_to(center - e, f"probe -{axes[k]}"), f"probe -{axes[k]}")
+                cols.append((lp - lm) / (2 * step_deg))
+            return np.column_stack(cols)                         # d(laue)/d(tilt), 2 x n
+
+        center = np.zeros(n)
+        slopes: list[np.ndarray | None] = [None] * n
+        brackets: list[tuple[float, float, np.ndarray] | None] = [None] * n
+        if coarse_step_deg:
+            # Bracket the zone on each axis: the Laue component that this axis moves changes sign at the
+            # zone. A sign change is robust to noise and to the response being non-linear far out.
+            for k in range(n):
+                grid = np.arange(-max_offset_deg, max_offset_deg + 1e-9, coarse_step_deg)
+                vecs = []
+                for g in grid:
+                    c = center.copy()
+                    c[k] = g
+                    vecs.append(laue(tilt_to(c, f"coarse {axes[k]}"), f"coarse {axes[k]}"))
+                vecs = np.array(vecs)
+                slope = np.polyfit(grid, vecs, 1)[0]                 # d(laue)/d(tilt) along this axis
+                if np.linalg.norm(slope) < 1e-12:
+                    continue
+                slopes[k] = slope
+                u = slope / np.linalg.norm(slope)
+                comp = vecs @ u                                      # signed controllable component
+                crossings = [i for i in range(len(grid) - 1) if np.sign(comp[i]) != np.sign(comp[i + 1])
+                             and comp[i] < comp[i + 1]]
+                if crossings:
+                    # The steepest rising crossing is the zone; interpolate between the two patterns.
+                    i = max(crossings, key=lambda j: comp[j + 1] - comp[j])
+                    root = grid[i] - comp[i] * (grid[i + 1] - grid[i]) / (comp[i + 1] - comp[i])
+                    brackets[k] = (float(grid[i]), float(grid[i + 1]), u)
+                else:
+                    root = grid[int(np.argmin(np.abs(comp)))]
+                center[k] = float(np.clip(root, -max_offset_deg, max_offset_deg))
+                scans.append({"axis": axes[k], "grid": grid.tolist(), "component": comp.tolist(),
+                              "zone_estimate": center[k]})
+        # The response fitted over the whole coarse scan is far more robust than a ±step finite
+        # difference, whose two tilts each carry the stage's tilt error.
+        jac = np.column_stack(slopes) if all(sl is not None for sl in slopes) else probe(center)
         if np.linalg.matrix_rank(jac, tol=1e-6) < n:
             raise RuntimeError("diffraction does not respond to the tilt axes (no crystal under the beam, "
                                "or the probe step is too small)")
-        baseline = controllable(l0, jac)
-        current = tilt_to(np.zeros(n), "back to start")
-        best = (baseline, np.zeros(n))
-        lv = l0
-        for it in range(max_iterations):
-            delta = -np.linalg.lstsq(jac, lv, rcond=None)[0]
-            target = np.clip(current + delta, -max_offset_deg, max_offset_deg)
-            current = tilt_to(target, f"newton {it}")
-            new = laue(current, f"newton {it}")
-            score = controllable(new, jac)
-            if score < best[0]:
-                best = (score, current.copy())
-            dl = new - lv
-            if np.linalg.norm(delta) > 1e-9:                     # Broyden update of the response
-                jac = jac + np.outer(dl - jac @ delta, delta) / float(delta @ delta)
-            lv = new
-            if score <= tolerance or np.linalg.norm(delta) < step_deg / 20:
+        # Stop when the remaining offset corresponds to less than tilt_tolerance_deg of tilt.
+        tol = max(tolerance, float(np.linalg.svd(jac, compute_uv=False).min()) * tilt_tolerance_deg)
+        # Near the zone the component can be step-like (the Laue circle sweeping through a row of
+        # spots), so refine by its sign, which flips cleanly: bisect each bracket.
+        for k in range(n):
+            if brackets[k] is None:
+                continue
+            lo, hi, u = brackets[k]
+            for _ in range(bisect_iterations):
+                c = center.copy()
+                c[k] = (lo + hi) / 2
+                comp = float(laue(tilt_to(c, f"bisect {axes[k]}"), f"bisect {axes[k]}", refine_repeats) @ u)
+                lo, hi = ((lo + hi) / 2, hi) if comp < 0 else (lo, (lo + hi) / 2)
+            center[k] = (lo + hi) / 2
+        bracketed = all(b is not None for b in brackets)
+        if bracketed:
+            # Land on the estimate from the same side every time (consistent backlash). The landing
+            # carries tilt error, so measure it; if it is outside the noise band, back off and land again
+            # (re-rolls the error; on a stage without tilt error a repeat landing is identical).
+            for attempt in range(landing_attempts):
+                tilt_to(center - approach_deg, "approach")
+                current = tilt_to(center, f"land {attempt + 1}")
+                lv = laue(current, f"land {attempt + 1}", refine_repeats)
+                sem = noise.get("sem")
+                landing_tol = max(float(np.linalg.svd(jac, compute_uv=False).min()) * tilt_tolerance_deg,
+                                  2.0 * float(np.linalg.norm(sem)) if sem is not None else 0.0)
+                if controllable(lv, jac) <= landing_tol:
+                    break
+            max_newton = 0
+        else:
+            # No bracket (no sign change in range): Newton steps from the measured state instead.
+            current = tilt_to(center, "to zone estimate")
+            lv = laue(current, "start of refinement", refine_repeats)
+            max_newton = max_iterations
+        stalls = 0
+        smin = float(np.linalg.svd(jac, compute_uv=False).min())
+        for it in range(max_newton):
+            score = controllable(lv, jac)
+            # Stop inside the measurement's own noise band: another move would only re-roll tilt error.
+            sem = noise.get("sem")
+            noise_tol = 2.0 * float(np.linalg.norm(sem)) if sem is not None else 0.0
+            if score <= max(tol, noise_tol):
                 break
-        # Verify at the best tilt with a fresh pattern.
-        current = tilt_to(best[1], "verify best")
-        verified = controllable(laue(current, "verify best"), jac)
-        if verified < baseline and np.any(best[1]):
+            delta = -damping * np.linalg.lstsq(jac, lv, rcond=None)[0]
+            current = tilt_to(current + delta, f"newton {it}")
+            new = laue(current, f"newton {it}", refine_repeats)
+            # No Broyden update: with tilt error on every move, commanded steps are not the steps taken.
+            if controllable(new, jac) >= score:
+                stalls += 1
+                if stalls >= 2:                                  # not linear here: re-linearise in place
+                    fresh = probe(current)
+                    if np.linalg.matrix_rank(fresh, tol=1e-6) == n:
+                        jac = fresh
+                    current = tilt_to(current, "back after probing")
+                    new = laue(current, "after re-probe", refine_repeats)
+                    stalls = 0
+            else:
+                stalls = 0
+            lv = new
+        # Verify where the crystal actually is: more patterns, no move (a move would re-roll tilt error).
+        verified = controllable((lv + laue(current, "verify", refine_repeats)) / 2, jac)
+        baseline = controllable(l0, jac)
+        if verified < baseline and np.any(current):
             status = "improved"
         else:
             current = tilt_to(np.zeros(n), "restore start (no verified gain)")
@@ -387,7 +493,7 @@ def align_zone_axis(instrument, fetch_array: Callable[[str], np.ndarray], resili
     return {"routine": "align_zone_axis", "status": status, "reasons": reasons, "axes": list(axes),
             "start_tilt_deg": [start[index[a]] for a in axes], "final_tilt_deg": [final[index[a]] for a in axes],
             "baseline_laue_offset": baseline, "verified_laue_offset": verified,
-            "response_per_deg": np.asarray(jac).tolist(), "trials": trials, "tracking": tracked[-3:],
+            "response_per_deg": np.asarray(jac).tolist(), "coarse_scans": scans, "trials": trials, "tracking": tracked[-3:],
             "recoveries": list(resilient.events), "duration_s": time.time() - t0}
 
 

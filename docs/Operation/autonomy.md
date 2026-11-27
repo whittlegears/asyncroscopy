@@ -65,12 +65,15 @@ Measured on the tilt twin across ±90 nm defocus (64 px, shot noise):
   - **Whole session:** focus improves, aberrations are corrected, and edge
     sharpness rises by more than 20 %.
 - **Tilt twin, zone axis on abTEM multislice diffraction:**
-  - **Alpha only:** lands within 0.03° of the on-zone tilt, using 8 patterns
-    in 9 s.
-  - **Alpha and beta:** within 0.02° on both, using 10 patterns in 10.5 s.
+  - **Method:** coarse scan to bracket the zone, bisection on the sign of the
+    controllable Laue component, then landing from one side with re-landing
+    on a measured miss.
+  - **Live benchmark stack:** 5–7/8 seeds within 0.05°, with passes
+    0.002–0.05°. The stage gives every tilt about ±0.045° of error, which is
+    the floor. See `benchmark.md`.
   - **Why not a plain search:** a search on |Laue offset| stopped 0.11° away.
     The component that the other axis would fix makes the minimum shallow,
-    which is why the routine solves for the controllable part instead.
+    which is why the routine works on the controllable part only.
 - **Gold twin, live through MCP** (corrector detuned to C1 25 nm and A1 7 nm,
   with the corrector link dropped before the start):
   - The session recovered the link at the health stage.
