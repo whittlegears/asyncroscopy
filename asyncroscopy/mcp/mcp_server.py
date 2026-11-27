@@ -209,18 +209,12 @@ class MCPServer:
 
     def stack_simulated(self) -> bool:
         """Whether the stack drives a simulator: run_servers' top-level ``simulated:``, which every device holds as
-        its ``simulated`` property. Unknown (no device says) counts as real hardware."""
+        its ``simulated`` property. True only when every device with a command that acts says simulated true; one that
+        says false, says nothing or cannot be read counts as real hardware, and so does a stack with no such device."""
         if self._simulated is None:
-            for device in self.devices.values():
-                if device.proxy is None:
-                    continue
-                try:
-                    values = device.proxy.get_property(["simulated"]).get("simulated") or []
-                except Exception:
-                    continue
-                if values:
-                    self._simulated = str(values[0]).strip().lower() == "true"
-                    break
+            acting = {t.device for t in self.descriptors.values() if not t.native and t.acts}
+            devices = [d for prefix, d in self.devices.items() if prefix in acting]
+            self._simulated = bool(devices) and all(_says_simulated(d.proxy) for d in devices)
         return bool(self._simulated)
 
     @property
@@ -739,20 +733,33 @@ def check_port_free(host: str, port: int) -> str | None:
     return None
 
 
+def _says_simulated(proxy: Any) -> bool:
+    """Whether a device's ``simulated`` property is true; unset or unreadable is False (real hardware)."""
+    if proxy is None:
+        return False
+    try:
+        values = proxy.get_property(["simulated"]).get("simulated") or []
+    except Exception:
+        return False
+    return bool(values) and str(values[0]).strip().lower() == "true"
+
+
 def stack_simulated(tango_host: str, tango_port: int, _unused: str | None = None) -> bool:
-    """Whether the stack drives a simulator: the ``simulated`` property its devices hold (run_servers' top-level
-    ``simulated:``). No device saying so, or a database that cannot be read, counts as real hardware."""
+    """Whether the stack drives a simulator: every device in the database holds ``simulated`` true (run_servers'
+    top-level ``simulated:``). One device without it, or saying false, or a database that cannot be read, counts as
+    real hardware: this decides whether an endpoint may bind beyond this computer without tokens."""
     try:
         database = Database(tango_host, tango_port)
-        for name in database.get_device_exported("*"):
-            if name.lower().startswith(("dserver/", "sys/")):
-                continue
+        names = [n for n in database.get_device_exported("*") if not n.lower().startswith(("dserver/", "sys/"))]
+        if not names:
+            return False
+        for name in names:
             values = database.get_device_property(name, ["simulated"]).get("simulated") or []
-            if values:
-                return str(values[0]).strip().lower() == "true"
+            if not (values and str(values[0]).strip().lower() == "true"):
+                return False
+        return True
     except Exception:
-        pass
-    return False
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
