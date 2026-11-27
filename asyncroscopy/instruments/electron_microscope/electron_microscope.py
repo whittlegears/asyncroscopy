@@ -27,7 +27,7 @@ import tango
 from tango import AttrWriteType, DevDouble, DevFloat, DevString, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, device_property
 
-from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, unsupported
+from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, refuses, unsupported
 from asyncroscopy.utils.commands import command
 
 # The base connects these detector and sub-device proxies. Each name maps to the device property that holds its address.
@@ -396,6 +396,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
         self._set_scanning_detector(str(request[0]), str(request[1]))
 
     
+    @refuses("acquire_camera_image")
     def _acquire_camera_image(
         self,
         imsize: int,
@@ -406,65 +407,73 @@ class ElectronMicroscope(ScanningBeamInstrument):
         output_format: str = '.h5',
     ) -> str:
         """Vendor-specific camera acquisition implementation."""
-        tango.Except.throw_exception(
-            'UnsupportedCommand',
-            'This microscope does not support camera image acquisition.',
-            '_acquire_camera_image()',
-        )
+        unsupported(self, "acquire_camera_image")
 
+    @refuses("acquire_spectrum_image")
     def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
         """Vendor-specific EDS spectrum image; the base backend has none."""
         unsupported(self, "acquire_spectrum_image")
 
+    @refuses("acquire_scanned_data_advanced")
     def _acquire_scanned_data_advanced(self, imsize: int, dwell_time: float, detector: str, scan_region: list[float]) -> str:
         """Vendor-specific advanced 4D scanned data acquisition trigger."""
-        tango.Except.throw_exception(
-            'UnsupportedCommand',
-            'This microscope does not support advanced scanned data acquisition.',
-            '_acquire_scanned_data_advanced()',
-        )
+        unsupported(self, "acquire_scanned_data_advanced")
 
+    @refuses("set_stigmator")
     def _set_stigmator(self, stigmator: list[float]) -> None:
         """Set the objective stigmator [a, b] (metres of A1, already checked against max_stigmator)."""
         unsupported(self, "set_stigmator")
 
+    @refuses("get_stigmator")
     def _get_stigmator(self) -> list[float]:
         """The objective stigmator [a, b] in metres of A1."""
         unsupported(self, "get_stigmator")
 
+    @refuses("set_defocus")
     def _set_defocus(self, defocus):
         unsupported(self, "set_defocus")
 
+    @refuses("set_column_valves")
     def _set_column_valves(self, state: str) -> None:
         unsupported(self, "set_column_valves")
 
+    @refuses("get_detectors")
     def _detectors(self) -> dict:
         unsupported(self, "get_detectors")
 
+    @refuses("run_stem_auto_focus")
     def _run_stem_auto_focus(self, fields: dict) -> dict:
         unsupported(self, "run_stem_auto_focus")
 
+    @refuses("run_beam_tilt_auto_focus")
     def _run_beam_tilt_auto_focus(self, fields: dict) -> dict:
         unsupported(self, "run_beam_tilt_auto_focus")
 
+    @refuses("acquire_camera_series")
     def _acquire_camera_series(self, imsize: int, exposure_time: float, detector: str, readout_area: str, frame_combining: int, length: int) -> str:
         unsupported(self, "acquire_camera_series")
 
+    @refuses("acquire_eels_spectra")
     def _acquire_eels_spectra(self, detector: str, exposure_time: float) -> str:
         unsupported(self, "acquire_eels_spectra")
 
+    @refuses("acquire_eels_spectrum_image")
     def _acquire_eels_spectrum_image(self, detector: str, exposure_time: float, size: int) -> str:
         unsupported(self, "acquire_eels_spectrum_image")
 
+    @refuses("set_projector_mode")
     def _set_projector_mode(self, mode: str) -> None:
         unsupported(self, "set_projector_mode")
 
+    @refuses("set_camera_length")
     def _set_camera_length(self, label: str) -> None:
         unsupported(self, "set_camera_length")
 
+    @refuses("set_beam_stopper")
     def _set_beam_stopper(self, state: str) -> None:
         unsupported(self, "set_beam_stopper")
 
+    @refuses("set_scanning_detector")
     def _set_scanning_detector(self, detector: str, state: str) -> None:
         unsupported(self, "set_scanning_detector")
 

@@ -26,7 +26,25 @@ from asyncroscopy.sim.stage_model import StageTrajectory
 ANGSTROM = 1e-10
 
 
-class ScanningBeamTwin:
+class TwinBlanker:
+    """The blanker every simulated beam instrument shares. Blanked, no electrons reach the sample or a detector: a
+    twin with a beam-current model gives 0 pA (``ScanningBeamTwin._beam_current_pa``), and one without passes what its
+    detectors would have recorded through ``_beam_signal``, so they record nothing but their own noise."""
+
+    _blanked = False
+
+    def _blank_beam(self) -> None:
+        self._blanked = True
+
+    def _unblank_beam(self) -> None:
+        self._blanked = False
+
+    def _beam_signal(self, data):
+        """``data`` (what the beam put on a detector), or zeros of its shape while the beam is blanked."""
+        return np.zeros_like(np.asarray(data)) if self._blanked else data
+
+
+class ScanningBeamTwin(TwinBlanker):
     """The clock, stage, blanker, image shift and frame scan of a simulated scanning-beam instrument."""
 
     def _start_beam_twin(self, seed: int) -> None:
@@ -49,13 +67,6 @@ class ScanningBeamTwin:
 
     def _set_image_shift(self, shift) -> None:
         self._image_shift = np.asarray(shift, dtype=np.float64)
-
-    def _blank_beam(self) -> None:
-        """A blanked beam gives no signal and no dose, as on the instrument."""
-        self._blanked = True
-
-    def _unblank_beam(self) -> None:
-        self._blanked = False
 
     def _beam_current_pa(self) -> float:
         return 0.0 if self._blanked else self._detector_params.beam_current_pa

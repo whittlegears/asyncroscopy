@@ -1007,7 +1007,7 @@ def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts
     else:
         body, read = kind.text(ds, opts)
     summary["read"] = read
-    if ds.attrs.get("beam_current_pa") == 0:
+    if ds.attrs.get("beam_current_pa") == 0 or ds.attrs.get("beam_blanked") in (True, np.True_):
         summary["beam_blanked"] = True  # only detector noise, and the MCP server fails such an acquisition
     summary["text"] = _cap("\n".join(header + [read] + ([body] if body else [])))
     return summary, png

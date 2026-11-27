@@ -146,8 +146,12 @@ coordinates and local lattice under a parked beam, and for 4D-STEM a `truth_file
 maps, written under the `ground_truth_directory` property (`outputs/twin_ground_truth`; never the acquisition
 directory, which Tiled serves); the diffraction twin's particle and its strain; the gold twin's rendered atom count and
 corrector aberrations. Only `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
-model: on the other twins `acquire_camera_image()` raises UnsupportedCommand. The atomistic twins have no blanker:
-`blank_beam()` (and so the e-stop's blank) raises UnsupportedCommand there, and `stop_all` reports it as not stopped.
+model: on the other twins `acquire_camera_image()` raises UnsupportedCommand, and their `action_hints` mark it
+`unsupported`, so agent endpoints do not offer it. Every twin blanks with the same blanker (`TwinBlanker`,
+`scanning_beam_twin.py`): blanked, no electrons reach the sample or a detector. `DigitalTwin` then gives 0 pA; the
+atomistic twins, which have no beam-current model, record zeros of the beam's signal (plus any detector noise they
+model) and save `beam_blanked: true`, so the MCP server fails such an acquisition exactly as on `DigitalTwin`.
+`get_parameters` reports `beam_blanked` on every twin, and `stop_all` blanks them all.
 The corrector twin's hidden aberrations (`get_aberrations_coeff_sim`, `set_aberrations_coeff_sim`) are operator only.
 
 To build a twin of another electron microscope, start from `DigitalTwin` if it images a sample by scanning, or from `ElectronMicroscopeTwin` if you want the shared plumbing and your own renderer (implement `_generate_sample`). Every command, and what it is (risk, role, stop), comes from the `ElectronMicroscope` base: a twin declares nothing. For a different kind of instrument, start from the nanoindenter in [new_instrument.md](Adding_New_Hardware/new_instrument.md) (a `NanoIndenter` base with `SimIndenter` as its simulated backend) and reuse the modality-free models in `asyncroscopy/sim/`: `stage_model.py` (five axes `[x, y, z, alpha, beta]`; pass zeros for the axes you do not have), `clock.py`, `rng.py` and `dose.py`.

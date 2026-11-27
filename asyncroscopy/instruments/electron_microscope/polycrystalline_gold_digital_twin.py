@@ -139,7 +139,7 @@ class PolycrystallineGoldDigitalTwin(ParticleSpectrumMixin, ElectronMicroscopeTw
         rng = np.random.default_rng(pose_seed)
         image -= image.min()
         image /= image.sum() if image.sum() > 0 else 1.0
-        noisy = rng.poisson(image * counts).astype(np.float32)
+        noisy = self._beam_signal(rng.poisson(image * counts).astype(np.float32))
         noisy -= noisy.min()
         noisy /= noisy.max() if noisy.max() > 0 else 1.0
         noise = rng.normal(0.0, 0.1, noisy.shape)
@@ -156,7 +156,7 @@ class PolycrystallineGoldDigitalTwin(ParticleSpectrumMixin, ElectronMicroscopeTw
         images = [self._render_stem_image(int(imsize), float(dwell_time)) for _detector in detector_list]
         index = self._keep_truth("stem_image", {"last_rendered_atom_count": self._last_rendered_atom_count,
                                                 "corrector_aberrations": self._corrector_coefficients()})
-        metadata = {"acquisition_index": index, "defocus_m": self._get_defocus(), "fov_m": float(self._fov),
+        metadata = {"acquisition_index": index, "beam_blanked": self._blanked, "defocus_m": self._get_defocus(), "fov_m": float(self._fov),
                     "acceleration_voltage_ev": float(self.acceleration_voltage_ev), "convergence_angle_mrad": float(self.convergence_angle_mrad)}
         attrs = [metadata.copy() for _image in images]
         return save_acquisition(self, self._detector_proxies.get("data"), "stem_image", detector_list, images, dataset_attrs=attrs, file_attrs=metadata, output_format=output_format)

@@ -194,7 +194,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         # ── Noise chain (unchanged) ───────────────────────────────────────────────
         scan_time   = dwell_time * size * size
         counts      = scan_time * (beam_current * 1e-12) / ELECTRON_CHARGE
-        noisy_image = poisson_noise(image, counts=counts)
+        noisy_image = self._beam_signal(poisson_noise(image, counts=counts))
         blur_noise  = lowfreq_noise(noisy_image, noise_level=0.1, freq_scale=0.1)
         noisy_image += blur_noise * blur_noise_level
 
@@ -209,6 +209,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             images,
             dataset_attrs={
                 "sample_type": "oriented_particles",
+                "beam_blanked": self._blanked,
                 "world_shape": field.info["world_shape"],
                 "voxel_size_angstrom": field.info["voxel_size_angstrom"],
                 "stage_position": list(self._get_stage()),
@@ -248,9 +249,9 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             self._detector_proxies.get("data"),
             "spectrum",
             detector_name,
-            np.asarray([spectrum[element] for element in elements], dtype=np.float64),
+            self._beam_signal(np.asarray([spectrum[element] for element in elements], dtype=np.float64)),
             dataset_name="spectrum",
-            dataset_attrs={"elements": elements, "exposure_time": float(exposure_time)},
+            dataset_attrs={"elements": elements, "exposure_time": float(exposure_time), "beam_blanked": self._blanked},
         )
 
 

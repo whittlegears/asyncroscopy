@@ -374,6 +374,8 @@ class MCPServer:
                 return False
             if hints.get(command_name, {}).get("operator_only") is True or operator_only(dev_class, command_name):
                 return False
+            if hints.get(command_name, {}).get("unsupported") is True:  # the device always refuses it
+                return False
         if self.endpoint_role == "monitor":
             name = tool_name(prefix, command_name).lower()
             marked_high = any(level == "high" and fnmatchcase(name, pattern.lower()) for pattern, level in self.config.risk_overrides.items())

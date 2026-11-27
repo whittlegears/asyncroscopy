@@ -261,7 +261,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             1.0,
             float(self.haadf_poisson_counts) * max(float(dwell_time), 1e-7) / 1e-6,
         )
-        image = rng.poisson(np.clip(image, 0.0, 1.0) * counts) / counts
+        image = self._beam_signal(rng.poisson(np.clip(image, 0.0, 1.0) * counts) / counts)
         image += rng.normal(
             0.0,
             float(self.detector_noise_fraction) * max(0.0, float(self.randomness_scale)),
@@ -366,6 +366,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         attrs = {
             "pixel_size_nm": float(self._fov * 1e9 / int(imsize)),
             "fov_nm": float(self._fov * 1e9),
+            "beam_blanked": self._blanked,
             "stage_command": self._stage_command.tolist(),
             "acquisition_index": self._keep_truth("stem_image", {"stage_actual": self._stage_position.tolist(),
                                                                  "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist()}),
@@ -403,6 +404,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             diffraction = self._vacuum_diffraction(int(imsize))
         else:
             diffraction = np.zeros((int(imsize), int(imsize)), dtype=np.float32)
+        diffraction = self._beam_signal(diffraction)
         rng = self._rng("camera_detector")
         diffraction += rng.normal(
             0.0,
@@ -415,6 +417,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
                  **(atoms.info if atoms is not None else {})}
         attrs = {
             "acquisition_index": self._keep_truth("diffraction", truth),
+            "beam_blanked": self._blanked,
             "pixel_size_mrad": float(2.0 * float(self.diffraction_max_angle_mrad) / int(imsize)),
             "max_angle_mrad": float(self.diffraction_max_angle_mrad),
             "convergence_angle_mrad": float(self.convergence_angle_mrad),
@@ -483,6 +486,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             crystal_tilt_y[row, column] = atoms.info["crystal_tilt_y_mrad"]
 
         datacube[gridbar] = 0.0
+        datacube = self._beam_signal(datacube)
         rng = self._rng("4dstem")
         datacube += rng.normal(
             0.0,
@@ -492,6 +496,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         datacube = np.clip(datacube, 0.0, None).astype(np.float32)
         attrs = {
             "scan_shape": [scan_size, scan_size],
+            "beam_blanked": self._blanked,
             "diffraction_shape": [dp_size, dp_size],
             "pixel_size_mrad": float(2.0 * float(self.diffraction_max_angle_mrad) / dp_size),
             "convergence_angle_mrad": float(self.convergence_angle_mrad),
@@ -619,6 +624,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         return json.dumps(
             {
                 "sample": "bulk silicon FIB lamella",
+                "beam_blanked": self._blanked,
                 "stage_command": self._stage_command.tolist(),
                 "image_shift_m": self._image_shift.tolist(),
                 "beam_tilt_mrad": (self._beam_tilt_command * 1e3).tolist(),

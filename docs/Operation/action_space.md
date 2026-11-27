@@ -106,6 +106,8 @@ Most YAML commands need no annotation, because the file already says more than t
 
 `raman.yaml` and `xrd.yaml` annotate `laser_on` and `xray_on` (`beam.unblank`) and `laser_off` and `xray_off` (`beam.blank`); `afm.yaml` its tip and stage commands. A command's role also sets its risk when the file gives no `risk:` (a stop role low, any other high), so annotate every command.
 
+A backend method whose default only refuses is marked with `asyncroscopy.instruments.scanning_beam.refuses("<command>")`; a device class that does not override it serves `"unsupported": true` for that command in `action_hints`, and agent and monitor endpoints leave the command out (the operator endpoint still lists it).
+
 A Python device declares its commands with `asyncroscopy.utils.commands.command(risk=..., role=..., stop=..., operator_only=...)` and serves them with `action_hints = action_hints_attribute()` (`Instrument` and the device bases already have it). `action_hints_attribute(extra=...)` adds what the device works out itself, such as units and ranges at its own limits.
 
 A job device publishes its plan's schema by setting `PLAN_SCHEMA` to the name of a schema in `asyncroscopy/contracts`. The Mapper sets it to `"map_plan"`. The `plan_schema` attribute then serves the schema. A device that gives no schema still has its `plan_example`.

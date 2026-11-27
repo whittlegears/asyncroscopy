@@ -85,6 +85,3 @@ def test_a_twin_without_a_camera_model_refuses_a_camera_image(twin_class):
         cls._acquire_camera_image(twin, 64, 0.1, "BM-Ceta", "Full", 1, ".h5")
 
 
-def test_a_twin_without_a_blanker_refuses_to_blank(particles_twin_proxy):
-    with pytest.raises(tango.DevFailed, match="does not support blank_beam"):
-        particles_twin_proxy.blank_beam()

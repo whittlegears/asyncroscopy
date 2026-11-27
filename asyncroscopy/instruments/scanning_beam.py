@@ -27,7 +27,7 @@ import json
 import math
 import threading
 from abc import abstractmethod
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import tango
@@ -102,6 +102,26 @@ def hardware_call(serialized: bool = True):
         return guarded
 
     return decorate
+
+
+REFUSES = "__asyncroscopy_refuses__"
+
+
+def refuses(command_name: str) -> Callable:
+    """Mark a backend method whose default only refuses (``unsupported``): a device class that does not override it
+    can never run ``command_name``, and its action_hints say so (``unsupported_commands``)."""
+
+    def mark(method: Callable) -> Callable:
+        setattr(method, REFUSES, command_name)
+        return method
+
+    return mark
+
+
+def unsupported_commands(device_class: type) -> list[str]:
+    """The commands ``device_class`` always refuses: those whose backend method is still a ``refuses`` default."""
+    found = {getattr(getattr(device_class, name, None), REFUSES, None) for name in dir(device_class) if name.startswith("_")}
+    return sorted(name for name in found if name)
 
 
 def unsupported(device: object, what: str) -> None:
@@ -237,6 +257,7 @@ class ScanningBeamInstrument(Instrument):
             "get_stage": {"returns": stage},
             "acquire_scanned_image": {"primary": True, "args": [{"name": "detector_list", "type": "array", "items": "string",
                                                                  "doc": "scanning detectors; [] means the microscope's default_detector"}]},
+            **{name: {"unsupported": True} for name in unsupported_commands(type(self))},
         }
 
     def beam_current_fields(self) -> dict:
@@ -417,12 +438,15 @@ class ScanningBeamInstrument(Instrument):
         unsupported(self, "stage_moving")
 
     # A backend without a blanker or a parked beam refuses these. A blank that did nothing must never look like one that worked.
+    @refuses("place_beam")
     def _place_beam(self, position):
         unsupported(self, "place_beam")
 
+    @refuses("blank_beam")
     def _blank_beam(self):
         unsupported(self, "blank_beam")
 
+    @refuses("unblank_beam")
     def _unblank_beam(self):
         unsupported(self, "unblank_beam")
 

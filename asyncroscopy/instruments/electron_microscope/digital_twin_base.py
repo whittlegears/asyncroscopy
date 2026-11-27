@@ -22,7 +22,8 @@ from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.instruments.scanning_beam import unsupported
+from asyncroscopy.instruments.scanning_beam import refuses, unsupported
+from asyncroscopy.instruments.scanning_beam_twin import TwinBlanker
 from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
@@ -31,8 +32,8 @@ DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 DEFAULT_GROUND_TRUTH_DIR = "outputs/twin_ground_truth"
 
 
-class ElectronMicroscopeTwin(ElectronMicroscope):
-    """A simulated electron microscope: beam, field of view, defocus and stage state over the support devices."""
+class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
+    """A simulated electron microscope: beam (with its blanker), field of view, defocus and stage state over the support devices."""
 
     # Device properties. Set them in the Tango database for each deployment.
 
@@ -113,6 +114,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         self._manufacturer = "UTKTeam"
         self._beam_pos_x = 0.5
         self._beam_pos_y = 0.5
+        self._blanked = False
         self._defocus = 0.0
         self._imsize = 512
         self._fov = 200e-10  # meters
@@ -217,6 +219,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
             "world_bounds_angstrom": self._world_bounds_ang,
         }
 
+    @refuses("acquire_camera_image")
     def _acquire_camera_image(
         self,
         imsize: int,
@@ -302,6 +305,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
             "scan_detectors": self._detectors()["scanning"],
             "spectrum_detectors": self._detectors()["eds"],
             "camera_detectors": self._detectors()["camera"],
+            "beam_blanked": self._blanked,
             **self._viewport_metadata(),
         }
         return json.dumps(parameters)

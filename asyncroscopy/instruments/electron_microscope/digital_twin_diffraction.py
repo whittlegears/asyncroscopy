@@ -70,7 +70,7 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         seed = int(abs(hash((int(self.sample_seed), tuple(np.round(self._stage_position, 10)), int(imsize)))) % (2**32))
         rng = np.random.default_rng(seed)
         counts = max(1.0, float(self.haadf_poisson_counts))
-        image = rng.poisson(np.clip(image, 0.0, 1.0) * counts).astype(np.float32) / counts
+        image = self._beam_signal(rng.poisson(np.clip(image, 0.0, 1.0) * counts).astype(np.float32) / counts)
         image += rng.normal(0.0, 0.008, size=image.shape).astype(np.float32)
         return np.clip(image, 0.0, 1.0)
 
@@ -140,12 +140,13 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         atoms = self._beam_atoms()
         rattle_value = float(atoms.info["rattle_value"]) if atoms is not None else 0.0
         image_size = int(imsize or self.diffraction_image_size)
-        diffraction = self._vacuum_diffraction(image_size) if atoms is None else self._simulate_diffraction_from_atoms(atoms, image_size)
+        diffraction = self._beam_signal(self._vacuum_diffraction(image_size) if atoms is None else self._simulate_diffraction_from_atoms(atoms, image_size))
         data_server = self._detector_proxies.get('data')
         attrs = {
             'pixel_size_mrad': float(2.0 * DIFFRACTION_MAX_ANGLE_MRAD / image_size),
             'pixel_size_rad': float(2.0 * DIFFRACTION_MAX_ANGLE_MRAD * 1e-3 / image_size),
             'max_angle_mrad': float(DIFFRACTION_MAX_ANGLE_MRAD),
+            'beam_blanked': self._blanked,
             'beam_position_x': float(self._beam_pos_x),
             'beam_position_y': float(self._beam_pos_y),
             'exposure_time': float(exposure_time),
@@ -197,6 +198,7 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             'fov_m': float(FOV_M),
             'map_size_px': self._specimen.map_size,
             'sample_pixel_size_nm': float(FOV_NM / self._specimen.map_size),
+            'beam_blanked': self._blanked,
         }
         images = [self._render_stem_image(image_size, float(dwell_time), [detector]) for detector in detector_list]
         return save_acquisition(self, data_server, 'stem_image', detector_list, images, dataset_attrs=attrs, output_format=output_format)

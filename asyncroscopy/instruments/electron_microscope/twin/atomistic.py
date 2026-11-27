@@ -109,9 +109,9 @@ class ParticleSpectrumMixin:
             self._detector_proxies.get("data"),
             "spectrum",
             detector_name,
-            np.array(list(spectrum.values()), dtype=np.float64),
+            self._beam_signal(np.array(list(spectrum.values()), dtype=np.float64)),
             dataset_name="spectrum",
-            dataset_attrs={"elements": list(spectrum.keys())},
+            dataset_attrs={"elements": list(spectrum.keys()), "beam_blanked": self._blanked},
         )
 
     def _ground_truth(self) -> dict:
