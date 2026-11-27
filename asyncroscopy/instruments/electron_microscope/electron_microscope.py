@@ -118,6 +118,9 @@ class ElectronMicroscope(ScanningBeamInstrument):
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
     max_camera_series_frames = device_property(dtype=int, default_value=100, doc="Most frames acquire_camera_series accepts.")
+    max_camera_series_bytes = device_property(dtype=int, default_value=1 << 30, doc="Largest series acquire_camera_series accepts: frames x size^2 x camera_bytes_per_pixel (bytes).")
+    # The vendor API does not report a camera's bytes per pixel, so it is configured. 0 (not set): acquire_camera_series is refused.
+    camera_bytes_per_pixel = device_property(dtype=int, default_value=0, doc="Bytes per pixel of one camera frame as the camera returns it; 0: not set (acquire_camera_series is refused).")
     max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")
 
     stem_mode = attribute(
@@ -340,7 +343,7 @@ class ElectronMicroscope(ScanningBeamInstrument):
         "beam_blanked", the blanker read after it."""
         return json.dumps(self._run_beam_tilt_auto_focus(_request(request)))
 
-    @command(dtype_in=int, dtype_out=str, doc_in=":param length: Number of camera frames (1 to the max_camera_series_frames property).",
+    @command(dtype_in=int, dtype_out=str, doc_in=":param length: Number of camera frames (1 to the max_camera_series_frames property, and at most max_camera_series_bytes in all).",
              risk="high", operator_only=True, role="acquire.image")
     @hardware_call()
     def acquire_camera_series(self, length: int) -> str:
@@ -349,7 +352,16 @@ class ElectronMicroscope(ScanningBeamInstrument):
         if not 1 <= length <= int(self.max_camera_series_frames):
             raise ValueError(f"length must be between 1 and {int(self.max_camera_series_frames)} (max_camera_series_frames), got {length}; nothing was acquired")
         camera = self._detector_proxies.get('camera')
-        return self._acquire_camera_series(camera.imsize, camera.exposure_time, camera.camera_detector, camera.readout_area, camera.frame_combining, length)
+        per_pixel = int(self.camera_bytes_per_pixel)
+        if per_pixel <= 0:
+            raise ValueError("camera_bytes_per_pixel is not set, so the size of a series is not known; set it from the camera's "
+                             "specification. Nothing was acquired")
+        size = int(camera.imsize)
+        total = length * size * size * per_pixel
+        if total > int(self.max_camera_series_bytes):
+            raise ValueError(f"{length} frames of {size}x{size} at {per_pixel} bytes per pixel is {total} bytes, above max_camera_series_bytes "
+                             f"({int(self.max_camera_series_bytes)}); take fewer or smaller frames. Nothing was acquired")
+        return self._acquire_camera_series(size, camera.exposure_time, camera.camera_detector, camera.readout_area, camera.frame_combining, length)
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"detector": an EELS detector from get_detectors, "exposure_time_s": seconds}.',
              risk="high", operator_only=True, role="acquire.spectrum")

@@ -99,7 +99,7 @@ twins and JEOL each one raises UnsupportedCommand; no twin pretends to run them.
 | :-- | :-- | :-- | :-- |
 | `run_stem_auto_focus(request)` | microscope | `auto_functions.run_stem_auto_focus(RunStemAutoFocusSettings)`; STEM only; returns `defocus_m`, `astigmatism_m` and `beam_blanked` (the blanker read after the routine) | `optics.focus` |
 | `run_beam_tilt_auto_focus(request)` | microscope | `auto_functions.run_beam_tilt_auto_focus(RunBeamTiltAutoFocusSettings)`; TEM only; returns `defocus_m`, `astigmatism_m`, `drift_m`, `beam_blanked` | `optics.focus` |
-| `acquire_camera_series(length)` | microscope | `acquisition.acquire_camera_series_advanced(CameraAcquisitionSettings, length)`, with the CAMERA device's settings; at most `max_camera_series_frames` | `acquire.image` |
+| `acquire_camera_series(length)` | microscope | `acquisition.acquire_camera_series_advanced(CameraAcquisitionSettings, length)`, with the CAMERA device's settings; at most `max_camera_series_frames` frames and `max_camera_series_bytes` bytes (frames x size² x `camera_bytes_per_pixel`, which must be set from the camera: the API does not report it) | `acquire.image` |
 | `acquire_eels_spectra(request)` | microscope | `analysis.eels.acquire_spectra(EelsAcquisitionSettings)`; the detector must be in `eels_detectors` | `acquire.spectrum` |
 | `acquire_eels_spectrum_image(request)` | microscope | `analysis.eels.acquire_spectrum_image(EelsSpectrumImageSettings)`; saved as the vendor file, like the EDS one | `acquire.other` |
 | `set_projector_mode(mode)` | microscope | `optics.projector_mode` = `ProjectorMode.IMAGING` or `DIFFRACTION` | `setting.set` |

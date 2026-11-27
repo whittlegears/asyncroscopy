@@ -483,6 +483,16 @@ def test_autoscript_camera_series_uses_the_camera_settings_and_is_bounded(autosc
     autoscript.device._detector_proxies["camera"] = SimpleNamespace(imsize=64, exposure_time=0.01, camera_detector="BM-Ceta", readout_area="Half",
                                                                    frame_combining=1)
     autoscript.device.max_camera_series_frames = 10
+    autoscript.device.max_camera_series_bytes = 1 << 30
+    autoscript.device.camera_bytes_per_pixel = 0
+    with pytest.raises(REFUSED, match="camera_bytes_per_pixel is not set"):
+        autoscript.call("acquire_camera_series", 3)
+    autoscript.device.camera_bytes_per_pixel = 2
+    autoscript.device.max_camera_series_bytes = 3 * 64 * 64 * 2 - 1
+    with pytest.raises(REFUSED, match="above max_camera_series_bytes"):
+        autoscript.call("acquire_camera_series", 3)
+    assert autoscript.client.writes("acquisition.acquire_camera_series_advanced") == []
+    autoscript.device.max_camera_series_bytes = 3 * 64 * 64 * 2
     key = autoscript.call("acquire_camera_series", 3)
     with h5py.File(key, "r") as h5:
         assert h5["camera_series"].shape == (3, 64, 64) and h5["camera_series"].attrs["length"] == 3
