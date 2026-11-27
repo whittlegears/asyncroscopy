@@ -29,7 +29,6 @@ DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
 TRANSPORTS = ('streamable-http', 'sse')
 # The host and port below must match the server's own defaults.
 SERVER_MODULE = 'asyncroscopy.analysis_server'
-WORKFLOWS_MODULE = 'asyncroscopy.workflows.analysis_host'  # the same server with the workflow tools added
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8003
 API_KEY_VARIABLE = 'ASYNCROSCOPY_TILED_API_KEY'  # the server reads the key from this variable
@@ -51,12 +50,6 @@ SETTINGS = [
             help='Runs gathered from single images, and their maps, are saved here as files, not in Tiled. Blank: in Tiled.'),
     Setting('pytemlib.max_canvas_megapixels', section='Limits', label='Max canvas (megapixels)', help=SERVER_DEFAULT),
     Setting('pytemlib.max_jobs', 'int', section='Limits', label='Jobs at once', help=SERVER_DEFAULT),
-    Setting('pytemlib.workflows', 'bool', False, section='Workflows', label='Offer the workflow tools',
-            help='list_workflows, run_workflow, workflow_status, ... beside the analysis tools, so a chat client can run a map.'),
-    Setting('pytemlib.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
-            help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
-    Setting('pytemlib.workflows_mcp_url', section='Workflows', label='Instrument endpoint',
-            help="The instrument's agent endpoint the workflows drive. Blank: the default endpoint."),
     Setting('pytemlib.trace', section='Logs', label='Tool call trace (JSONL)', help=LOG_HELP),
     Setting('pytemlib.annotations', section='Logs', label='Notes (JSONL)', help=LOG_HELP),
     Setting('pytemlib.placements', section='Logs', label='Placements (JSONL)', help=LOG_HELP),
@@ -80,9 +73,6 @@ class PytemlibConfig:
     api_key: str = field(default='', repr=False)
     local_roots: list[str] = field(default_factory=list)
     local_runs: str = ''
-    workflows: bool = False
-    workflows_hardware: bool = False
-    workflows_mcp_url: str = ''
     # None means the server default. An empty string turns a log off.
     max_canvas_megapixels: float | None = None
     max_jobs: int | None = None
@@ -132,9 +122,6 @@ def load_config(path: Path) -> Config:
     max_jobs = values['pytemlib.max_jobs']
     if max_jobs is not None and max_jobs < 1:
         problems.append('pytemlib.max_jobs must be at least 1')
-    if values['pytemlib.workflows_hardware'] and not is_loopback_host(str(values['pytemlib.host'] or DEFAULT_HOST)):
-        problems.append('pytemlib.workflows_hardware needs pytemlib.host 127.0.0.1: this server has no login, so on another '
-                        'address anyone who reaches the port would run workflows on the real instrument')
     if problems:
         raise ConfigError(problems)
     return Config(
@@ -147,9 +134,6 @@ def load_config(path: Path) -> Config:
             api_key=values['pytemlib.api_key'] or '',
             local_roots=values['pytemlib.local_roots'],
             local_runs=values['pytemlib.local_runs'] or '',
-            workflows=bool(values['pytemlib.workflows']) or bool(values['pytemlib.workflows_hardware']),
-            workflows_hardware=bool(values['pytemlib.workflows_hardware']),
-            workflows_mcp_url=values['pytemlib.workflows_mcp_url'] or '',
             max_canvas_megapixels=megapixels,
             max_jobs=max_jobs,
             trace=values['pytemlib.trace'],
@@ -162,12 +146,7 @@ def load_config(path: Path) -> Config:
 def build_command(config: Config) -> list[str]:
     """The server command. The Tiled API key is passed in the environment instead."""
     server = config.pytemlib
-    module = WORKFLOWS_MODULE if server.workflows else SERVER_MODULE
-    args = ['-m', module, '--transport', server.transport, '--host', server.host, '--port', str(server.port)]
-    if server.workflows and server.workflows_mcp_url:
-        args += ['--workflows-mcp-url', server.workflows_mcp_url]
-    if server.workflows_hardware:
-        args.append('--workflows-hardware')
+    args = ['-m', SERVER_MODULE, '--transport', server.transport, '--host', server.host, '--port', str(server.port)]
     if server.tiled:
         args += ['--tiled', server.tiled]
     for root in server.local_roots:

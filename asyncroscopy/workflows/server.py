@@ -1,7 +1,7 @@
 """The workflow tools, which an agent or any MCP client uses to run workflows.
 
-They are served by the agent server (``agent.workflows`` in its config) or by the pyTEMlib analysis server
-(``analysis_host.py``). There is no workflow server of its own.
+They are served by the agent MCP server (``asyncroscopy.mcp.agent_mcp_server``; ``agent.workflows`` in its config, on
+by default), the one process that runs workflows. There is no workflow server of its own.
 
 An agent chooses a workflow, fills in its inputs, runs it and reads the result. For a task of many steps that no
 workflow fits, the agent can write one. The workflow then carries out the steps exactly and much faster than a

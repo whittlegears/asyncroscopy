@@ -572,41 +572,15 @@ def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_pur
     assert reply["state"] != "refused" and instrument.log
 
 
-# Workflow tools on the pyTEMlib analysis server
-def test_the_analysis_server_can_carry_the_workflow_tools_for_a_chat_client(tmp_path):
-    from fastmcp import Client
-    from asyncroscopy.workflows import analysis_host
-    from asyncroscopy.workflows.server import WorkflowServer
-    from asyncroscopy.analysis_server import create_server
-
-    instrument, analysis, state = twin()
-    mcp, _ = create_server(local_roots=[tmp_path])
-    workflows = WorkflowServer(FakeEndpoints(instrument, analysis, simulated=True), state_dir=tmp_path / "state")
-    added = analysis_host.add_workflow_tools(mcp, workflows)
-    assert set(added) == set(analysis_host.OFFERED)
-
-    async def go():
-        async with Client(mcp) as client:
-            listed = {t.name: t for t in await client.list_tools()}
-            assert {"assemble_map", "collect_map_run", "run_workflow", "workflow_status"} <= set(listed)
-            assert {"propose_workflow", "list_blocks"} <= set(listed) and listed["list_blocks"].annotations.read_only_hint
-            assert listed["list_workflows"].annotations.read_only_hint and listed["map_info"].annotations.read_only_hint
-            assert not (listed["run_workflow"].annotations and listed["run_workflow"].annotations.read_only_hint)
-            return await call(client, "run_workflow", name="map_grid", inputs=INPUTS)
-    done = run(go())
-    assert done["state"] == "done" and state["taken"] == 4 and state["blanked"]
-    assert analysis_host.main(["--host", "0.0.0.0", "--workflows-hardware"]) == 1
-
-
 # Workflows inside the agent process
 def test_the_agent_server_runs_workflows_itself_so_no_workflow_server_is_needed(tmp_path):
     pytest.importorskip("langchain_core")
     from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer, main
 
-    plain = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False)
-    assert plain.workflows is None
+    off = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False, workflows=False)
+    assert off.workflows is None
 
-    server = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False, workflows=True)
+    server = AgentMCPServer("agent", ["http://127.0.0.1:8000/mcp"], verbose=False)  # on by default
     assert server.workflows.endpoints.mcp_url == "http://127.0.0.1:8000/mcp" and not server.workflows.hardware
     instrument, analysis, state = twin()
     server.workflows.endpoints = FakeEndpoints(instrument, analysis, simulated=True)
@@ -814,22 +788,6 @@ def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
     out = tmp_path / "page.html"
     assert main(["view", "--library", str(tmp_path / "library"), "--out", str(out)]) == 0
     assert capsys.readouterr().out.strip() == str(out.resolve()) and "tiles_only" in out.read_text(encoding="utf-8")
-
-
-def test_the_page_is_served_beside_the_tools_for_a_browser(tmp_path):
-    from starlette.testclient import TestClient
-
-    from asyncroscopy.workflows import analysis_host
-    from asyncroscopy.workflows.server import WorkflowServer
-    from asyncroscopy.analysis_server import create_server
-
-    instrument, analysis, _ = twin()
-    mcp, _ = create_server(local_roots=[tmp_path])
-    analysis_host.add_workflow_tools(mcp, WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state"))
-    with TestClient(mcp.http_app()) as browser:
-        reply = browser.get(analysis_host.VIEW_PATH)
-    assert reply.status_code == 200 and reply.headers["content-type"].startswith("text/html") and 'id="map_grid"' in reply.text
-    assert instrument.log == []  # viewing the page calls no instrument
 
 
 def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):

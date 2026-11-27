@@ -239,9 +239,17 @@ def test_run_llm_passes_the_workflow_switches_and_keeps_hardware_on_loopback(tmp
         return run_llm.build_command(run_llm.Config(path=tmp_path / "a.yaml", agent=run_llm.AgentConfig(
             name="Agent_MCP", transport="streamable-http", http_host="127.0.0.1", http_port=8124, **agent)))
 
-    assert not {"--workflows", "--workflows-hardware"} & set(command())
-    assert "--workflows" in command(workflows=True)
-    assert "--workflows-hardware" in command(workflows_hardware=True)
+    from asyncroscopy.mcp.agent_mcp_server import parse_args
+
+    base = ["--name", "A", "--transport", "streamable-http", "--http-host", "127.0.0.1", "--http-port", "8124"]
+    # Workflows are on by default; the agent server is the one place they run.
+    assert not {"--no-workflows", "--workflows-hardware"} & set(command())
+    assert parse_args(base).workflows and not parse_args(base).workflows_hardware
+    assert "--no-workflows" in command(workflows=False) and not parse_args(base + ["--no-workflows"]).workflows
+    assert "--workflows-hardware" in command(workflows_hardware=True) and "--no-workflows" not in command(workflows=False, workflows_hardware=True)
+    path = tmp_path / "plain.yaml"
+    path.write_text("agent: {name: A, transport: streamable-http, http_host: 127.0.0.1, http_port: 8002}", encoding="utf-8")
+    assert run_llm.load_config(path).agent.workflows
     path = tmp_path / "agent.yaml"
     path.write_text("agent: {name: A, transport: streamable-http, http_host: 0.0.0.0, http_port: 8002, workflows_hardware: true}", encoding="utf-8")
     with pytest.raises(run_llm.ConfigError, match="127.0.0.1"):
@@ -497,25 +505,14 @@ def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
     assert (run_pytemlib.DEFAULT_HOST, run_pytemlib.DEFAULT_PORT, run_pytemlib.TRANSPORTS[0]) == (defaults.host, defaults.port, defaults.transport)
     options = {a.dest for a in server._actions if a.option_strings and a.dest != "help"}
     declared = {s.path.split(".", 1)[1] for s in run_pytemlib.SETTINGS}
-    # With workflows on the launcher starts the module that adds the workflow tools.
-    from asyncroscopy.workflows.analysis_host import parser as host_parser
-
-    host = {a.dest for a in host_parser(settings.get())._actions if a.option_strings and a.dest != "help"}
-    assert host - options == {"workflows_hardware", "workflows_mcp_url"}
-    assert {"local_root" if name == "local_roots" else name for name in declared} - {"workflows"} == host
+    assert {"local_root" if name == "local_roots" else name for name in declared} == options
 
 
-def test_run_pytemlib_starts_the_server_with_workflow_tools_only_when_asked(tmp_path):
-    from asyncroscopy import settings
-    from asyncroscopy.workflows.analysis_host import parser as host_parser
-
-    plain = run_pytemlib.build_command(pytemlib_config())
-    assert "asyncroscopy.analysis_server" in plain and not [a for a in plain if "workflows" in a]
-    command = run_pytemlib.build_command(pytemlib_config(workflows=True, workflows_hardware=True, workflows_mcp_url="http://127.0.0.1:8000/mcp", local_runs="outputs/maps"))
-    module = "asyncroscopy.workflows.analysis_host"
-    args = host_parser(settings.get()).parse_args(command[command.index(module) + 1:])
-    assert (args.workflows_hardware, args.workflows_mcp_url, args.local_runs) == (True, "http://127.0.0.1:8000/mcp", "outputs/maps")
+def test_run_pytemlib_starts_only_the_analysis_server_and_refuses_the_old_workflow_keys(tmp_path):
+    # Workflows run in the agent MCP server only (run_llm.py, agent.workflows).
+    command = run_pytemlib.build_command(pytemlib_config(local_runs="outputs/maps"))
+    assert "asyncroscopy.analysis_server" in command and not [a for a in command if "workflows" in a]
     path = tmp_path / "p.yaml"
-    path.write_text("pytemlib: {host: 0.0.0.0, workflows_hardware: true}", encoding="utf-8")
-    with pytest.raises(run_pytemlib.ConfigError, match="127.0.0.1"):
+    path.write_text("pytemlib: {workflows: true}", encoding="utf-8")
+    with pytest.raises(run_pytemlib.ConfigError, match="unknown key"):
         run_pytemlib.load_config(path)

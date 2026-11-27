@@ -49,8 +49,9 @@ SETTINGS = [
     Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
     Setting('agent.use_init_chat_model', 'bool', False, section='Model', label='Use init_chat_model'),
     Setting('agent.startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
-    Setting('agent.workflows', 'bool', False, section='Workflows', label='Run workflows here',
-            help='Workflow tools (list_workflows, run_workflow, ...) in the agent process.'),
+    Setting('agent.workflows', 'bool', True, section='Workflows', label='Run workflows here',
+            help='Workflow tools (list_workflows, run_workflow, ...) in the agent process, the one place workflows run. '
+                 'On a simulated stack only, unless the next setting is on.'),
     Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
             help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
 ]
@@ -74,7 +75,7 @@ class AgentConfig:
     # Kept as plain dicts so this module never imports the agent extras, which
     # keeps --help and config errors working without them installed.
     startup_agents: list[dict] = field(default_factory=list)
-    workflows: bool = False
+    workflows: bool = True
     workflows_hardware: bool = False
 
 
@@ -121,7 +122,7 @@ def load_config(path: Path) -> Config:
             max_steps=values['agent.max_steps'],
             use_init_chat_model=values['agent.use_init_chat_model'],
             startup_agents=[dict(entry) for entry in startup_agents],
-            workflows=bool(values['agent.workflows']),
+            workflows=bool(values['agent.workflows']) or bool(values['agent.workflows_hardware']),
             workflows_hardware=bool(values['agent.workflows_hardware']),
         ),
     )
@@ -159,8 +160,8 @@ def build_command(config: Config) -> list[str]:
         command.append('--use-init-chat-model')
     if agent.workflows_hardware:
         command.append('--workflows-hardware')
-    elif agent.workflows:
-        command.append('--workflows')
+    elif not agent.workflows:
+        command.append('--no-workflows')
     return command
 
 

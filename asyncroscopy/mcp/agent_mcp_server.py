@@ -72,7 +72,7 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
-        workflows: bool = False,
+        workflows: bool = True,
         workflows_hardware: bool = False,
     ) -> None:
         """
@@ -85,8 +85,9 @@ class AgentMCPServer:
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
-            workflows (bool): Run workflows in this process and offer their tools here and to the agents.
-                They drive the first of ``mcp_urls``.
+            workflows (bool): Run workflows in this process and offer their tools here and to the agents (default).
+                This is the one process workflows run in. They drive the first of ``mcp_urls``.
+                False: no workflow tools.
             workflows_hardware (bool): Also allow workflows on a stack that is not simulated.
         """
         from asyncroscopy.agents.graphs.swarm import AgentSwarm
@@ -248,9 +249,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=None, help="Recursion limit per query; default: the swarm's.")
     parser.add_argument("--startup-agents-json", default="[]")
     parser.add_argument("--use-init-chat-model", action="store_true")
-    parser.add_argument("--workflows", action="store_true", help="Run workflows in this process and offer their tools (list_workflows, run_workflow, ...).")
+    parser.add_argument("--no-workflows", dest="workflows", action="store_false",
+                        help="Do not run workflows here. By default this process runs them on simulated stacks and offers their tools "
+                             "(list_workflows, run_workflow, ...).")
     parser.add_argument("--workflows-hardware", action="store_true",
-                        help="As --workflows, and also on a stack that does not say it is simulated (a real instrument). Needs a loopback --http-host.")
+                        help="Also run workflows on a stack that does not say it is simulated (a real instrument). Needs a loopback --http-host.")
     parser.add_argument("--quiet", action="store_true")
     return parser.parse_args(argv)
 

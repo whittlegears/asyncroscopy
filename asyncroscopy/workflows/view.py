@@ -1,7 +1,6 @@
 """One page for a person that shows every workflow with its graph, its purpose, who asked for it and its status.
 
     python -m asyncroscopy.workflows view            # writes outputs/workflows/workflows.html
-    http://127.0.0.1:8003/workflows                         # the same page served live by analysis_host
 
 The page is one HTML file that loads nothing from the network. Each graph is drawn as SVG from the workflow's
 blueprint. Workflows waiting for approval come first, each with the request it was made for and the command that

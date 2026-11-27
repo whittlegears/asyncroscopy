@@ -13,5 +13,3 @@ pytemlib:
   tiled: http://10.46.217.241:9091
   # Maps are saved in this folder so Tiled is only read and needs no key
   local_runs: outputs/maps
-  # The agent server offers the workflow tools (configs/gemma-llm.yaml), so they are off here.
-  workflows: false
