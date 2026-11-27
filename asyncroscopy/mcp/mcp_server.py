@@ -63,6 +63,23 @@ REPEAT_FAILURE_WARN_AT = 2
 # Identical failures further apart than this don't count as a loop.
 REPEAT_FAILURE_WINDOW_S = 120.0
 
+# A setter that times out may have partly moved the hardware.
+# The server reads back the matching getter once, so the agent knows the real state.
+READBACK_GETTERS = {
+    "move_stage": "get_stage",
+    "set_fov": "get_fov",
+    "set_defocus": "get_defocus",
+    "set_image_shift": "get_image_shift",
+    "set_beam_tilt": "get_beam_tilt",
+}
+READBACK_TIMEOUT_MILLIS = 3_000
+UNREACHABLE_REASONS = {
+    "API_DeviceNotExported",
+    "API_CantConnectToDevice",
+    "API_ConnectionFailed",
+    "API_ServerNotRunning",
+}
+
 
 def describe_error(exc: Exception) -> str:
     """One-line summary of a failure; for DevFailed, the first (cause) and last (device) errors, no stack."""
@@ -112,6 +129,8 @@ class MCPServer:
         # tool name -> (arguments + error signature, consecutive count, time of last failure)
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
+        # (dev_class, command_name) -> Tango device name, filled by _find_tools
+        self._device_names: dict[tuple[str, str], str] = {}
         self.tools: dict[str, dict[str, Callable]] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
@@ -526,6 +545,7 @@ class MCPServer:
                         f"\nThis call has failed {repeats} times in a row. "
                         "Do not call it again with the same arguments; report the error to the user."
                     )
+                message += self._diagnose_failure(exc, dev_class, command_name)
                 raise RuntimeError(message) from exc
             with self._failures_lock:
                 self._failures.pop(unique_name, None)
@@ -602,6 +622,32 @@ class MCPServer:
 
         return wrapper
 
+    def _diagnose_failure(self, exc: Exception, dev_class: str, command_name: str) -> str:
+        """Extra lines for a failed call. Returns an empty string if the diagnosis itself fails."""
+        try:
+            reasons = {e.reason for e in exc.args} if isinstance(exc, tango.DevFailed) else set()
+            if reasons & UNREACHABLE_REASONS:
+                return (
+                    "\nThe device server is not answering. "
+                    "Do not retry. Report this to the operator."
+                )
+            getter = READBACK_GETTERS.get(command_name)
+            device = self._device_names.get((dev_class, getter))
+            timed_out = "API_DeviceTimedOut" in reasons or isinstance(exc, TimeoutError)
+            if not timed_out or device is None:
+                return ""
+            try:
+                proxy = DeviceProxy(device)
+                proxy.set_timeout_millis(READBACK_TIMEOUT_MILLIS)
+                value = self._numpy_to_python(proxy.command_inout(getter))
+                return f"\nReadback after timeout: {getter} = {value}"
+            except Exception as read_exc:
+                return (f"\nReadback after timeout: {getter} also failed ({describe_error(read_exc)}). "
+                        "The device is probably still running the earlier command. "
+                        f"Call {getter} again and check the state before you retry.")
+        except Exception:
+            return ""
+
     def _note_failure(self, tool_name: str, arguments: dict, error: str) -> int:
         """Count consecutive identical failures of a tool; a success, new error or long pause resets it."""
         signature = json.dumps(arguments, sort_keys=True, default=str) + "\n" + error
@@ -669,6 +715,7 @@ class MCPServer:
                 if dev_class not in tools:
                     tools[dev_class] = {}
                 tools[dev_class][command_name] = (func, cmd)
+                self._device_names[(dev_class, command_name)] = device_name
         return tools
 
     def setup(self, print_summary: bool = True):

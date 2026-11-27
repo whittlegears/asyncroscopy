@@ -87,6 +87,18 @@ and registers every non-blocked Tango command as a FastMCP tool.
 Tool signatures are built from Tango command types. NumPy values and Tango
 `DevEncoded` payloads are normalized into JSON-safe results.
 
+## Failed Calls
+
+A failed tool call returns the Tango error as one line. The server adds lines to help the agent:
+
+- If the same call fails two times in a row, the agent must stop and report the error.
+- If a setter times out, the server reads the matching getter one time, with a 3 s timeout.
+  For example, `move_stage` reads `get_stage`. The command can partly move the hardware, so the agent must check the real state before it tries again.
+  Tango runs one command at a time on a device. If the setter is still running, the readback can time out too. The message then tells the agent to read the state again before it retries.
+- If the device server does not answer, the agent must not retry. It must report the problem to the operator.
+
+The server does not restart, reconnect or initialise a device. The operator does this.
+
 ## Added MCP Tools
 
 For device commands, add a Tango `@command` to the relevant device class. If the

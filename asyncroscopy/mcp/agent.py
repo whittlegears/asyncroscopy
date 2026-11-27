@@ -18,7 +18,6 @@ try:
     from langchain.chat_models import init_chat_model
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
     from langchain_core.tools import BaseTool
-    from langchain_mcp_adapters.client import MultiServerMCPClient
 
     from langgraph.graph import END, START, StateGraph
 except ImportError:
@@ -81,7 +80,7 @@ class AgentSwarm:
 
         self._agents: list[Agent] = list(startup_agents or [])
         self._tools: list[BaseTool] = []
-        self._mcp_clients: list[MultiServerMCPClient] = []
+        self._mcp_clients: list = []
         self._model = None
         self.startup_error: str | None = None
 
@@ -156,16 +155,19 @@ class AgentSwarm:
     # ----------------------------------------------------------------------
 
     async def connect_mcp(self, url: str, transport: str = "streamable_http") -> bool:
-        """Connect to an MCP server and inherit its tools. Returns true for success."""
+        """Connect to an MCP server and inherit its tools. Returns true for success.
+
+        The fastmcp client in asyncroscopy.mcp.mcp_tools loads the tools.
+        It infers the transport from the URL. The transport argument stays for compatibility.
+        """
         try:
-            server_id = f"server_{len(self._mcp_clients)}"
-            client = MultiServerMCPClient({server_id: {"url": url, "transport": transport}})
+            from asyncroscopy.mcp.mcp_tools import McpToolSource
 
             print(f"\n[SYSTEM]: Connecting to MCP Server at {url}...")
+            source = McpToolSource(url)
+            tools = await source.open()
 
-            tools = await client.get_tools()
-
-            self._mcp_clients.append(client)
+            self._mcp_clients.append(source)
             self._tools.extend(tools)
             print(f"[SYSTEM]: Connected. Inherited {len(tools)} tools.")
         except Exception as e:
@@ -173,6 +175,15 @@ class AgentSwarm:
             return False
 
         return True
+
+    async def close(self) -> None:
+        """Close the MCP connections opened by connect_mcp."""
+        for source in self._mcp_clients:
+            try:
+                await source.close()
+            except Exception:
+                pass
+        self._mcp_clients.clear()
 
     async def ensure_ollama_running(self, host: str = "http://localhost:11434", timeout: int = 10) -> None:
         """Check if Ollama server is running, offloaded to prevent blocking the event loop."""

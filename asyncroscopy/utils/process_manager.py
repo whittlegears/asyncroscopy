@@ -350,20 +350,11 @@ class ProcessManager:
 
     def stop_stale_device_servers(self):
         """Finds and kills orphaned Python processes running asyncroscopy device servers."""
-        current_pid = os.getpid()
-        if os.name == "nt":
-            try:
-                cmd = ["wmic", "process", "where", "name='python.exe'", "get", "ProcessId,CommandLine"]
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                for line in res.stdout.splitlines():
-                    if ("asyncroscopy.instruments" in line or "asyncroscopy.data" in line) and "run_servers.py" not in line:
-                        parts = line.strip().split()
-                        if parts and parts[-1].isdigit():
-                            pid = int(parts[-1])
-                            if pid != current_pid:
-                                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
-            except Exception:
-                pass
+        for pid in stale_device_server_pids(list_processes(), os.getpid()):
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+            else:
+                self._kill_stale_pid(pid)
 
     def stop_processes_on_port(self, port: int) -> int:
         """Identifies and kills processes occupying a specific TCP port."""
@@ -412,3 +403,41 @@ class ProcessManager:
                 self._kill_stale_pid(int(pid_str.strip()))
                 stopped += 1
         return stopped
+
+
+def stale_device_server_pids(processes: list[tuple[int, str]], current_pid: int) -> list[int]:
+    """PIDs of asyncroscopy device servers, never the launcher or this process."""
+    return [
+        pid for pid, command in processes
+        if pid != current_pid
+        and ("asyncroscopy.instruments" in command or "asyncroscopy.data" in command)
+        and "run_servers.py" not in command
+    ]
+
+
+def list_processes() -> list[tuple[int, str]]:
+    """(PID, command line) of every running process, or nothing when they cannot be listed.
+
+    Windows uses PowerShell's Get-CimInstance: recent Windows 11 removed wmic,
+    and the old wmic call failed silently, so stale servers were left running.
+    """
+    try:
+        if os.name == "nt":
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_Process | Where-Object CommandLine | "
+                 "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"],
+                capture_output=True, text=True, timeout=30,
+            )
+            rows = json.loads(result.stdout or "[]")
+            rows = [rows] if isinstance(rows, dict) else rows
+            return [(int(r["ProcessId"]), r["CommandLine"] or "") for r in rows]
+        result = subprocess.run(["ps", "-eo", "pid=,args="], capture_output=True, text=True, timeout=30)
+        processes = []
+        for line in result.stdout.splitlines():
+            pid, _, command = line.strip().partition(" ")
+            if pid.isdigit():
+                processes.append((int(pid), command))
+        return processes
+    except Exception:
+        return []

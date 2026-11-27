@@ -444,6 +444,20 @@ def stop_tiled_server() -> None:
         pass
 
 
+def report_exited_processes(processes: Iterable[ManagedProcess], reported: set[str]) -> None:
+    """Print a FAIL line once for each process that exited. Do not restart it.
+
+    An unattended restart would initialise the instrument hardware again.
+    """
+    for managed in processes:
+        if managed.key in reported or managed.running:
+            continue
+        reported.add(managed.key)
+        tail = " | ".join(line.strip() for line in list(managed.stderr_lines)[-2:])
+        status_line("FAIL", managed.key, f"exited with code {managed.process.poll()}  {tail}".strip())
+        print(color("  A device server stopped. Stop this stack with Ctrl+C and start it again.", Style.red))
+
+
 def print_debug_output(processes: Iterable[ManagedProcess]) -> None:
     print()
     print(color("Debug output", Style.bold + Style.yellow))
@@ -711,7 +725,9 @@ def main(argv: list[str] | None = None) -> int:
             print(color("Leave this terminal open while you use the servers. Press Ctrl+C to stop them.", Style.dim))
             
             try:
+                reported: set[str] = set()
                 while True:
+                    report_exited_processes(manager.active_processes, reported)
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 # Catch the Ctrl-C INSIDE the with block so processes are still alive!

@@ -209,3 +209,30 @@ def test_run_llm_command_passes_init_chat_model_flag():
     )
 
     assert "--use-init-chat-model" in run_llm.build_command(config)
+
+
+def test_report_exited_processes_reports_once_without_restart(capsys):
+    from collections import deque
+    from types import SimpleNamespace
+
+    from asyncroscopy.utils.process_manager import ManagedProcess
+
+    dead = ManagedProcess(
+        key="twin",
+        label="Twin",
+        process=SimpleNamespace(poll=lambda: 3),
+        stderr_lines=deque(["first", "second", "Traceback: boom"]),
+    )
+    alive = ManagedProcess(key="data", label="Data", process=SimpleNamespace(poll=lambda: None))
+    reported: set[str] = set()
+
+    run_servers.report_exited_processes([dead, alive], reported)
+    run_servers.report_exited_processes([dead, alive], reported)
+
+    out = capsys.readouterr().out
+    assert out.count("FAIL") == 1
+    assert "exited with code 3" in out
+    assert "second | Traceback: boom" in out
+    assert "first" not in out
+    assert "start it again" in out
+    assert reported == {"twin"}
