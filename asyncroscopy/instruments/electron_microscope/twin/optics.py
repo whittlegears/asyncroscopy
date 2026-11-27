@@ -13,6 +13,9 @@ import numpy as np
 import pyTEMlib.image_tools as it
 import pyTEMlib.probe_tools as pt
 
+# pyTEMlib's one Spectra300 target-aberration table is for 200 kV; the twins use it at every voltage.
+TARGET_ABERRATIONS_V = 200000
+
 # Maps CEOS corrector names in metres to pyTEMlib names in nanometres.
 CORRECTOR_TO_PYTEMLIB = {
     "C1": ("C10",),
@@ -67,7 +70,7 @@ class FocusDrift:
 
 def aberrations_nm(corrector_coefficients: dict | None, voltage_v: float, extra_defocus_m: float) -> dict:
     """pyTEMlib aberration dict (nm) from corrector coefficients (m) plus a defocus offset."""
-    ab = pt.get_target_aberrations("Spectra300", int(voltage_v))
+    ab = pt.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
     for source, destinations in CORRECTOR_TO_PYTEMLIB.items():
         values = (corrector_coefficients or {}).get(source)
         if values is None:

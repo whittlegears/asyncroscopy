@@ -14,6 +14,7 @@ from asyncroscopy.utils.commands import command
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
 from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
+from asyncroscopy.instruments.electron_microscope.twin.optics import TARGET_ABERRATIONS_V
 from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
@@ -117,7 +118,7 @@ class PolycrystallineGoldDigitalTwin(ParticleSpectrumMixin, ElectronMicroscopeTw
         padded_size = imsize + 2 * edge_crop
         padded_fov_angstrom = pixel_size_angstrom * padded_size
         coefficients = self._corrector_coefficients()
-        aberrations = probe_tools.get_target_aberrations("Spectra300", int(self.acceleration_voltage_ev))
+        aberrations = probe_tools.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
         mappings = {"C1": ("C10",), "A1": ("C12a", "C12b"), "B2": ("C21a", "C21b"), "A2": ("C23a", "C23b"), "C3": ("C30",), "S3": ("C32a", "C32b"), "A3": ("C34a", "C34b"), "D4": ("C41a", "C41b"), "B4": ("C43a", "C43b"), "A4": ("C45a", "C45b")}
         for source, destinations in mappings.items():
             values = np.atleast_1d(coefficients[source]).astype(float)
