@@ -7,6 +7,7 @@ import argparse
 import subprocess
 import json
 import os
+import signal
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,6 +122,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    shutdown_requested = False
+
+    def request_shutdown(_signum, _frame) -> None:
+        # SIGTERM (a GUI's Stop button, a supervisor) must unwind through the
+        # ProcessManager so the MCP server child is stopped too; without this the
+        # default handler kills only this launcher and orphans the server, which
+        # then keeps the HTTP port and blocks the next start.
+        nonlocal shutdown_requested
+        if shutdown_requested:
+            return
+        shutdown_requested = True
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, request_shutdown)
+
     args = parse_args(argv)
     try:
         config = load_config(args.yaml)
