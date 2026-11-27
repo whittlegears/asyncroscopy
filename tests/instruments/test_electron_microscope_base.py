@@ -36,6 +36,20 @@ def test_a_backend_without_a_stigmator_or_stage_moving_says_so(call):
     assert refused.value.args[0].reason == "UnsupportedCommand" and "JeolMicroscope" in refused.value.args[0].desc
 
 
+@pytest.mark.parametrize("call, what", [
+    (lambda d: EM.blank_beam(d), "blank_beam"), (lambda d: EM.unblank_beam(d), "unblank_beam"),
+    (lambda d: EM.place_beam(d, [0.5, 0.5]), "place_beam"), (lambda d: EM._set_defocus(d, 1e-9), "set_defocus"),
+    (lambda d: EM._set_column_valves(d, "open"), "set_column_valves"),
+])
+def test_a_backend_without_a_blanker_or_defocus_refuses_instead_of_doing_nothing(call, what):
+    """JEOL (and the atomistic twins) implement none of these; the base must never report success for them."""
+    device = jeol_device()
+    device._check_connected = lambda name: None
+    with pytest.raises(tango.DevFailed) as refused:
+        call(device)
+    assert refused.value.args[0].reason == "UnsupportedCommand" and what in refused.value.args[0].desc
+
+
 def test_autoscript_stigmator_is_refused_until_calibrated_then_set_in_its_own_units(autoscript):
     device, client = autoscript
     device.max_stigmator = 1e-6

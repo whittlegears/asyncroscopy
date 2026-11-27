@@ -545,14 +545,14 @@ class AutoScriptMicroscope(ElectronMicroscope):
         return self._microscope.optics.scan_field_of_view
 
     def _set_column_valves(self, state: str) -> None:
-        """Set column valves state."""
+        """Open or close the column valves; any state but 'open' or 'close' is refused before the instrument."""
+        if state not in ("open", "close"):
+            raise ValueError(f"column valve state must be 'open' or 'close', got {state!r}; nothing was changed")
         if self._microscope is not None:
             if state == "open":
                 self._microscope.vacuum.column_valves.open()
-            elif state == "close":
-                self._microscope.vacuum.column_valves.close()
             else:
-                print(f"Invalid valve state '{state}'. Use 'open' or 'close'.")
+                self._microscope.vacuum.column_valves.close()
 
     def _blank_beam(self) -> None:
         """Blank the beam (the blank_beam command, and the e-stop's). It takes no command lock and uses its own
@@ -616,13 +616,17 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return float(optics.focusing.stem.objective.defocus)
         return float(optics.focusing.tem.defocus)
     
-    def _set_screen(self, position: str)->None:
-        if position.lower() in ['in', 'insert', 'inserted']:
+    def _set_screen(self, position: str) -> None:
+        """Insert or retract the screen; any other word is refused before the instrument."""
+        wanted = str(position).lower().strip()
+        if wanted in ('in', 'insert', 'inserted'):
             if self._microscope.detectors.screen.position == 'Retracted':
                 self._microscope.detectors.screen.insert()
-        elif position.lower() in ['out', 'retract', 'retracted']:
-             if self._microscope.detectors.screen.position == 'Inserted':
+        elif wanted in ('out', 'retract', 'retracted'):
+            if self._microscope.detectors.screen.position == 'Inserted':
                 self._microscope.detectors.screen.retract()
+        else:
+            raise ValueError(f"screen position must be 'inserted' or 'retracted', got {position!r}; nothing was changed")
 
 
     def _calibrate_screen_current(self) -> None:
@@ -853,35 +857,44 @@ class AutoScriptMicroscope(ElectronMicroscope):
         y_shift = float(shift[1])
         setattr(self._microscope.optics.deflectors, self._shift_deflector(), (x_shift, y_shift))
 
+    # AutoScript's deflectors.image_tilt is "the tilt of the image as a 2D vector in radians (x, y), equivalent to
+    # diffraction shift" (the 1.15, 1.17 and 1.18 clients). image_shift is in metres and is the image shift.
     def _set_diffraction_shift(self, shift):
-        """Apply diffraction shift; only in diffraction (the projector's mode, as the getter reads it)."""
+        """Apply the diffraction shift in radians (deflectors.image_tilt); only in diffraction mode."""
         x_shift = float(shift[0])
         y_shift = float(shift[1])
         if not self._is_diffraction():
             raise ValueError("diffraction shift needs the projector in Diffraction mode")
-        self._microscope.optics.deflectors.image_shift = (x_shift, y_shift)
+        self._microscope.optics.deflectors.image_tilt = (x_shift, y_shift)
 
     def _get_diffraction_shift(self):
-        if self._is_diffraction():
-            position = self._microscope.optics.deflectors.image_shift
-            return np.array([position.x, position.y])
-        else:
-            return np.array([0, 0])
+        """The diffraction shift in radians (deflectors.image_tilt); refused outside diffraction mode."""
+        if not self._is_diffraction():
+            raise ValueError("the diffraction shift is read in diffraction mode only; the projector is in "
+                             f"{self._microscope.optics.projector_mode} mode")
+        position = self._microscope.optics.deflectors.image_tilt
+        return np.array([float(position.x), float(position.y)])
 
 
     def _get_image_shift(self):
         position = getattr(self._microscope.optics.deflectors, self._shift_deflector())
         return np.array([position.x, position.y])
 
+    def _beam_tilt_units(self) -> dict:
+        """AutoScript's beam tilt is "a unitless 2D vector (x, y). Ranges from -1 to +1"; it is passed as it is."""
+        return {"units": "unitless", "min": -1.0, "max": 1.0}
+
     def _get_beam_tilt(self):
+        """The beam tilt as AutoScript gives it: unitless, -1 to 1 for x and y."""
         tilt = self._microscope.optics.deflectors.beam_tilt
-        return np.array([tilt.x, tilt.y])
+        return np.array([float(tilt.x), float(tilt.y)])
 
     def _set_beam_tilt(self, tilt):
-        """Apply beam tilt (AutoScript: unitless, -1 to +1 for x and y)."""
-        x_tilt = float(tilt[0])
-        y_tilt = float(tilt[1])
-        self._microscope.optics.deflectors.beam_tilt = (x_tilt, y_tilt)
+        """Apply the beam tilt as AutoScript takes it: unitless, -1 to 1 for x and y; anything else is refused."""
+        values = [float(v) for v in tilt]
+        if len(values) != 2 or not all(math.isfinite(v) and -1.0 <= v <= 1.0 for v in values):
+            raise ValueError(f"beam tilt must be [x, y], each unitless between -1 and 1 (AutoScript's units), got {list(tilt)}; nothing was set")
+        self._microscope.optics.deflectors.beam_tilt = (values[0], values[1])
 
 
 # ----------------------------------------------------------------------

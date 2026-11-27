@@ -428,14 +428,15 @@ class ScanningBeamInstrument(Instrument):
         """True while a stage move is under way; a backend whose moves return only on arrival may return False."""
         unsupported(self, "stage_moving")
 
+    # A backend without a blanker or a parked beam refuses these. A blank that did nothing must never look like one that worked.
     def _place_beam(self, position):
-        pass
+        unsupported(self, "place_beam")
 
     def _blank_beam(self):
-        pass
+        unsupported(self, "blank_beam")
 
     def _unblank_beam(self):
-        pass
+        unsupported(self, "unblank_beam")
 
     @abstractmethod
     def _move_stage(self, position):

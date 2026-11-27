@@ -11,7 +11,7 @@ member names, types and units of AutoScript 1.18 (the client in ``stubs/``):
   ``scan_field_of_view`` (m), ``focusing.stem.objective.defocus`` and
   ``focusing.tem.defocus`` (m), ``blanker``, ``paused_scan_beam_position``
   (fractions 0-1), ``monochromator.focus`` (V), ``deflectors`` (beam and image
-  shift in m, beam tilt unitless -1..+1), and the read-only status members
+  shift in m, beam tilt unitless -1..+1, image tilt, the diffraction shift, in rad), and the read-only status members
   ``get_parameters`` reads;
 - ``acquisition``: ``acquire_stem_images_advanced``, ``acquire_camera_image_advanced``;
 - ``analysis.eds.acquire_spectrum``;
@@ -56,6 +56,7 @@ HARDWARE_LIMITS = {
     "beam_shift": (-1.0e-5, 1.0e-5),  # m, each of x and y
     "image_shift": (-1.0e-5, 1.0e-5),
     "beam_tilt": (-1.0, 1.0),  # unitless
+    "image_tilt": (-0.1, 0.1),  # rad, the diffraction shift; placeholder
     "fraction": (0.0, 1.0),  # paused beam position, scan region
     "camera_exposure": (1.0e-3, 60.0),  # s, placeholder
 }
@@ -208,7 +209,7 @@ class _Monochromator(_Node):
 
 
 class _Deflectors(_Node):
-    UNITS = {"beam_shift": "beam_shift", "image_shift": "image_shift", "beam_tilt": "beam_tilt"}
+    UNITS = {"beam_shift": "beam_shift", "image_shift": "image_shift", "beam_tilt": "beam_tilt", "image_tilt": "image_tilt"}
 
     def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)

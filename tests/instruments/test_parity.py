@@ -267,7 +267,7 @@ def test_acquisitions_return_the_same_shapes(backend):
 TWIN_LACKS = {
     "set_beam_tilt": ([0.1, -0.1],),
     "get_beam_tilt": (),
-    "set_diffraction_shift": ([1e-7, 0.0],),
+    "set_diffraction_shift": ([1e-3, 0.0],),
     "get_diffraction_shift": (),
 }
 # The twin has the screen and its current since it models the column (tests/twin/test_twin_column.py).
@@ -346,11 +346,12 @@ def test_autoscript_shift_and_tilt_round_trip(autoscript):
     autoscript.device.stem_shift_deflector = "image_shift"
     autoscript.call("set_beam_tilt", [0.1, -0.1])
     assert list(autoscript.call("get_beam_tilt")) == pytest.approx([0.1, -0.1])
-    # Diffraction shift is written to deflectors.image_shift in metres.
-    # AutoScript says deflectors.image_tilt in radians is equivalent. Confirm this at first light.
+    # The diffraction shift is deflectors.image_tilt, in radians ("equivalent to diffraction shift", the stub says).
     autoscript.client.optics.projector_mode = "Diffraction"
-    autoscript.call("set_diffraction_shift", [1e-7, 0.0])
-    assert list(autoscript.call("get_diffraction_shift")) == pytest.approx([1e-7, 0.0])
+    autoscript.call("set_diffraction_shift", [1e-3, 0.0])
+    assert list(autoscript.call("get_diffraction_shift")) == pytest.approx([1e-3, 0.0])
+    assert [c["path"] for c in autoscript.client.writes("optics.deflectors")][-1] == "optics.deflectors.image_tilt"
+    assert autoscript.client.optics.deflectors.image_shift.x == pytest.approx(1e-9)  # the image shift set above is untouched
 
 
 @pytest.mark.parametrize("command, value", [("set_image_shift", [1.0, 0.0]), ("set_beam_tilt", [2.0, 0.0])])
@@ -363,7 +364,25 @@ def test_autoscript_refused_shift_or_tilt_raises(autoscript, command, value):
 def test_autoscript_diffraction_shift_outside_diffraction_is_refused(autoscript):
     with pytest.raises(REFUSED):
         autoscript.call("set_diffraction_shift", [1e-7, 0.0])
+    with pytest.raises(REFUSED, match="diffraction mode only"):
+        autoscript.call("get_diffraction_shift")  # never a made-up [0, 0]
     assert autoscript.client.writes("optics.deflectors") == []
+
+
+def test_autoscript_beam_tilt_is_unitless_and_says_so(autoscript):
+    with pytest.raises(REFUSED, match="unitless between -1 and 1"):
+        autoscript.call("set_beam_tilt", [1.5, 0.0])
+    assert autoscript.client.writes("optics.deflectors") == []  # refused before the instrument
+    hints = autoscript.device.argument_hints()
+    assert hints["set_beam_tilt"]["args"][0]["units"] == "unitless" and hints["set_beam_tilt"]["args"][0]["min"] == -1.0
+    assert hints["get_beam_tilt"]["returns"]["units"] == "unitless" and hints["get_diffraction_shift"]["returns"]["units"] == "rad"
+
+
+@pytest.mark.parametrize("command, word", [("set_column_valves", "ajar"), ("set_screen", "halfway")])
+def test_autoscript_refuses_an_unknown_valve_or_screen_word(autoscript, command, word):
+    with pytest.raises(REFUSED, match="nothing was changed"):
+        autoscript.call(command, word)
+    assert [c for c in autoscript.client.writes() if c["path"].startswith(("vacuum", "detectors.screen"))] == []
 
 
 def test_autoscript_register_stage_reads_the_instrument_and_moves_nothing(autoscript):

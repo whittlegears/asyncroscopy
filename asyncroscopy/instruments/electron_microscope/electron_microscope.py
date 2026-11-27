@@ -144,7 +144,15 @@ class ElectronMicroscope(ScanningBeamInstrument):
             "get_defocus": {"returns": {"type": "number", "units": "m"}},
             "get_screen_current": {"returns": {"type": "number", "units": "pA"}},
             "set_screen_current": {"args": [{"name": "current", "type": "number", "units": "pA"}]},
+            "get_beam_tilt": {"returns": {"type": "array", "items": "number", "elements": ["x", "y"], **self._beam_tilt_units()}},
+            "set_beam_tilt": {"args": [{"name": "tilt", "type": "array", "items": "number", "elements": ["x", "y"], **self._beam_tilt_units()}]},
+            "get_diffraction_shift": {"returns": {"type": "array", "items": "number", "elements": ["x", "y"], "units": "rad"}},
+            "set_diffraction_shift": {"args": [{"name": "shift", "type": "array", "items": "number", "elements": ["x", "y"], "units": "rad"}]},
         }
+
+    def _beam_tilt_units(self) -> dict:
+        """The units (and range) of get_beam_tilt and set_beam_tilt on this backend: radians unless it says otherwise."""
+        return {"units": "rad"}
 
     def _spectrum_detector_names(self) -> list[str]:
         return [name for name in SPECTRUM_DETECTORS if name in self._detector_proxies]
@@ -251,25 +259,27 @@ class ElectronMicroscope(ScanningBeamInstrument):
     @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_beam_tilt(self) -> list[float]:
-        """Get the current beam tilt as [alpha, beta] in radian."""
+        """Get the current beam tilt as [x, y], in this backend's beam-tilt units (action_space gives them: radians on
+        a twin, AutoScript's unitless -1 to 1 on a Thermo Fisher microscope, which has no calibration to radians here)."""
         return self._get_beam_tilt()
 
-    @command(dtype_in=DevVarFloatArray, doc_in=':param tilt: [x, y] beam tilt in radians.', risk="high", role="setting.set", routine=True)
+    @command(dtype_in=DevVarFloatArray, doc_in=":param tilt: [x, y] beam tilt in this backend's beam-tilt units (action_space gives them).",
+             risk="high", role="setting.set", routine=True)
     @hardware_call()
     def set_beam_tilt(self, tilt: list[float]) -> None:
-        """Set the beam tilt to [x_tilt, y_tilt] in radian."""
+        """Set the beam tilt to [x, y], in the units get_beam_tilt returns (radians on a twin, AutoScript's unitless -1 to 1)."""
         self._set_beam_tilt(tilt)
 
     @command(dtype_out=DevVarFloatArray, risk="low", role="setting.read")
     @hardware_call()
     def get_diffraction_shift(self) -> list[float]:
-        """Get the current diffraction shift as [alpha, beta] in radian."""
+        """Get the current diffraction shift as [x, y] in radians. Refused outside diffraction mode."""
         return self._get_diffraction_shift()
-    
-    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift.', risk="high", role="setting.set")
+
+    @command(dtype_in=DevVarFloatArray, doc_in=':param shift: [x, y] diffraction shift in radians.', risk="high", role="setting.set")
     @hardware_call()
     def set_diffraction_shift(self, shift: list[float]) -> None:
-        """Set the diffraction shift to [x_shift, y_shift] in radian."""
+        """Set the diffraction shift to [x, y] in radians. Refused outside diffraction mode."""
         self._set_diffraction_shift(shift)
 
     @command(dtype_in=DevString, doc_in=":param position: 'inserted' or 'retracted'.", risk="high", role="setting.set")
@@ -341,7 +351,10 @@ class ElectronMicroscope(ScanningBeamInstrument):
         unsupported(self, "get_stigmator")
 
     def _set_defocus(self, defocus):
-        pass
+        unsupported(self, "set_defocus")
+
+    def _set_column_valves(self, state: str) -> None:
+        unsupported(self, "set_column_valves")
 
     @abstractmethod
     def _get_defocus(self):

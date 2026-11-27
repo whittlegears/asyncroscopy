@@ -811,3 +811,30 @@ def test_stop_all_stops_every_device_and_reports_what_it_could_not(server_factor
     assert failed == {"Mapper_abort_all", "OldJob_abort_all", "BlindStem_blank_beam", "SlowCam"} and not reply["stopped"]
     # AutoScript 1.18 has no stage stop so a move under way is named and not passed over.
     assert len(reply["not_stopped"]) == 1 and reply["not_stopped"][0].startswith("DigitalTwin: a stage move")
+
+
+def test_stop_all_reports_a_blank_the_backend_does_not_support_as_a_failure(server_factory, monkeypatch):
+    """A JEOL or an atomistic twin has no blanker: its blank_beam raises UnsupportedCommand, and the e-stop must say
+    the beam was not blanked instead of reporting it stopped."""
+    import threading
+
+    from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+    from asyncroscopy.instruments.electron_microscope.jeol import JeolMicroscope
+
+    monkeypatch.setattr("asyncroscopy.safety.estop.STOP_ALL_WAIT_S", 1.0)
+    jeol = JeolMicroscope.__new__(JeolMicroscope)
+    jeol._command_lock = threading.RLock()
+    jeol._check_connected = lambda name: None
+
+    class Proxy:
+        def command_inout(self, name):
+            return getattr(ElectronMicroscope, name)(jeol)
+
+    server = server_factory()
+    server.tools = {}
+    server.add_device("Jeol", Proxy(), stem=True)
+    void = tango.CmdArgType.DevVoid
+    server.tools["Jeol"] = {"blank_beam": server._create_wrapper(lambda *a: None, cmd_info(in_type=void), "blank_beam", "Jeol")}
+    reply = server.estop.stop_all()
+    blanks = [s for s in reply["steps"] if s["tool"] == "Jeol_blank_beam"]
+    assert reply["stopped"] is False and blanks and all(not s["ok"] and "does not support blank_beam" in s["error"] for s in blanks)
