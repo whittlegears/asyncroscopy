@@ -215,3 +215,45 @@ def test_stop_processes_on_port(tmp_path, monkeypatch):
         assert count == 2
         assert 1001 in killed_pids
         assert 1002 in killed_pids
+
+def test_stale_device_servers_are_picked_but_not_the_launcher_or_this_process():
+    from asyncroscopy.utils.process_manager import stale_device_server_pids
+
+    processes = [
+        (10, "python -m asyncroscopy.instruments.electron_microscope.digital_twin instrument_instance"),
+        (11, "python -u -m asyncroscopy.data.data data_instance"),
+        (12, "python startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml"),
+        (13, "python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan_instance"),
+        (14, "python unrelated.py"),
+    ]
+    assert stale_device_server_pids(processes, current_pid=13) == [10, 11]
+
+
+def test_windows_process_list_is_read_without_wmic(monkeypatch):
+    import subprocess
+
+    from asyncroscopy.utils import process_manager
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout='[{"ProcessId":10,"CommandLine":"python -m asyncroscopy.data.data x"},'
+                           '{"ProcessId":11,"CommandLine":null}]')
+
+    monkeypatch.setattr(process_manager.os, "name", "nt")
+    monkeypatch.setattr(process_manager.subprocess, "run", fake_run)
+    assert process_manager.list_processes() == [(10, "python -m asyncroscopy.data.data x"), (11, "")]
+    assert calls[0][0] == "powershell" and "wmic" not in " ".join(calls[0])
+
+
+def test_one_windows_process_comes_back_as_an_object_not_a_list(monkeypatch):
+    import subprocess
+
+    from asyncroscopy.utils import process_manager
+
+    monkeypatch.setattr(process_manager.os, "name", "nt")
+    monkeypatch.setattr(process_manager.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(
+        cmd, 0, stdout='{"ProcessId":7,"CommandLine":"python -m asyncroscopy.data.data x"}'))
+    assert process_manager.list_processes() == [(7, "python -m asyncroscopy.data.data x")]
