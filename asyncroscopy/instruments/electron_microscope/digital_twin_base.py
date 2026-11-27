@@ -28,6 +28,7 @@ from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenC
 from asyncroscopy.sim.rng import EventRng
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
+DEFAULT_GROUND_TRUTH_DIR = "outputs/twin_ground_truth"
 
 
 class ElectronMicroscopeTwin(ElectronMicroscope):
@@ -78,6 +79,11 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
     )
+    ground_truth_directory = device_property(
+        dtype=str,
+        default_value=DEFAULT_GROUND_TRUTH_DIR,
+        doc="Where a twin writes the truth maps of an acquisition (export_ground_truth names the file); never the acquisition directory, which Tiled serves.",
+    )
 
     manufacturer = attribute(
         label="DigitalTwin",
@@ -111,6 +117,7 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         self._imsize = 512
         self._fov = 200e-10  # meters
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
+        self._truth_log: list[dict] = []  # what each acquisition really saw, for export_ground_truth only
         # The sample's extent in angstrom. _generate_sample sets it.
         self._world_bounds_ang = {
             "x_min": -1.0,
@@ -180,7 +187,14 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
 
     def _ground_truth(self) -> dict:
         """What export_ground_truth returns. A twin adds the truth it keeps."""
-        return {"sample_seed": int(self.sample_seed)}
+        return {"sample_seed": int(self.sample_seed), "acquisitions": list(self._truth_log)}
+
+    def _keep_truth(self, kind: str, truth: dict) -> int:
+        """Record what one acquisition really saw (never saved with its data or returned by a command an agent has)
+        and return its ``acquisition_index``, which the saved data carries so a scorer can match the two."""
+        index = len(self._truth_log)
+        self._truth_log.append({"acquisition_index": index, "kind": kind, **truth})
+        return index
 
     def _viewport_metadata(self) -> dict:
         fov_ang = self._fov * 1e10

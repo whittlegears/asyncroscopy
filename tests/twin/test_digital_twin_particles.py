@@ -27,7 +27,7 @@ def test_particle_twin_saves_haadf_with_world_metadata(
         image = h5["image/HAADF"]
         assert image.shape == (48, 48)
         assert image.attrs["sample_type"] == "oriented_particles"
-        assert image.attrs["particle_count"] > 0
+        assert "particle_count" not in image.attrs
         assert json.loads(image.attrs["world_shape"]) == [48, 48, 24]
 
 

@@ -41,12 +41,14 @@ def twin_for_path(tmp_path: Path, randomness_scale: float = 0.0) -> DigitalTwinT
         "autofocus_residual_std_nm": 2.0,
         "haadf_poisson_counts": 180.0,
         "acquisition_save_directory": str(tmp_path),
+        "ground_truth_directory": str(tmp_path / "truth"),
         "specimen": "",
         "specimen_source": "silicon_lamella",
     }
     for name, value in properties.items():
         setattr(twin, name, value)
     twin._initialize_tilt_state()
+    twin._truth_log = []
     twin._generate_sample(seed=int(twin.sample_seed))
     return twin
 
@@ -192,16 +194,18 @@ def test_camera_diffraction_uses_local_silicon_ase_model(
     with h5py.File(saved_path, "r") as h5:
         image = h5["image"]
         assert image.shape == (64, 64)
-        assert image.attrs["material"] == "silicon"
         assert image.attrs["convergence_angle_mrad"] == 8.0
         assert image.attrs["pixel_size_mrad"] == pytest.approx(120.0 / 64)
         assert image.attrs["frame_combining"] == 2
         assert image.attrs["simulation"] == "ASE silicon + abTEM multislice"
-        local_lattice = image.attrs["lattice_parameter_angstrom"]
-        assert local_lattice == pytest.approx(5.431, abs=0.01)
-        assert image.attrs["nearest_neighbor_distance_angstrom"] == pytest.approx(
-            local_lattice * np.sqrt(3.0) / 4.0
-        )
+        for hidden in ("material", "local_x_nm", "stage_actual", "lattice_parameter_angstrom", "nearest_neighbor_distance_angstrom"):
+            assert hidden not in image.attrs, hidden
+        index = int(image.attrs["acquisition_index"])
+    truth = twin._ground_truth()["acquisitions"][index]
+    assert truth["material"] == "silicon"
+    local_lattice = truth["lattice_parameter_angstrom"]
+    assert local_lattice == pytest.approx(5.431, abs=0.01)
+    assert truth["nearest_neighbor_distance_angstrom"] == pytest.approx(local_lattice * np.sqrt(3.0) / 4.0)
     assert len(simulated_atoms) == 1
     assert simulated_atoms[0].get_chemical_symbols() == ["Si"] * len(simulated_atoms[0])
 
@@ -250,6 +254,11 @@ def test_scanned_overview_and_4dstem_acquisitions_are_saved(monkeypatch, tmp_pat
         assert stem_data.shape == (8, 8, 16, 16)
         assert stem_data.attrs["convergence_angle_mrad"] == 8.0
         assert json.loads(stem_data.attrs["beam_tilt_mrad"])[0] == pytest.approx(8.0)
+        assert "simulation" not in h5 and "stage_actual" not in stem_data.attrs
+        index = int(stem_data.attrs["acquisition_index"])
+    truth = twin._ground_truth()["acquisitions"][index]
+    assert Path(truth["truth_file"]).parent == tmp_path / "truth"
+    with h5py.File(truth["truth_file"], "r") as h5:
         lattice_parameter = h5["simulation/lattice_parameter_angstrom"][:]
         crystal_rotation = h5["simulation/crystal_rotation_deg"][:]
         assert np.nanmax(lattice_parameter) > np.nanmin(lattice_parameter)

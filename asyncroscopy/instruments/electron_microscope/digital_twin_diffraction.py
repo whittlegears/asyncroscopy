@@ -146,16 +146,16 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             'pixel_size_mrad': float(2.0 * DIFFRACTION_MAX_ANGLE_MRAD / image_size),
             'pixel_size_rad': float(2.0 * DIFFRACTION_MAX_ANGLE_MRAD * 1e-3 / image_size),
             'max_angle_mrad': float(DIFFRACTION_MAX_ANGLE_MRAD),
-            'rattle_value': float(rattle_value),
             'beam_position_x': float(self._beam_pos_x),
             'beam_position_y': float(self._beam_pos_y),
             'exposure_time': float(exposure_time),
             'readout_area': str(readout_area),
             'frame_combining': int(frame_combining),
         }
+        truth = {'rattle_value': float(rattle_value), 'particle_id': None}
         if atoms is not None:
             particle = atoms.info
-            attrs.update(
+            truth.update(
                 {
                     'particle_id': int(particle['particle_id']),
                     'particle_kind': str(particle['particle_kind']),
@@ -167,6 +167,7 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
                     'particle_zone_axis': '<100>',
                 }
             )
+        attrs['acquisition_index'] = self._keep_truth('diffraction', truth)
         return save_acquisition(
             self,
             data_server,

@@ -22,6 +22,7 @@ def twin_for_path(tmp_path: Path) -> DigitalTwinDiffraction:
     twin._tango_properties = {}
     twin._detector_proxies = {}
     twin._stage_position = np.zeros(5, dtype=np.float64)
+    twin._truth_log = []
     twin._beam_pos_x = 0.5
     twin._beam_pos_y = 0.5
     twin._fov = FOV_M
@@ -145,13 +146,16 @@ def test_particle_camera_acquisition_saves_local_lattice_metadata(monkeypatch, t
 
     with h5py.File(saved_path, 'r') as h5:
         attrs = h5['image'].attrs
-        assert attrs['particle_lattice_parameter_angstrom'] == particle['lattice_parameter']
-        assert attrs['particle_center_lattice_parameter_angstrom'] == particle['center_lattice_parameter']
-        assert attrs['particle_lattice_strain_fraction'] == particle['lattice_strain_fraction']
-        assert attrs['particle_lattice_strain_percent'] == 100.0 * particle['lattice_strain_fraction']
+        assert not [key for key in attrs if key.startswith('particle_') or key == 'rattle_value']
         assert attrs['exposure_time'] == pytest.approx(0.1)
         assert attrs['readout_area'] == 'Half'
         assert attrs['frame_combining'] == 6
+        truth = twin._truth_log[int(attrs['acquisition_index'])]
+    assert truth['particle_lattice_parameter_angstrom'] == particle['lattice_parameter']
+    assert truth['particle_center_lattice_parameter_angstrom'] == particle['center_lattice_parameter']
+    assert truth['particle_lattice_strain_fraction'] == particle['lattice_strain_fraction']
+    assert truth['particle_lattice_strain_percent'] == 100.0 * particle['lattice_strain_fraction']
+    assert truth['rattle_value'] == 0.75
 
 
 def test_off_particle_camera_acquisition_saves_vacuum_diffraction(tmp_path: Path):
@@ -173,7 +177,8 @@ def test_off_particle_camera_acquisition_saves_vacuum_diffraction(tmp_path: Path
         assert h5['image'].attrs['detector'] == 'BM-Ceta'
         assert h5['image'].attrs['pixel_size_mrad'] == 5.0
         assert h5['image'].attrs['max_angle_mrad'] == 80.0
-        assert h5['image'].attrs['rattle_value'] == 0.0
+        assert 'rattle_value' not in h5['image'].attrs
+    assert twin._truth_log[-1]['rattle_value'] == 0.0
 
 
 def test_particle_atoms_include_rotation_and_rattle(tmp_path: Path):

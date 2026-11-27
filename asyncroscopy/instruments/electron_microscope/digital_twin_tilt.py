@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import tango
@@ -366,12 +367,8 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             "pixel_size_nm": float(self._fov * 1e9 / int(imsize)),
             "fov_nm": float(self._fov * 1e9),
             "stage_command": self._stage_command.tolist(),
-            "stage_actual": self._stage_position.tolist(),
-            "rotation_center_nm": [
-                float(self.rotation_center_x_nm),
-                float(self.rotation_center_y_nm),
-                float(self.rotation_center_z_nm),
-            ],
+            "acquisition_index": self._keep_truth("stem_image", {"stage_actual": self._stage_position.tolist(),
+                                                                 "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist()}),
         }
         return save_acquisition(
             self,
@@ -413,16 +410,16 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             size=diffraction.shape,
         ).astype(np.float32)
         diffraction = np.clip(diffraction, 0.0, None)
+        truth = {"material": material, "local_x_nm": local_x, "local_y_nm": local_y, "stage_actual": self._stage_position.tolist(),
+                 "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
+                 **(atoms.info if atoms is not None else {})}
         attrs = {
-            "material": material,
-            "local_x_nm": local_x,
-            "local_y_nm": local_y,
+            "acquisition_index": self._keep_truth("diffraction", truth),
             "pixel_size_mrad": float(2.0 * float(self.diffraction_max_angle_mrad) / int(imsize)),
             "max_angle_mrad": float(self.diffraction_max_angle_mrad),
             "convergence_angle_mrad": float(self.convergence_angle_mrad),
             "stage_command": self._stage_command.tolist(),
-            "stage_actual": self._stage_position.tolist(),
-            "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
+            "beam_tilt_mrad": (self._beam_tilt_command * 1e3).tolist(),
             "image_shift_m": self._image_shift.tolist(),
             "defocus_m": float(self._defocus),
             "exposure_time": float(exposure_time),
@@ -435,8 +432,6 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
                 self.potential_slice_thickness_angstrom
             ),
         }
-        if atoms is not None:
-            attrs.update(atoms.info)
         return save_acquisition(
             self,
             self._detector_proxies.get("data"),
@@ -500,8 +495,8 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             "diffraction_shape": [dp_size, dp_size],
             "pixel_size_mrad": float(2.0 * float(self.diffraction_max_angle_mrad) / dp_size),
             "convergence_angle_mrad": float(self.convergence_angle_mrad),
-            "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
-            "stage_actual": self._stage_position.tolist(),
+            "beam_tilt_mrad": (self._beam_tilt_command * 1e3).tolist(),
+            "stage_command": self._stage_command.tolist(),
             "simulation": "one ASE silicon supercell and abTEM multislice calculation per scan point",
             "electron_energy_ev": float(self.electron_energy_ev),
             "potential_sampling_angstrom": float(self.potential_sampling_angstrom),
@@ -512,37 +507,20 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         }
         data_server = self._detector_proxies.get("data")
         path = acquisition_filename(self, "stem_data", str(detector), data_server)
-        save_acquisition_hdf5(
-            path,
-            [
-                {"name": "stem_data", "source": datacube, "attrs": attrs},
-                {
-                    "name": "simulation/lattice_parameter_angstrom",
-                    "source": lattice_parameter,
-                    "attrs": {"description": "Local ASE cubic cell parameter"},
-                },
-                {
-                    "name": "simulation/bond_distance_angstrom",
-                    "source": bond_distance,
-                    "attrs": {"description": "Local Si nearest-neighbor distance"},
-                },
-                {
-                    "name": "simulation/crystal_rotation_deg",
-                    "source": crystal_rotation,
-                    "attrs": {"description": "Local in-plane ASE rotation"},
-                },
-                {
-                    "name": "simulation/crystal_tilt_x_mrad",
-                    "source": crystal_tilt_x,
-                    "attrs": {"description": "Local ASE x tilt before stage tilt"},
-                },
-                {
-                    "name": "simulation/crystal_tilt_y_mrad",
-                    "source": crystal_tilt_y,
-                    "attrs": {"description": "Local ASE y tilt before stage tilt"},
-                },
-            ],
-        )
+        truth_dir = Path(self.ground_truth_directory).expanduser()
+        truth_dir.mkdir(parents=True, exist_ok=True)
+        truth_path = truth_dir / f"truth_{path.name}"
+        maps = {"lattice_parameter_angstrom": (lattice_parameter, "Local ASE cubic cell parameter"),
+                "bond_distance_angstrom": (bond_distance, "Local Si nearest-neighbor distance"),
+                "crystal_rotation_deg": (crystal_rotation, "Local in-plane ASE rotation"),
+                "crystal_tilt_x_mrad": (crystal_tilt_x, "Local ASE x tilt before stage tilt"),
+                "crystal_tilt_y_mrad": (crystal_tilt_y, "Local ASE y tilt before stage tilt")}
+        save_acquisition_hdf5(truth_path, [{"name": f"simulation/{name}", "source": source, "attrs": {"description": text}}
+                                           for name, (source, text) in maps.items()])
+        attrs["acquisition_index"] = self._keep_truth("stem_data", {"stage_actual": self._stage_position.tolist(),
+                                                                    "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
+                                                                    "truth_file": str(truth_path)})
+        save_acquisition_hdf5(path, [{"name": "stem_data", "source": datacube, "attrs": attrs}])
         return data_server.register_path(str(path)) if data_server is not None else str(path)
 
     def _multislice_supercell(self) -> list[int]:
@@ -559,8 +537,9 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         self._apply_stage_target(target)
 
     def _get_stage(self):
+        """Where the stage reports it is: the commanded pose. The pose it really reached is hidden truth."""
         self._sync_stage_from_proxy()
-        return self._stage_position
+        return self._stage_command
 
     def _set_image_shift(self, shift) -> None:
         value = np.asarray(shift, dtype=np.float64)
@@ -587,7 +566,8 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         self._beam_tilt = command + noise
 
     def _get_beam_tilt(self):
-        return self._beam_tilt
+        """The beam tilt as set. The tilt the beam really has (with its error) is hidden truth."""
+        return self._beam_tilt_command
 
     def _set_diffraction_shift(self, shift) -> None:
         value = np.asarray(shift, dtype=np.float64)
@@ -640,9 +620,8 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             {
                 "sample": "bulk silicon FIB lamella",
                 "stage_command": self._stage_command.tolist(),
-                "stage_actual": self._stage_position.tolist(),
                 "image_shift_m": self._image_shift.tolist(),
-                "beam_tilt_mrad": (self._beam_tilt * 1e3).tolist(),
+                "beam_tilt_mrad": (self._beam_tilt_command * 1e3).tolist(),
                 "convergence_angle_mrad": float(self.convergence_angle_mrad),
                 "diffraction_image_size": int(self.diffraction_image_size),
                 "diffraction_max_angle_mrad": float(self.diffraction_max_angle_mrad),

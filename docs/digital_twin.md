@@ -139,7 +139,13 @@ Each acquisition's record is appended to `<acquisition_save_directory>/ground_tr
 
 Every twin has the operator-only `export_ground_truth()`; the specialised twins return what they hide there (the seed and
 particle count; the tilt twin's lamella, lattice, crystal rotation and tilt and its rotation centre; the gold twin's
-grains and regions), never in `get_parameters()`. Only `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
+grains and regions), never in `get_parameters()` or in what an acquisition saves. Its `acquisitions` list holds what
+each acquisition really saw, matched to the saved data by the `acquisition_index` attribute: the tilt twin's true stage
+pose and beam tilt (`get_stage`, `get_beam_tilt` and every saved file give the commanded ones), the material, lamella
+coordinates and local lattice under a parked beam, and for 4D-STEM a `truth_file` with the lattice, rotation and tilt
+maps, written under the `ground_truth_directory` property (`outputs/twin_ground_truth`; never the acquisition
+directory, which Tiled serves); the diffraction twin's particle and its strain; the gold twin's rendered atom count and
+corrector aberrations. Only `DigitalTwinDiffraction` and `DigitalTwinTilt` have a camera
 model: on the other twins `acquire_camera_image()` raises UnsupportedCommand. The atomistic twins have no blanker:
 `blank_beam()` (and so the e-stop's blank) raises UnsupportedCommand there, and `stop_all` reports it as not stopped.
 The corrector twin's hidden aberrations (`get_aberrations_coeff_sim`, `set_aberrations_coeff_sim`) are operator only.

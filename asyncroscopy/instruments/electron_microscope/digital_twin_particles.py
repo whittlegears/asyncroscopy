@@ -209,7 +209,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             images,
             dataset_attrs={
                 "sample_type": "oriented_particles",
-                "particle_count": field.info["particle_count"],
                 "world_shape": field.info["world_shape"],
                 "voxel_size_angstrom": field.info["voxel_size_angstrom"],
                 "stage_position": list(self._get_stage()),
