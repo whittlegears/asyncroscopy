@@ -4,16 +4,18 @@ and a relative move that is an absolute move to a checked target."""
 import json
 import math
 import pathlib
+import subprocess
+import sys
 import tempfile
 
 import pytest
 from tango import DevState
-from tango.test_context import DeviceTestContext
 
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE, narrow_travel
 from asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript import AutoScriptSTAGE
 from tests.fake_autoscript import FakeAutoScriptClient
 
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 TRAVEL = {"x": (-2e-3, 2e-3), "y": (-1e-3, 1e-3), "z": (-1e-3, 1e-3), "alpha": (-70.0, 70.0), "beta": (-30.0, 30.0)}
 
 
@@ -110,11 +112,21 @@ def test_a_relative_move_is_refused_while_the_stage_moves():
     assert client.writes("specimen.stage.absolute") == []
 
 
+CONNECT_FAILURE = """
+import json, sys
+from tango.test_context import DeviceTestContext
+from asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript import AutoScriptSTAGE
+properties = {"holders": json.dumps({"a": {}, "b": {}}), "holder_file": sys.argv[1], "simulated": False, "hardware_host": ""}
+with DeviceTestContext(AutoScriptSTAGE, properties=properties) as stage:
+    print(json.dumps({"state": str(stage.State()), "status": stage.Status()}))
+"""
+
+
 def test_a_connect_failure_is_not_hidden_by_the_holder_alarm(tmp_path):
     record = tmp_path / "holder.json"
     record.write_text("not json", encoding="utf-8")
-    properties = {"holders": json.dumps({"a": {}, "b": {}}), "holder_file": str(record), "simulated": False, "hardware_host": ""}
-    with DeviceTestContext(AutoScriptSTAGE, properties=properties, process=True) as stage:
-        assert stage.State() == DevState.FAULT
-        status = stage.Status()
-        assert "Not connected to AutoScript" in status and "could not be read" in status
+    done = subprocess.run([sys.executable, "-c", CONNECT_FAILURE, str(record)], capture_output=True, text=True, timeout=120, cwd=ROOT)
+    assert done.returncode == 0, done.stderr
+    reply = json.loads(done.stdout.strip().splitlines()[-1])
+    assert reply["state"] == "FAULT"
+    assert "Not connected to AutoScript" in reply["status"] and "could not be read" in reply["status"]
