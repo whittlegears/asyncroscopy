@@ -79,6 +79,7 @@ class FakeStageProxy:
     _read_beta_tilt_enabled = AutoScriptSTAGE._read_beta_tilt_enabled
     _check_limits = STAGE._check_limits
     _check_z_and_tilt = STAGE._check_z_and_tilt
+    _refuse_if_held = STAGE._refuse_if_held
     read_beta_tilt_enabled = STAGE.read_beta_tilt_enabled
     high_tilt_deg, high_tilt_max_abs_z_m = 15.0, 1e-4  # STAGE's defaults
 
@@ -519,20 +520,9 @@ def test_autoscript_imaging_set_up_takes_only_what_the_microscope_offers(autoscr
     assert len(autoscript.client.writes()) == before
 
 
-def test_a_relative_stage_move_is_checked_against_the_limits_then_uses_relative_move_safe():
-    from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
-
+def test_autoscript_stage_stop_jogging_reaches_the_client():
     client = FakeAutoScriptClient()
     device = AutoScriptSTAGE.__new__(AutoScriptSTAGE)
-    device._tango_properties = {}
-    device._microscope, device._frozen, device._holder = client, None, ""
-    device._limits = {"x": (-1e-5, 1e-5), "y": (-1e-5, 1e-5), "z": (-1e-5, 1e-5), "alpha": (-30.0, 30.0), "beta": (-20.0, 20.0)}
-    device.high_tilt_deg, device.high_tilt_max_abs_z_m = 90.0, 1.0
-    STAGE.move_relative(device, [2e-6, 0.0, 0.0, 5.0, 0.0])
-    (call,) = client.writes("specimen.stage.relative_move_safe")
-    assert call["value"][:3] == [2e-6, 0.0, 0.0] and call["value"][3] == pytest.approx(math.radians(5.0))
-    with pytest.raises(ValueError, match="outside the stage limits"):
-        STAGE.move_relative(device, [9e-6, 0.0, 0.0, 0.0, 0.0])  # 2 + 9 um is past the 10 um limit
-    assert len(client.writes("specimen.stage.relative_move_safe")) == 1
+    device._microscope = client
     AutoScriptSTAGE.stop_jogging(device)
     assert client.writes("specimen.stage.stop_jogging")

@@ -104,7 +104,7 @@ twins and JEOL each one raises UnsupportedCommand; no twin pretends to run them.
 | `set_camera_length(label)` | microscope | `optics.camera_length.value` = the `available_values` entry with that label | `setting.set` |
 | `set_beam_stopper(state)` | microscope | `optics.beam_stopper.insert()`, `half_insert()` or `retract()` | `setting.set` |
 | `set_scanning_detector([detector, state])` | microscope | `detectors.get_scanning_detector(name).insert()` or `retract()` | `setting.set` |
-| `move_relative(delta)` | STAGE | the target (here + delta) is checked against the stage and holder limits first; AutoScript then uses `specimen.stage.relative_move_safe` (tilt to zero first), the twin moves to the target | `stage.move` |
+| `move_relative(delta)` | STAGE | refused while `specimen.stage.is_moving`; the target (here + delta) is checked against the stage and holder limits and sent as the same absolute move `move_stage` makes (`absolute_move_safe` when z or a tilt changes, else `absolute_move`) | `stage.move` |
 
 The focus routines take only the settings fields the stub lists for them (others are refused);
 `reset_beam_blanker_afterwards` is not offered, so AutoScript's default, a blanked beam afterwards, holds.

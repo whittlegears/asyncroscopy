@@ -17,7 +17,6 @@ from asyncroscopy.utils.commands import command
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import StageAxis
-    from autoscript_tem_microscope_client.structures import StagePosition
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
@@ -75,16 +74,14 @@ class AutoScriptSTAGE(STAGE):
     # Initialisation
     # ------------------------------------------------------------------
 
-    def init_device(self) -> None:
-        # The base asks _read_hardware_limits for the travel, so the client connects inside that call.
-        super().init_device()
+    def _connect(self) -> None:
+        self._connect_autoscript()
 
     def _read_hardware_limits(self) -> dict[str, tuple[float, float]]:
-        """Connect, then read each axis's limits from AutoScript (get_axis_limits: m, and rad for the tilts, given here
-        in degrees). Beta is read only on a double-tilt holder. An axis AutoScript cannot answer for is left to the
-        configured limits and logged."""
-        self._connect_autoscript()
-        if self._microscope is None:
+        """Each axis's limits from AutoScript (get_axis_limits: m, and rad for the tilts, given here in degrees). Beta is
+        read only on a double-tilt holder; set_holder reads them again, so a double tilt fitted later brings its beta
+        limits. An axis AutoScript cannot answer for is left to the configured limits and logged."""
+        if getattr(self, "_microscope", None) is None:
             return {}
         stage = self._microscope.specimen.stage
         axes = [("x", StageAxis.X), ("y", StageAxis.Y), ("z", StageAxis.Z), ("alpha", StageAxis.A)]
@@ -180,13 +177,10 @@ class AutoScriptSTAGE(STAGE):
         else:
             stage.absolute_move(position)
 
-    def _move_relative(self, delta: list[float], target: list[float]) -> None:
-        """relative_move_safe: AutoScript sets the tilt to zero first, then moves by delta (m, and rad for the tilts)."""
-        dx, dy, dz, da, db = delta
-        beta = math.radians(db) if self._read_beta_tilt_enabled() else None
-        if beta is None and db != 0.0:
-            raise ValueError(f"stage dbeta = {db:.6g}, but the fitted holder has no beta tilt: give 0; the stage did not move")
-        self._microscope.specimen.stage.relative_move_safe(StagePosition(dx, dy, dz, math.radians(da), beta))
+    def _is_moving(self) -> bool:
+        if self._microscope is None:
+            raise RuntimeError("not connected to AutoScript, so whether the stage is moving is not known; the stage did not move")
+        return bool(self._microscope.specimen.stage.is_moving)
 
     @command(risk="low", stop=True, role="safe_stop")
     def stop_jogging(self) -> None:

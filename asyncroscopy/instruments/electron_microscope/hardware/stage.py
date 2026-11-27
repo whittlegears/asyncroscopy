@@ -164,18 +164,22 @@ class STAGE(Device):
         Device.init_device(self)
         self.set_state(DevState.ON)
         self._position = [0.0, 0.0, 0.0, 0.0, 0.0]
-        self._travel = {
+        self._configured_travel = {
             "x": self._pair(self.x_limits_m, "x_limits_m"),
             "y": self._pair(self.y_limits_m, "y_limits_m"),
             "z": self._pair(self.z_limits_m, "z_limits_m"),
             **TILT_LIMITS_DEG,
         }
+        self._connect()
         # The instrument's own axis limits, where the backend can read them, narrow the configured travel.
         self._hardware_limits = self._read_hardware_limits()
-        self._travel, apart = narrow_travel(self._travel, self._hardware_limits)
+        self._travel, apart = narrow_travel(self._configured_travel, self._hardware_limits)
         self._holders = holder_profiles(self.holders)
         self._holder = ""
         self._frozen = None
+        # The configured limits and the instrument's do not overlap on some axis. Only a fixed configuration and a
+        # restart clear it; set_holder never does.
+        self._limits_conflict: str | None = None
         self._holder_path = Path(self.holder_file or f"outputs/stage/{self.get_name().replace('/', '_')}_holder.json")
         installed, problem = self._restore_holder()
         self._apply_holder(installed)
@@ -192,12 +196,10 @@ class STAGE(Device):
             else:
                 self._limits = strictest
                 self._apply_limits()
-            self.set_state(DevState.ALARM)
-            self.set_status(self._frozen or f"{problem}; until set_holder says which is fitted, moves are held to the limits every configured holder allows.")
+            self._alarm(self._frozen or f"{problem}; until set_holder says which is fitted, moves are held to the limits every configured holder allows.")
         if apart:
-            self._frozen = f"the configured stage limits do not overlap the instrument's for {', '.join(apart)}; no move is allowed until the configuration is fixed"
-            self.set_state(DevState.ALARM)
-            self.set_status(self._frozen)
+            self._limits_conflict = self._conflict(apart)
+            self._alarm(self._limits_conflict)
 
         self.info_stream("STAGE device initialised")
 
@@ -212,10 +214,38 @@ class STAGE(Device):
         return float(self.position_error_m)
 
     def write_position(self, value: list[float]) -> None:
-        if getattr(self, "_frozen", None):
-            raise ValueError(f"the stage did not move: {self._frozen}")
+        self._refuse_if_held()
         self._check_limits(value)
         self._write_position(value)
+
+    def _refuse_if_held(self) -> None:
+        for reason in (getattr(self, "_limits_conflict", None), getattr(self, "_frozen", None)):
+            if reason:
+                raise ValueError(f"the stage did not move: {reason}")
+
+    @staticmethod
+    def _conflict(apart: list[str]) -> str:
+        return f"the configured stage limits do not overlap the instrument's for {', '.join(apart)}; no move is allowed until the configuration is fixed and the device restarted"
+
+    def _alarm(self, status: str) -> None:
+        """ALARM with ``status``; a device already in FAULT (its backend could not connect) stays in FAULT and keeps
+        that reason first, so the holder or limits message never hides it."""
+        if self.get_state() == DevState.FAULT:
+            fault = str(self.get_status()).strip()
+            self.set_status(status if status in fault else f"{fault}\n{status}")
+            return
+        self.set_state(DevState.ALARM)
+        self.set_status(status)
+
+    def _reread_hardware_limits(self) -> None:
+        """Read the instrument's axis limits again (a holder change can bring new ones, such as beta on a double tilt)
+        and narrow the travel to them. An axis it no longer answers for keeps the limits read before. A new conflict
+        holds the stage; an earlier one stays."""
+        fresh = self._read_hardware_limits()
+        self._hardware_limits = {**self._hardware_limits, **fresh}
+        self._travel, apart = narrow_travel(self._configured_travel, self._hardware_limits)
+        if apart and not self._limits_conflict:
+            self._limits_conflict = self._conflict(apart)
 
     def _check_limits(self, value: list[float]) -> None:
         """Refuse a position outside the limits (with the installed holder's name), or a high tilt away from eucentric height."""
@@ -282,6 +312,7 @@ class STAGE(Device):
         """The installed holder and the stage limits it leaves: JSON {"holder", "holders", "limits": {axis: [min, max]}} (m, deg),
         and "hardware_limits", the axis limits the instrument itself reports (empty when the backend reads none)."""
         return json.dumps({"holder": self._holder or None, "holders": sorted(self._holders), "frozen": self._frozen,
+                           "limits_conflict": self._limits_conflict,
                            "limits": {axis: list(pair) for axis, pair in self._limits.items()},
                            "hardware_limits": {axis: list(pair) for axis, pair in self._hardware_limits.items()}})
 
@@ -292,6 +323,7 @@ class STAGE(Device):
         name = name.strip()
         if name and name not in self._holders:
             raise ValueError(f"unknown holder {name!r}; holders configured: {sorted(self._holders) or 'none (set the holders property)'}")
+        self._reread_hardware_limits()
         limits = self._limits_for(name)  # raises for a holder whose limits miss the stage travel, before anything changes
         for axis, value in zip(("x", "y", "z", "alpha", "beta"), self.read_position()):
             low, high = limits[axis]
@@ -301,27 +333,29 @@ class STAGE(Device):
         self._holder_path.write_text(json.dumps({"holder": name, "at": time.time()}), encoding="utf-8")
         self._apply_holder(name)
         self._frozen = None
-        if self.get_state() == DevState.ALARM:
+        if self._limits_conflict:
+            self._alarm(self._limits_conflict)
+        elif self.get_state() == DevState.ALARM:
             self.set_state(DevState.ON)
-        self.set_status(f"holder {name or 'none'}")
+            self.set_status(f"holder {name or 'none'}")
+        elif self.get_state() != DevState.FAULT:
+            self.set_status(f"holder {name or 'none'}")
         return self.get_holder()
 
     @command(dtype_in=DevVarFloatArray, doc_in=":param delta: [dx, dy, dz, dalpha, dbeta]; m for x, y, z and degrees for the tilts.",
              risk="high", operator_only=True, role="stage.move")
     def move_relative(self, delta: list[float]) -> None:
-        """Move the stage by delta from where it is. The target is checked against the stage and holder limits first."""
-        if getattr(self, "_frozen", None):
-            raise ValueError(f"the stage did not move: {self._frozen}")
+        """Move the stage by delta from where it is: the target (here + delta) is checked against the stage and holder
+        limits and sent as an absolute move, as move_stage is. Refused while the stage is moving, since "here" is not yet known."""
+        self._refuse_if_held()
         step = [float(v) for v in delta]
         if len(step) != 5 or not all(math.isfinite(v) for v in step):
             raise ValueError(f"delta must be five finite numbers [dx, dy, dz, dalpha, dbeta], got {list(delta)}; the stage did not move")
+        if self._is_moving():
+            raise ValueError("the stage is moving, so where a relative move would end is not known; wait for it to stop. The stage did not move")
         here = [float(v) for v in self.read_position()]
         target = [h + d for h, d in zip(here, step)]
         self._check_limits(target)
-        self._move_relative(step, target)
-
-    def _move_relative(self, delta: list[float], target: list[float]) -> None:
-        """Move by ``delta`` (already checked: ``target`` is where it ends). A backend without its own relative move goes to ``target``."""
         self._write_position(target)
 
     @staticmethod
@@ -334,9 +368,16 @@ class STAGE(Device):
     def read_beta_tilt_enabled(self) -> bool:
         return self._read_beta_tilt_enabled()
 
+    def _connect(self) -> None:
+        """Connect the backend, once, at init; a backend that cannot connect sets FAULT with the reason as its Status."""
+
     def _read_hardware_limits(self) -> dict[str, tuple[float, float]]:
         """{axis: (min, max)} in m and deg as the instrument reports them; {} for a backend that reads none."""
         return {}
+
+    @abstractmethod
+    def _is_moving(self) -> bool:
+        pass
 
     @abstractmethod
     def _read_position(self):

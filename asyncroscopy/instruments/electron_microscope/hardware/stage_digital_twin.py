@@ -100,6 +100,9 @@ class DigitalTwinSTAGE(STAGE):
     def read_stage_moving(self) -> bool:
         return time.monotonic() < self._moving_until
 
+    def _is_moving(self) -> bool:
+        return self.read_stage_moving()
+
     def read_moving_seconds_left(self) -> float:
         return max(0.0, self._moving_until - time.monotonic())
 

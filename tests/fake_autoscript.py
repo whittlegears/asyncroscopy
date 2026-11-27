@@ -18,7 +18,8 @@ member names, types and units of AutoScript 1.18 (the client in ``stubs/``):
 - ``detectors.screen``: ``position``, ``insert``, ``retract``, ``measure_current`` (A);
 - ``auto_functions``: ``run_opti_stem`` (a RunOptiStemResults), ``run_objective_auto_stigmator``,
   ``run_stem_auto_focus`` and ``run_beam_tilt_auto_focus`` (their Results: defocus and astigmatism in m);
-- ``specimen.stage.relative_move_safe`` and ``stop_jogging``; ``acquisition.acquire_camera_series_advanced``;
+- ``specimen.stage.is_moving`` (whatever a test sets ``moving`` to: the stub does not say whether a move returns
+  before the stage arrives) and ``stop_jogging``; ``acquisition.acquire_camera_series_advanced``;
   ``analysis.eels.acquire_spectra`` and ``acquire_spectrum_image``; ``optics.beam_stopper`` (insert,
   half_insert, retract); ``optics.camera_length.value`` (set from ``available_values``);
   ``detectors.get_scanning_detector`` (insert, retract);
@@ -126,6 +127,7 @@ class _Stage(_Node):
         super().__init__(record, path)
         object.__setattr__(self, "_position", StagePosition(0.0, 0.0, 0.0, 0.0, 0.0))
         object.__setattr__(self, "holder_type", "DoubleTilt")
+        object.__setattr__(self, "moving", False)
 
     @property
     def position(self) -> StagePosition:
@@ -144,13 +146,6 @@ class _Stage(_Node):
         self._rec("absolute_move_safe", "call", [p.x, p.y, p.z, p.a, p.b])
         self._move(p)
 
-    def relative_move_safe(self, relative_position: StagePosition | list[float]) -> None:
-        """AutoScript sets the tilt to zero first, then moves by the delta (m and rad)."""
-        d = relative_position if isinstance(relative_position, StagePosition) else StagePosition(*relative_position)
-        self._rec("relative_move_safe", "call", [d.x, d.y, d.z, d.a, d.b])
-        old = self._position
-        self._move(StagePosition(old.x + d.x, old.y + d.y, old.z + d.z, old.a + (d.a or 0.0), None if d.b is None else old.b + d.b))
-
     def stop_jogging(self) -> None:
         self._rec("stop_jogging", "call")
 
@@ -168,7 +163,7 @@ class _Stage(_Node):
     @property
     def is_moving(self) -> bool:
         self._rec("is_moving", "get")
-        return False  # moves return on arrival
+        return self.moving
 
     def get_holder_type(self) -> str:
         self._rec("get_holder_type", "call")

@@ -20,6 +20,10 @@ class TestStage(STAGE):
     def _read_beta_tilt_enabled(self) -> bool:
         return True
 
+    def _is_moving(self) -> bool:
+        """Its moves set the position at once, so it is never between two."""
+        return False
+
 
 if __name__ == "__main__":
     TestStage.run_server()

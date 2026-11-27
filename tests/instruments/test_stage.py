@@ -100,7 +100,7 @@ def test_autoscript_stage_reads_its_axis_limits_and_they_narrow_the_configured_t
     client = FakeAutoScriptClient()
     device = AutoScriptSTAGE.__new__(AutoScriptSTAGE)
     device.warn_stream = lambda *a: None
-    monkeypatch.setattr(AutoScriptSTAGE, "_connect_autoscript", lambda self: setattr(self, "_microscope", client))
+    device._microscope = client
     limits = device._read_hardware_limits()
     assert [c["value"] for c in client.calls if c["path"] == "specimen.stage.get_axis_limits"] == ["X", "Y", "Z", "A", "B"]
     assert limits["x"] == pytest.approx(HARDWARE_LIMITS["stage_x"]) and limits["alpha"] == pytest.approx((-70.0, 70.0))
@@ -114,5 +114,5 @@ def test_autoscript_stage_reads_its_axis_limits_and_they_narrow_the_configured_t
 
     object.__setattr__(client.specimen.stage, "holder_type", "SingleTilt")
     assert "beta" not in device._read_hardware_limits()  # a single-tilt holder has no beta to ask about
-    monkeypatch.setattr(AutoScriptSTAGE, "_connect_autoscript", lambda self: setattr(self, "_microscope", None))
+    device._microscope = None
     assert device._read_hardware_limits() == {}  # not connected: the configured limits apply
