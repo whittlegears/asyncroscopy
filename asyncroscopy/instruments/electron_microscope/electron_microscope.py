@@ -20,6 +20,7 @@ implementation, typically a DATA/Tiled unique id.
 """
 
 import math
+import json
 from abc import abstractmethod
 
 import tango
@@ -211,6 +212,13 @@ class ElectronMicroscope(ScanningBeamInstrument):
             camera.output_format,
         )
 
+    @command(dtype_out=str, risk="low", role="setting.read")
+    @hardware_call()
+    def get_detectors(self) -> str:
+        """The detectors this microscope has, by the names its acquisitions take, as JSON {"scanning", "camera", "eds",
+        "eels"} (lists), and "cameras" with each camera's exposure limits and image sizes where the backend gives them."""
+        return json.dumps(self._detectors())
+
     @command(dtype_in=str, doc_in=":param state: 'open' or 'close'.", risk="high", role="setting.set")
     @hardware_call()
     def set_column_valves(self, state: str) -> None:
@@ -340,6 +348,9 @@ class ElectronMicroscope(ScanningBeamInstrument):
 
     def _set_column_valves(self, state: str) -> None:
         unsupported(self, "set_column_valves")
+
+    def _detectors(self) -> dict:
+        unsupported(self, "get_detectors")
 
     @abstractmethod
     def _get_defocus(self):

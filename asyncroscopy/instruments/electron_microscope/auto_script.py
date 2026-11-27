@@ -164,6 +164,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         super()._init_device_attributes()
         self._blank_client = None  # a second AutoScript connection, used only to blank the beam
         self._blank_count = 0  # counts blank_beam calls so that a running 4D-STEM scan stops when it changes
+        self._connected_versions = None  # what _versions read when Connect last reached AutoScript
 
     def _connect(self):
         self._connect_error = None
@@ -196,7 +197,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 raise ValueError(NO_HOST)
             self._microscope = TemMicroscopeClient()
             self._microscope.connect(self.hardware_host, self.hardware_port)
-            self.info_stream(f"Connected to AutoScript at {self.hardware_host}:{self.hardware_port}")
+            self._connected_versions = self._versions()
+            self.info_stream(f"Connected to AutoScript at {self.hardware_host}:{self.hardware_port}: {json.dumps(self._connected_versions)}")
             self.is_autoscript = True
         except Exception as e:
             self._connect_error = f"connecting to {self.hardware_host}:{self.hardware_port} failed: {e}"
@@ -261,6 +263,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
         detector_list = [d.upper() for d in detector_list]
+        offered = [str(d) for d in self._microscope.detectors.scanning_detectors]
+        unknown = [d for d in detector_list if d not in offered]
+        if unknown:
+            raise ValueError(f"no scanning detector {unknown} on this microscope; it offers {offered} (get_detectors); nothing was acquired")
         attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # read before the frame so they say where and how it is taken
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         with self._beam_restored():
@@ -437,6 +443,20 @@ class AutoScriptMicroscope(ElectronMicroscope):
         spectrum_image.save(str(path))
         return record_vendor_file(self, path, self._frame_attrs(points, float(exposure_time), [0.0, 0.0, 1.0, 1.0]))
 
+    def _detectors(self) -> dict:
+        """The detectors AutoScript reports (DetectorType, CameraType, EdsDetectorType and EelsDetectorType values),
+        with each camera's exposure limits (AutoScript gives them for the Flucam only) and supported image sizes."""
+        detectors = self._microscope.detectors
+        cameras = {}
+        for name in detectors.camera_detectors:
+            camera = detectors.get_camera_detector(name)
+            cameras[str(name)] = {
+                "exposure_time_limits_s": self._read(lambda: [float(camera.exposure_time_limits.min), float(camera.exposure_time_limits.max)]),
+                "image_sizes": self._read(lambda: [{"size": int(s.size), "fixed_readout_area": s.fixed_readout_area} for s in camera.get_supported_image_sizes()]),
+            }
+        return {"scanning": [str(d) for d in detectors.scanning_detectors], "camera": sorted(cameras), "eds": [str(d) for d in detectors.eds_detectors],
+                "eels": [str(d) for d in detectors.eels_detectors], "cameras": cameras}
+
     def _place_beam(self, position) -> None:
         """
         sets resting beam position, [0:1]
@@ -508,14 +528,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
     def _set_defocus(self, defocus) -> None:
         """Set defocus in meters (checked against max_defocus by the base)."""
         defocus = float(defocus)
-        optics = getattr(self._microscope, "optics", None)
-        if optics is None:
-            raise AttributeError("Microscope object has no optics")
-
-        if hasattr(optics, "defocus"):
-            optics.defocus = defocus
-            return
-
+        optics = self._microscope.optics
         if self._is_stem():
             optics.focusing.stem.objective.defocus = defocus
         else:
@@ -523,13 +536,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
     def _get_defocus(self) -> float:
         """Get defocus in meters."""
-        optics = getattr(self._microscope, "optics", None)
-        if optics is None:
-            raise AttributeError("Microscope object has no optics")
-
-        if hasattr(optics, "defocus"):
-            return float(optics.defocus)
-
+        optics = self._microscope.optics
         if self._is_stem():
             return float(optics.focusing.stem.objective.defocus)
         return float(optics.focusing.tem.defocus)
@@ -617,7 +624,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 "spot_size": optics.spot_size_index,
                 "optical_mode": str(optics.optical_mode),
                 "illumination_mode": str(optics.illumination_mode),
-                "acceleration_voltage": float(optics.acceleration_voltage.value),
+                "acceleration_voltage": float(self._microscope.source.acceleration_voltage.value),
             }
             for mechanism_type in optics.aperture_mechanisms.get_available():
                 mechanism = optics.aperture_mechanisms.get_mechanism(mechanism_type)
@@ -692,22 +699,62 @@ class AutoScriptMicroscope(ElectronMicroscope):
             tilts[1] = 0.0  # a single tilt holder has no beta
         return np.array([float(position.x), float(position.y), float(position.z), *tilts], dtype=np.float64)
 
+    @staticmethod
+    def _read(read):
+        """``read()``, or {"unavailable": the reason} when this instrument cannot answer it (a member some systems
+        lack, such as the convergence angle without three condenser lenses)."""
+        try:
+            return read()
+        except Exception as exc:
+            return {"unavailable": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
+
+    def _versions(self) -> dict:
+        """The AutoScript server and client versions, whether the server is offline (a simulator), and the
+        microscope's serial number and TEM server version, as AutoScript reports them."""
+        service = self._microscope.service
+        return {
+            "autoscript_server_version": self._read(lambda: str(service.autoscript.server.version)),
+            "autoscript_client_version": self._read(lambda: str(service.autoscript.client.version)),
+            "autoscript_server_offline": self._read(lambda: bool(service.autoscript.server.is_offline)),
+            "system_serial_number": self._read(lambda: str(service.system.serial_number)),
+            "system_version": self._read(lambda: str(service.system.version)),
+        }
+
+    def _optics_readout(self) -> dict:
+        """Camera length, magnification, convergence angle and beam diameter as AutoScript reports them."""
+        optics = self._microscope.optics
+
+        def projector(value) -> dict:
+            return {"calibrated": float(value.calibrated), "nominal": float(value.nominal), "label": value.label}
+
+        return {
+            "camera_length_m": self._read(lambda: projector(optics.camera_length.value)),
+            "camera_lengths": self._read(lambda: [v.label for v in optics.camera_length.available_values]),
+            "magnification": self._read(lambda: projector(optics.magnification.value)),
+            "convergence_angle_rad": self._read(lambda: float(optics.convergence_angle)),
+            "beam_diameter_m": self._read(lambda: float(optics.beam_diameter)),
+        }
+
     def _get_parameters(self):
         optics = self._microscope.optics
+        source = self._microscope.source
         status = {'system': self._microscope.service.system.name,
                 'vacuum': self._microscope.vacuum.state,
                 'column_valves': self._microscope.vacuum.column_valves.state,
-                'is_accelerator_on': optics.is_accelerator_on,
-                'acceleration_voltage': optics.acceleration_voltage.value,
+                'is_accelerator_on': source.is_accelerator_on,
+                'acceleration_voltage': source.acceleration_voltage.value,
                 'optical_mode': optics.optical_mode,
                 'illumination_mode': optics.illumination_mode,
                 'objective_lens_mode': optics.objective_lens_mode,
                 'projector_mode': optics.projector_mode,
-                #'convergence_angle': optics.convergence_angle,
                 'spot_size': optics.spot_size_index,
                 'beam_stopper': optics.beam_stopper.insertion_state,
                 'beam_blanker': optics.blanker.is_beam_blanked,
+                'auto_beam_blank_mode': self._read(lambda: str(optics.blanker.auto_beam_blank.mode.value)),
                 'is_eftem_on': optics.is_eftem_on,
+                **self._optics_readout(),
+                'versions': self._versions(),
+                'versions_at_connect': self._connected_versions,
                 }
         stem = self._is_stem()
         if stem:

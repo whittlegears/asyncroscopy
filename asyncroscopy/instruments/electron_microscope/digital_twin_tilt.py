@@ -16,6 +16,7 @@ from asyncroscopy.data.data_writer import (
     save_acquisition,
     save_acquisition_hdf5,
 )
+from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import (
     DEFAULT_ACQUISITION_DIR,
     ElectronMicroscopeTwin,
@@ -381,6 +382,9 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
             dataset_attrs=attrs,
             output_format=output_format,
         )
+
+    def _detectors(self) -> dict:
+        return {**super()._detectors(), "camera": sorted(CAMERA._CAMERA_DETECTORS)}
 
     def _acquire_camera_image(
         self,

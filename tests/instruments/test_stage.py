@@ -91,3 +91,28 @@ def test_autoscript_double_tilt_write_passes_beta_move_through_the_safe_move():
         math.radians(4.0),
         math.radians(5.0),
     )
+
+
+def test_autoscript_stage_reads_its_axis_limits_and_they_narrow_the_configured_travel(monkeypatch):
+    from asyncroscopy.instruments.electron_microscope.hardware.stage import narrow_travel
+    from tests.fake_autoscript import HARDWARE_LIMITS, FakeAutoScriptClient
+
+    client = FakeAutoScriptClient()
+    device = AutoScriptSTAGE.__new__(AutoScriptSTAGE)
+    device.warn_stream = lambda *a: None
+    monkeypatch.setattr(AutoScriptSTAGE, "_connect_autoscript", lambda self: setattr(self, "_microscope", client))
+    limits = device._read_hardware_limits()
+    assert [c["value"] for c in client.calls if c["path"] == "specimen.stage.get_axis_limits"] == ["X", "Y", "Z", "A", "B"]
+    assert limits["x"] == pytest.approx(HARDWARE_LIMITS["stage_x"]) and limits["alpha"] == pytest.approx((-70.0, 70.0))
+    assert client.writes("specimen.stage.absolute") == []  # reading limits moves nothing
+
+    travel = {"x": (-2e-3, 2e-3), "y": (-5e-4, 5e-4), "z": (-5e-4, 5e-4), "alpha": (-35.0, 35.0), "beta": (-20.0, 20.0)}
+    narrowed, apart = narrow_travel(travel, limits)
+    assert narrowed["x"] == pytest.approx(HARDWARE_LIMITS["stage_x"]) and narrowed["y"] == (-5e-4, 5e-4) and apart == []
+    _, apart = narrow_travel(travel, {"x": (5e-3, 6e-3)})
+    assert apart and apart[0].startswith("x")
+
+    object.__setattr__(client.specimen.stage, "holder_type", "SingleTilt")
+    assert "beta" not in device._read_hardware_limits()  # a single-tilt holder has no beta to ask about
+    monkeypatch.setattr(AutoScriptSTAGE, "_connect_autoscript", lambda self: setattr(self, "_microscope", None))
+    assert device._read_hardware_limits() == {}  # not connected: the configured limits apply

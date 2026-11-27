@@ -48,6 +48,8 @@ def bare_microscope(client: types.SimpleNamespace) -> AutoScriptMicroscope:
         client.optics = optics = types.SimpleNamespace()
     if not hasattr(optics, "blanker"):
         optics.blanker = FakeBlanker()
+    if not hasattr(client, "detectors"):
+        client.detectors = types.SimpleNamespace(scanning_detectors=["BF", "DF2", "DF4", "HAADF", "BF-S", "DF-S"])
     microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
     microscope._command_lock, microscope._blank_client, microscope._blank_count = threading.RLock(), None, 0
     microscope._microscope = client
@@ -423,15 +425,19 @@ class TestAutoScriptMicroscope:
         assert eds.settings.exposure_time_type == ExposureTimeType.LIVE_TIME
 
     def test_defocus_helpers_read_and_write_autoscript_optics(self) -> None:
-        optics = types.SimpleNamespace(defocus=0.0)
+        """The 1.18 client has no optics.defocus: STEM writes focusing.stem.objective.defocus, TEM focusing.tem.defocus."""
+        stem, tem = types.SimpleNamespace(defocus=0.0), types.SimpleNamespace(defocus=0.0)
+        optics = types.SimpleNamespace(optical_mode="Stem", focusing=types.SimpleNamespace(stem=types.SimpleNamespace(objective=stem), tem=tem))
         microscope = bare_microscope(types.SimpleNamespace(optics=optics))
         microscope._tango_properties = {}
         microscope.max_defocus = 1e-5
 
         AutoScriptMicroscope._set_defocus(microscope, 8e-9)
-
-        assert optics.defocus == pytest.approx(8e-9)
+        assert stem.defocus == pytest.approx(8e-9) and tem.defocus == 0.0
         assert AutoScriptMicroscope._get_defocus(microscope) == pytest.approx(8e-9)
+        optics.optical_mode = "Tem"
+        AutoScriptMicroscope._set_defocus(microscope, -3e-9)
+        assert tem.defocus == pytest.approx(-3e-9) and AutoScriptMicroscope._get_defocus(microscope) == pytest.approx(-3e-9)
 
     def test_disconnect_sets_state_off(self, auto_script_proxy: tango.DeviceProxy) -> None:
         auto_script_proxy.Disconnect()

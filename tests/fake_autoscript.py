@@ -17,7 +17,16 @@ member names, types and units of AutoScript 1.18 (the client in ``stubs/``):
 - ``analysis.eds.acquire_spectrum``;
 - ``detectors.screen``: ``position``, ``insert``, ``retract``, ``measure_current`` (A);
 - ``auto_functions``: ``run_opti_stem``, ``run_objective_auto_stigmator``;
-- ``vacuum``, ``service.system.name``, ``source.acceleration_voltage``.
+- ``detectors``: ``scanning_detectors``, ``camera_detectors``, ``eds_detectors``,
+  ``eels_detectors`` and ``get_camera_detector`` (``exposure_time_limits``, Flucam only, and
+  ``get_supported_image_sizes``), with the DetectorType / CameraType names of a Spectra 300;
+- ``optics.camera_length`` and ``optics.magnification`` (``value``: a CameraLengthData /
+  MagnificationData; ``available_values``), ``convergence_angle`` (rad), ``beam_diameter`` (m),
+  ``blanker.auto_beam_blank.mode.value``;
+- ``vacuum``, ``service.system`` (name, serial_number, version), ``service.autoscript``
+  (server.version, server.is_offline, client.version), ``source.acceleration_voltage`` and
+  ``source.is_accelerator_on``. The deprecated ``optics.acceleration_voltage`` and
+  ``optics.is_accelerator_on`` are left out, so a test fails if the code uses them.
 
 Every read, write and call is appended to ``client.calls`` as
 ``{"path": "optics.scan_field_of_view", "op": "set", "value": 2e-7}``, so a test
@@ -42,7 +51,7 @@ from typing import Any
 
 import numpy as np
 from autoscript_core.common import ApplicationServerException
-from autoscript_tem_microscope_client.structures import Limits, Point, StagePosition
+from autoscript_tem_microscope_client.structures import CameraImageSize, CameraLengthData, Limits, MagnificationData, Point, StagePosition
 
 HARDWARE_LIMITS = {
     "stage_x": (-1.0e-3, 1.0e-3),  # m
@@ -264,6 +273,63 @@ class _Apertures(_Node):
         return []
 
 
+CAMERA_LENGTHS = tuple(CameraLengthData(nominal=n, calibrated=n * 1.03, label=f"{n * 1e3:g} mm") for n in (0.06, 0.091, 0.115, 0.185))
+
+
+class _Camera(_Node):
+    """One camera detector. AutoScript gives exposure_time_limits for the Flucam only and raises for the others."""
+
+    def __init__(self, record: _Recorder, path: str, name: str) -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "name", name)
+
+    @property
+    def exposure_time_limits(self) -> Limits:
+        self._rec("exposure_time_limits", "get")
+        if self.name != "Flucam":
+            raise ApplicationServerException("exposure time limits are available for the Flucam only")
+        return Limits(*HARDWARE_LIMITS["camera_exposure"])
+
+    def get_supported_image_sizes(self) -> list:
+        self._rec("get_supported_image_sizes", "call")
+        return [CameraImageSize(size=size, fixed_readout_area=area) for size, area in ((4096, "Full"), (2048, "Half"), (1024, "Quarter"))]
+
+
+class _Detectors(_Node):
+    SCANNING = ["BF", "DF2", "DF4", "HAADF", "BF-S", "DF-S"]
+    CAMERAS = ["Flucam", "BM-Ceta"]
+
+    def __init__(self, record: _Recorder, path: str, monochromator: "_Monochromator") -> None:
+        super().__init__(record, path)
+        object.__setattr__(self, "screen", _Screen(record, f"{path}.screen", monochromator))
+
+    @property
+    def scanning_detectors(self) -> list[str]:
+        self._rec("scanning_detectors", "get")
+        return list(self.SCANNING)
+
+    @property
+    def camera_detectors(self) -> list[str]:
+        self._rec("camera_detectors", "get")
+        return list(self.CAMERAS)
+
+    @property
+    def eds_detectors(self) -> list[str]:
+        self._rec("eds_detectors", "get")
+        return ["SuperX"]
+
+    @property
+    def eels_detectors(self) -> list[str]:
+        self._rec("eels_detectors", "get")
+        return []
+
+    def get_camera_detector(self, detector_name: str) -> _Camera:
+        self._rec("get_camera_detector", "call", detector_name)
+        if detector_name not in self.CAMERAS:
+            raise ApplicationServerException(f"no camera {detector_name!r}")
+        return _Camera(self._record, f"{self._path}.camera[{detector_name}]", detector_name)
+
+
 class _Optics(_Node):
     def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
@@ -278,8 +344,9 @@ class _Optics(_Node):
             "scan_field_of_view": 2.0e-7,
             "paused_scan_beam_position": Point(0.5, 0.5),
             "scan_rotation": 0.0,
-            "is_accelerator_on": True,
             "illumination_mode": "Probe",
+            "convergence_angle": 0.025,
+            "beam_diameter": 1.0e-10,
             "objective_lens_mode": "HM",
             "spot_size_index": 6,
             "is_eftem_on": False,
@@ -294,9 +361,14 @@ class _Optics(_Node):
             "stigmators": sub(_Stigmators, "stigmators"),
             "aperture_mechanisms": sub(_Apertures, "aperture_mechanisms"),
             "beam_stopper": _ReadOnly(record, f"{path}.beam_stopper", insertion_state="Retracted"),
-            "acceleration_voltage": _ReadOnly(record, f"{path}.acceleration_voltage", value=300e3),
+            "camera_length": _ReadOnly(record, f"{path}.camera_length", value=CAMERA_LENGTHS[2], available_values=list(CAMERA_LENGTHS)),
+            "magnification": _ReadOnly(record, f"{path}.magnification", value=MagnificationData(nominal=1.0e5, calibrated=1.02e5, label="100 kx"),
+                                       available_values=[MagnificationData(nominal=1.0e5, calibrated=1.02e5, label="100 kx")]),
         }.items():
             object.__setattr__(self, name, value)
+        auto_blank = _Node(record, f"{path}.blanker.auto_beam_blank")
+        object.__setattr__(auto_blank, "mode", _ReadOnly(record, f"{path}.blanker.auto_beam_blank.mode", value="Off"))
+        object.__setattr__(self.blanker, "auto_beam_blank", auto_blank)
 
     WRITABLE = {"optical_mode", "projector_mode", "scan_field_of_view", "paused_scan_beam_position"}
 
@@ -483,14 +555,18 @@ class FakeAutoScriptClient:
         self.acquisition = _Acquisition(record, "acquisition", self.optics)
         self.analysis = _Node(record, "analysis")
         object.__setattr__(self.analysis, "eds", _Eds(record, "analysis.eds", self.optics))
-        self.detectors = _Node(record, "detectors")
-        object.__setattr__(self.detectors, "screen", _Screen(record, "detectors.screen", self.optics.monochromator))
+        self.detectors = _Detectors(record, "detectors", self.optics.monochromator)
         self.auto_functions = _AutoFunctions(record, "auto_functions", self.optics)
         self.vacuum = _ReadOnly(record, "vacuum", state="Ready")
         object.__setattr__(self.vacuum, "column_valves", _ColumnValves(record, "vacuum.column_valves"))
         self.service = _Node(record, "service")
-        object.__setattr__(self.service, "system", _ReadOnly(record, "service.system", name="Spectra 300 (fake)"))
-        self.source = _Node(record, "source")
+        object.__setattr__(self.service, "system", _ReadOnly(record, "service.system", name="Spectra 300 (fake)", serial_number="FAKE-0000",
+                                                             version="fake TEM server"))
+        autoscript = _Node(record, "service.autoscript")
+        object.__setattr__(autoscript, "server", _ReadOnly(record, "service.autoscript.server", version="1.18.0 (fake)", is_offline=True))
+        object.__setattr__(autoscript, "client", _ReadOnly(record, "service.autoscript.client", version="1.18.0"))
+        object.__setattr__(self.service, "autoscript", autoscript)
+        self.source = _ReadOnly(record, "source", is_accelerator_on=True)
         object.__setattr__(self.source, "acceleration_voltage", _ReadOnly(record, "source.acceleration_voltage", value=300e3))
 
     @property

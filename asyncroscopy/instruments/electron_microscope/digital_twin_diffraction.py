@@ -7,6 +7,7 @@ from ase import Atoms
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_ACQUISITION_DIR, ElectronMicroscopeTwin
 from asyncroscopy.instruments.electron_microscope.twin.atomistic import ParticleSpectrumMixin
 from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
@@ -123,6 +124,9 @@ class DigitalTwinDiffraction(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         result -= float(result.min())
         max_val = float(result.max())
         return result / max_val if max_val > 0.0 else result
+
+    def _detectors(self) -> dict:
+        return {**super()._detectors(), "camera": sorted(CAMERA._CAMERA_DETECTORS)}
 
     def _acquire_camera_image(
         self,

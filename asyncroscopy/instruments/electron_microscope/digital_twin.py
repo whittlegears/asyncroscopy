@@ -585,7 +585,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     def _get_parameters(self) -> str:
         parameters = json.loads(super()._get_parameters())
         parameters["stage_position"] = self._stage.reported.tolist()
-        parameters["scan_detectors"] = sorted(d.lower() for d in DETECTOR_SCALE)
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
         # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
@@ -597,6 +596,9 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["simulated"] = True  # This is for clients. Job devices take the simulated property of the stack and never this.
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
+
+    def _detectors(self) -> dict:
+        return {**super()._detectors(), "scanning": sorted(d.lower() for d in DETECTOR_SCALE)}
 
     def _ground_truth(self) -> dict:
         """The particles, the true stage pose and the drift of every acquisition (export_ground_truth)."""

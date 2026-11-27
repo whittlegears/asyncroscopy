@@ -15,6 +15,7 @@ from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
 # on a development machine without AutoScript installed.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
+    from autoscript_tem_microscope_client.enumerations import StageAxis
     _AUTOSCRIPT_AVAILABLE = True
 except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
@@ -73,8 +74,30 @@ class AutoScriptSTAGE(STAGE):
     # ------------------------------------------------------------------
 
     def init_device(self) -> None:
+        # The base asks _read_hardware_limits for the travel, so the client connects inside that call.
         super().init_device()
+
+    def _read_hardware_limits(self) -> dict[str, tuple[float, float]]:
+        """Connect, then read each axis's limits from AutoScript (get_axis_limits: m, and rad for the tilts, given here
+        in degrees). Beta is read only on a double-tilt holder. An axis AutoScript cannot answer for is left to the
+        configured limits and logged."""
         self._connect_autoscript()
+        if self._microscope is None:
+            return {}
+        stage = self._microscope.specimen.stage
+        axes = [("x", StageAxis.X), ("y", StageAxis.Y), ("z", StageAxis.Z), ("alpha", StageAxis.A)]
+        if self._read_beta_tilt_enabled():
+            axes.append(("beta", StageAxis.B))
+        found = {}
+        for axis, name in axes:
+            try:
+                limits = stage.get_axis_limits(name)
+                low, high = float(limits.min), float(limits.max)
+            except Exception as exc:
+                self.warn_stream(f"AutoScript gave no {axis} limits ({exc}); the configured ones apply")
+                continue
+            found[axis] = (math.degrees(low), math.degrees(high)) if axis in ("alpha", "beta") else (low, high)
+        return found
 
     def _connect_autoscript(self) -> None:
         """Connect the AutoScript client; without it (no package, or a refused connection) the device is in FAULT

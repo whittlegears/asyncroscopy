@@ -104,7 +104,7 @@ def autoscript_device(client: FakeAutoScriptClient, save_dir: Path):
             setattr(device, name, value)
     device._microscope = client
     device._connect_error = None
-    device._command_lock, device._blank_client, device._blank_count = threading.RLock(), None, 0
+    device._command_lock, device._blank_client, device._blank_count, device._connected_versions = threading.RLock(), None, 0, None
     device.screen_current_calibration = None
     device.info_stream = device.warn_stream = device.error_stream = device.debug_stream = lambda *a, **k: None
     device._detector_proxies = {
@@ -389,3 +389,48 @@ def test_autoscript_has_no_attributes_that_duplicate_commands():
     register_stage duplicated get_stage. One way to read each."""
     for name in ("fov", "defocus", "beam_state", "manufacturer", "register_stage"):
         assert not hasattr(AutoScriptMicroscope, name), name
+
+
+def test_autoscript_get_parameters_reports_optics_versions_and_auto_blank_from_the_instrument(autoscript):
+    parameters = json.loads(autoscript.call("get_parameters"))
+    assert parameters["camera_length_m"] == {"calibrated": pytest.approx(0.115 * 1.03), "nominal": pytest.approx(0.115), "label": "115 mm"}
+    assert parameters["camera_lengths"] == ["60 mm", "91 mm", "115 mm", "185 mm"]
+    assert parameters["magnification"]["label"] == "100 kx" and parameters["convergence_angle_rad"] == pytest.approx(0.025)
+    assert parameters["beam_diameter_m"] == pytest.approx(1e-10) and parameters["auto_beam_blank_mode"] == "Off"
+    assert parameters["versions"] == {"autoscript_server_version": "1.18.0 (fake)", "autoscript_client_version": "1.18.0",
+                                      "autoscript_server_offline": True, "system_serial_number": "FAKE-0000", "system_version": "fake TEM server"}
+    assert parameters["is_accelerator_on"] is True and parameters["acceleration_voltage"] == pytest.approx(300e3)
+    paths = {c["path"] for c in autoscript.client.calls}
+    assert "source.acceleration_voltage.value" in paths and "source.is_accelerator_on" in paths  # not the deprecated optics.* members
+    assert [c for c in autoscript.client.calls if c["op"] == "set"] == []  # get_parameters only reads
+
+
+def test_autoscript_says_which_readings_it_cannot_give(autoscript):
+    def unavailable():
+        raise RuntimeError("only on systems with three condenser lenses")
+
+    optics = autoscript.client.optics
+    type(optics).convergence_angle = property(lambda self: unavailable())
+    try:
+        parameters = json.loads(autoscript.call("get_parameters"))
+    finally:
+        del type(optics).convergence_angle
+    assert "three condenser lenses" in parameters["convergence_angle_rad"]["unavailable"]
+
+
+def test_autoscript_lists_its_detectors_and_refuses_one_it_does_not_have(autoscript):
+    detectors = json.loads(autoscript.call("get_detectors"))
+    assert detectors["scanning"] == ["BF", "DF2", "DF4", "HAADF", "BF-S", "DF-S"] and detectors["camera"] == ["BM-Ceta", "Flucam"]
+    assert detectors["eds"] == ["SuperX"] and detectors["eels"] == []
+    assert detectors["cameras"]["Flucam"]["exposure_time_limits_s"] == [1e-3, 60.0]
+    assert "Flucam only" in detectors["cameras"]["BM-Ceta"]["exposure_time_limits_s"]["unavailable"]
+    assert {"size": 4096, "fixed_readout_area": "Full"} in detectors["cameras"]["BM-Ceta"]["image_sizes"]
+    with pytest.raises(REFUSED, match="no scanning detector"):
+        autoscript.device._acquire_scanned_image(32, 1e-6, ["adf"], [0.0, 0.0, 1.0, 1.0])  # ADF is a twin name
+    assert autoscript.client.writes("acquisition") == []
+
+
+def test_the_twin_lists_the_detectors_it_renders(twin):
+    detectors = json.loads(twin.call("get_detectors"))
+    parameters = json.loads(twin.call("get_parameters"))
+    assert detectors["scanning"] == parameters["scan_detectors"] and detectors["camera"] == parameters["camera_detectors"] == []

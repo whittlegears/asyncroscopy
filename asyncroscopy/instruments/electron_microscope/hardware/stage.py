@@ -37,6 +37,19 @@ def holder_profiles(text: str) -> dict[str, dict[str, tuple[float, float]]]:
         profiles[str(name)] = {HOLDER_KEYS[key]: STAGE._pair(value, f"holder {name!r} {key}") for key, value in limits.items()}
     return profiles
 
+def narrow_travel(travel: dict[str, tuple[float, float]], hardware: dict[str, tuple[float, float]]) -> tuple[dict, list[str]]:
+    """The configured ``travel`` narrowed to the instrument's ``hardware`` limits, axis by axis, and the axes where the
+    two do not overlap (those keep the configured travel, and the device refuses every move)."""
+    narrowed, apart = dict(travel), []
+    for axis, (low, high) in hardware.items():
+        both = (max(low, travel[axis][0]), min(high, travel[axis][1]))
+        if both[0] < both[1]:
+            narrowed[axis] = both
+        else:
+            apart.append(f"{axis} (configured {list(travel[axis])}, the instrument's {[low, high]})")
+    return narrowed, apart
+
+
 class STAGE(Device):
     """Stage settings device: travel, holder limits and position. Which sample is loaded is the SAMPLE device's.
 
@@ -157,6 +170,9 @@ class STAGE(Device):
             "z": self._pair(self.z_limits_m, "z_limits_m"),
             **TILT_LIMITS_DEG,
         }
+        # The instrument's own axis limits, where the backend can read them, narrow the configured travel.
+        self._hardware_limits = self._read_hardware_limits()
+        self._travel, apart = narrow_travel(self._travel, self._hardware_limits)
         self._holders = holder_profiles(self.holders)
         self._holder = ""
         self._frozen = None
@@ -178,6 +194,10 @@ class STAGE(Device):
                 self._apply_limits()
             self.set_state(DevState.ALARM)
             self.set_status(self._frozen or f"{problem}; until set_holder says which is fitted, moves are held to the limits every configured holder allows.")
+        if apart:
+            self._frozen = f"the configured stage limits do not overlap the instrument's for {', '.join(apart)}; no move is allowed until the configuration is fixed"
+            self.set_state(DevState.ALARM)
+            self.set_status(self._frozen)
 
         self.info_stream("STAGE device initialised")
 
@@ -259,9 +279,11 @@ class STAGE(Device):
 
     @command(dtype_out=str, risk="low", role="setting.read")
     def get_holder(self) -> str:
-        """The installed holder and the stage limits it leaves: JSON {"holder", "holders", "limits": {axis: [min, max]}} (m, deg)."""
+        """The installed holder and the stage limits it leaves: JSON {"holder", "holders", "limits": {axis: [min, max]}} (m, deg),
+        and "hardware_limits", the axis limits the instrument itself reports (empty when the backend reads none)."""
         return json.dumps({"holder": self._holder or None, "holders": sorted(self._holders), "frozen": self._frozen,
-                           "limits": {axis: list(pair) for axis, pair in self._limits.items()}})
+                           "limits": {axis: list(pair) for axis, pair in self._limits.items()},
+                           "hardware_limits": {axis: list(pair) for axis, pair in self._hardware_limits.items()}})
 
     @command(dtype_in=str, dtype_out=str, doc_in="Name of the holder now installed (one of holders), or blank for none.", risk="high", operator_only=True, role="setting.set")
     def set_holder(self, name: str) -> str:
@@ -293,6 +315,10 @@ class STAGE(Device):
 
     def read_beta_tilt_enabled(self) -> bool:
         return self._read_beta_tilt_enabled()
+
+    def _read_hardware_limits(self) -> dict[str, tuple[float, float]]:
+        """{axis: (min, max)} in m and deg as the instrument reports them; {} for a backend that reads none."""
+        return {}
 
     @abstractmethod
     def _read_position(self):

@@ -62,3 +62,26 @@ If you're editing this class, you're usually doing one of these:
    inside the helper. Pick the right `dataset_name` for `save_acquisition`
    (e.g. `"image"`, `"spectrum"`, `"stem_data"`); multi-detector results are
    stored under `image/<DETECTOR>`.
+
+## What the device reads from AutoScript
+
+The client is the 1.18 wheel that `pyproject.toml` installs, so the code uses 1.18 members only: the high
+tension comes from `source.acceleration_voltage` and `source.is_accelerator_on` (the `optics.*` ones are
+deprecated and go in 1.21), and defocus from `optics.focusing.stem.objective.defocus` or
+`optics.focusing.tem.defocus` (1.18 has no `optics.defocus`).
+
+- `get_parameters` adds, read from the instrument each time: `camera_length_m` (calibrated, nominal and label of
+  `optics.camera_length.value`) and `camera_lengths` (the labels of `available_values`), `magnification`,
+  `convergence_angle_rad`, `beam_diameter_m`, `auto_beam_blank_mode` (`optics.blanker.auto_beam_blank.mode.value`),
+  and `versions` (`service.autoscript.server.version`, `server.is_offline`, `client.version`,
+  `service.system.serial_number` and `version`). `versions_at_connect` is what Connect read; it is also logged.
+  A reading this instrument cannot give (the convergence angle and beam diameter need three condenser lenses) is
+  `{"unavailable": the error}`, never a made-up value.
+- `get_detectors` returns `detectors.scanning_detectors`, `camera_detectors`, `eds_detectors` and `eels_detectors`,
+  and for each camera `exposure_time_limits` (AutoScript gives them for the Flucam only) and
+  `get_supported_image_sizes()`. A scanned image with a detector the microscope does not list (such as the twin's
+  "ADF") is refused before anything is acquired. The twins answer `get_detectors` with what they render.
+- The AutoScript STAGE device reads `specimen.stage.get_axis_limits(StageAxis.X/Y/Z/A, and B on a double-tilt
+  holder)` when it connects. They narrow the configured `x_limits_m`, `y_limits_m`, `z_limits_m` and tilt limits,
+  so a move is checked against the instrument's own limits as well; `get_holder` shows them as `hardware_limits`.
+  When the two do not overlap on an axis, every move is refused until the configuration is fixed.

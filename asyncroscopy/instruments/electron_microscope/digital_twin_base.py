@@ -24,7 +24,6 @@ from tango.server import Device, attribute, device_property
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.utils.commands import command
-from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
 
@@ -216,6 +215,11 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         """A twin without a camera model has no camera image to give. A scan returned as one would be mislabelled."""
         unsupported(self, "acquire_camera_image (this twin has no camera model; the diffraction and tilt twins have one)")
 
+    def _detectors(self) -> dict:
+        """What this twin renders: a HAADF scan and an EDS spectrum, and no camera image (a twin with a camera
+        model lists the CAMERA device's names, which all give its one simulated camera)."""
+        return {"scanning": ["haadf"], "camera": [], "eds": ["eds"], "eels": [], "cameras": {}}
+
     def _place_beam(self, position) -> None:
         """Park the beam at [x, y], fractions of the field (place_beam checks them first)."""
         x, y = (float(v) for v in list(position)[:2])
@@ -270,7 +274,8 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
         detectors), scan_detectors is what the twin's STEM renderer actually
         produces (a simulated HAADF signal, whatever label is requested),
         spectrum_detectors is what acquire_spectrum accepts, and camera_detectors
-        are the names the CAMERA device validates writes against. An earlier
+        the camera names it gives an image for (none without a camera model);
+        all three come from _detectors, which get_detectors serves. An earlier
         draft published the proxy keys under a "detectors" key, which told an
         agent that "stage" and "data" were detectors it could scan with.
         """
@@ -280,9 +285,9 @@ class ElectronMicroscopeTwin(ElectronMicroscope):
             "stem_mode": bool(self._stem_mode),
             "defocus_m": float(self._defocus),
             "device_proxies": sorted(self._detector_proxies.keys()),
-            "scan_detectors": ["haadf"],
-            "spectrum_detectors": ["eds"],
-            "camera_detectors": sorted(CAMERA._CAMERA_DETECTORS),
+            "scan_detectors": self._detectors()["scanning"],
+            "spectrum_detectors": self._detectors()["eds"],
+            "camera_detectors": self._detectors()["camera"],
             **self._viewport_metadata(),
         }
         return json.dumps(parameters)
