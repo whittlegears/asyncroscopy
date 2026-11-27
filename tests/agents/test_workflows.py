@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -1264,3 +1265,32 @@ def test_the_workflow_operator_endpoint_binds_to_loopback_only(capsys):
 
     assert main(["--name", "W", "--transport", "streamable-http", "--http-host", "0.0.0.0", "--http-port", "8004", "--endpoint-role", "operator"]) == 1
     assert "needs --http-host 127.0.0.1" in capsys.readouterr().out
+
+
+def test_review_and_approve_agree_on_an_expired_approval(tmp_path, monkeypatch):
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows import server as workflow_server
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    instrument, analysis, _state = twin()
+    workflows = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state", library=library)
+    tools = {fn.__name__: fn for fn in workflows.tools() + workflows.operator_tools()}
+    assert run(tools["propose_workflow"](user_request=ASKED, source=TEMPLATE))["ok"]
+    assert run(tools["run_workflow"](name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
+    reviewed = workflows.review("tiles_only")["hash"]
+    first = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, days=1))
+    assert first["ok"] and first["approval"]["rehearsed"]["inputs"]["size_m"] == 5e-7
+
+    review = workflows.review("tiles_only")
+    again = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    assert not review["approval_expired"] and not review["can_approve"]
+    assert not again["ok"] and again["error"] == review["why_not"] and library.approval("tiles_only")["expires"] == first["approval"]["expires"]
+
+    later = time.time() + 2 * 86400.0
+    monkeypatch.setattr(workflow_server.time, "time", lambda: later)
+    review = workflows.review("tiles_only")
+    assert review["approval_expired"] and review["can_approve"] and review["why_not"] is None
+    renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    assert renewed["ok"] and renewed["approval"]["expires"] is None

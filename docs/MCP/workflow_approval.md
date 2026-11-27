@@ -89,6 +89,7 @@ This tool only reads. The reply:
   "problems": [],
   "request_as_reported_by_agent": {"text": "what the agent says the user asked", "at": 1795817468.2, "this_code": true},
   "approval": null,
+  "approval_expired": false,
   "changed_since_approval": false,
   "rejection": null,
   "rehearsals": [
@@ -113,8 +114,11 @@ This tool only reads. The reply:
   are the problems that the run recorded.
 - `hash` identifies this exact code (the module and every block it uses). Pass it back as `expected_hash`.
 - `rehearsed` is true when a run of this code reached `done`.
-- `can_approve` and `why_not` say whether `approve_workflow` would accept it now. The reasons are: it is shipped,
-  it is already approved, it fails its checks, or it was never rehearsed to the end.
+- `approval_expired` is true when the approval's `expires` has passed: the workflow no longer runs on an instrument
+  and may be approved again.
+- `can_approve` and `why_not` say whether `approve_workflow` would accept it now; `approve_workflow` decides from
+  this same reply, so the two never disagree. The reasons are: it is shipped, it is already approved and the
+  approval has not expired, it fails its checks, or it was never rehearsed to the end.
 - `problems` are the workflow's own checks. They do not check it against the live endpoint's tools; the runner
   does that before every run.
 - Times (`at`) are Unix seconds.
@@ -129,7 +133,8 @@ until it is revoked.
 The tool refuses (`ok: false`) when:
 
 - there is no such workflow;
-- the workflow is shipped;
+- `review_workflow` would report `can_approve: false` (shipped, approved and not expired, failing its checks, or
+  never rehearsed), with its `why_not` as the error;
 - the workflow's hash is not `expected_hash` (it changed since it was reviewed: review it again);
 - `approver` is empty;
 - `days` is not above 0;
@@ -144,10 +149,12 @@ The reply when it succeeds:
  "approval": {"name": "tiles_only", "hash": "...", "by": "Sam Reed", "login": "sam", "at": 1795817500.0,
               "acts": true, "tools": ["..."], "instrument": "tango://scope-a:9094", "expires": 1798409500.0,
               "rehearsed": {"run_id": "3f2a...", "at": 1795817470.1, "calls": 14, "inputs": {"size_m": 5e-07}},
-              "request": "the user's own words", "via": "Workflow_Operator_MCP"}}
+              "request": "what the proposing agent said the user asked", "via": "Workflow_Operator_MCP"}}
 ```
 
-`via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
+`request` is the proposing agent's account of the user's request (`request_as_reported_by_agent` in the review),
+kept with the approval; it is not the person's own record. `rehearsed` is the last run of this code on a twin that
+reached `done`, with the inputs it ran with. `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
 earlier rejection.
 
 ### `reject_workflow(name: str, reason: str, expected_hash: str)`

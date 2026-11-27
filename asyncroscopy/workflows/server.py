@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -246,9 +247,11 @@ class WorkflowServer:
                 shown["problems"] = list(dict.fromkeys([*shown["problems"], *run["problems"]]))
             rehearsals.append(shown)
         rehearsed = any(r["this_code"] and r["state"] == "done" for r in rehearsals)
+        expires = (approval or {}).get("expires")
+        expired = expires is not None and time.time() > float(expires)
         if status == SHIPPED:
             refusal = f"{workflow.name} is shipped with the software; there is nothing to approve"
-        elif status == APPROVED:
+        elif status == APPROVED and not expired:
             refusal = f"{workflow.name} is already approved, as it is now"
         elif not checked["ok"]:
             refusal = f"{workflow.name} does not pass its checks: {checked['problems']}"
@@ -263,6 +266,7 @@ class WorkflowServer:
             # The agent that proposed it supplied these words: they are what it says the user asked, not the person's own record.
             "request_as_reported_by_agent": {"text": asked.get("request"), "at": asked.get("at"), "this_code": asked.get("hash") == current} if asked else None,
             "approval": approval,
+            "approval_expired": expired,
             "changed_since_approval": approval is not None and approval.get("hash") != current,
             "rejection": {**rejection, "this_code": rejection.get("hash") == current} if rejection else None,
             "rehearsals": rehearsals, "rehearsed": rehearsed,
@@ -291,13 +295,15 @@ class WorkflowServer:
             name. instrument: the stack_id it is approved for (left out or "any": every instrument). days: how long the
             approval holds (left out: until revoked). Refused unless this exact code ran to the end on a digital twin."""
             try:
-                workflow, status = server._workflow(name)
+                review = server.review(name)
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
-            if status == SHIPPED:
-                return {"ok": False, "status": status, "error": f"{workflow.name} is shipped with the software; there is nothing to approve"}
+            status = review["status"]
+            # A draft that is not the reviewed code is refused by approve below, as changed since it was reviewed.
+            if str(expected_hash) == review["hash"] and not review["can_approve"]:  # the one decision review_workflow reports
+                return {"ok": False, "status": status, "error": review["why_not"]}
             try:
-                record = server.library.approve(workflow.name, approver, login=getpass.getuser(), instrument=instrument, days=days,
+                record = server.library.approve(review["name"], approver, login=getpass.getuser(), instrument=instrument, days=days,
                                                 require_rehearsal=True, via=via, expected_hash=str(expected_hash))
             except (KeyError, ValueError, PermissionError) as exc:
                 return {"ok": False, "status": status, "error": str(exc.args[0])}
