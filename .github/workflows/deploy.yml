@@ -28,7 +28,7 @@ jobs:
       - name: Setup MyST
         run: npm install -g mystmd
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Build site
         env:
@@ -38,14 +38,14 @@ jobs:
           myst build --html
           touch _build/html/.nojekyll
       - name: Delete old GitHub Pages artifact
-        uses: geekyeggo/delete-artifact@v2
+        uses: geekyeggo/delete-artifact@v6
         with:
           name: github-pages
           failOnError: false
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: 'docs/_build/html'
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
