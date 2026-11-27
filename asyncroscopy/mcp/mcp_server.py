@@ -61,7 +61,7 @@ SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
 COMMAND_TIMEOUT_MILLIS = 30_000
 
 # After a command times out, read back the state it was changing, so the
-# caller knows what actually happened instead of guessing (idea from AMADEUS).
+# caller knows what actually happened instead of guessing.
 READBACK = {
     "move_stage": "get_stage",
     "set_fov": "get_fov",

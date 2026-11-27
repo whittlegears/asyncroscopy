@@ -1,13 +1,12 @@
 """Image <-> stage mapping and specimen-remount transforms.
 
-Pixel to stage (borrowed from AMADEUS's ``client/analysis/stage_mapping.py``):
-stage axes are generally not aligned with the scan axes and can have
+Pixel to stage: stage axes are generally not aligned with the scan axes and can have
 different gains. Moving the stage by ``d = (dx, dy)`` metres shifts image
 features by ``J @ d`` metres (image x right, y down). To bring a feature at
 image offset ``o`` from the centre to the centre, ``J @ d = -o``, so
 ``d = -J^-1 @ o``.
 
-Unlike AMADEUS, a mapped coordinate here is only a *starting guess* for
+A mapped coordinate is only a *starting guess* for
 :mod:`asyncroscopy.atlas.revisit`, which reacquires and registers before it
 calls anything a match.
 

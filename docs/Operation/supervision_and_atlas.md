@@ -8,10 +8,6 @@ This adds three things to the MCP server:
 2. **Recipes**: a successful run you can save, edit, rehearse on the twin, and then run on the microscope.
 3. **A specimen atlas** where "return to this spot" is a verified action.
 
-The queue design is borrowed from AMADEUS's action queue. The pixel-to-stage
-mapping is borrowed from AMADEUS's `stage_mapping.py`, but here a mapped
-coordinate is only a starting guess.
-
 Turn it on in the MCP config (`configs/mcp_dt.yaml` has a full example):
 
 ```yaml
