@@ -13,7 +13,8 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 from tango.server import command, device_property
 
-from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.analysis.correction import ceos_to_pytemlib
+from asyncroscopy.data.data_writer import save_acquisition, scan_attrs, utc_now
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 
 
@@ -206,13 +207,7 @@ class PolycrystallineGoldDigitalTwin(DigitalTwin):
         padded_fov_angstrom = pixel_size_angstrom * padded_size
         coefficients = self._corrector_coefficients()
         aberrations = probe_tools.get_target_aberrations("Spectra300", int(self.acceleration_voltage_ev))
-        mappings = {"C1": ("C10",), "A1": ("C12a", "C12b"), "B2": ("C21a", "C21b"), "A2": ("C23a", "C23b"), "C3": ("C30",), "S3": ("C32a", "C32b"), "A3": ("C34a", "C34b"), "D4": ("C41a", "C41b"), "B4": ("C43a", "C43b"), "A4": ("C45a", "C45b")}
-        for source, destinations in mappings.items():
-            values = np.atleast_1d(coefficients[source]).astype(float)
-            if len(values) != len(destinations):
-                raise ValueError(f"Corrector coefficient {source} has {len(values)} value(s); expected {len(destinations)}")
-            for destination, value_m in zip(destinations, values):
-                aberrations[destination] = float(value_m * 1e9)
+        aberrations.update(ceos_to_pytemlib(coefficients))  # CEOS (Haider) -> pyTEMlib (Krivanek) notation
         aberrations["acceleration_voltage"] = float(self.acceleration_voltage_ev)
         aberrations["FOV"] = padded_fov_angstrom / 10.0
         aberrations["convergence_angle"] = float(self.convergence_angle_mrad)
@@ -224,7 +219,7 @@ class PolycrystallineGoldDigitalTwin(DigitalTwin):
         scan_time = dwell_time * imsize * imsize
         counts = scan_time * (float(self.beam_current_pa) * 1e-12) / 1.602e-19 / 100.0
         pose_seed = abs(hash((int(self.sample_seed), int(imsize), round(fov_angstrom, 6), tuple(np.round(self._stage_position, 12))))) % (2**32)
-        rng = np.random.default_rng(pose_seed)
+        rng = np.random.default_rng(self._noise_seed(pose_seed))
         image -= image.min()
         image /= image.sum() if image.sum() > 0 else 1.0
         noisy = rng.poisson(image * counts).astype(np.float32)
@@ -241,9 +236,11 @@ class PolycrystallineGoldDigitalTwin(DigitalTwin):
 
     def _acquire_scanned_image(self, imsize: int, dwell_time: float, detector_list: list[str] = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5") -> str:
         detector_list = [detector.upper() for detector in detector_list]
+        started_at = utc_now()
         images = [self._render_stem_image(int(imsize), float(dwell_time)) for _detector in detector_list]
         metadata = {**self._sample_metadata, "last_rendered_atom_count": self._last_rendered_atom_count, "raw_potential_cache_hits": self._raw_potential_cache_hits, "defocus_m": self._get_defocus(), "corrector_aberrations": self._corrector_coefficients()}
-        attrs = [metadata.copy() for _image in images]
+        scan = scan_attrs(int(imsize), float(dwell_time), started_at, pixel_size_m=float(self._fov) / int(imsize))
+        attrs = [{**metadata, **scan} for _image in images]
         return save_acquisition(self, self._detector_proxies.get("data"), "stem_image", detector_list, images, dataset_attrs=attrs, file_attrs=metadata, output_format=output_format)
 
     @command(dtype_out=str)

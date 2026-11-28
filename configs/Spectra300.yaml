@@ -19,6 +19,21 @@ devices:
   corrector:
     class_name: CEOSCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos
+    # Correction limits protect the corrector from an agent or a script bug.
+    # Choose the values with the corrector operators (unit: m; rad for WD).
+    # Aberrations not listed are not limited. Example shape only, not safe values:
+    # properties:
+    #   max_step: '{"C1": 50e-9, "A1": 20e-9}'
+    #   max_total_since_tableau: '{"C1": 200e-9}'
+  analysis:
+    class_name: ANALYSIS
+    module_name: asyncroscopy.analysis.analysis_device
+    properties:
+      data_device_address: asyncroscopy/data/default
+      accelerating_voltage_v: 300000
+      # Set to the probe convergence semi-angle in use to get a correction target.
+      convergence_semi_angle_mrad: 0
+      max_drift_per_frame_px: 0.5
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
   scan:      { module_name: asyncroscopy.instruments.electron_microscope.hardware.scan }

@@ -28,6 +28,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin_particles import 
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.electron_microscope.auto_script import AutoScriptMicroscope
 from asyncroscopy.data.data import DATA
+from asyncroscopy.analysis.analysis_device import ANALYSIS
 
 
 from tests.test_agent import setup_llm_stubs
@@ -99,6 +100,28 @@ def tango_ctx(data_save_dir):
                 {
                     "name": "asyncroscopy/corrector/default",
                     "properties": {"measurement_noise_fraction": 0.0},
+                },
+                {
+                    "name": "asyncroscopy/corrector/limited",
+                    "properties": {
+                        "measurement_noise_fraction": 0.0,
+                        "max_step": '{"C1": 10e-9, "A1": 5e-9}',
+                        "max_total_since_tableau": '{"C1": 25e-9}',
+                    },
+                },
+            ],
+        },
+        {
+            "class": ANALYSIS,
+            "devices": [
+                {
+                    "name": "asyncroscopy/analysis/default",
+                    "properties": {
+                        "accelerating_voltage_v": 300e3,
+                        "convergence_semi_angle_mrad": 25.0,
+                        "max_drift_per_frame_px": 0.5,
+                        "expected_spacings_m": '{"coarse": 2e-9}',
+                    },
                 }
             ],
         },
@@ -231,6 +254,18 @@ def stage_proxy(tango_ctx):
 def corrector_proxy(tango_ctx):
     return tango.DeviceProxy(
         tango_ctx.get_device_access("asyncroscopy/corrector/default")
+    )
+
+
+@pytest.fixture
+def analysis_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/analysis/default"))
+
+
+@pytest.fixture
+def limited_corrector_proxy(tango_ctx):
+    return tango.DeviceProxy(
+        tango_ctx.get_device_access("asyncroscopy/corrector/limited")
     )
 
 

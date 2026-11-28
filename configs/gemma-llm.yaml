@@ -9,6 +9,9 @@ agent:
   model_provider: "ollama"
   max_steps: 10
   use_init_chat_model: false
+  # Every prompt and output is recorded here as JSON-lines training data
+  # (see asyncroscopy/training). Remove the line to turn it off.
+  training_log_dir: outputs/training_data
 
   mcp_urls:
     - "http://127.0.0.1:8000/mcp"

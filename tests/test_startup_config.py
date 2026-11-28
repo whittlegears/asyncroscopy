@@ -335,3 +335,16 @@ def test_cleanup_flag_exits_without_starting(tmp_path, script, config):
     )
     assert result.returncode == 0, result.stderr
     assert "Stopped processes left by an earlier run" in result.stdout
+
+
+def test_llm_training_log_dir_is_passed_to_the_agent_server(tmp_path):
+    config = run_llm.load_config(CONFIGS / "gemma-llm.yaml")
+    assert config.agent.training_log_dir == "outputs/training_data"
+    assert run_llm.build_command(config)[-2:] == ["--training-log-dir", "outputs/training_data"]
+
+    raw = yaml.safe_load((CONFIGS / "gemma-llm.yaml").read_text())
+    del raw["agent"]["training_log_dir"]
+    path = tmp_path / "llm.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    assert "--training-log-dir" not in run_llm.build_command(run_llm.load_config(path))
+

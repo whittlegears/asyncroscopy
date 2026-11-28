@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -34,6 +34,65 @@ def acquisition_filename(
     directory.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
     return directory / f"{acquisition_type}_{detector}_{stamp}.{extension.lower().lstrip('.')}"
+
+
+def utc_now() -> str:
+    """Current time as an ISO 8601 UTC string with microseconds."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def scan_attrs(imsize: int, dwell_time: float, started_at: str, pixel_size_m: float | None = None) -> dict:
+    """Standard attrs for one scanned image, written under fixed names.
+
+    ``frame_time_s`` is dwell x pixels and leaves out flyback, so it is a lower bound.
+    Analysis reads these names (see asyncroscopy/analysis/analysis_device.py); only
+    .h5 output keeps them for AutoScript images, which save TIFFs themselves.
+    """
+    attrs = {
+        "imsize_px": int(imsize),
+        "dwell_time_s": float(dwell_time),
+        "frame_time_s": float(dwell_time) * int(imsize) ** 2,
+        "acquisition_start_utc": started_at,
+    }
+    if pixel_size_m is not None:
+        attrs["pixel_size_m"] = float(pixel_size_m)
+    return attrs
+
+
+def _xml_length_m(element) -> float | None:
+    """A length element such as ``<X unit="m" unitPrefixPower="-9">1.2</X>``, in meters.
+
+    Returns None for any unit other than meters rather than guess a conversion.
+    """
+    if element is None or element.get("unit", "m") != "m":
+        return None
+    try:
+        value = float((element.text or "").strip())
+    except ValueError:
+        return None
+    return value * 10.0 ** int(element.get("unitPrefixPower") or 0)
+
+
+def pixel_size_from_source(source) -> float | None:
+    """The pixel size in meters of an AutoScript image, or None if it has none.
+
+    Tries the AutoScript metadata object first, then the metadata XML by its full
+    path (BinaryResult/PixelSize/X, in any XML namespace). The flattened XML attrs
+    cannot be used for this: generic tags like X appear many times.
+    """
+    metadata = getattr(source, "metadata", None)
+    try:
+        return float(metadata.binary_result.pixel_size.x)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    metadata_xml = getattr(metadata, "metadata_as_xml", None)
+    if not metadata_xml:
+        return None
+    try:
+        root = ET.fromstring(metadata_xml)
+    except ET.ParseError:
+        return None
+    return _xml_length_m(root.find(".//{*}BinaryResult/{*}PixelSize/{*}X"))
 
 
 def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
@@ -146,3 +205,8 @@ def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: di
             elif isinstance(metadata, dict):
                 for key, value in metadata.items():
                     dset.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
+
+            # Fixed names that analysis code can rely on, whatever the source.
+            pixel_size = pixel_size_from_source(source)
+            if pixel_size is not None and "pixel_size_m" not in item.get("attrs", {}):
+                dset.attrs["pixel_size_m"] = pixel_size

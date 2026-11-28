@@ -29,6 +29,15 @@ devices:
       measurement_noise_fraction: 0.0
   data:
     module_name: asyncroscopy.data.data
+  analysis:
+    class_name: ANALYSIS
+    module_name: asyncroscopy.analysis.analysis_device
+    properties:
+      data_device_address: asyncroscopy/data/default
+      accelerating_voltage_v: 200000
+      convergence_semi_angle_mrad: 30
+      # Gold lattice spacings, a = 4.08 Angstrom.
+      expected_spacings_m: '{"Au(111)": 2.355e-10, "Au(200)": 2.04e-10, "Au(220)": 1.442e-10}'
   eds:
     module_name: asyncroscopy.instruments.electron_microscope.detectors.eds
   scan:

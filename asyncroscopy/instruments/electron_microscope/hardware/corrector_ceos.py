@@ -60,6 +60,9 @@ class CEOSCorrector(CORRECTOR):
         return self._call("measureC1A1")
 
     def _correct_aberration(self, name: str, values: list[float]) -> str:
+        # CEOS expects an [x, y] pair for every aberration, y = 0 for scalars.
+        if len(values) == 1:
+            values = [values[0], 0.0]
         return self._call("correctAberration", {"name": name, "value": values})
 
     def _call(self, method: str, params: Optional[dict] = None) -> str:

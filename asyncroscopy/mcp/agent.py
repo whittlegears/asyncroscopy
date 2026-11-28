@@ -26,6 +26,8 @@ except ImportError:
     print("uv sync --extra agent --extra ollama")
     sys.exit(1)
 
+from asyncroscopy.training.recorder import TrainingRecorder, to_openai_message
+
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_MODEL = "gemma4:31b"
 DEFAULT_MAX_STEPS = 10
@@ -61,6 +63,7 @@ class AgentSwarm:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
+        training_log_dir: str | None = None,
     ):
         """
         Args:
@@ -72,6 +75,8 @@ class AgentSwarm:
             use_init_chat_model (bool): Initialize the model through LangChain's
                 ``init_chat_model`` (OpenAI, Anthropic, ...) instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+            training_log_dir (str, optional): Directory where every prompt and output is
+                recorded as JSON-lines training data. None disables it.
         """
         self.model = model
         self.model_provider = model_provider
@@ -84,6 +89,10 @@ class AgentSwarm:
         self._mcp_clients: list[MultiServerMCPClient] = []
         self._model = None
         self.startup_error: str | None = None
+        self._recorder: TrainingRecorder | None = (
+            TrainingRecorder(training_log_dir, model=model) if training_log_dir else None
+        )
+        self._tool_schemas: dict[str, list[dict]] = {}  # agent name -> tools it is offered, for the recorder
 
     # ----------------------------------------------------------------------
     # Startup
@@ -242,6 +251,9 @@ class AgentSwarm:
         """
         if not self.ready:
             return f"Agent Error: no model is available ({self.startup_error})."
+        if self._recorder is not None:
+            self._recorder.start_run(prompt)
+        final, error = "", None
         try:
             transcript: list[str] | None = [] if include_transcript else None
             final = await self._run_swarm(prompt, transcript=transcript)
@@ -250,7 +262,12 @@ class AgentSwarm:
             return "\n".join([*transcript, "", "FINAL ANSWER:", final])
         except Exception as e:
             print(f"\n[CRITICAL ERROR]: {e}")
-            return str(e)
+            error = str(e)
+            return error
+        finally:
+            # Also runs when the query is cancelled, so the run record is always written.
+            if self._recorder is not None:
+                self._recorder.end_run(final, error=error)
 
     async def complete(self, request_json: str) -> str:
         """OpenAI-compatible single-step chat completion."""
@@ -262,7 +279,9 @@ class AgentSwarm:
             tools = request.get("tools") or []
             model = self._model.bind_tools(tools) if tools else self._model
             response = await model.ainvoke(messages)
-            return json.dumps({"message": self._langchain_message_to_openai(response)})
+            if self._recorder is not None:
+                self._recorder.record_call(request.get("messages") or [], response, agent="complete", tools=tools)
+            return json.dumps({"message": to_openai_message(response)})
         except Exception as e:
             return json.dumps({"error": {"message": str(e)}})
 
@@ -315,24 +334,18 @@ class AgentSwarm:
                 converted.append(HumanMessage(content=content or ""))
         return converted
 
+    # Kept as a name for existing callers; the recorder owns the conversion.
+    _langchain_message_to_openai = staticmethod(to_openai_message)
+
     @staticmethod
-    def _langchain_message_to_openai(message: BaseMessage) -> dict:
-        """Convert a LangChain AIMessage into an OpenAI-style assistant message dict."""
-        result: dict = {"role": "assistant", "content": message.content or ""}
-        tool_calls = getattr(message, "tool_calls", None) or []
-        if tool_calls:
-            result["tool_calls"] = [
-                {
-                    "id": call.get("id") or f"call_{index}",
-                    "type": "function",
-                    "function": {
-                        "name": call["name"],
-                        "arguments": json.dumps(call.get("args") or {}),
-                    },
-                }
-                for index, call in enumerate(tool_calls)
-            ]
-        return result
+    def _tool_schema(tool) -> dict:
+        """A tool's OpenAI-style definition, as fine-tuning data expects."""
+        try:
+            from langchain_core.utils.function_calling import convert_to_openai_tool
+
+            return convert_to_openai_tool(tool)
+        except Exception:  # unusual tool objects: keep at least the name and description
+            return {"type": "function", "function": {"name": tool.name, "description": getattr(tool, "description", "")}}
 
     # ----------------------------------------------------------------------
     # Swarm internals
@@ -348,6 +361,8 @@ class AgentSwarm:
         """Filter this agent's tools and construct its ReAct executor."""
         agent_tools = self._get_agent_tools(agent.tools)
         print(f"[SYSTEM]: Binding {len(agent_tools)} tools to {agent.name}")
+        if self._recorder is not None:
+            self._tool_schemas[agent.name] = [self._tool_schema(tool) for tool in agent_tools]
         return create_agent(model=self._model, tools=agent_tools, system_prompt=agent.system_prompt)
 
     def _extract_json(self, text: str) -> str:
@@ -389,6 +404,8 @@ class AgentSwarm:
                 transcript.append(line)
 
         config = {"recursion_limit": recursion_limit} if recursion_limit else None
+        model_inputs: dict = {}  # event run_id -> messages the model was given
+        tool_inputs: dict = {}  # event run_id -> tool arguments
         async for event in agent_executor.astream_events({"messages": messages}, config=config, version="v2"):
             kind = event["event"]
 
@@ -396,6 +413,9 @@ class AgentSwarm:
                 # A new generation round is starting (could be a tool-call round or the final answer)
                 start_time = time.time()
                 first_token_received = False
+                given = (event.get("data", {}).get("input") or {}).get("messages") or []
+                # Chat-model events carry a batch of conversations; the agent sends one.
+                model_inputs[event.get("run_id")] = given[0] if given and isinstance(given[0], list) else given
 
             elif kind == "on_chat_model_stream":
                 chunk = event["data"]["chunk"]
@@ -410,6 +430,14 @@ class AgentSwarm:
 
             elif kind == "on_chat_model_end":
                 output = event["data"]["output"]
+                if self._recorder is not None:
+                    self._recorder.record_call(
+                        model_inputs.pop(event.get("run_id"), None) or [],
+                        output,
+                        agent=agent_label,
+                        tools=self._tool_schemas.get(agent_label),
+                        latency_s=round(time.time() - start_time, 3),
+                    )
                 tool_calls = getattr(output, "tool_calls", None) or []
                 if not tool_calls:
                     # This round produced no tool calls, so it's the final answer
@@ -419,12 +447,20 @@ class AgentSwarm:
             elif kind == "on_tool_start":
                 tool_name = event["name"]
                 tool_input = event["data"].get("input")
+                tool_inputs[event.get("run_id")] = tool_input
                 line = f"{prefix}EXECUTING TOOL: {tool_name}({tool_input})"
                 print(f"{prefix}[EXECUTING TOOL]: {tool_name}({tool_input})")
                 record(line)
 
             elif kind == "on_tool_end":
                 output = event["data"].get("output")
+                if self._recorder is not None:
+                    self._recorder.record_tool(
+                        event.get("name", ""),
+                        tool_inputs.pop(event.get("run_id"), event["data"].get("input")),
+                        getattr(output, "content", output),
+                        agent=agent_label,
+                    )
                 print(f"{prefix}[TOOL RESULT]: {output}")
                 record(f"{prefix}TOOL RESULT: {output}")
 
@@ -523,6 +559,8 @@ class AgentSwarm:
                 )
             )
             response = await self._model.ainvoke([sys_prompt] + state["messages"])
+            if self._recorder is not None:
+                self._recorder.record_call([sys_prompt] + list(state["messages"]), response, agent="Supervisor")
             next_agent, subtask = self._parse_routing_decision(response.content, valid_options, fallback)
             print(f"[Supervisor] Decision: {next_agent}")
             record(f"Supervisor -> {next_agent}: {subtask}" if next_agent != "FINISH" else "Supervisor -> FINISH")

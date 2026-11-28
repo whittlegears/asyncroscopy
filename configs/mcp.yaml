@@ -26,3 +26,7 @@ mcp:
       - Init
       - Kill
       - RestartServer
+      # Twin-only answers: hidden so the agent is graded on what it measures.
+      - get_ground_truth
+      - get_aberrations_coeff_sim
+      - set_aberrations_coeff_sim

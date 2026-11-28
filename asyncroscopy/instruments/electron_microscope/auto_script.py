@@ -28,7 +28,7 @@ from tango import AttrWriteType, DevState
 from tango.server import attribute, command, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
-from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
+from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition, scan_attrs, utc_now
 
 # AutoScript imports — only available on the microscope PC.
 # Wrapped in try/except so the device can still be imported and tested
@@ -276,11 +276,15 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         detector_list = [d.upper() for d in detector_list]
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
+        started_at = utc_now()
         adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
         if not isinstance(adorned, list):
             adorned = [adorned]
         data_server = self._detector_proxies.get("data")
-        return save_acquisition(self, data_server, "stem_image", detector_list, adorned, output_format=output_format)
+        # Pixel size is taken from each image's own metadata by the writer, not from
+        # the live field of view, which can change between acquisitions.
+        attrs = scan_attrs(int(imsize), float(dwell_time), started_at)
+        return save_acquisition(self, data_server, "stem_image", detector_list, adorned, dataset_attrs=attrs, output_format=output_format)
 
 
     def _acquire_camera_image(

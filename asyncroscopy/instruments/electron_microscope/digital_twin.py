@@ -13,11 +13,11 @@ import tango
 from ase import Atoms
 from ase.build import bulk
 from tango import AttrWriteType, DevState
-from tango.server import Device, attribute, device_property
+from tango.server import Device, attribute, command, device_property
 
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
-from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.data.data_writer import save_acquisition, scan_attrs, utc_now
 
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 
@@ -50,6 +50,15 @@ class DigitalTwin(ElectronMicroscope):
         dtype=float,
         default_value=6e-9,
         doc="Absolute sample thickness (Z) in meters (must be > 0).",
+    )
+    frame_noise = device_property(
+        dtype=bool,
+        default_value=False,
+        doc=(
+            "False (default): an image depends only on the pose, so repeating a "
+            "pose repeats the image exactly. True: each frame gets new shot noise, "
+            "as on a real detector. Needed to test scores that compare two frames."
+        ),
     )
     stage_move_noise_std = device_property(
         dtype=float,
@@ -95,6 +104,7 @@ class DigitalTwin(ElectronMicroscope):
         self.set_state(DevState.INIT)
 
         self._stem_mode = True
+        self._frame_rng = np.random.default_rng(int(self.sample_seed))  # used only when frame_noise is on
         self._detector_proxies: dict[str, tango.DeviceProxy] = {}
         self._manufacturer = "UTKTeam"
         self._beam_pos_x = 0.5
@@ -470,6 +480,12 @@ class DigitalTwin(ElectronMicroscope):
             "particle_count": len(self._particle_records_base),
         }
 
+    def _noise_seed(self, pose_seed: int) -> int:
+        """Seed for one frame's noise: the pose alone, or a new seed per frame when frame_noise is on."""
+        if not bool(self.frame_noise):
+            return int(pose_seed)
+        return int(self._frame_rng.integers(2**32))
+
     def _render_stem_image(self, imsize: int, dwell_time: float, detector_list: list) -> np.ndarray:
         """Simulate STEM image acquisition using convolutions of the pseudo-potential and electron probe."""
         self._sync_stage_from_proxy()
@@ -509,7 +525,7 @@ class DigitalTwin(ElectronMicroscope):
         scan_time = dwell_time * size * size
         counts = scan_time * (beam_current * 1e-12) / (1.602e-19)
         pose_seed = int(abs(hash((tuple(np.round(self._stage_position, 10)), round(self._fov, 14), size))) % (2**32))
-        rng = np.random.default_rng(pose_seed + int(self.sample_seed))
+        rng = np.random.default_rng(self._noise_seed(pose_seed + int(self.sample_seed)))
         noisy_image = self._poisson_noise(image, counts=counts, rng=rng)
         noisy_image += self._lowfreq_noise(noisy_image, noise_level=0.1, freq_scale=0.1, rng=rng) * blur_noise_level
         return np.clip(noisy_image, 0.0, 1.0).astype(np.float32)
@@ -525,11 +541,13 @@ class DigitalTwin(ElectronMicroscope):
         """Simulate STEM acquisition, save the data with metadata, and return its DATA/Tiled key."""
         detector_list = [detector.upper() for detector in detector_list]
         data_server = self._detector_proxies.get("data")
+        started_at = utc_now()
         images = []
         for detector in detector_list:
             image = self._render_stem_image(int(imsize), float(dwell_time), [detector])
             images.append(image)
-        return save_acquisition(self, data_server, "stem_image", detector_list, images, output_format=output_format)
+        attrs = scan_attrs(int(imsize), float(dwell_time), started_at, pixel_size_m=float(self._fov) / int(imsize))
+        return save_acquisition(self, data_server, "stem_image", detector_list, images, dataset_attrs=attrs, output_format=output_format)
 
     def _acquire_camera_image(
         self,
@@ -691,6 +709,47 @@ class DigitalTwin(ElectronMicroscope):
             **self._viewport_metadata(),
         }
         return json.dumps(parameters)
+
+    @command(dtype_out=str)
+    def get_ground_truth(self) -> str:
+        """Return the true particles in the current view, in image pixel coordinates.
+
+        For testing and grading only. It reveals the answer an agent should find,
+        so the MCP configs block it from the agent. Coordinates match an image of
+        the last acquired size at the current pose: row from x, column from y.
+        """
+        if not self._particle_records_base:
+            raise RuntimeError(f"{type(self).__name__} keeps no particle positions, so it has no ground truth")
+        self._sync_stage_from_proxy()
+        self._update_view_cache(force=False)
+        return json.dumps(self._ground_truth())
+
+    def _ground_truth(self) -> dict:
+        imsize = int(self._imsize)
+        fov_ang = float(self._fov) * 1e10
+        pixel_ang = fov_ang / imsize
+        half = fov_ang * 0.5
+        particles = []
+        for record in self._particle_records_view:
+            x, y = float(record["center"][0]), float(record["center"][1])
+            radius = float(record["radius"])
+            if x + radius < -half or x - radius > half or y + radius < -half or y - radius > half:
+                continue  # entirely outside the field of view
+            particles.append(
+                {
+                    "row": (x + half) / pixel_ang,
+                    "col": (y + half) / pixel_ang,
+                    "radius_px": radius / pixel_ang,
+                    "type": record["btype"],
+                    "fully_in_view": bool(abs(x) + radius <= half and abs(y) + radius <= half),
+                }
+            )
+        return {
+            "imsize_px": imsize,
+            "pixel_size_m": float(self._fov) / imsize,
+            "stage_position": [float(v) for v in self._stage_position],
+            "particles": particles,
+        }
 
     def get_viewport_metadata(self) -> str:
         """Return JSON-formatted metadata regarding the current simulation viewport and environment state."""

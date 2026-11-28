@@ -125,7 +125,7 @@ def test_unticked_device_is_never_started_and_reticking_restores_it(gui):
     path, error = window.check_config(window.generated_path)
     assert error is None
     config = run_servers.load_config(path)
-    assert {d.key for d in config.support_devices} == {"camera", "data", "scan", "stage"}
+    assert {d.key for d in config.support_devices} == {"analysis", "camera", "data", "scan", "stage"}
     assert set(config.disabled_devices) == {"eds", "corrector"}
     original = yaml.safe_load((CONFIGS / "DigitalTwin.yaml").read_text())["devices"]["corrector"]
     assert window.current_config()["devices"]["corrector"] == {**original, "enabled": False}

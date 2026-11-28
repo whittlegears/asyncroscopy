@@ -18,6 +18,13 @@ devices:
   corrector:
     class_name: DigitalTwinCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin
+  analysis:
+    class_name: ANALYSIS
+    module_name: asyncroscopy.analysis.analysis_device
+    properties:
+      data_device_address: asyncroscopy/data/default
+      accelerating_voltage_v: 200000  # the twin's probe
+      convergence_semi_angle_mrad: 30
 
 tango:
   host: localhost

@@ -19,32 +19,33 @@ project:
   github: https://github.com/whittlegears/asyncroscopy
   toc:
     - file: index.md
-    - title: Contributor Guides
+    - file: architecture.md
+    - title: Build your own
       children:
-        - file: dev_guide.md
-    - title: Microscopy
-      children:
-        - file: Microscopy/modify_auto_script_microscope.md
-        - file: Microscopy/modify_base_electron_microscope.md
-    - title: Adding New Hardware
-      children:
-        - file: Adding_New_Hardware/add_detector.md
-    - title: MCP Server
-      children:
-        - file: MCP/mcp_server.md
-        - file: MCP/agent_mcp_server.md
-        - file: MCP/building_an_mcp.md
-        - file: MCP/asyncroscopy_mcp.md
+        - file: new_instrument.md
+        - file: scaling.md
+        - file: digital_twin.md
     - title: Operation
       children:
         - file: Operation/run-servers.md
-        - file: Operation/run-server-gui.md
         - file: Operation/troubleshooting.md
-        - file: Operation/process_manager.md
-    - title: Tiled Server
+    - title: Electron microscopes
+      children:
+        - file: Microscopy/modify_base_electron_microscope.md
+        - file: Microscopy/modify_auto_script_microscope.md
+        - file: Adding_New_Hardware/add_detector.md
+    - title: Data
       children:
         - file: Tiled_server/data_integration.md
-    - file: upcoming_changes.md
+    - title: MCP and agents
+      children:
+        - file: MCP/mcp_server.md
+        - file: MCP/agent_mcp_server.md
+        - file: MCP/scores_and_training_data.md
+    - title: Contributing
+      children:
+        - file: dev_guide.md
+        - file: upcoming_changes.md
 
 site:
   template: book-theme

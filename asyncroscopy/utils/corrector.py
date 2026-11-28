@@ -63,7 +63,7 @@ def correct_3rd(ab, corrector_proxy):
     """
     corrected = []
     for key in ['C3', 'S3', 'A3']:
-        if np.linalgnorm(ab.get(key, [0, 0])) > thresholds[key]:
+        if np.linalg.norm(ab.get(key, [0, 0])) > thresholds[key]:
             correct(key, [v * factors[key] for v in ab[key]], corrector_proxy)
             corrected.append(key)
     return corrected
@@ -73,7 +73,7 @@ def correct_4th(ab, factor=1, corrector_proxy=None):
     """Correct 4th order with partial factor. Returns list of corrected keys."""
     corrected = []
     for key in fourth_order:
-        if np.linalgnorm(ab.get(key, [0, 0])) > thresholds[key]:
+        if np.linalg.norm(ab.get(key, [0, 0])) > thresholds[key]:
             correct(key, [v * factors[key]*factor for v in ab[key]], corrector_proxy)
             corrected.append(key)
     return corrected

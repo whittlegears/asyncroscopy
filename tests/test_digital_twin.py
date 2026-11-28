@@ -56,6 +56,18 @@ class TestDigitalTwin:
             assert h5["image/HAADF"].attrs["acquisition_type"] == "stem_image"
             assert h5["image/HAADF"].attrs["detector"] == "HAADF"
 
+    def test_image_records_pixel_size_and_timing(self, twin_proxy: tango.DeviceProxy, scan_proxy: tango.DeviceProxy):
+        scan_proxy.imsize = 32
+        scan_proxy.dwell_time = 1e-6
+        twin_proxy.set_fov(64e-9)
+
+        with h5py.File(twin_proxy.acquire_scanned_image(["haadf"]), "r") as h5:
+            attrs = h5["image/HAADF"].attrs
+            assert attrs["pixel_size_m"] == pytest.approx(2e-9)
+            assert attrs["imsize_px"] == 32
+            assert attrs["frame_time_s"] == pytest.approx(1e-6 * 32 * 32)
+            assert "acquisition_start_utc" in attrs
+
     def test_stage_navigation_changes_and_restores_view(
         self,
         twin_proxy: tango.DeviceProxy,
@@ -102,3 +114,21 @@ class TestDigitalTwin:
         with h5py.File(twin_proxy.acquire_spectrum("eds"), "r") as h5:
             spec_2 = h5["spectrum"][()]
         assert spec_1.tolist() == spec_2.tolist()
+
+
+def test_frame_noise_off_repeats_the_seed_and_on_gives_each_frame_its_own():
+    from types import SimpleNamespace
+
+    from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
+
+    import numpy as np
+
+    still = SimpleNamespace(frame_noise=False)
+    assert DigitalTwin._noise_seed(still, 42) == DigitalTwin._noise_seed(still, 42) == 42
+
+    noisy = SimpleNamespace(frame_noise=True, _frame_rng=np.random.default_rng(1))
+    seeds = [DigitalTwin._noise_seed(noisy, 42) for _ in range(3)]
+    assert len(set(seeds)) == 3
+
+    replay = SimpleNamespace(frame_noise=True, _frame_rng=np.random.default_rng(1))
+    assert [DigitalTwin._noise_seed(replay, 42) for _ in range(3)] == seeds  # same sample seed, same frames

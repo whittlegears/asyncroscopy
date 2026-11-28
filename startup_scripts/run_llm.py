@@ -35,6 +35,7 @@ SETTINGS = [
     Setting('agent.max_steps', 'int', 10),
     Setting('agent.use_init_chat_model', 'bool', False),
     Setting('agent.startup_agents', 'yaml', []),
+    Setting('agent.training_log_dir', default=''),
 ]
 
 
@@ -56,6 +57,8 @@ class AgentConfig:
     # Kept as plain dicts so this module never imports the agent extras, which
     # keeps --help and config errors working without them installed.
     startup_agents: list[dict] = field(default_factory=list)
+    # Directory for background JSONL training data; empty disables recording.
+    training_log_dir: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,7 @@ def load_config(path: Path) -> Config:
             max_steps=values['agent.max_steps'],
             use_init_chat_model=values['agent.use_init_chat_model'],
             startup_agents=[dict(entry) for entry in startup_agents],
+            training_log_dir=str(values['agent.training_log_dir'] or ''),
         ),
     )
 
@@ -135,6 +139,8 @@ def build_command(config: Config) -> list[str]:
     ]
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
+    if agent.training_log_dir:
+        command.extend(['--training-log-dir', agent.training_log_dir])
     return command
 
 
@@ -161,6 +167,7 @@ def run_interactive(config: Config) -> int:
         max_steps=config.agent.max_steps,
         startup_agents=[Agent(**entry) for entry in config.agent.startup_agents],
         use_init_chat_model=config.agent.use_init_chat_model,
+        training_log_dir=config.agent.training_log_dir or None,
     )
     asyncio.run(swarm.start(config.agent.mcp_urls))
 

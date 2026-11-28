@@ -41,6 +41,7 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
+        training_log_dir: str | None = None,
     ):
         """
         Args:
@@ -52,6 +53,8 @@ class AgentMCPServer:
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+            training_log_dir (str, optional): Record every prompt and output here as
+                JSON-lines training data. None disables it.
         """
         self.verbose = verbose
         self.mcp_urls = list(mcp_urls)
@@ -62,6 +65,7 @@ class AgentMCPServer:
             startup_agents=startup_agents,
             use_init_chat_model=use_init_chat_model,
             verbose=verbose,
+            training_log_dir=training_log_dir,
         )
 
         # Swarm must be initialized inside the server's own event loop
@@ -170,6 +174,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--startup-agents-json", default="[]")
     parser.add_argument("--use-init-chat-model", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--training-log-dir",
+        default=None,
+        help="Record every prompt and output here as JSONL training data (off when not given).",
+    )
     return parser.parse_args(argv)
 
 
@@ -196,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         startup_agents=[Agent(**agent) for agent in json.loads(args.startup_agents_json)],
         use_init_chat_model=args.use_init_chat_model,
         verbose=not args.quiet,
+        training_log_dir=args.training_log_dir,
     )
     if args.transport == "streamable-http":
         print(

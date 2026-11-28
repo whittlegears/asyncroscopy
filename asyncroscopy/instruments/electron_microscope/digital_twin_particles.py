@@ -14,7 +14,7 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
-from asyncroscopy.data.data_writer import save_acquisition
+from asyncroscopy.data.data_writer import save_acquisition, scan_attrs, utc_now
 from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
 
 
@@ -67,7 +67,7 @@ class DigitalTwinParticles(DigitalTwin):
     def _connect(self):
         """Connect the current support devices and build the persistent world."""
         self._connect_detector_proxies()
-        np.random.seed(int(self.sample_seed))
+        self._rng = np.random.default_rng(int(self.sample_seed))
         self._make_sample_recipe()
         self._cook_sample_recipe()
         self.set_state(DevState.ON)
@@ -138,6 +138,7 @@ class DigitalTwinParticles(DigitalTwin):
         Acquire a simulated STEM image using the pre-cooked sample state.
         Requires _cook_sample_recipe() to have been called immediately before this.
         """
+        started_at = utc_now()
         self._cook_sample_recipe()
         size = imsize
         self._imsize = imsize
@@ -195,13 +196,13 @@ class DigitalTwinParticles(DigitalTwin):
         def poisson_noise(image, counts=1e9):
             image = image - image.min()
             image = image / image.sum()
-            noisy = np.random.poisson(image * counts).astype(float)
+            noisy = self._rng.poisson(image * counts).astype(float)
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
         def lowfreq_noise(image, noise_level=0.1, freq_scale=0.1):
             size_x, size_y = image.shape
-            noise      = np.random.normal(0, noise_level, (size_x, size_y))
+            noise      = self._rng.normal(0, noise_level, (size_x, size_y))
             noise_fft  = np.fft.fft2(noise)
             x_freqs    = np.fft.fftfreq(size_x)
             y_freqs    = np.fft.fftfreq(size_y)
@@ -312,6 +313,7 @@ class DigitalTwinParticles(DigitalTwin):
                 "world_shape": list(self._world_shape),
                 "voxel_size_angstrom": float(self._vox_size),
                 "stage_position": list(self._get_stage()),
+                **scan_attrs(int(imsize), float(dwell_time), started_at, pixel_size_m=float(self._fov) / int(imsize)),
             },
             output_format=output_format,
         )
@@ -373,12 +375,12 @@ class DigitalTwinParticles(DigitalTwin):
             if len(placed_particles) >= n_particles:
                 break
 
-            radius = np.clip(np.random.normal(particle_radius, radius_std), 3.0, None)
+            radius = np.clip(self._rng.normal(particle_radius, radius_std), 3.0, None)
             margin = radius + 2.0
             sample_fov = (fov_ang, fov_ang, world_z_ang)
 
-            cx = np.random.uniform(margin, sample_fov[0] - margin)
-            cy = np.random.uniform(margin, sample_fov[1] - margin)
+            cx = self._rng.uniform(margin, sample_fov[0] - margin)
+            cy = self._rng.uniform(margin, sample_fov[1] - margin)
             cz = sample_fov[2] * 0.5
 
             too_close = any(
@@ -389,9 +391,9 @@ class DigitalTwinParticles(DigitalTwin):
                 continue
 
             placed_centers.append((cx, cy, radius))
-            btype  = np.random.choice(bulk_names)
+            btype  = self._rng.choice(bulk_names)
             i      = len(placed_particles)
-            angles = desired_angles[i] if i < len(desired_angles) else tuple(np.random.rand(3) * 360)
+            angles = desired_angles[i] if i < len(desired_angles) else tuple(self._rng.random(3) * 360)
             placed_particles.append((btype, np.array([cx, cy, cz]), radius, angles))
 
             symbols_in_bulk = bulk_types[btype].get_chemical_symbols()
@@ -640,7 +642,7 @@ class DigitalTwinParticles(DigitalTwin):
                 raw   = {el: frac for el, frac in rec['composition'].items()}
                 total = sum(raw.values())
                 spectrum = {
-                    el: max(0.0, v / total + np.random.normal(0.01, 0.1))
+                    el: max(0.0, v / total + self._rng.normal(0.01, 0.1))
                     for el, v in raw.items()
                 }
                 break
@@ -649,7 +651,7 @@ class DigitalTwinParticles(DigitalTwin):
                 el for rec in self._particle_records for el in rec['composition']
             }
             spectrum = {
-                el: float(np.abs(np.random.normal(0, 0.05)))
+                el: float(np.abs(self._rng.normal(0, 0.05)))
                 for el in all_elements
             }
 
@@ -676,7 +678,7 @@ class DigitalTwinParticles(DigitalTwin):
     def _set_fov(self, fov) -> None:
         """set field of view in meters"""
         self._fov = float(fov)
-        np.random.seed(int(self.sample_seed))
+        self._rng = np.random.default_rng(int(self.sample_seed))
         self._make_sample_recipe()
         self._cook_sample_recipe()
 

@@ -8,7 +8,7 @@ import json
 from tango import DevState
 from tango.server import device_property
 
-from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR
+from asyncroscopy.instruments.electron_microscope.hardware.corrector import CORRECTOR, ROUND_ABERRATIONS
 
 
 DEFAULT_ABERRATIONS = {
@@ -24,6 +24,23 @@ DEFAULT_ABERRATIONS = {
     "B4": [4021.8433526960034e-9, 131.72716642732158e-9],
     "A4": [-4702.390968272048e-9, -208.25028574642903e-9],
 }
+
+# Fit order used by the CEOS-RPC protocol. A tableau returns every aberration
+# up to and including its type's default "maxFit" entry.
+FIT_ORDER = ["A2", "B2", "C3", "A3", "S3", "A4", "D4", "B4", "C5", "A5", "R5", "S5"]
+TABLEAU_MAX_FIT = {"Fast": "B2", "Standard": "A4", "Enhanced": "A5"}
+# Returned by every tableau regardless of type.
+TABLEAU_BASE = ["WD", "C1", "A1"]
+
+
+def tableau_aberration_names(tab_type: str) -> list[str]:
+    """Aberrations a CEOS tableau of ``tab_type`` reports, in fit order."""
+    if tab_type not in TABLEAU_MAX_FIT:
+        raise ValueError(
+            f"Unknown tableau type {tab_type!r}; expected one of {sorted(TABLEAU_MAX_FIT)}"
+        )
+    last = FIT_ORDER.index(TABLEAU_MAX_FIT[tab_type])
+    return TABLEAU_BASE + FIT_ORDER[: last + 1]
 
 
 class DigitalTwinCorrector(CORRECTOR):
@@ -55,6 +72,8 @@ class DigitalTwinCorrector(CORRECTOR):
                 "model": "DigitalTwinCorrector",
                 "connected": True,
                 "simulation": True,
+                "correctorType": "CESCOR",
+                "mode": "STEM",
             }
         )
 
@@ -73,25 +92,42 @@ class DigitalTwinCorrector(CORRECTOR):
             ]
         return coefficients
 
+    @staticmethod
+    def _wire(names, measured) -> dict[str, list[float]]:
+        """Format aberrations as the CEOS server sends them: [x, y] pairs."""
+        out = {}
+        for name in names:
+            if name not in measured:
+                continue  # not simulated (for example C5, A5)
+            values = list(measured[name])
+            if name in ROUND_ABERRATIONS:
+                values = [values[0], 0.0]
+            out[name] = values
+        return out
+
     def _acquire_tableau(self, tab_type: str, angle: float) -> str:
+        names = tableau_aberration_names(tab_type)
+        if not float(angle) > 0.0:
+            raise ValueError(f"Tableau angle must be > 0 mrad, got {angle}")
         return self._response(
             {
                 "tabType": tab_type,
                 "angle": float(angle),
-                "aberrations": self._measured_aberrations(),
+                "aberrations": self._wire(names, self._measured_aberrations()),
             }
         )
 
     def _measure_c1a1(self) -> str:
-        measured = self._measured_aberrations()
         return self._response(
-            {"aberrations": {name: measured[name] for name in ("C1", "A1")}}
+            {"aberrations": self._wire(("C1", "A1"), self._measured_aberrations())}
         )
 
     def _correct_aberration(self, name: str, values: list[float]) -> str:
         if name not in self._simulation_aberrations:
             raise ValueError(f"Unknown aberration {name!r}")
         current = self._simulation_aberrations[name]
+        if name in ROUND_ABERRATIONS and len(values) == 2:
+            values = values[:1]  # the y component of a scalar is ignored
         if len(values) != len(current):
             raise ValueError(
                 f"Aberration {name} expects {len(current)} value(s), got {len(values)}"
@@ -100,9 +136,8 @@ class DigitalTwinCorrector(CORRECTOR):
             float(existing - correction)
             for existing, correction in zip(current, values)
         ]
-        return self._response(
-            {"name": name, "value": self._simulation_aberrations[name], "corrected": True}
-        )
+        # The CEOS server returns a null result for a successful correction.
+        return self._response(None)
 
     def _set_simulation_aberrations(self, coefficients: dict) -> None:
         unknown = set(coefficients) - set(DEFAULT_ABERRATIONS)

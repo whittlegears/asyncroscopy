@@ -2,11 +2,12 @@ import json
 import types
 
 import h5py
+import pytest
 import numpy as np
 
 import tifffile
 
-from asyncroscopy.data.data_writer import save_acquisition, save_acquisition_hdf5
+from asyncroscopy.data.data_writer import pixel_size_from_source, save_acquisition, save_acquisition_hdf5, scan_attrs
 
 
 class FakeDataServer:
@@ -100,3 +101,60 @@ def test_save_acquisition_tiff_writes_one_registered_file_per_detector(tmp_path)
         assert np.array_equal(tifffile.imread(path), images[index])
         with tifffile.TiffFile(path) as tif:
             assert json.loads(tif.pages[0].description) == attrs[index]
+
+
+
+# AutoScript-style XML: X and Y appear under several parents, so only the full
+# BinaryResult/PixelSize path identifies the pixel size.
+AUTOSCRIPT_LIKE_XML = """
+<Metadata{namespace}>
+  <StagePosition><X unit="m">0.000123</X><Y unit="m">-0.000045</Y></StagePosition>
+  <BinaryResult>
+    <ImageSize><X>512</X><Y>512</Y></ImageSize>
+    <PixelSize><X unit="m" unitPrefixPower="-9">0.0391</X><Y unit="m" unitPrefixPower="-9">0.0391</Y></PixelSize>
+  </BinaryResult>
+</Metadata>
+"""
+
+
+def _xml_source(namespace=""):
+    xml = AUTOSCRIPT_LIKE_XML.format(namespace=f' xmlns="{namespace}"' if namespace else "")
+    return types.SimpleNamespace(data=np.zeros((2, 2), dtype=np.float32), metadata=types.SimpleNamespace(metadata_as_xml=xml))
+
+
+@pytest.mark.parametrize("namespace", ["", "http://schemas.datacontract.org/2004/07/Fei.SharedObjects"])
+def test_pixel_size_is_read_from_the_full_xml_path(namespace):
+    assert pixel_size_from_source(_xml_source(namespace)) == pytest.approx(0.0391e-9)
+
+
+def test_pixel_size_prefers_the_autoscript_metadata_object():
+    source = _xml_source()
+    source.metadata.binary_result = types.SimpleNamespace(pixel_size=types.SimpleNamespace(x=2e-11, y=2e-11))
+
+    assert pixel_size_from_source(source) == 2e-11
+
+
+def test_pixel_size_is_none_when_missing_or_in_an_unexpected_unit():
+    assert pixel_size_from_source(np.zeros((2, 2))) is None
+    plain = types.SimpleNamespace(metadata=types.SimpleNamespace(metadata_as_xml="<root><X>1</X></root>"))
+    assert pixel_size_from_source(plain) is None
+    nm = types.SimpleNamespace(metadata=types.SimpleNamespace(
+        metadata_as_xml="<M><BinaryResult><PixelSize><X unit='nm'>0.04</X></PixelSize></BinaryResult></M>"))
+    assert pixel_size_from_source(nm) is None
+
+
+def test_writer_stores_pixel_size_under_a_fixed_name(tmp_path):
+    path = tmp_path / "acquisition.h5"
+
+    save_acquisition_hdf5(path, [{"name": "image/HAADF", "source": _xml_source(), "attrs": {}}])
+
+    with h5py.File(path, "r") as h5:
+        assert h5["image/HAADF"].attrs["pixel_size_m"] == pytest.approx(0.0391e-9)
+
+
+def test_scan_attrs_records_frame_timing():
+    attrs = scan_attrs(256, 2e-6, "2026-11-27T00:00:00.000000+00:00", pixel_size_m=1e-10)
+
+    assert attrs["frame_time_s"] == pytest.approx(2e-6 * 256 * 256)
+    assert attrs["pixel_size_m"] == 1e-10
+    assert attrs["acquisition_start_utc"].startswith("2026-11-27")

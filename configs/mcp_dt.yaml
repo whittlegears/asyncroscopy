@@ -26,6 +26,10 @@ mcp:
       - Init
       - Kill
       - RestartServer
+      # Twin-only answers: hidden so the agent is graded on what it measures.
+      - get_ground_truth
+      - get_aberrations_coeff_sim
+      - set_aberrations_coeff_sim
   # Optional Tango command allowlist. Leave empty to include all non-blocked
   # commands. Entries may be "command" or "Class.command".
   # list_devices and get_data_from_key are always included.
