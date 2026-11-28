@@ -49,8 +49,6 @@ DEFAULT_MAX_FOV = 1e-4
 DEFAULT_MAX_IMAGE_SHIFT = 1e-6  # per axis, well inside a Spectra's beam-shift range
 STAGE_ELEMENTS = ("x", "y", "z", "alpha", "beta")
 STAGE_UNITS = ("m", "m", "m", "deg", "deg")
-DETECTOR_TIMEOUT_MS = 12_000
-DATA_TIMEOUT_MS = 3_600_000  # registering a large acquisition with Tiled can take long
 
 
 def check_fov(fov: float, min_fov: float, max_fov: float) -> float:
@@ -189,6 +187,17 @@ class ScanningBeamInstrument(Instrument):
     min_fov = device_property(dtype=float, default_value=DEFAULT_MIN_FOV, doc="Smallest field of view accepted (m).")
     max_fov = device_property(dtype=float, default_value=DEFAULT_MAX_FOV, doc="Largest field of view accepted (m).")
     max_image_shift = device_property(dtype=float, default_value=DEFAULT_MAX_IMAGE_SHIFT, doc="Largest |image shift| per axis accepted (m).")
+    detector_timeout_seconds = device_property(
+        dtype=float,
+        default_value=12.0,
+        doc="How long a call to a detector or other sub-device (SCAN, CAMERA, EDS, ...) may take (s), unless it has its own timeout.",
+    )
+    data_timeout_seconds = device_property(
+        dtype=float,
+        default_value=3600.0,
+        doc="How long a call to the DATA device may take (s): registering a large acquisition with Tiled can take long. "
+        "Must exceed the DATA device's register wait (REGISTER_WAIT_SECONDS in asyncroscopy.data.data, 8 s).",
+    )
     default_beam_current_pa = device_property(
         dtype=float,
         default_value=DEFAULT_BEAM_CURRENT_PA,
@@ -257,7 +266,8 @@ class ScanningBeamInstrument(Instrument):
 
     def _proxy_timeout_ms(self, name: str) -> int:
         """How long a call to sub-device ``name`` may take."""
-        return DATA_TIMEOUT_MS if name == "data" else DETECTOR_TIMEOUT_MS
+        seconds = self.data_timeout_seconds if name == "data" else self.detector_timeout_seconds
+        return int(1000 * float(seconds))
 
     def _check_connected(self, command_name: str) -> None:
         """Raise a Tango error when the backend cannot reach the instrument; by default it always can."""

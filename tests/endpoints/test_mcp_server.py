@@ -30,7 +30,7 @@ from fastmcp.tools import ToolResult
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import mcp_server
 from asyncroscopy.mcp.components import data_tools
-from asyncroscopy.mcp.mcp_server import COMMAND_TIMEOUT_MILLIS, MCPServer
+from asyncroscopy.mcp.mcp_server import MCPServer
 
 
 def mcp_kwargs(**overrides):
@@ -642,7 +642,8 @@ class TestMCPRegistration:
 
 
 class TestMCPCommandTimeout:
-    def test_find_tools_raises_proxy_timeout_above_tango_default(self, monkeypatch) -> None:
+    @staticmethod
+    def proxy_timeouts(monkeypatch, **kwargs) -> tuple[MCPServer, list[int]]:
         class FakeDb:
             def get_device_exported(self, pattern):
                 return type("Result", (), {"value_string": ["asyncroscopy/twin/default"]})()
@@ -665,11 +666,21 @@ class TestMCPCommandTimeout:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: FakeDb())
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FakeProxy)
 
-        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False, **kwargs)
         server._find_tools()
+        return server, timeouts
 
-        assert timeouts == [COMMAND_TIMEOUT_MILLIS]
-        assert COMMAND_TIMEOUT_MILLIS > 3000
+    def test_find_tools_raises_proxy_timeout_above_tango_default(self, monkeypatch) -> None:
+        server, timeouts = self.proxy_timeouts(monkeypatch)
+
+        assert timeouts == [30_000]
+        assert server.command_timeout_s == 30.0
+
+    def test_find_tools_gives_proxies_the_configured_command_timeout(self, monkeypatch) -> None:
+        server, timeouts = self.proxy_timeouts(monkeypatch, command_timeout_s=45.0)
+
+        assert timeouts == [45_000]
+        assert server.command_timeout_s == 45.0
 
 
 class TestMCPSpectrumPreview:

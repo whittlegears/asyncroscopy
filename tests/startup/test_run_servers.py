@@ -184,6 +184,23 @@ def test_run_mcp_builds_server_command(fake_uv):
     assert "--search-packages-json" not in command
 
 
+def test_run_mcp_command_timeout_defaults_to_30_s_and_reads_the_config(fake_uv, tmp_path):
+    default = run_mcp.load_config(run_mcp.PROJECT_DIR / "configs" / "mcp.yaml")
+    assert default.mcp.command_timeout_s == 30.0
+    assert "--command-timeout-s" not in run_mcp.build_command(default)
+
+    raw = yaml.safe_load((run_mcp.PROJECT_DIR / "configs" / "mcp_dt.yaml").read_text(encoding="utf-8"))
+    raw["mcp"]["command_timeout_s"] = 45
+    path = tmp_path / "mcp.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    config = run_mcp.load_config(path)
+    command = run_mcp.build_command(config)
+
+    assert config.mcp.command_timeout_s == 45.0
+    assert command[command.index("--command-timeout-s") + 1] == "45.0"
+    assert run_mcp.operator_config(config) is None or run_mcp.operator_config(config).mcp.command_timeout_s == 45.0
+
+
 def test_load_agent_config():
     config = run_llm.load_config(run_llm.PROJECT_DIR / "configs" / "gemma-llm.yaml")
 

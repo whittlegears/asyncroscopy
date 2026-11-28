@@ -5,6 +5,8 @@ import h5py
 import numpy as np
 import pytest
 
+from asyncroscopy.data.data import REGISTER_WAIT_SECONDS
+from asyncroscopy.instruments.electron_microscope.detectors import eels as eels_module
 from asyncroscopy.instruments.electron_microscope.detectors.eels import EELSBase
 from asyncroscopy.instruments.electron_microscope.detectors.eels_gatan import EELS
 
@@ -164,3 +166,27 @@ def test_gatan_eels_acquires_saves_and_registers_spectrum(tmp_path):
         assert spectrum.attrs["dispersion_units"] == "eV/channel"
         assert spectrum.attrs["exposure_time"] == pytest.approx(0.05)
         assert spectrum.attrs["number_of_frames"] == 3
+
+
+def test_eels_data_timeout_defaults_to_120_s():
+    assert EELSBase.data_timeout_seconds.default_value == 120.0
+    assert EELSBase.data_timeout_seconds.default_value > REGISTER_WAIT_SECONDS
+
+
+def test_eels_data_proxy_gets_the_configured_timeout(monkeypatch):
+    timeouts = {}
+
+    class Proxy:
+        def __init__(self, address):
+            self.address = address
+
+        def set_timeout_millis(self, ms):
+            timeouts[self.address] = ms
+
+    monkeypatch.setattr(eels_module.tango, "DeviceProxy", Proxy)
+    device = EELS.__new__(EELS)
+    device._tango_properties = {}
+    device.data_device_address, device.data_timeout_seconds = "d/t/1", 45.0
+    device.info_stream = device.warn_stream = lambda *a: None
+    device._connect_data_proxy()
+    assert timeouts == {"d/t/1": 45_000}

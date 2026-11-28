@@ -27,6 +27,7 @@ import tango
 import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 import asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript as aperture_module
 import asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript as stage_module
+from asyncroscopy.data.data import REGISTER_WAIT_SECONDS
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
 from asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript import AutoScriptAPERTURE
 from asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos import CEOSCorrector
@@ -353,8 +354,40 @@ def test_the_stage_proxy_gets_the_stage_timeout(monkeypatch):
     for name in ("eds", "scan", "camera", "corrector"):
         setattr(device, f"{name}_device_address", "")
     device.stage_device_address, device.data_device_address, device.stage_timeout_seconds = "s/t/1", "d/t/1", 240.0
+    device.detector_timeout_seconds, device.data_timeout_seconds = 12.0, 3600.0
     device._detector_proxies = {}
     device.info_stream = device.error_stream = lambda *a: None
     device._configured_addresses = dict
     auto_script_module.AutoScriptMicroscope._connect_detector_proxies(device)
     assert timeouts == {"s/t/1": 240_000, "d/t/1": 3_600_000}
+
+
+def test_sub_device_timeouts_default_to_12_s_and_an_hour():
+    microscope = auto_script_module.AutoScriptMicroscope
+    assert microscope.detector_timeout_seconds.default_value == 12.0
+    assert microscope.data_timeout_seconds.default_value == 3600.0
+    assert microscope.data_timeout_seconds.default_value > REGISTER_WAIT_SECONDS
+
+
+def test_the_detector_and_data_proxies_get_the_configured_timeouts(monkeypatch):
+    timeouts = {}
+
+    class Proxy:
+        def __init__(self, address):
+            self.address = address
+
+        def set_timeout_millis(self, ms):
+            timeouts[self.address] = ms
+
+    monkeypatch.setattr(auto_script_module.tango, "DeviceProxy", Proxy)
+    device = auto_script_module.AutoScriptMicroscope.__new__(auto_script_module.AutoScriptMicroscope)
+    device._tango_properties = {}
+    for name in ("stage", "scan", "camera", "corrector"):
+        setattr(device, f"{name}_device_address", "")
+    device.eds_device_address, device.data_device_address = "e/t/1", "d/t/1"
+    device.detector_timeout_seconds, device.data_timeout_seconds = 20.0, 90.0
+    device._detector_proxies = {}
+    device.info_stream = device.error_stream = lambda *a: None
+    device._configured_addresses = dict
+    auto_script_module.AutoScriptMicroscope._connect_detector_proxies(device)
+    assert timeouts == {"e/t/1": 20_000, "d/t/1": 90_000}

@@ -53,6 +53,7 @@ mcp:
     - DataBase
     - DServer
   needs_approval: {}         # {Class or "*": [command, ...]}: held for a person (permissions.md)
+  command_timeout_s: 30      # how long one call to a Tango device may take (s); endpoint_info reports it
   safety:
     risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
   # agent_profile: asyncroscopy/agents/profiles/capable.yaml   # whose tool selection endpoint_info reports

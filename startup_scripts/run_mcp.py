@@ -18,7 +18,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.core.names import endpoint_urls
+from asyncroscopy.core.names import default_command_timeout_s, endpoint_urls
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth
 from asyncroscopy.safety.permissions import default_approval_ttl_s
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination
@@ -99,6 +99,7 @@ class MCPConfig:
     urls: dict[str, str | None] = field(default_factory=endpoint_urls)
     permissions_file: str = ''
     approval_ttl_s: float = default_approval_ttl_s
+    command_timeout_s: float = default_command_timeout_s
     job_limits: dict[str, float] = field(default_factory=dict)
     allow_remote_bind: bool = False
     auth: AuthSettings | None = None
@@ -205,6 +206,7 @@ def load_config(path: Path) -> Config:
             urls=endpoint_urls(mcp.get('urls'), f'{path}: mcp.urls'),
             permissions_file=_beside_config(path, mcp.get('permissions_file')),
             approval_ttl_s=float(mcp.get('approval_ttl_s') or default_approval_ttl_s),
+            command_timeout_s=float(mcp.get('command_timeout_s') or default_command_timeout_s),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
             auth=AuthSettings.from_config(mcp.get('auth'), base_dir=PROJECT_DIR),
@@ -309,6 +311,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--permissions-file', config.mcp.permissions_file])
     if config.mcp.approval_ttl_s != default_approval_ttl_s:
         command.extend(['--approval-ttl-s', str(config.mcp.approval_ttl_s)])
+    if config.mcp.command_timeout_s != default_command_timeout_s:
+        command.extend(['--command-timeout-s', str(config.mcp.command_timeout_s)])
     if config.mcp.job_limits:
         command.extend(['--job-limits-json', json.dumps(config.mcp.job_limits)])
     if config.mcp.allow_remote_bind:

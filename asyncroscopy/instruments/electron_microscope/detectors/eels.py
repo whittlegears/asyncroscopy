@@ -27,6 +27,13 @@ class EELSBase(Device):
         "e.g. 'asyncroscopy/data/default'.",
     )
 
+    data_timeout_seconds = device_property(
+        dtype=float,
+        default_value=120.0,
+        doc="How long a call to the DATA device may take (s). Must exceed the DATA device's register wait "
+        "(REGISTER_WAIT_SECONDS in asyncroscopy.data.data, 8 s).",
+    )
+
 
     exposure_time = attribute(
         label="Exposure Time",
@@ -79,7 +86,7 @@ class EELSBase(Device):
 
         try:
             self._data_proxy = tango.DeviceProxy(self.data_device_address)
-            self._data_proxy.set_timeout_millis(120_000)
+            self._data_proxy.set_timeout_millis(int(1000 * float(self.data_timeout_seconds)))
             self.info_stream(f"Connected to DATA device at {self.data_device_address}")
         except tango.DevFailed as exc:
             self._data_proxy = None

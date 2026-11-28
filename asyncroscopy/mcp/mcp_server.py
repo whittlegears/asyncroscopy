@@ -5,8 +5,6 @@ The server discovers the devices in the Tango database, decides once what each c
 ordered list of interceptors (``asyncroscopy.mcp.interceptors``): the job checks,
 logging and the trace, an acquisition's preview. The native tools (data, jobs, discovery, skills,
 the trace and the emergency stop) come from the components in ``asyncroscopy.mcp.components``.
-
-COMMAND_TIMEOUT_MILLIS is longer than Tango's 3 s default, which a cold first acquisition on the twin exceeds.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ from tango import CmdArgType, CommandInfo, Database, DeviceProxy, DispLevel
 from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_type, is_int_type, is_scalar_type, is_str_type
 
 from asyncroscopy import settings
-from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, endpoint_urls, tool_name
+from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, default_command_timeout_s, endpoint_urls, tool_name
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
@@ -47,7 +45,6 @@ from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
-COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_LIMITS = ("max_duration_s", "max_dose_e_per_a2")
 
 
@@ -76,6 +73,7 @@ class ServerConfig:
     needs_approval: dict[str, list[str]] = field(default_factory=dict)
     permissions_file: str = ""
     approval_ttl_s: float = default_approval_ttl_s
+    command_timeout_s: float = default_command_timeout_s
     job_limits: dict[str, float] = field(default_factory=dict)
     trace_follow: list[str] = field(default_factory=list)
     verbose: bool = True
@@ -112,6 +110,7 @@ class MCPServer:
         agent_profile: str | None = None,
         permissions_file: str | None = None,
         approval_ttl_s: float = default_approval_ttl_s,
+        command_timeout_s: float = default_command_timeout_s,
     ) -> None:
         """
         Args:
@@ -148,6 +147,7 @@ class MCPServer:
                 (``asyncroscopy.safety.permissions``). None: ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
                 outputs/permissions/permissions.json.
             approval_ttl_s: How long a held call waits for a person, and an approval waits for its call.
+            command_timeout_s: How long one call to a Tango device may take (s), for every device this server opens.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -161,7 +161,7 @@ class MCPServer:
             auto_routine=None if auto_routine is None else dict(auto_routine), urls=endpoint_urls(urls),
             needs_approval={key: list(value) for key, value in needs_approval.items()},
             permissions_file=permissions_file or str(settings.get().permissions_file), approval_ttl_s=float(approval_ttl_s),
-            job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
+            command_timeout_s=float(command_timeout_s), job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
             verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
         self.database = database if database is not None else Database(tango_host, tango_port)
@@ -226,7 +226,7 @@ class MCPServer:
 
     @property
     def command_timeout_s(self) -> float:
-        return COMMAND_TIMEOUT_MILLIS / 1000
+        return self.config.command_timeout_s
 
     @property
     def tool_risks(self) -> dict[str, str]:
@@ -336,7 +336,7 @@ class MCPServer:
                 continue
             try:
                 dev = DeviceProxy(device_name)
-                dev.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+                dev.set_timeout_millis(int(1000 * self.config.command_timeout_s))
                 dev_class = dev.info().dev_class
             except Exception as exc:
                 if self.verbose:
@@ -683,6 +683,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--needs-approval-json", default="{}", help='{"Class" or "*": [command, ...]}: what the agent endpoint holds for a person by default.')
     parser.add_argument("--permissions-file", default="", help="People's permission settings, shared by the stack's endpoints; empty: $ASYNCROSCOPY_PERMISSIONS_FILE, else outputs/permissions/permissions.json.")
     parser.add_argument("--approval-ttl-s", type=float, default=default_approval_ttl_s, help="How long a held call waits for a person.")
+    parser.add_argument("--command-timeout-s", type=float, default=default_command_timeout_s, help="How long one call to a Tango device may take.")
     parser.add_argument("--include-only-functions-json", default="[]")
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
@@ -784,6 +785,7 @@ def main(argv: list[str] | None = None) -> int:
         auth=auth, clock_device=args.clock_device or None, trace_follow=json.loads(args.trace_follow_json) or None,
         auto_routine=json.loads(args.auto_routine_json) if args.auto_routine_json else None, agent_profile=args.agent_profile or None,
         permissions_file=args.permissions_file or None, approval_ttl_s=args.approval_ttl_s,
+        command_timeout_s=args.command_timeout_s,
     )
     if args.transport == "streamable-http":
         print(f"Starting {args.name} at http://{args.http_host}:{args.http_port}/mcp for Tango DB {args.tango_host}:{args.tango_port}", flush=True)

@@ -20,6 +20,7 @@ def parse_args(description: str, extra: Callable[[argparse.ArgumentParser], obje
     parser.add_argument("--fov", type=float, default=200e-9, help="Field of view (m).")
     parser.add_argument("--imsize", type=int, default=256, help="Image size (pixels per side).")
     parser.add_argument("--dwell", type=float, default=2e-6, help="Dwell time per pixel (s).")
+    parser.add_argument("--timeout-s", type=float, default=120.0, help="How long one call to the microscope device may take (s).")
     parser.add_argument("--profile", default="", help="Instrument profile (YAML) to write the measured values into; see calibration/profile.py.")
     if extra:
         extra(parser)
@@ -28,7 +29,7 @@ def parse_args(description: str, extra: Callable[[argparse.ArgumentParser], obje
 
 def connect(args: argparse.Namespace) -> tuple[tango.DeviceProxy, tango.DeviceProxy]:
     microscope = tango.DeviceProxy(args.device)
-    microscope.set_timeout_millis(120_000)
+    microscope.set_timeout_millis(int(1000 * args.timeout_s))
     scan = tango.DeviceProxy(args.scan)
     scan.imsize = args.imsize
     scan.dwell_time = args.dwell

@@ -20,8 +20,9 @@ should set an extended timeout on their DATA ``DeviceProxy``. Changing
 ``host``, ``port`` or ``save_path`` while a managed server runs restarts it in
 the background; ``get_config`` shows when it is serving the new settings.
 
-REGISTER_WAIT_SECONDS is well inside the 12 s the instrument devices give DATA; a slower registration carries on in the
-background. TILED_WRITTEN matches Tiled's own storage for the analysis server's maps and point stores, never
+REGISTER_WAIT_SECONDS is well inside the timeouts callers give DATA (the instrument devices' and the EELS device's
+``data_timeout_seconds``, 3600 s and 120 s by default; a job's ``step_timeout_s``, 120 s); a slower registration carries
+on in the background. TILED_WRITTEN matches Tiled's own storage for the analysis server's maps and point stores, never
 acquisitions to register.
 """
 

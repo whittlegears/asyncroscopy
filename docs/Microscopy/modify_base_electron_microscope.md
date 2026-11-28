@@ -39,7 +39,8 @@ implements only `_helper` methods:
 - **Detector proxies.** `_connect_detector_proxies` (on `ScanningBeamInstrument`,
   `asyncroscopy/instruments/scanning_beam.py`, with the beam, field of view, image shift, stage,
   beam current and limits) builds a proxy for every address in `DETECTOR_ADDRESSES`; `_proxy_timeout_ms(name)` sets each one's
-  timeout (AutoScript lengthens the stage's).
+  timeout from the `detector_timeout_seconds` (12 s) and `data_timeout_seconds` (3600 s) properties (AutoScript
+  gives the stage `stage_timeout_seconds`).
 - **The command lock.** Every public command that reaches the instrument is
   decorated with `@hardware_call()`: it runs under the device's command lock, after
   `_check_connected` (AutoScript refuses with `NotConnected` when it has no

@@ -1,7 +1,10 @@
-"""The calibration scripts recover the stage errors the twin was configured with."""
+"""The calibration scripts recover the stage errors the twin was configured with, and connect with the --timeout-s they are given."""
+
+import sys
 
 import pytest
 
+from asyncroscopy.calibration import _common
 from asyncroscopy.calibration.stage_repeatability import measure
 from tests.conftest import MAPPING_TWIN_PROPERTIES
 
@@ -18,3 +21,23 @@ def test_stage_repeatability_recovers_backlash_and_noise(mapping_twin_proxy, map
     assert result["stage_backlash_y"] == pytest.approx(MAPPING_TWIN_PROPERTIES["stage_backlash_y"], abs=2.5e-9)
     assert result["stage_move_noise_std"] == pytest.approx(MAPPING_TWIN_PROPERTIES["stage_move_noise_std"], rel=0.5)
     assert result["stage_reported_noise_std"] == pytest.approx(MAPPING_TWIN_PROPERTIES["stage_reported_noise_std"], rel=0.6)
+
+
+@pytest.mark.parametrize(("argv", "expected_ms"), [([], 120_000), (["--timeout-s", "300"], 300_000)])
+def test_connect_gives_the_microscope_the_timeout_flag(monkeypatch, argv, expected_ms):
+    timeouts = {}
+
+    class Proxy:
+        def __init__(self, address):
+            self.address = address
+
+        def set_timeout_millis(self, ms):
+            timeouts[self.address] = ms
+
+        def set_fov(self, fov):
+            self.fov = fov
+
+    monkeypatch.setattr(_common.tango, "DeviceProxy", Proxy)
+    monkeypatch.setattr(sys, "argv", ["calibration", *argv])
+    _common.connect(_common.parse_args("test"))
+    assert timeouts == {"asyncroscopy/instrument/default": expected_ms}

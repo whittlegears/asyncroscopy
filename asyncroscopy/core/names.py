@@ -1,5 +1,6 @@
 """One home for the names every layer shares: tool names, HTTP headers, job envelope verbs and states,
-data-key patterns, the canonical action roles, and the default endpoint addresses.
+data-key patterns, the canonical action roles, the default endpoint addresses, and the MCP bridge's default command
+timeout (``mcp.command_timeout_s``), longer than Tango's 3 s default, which a cold first acquisition on the twin exceeds.
 
 Nothing here imports anything outside the standard library.
 
@@ -16,6 +17,7 @@ DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
 default_operator_url = "http://127.0.0.1:8001/mcp"
 autoscript_port = 9095
+default_command_timeout_s = 30.0
 CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
 RUN_KEY_HEADER = "X-Asyncroscopy-Run-Key"
