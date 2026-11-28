@@ -25,12 +25,12 @@ def group_of(acts: bool) -> str:
     return "acts" if acts else "reads"
 
 
-def canonical_json(arguments: dict[str, Any] | None) -> str:
-    return json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"), default=str)
+def canonical_json(value: Any) -> str:
+    return json.dumps({} if value is None else value, sort_keys=True, separators=(",", ":"), default=str)
 
 
-def arguments_sha256(arguments: dict[str, Any] | None) -> str:
-    return hashlib.sha256(canonical_json(arguments).encode("utf-8")).hexdigest()
+def json_sha256(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
 
 
 def run_key_sha256(run_key: str) -> str:
@@ -166,7 +166,7 @@ class PermissionStore:
                 signoff: dict[str, Any] | None = None, run: dict[str, str] | None = None) -> dict[str, Any]:
         """The request a call of an ``approve`` tool makes or matches (same tool, arguments, caller and run); an
         approved one is used up here."""
-        digest = arguments_sha256(arguments)
+        digest = json_sha256(arguments)
         bound = {"run_id": (run or {}).get("run_id"), "run_key_sha256": (run or {}).get("run_key_sha256")}
         with self._locked():
             state = self._read(self.state_path)

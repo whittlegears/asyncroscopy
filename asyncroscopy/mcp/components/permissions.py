@@ -21,7 +21,7 @@ from asyncroscopy.core.names import RUN_KEY_HEADER, STOP_ROLES
 from asyncroscopy.mcp.interceptors import Call, Interceptor
 from asyncroscopy.safety.permissions import (
     PermissionStore,
-    arguments_sha256,
+    json_sha256,
     effective_permission,
     run_key_sha256,
 )
@@ -200,7 +200,7 @@ class Permissions:
                 if tool not in self.server.registered:
                     continue
                 try:
-                    digest = arguments_sha256(self.validated(tool, call["arguments"]))
+                    digest = json_sha256(self.validated(tool, call["arguments"]))
                 except ValidationError:
                     continue
                 counts = covered.setdefault(tool, {})
@@ -230,7 +230,7 @@ class Permissions:
         if grant is not None:
             run = {"run_id": grant["run_id"], "run_key_sha256": grant["run_key_sha256"]}
             covered = self.rehearsed(grant)
-            digest = arguments_sha256(arguments)
+            digest = json_sha256(arguments)
             allowed = covered.get(name, {}).get(digest, 0)
             if allowed and self.store.use_run_call(grant["run_id"], grant["run_key_sha256"], f"{name} {digest}", allowed):
                 return None, {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"]}

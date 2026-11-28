@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
-import json
 import subprocess
 from collections.abc import Mapping
 from importlib.metadata import PackageNotFoundError, version
@@ -14,14 +13,11 @@ from typing import Any
 
 import asyncroscopy
 from asyncroscopy.mcp.descriptors import DeviceInfo
+from asyncroscopy.safety.permissions import json_sha256
 
 module_property = "module_name"
 simulated_by = "declared: the simulated Tango property of every device with a command that acts (run_servers' top-level simulated:)"
 checkout = Path(asyncroscopy.__file__).resolve().parents[1]
-
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
 def _git(*args: str) -> str | None:
@@ -75,8 +71,8 @@ def stack_fingerprint(devices: Mapping[str, DeviceInfo], simulated: bool) -> dic
     fingerprint = {
         "software": software(),
         "devices": {prefix: device_code(device.dev_class, properties[prefix]) for prefix, device in sorted(devices.items())},
-        "config_digest": digest(properties),
+        "config_digest": json_sha256(properties),
         "unreadable_properties": sorted(prefix for prefix, values in properties.items() if values is None),
         "simulated": {"value": bool(simulated), "established_by": simulated_by},
     }
-    return {**fingerprint, "digest": digest(fingerprint)}
+    return {**fingerprint, "digest": json_sha256(fingerprint)}

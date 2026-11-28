@@ -21,7 +21,7 @@ from typing import Any
 
 from asyncroscopy.core.fileio import write_atomic
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT, reply_keys
-from asyncroscopy.safety.permissions import arguments_sha256
+from asyncroscopy.safety.permissions import json_sha256
 
 from asyncroscopy.agents.mcp_tools import McpServer, held_for_approval, result_text
 
@@ -169,7 +169,7 @@ class CallJournal:
 
     LangGraph runs a node that stopped to wait (a held call, a question) again from its first line. Each call that
     execution makes is matched, in order, against the calls the node's earlier execution completed: same server, tool
-    and canonical arguments (``safety.permissions.arguments_sha256``). A match returns the recorded reply without
+    and canonical arguments (``safety.permissions.json_sha256``). A match returns the recorded reply without
     sending anything. The first call that does not match is sent, and so is every call after it: the held call is
     sent again and uses its approval. A node that finishes drops its entries.
 
@@ -212,7 +212,7 @@ class CallJournal:
             return None
         entries = self.nodes.get(scope["node"], [])
         at = scope["cursor"]
-        if at < len(entries) and entries[at]["key"] == [server, tool, arguments_sha256(arguments)]:
+        if at < len(entries) and entries[at]["key"] == [server, tool, json_sha256(arguments)]:
             scope["cursor"] += 1
             return {"text": entries[at]["text"]}
         scope["replaying"] = False
@@ -232,7 +232,7 @@ class CallJournal:
             if self.nodes.pop(scope["node"], None) is not None:
                 self._save()
             return
-        self.nodes.setdefault(scope["node"], []).append({"key": [server, tool, arguments_sha256(arguments)], "text": text})
+        self.nodes.setdefault(scope["node"], []).append({"key": [server, tool, json_sha256(arguments)], "text": text})
         scope["cursor"] += 1
         self._save()
 

@@ -59,7 +59,7 @@ from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_operator_url, devices_of_kind
-from asyncroscopy.mcp.fingerprint import digest
+from asyncroscopy.safety.permissions import json_sha256
 from asyncroscopy.sim.truth_score import median_error
 from asyncroscopy.skills.registry import list_skills
 from asyncroscopy.workflows.signoff import twin_truth
@@ -182,7 +182,7 @@ def check_source(fn: Any) -> dict[str, str]:
 def task_hash(entry: dict) -> str:
     """A benchmark's identity: its YAML entry as written and the source of its checks."""
     used = sorted({spec.get("check") for spec in entry.get("checks") or [] if isinstance(spec, dict) and spec.get("check") in CHECKS})
-    return digest({"entry": entry, "checks": {name: check_source(CHECKS[name]) for name in used}})
+    return json_sha256({"entry": entry, "checks": {name: check_source(CHECKS[name]) for name in used}})
 
 
 def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> list[dict]:
