@@ -74,28 +74,22 @@ class SampleMapRequest(TypedDict, total=False):
     seconds_per_tile: float
     analysis_wait_s: float
     stage_sigma_m: float  # how well the stage repeats; bounds pyTEMlib's overlap search
-    scan_linear: Any  # 2 x 2 matrix, "measure", or omit for the default below
-
-
-# pyTEMlib fits its own scan stretch and turn (scan_linear) once 9 tiles match. On
-# a 3 x 3 grid of atomic-resolution twin tiles that fit came out as a 0.2-0.9 degree
-# turn that is not there, from matches one lattice period off, and placed tiles up
-# to 9 px wrong; with the identity every tile was within 0.6 px (tests/test_mapping.py).
-# The grid's own calibration already gives the direction, so a small grid passes
-# the identity unless the request says otherwise.
-SCAN_LINEAR_MIN_TILES = 25
+    scan_linear: Any  # 2 x 2 matrix to impose; omit (or "measure") to let pyTEMlib measure it
 
 
 def assemble_arguments(request: SampleMapRequest, manifest: dict) -> dict:
-    """Extra assemble_map arguments: stage_sigma_m and scan_linear, chosen as described above."""
+    """Extra assemble_map arguments: stage_sigma_m, and scan_linear only when the request gives a matrix.
+
+    pyTEMlib measures the scan's stretch and turn itself. It fits none on fewer than 16
+    matched tiles and refuses matches one lattice period off, so small atomic-resolution
+    grids no longer get an invented turn (tests/test_mapping.py).
+    """
     args: dict[str, Any] = {}
     if request.get("stage_sigma_m"):
         args["stage_sigma_m"] = float(request["stage_sigma_m"])
     choice = request.get("scan_linear")
     if isinstance(choice, (list, tuple)):
         args["scan_linear"] = [[float(v) for v in row] for row in choice]
-    elif choice != "measure" and manifest.get("calibration") and len(manifest.get("tiles", [])) < SCAN_LINEAR_MIN_TILES:
-        args["scan_linear"] = [[1.0, 0.0], [0.0, 1.0]]
     return args
 
 

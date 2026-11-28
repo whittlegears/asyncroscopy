@@ -95,12 +95,14 @@ pixel size, which is better known than the length of a test move.
 |---|---|
 | 3 x 3 synthetic grid, stage axes swapped, with the conversion | 20 / 20 matches used, median residual 0.014 px |
 | The same grid, raw stage axes | 7 / 14 matches used, one tile placed from the stage alone |
-| 3 x 3 twin grid (10 nm tiles, 256 px), pyTEMlib fits its own `scan_linear` | tiles up to 9 px from the true stage |
-| The same, identity `scan_linear` | every tile within 0.9 px (39 pm) over 9 runs |
+| 3 x 3 twin grid (10 nm tiles, 256 px), pyTEMlib before the fix | tiles up to 9 px from the true stage |
+| The same, identity `scan_linear` (the old workaround) | every tile within 0.9 px (39 pm) over 9 runs |
+| The same, pyTEMlib `c4a2f75` measuring its own `scan_linear` | every tile within 0.46 px (18 pm) |
 
-On 9 atomic-resolution tiles pyTEMlib fitted a 0.2-0.9 degree scan turn that
-the twin does not have, from matches one lattice period off. The workflow
-therefore passes the identity `scan_linear` for calibrated grids under 25
-tiles (`assemble_arguments`); a request can pass `"scan_linear": "measure"`
+On 9 atomic-resolution tiles pyTEMlib used to fit a 0.2-0.9 degree scan turn
+that the twin does not have, from matches one lattice period off. pyTEMlib
+`c4a2f75` (on the fork's `fix/scan-linear-small-grids`) refuses those matches
+and fits no distortion on fewer than 16 matched tiles, so the workflow no
+longer passes an identity `scan_linear` for small grids. A request can still pass
 or its own matrix, and `stage_sigma_m` for how well the stage repeats. Tiles of
 128 px or less leave too few overlap pixels for reliable matching.

@@ -134,7 +134,7 @@ class TestAcquireMapGridDigitalTwin:
 
         async def stitch():
             async with Client(mcp) as client:
-                # The workflow's own choice of arguments: the identity scan_linear for a small grid.
+                # The workflow's own arguments: pyTEMlib measures the scan itself, even on a 3 x 3 grid.
                 job = (await client.call_tool("assemble_map", {"run": str(run), **assemble_arguments({}, spec)})).structured_content
                 await client.call_tool("analysis_job_status", {"job_id": job["job_id"], "wait_s": 25})
                 return (await client.call_tool("analysis_job_results", {"job_id": job["job_id"]})).structured_content
@@ -151,7 +151,7 @@ class TestAcquireMapGridDigitalTwin:
         print(f"\ntwin 3x3 via pyTEMlib: max {errors.max():.2f} px, mean {errors.mean():.2f} px ({pixel * 1e12:.0f} pm/px); "
               f"matches {summary['matches_used']}/{summary['matches_found']}, fallback tiles {summary['fallback_tiles']}")
         assert summary["unplaced_tiles"] == []
-        assert errors.max() < 1.5  # was up to 9 px before the identity scan_linear
+        assert errors.max() < 1.5  # was up to 9 px before pyTEMlib stopped fitting a turn from lattice-period matches
 
     def test_known_calibration_skips_the_test_moves(self, mapping_twin_proxy, scan_proxy):
         pixel = self.FOV / self.IMSIZE

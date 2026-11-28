@@ -203,12 +203,10 @@ def _mkdir(path):
     return path
 
 
-def test_small_calibrated_grids_get_the_identity_scan_linear():
+def test_pytemlib_measures_the_scan_linear_unless_the_request_gives_one():
     calibrated = {"calibration": {"px_per_m": [[1, 0], [0, 1]]}, "tiles": [{}] * 9}
-    assert sample_map.assemble_arguments({}, calibrated) == {"scan_linear": [[1.0, 0.0], [0.0, 1.0]]}
+    assert sample_map.assemble_arguments({}, calibrated) == {}  # small grids too: pyTEMlib no longer invents a turn
     assert sample_map.assemble_arguments({"scan_linear": "measure"}, calibrated) == {}
-    assert sample_map.assemble_arguments({}, {**calibrated, "tiles": [{}] * 30}) == {}
-    assert sample_map.assemble_arguments({}, {"tiles": [{}] * 9}) == {}  # no calibration: let pyTEMlib measure
     assert sample_map.assemble_arguments({"stage_sigma_m": 1e-10, "scan_linear": [[1, 0.01], [0, 1]]}, calibrated) == {
         "stage_sigma_m": 1e-10, "scan_linear": [[1.0, 0.01], [0.0, 1.0]]}
 

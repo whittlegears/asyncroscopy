@@ -83,20 +83,12 @@ The long-running branch already has graphs built this way under
 
 ## Still open
 
-- **The pyTEMlib scan fix: done, not pushed.** It's on a local branch of the
-  pyTEMlib fork (`fix/scan-linear-small-grids`, worktree `../pyTEMlib-scan-linear`,
-  latest commit in its log). Small lattice maps no longer get an invented scan
-  turn, matches one lattice period off are refused, and every stitching and
-  analysis-server test passes (176 passed, 1 skipped).
-  - **Decision:** lattice safety wins. Without the guard, lattice tiles land
-    11-42 px wrong.
-  - **What changed in the drift test:** it now runs on four seeds with a 15%
-    limit. The old 10% limit fitted only its one seed: across four seeds the
-    drift error is 3-12% with or without the guard. The failure it protects
-    against shows up at about 20%.
-  - **To use it in asyncroscopy:** push the branch, pin its commit in
-    `pyproject.toml`, and drop the identity `scan_linear` workaround in
-    `sample_map.assemble_arguments` if the twin test still passes without it.
+- **The pyTEMlib scan fix: merged into the pin, not yet upstream.** asyncroscopy
+  pins `c4a2f75` on the fork's `fix/scan-linear-small-grids`. Small lattice maps no
+  longer get an invented scan turn, so the sample-map workflow lets pyTEMlib
+  measure `scan_linear` itself (twin 3 x 3: every tile within 0.46 px). The
+  drift test now runs on four seeds at 15%: the old 10% limit fitted only one
+  seed. Still to do: a pull request to pycroscopy/pyTEMlib.
 - **Not run on a microscope or with Gemma.** Everything here is tested on the
   digital twins and offline only.
   - Structured routing has not been tried with the local Gemma model; Ollama is
