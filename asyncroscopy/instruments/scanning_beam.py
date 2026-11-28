@@ -449,8 +449,7 @@ class ScanningBeamInstrument(Instrument):
         raise NotImplementedError(f"{type(self).__name__} does not implement _acquire_scanned_image; this vendor backend is missing the override")
 
     def _beam_current(self) -> dict:
-        """The beam current: {"pa", "source" ("measured" or "default"), "age_s" (measured) or "reason" (assumed)}.
-        By default the default_beam_current_pa property, assumed: a backend that measures its current overrides this."""
+        """The beam current with its source; by default the assumed default_beam_current_pa."""
         return {"pa": float(self.default_beam_current_pa), "source": "default", "age_s": None,
                 "reason": f"{type(self).__name__} does not measure its beam current; default_beam_current_pa is assumed"}
 

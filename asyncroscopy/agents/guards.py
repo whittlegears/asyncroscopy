@@ -228,6 +228,9 @@ def _progress(job_id: str, status: dict, waited: float) -> None:
 class JobWaitMiddleware(AgentMiddleware):
     """Waits for a job inside one tool call: the model sees one reply when the job ends (see the module docstring)."""
 
+    estimate_factor = 1.5
+    estimate_slack_s = 120.0
+
     def __init__(self, tools: Iterable[BaseTool], default_cap_s: float = 3600.0, deadline: float | None = None,
                  on_progress: Callable[[str, dict, float], None] | None = _progress, stop: Callable[[], bool] | None = None) -> None:
         super().__init__()
@@ -240,7 +243,7 @@ class JobWaitMiddleware(AgentMiddleware):
 
     def _wait_cap_s(self, job_id: str) -> float:
         estimate = self.estimates.get(job_id)
-        cap = estimate * 1.5 + 120.0 if estimate else self.default_cap_s
+        cap = estimate * self.estimate_factor + self.estimate_slack_s if estimate else self.default_cap_s
         if self.deadline is not None:
             cap = min(cap, max(0.0, self.deadline - time.monotonic()))
         return cap

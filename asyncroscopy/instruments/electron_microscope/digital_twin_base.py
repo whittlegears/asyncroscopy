@@ -186,8 +186,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         return {"sample_seed": int(self.sample_seed), "acquisitions": list(self._truth_log)}
 
     def _keep_truth(self, kind: str, truth: dict) -> int:
-        """Record what one acquisition really saw (never saved with its data or returned by a command an agent has)
-        and return its ``acquisition_index``, which the saved data carries so a scorer can match the two."""
+        """Record what one acquisition really saw, for export_ground_truth only, and return its ``acquisition_index``."""
         index = len(self._truth_log)
         self._truth_log.append({"acquisition_index": index, "kind": kind, **truth})
         return index
@@ -227,8 +226,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         unsupported(self, "acquire_camera_image (this twin has no camera model; DigitalTwin, the diffraction and the tilt twins have one)")
 
     def _detectors(self) -> dict:
-        """What this twin renders: a HAADF scan and an EDS spectrum, and no camera image (a twin with a camera
-        model lists the CAMERA device's names, which all give its one simulated camera)."""
+        """What this twin renders: a HAADF scan and an EDS spectrum, and a camera only with a camera model."""
         return {"scanning": ["haadf"], "camera": [], "eds": ["eds"], "eels": [], "cameras": {}}
 
     def _place_beam(self, position) -> None:
@@ -271,12 +269,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self._stage_position = target
 
     def _get_parameters(self) -> str:
-        """All simulated status parameters as JSON (get_parameters is typed DevString, so a dict would fail).
-
-        device_proxies are the connected settings devices (scan, stage, data), not detectors. scan_detectors,
-        spectrum_detectors and camera_detectors are what the twin really renders, from _detectors; naming the
-        proxies "detectors" once told an agent it could scan with "stage".
-        """
+        """All simulated status parameters as JSON (DevString); the detectors listed are those the twin renders."""
         self._sync_stage_from_proxy()
         parameters = {
             "manufacturer": self._manufacturer,

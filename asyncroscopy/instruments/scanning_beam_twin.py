@@ -79,8 +79,7 @@ class ScanningBeamTwin(TwinBlanker):
         return json.dumps({"session": self._stage_session, "seed": int(self.sample_seed), "clock_s": self._clock.now(), **fields})
 
     def _fetch_stage(self, window_s: float = 0.0) -> None:
-        """Ask the STAGE device where the stage is (one call, however many pixels the frame has) and advance the clock
-        by any move written to it directly; the drift it returns holds for the next ``window_s`` simulated seconds."""
+        """Read the stage once per frame and advance the clock by any direct move; its drift holds for ``window_s``."""
         stage = self._detector_proxies.get("stage")
         if stage is None:
             return

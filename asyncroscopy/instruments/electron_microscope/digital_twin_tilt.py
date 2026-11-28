@@ -632,8 +632,7 @@ class DigitalTwinTilt(ParticleSpectrumMixin, ElectronMicroscopeTwin):
         return float(self._fov)
 
     def _get_parameters(self) -> str:
-        """The instrument's state. What the specimen is (the lamella, its lattice, rotation and tilt, and their
-        gradients) and where the stage rotates about are hidden truth, in export_ground_truth only."""
+        """The instrument's state; the specimen and the rotation centre are hidden truth."""
         self._sync_stage_from_proxy()
         return json.dumps(
             {

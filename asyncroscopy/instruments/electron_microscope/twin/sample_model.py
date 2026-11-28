@@ -212,9 +212,7 @@ class SampleModel(ParticleTable, Specimen):
         }
 
     def _draw_texture(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Wave vectors (kx, ky), phases and amplitudes of the support texture: lengths spread evenly in log from
-        support_texture_scale_m to TEXTURE_FINEST_M, random directions, equal amplitude per wave, scaled so the
-        sum has standard deviation ``support_texture``."""
+        """Wave vectors, phases and amplitudes of the support texture, log-spaced from support_texture_scale_m to TEXTURE_FINEST_M."""
         lengths = np.geomspace(self.params.support_texture_scale_m, TEXTURE_FINEST_M, TEXTURE_WAVES)
         angles = rng.uniform(0.0, np.pi, TEXTURE_WAVES)
         phases = rng.uniform(0.0, 2.0 * np.pi, TEXTURE_WAVES)
@@ -223,8 +221,7 @@ class SampleModel(ParticleTable, Specimen):
         return k * np.cos(angles), k * np.sin(angles), phases, amplitude
 
     def _draw_relief(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
-        """Wave vectors (kx, ky), phases and the amplitude of the height relief: a few long waves in random
-        directions, scaled so their sum has standard deviation ``height_relief_m``."""
+        """Wave vectors, phases and amplitude of a few long waves scaled to ``height_relief_m``."""
         lengths = np.geomspace(self.params.height_relief_scale_m, self.params.height_relief_scale_m / 4.0, RELIEF_WAVES)
         angles = rng.uniform(0.0, np.pi, RELIEF_WAVES)
         phases = rng.uniform(0.0, 2.0 * np.pi, RELIEF_WAVES)

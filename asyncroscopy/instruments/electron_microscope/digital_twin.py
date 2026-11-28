@@ -280,8 +280,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return self._column_valves_open and not self._screen_inserted
 
     def _get_screen_current(self) -> float:
-        """The current on the screen in pA: the beam current when the screen is inserted, 0 when it is not. A
-        reading above 0 is the measured beam current from then on."""
+        """The screen current in pA: the beam current with the screen inserted, else 0."""
         current = self._beam_current_pa() if self._screen_inserted else 0.0
         if current > 0:
             self._current_measured_s = self._clock.now()
@@ -298,8 +297,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         """Nothing to calibrate: the twin sets the current it is told exactly."""
 
     def _beam_current(self) -> dict:
-        """As on the instrument with cold_start: assumed ("default") until the screen has read it, then measured
-        with the reading's age. Without cold_start the twin's current always counts as measured."""
+        """With cold_start "default" until the screen has read it, as on the instrument; else always measured."""
         if not bool(self.cold_start):
             return super()._beam_current()
         if self._current_measured_s is None:

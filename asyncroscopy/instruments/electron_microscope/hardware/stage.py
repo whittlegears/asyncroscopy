@@ -215,8 +215,7 @@ class STAGE(Device):
         return f"the configured stage limits do not overlap the instrument's for {', '.join(apart)}; no move is allowed until the configuration is fixed and the device restarted"
 
     def _alarm(self, status: str) -> None:
-        """ALARM with ``status``; a device already in FAULT (its backend could not connect) stays in FAULT and keeps
-        that reason first, so the holder or limits message never hides it."""
+        """ALARM with ``status``, unless already in FAULT, whose reason stays first."""
         if self.get_state() == DevState.FAULT:
             fault = str(self.get_status()).strip()
             self.set_status(status if status in fault else f"{fault}\n{status}")
@@ -225,9 +224,7 @@ class STAGE(Device):
         self.set_status(status)
 
     def _reread_hardware_limits(self) -> None:
-        """Read the instrument's axis limits again (a holder change can bring new ones, such as beta on a double tilt)
-        and narrow the travel to them. An axis it no longer answers for keeps the limits read before. A new conflict
-        holds the stage; an earlier one stays."""
+        """Re-read the axis limits (a holder change can bring new ones) and narrow the travel to them."""
         fresh = self._read_hardware_limits()
         self._hardware_limits = {**self._hardware_limits, **fresh}
         self._travel, apart = narrow_travel(self._configured_travel, self._hardware_limits)

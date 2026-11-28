@@ -67,6 +67,7 @@ AUTOSCRIPT_STEM_OUTPUT_DIRECTORY = Path(r"Y:\AutoScript TEM")
 # It waits this long at each step for the current to settle.
 SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
 SCREEN_SETTLE_S = 1.0
+screen_calibration_degree = 11
 
 
 NO_HOST = ("the device property hardware_host is not set: give it in the stack YAML (instrument.hardware_host, as configs/Spectra300.yaml does); "
@@ -222,8 +223,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         return super()._proxy_timeout_ms(name)
 
     def _client(self, what: str):
-        """The AutoScript client; without one (testing mode has none by design) NotConnected, never a silent pass:
-        a blank, valve or beam command that reached no instrument must not read as done."""
+        """The AutoScript client, else NotConnected: a blank, valve or beam command that reached no instrument must not read as done."""
         if self._microscope is None:
             reason = getattr(self, "_connect_error", None) or ("testing mode has no AutoScript client" if getattr(self, "testing_mode_bool", False)
                                                               else "the device has not connected")
@@ -280,8 +280,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         return save_acquisition(self, data_server, "stem_image", detector_list, adorned, dataset_attrs=attrs, output_format=output_format)
 
     def _frame_attrs(self, imsize: int, dwell_time: float, scan_region: list[float]) -> dict:
-        """What a saved frame records about where and how it was taken (the dose ledger reads it). A stage or field of
-        view that cannot be read is said in "frame_attrs_error", and the frame is then not in the ledger."""
+        """Where and how a saved frame was taken, for the dose ledger; an unreadable stage or field keeps it out of the ledger."""
         try:
             stage = [float(v) for v in self._get_stage()]
             fov = float(self._get_fov())
@@ -309,10 +308,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         frame_combining: int = 1,
         output_format: str = ".h5",
     ) -> str:
-        """
-        Call advanced AutoScript camera acquisition, save the adorned image,
-        and return its DATA/Tiled key.
-        """
+        """Acquire with the advanced AutoScript camera, save the adorned image and return its key."""
         camera_detector = {"flucam": "Flucam", "bm-ceta": "BM-Ceta"}.get(detector.lower(), detector)
         fixed_readout_area = {
             "full": "Full",
@@ -571,7 +567,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope.optics.monochromator.focus = original_gun_lens
         current_series = np.array(current_series) * 1e12
 
-        coeffs = np.polyfit(gun_lens_series, current_series, 11)
+        coeffs = np.polyfit(gun_lens_series, current_series, screen_calibration_degree)
         self.screen_current_calibration = np.poly1d(coeffs)
         self.screen_current_calibration_range = {
             "focus_v": (float(gun_lens_series.min()), float(gun_lens_series.max())),
@@ -579,11 +575,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         }
 
     def _screen_current_focus(self, current: float) -> float:
-        """The monochromator focus (V) that gives ``current`` pA, refused unless it lies inside the calibrated span.
-
-        The calibration is a degree-11 polynomial through 15 points: outside the measured focus span its
-        roots are extrapolation, and writing one would be an unbounded write to the gun.
-        """
+        """The monochromator focus (V) that gives ``current`` pA, inside the calibrated span only: outside it the
+        polynomial's roots are extrapolation, and writing one would be an unbounded write to the gun."""
         span = self.screen_current_calibration_range
         low_v, high_v = span["focus_v"]
         low_pa, high_pa = span["current_pa"]
@@ -612,8 +605,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._microscope.optics.monochromator.focus = self._screen_current_focus(current)
 
     def _current_conditions(self) -> dict | None:
-        """What sets the beam current, as AutoScript reports it: the monochromator focus, spot size, optical and
-        illumination mode, high tension and the aperture mechanisms. None when any of it cannot be read."""
+        """What sets the beam current, as AutoScript reports it; None when any of it cannot be read."""
         try:
             optics = self._microscope.optics
             conditions = {
@@ -637,8 +629,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return None
 
     def _get_screen_current(self) -> float:
-        """get screen current in pA; with the screen inserted it is the beam current, kept for get_parameters
-        together with the optics it was measured under, so a later change to them makes it stale"""
+        """The screen current in pA, kept with the optics it was measured under."""
         screen_current = self._microscope.detectors.screen.measure_current() * 1e12
         if screen_current > 0 and self._microscope.detectors.screen.position == "Inserted":
             self._measured_beam_current = {"pa": float(screen_current), "at": time.time(), "conditions": self._current_conditions()}
@@ -706,8 +697,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return {"unavailable": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
 
     def _versions(self) -> dict:
-        """The AutoScript server and client versions, whether the server is offline (a simulator), and the
-        microscope's serial number and TEM server version, as AutoScript reports them."""
+        """AutoScript's server and client versions, whether it is offline, and the microscope's serial and TEM server version."""
         service = self._microscope.service
         return {
             "autoscript_server_version": self._read(lambda: str(service.autoscript.server.version)),
