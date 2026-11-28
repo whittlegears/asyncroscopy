@@ -9,11 +9,9 @@ import json
 import os
 import signal
 import sys
-import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from io import BufferedReader
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -251,10 +249,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def instrument_cleanup_patterns(config: Config) -> set[str]:
-    return {f"{config.instrument.class_name} instrument_instance"}
-
-
 def selected_instrument(devices: list[DeviceConfig]) -> DeviceConfig:
     return next(device for device in devices if device.key == "instrument")
 
@@ -339,31 +333,6 @@ def make_environment(
         "ASYNCROSCOPY_ACQUISITION_DIR": acquisition_dir,
         "PYTHONUNBUFFERED": "1",
     }
-
-
-def drain_process_output(
-    stream: BufferedReader | None,
-    output: deque[str],
-    log_path: Path | None = None,
-    stream_name: str = '',
-) -> None:
-    if stream is None:
-        return
-
-    def drain() -> None:
-        log_file = log_path.open('a', encoding='utf-8') if log_path is not None else None
-        for line in iter(stream.readline, b""):
-            text = line.decode(errors='replace').rstrip()
-            output.append(text)
-            if log_file is not None:
-                prefix = f'[{stream_name}] ' if stream_name else ''
-                log_file.write(f'{prefix}{text}\n')
-                log_file.flush()
-        if log_file is not None:
-            log_file.close()
-        stream.close()
-
-    threading.Thread(target=drain, daemon=True).start()
 
 
 def buffered_output(lines: deque[str]) -> str:

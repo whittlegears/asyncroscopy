@@ -56,5 +56,4 @@ uv sync --extra diffraction
 - `acquire_scanned_image(["haadf"])`
 - `place_beam([x, y])`
 - `acquire_spectrum("eds")`
-- `get_viewport_metadata()`
 - `regenerate_sample(seed)`

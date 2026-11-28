@@ -692,33 +692,6 @@ class DigitalTwin(ElectronMicroscope):
         }
         return json.dumps(parameters)
 
-    def get_viewport_metadata(self) -> str:
-        """Return JSON-formatted metadata regarding the current simulation viewport and environment state."""
-        self._sync_stage_from_proxy()
-        fov_ang = self._fov * 1e10
-        stage_xyz_ang = self._stage_position[:3] * 1e10
-        viewport = {
-            "x_min": float(stage_xyz_ang[0] - fov_ang * 0.5),
-            "x_max": float(stage_xyz_ang[0] + fov_ang * 0.5),
-            "y_min": float(stage_xyz_ang[1] - fov_ang * 0.5),
-            "y_max": float(stage_xyz_ang[1] + fov_ang * 0.5),
-            "z_center": float(stage_xyz_ang[2]),
-        }
-        metadata = {
-            "stage_position": [float(v) for v in self._stage_position],
-            "fov_m": float(self._fov),
-            "fov_angstrom": float(fov_ang),
-            "imsize": int(self._imsize),
-            "sample_seed": int(self.sample_seed),
-            "sample_size_xy": float(self.sample_size_xy),
-            "sample_size_z": float(self.sample_size_z),
-            "sample_size_xy_generated_angstrom": float(self._world_bounds_ang["x_max"] - self._world_bounds_ang["x_min"]),
-            "sample_size_z_generated_angstrom": float(self._world_bounds_ang["z_max"] - self._world_bounds_ang["z_min"]),
-            "viewport_world_angstrom": viewport,
-            "world_bounds_angstrom": self._world_bounds_ang,
-            "particle_count": len(self._particle_records_base),
-        }
-        return json.dumps(metadata)
 
 if __name__ == "__main__":
     DigitalTwin.run_server()

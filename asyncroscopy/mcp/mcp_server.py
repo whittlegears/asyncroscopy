@@ -351,10 +351,6 @@ class MCPServer:
         return ToolResult(content=[result, preview], structured_content={"result": result})
 
     @staticmethod
-    def _hdf5_attrs_to_json(attrs: Any) -> dict[str, Any]:
-        return {key: MCPServer._numpy_to_python(value) for key, value in attrs.items()}
-
-    @staticmethod
     def _tango_type_to_python(cmd_type: CmdArgType) -> Any:
         if cmd_type == CmdArgType.DevVoid:
             return type(None)
