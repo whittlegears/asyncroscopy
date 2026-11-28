@@ -33,12 +33,12 @@ class StopTarget:
     proxy: Any
     energy: list[str] = field(default_factory=list)  # stop energy reaching the sample; both phases
     other: list[str] = field(default_factory=list)  # abort jobs and lift probes; first phase
-    retracts: set[str] = field(default_factory=set)  # True means the probe is still engaged
+    retracts: set[str] = field(default_factory=set)  # commands that answer True while the probe is still engaged
 
 
-def stop_all(targets: list[StopTarget], *, who: str,
+def stop_all(targets: list[StopTarget], *,
              missing: list[dict], describe: Callable[[Exception], str], wait_s: float = STOP_ALL_WAIT_S) -> list[dict[str, Any]]:
-    """Stop ``targets``. ``who`` names the caller for the record.
+    """Stop ``targets``.
 
     ``missing``: steps already known to have failed (a device that offers no stop for what it does).
     Returns every step, {"tool", "ok", "error"?}, in the order they finished.

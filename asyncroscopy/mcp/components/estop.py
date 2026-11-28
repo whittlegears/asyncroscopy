@@ -82,7 +82,7 @@ class Estop:
         is not stopped (no call stops a stage move; stop_jogging stops only jogging) and is listed in "not_stopped". Returns what each step did."""
         server = self.server
         targets, missing = self.targets()
-        report = estop.stop_all(targets, who=f"stop_all ({server.caller() or 'unknown caller'})", missing=missing,
+        report = estop.stop_all(targets, missing=missing,
                                 describe=_failed, wait_s=estop.STOP_ALL_WAIT_S)
         not_stopped = [
             f"{prefix}: a stage move already under way is not stopped (AutoScript 1.18 can stop only jogging, with stop_jogging); "
