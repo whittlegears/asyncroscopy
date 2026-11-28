@@ -422,37 +422,6 @@ class ProcessManager:
             except (ProcessLookupError, PermissionError):
                 proc.kill()
 
-    def _terminate_popen(self, proc: subprocess.Popen):
-        """Terminates a process via SIGTERM, waits, and escalates to SIGKILL if necessary."""
-        if proc.poll() is not None:
-            return
-
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-            )
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                pass
-        else:
-            try:
-                pgid = os.getpgid(proc.pid)
-                os.killpg(pgid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                proc.terminate()
-
-            try:
-                proc.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    proc.kill()
-                proc.wait()
-
     def _cleanup_stale_state(self):
         """Reads state file on startup, terminates surviving PIDs, and deletes the file."""
         if not self.state_file.exists():
