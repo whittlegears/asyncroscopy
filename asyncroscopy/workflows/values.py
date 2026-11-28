@@ -151,7 +151,6 @@ def check_inputs(workflow: str, declared: dict, given: dict | None) -> dict:
         if (isinstance(value, bool) and kind in ("number", "integer")) or not isinstance(value, TYPES.get(kind, (object,))):
             raise ValueError(f"input {name} must be a {kind}, not {value!r}")
         if kind in ("number", "integer") and not math.isfinite(value):
-            # NaN and infinity can pass the range checks below
             raise ValueError(f"input {name} must be a finite {kind}, not {value!r}")
         for bound, bad in (("min", lambda v, b: v < b), ("max", lambda v, b: v > b)):
             if bound in port and bad(value, port[bound]):

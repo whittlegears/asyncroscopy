@@ -120,7 +120,7 @@ async def _expose(ctx: BlockContext, args: dict, index: int) -> str:
             failure = exc
     except BaseException as exc:
         failure = exc
-    # Always blank the beam. If blanking fails, the error still says why the tile failed or which image was taken.
+    # Blank even after a failure; the error still says why the tile failed.
     try:
         await ctx.call_always("*_blank_beam")
     except Exception as blank_error:
@@ -162,12 +162,10 @@ async def _acquire_tile(ctx: BlockContext, args: dict, previous: dict | None) ->
                 await _put_back(ctx, "*_set_image_shift", {"shift": home_shift})
         else:
             await ctx.call("*_move_stage", {"position": [x, y, *rest]})
-            # Read where the stage really stopped. The map uses this when an image records no position.
             reported = _numbers(await ctx.call("*_get_stage"), 2, f"the stage position at tile {index}")[:2]
             key = await _expose(ctx, args, index)
     except BaseException:  # on any failure or stop, put back the field of view and the stage
         if not by_shift and args.get("origin_xy_m"):
-            # A resumed run moves to this tile again, so going back loses nothing.
             home_xy = _numbers(args["origin_xy_m"], 2, "origin_xy_m (plan_grid's start_xy_m)")[:2]
             await _put_back(ctx, "*_move_stage", {"position": [*home_xy, *rest]})
         if home_fov:

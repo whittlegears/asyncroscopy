@@ -245,7 +245,6 @@ class WorkflowServer:
             if task is not None and task.exception() is not None:
                 return {"run_id": run_id, "state": "failed", "error": f"{type(task.exception()).__name__}: {task.exception()}"}
             return {"error": f"there is no workflow run {run_id!r}; call list_runs"}
-        # A run another process drives (it holds the run's lock) is still going; one nobody drives was cut off.
         if record["state"] in GOING and (task is None or task.done()) and not runner.driven_elsewhere(run_id, self.state_dir):
             record["state"], record["error"] = "stopped", "the workflow server was restarted while this run was going"
         return _reply(record, self.state_dir)
@@ -358,7 +357,6 @@ class WorkflowServer:
             "name": workflow.name, "status": status, "summary": workflow.summary, "inputs": dict(workflow.inputs), "budget": dict(workflow.budget),
             "graph": {k: v for k, v in workflow.blueprint().items() if k in ("nodes", "edges")}, "source": source,
             "hash": current, "acts": checked["acts"], "tools": checked["tools"], "blocks": checked["blocks"], "problems": checked["problems"],
-            # The agent that proposed it supplied these words: they are what it says the user asked, not the person's own record.
             "request_as_reported_by_agent": {"text": asked.get("request"), "at": asked.get("at"), "this_code": asked.get("hash") == current} if asked else None,
             "context_as_reported_by_agent": {"text": asked["context"], "this_code": asked.get("hash") == current} if asked and asked.get("context") else None,
             "last_approved": {k: signed.get(k) for k in ("hash", "by", "at")} if signed else None,
@@ -411,7 +409,6 @@ class WorkflowServer:
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
             status = review["status"]
-            # A draft that is not the reviewed code is refused by approve below, as changed since it was reviewed.
             if str(expected_hash) == review["hash"] and not review["can_approve"]:  # the one decision review_workflow reports
                 return {"ok": False, "status": status, "error": review["why_not"]}
             try:
@@ -498,7 +495,6 @@ class WorkflowServer:
             if problem:
                 return {"state": "refused", "workflow": workflow.name, "problems": [problem]}
             run_id = uuid.uuid4().hex[:12]
-            # Opened again so every call carries the run id, and the name of the caller that asked for the run.
             instrument, analysis, operator, fields = await server._prepared(run_id, info, status, workflow, instrument_url)
             granted = bool((fields.get("preapproval") or {}).get("granted"))
             server._start(run_id, lambda: server._rehearsed(run_id, info, workflow, runner.run_workflow(

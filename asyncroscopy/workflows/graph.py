@@ -54,9 +54,7 @@ from .blocks import Block, BlockContext, BlockFailed, Unreachable, all_blocks
 from .checks import END, START, edges_of, lint
 from .values import check_inputs, evaluate, fill
 
-# A node whose tool call never reached the endpoint (connection refused, connect or pool timeout) is tried again; the
-# call was not delivered, so it cannot have acted. Nothing else is retried: a refusal, an instrument error, a bad input,
-# a stop or a timeout while the endpoint was answering (it may have acted) ends the run, to be looked at and resumed.
+# Retried only when the call never reached the endpoint, so it cannot have acted.
 TRANSPORT_RETRY = RetryPolicy(max_attempts=4, initial_interval=2.0, backoff_factor=2.0, max_interval=30.0, jitter=True,
                               retry_on=lambda exc: isinstance(exc, Unreachable))
 
@@ -203,7 +201,6 @@ class Workflow:
     build: Callable[[Steps], StateGraph] = field(repr=False, compare=False)
     inputs: dict[str, dict] = field(default_factory=dict)
     budget: dict[str, Any] = field(default_factory=dict)
-    # Set for a workflow proposed as text because it has no module file to read
     source_text: str = field(default="", repr=False, compare=False)
 
     def _built(self, ctx: BlockContext | None) -> StateGraph:

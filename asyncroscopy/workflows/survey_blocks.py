@@ -147,7 +147,6 @@ class _Visit:
     async def go_to(self, field: int, at: list[float]) -> None:
         if self.moves:
             await self.ctx.call("*_move_stage", {"position": [at[0], at[1], *self.rest]})
-        # Read where the stage really is, because tiles are placed from this.
         self.origin = _numbers(await self.ctx.call("*_get_stage"), 2, "the stage position")[:2]
         self.field = field
 
@@ -180,7 +179,6 @@ class _Visit:
         for _ in range(self.retries):
             if ok:
                 break
-            # Take one more image between the two, closer to the last one that fitted.
             aim = [fitted.at[axis] + (tile.at[axis] - fitted.at[axis]) * fraction for axis in (0, 1)]
             extra = await self.bridge(aim, index)
             self.keys.insert(len(self.keys) - 1, extra.key)
@@ -209,8 +207,7 @@ class _Visit:
             self.counts["unchecked"] += 1
         else:
             self.counts["matched" if await self.fits_with_bridges(tile, before, index) else "unmatched"] += 1
-            # A bridging image changes the image shift and may move the stage. Go back to this tile, so that spectra
-            # taken after the visit (spectrum_here with shift_m) land on the tile they are filed under.
+            # Go back to this tile, so spectra taken after the visit land on the tile they are filed under.
             if self.field != field:
                 await self.go_to(field, field_at)
             self.shift = tile_shift
@@ -253,7 +250,6 @@ async def _survey_tiles(ctx: BlockContext, args: dict, previous: dict | None) ->
                     break
                 index += 1
         finally:
-            # Put the image shift back after every visit, however it ended.
             await _put_back(ctx, "*_set_image_shift", {"shift": home_shift})
     except BaseException:  # on any failure or stop, put back the field of view
         if home_fov:

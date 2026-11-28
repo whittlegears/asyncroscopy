@@ -352,7 +352,7 @@ def load_source(source: str) -> Workflow:
     if problems:
         raise NotAWorkflow(problems)
     tree = ast.parse(source)
-    # Imports are dropped because the names they bring in are passed in below and there are no builtins to import with.
+    # Imports are dropped: their names are passed in below, and there are no builtins to import with.
     tree.body = [statement for statement in tree.body if not isinstance(statement, ast.ImportFrom)]
     scope: dict[str, Any] = {"__builtins__": {}, "__name__": "proposed_workflow", "END": END, "START": START, "StateGraph": StateGraph,
                              "Steps": Steps, "Workflow": Workflow, "WorkflowState": WorkflowState}

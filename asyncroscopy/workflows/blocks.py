@@ -150,10 +150,8 @@ def parse_reply(text: str) -> Any:
     return value
 
 
-# What AutoScript says when the microscope's own software is scanning (its live view) as an acquisition starts.
 LIVE_SCAN = re.compile(r"scan ?task is already active|another scan (?:task )?is (?:already )?(?:active|running)", re.IGNORECASE)
-# One option: the step starts over when answered and retries the call before it reads the answer, so a "stop"
-# answer could not stop it. Stopping the run (stop_workflow) ends it instead.
+# One option only: an answered step retries before it reads the answer, so stopping takes stop_workflow.
 LIVE_SCAN_QUESTION = {
     "question": "The microscope's own scan (live view) is running, so the workflow cannot take its image. "
                 "Stop the live scan in the microscope software, then choose continue (or stop the run).",
@@ -254,6 +252,13 @@ class BlockContext:
     ``on_ask`` is called with a question for a person and returns their answer. Without it a block that asks fails.
     ``on_hold`` is called with a call the endpoint holds for a person's approval. Without it that call fails the block.
     The runner raises a LangGraph interrupt in both, so the run waits there.
+
+    What the run builds up: ``data_keys`` (every key its replies named, in order), ``restores`` (settings it
+    changed, ``{name: {"set": call, "restore": call}}``, put back when it ends early and set again on resume),
+    ``unrestored`` (those it could not put back), ``step`` and ``loop`` (the running node and the latest loop's
+    ``{"node", "done", "total"}``, for a client following it), ``tiles`` (data key -> ``{"key", "x_m", "y_m",
+    "fov_m"}``), ``acts`` (its workflow has a block that acts, so it never drives the instrument beside another
+    such run) and ``cleaned`` (what its cleanup did when it gave the instrument back early).
     """
 
     def __init__(
@@ -267,23 +272,14 @@ class BlockContext:
         self.on_hold = on_hold
         self.journal = journal if journal is not None else CallJournal(None)
         self.calls: list[dict] = []
-        # Every data key the run's replies named, in order: acquisitions and what analysis jobs derived from them.
         self.data_keys: list[str] = []
-        # Settings a block could not put back. The run record lists them for the operator.
         self.unrestored: list[dict] = []
-        # Settings a run changed and must put back if it ends early: {name: {"set": call, "restore": call}}, each call
-        # {"tool", "arguments"}. The runner restores them when a run ends without finishing and sets them again on resume.
         self.restores: dict[str, dict] = {}
         self._names: dict[int, list[str]] = {}
-        # For a client following the run: the node running now, and the latest loop node's count
-        # ({"node", "done", "total"}, plus "level" in a multi-level map). Set by Steps.block.
         self.step: str | None = None
         self.loop: dict | None = None
-        # The images a map has taken so far, where and how wide: data key -> {"key", "x_m", "y_m", "fov_m"}.
         self.tiles: dict[str, dict] = {}
-        # Whether the run's workflow has a block that acts on the instrument: two such runs never drive it at once.
         self.acts = False
-        # What the run's cleanup did when it gave the instrument back before it ended; None while it has not.
         self.cleaned: list[dict] | None = None
 
     def changed(self, name: str, set_call: dict, restore_call: dict) -> None:
@@ -375,8 +371,6 @@ class BlockContext:
                     raise BlockFailed(f"{name} is waiting for a person to approve it (request {held.get('request_id')}), and this run cannot wait")
                 self.on_hold(held)
                 continue
-            # The microscope's own scan (its live view) blocks every acquisition. A person can stop it: the run
-            # asks them, waits, and tries the call again; it fails only when they choose to stop.
             if checked and self.on_ask is not None and LIVE_SCAN.search(text):
                 self.ask(dict(LIVE_SCAN_QUESTION))
                 continue

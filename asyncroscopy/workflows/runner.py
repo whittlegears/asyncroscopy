@@ -58,7 +58,6 @@ from .turns import Turn, acting_ahead
 from .graph import Workflow, get_workflow, recursion_limit
 
 DEFAULT_STATE_DIR = Path("outputs/workflows")
-# Runs going on in this process by run id. ``progress`` reads it.
 LIVE: dict[str, BlockContext] = {}
 TWIN_ONLY = ("this endpoint does not say its stack is simulated. Workflows run on a digital twin unless hardware is allowed "
              "on purpose: --hardware on the command line (run, resume, serve).")
@@ -261,7 +260,6 @@ async def run_workflow(
         record["inputs"] = workflow.check_inputs(inputs)
     except ValueError as exc:
         input_problem = str(exc)
-    # A node this run switches off (eels: false) needs no tool: a map without EELS runs where there is none.
     off = switched_off_nodes(record["blueprint"], record["inputs"]) if input_problem is None else frozenset()
     checked = workflow.lint(offered, offered_analysis, switched_off=off)
     record["problems"] = list(checked["problems"])
@@ -332,7 +330,6 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
                  start: bool, answers: dict | None = None) -> dict:
     blueprint, run_id = record["blueprint"], record["run_id"]
     budget = blueprint.get("budget") or {}
-    # The budget covers the whole run, so a resumed run gets only what is left. Time spent waiting does not count.
     record["calls_before"] = int(record.get("calls", 0)) if not start else 0
     record["seconds_before"] = float(record.get("seconds", 0.0)) if not start else 0.0
     record["tools_called_before"] = dict(record.get("tools_called") or {}) if not start else {}
@@ -371,10 +368,6 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
             latest = read_run(run_id, state_dir)
             if latest.get("state") == "done":
                 return latest
-        # One run at a time drives the instrument: on the twin a second map found the beam blanked by the first one's
-        # tiles and failed; on an instrument the two would move the stage and the scan under each other.
-        # Where the endpoint gives turns (take_turn), a run that acts queues for the instrument there instead, behind
-        # runs of any process; without them, a second acting run in this process is refused.
         turn = Turn(instrument, what=f"{workflow.name}, run {run_id}") if ctx.acts and await Turn.offered(instrument) else None
         driving = [other for other, live in LIVE.items() if other != run_id and live.acts]
         if turn is None and ctx.acts and driving:
@@ -397,7 +390,6 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
                 async def clean_up() -> None:
                     ctx.cleaned = await _clean_up(ctx, used)
 
-                # The turn is given back when no block that acts can still run: a map is stitched while the next one starts.
                 all_known = all_blocks()
                 turn.keep(done_acting=lambda: ctx.step is not None and not acting_ahead(blueprint, all_known, ctx.step), before_giving=clean_up)
             return await _drive_checked(record, workflow, state_dir, ctx, config, used, save, durable, start, answers or {})
@@ -515,7 +507,6 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             if not snapshot.next:
                 raise ValueError(f"run {run_id} has no saved place to continue from (it was not run with a durable checkpoint)")
             questions = _pending(snapshot)
-            # Each waiting node is resumed by its own id. A question with no answer yet keeps waiting.
             answered = [q for q in questions if q["id"] in answers]
             resume = {q["id"]: answers[q["id"]] for q in answered}
             first = Command(resume=resume) if resume else None
@@ -526,7 +517,6 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
         save(state="running", durable=is_durable, ended=None, error=None, questions=None, approvals=None, unrestored=None)
         state, error = "done", None
         try:
-            # Settings the run had changed were put back when it ended early. Set them again before it continues.
             ctx.restores = {name: dict(entry) for name, entry in (record.get("restores") or {}).items()} if not start else {}
             for entry in ctx.restores.values():
                 await ctx.call(entry["set"]["tool"], entry["set"]["arguments"])
@@ -544,8 +534,7 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             state = "waiting"
         if state != "waiting":
             ctx.journal.clear()
-        # A run that gave the instrument back early cleaned up then, while it was still its own: a blank now would
-        # land in the middle of the next run's tile.
+        # Cleaned up already when it gave the instrument back; a blank now could land in the next run's tile.
         cleanup = list(ctx.cleaned) if ctx.cleaned is not None else await _clean_up(ctx, used)
         if state != "done":  # the run ended part way: put back what it changed and has not put back itself
             for name, entry in ctx.restores.items():
