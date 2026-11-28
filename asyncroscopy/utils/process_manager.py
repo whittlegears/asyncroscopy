@@ -366,7 +366,7 @@ class ProcessManager:
                 pass
 
     def stop_processes_on_port(self, port: int) -> int:
-        """Identifies and kills processes occupying a specific TCP port."""
+        """Identifies and kills the processes listening on a specific TCP port."""
         if os.name == "nt":
             try:
                 result = subprocess.run(
@@ -399,9 +399,12 @@ class ProcessManager:
                     stopped += 1
             return stopped
 
+        # Only the process listening on the port: plain `lsof -ti :PORT` also lists every
+        # client connected to it (an MCP server talking to Tiled, a notebook), and those
+        # must survive a stack restart.
         try:
             result = subprocess.run(
-                ["lsof", "-ti", f":{port}"], capture_output=True, text=True
+                ["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True
             )
         except FileNotFoundError:
             return 0
