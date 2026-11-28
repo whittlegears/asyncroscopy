@@ -1,6 +1,6 @@
 ## Future Changes
 
 - **EELS, EDS, CEOS** detector device files are present as stubs.
-- **Async acquisition** — deferred; architecture is designed to adopt gevent-based async later without structural changes.
-- **Create benchmarking for model
-- **Test UNET Blob Finder and integrate ML as a device to call**
+- Async acquisition is not implemented. The plan is to add gevent-based async later without a change to the structure.
+- A benchmark for agent models.
+- Tests for the UNET blob finder, and an ML device that the instrument can call.

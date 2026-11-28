@@ -1,123 +1,77 @@
 # Asyncroscopy
 
-**Asynchronous control framework for smart microscopy.** Built on `PyTango` to be hardware-agnostic.
+Asyncroscopy controls lab instruments through `PyTango`. Each instrument, and each part of it, is a Tango device. Notebooks, scripts and LLM agents use the same devices.
 
 <div class="d-flex justify-content-between align-items-center w-100">
   <img src="docs/images/architecturev1.png" style="width: 36%;" alt="Architecture V1" />
   <img src="docs/images/architecturev2.png" style="width: 60%;" alt="Architecture V2" />
 </div>
 
-## Quick Start
+## Quick start
 
 ```bash
-# Install all dependencies
 uv sync
 
-# Start the server stack with a configuration
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
-
-# Or use the DigitalTwin (no hardware required)
+# Simulated microscope, no hardware needed
 uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
+
+# In a second terminal: expose the devices to agents over MCP
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-Start the MCP server in a second terminal for agent/AI integration:
-```bash
-uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
-```
+For a real instrument, use its config, for example `configs/Spectra300.yaml` with `configs/mcp.yaml`.
 
-Start only the segmentation Tango device against an existing Tango/DATA/Tiled stack:
-```bash
-uv run --extra segment startup_scripts/run_segmentation.py --yaml configs/Segmentation.yaml
-```
-
-Start the oriented-particle digital twin:
+The startup GUI does the same from a window:
 
 ```bash
-uv run --extra diffraction python startup_scripts/run_servers.py --yaml configs/digital_twin_particles.yaml
+uv run startup_guis/server_gui.py
 ```
 
-`configs/Segmentation.yaml` sets `compute_device: cuda`. On Linux and Windows,
-the `segment` extra installs PyTorch from its CUDA 13.0 package index; macOS
-continues to use the normal PyPI build. The launcher fails at startup instead
-of silently using the CPU when CUDA is unavailable. Install and verify on the
-GPU host before launching:
+## Documentation
+
+The [documentation](https://pycroscopy.github.io/asyncroscopy/) explains how to:
+
+- [add your own instrument](docs/new_instrument.md),
+- [scale to more instruments and computers](docs/scaling.md),
+- [run the servers](docs/Operation/run-servers.md) and the [MCP server](docs/MCP/mcp_server.md).
+
+## Project structure
+
+```text
+asyncroscopy/
+├── instruments/       # Instrument and support devices, one folder per kind
+├── data/              # DATA device and the file writer for Tiled
+├── mcp/               # MCP server and the agent swarm
+└── utils/             # ProcessManager and helpers
+configs/               # One YAML per stack, MCP server or agent
+startup_scripts/       # run_servers.py, run_mcp.py, run_llm.py, run_segmentation.py
+startup_guis/          # The startup window
+notebooks/             # Example workflows
+```
+
+## Optional dependencies
+
+```bash
+uv sync --extra diffraction                 # abTEM simulation for the diffraction and tilt twins
+uv sync --extra agent                       # LLM agent (LangChain, OpenAI)
+uv sync --extra agent --extra ollama        # local models through Ollama
+uv sync --extra segment                     # SAM2 segmentation device (PyTorch)
+uv sync --extra jupiter                     # Asylum Research Jupiter AFM
+```
+
+On Linux and Windows, the `segment` extra installs PyTorch from its CUDA 13.0 package index. macOS uses the normal PyPI build. Check CUDA on the GPU host before you start the segmentation device:
 
 ```bash
 uv sync --extra segment --reinstall-package torch --reinstall-package torchvision
 uv run --extra segment python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name() if torch.cuda.is_available() else '')"
 ```
 
-For interactive GUI-based startup:
-```bash
-uv run startup_guis/server_gui.py
-uv run startup_guis/mcp_gui.py
-```
-
-## Project Structure
-
-```text
-asyncroscopy/
-├── data/              # Data management device
-├── instruments/       # Hardware device implementations
-└── mcp/               # FastMCP server for AI agents
-```
-
-## Configuration Files (`configs/`)
-
-| Config | Purpose |
-|--------|---------|
-| `Spectra300.yaml` | Real Thermo Fisher Spectra 300 setup |
-| `DigitalTwin.yaml` | Simulated microscope for development/testing |
-| `diffraction.yaml` | DigitalTwin with diffraction simulation |
-| `digital_twin_tilt.yaml` | ASE/abTEM multislice silicon lamella tilt twin |
-| `mcp.yaml` | MCP server configuration (not hardware) |
-
-These are some examples of the available configs, which define the instrument class, supporting devices, Tango connection, and Tiled settings.
-
-## Optional Dependencies
-
-```bash
-# Diffraction and tilt-twin multislice simulation (abTEM-based)
-uv sync --extra diffraction
-
-# AI agent support (LangChain/OpenAI)
-uv sync --extra agent
-
-# Local AI models via HuggingFace transformers (requires --extra agent)
-uv sync --extra agent --extra localagent
-```
-
-## Running Tests
+## Running tests
 
 ```bash
 uv run pytest tests/ -v
 ```
 
-## Architecture
-
-- **Abstraction Layer:** Instruments are defined as abstract base classes, with specific implementations for different hardware. As such, models can be defined for various microscopes, digital twins, etc.
-- **Device Orchestration:** Supporting devices (camera, EDS, stage, etc.) are initialized first and linked to the instrument via Tango properties.
-- **Execution Order:** The instrument serves as the final integration point, instantiated only after all prerequisite supporting devices are running.
-- **Data:** Data from devices is saved to Tiled.
-
-## Documentation
-
-Refer to the [asyncroscopy documentation](https://pycroscopy.github.io/asyncroscopy/).
-
-## Notebooks
-
-Various example workflows in `notebooks/`, including:
-
-- `00_Testing.ipynb` - Connection tests
-- `01_Aberrations.ipynb` - Probe aberration controls
-- `02_Image_Acquisition.ipynb` - HAADF image acquisition
-- `03_Stage_Movement_Sample_Map.ipynb` - Stage navigation
-- `04_Image_EDS_Point_Spectra.ipynb` - EDS spectrum acquisition
-- `05_Digital_Twin_EDS.ipynb` - DigitalTwin EDS simulation
-- `06_Digital_Twin_Tilt.ipynb` - DigitalTwin tilt control
-- `11_Test_AI_Agent.ipynb` - MCP agent testing
-- `15_MAPED.ipynb` - Multi-angle precession electron diffraction
-- `16_Alpha_Tilt_Diffraction_Map.ipynb` - Tracked alpha-tilt diffraction mapping
-
 ## Notes
-* The previous Twisted-based implementation is preserved in the `twisted-legacy` branch for reference.
+
+The earlier Twisted-based code is in the `twisted-legacy` branch.

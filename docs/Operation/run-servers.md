@@ -1,138 +1,79 @@
-# Running The Servers
+# Running the servers
 
-`startup_scripts/run_servers.py` starts the Tango/device side of asyncroscopy. It
-clears stale processes, starts the Tango database, registers devices, launches
-device servers, starts the DATA-managed Tiled HTTP server, and starts the
-selected instrument last.
+`startup_scripts/run_servers.py` starts one stack: the Tango database, the support devices, the DATA-managed Tiled server and the instrument. Start the MCP server and the agent after it, in other terminals or on other computers.
 
-MCP is started separately with `startup_scripts/run_mcp.py`; see
-[mcp_server.md](../MCP/mcp_server.md).
-
-## TL;DR
+## Quick start with no hardware
 
 ```bash
-uv run startup_scripts/run_servers.py
-
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
+uv sync
 uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
-uv run startup_scripts/run_servers.py --yaml configs/ThinkPad-utkarsh-covalent-setup.yaml
 ```
 
-GUI:
+Leave the terminal open while you work. Press Ctrl+C to stop every process the runner started, Tiled included.
+
+Then, in a second terminal, start the MCP server for the twin:
 
 ```bash
-uv run python startup_guis/server_gui.py
+uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
 ```
 
-- Press **Enter** at prompts to accept the value in brackets.
-- Leave the terminal open while you work. Press **Ctrl+C** to stop the managed
-  processes and the managed Tiled server.
-- Start MCP in a second terminal or on another computer:
+For a real instrument, use its config, for example `configs/Spectra300.yaml`.
+
+## Modes
+
+- With `--yaml`, the runner starts headless from that file and asks nothing.
+- Without `--yaml`, the runner asks for each value. Press Enter to accept the value in brackets. The defaults come from `configs/Spectra300.yaml`.
+
+## Options
+
+| Option | What it does |
+|---|---|
+| `--yaml PATH` | Config to start from. |
+| `--debug` | Writes each server's output to `output_tango_devices_logs/<timestamp>/<key>.log`. |
+| `--isolated DIR` | Runs a second stack beside an existing one. See [scaling](../scaling.md). |
+| `--cleanup` | Only stops processes that an earlier run of this config left behind, then exits. |
+
+## Startup stages
+
+1. Clear old processes. The runner frees the Tango and Tiled ports and stops old device servers.
+2. Start the Tango database, or wait for an existing one.
+3. Register the devices and write the instrument properties.
+4. Start the support devices, then Tiled, then the instrument.
+5. Print a summary: `TANGO_HOST`, PIDs, ready times and the Tiled URI.
+
+If a stage fails, the runner prints the last output of each server and stops what it started.
+
+Set `tango.reset_database_file: true` to delete a stale `tango_database.db` before the database starts.
+
+## The startup GUI
 
 ```bash
-uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
+uv run startup_guis/server_gui.py
+uv run startup_guis/mcp_gui.py
+uv run startup_guis/llm_gui.py
 ```
 
-## What It Starts
+All three open the same window (`startup_guis/script_gui.py`) on a different config. The server window opens on `DigitalTwin.yaml`, so a new window never targets real hardware. The config list shows every YAML in `configs/` that a startup script can run.
 
-| Order | Device(s) | Tango name |
-|-------|-----------|------------|
-| 1 | support devices | `asyncroscopy/{camera,corrector,data,eds,scan,stage}/default` |
-| 2 | Tiled HTTP server | started through the `data` device |
-| 3 | instrument | `asyncroscopy/instrument/default` |
+The window shows a form built from the YAML, a preview of the YAML it will run, and the terminal output. Start writes the current form to `outputs/startup_configs/<script>_gui.yaml` and runs the script on it. Stop stops the script and its processes. Save current config writes the form to a YAML you can reuse.
 
-The instrument starts last because it depends on the support devices. The runner
-writes support-device addresses and hardware connection values into Tango
-database properties before the instrument starts.
+## Process handling
 
-## Server GUI
+`ProcessManager` (`asyncroscopy/utils/process_manager.py`) starts and stops every child process for `run_servers.py`, `run_mcp.py` and `run_llm.py`. Use it if you write a new startup script:
 
-`startup_guis/server_gui.py` is a small YAML launcher for the server stack. It
-does not start servers directly. It formats the current selections into YAML,
-writes that YAML to `outputs/startup_configs/server_gui.yaml`, and runs:
-
-```bash
-uv run python startup_scripts/run_servers.py --yaml outputs/startup_configs/server_gui.yaml
+```python
+with ProcessManager() as manager:
+    manager.start_process(key="scan", label="SCAN", command=[...], env=environment)
 ```
 
-The GUI includes:
+- It records the PIDs in a state file under `.processes/`. At the next start, it stops processes that a crashed run left behind.
+- `stop_process` sends a graceful stop first. It kills the process if it does not stop within `timeout`.
+- On exit from the `with` block, `shutdown_all()` stops all tracked processes.
+- It handles the differences between Windows and POSIX.
 
-- YAML preview generated from the current selections.
-- Terminal output from the running process.
-- **Start** and **Stop** controls.
-- **Save current config** to write a YAML file you can reuse later.
+## Manual start
 
-## Configs
-
-Server startup configs live in [configs/](../../configs):
-
-| File | For |
-|------|-----|
-| [configs/Spectra300.yaml](../../configs/Spectra300.yaml) | The real Spectra 300 stack. This is the default config. |
-| [configs/ThinkPad-utkarsh-covalent-setup.yaml](../../configs/ThinkPad-utkarsh-covalent-setup.yaml) | A localhost-everywhere setup for local testing. |
-
-Each server config has:
-
-- `instrument:` for the selected instrument class, Python file, and hardware connection values.
-- `devices:` for support device modules.
-- `tango:` for the Tango database host, port, and optional database-file reset.
-- `tiled:` for the DATA-managed Tiled HTTP server.
-- `device_timeout_seconds:` for device readiness waits.
-
-Device `class_name` defaults to the upper-cased key (`scan` becomes `SCAN`).
-`instrument.hardware_host`, `instrument.hardware_port`, and
-`instrument.timeout_seconds` become instrument device properties.
-
-Set `tango.reset_database_file: true` to delete a stale local
-`tango_database.db` / `Tango_database.db` before starting the Tango database.
-The GUI exposes the same setting as **Delete tango_database.db before start**.
-
-## MCP
-
-MCP has its own config: [configs/mcp.yaml](../../configs/mcp.yaml).
-
-Start the server stack first. Then, from the MCP machine:
-
-```bash
-uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
-```
-
-If MCP runs on a different computer, edit `configs/mcp.yaml`:
-
-- `tango.host` should point to the machine running the Tango database.
-- `mcp.http_host` should be `127.0.0.1` for local-only clients or `0.0.0.0` when
-  other machines need to connect.
-
-## Prompts
-
-Interactive mode is used only when `--yaml` is omitted. The defaults come from
-`configs/Spectra300.yaml`.
-
-| Prompt | What it controls |
-|--------|------------------|
-| Tango database host / port | `TANGO_HOST` for Tango clients and servers. |
-| Tiled HTTP host / port | Where the DATA device starts Tiled. |
-| Acquisition save path | Directory written and served by Tiled. |
-| Start Tiled HTTP server | Whether DATA starts its managed Tiled server. |
-| Clear old processes first | Frees stale Tango/Tiled ports and old device servers. |
-| Start Tango database | Starts the DB or waits for an existing one. |
-| Register devices | Adds device entries and instrument properties to the DB. |
-| Device startup timeout seconds | How long to wait for each device to answer `ping()`. |
-| Hardware host / port / timeout seconds | Connection values for the selected instrument. |
-
-## Startup Stages
-
-1. **Clearing old processes** frees the database/Tiled ports and kills old device
-   server process groups.
-2. **Starting Tango database** starts or waits for the database server.
-3. **Registering devices** writes device entries and instrument properties.
-4. **Starting device servers** starts support devices, Tiled, and then the
-   selected instrument.
-5. **Startup summary** prints `TANGO_HOST`, PIDs, ready times, and the Tiled URI.
-
-## Manual Fallback
-
-The runner automates this database-mode flow:
+The runner automates this flow:
 
 ```bash
 TANGO_HOST=localhost:9094 uv run python -m tango.databaseds.database 2
@@ -142,6 +83,4 @@ uv run python -m asyncroscopy.instruments.electron_microscope.hardware.scan scan
 uv run python -m asyncroscopy.instruments.electron_microscope.auto_script instrument_instance
 ```
 
-Manual device startup requires the devices to already be registered in Tango.
-Let `run_servers.py` do registration once, then stop and relaunch individual
-servers as needed.
+A manual start needs the devices to be in the Tango database already. Let `run_servers.py` register them once. Then you can stop and start single servers by hand.

@@ -1,39 +1,22 @@
-# Asyncroscopy Agent MCP Server
+# Agent MCP server
 
-The agent MCP server exposes the LLM agent swarm as MCP tools. It is how clients drive the LLM.
+The agent MCP server serves an LLM agent swarm as MCP tools. The swarm takes its own tools from one or more [MCP servers](mcp_server.md). `asyncroscopy/mcp/agent.py` holds the swarm, and `asyncroscopy/mcp/agent_mcp_server.py` wraps it in FastMCP.
 
-`asyncroscopy/mcp/agent.py` holds the swarm and `asyncroscopy/mcp/agent_mcp_server.py` wraps it in FastMCP.
+## Start it
 
-## Start It
-
-Start the device stack and the instrument MCP server first:
-
-```bash
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
-uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
-```
-
-Then start the agent in another terminal or on the agent computer:
+Start the stack and the MCP server first. Then:
 
 ```bash
 uv run startup_scripts/run_llm.py --yaml configs/gemma-llm.yaml
 ```
 
-The default endpoint is:
-
-```text
-http://127.0.0.1:8002/mcp
-```
-
-To prompt the swarm from a terminal instead of serving it over MCP:
+The default endpoint is `http://127.0.0.1:8002/mcp`. To prompt the swarm in the terminal instead of serving it:
 
 ```bash
 uv run startup_scripts/run_llm.py --yaml configs/gemma-llm.yaml --interactive
 ```
 
-If the agent runs on another computer, set `agent.mcp_urls` to the instrument MCP machine and `agent.http_host` to the agent machine's bind address. Use `0.0.0.0` when clients on other machines need to connect.
-
-## YAML Contract
+## Config
 
 ```yaml
 agent:
@@ -53,19 +36,31 @@ agent:
       tools: ["list_devices"]
 ```
 
-`mcp_urls` is the only link to the instrument stack. `use_init_chat_model: true` initializes through LangChain's `init_chat_model` using `model` and `model_provider` instead of a local Ollama model.
+- `mcp_urls` is the only link to the instruments. List one URL per stack to give one agent several instruments. See [scaling](../scaling.md).
+- `use_init_chat_model: true` starts the model through LangChain's `init_chat_model` with `model` and `model_provider`, instead of a local Ollama model.
+- `tools` takes glob patterns against the inherited tool names, for example `["*spectrum"]`.
+- If the agent runs on another computer, point `mcp_urls` at the MCP computer. Set `http_host` to `0.0.0.0` when clients on other computers must connect.
+
+If the model does not start, the server still serves MCP, and `query_agent` reports the error.
 
 ## Tools
 
-| Tool | Signature | Purpose |
+| Tool | Signature | What it does |
 | --- | --- | --- |
-| `query_agent` | `(prompt: str, include_transcript: bool) -> str` | Run the swarm and return its response. |
-| `spawn_agent` | `(config: str) -> str` | Add a worker; returns its name, or `""` on failure. |
+| `query_agent` | `(prompt: str, include_transcript: bool) -> str` | Runs the swarm and returns its response. |
+| `spawn_agent` | `(config: str) -> str` | Adds a worker. Returns its name, or `""` if it fails. |
 | `list_agents` | `() -> list[str]` | Names of the agents in the swarm. |
 | `list_agent_tools` | `() -> str` | JSON list of the inherited MCP tool names. |
-| `complete` | `(request_json: str) -> str` | OpenAI-compatible single step. |
-| `set_max_steps` | `(max_steps: int) -> int` | LangGraph recursion limit per query. |
+| `complete` | `(request_json: str) -> str` | One OpenAI-compatible step. |
+| `set_max_steps` | `(max_steps: int) -> int` | Sets the LangGraph recursion limit per query. |
 
-`spawn_agent` takes `name`, `system_prompt`, and optionally `tools` (glob patterns matched against inherited tool names, e.g. `["*spectrum"]`), `model`, and `description`.
+`spawn_agent` takes `name` and `system_prompt`, and optionally `tools`, `model` and `description`.
 
-`query_agent` returns the whole run by default: supervisor routing, each tool call and its result, and the generated text, followed by `FINAL ANSWER:`. Pass `include_transcript=False` to get just the answer.
+By default, `query_agent` returns the whole run: the supervisor routing, each tool call with its result, and the text, then `FINAL ANSWER:`. Pass `include_transcript=False` to get only the answer.
+
+Optional dependencies:
+
+```bash
+uv sync --extra agent                       # LangChain and OpenAI
+uv sync --extra agent --extra ollama        # local models through Ollama
+```

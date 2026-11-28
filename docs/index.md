@@ -1,4 +1,5 @@
-# Asyncroscopy Documentation
+# Asyncroscopy documentation
+
 :::::{grid} 2
 :gutter: 0
 
@@ -15,28 +16,24 @@
 ::::
 
 :::::
----
-Welcome to the Asyncroscopy documentation site.
-Use this site to navigate contributor guidance, microscope architecture notes, hardware extension docs, MCP server references, and upcoming changes.
 
-## Start Here
+Asyncroscopy controls lab instruments through [PyTango](https://pytango.readthedocs.io). Each instrument is a Tango device. Each part of the instrument (scan unit, camera, stage, detector) is its own Tango device. Notebooks, scripts and LLM agents all talk to the same devices through the Tango database.
 
-- [Contributing Guide](dev_guide.md): project engineering principles and pull request expectations.
-- [Base Electron Microscope Extension Notes](Microscopy/modify_base_electron_microscope.md): where to add or change core microscope behavior.
-- [Thermo Microscope Extension Notes](Microscopy/modify_auto_script_microscope.md): detector integration and orchestration guidance.
+The code ships with electron microscopes (Thermo Fisher AutoScript, JEOL PyJEM, several digital twins), an Asylum Research Jupiter AFM and an Opentrons pipetting robot. You can add your own instrument without changes to the startup scripts, the GUI or the MCP server.
 
-## Hardware and Integrations
+## Where to start
 
-- [Add a Detector](Adding_New_Hardware/add_detector.md): detector onboarding checklist and implementation notes.
-- [Data Integration (Tiled)](Tiled_server/data_integration.md): how acquisitions are saved, registered, and served via the DATA device and Tiled.
-- [MCP Server Documentation](MCP/mcp_server.md): how Tango commands are exposed to MCP-compatible agents.
-- [Agent MCP Server](MCP/agent_mcp_server.md): how the LLM agent swarm is served over MCP.
+1. [Run the digital twin](Operation/run-servers.md) to see a full stack on one computer with no hardware.
+2. Read the [architecture](architecture.md) page. It explains the parts and the names they use.
+3. [Add your instrument](new_instrument.md): one instrument class, its support devices and one YAML config.
+4. [Scale out](scaling.md) to more instruments, more computers, or more capability per instrument.
 
-## Operation
+## Reference
 
-- [Starting Servers - CLI](Operation/run-servers.md)
-- [Starting Servers - GUI](Operation/run-server-gui.md)
-
-## Roadmap
-
-- [Upcoming Changes](upcoming_changes.md): planned areas and deferred work.
+- [Electron microscope family](Microscopy/modify_base_electron_microscope.md) and its [AutoScript implementation](Microscopy/modify_auto_script_microscope.md)
+- [Adding a detector](Adding_New_Hardware/add_detector.md) to an electron microscope
+- [Digital twins](digital_twin.md)
+- [Data and Tiled](Tiled_server/data_integration.md)
+- [MCP server](MCP/mcp_server.md) and [agent MCP server](MCP/agent_mcp_server.md)
+- [Troubleshooting](Operation/troubleshooting.md)
+- [Contributing guide](dev_guide.md)

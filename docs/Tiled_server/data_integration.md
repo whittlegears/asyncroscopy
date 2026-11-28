@@ -1,40 +1,51 @@
-# DATA acquisition workflow
+# Data and Tiled
 
-See more at https://github.com/bluesky/tiled.
+Acquisition commands save data to files on the instrument side and return a key. The DATA device (`asyncroscopy/data/data.py`) registers each file with a [Tiled](https://github.com/bluesky/tiled) HTTP server. Clients read the data from Tiled with the key.
 
-`AutoScriptMicroscope` saves real AutoScript acquisitions on the microscope side
-and returns the registered Tiled key through Tango. `asyncroscopy/data/data.py`
-is the Tango data device for registering those files with the Tiled HTTP server.
+There are two servers:
 
-The default format is one HDF5 file per acquisition event: each correlated
-output is a dataset, with parsed AutoScript XML leaf metadata as HDF5 attributes.
-Image acquisitions can instead write `.tiff` (Velox-compatible, one file per
-detector) via `scan.output_format = ".tiff"` for scanned images or
-`camera.output_format = ".tiff"` for camera images; spectra and STEM data are
-always HDF5.
+- `asyncroscopy/data/default` is the DATA Tango device. It starts Tiled and registers files.
+- The Tiled HTTP server indexes and serves the files. Its address is `tiled.host:tiled.port` in the config.
 
-Vendors return two shapes and `save_acquisition` absorbs both: AutoScript adorned
-images bundle pixels and metadata, while PyJEM (JEOL) returns raw pixels plus a
-separate `get_detectorsetting()` dict passed as `dataset_attrs`. Metadata lands as
-HDF5 attributes for `.h5`; for `.tiff`, adorned images save it natively while
-raw-array vendors get the dict json-encoded into the TIFF `ImageDescription` tag.
+`run_servers.py` starts DATA and its Tiled server together, and stops Tiled at shutdown. If DATA connects to a Tiled server that it did not start, it registers files there but does not stop that server.
 
-Acquisition commands that feed this pipeline include `acquire_scanned_image`,
-`acquire_spectrum`, `acquire_camera_image`, and `acquire_scanned_data_advanced`.
+## File formats
 
-What a command returns — and how you read it back — depends on the format:
+The default is one HDF5 file per acquisition. Each detector output is a dataset, and the vendor metadata is stored as HDF5 attributes.
 
-- **`.h5`** (default): returns one Tiled key, read nested.
-  `client[key]["image"]["HAADF"]` (one sub-dataset per detector), `["spectrum"]`,
-  or `["stem_data"]`; single camera frames use `image`.
-- **`.tiff`**: returns a shared *stem*. Rebuild one key per detector as
-  `client[f"{stem}_{DET}.tiff"]`; `.read()` returns the array directly (no nesting).
+Images can be saved as `.tiff` instead, with one Velox-compatible file per detector. Set `scan.output_format = ".tiff"` for scanned images or `camera.output_format = ".tiff"` for camera images. Spectra and STEM data are always HDF5.
 
-## Notebook setup
+`save_acquisition` (`asyncroscopy/data/data_writer.py`) accepts both vendor shapes:
 
-Connect to the DATA Tango device once at the beginning of a workflow. The
-`save_path` directory should be visible to the Tiled HTTP server, and the
-microscope device should have `data_device_address` set to this Tango device.
+- AutoScript returns adorned images that carry pixels and metadata together.
+- PyJEM (JEOL) returns raw pixels. The metadata comes from `get_detectorsetting()` and goes in as `dataset_attrs`.
+
+For `.tiff`, adorned images save their metadata natively. For raw arrays, the metadata is JSON-encoded into the TIFF `ImageDescription` tag.
+
+## Reading data back
+
+| Format | Command returns | Read it with |
+|---|---|---|
+| `.h5` | One Tiled key | `client[key]["image"]["HAADF"]`, `client[key]["spectrum"]` or `client[key]["stem_data"]`. A single camera frame is `client[key]["image"]`. |
+| `.tiff` | A shared stem | `client[f"{stem}_{DET}.tiff"].read()`, one key per detector |
+
+```python
+import tango
+from tiled.client import from_uri
+
+mic = tango.DeviceProxy("asyncroscopy/instrument/default")
+client = from_uri("http://<tiled-host>:9091")
+
+key = mic.acquire_scanned_image(["HAADF", "BF-S"])
+haadf = client[key]["image"]["HAADF"].read()
+
+camera_key = mic.acquire_camera_image()
+frame = client[camera_key]["image"].read()
+```
+
+To use Flucam, set `camera.camera_detector = "Flucam"` on the CAMERA device. Then call `acquire_camera_image()` as usual.
+
+## Changing the save directory
 
 ```python
 import json
@@ -42,58 +53,9 @@ import tango
 
 data = tango.DeviceProxy("asyncroscopy/data/default")
 data.set_timeout_millis(120_000)
-data.host = "10.46.217.241"
-data.port = 9091
 data.save_path = "/path/served/by/tiled"
+
+json.loads(data.get_config())["tiled_server_serving"]   # the directory Tiled serves
 ```
 
-Changing `data.save_path` creates the directory and restarts a DATA-managed
-Tiled HTTP server. Each acquisition is registered explicitly after it is
-written; DATA does not run a filesystem watcher. `startup_scripts/run_servers.py` sets
-the extended Tango timeout automatically.
-
-Acquire as usual. With the default `.h5` the return value is the Tiled key; with
-`.tiff` it is the shared stem (see the format contract above):
-
-```python
-key = mic.acquire_scanned_image(["HAADF", "BF-S"])   # .h5  → client[key]["image"]["HAADF"]
-# scan.output_format = ".tiff"                        # .tiff → client[f"{key}_HAADF.tiff"].read()
-
-camera_key = mic.acquire_camera_image()               # .h5  → client[camera_key]["image"]
-# camera.output_format = ".tiff"                      # .tiff → client[f"{stem}_BM-Ceta.tiff"].read()
-
-# Select Flucam through the same CAMERA device and acquisition command:
-# camera.camera_detector = "Flucam"
-# flucam_key = mic.acquire_camera_image()
-```
-
-## Server Roles
-
-There are two data-related servers:
-
-- `asyncroscopy/data/default` is the DATA Tango device server. It belongs to asyncroscopy and bridges notebooks or microscope devices to Tiled.
-- `http://10.46.217.241:9091` is the Tiled HTTP data server. It indexes and serves files.
-
-`startup_scripts/run_servers.py` starts the DATA device and its managed Tiled HTTP
-server together. It also shuts down the managed Tiled server with the rest of
-the server stack. To inspect the active directory, use:
-
-```python
-import json
-
-json.loads(data.get_config())["tiled_server_serving"]
-```
-
-If the DATA device connects to an already-running external Tiled HTTP server,
-it manually registers acquisitions but does not terminate that external server
-during shutdown.
-
-## Direct Tiled access
-
-We currently access the server in the notebook like this:
-
-from tiled.client import from_uri
-
-client = from_uri("http://10.46.217.241:9091")
-
-list(client) # should print out some folders and files
+A new `save_path` creates the directory and restarts the DATA-managed Tiled server on it. So the server and the save path stay the same. DATA registers each file after it is written. It does not watch the file system. `run_servers.py` sets the long Tango timeout for you.

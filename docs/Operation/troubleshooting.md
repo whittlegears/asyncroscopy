@@ -1,90 +1,59 @@
 # Troubleshooting
 
-Symptom-first answers to problems hit during live deployment. Most startup
-issues come down to one of three things: a **stale server still running**, a
-**stale `.db` file**, or a **slow network**. See
-[run-servers.md](run-servers.md) for normal startup.
+Most startup problems have one of three causes: an old server that still runs, a stale `.db` file, or a slow network. See [running the servers](run-servers.md) for a normal start.
 
-### Newly acquired data can't be found in Tiled, even though the file was written to disk
+## New data is on disk but not in Tiled
 
-A stale Tiled server is still running and serving an **old** save directory while
-new data is written somewhere else. Only one Tiled server should be active, bound
-to the current save path.
+An old Tiled server still serves an old save directory. Only one Tiled server must run, on the current save path.
 
-Find and kill the stale Tiled process (default port `9091`), then restart it on
-the right path:
+Find and stop the old process on the Tiled port (default `9091`). On Windows:
 
 ```powershell
 netstat -ano | findstr :9091
 taskkill /PID <PID> /F
 ```
 
-The cleaner fix is to let `run_servers.py` manage Tiled — it starts it as a
-tracked process bound to the save path you enter, and stops it on Ctrl+C.
-Changing `data.save_path` on the DATA device also restarts the managed Tiled
-server on the new path, so the server and the save path can't drift apart.
+To prevent this, let `run_servers.py` manage Tiled. It starts Tiled on the save path from the config and stops it on Ctrl+C. A new `data.save_path` also restarts the managed Tiled server on the new path.
 
-### Tiled (or the whole stack) fails to start after pulling new changes
+## The stack fails to start after you pull new changes
 
-Delete the stale `.db` files — both the Tiled catalog db and the Tango database
-db — then start fresh:
+Delete the stale `.db` files, both the Tiled catalog and the Tango database. Then start again. A clean run builds both databases again.
 
-```bash
-uv run startup_scripts/run_servers.py
-```
+## A strange error or a timeout at startup
 
-A clean run rebuilds both databases.
+Old servers probably still run. On Windows the PIDs change often, so a kill by PID is not reliable.
 
-### Startup gives a weird error or an unexplained timeout
-
-First suspect: **old servers are still running.** On the Windows microscope PC
-the PID changes constantly, so killing by PID is unreliable.
-
-- Re-run `run_servers.py` and answer **yes** to *Clear old processes first*.
-- To kill one specific Tango device server by name instead:
+- Run `run_servers.py` again. It clears old processes first. Without `--yaml`, answer yes to "Clear old processes first".
+- Run `run_servers.py --yaml <config> --cleanup` to stop only what an earlier run of that config left behind.
+- To stop one device server by name:
 
   ```python
   import tango
   db = tango.Database()
   print(db.get_server_list("CORRECTOR/*"))
-  d = tango.DeviceProxy("dserver/CORRECTOR/corrector_instance")
-  d.command_inout("Kill")
+  tango.DeviceProxy("dserver/CORRECTOR/corrector_instance").command_inout("Kill")
   ```
 
-### Database won't start, or "database did not become ready"
+- Add `--debug` to write each server's output to a log file.
 
-`tango.Database()` only **connects** to an existing database — it does not start
-one. The Tango database server must be started first (`run_servers.py` does this
-for you), or manually:
+## The database does not start
+
+`tango.Database()` only connects to a database that runs. It does not start one. `run_servers.py` starts it, or you can start it by hand:
 
 ```bash
 TANGO_HOST=localhost:9094 uv run python -m tango.databaseds.database 2
 ```
 
-If the database server still won't come up within ~2 minutes, enable
-`tango.reset_database_file: true` in the server YAML or check **Delete
-tango_database.db before start** in the startup GUI, then retry.
+If it is still not ready after about 2 minutes, set `tango.reset_database_file: true` in the config, or tick "Delete tango_database.db before start" in the GUI. Then try again.
 
-### Servers stop responding (e.g. after repeated `place_beam` calls)
+## Servers stop responding after many calls
 
-Reported recovery: kill the server notebook kernel, enable the Tango database
-file reset option, then start the servers again.
+This was seen after repeated `place_beam` calls. Stop the notebook kernel, turn on the database file reset, and start the servers again.
 
-### Unexplained timeouts when connecting from a remote location
+## Timeouts from a remote connection
 
-Usually slow or unstable internet rather than a code fault. It has shown up
-alongside an unusably laggy Teams call, and once after a power flicker /
-thunderstorm — both times from a remote connection.
+A slow or unstable network is the usual cause, not the code. Run the command again. If it keeps happening, work on the instrument PC itself through remote desktop, so the connection to the servers stays local.
 
-- Just retry — re-run the cell or command.
-- Or remote into the microscope PC with TeamViewer and use VS Code there, so the
-  connection to the servers stays local to that machine.
+## A package version mismatch
 
-### `pandas` version mismatch(observed - while using PyTemLib)
-
-Recreate the environment:
-
-```bash
-# delete .venv, then:
-uv sync
-```
+Delete `.venv`, then run `uv sync` to build the environment again.

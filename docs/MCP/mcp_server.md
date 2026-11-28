@@ -1,54 +1,29 @@
-# Asyncroscopy MCP Server
+# MCP server
 
-The MCP server is a FastMCP HTTP bridge over the live Tango database. It should
-start after the Tango database, support devices, Tiled, and selected instrument
-are ready.
-
-## Start It
-
-Start the device stack first:
-
-```bash
-uv run startup_scripts/run_servers.py --yaml configs/Spectra300.yaml
-uv run startup_scripts/run_servers.py --yaml configs/STEMDigitalTwin.yaml
-```
-
-Then start MCP in another terminal or on the MCP computer:
+The MCP server (`asyncroscopy/mcp/mcp_server.py`) is a FastMCP HTTP server over a live Tango database. It turns Tango commands into MCP tools, so a model client can call the devices. Start it after the stack is up.
 
 ```bash
 uv run startup_scripts/run_mcp.py --yaml configs/mcp.yaml
 ```
 
-GUI:
+The default endpoint is `http://127.0.0.1:8000/mcp`. To run an LLM agent on these tools, see the [agent MCP server](agent_mcp_server.md).
 
-```bash
-uv run python startup_guis/mcp_gui.py
-```
-
-The default endpoint is:
-
-```text
-http://127.0.0.1:8000/mcp
-```
-
-If MCP runs on another computer, set `tango.host` in `configs/mcp.yaml` to the
-Tango database machine and set `mcp.http_host` to the MCP machine's bind address.
-Use `0.0.0.0` when clients on other machines need to connect.
-
-## YAML Contract
+## Config
 
 ```yaml
 tango:
-  host: localhost
+  host: localhost              # the computer that runs the Tango database
   port: 9094
 
 mcp:
   name: Spectra300_MCP
   transport: streamable-http
-  http_host: 127.0.0.1
+  http_host: 127.0.0.1         # 0.0.0.0 when other computers must connect
   http_port: 8000
   data_device_address: asyncroscopy/data/default
   quiet: true
+  tool_log: ""                 # JSONL file of tool calls; blank turns it off
+  include_only_functions: []   # blank: every command that is not blocked
   blocked_classes:
     - DataBase
     - DServer
@@ -59,54 +34,51 @@ mcp:
       - RestartServer
 ```
 
-`startup_scripts/run_mcp.py` maps this config directly to:
+## How it finds tools
 
-```bash
-uv run python -m asyncroscopy.mcp.mcp_server ...
+At startup the server:
+
+1. Connects to the Tango database at `tango.host` and `tango.port`.
+2. Calls `get_device_exported("*")` and opens each device with `DeviceProxy`.
+3. Skips devices whose class is in `blocked_classes`.
+4. Reads each device's `command_list_query()` and skips blocked commands.
+5. Registers each remaining command as a tool named `<TangoClass>_<command>`, for example `AutoScriptMicroscope_acquire_scanned_image`.
+6. Registers the native tools `list_devices` and `get_data_from_key`.
+
+The Tango database is the source of truth. If a device is registered, exported and not blocked, its commands become tools. The tool set changes only when the server restarts.
+
+Tool signatures come from the Tango command types. The server converts NumPy values and `DevEncoded` results to JSON-safe values.
+
+## Adding tools
+
+For device behavior, add a Tango `@command` to the device class:
+
+```python
+from tango.server import Device, command
+
+
+class CAMERA(Device):
+    @command(dtype_in=float, dtype_out=str)
+    def set_exposure(self, exposure_ms: float) -> str:
+        self.exposure_ms = exposure_ms
+        return f"exposure set to {exposure_ms} ms"
 ```
 
-## MCP GUI
+Restart the stack and the MCP server. The tool `CAMERA_set_exposure` appears.
 
-`startup_guis/mcp_gui.py` is a YAML launcher for MCP. It formats the current
-selections into YAML, writes that YAML to `outputs/startup_configs/mcp_gui.yaml`,
-and runs:
+For behavior that is not one device command, such as a lookup across devices, add a method to `MCPServer` and add it to the `native_tools` list in `MCPServer.setup()`. Do not make a subclass for this.
 
-```bash
-uv run python startup_scripts/run_mcp.py --yaml outputs/startup_configs/mcp_gui.yaml
-```
+## Reading data
 
-The GUI includes a generated YAML preview, terminal output, **Start**, **Stop**,
-and **Save current config**.
+`get_data_from_key` reads a key from the Tiled server that the DATA device reports. It returns JSON-safe metadata and a small preview. The MCP computer does not need access to the instrument's file system.
 
-## Discovery
+## Blocking commands
 
-`MCPServer` connects to the Tango database, calls `get_device_exported("*")`,
-opens each exported device with `DeviceProxy`, queries `command_list_query()`,
-and registers every non-blocked Tango command as a FastMCP tool.
+The MCP server exposes hardware control. The block lists are part of the safety boundary, so set them before you connect an autonomous agent.
 
-Tool signatures are built from Tango command types. NumPy values and Tango
-`DevEncoded` payloads are normalized into JSON-safe results.
-
-## Added MCP Tools
-
-For device commands, add a Tango `@command` to the relevant device class. If the
-device is registered and exported, MCP discovers it automatically.
-
-For MCP-only behavior, add it directly to `MCPServer`. The required native tools
-today are:
-
-- `list_devices`
-- `get_data_from_key`
-
-`get_data_from_key` reads an acquired key through the Tiled HTTP URI reported by
-the DATA device and returns dataset metadata plus a small preview. This works
-when MCP and the microscope are on different computers without a shared mount.
-
-## Blacklisting
-
-Use `blocked_classes` to hide whole Tango classes and `blocked_functions` to hide
-commands. `blocked_functions` accepts global command names, fully qualified
-`Class.command` entries, or class-specific lists:
+- `blocked_classes` hides whole Tango classes.
+- `blocked_functions` hides commands. Under `"*"`, use a command name or `Class.command`. Under a class name, list that class's commands.
+- `include_only_functions`, if not empty, keeps only the listed commands.
 
 ```yaml
 blocked_functions:
@@ -117,9 +89,9 @@ blocked_functions:
     - Disconnect
 ```
 
-## Manual MCP Only
+## Running without the startup script
 
-If the Tango stack is already running:
+`run_mcp.py` passes the config to the module as arguments. To run the module directly against a stack that is up:
 
 ```bash
 uv run python -m asyncroscopy.mcp.mcp_server \
@@ -133,3 +105,11 @@ uv run python -m asyncroscopy.mcp.mcp_server \
   --blocked-classes-json '["DataBase", "DServer"]' \
   --blocked-functions-json '{"*": ["Init", "Kill", "RestartServer"]}'
 ```
+
+## Tests
+
+```bash
+uv run pytest tests/test_mcp_server.py tests/test_run_servers.py
+```
+
+Add or change tests when you change tool discovery, command filtering, argument mapping or the native tools.
