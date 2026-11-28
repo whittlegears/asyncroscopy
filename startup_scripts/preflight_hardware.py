@@ -52,7 +52,7 @@ from asyncroscopy.safety.policy import is_read_only
 
 DEFAULT_YAML = PROJECT_DIR / "configs" / "Spectra300.yaml"
 DEFAULT_MCP_YAMLS = (PROJECT_DIR / "configs" / "mcp.yaml", PROJECT_DIR / "configs" / "mcp_operator.yaml")
-EXPECTED_AUTOSCRIPT = "1.18"  # the client wheels pyproject.toml installs from stubs/AutoScript_v_1.18
+EXPECTED_AUTOSCRIPT = "1.18"  # stubs/AutoScript_v_1.18, installed by pyproject.toml
 AUTOSCRIPT_DEFAULT_PORT = 7521
 DEVICE_TIMEOUT_MS = 5000
 NET_TIMEOUT_S = 5.0
@@ -153,7 +153,7 @@ def _autoscript_server_version(host: str, port: int) -> str:
     try:
         return str(client.service.autoscript.server.version)
     finally:
-        client.disconnect()  # Closes this script's own connection only. The instrument device keeps its own.
+        client.disconnect()  # this script's connection only; the instrument device keeps its own
 
 
 REAL_PROBES = Probes(
@@ -182,7 +182,7 @@ class Report:
 
 def _error(exc: BaseException) -> str:
     text = str(exc).strip().splitlines()
-    for line in text:  # A Tango DevFailed prints many lines. The one with desc says what happened.
+    for line in text:  # the DevFailed line with desc says what happened
         if "desc" in line.lower():
             return line.strip()[:240]
     return f"{type(exc).__name__}: {text[0][:240] if text else ''}"

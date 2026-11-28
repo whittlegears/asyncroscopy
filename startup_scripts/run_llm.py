@@ -231,7 +231,7 @@ def run_interactive(config: Config) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    stop_on_termination()  # `kill <launcher>` must also stop the server it started
+    stop_on_termination()  # `kill <launcher>` must also stop the server
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
     try:

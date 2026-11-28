@@ -90,10 +90,10 @@ class MCPConfig:
     endpoint_role: str = 'agent'
     risk: dict[str, str] = field(default_factory=dict)
     auto_routine: dict[str, list[str]] | None = None
-    agent_profile: str = ''  # agent profile YAML whose tool selection endpoint_info reports. Empty means the default.
+    agent_profile: str = ''  # whose tool selection endpoint_info reports; empty for the default
     trace: str = ''
-    clock_device: str = ''  # instrument whose clock_s stamps trace events. Empty means this computer's time.
-    trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads. Empty means trace's directory.
+    clock_device: str = ''  # whose clock_s stamps trace events; empty for this computer's time
+    trace_follow: list[str] = field(default_factory=list)  # what trace_since reads; empty for trace's directory
     data_views: list[str] = field(default_factory=list)
     urls: dict[str, str | None] = field(default_factory=endpoint_urls)
     permissions_file: str = ''
@@ -340,7 +340,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    stop_on_termination()  # `kill <launcher>` must also stop the server it started
+    stop_on_termination()  # `kill <launcher>` must also stop the server
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
     if args.yaml is None:

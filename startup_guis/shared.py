@@ -623,7 +623,7 @@ class ManagedCommand(QObject):
     def _emit(self, name: str, value) -> None:
         try:
             getattr(self, name).emit(value)
-        except RuntimeError:  # the window was closed while the script was still printing
+        except RuntimeError:  # window closed while the script was printing
             pass
 
     def _read_output(self) -> None:

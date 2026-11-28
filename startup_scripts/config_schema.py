@@ -94,8 +94,8 @@ class Setting:
     section: str = "General"
     help: str = ""
     required: bool = False
-    choices: tuple[str, ...] = ()  # suggestions only, any value may still be typed
-    presets: dict[str, str] = field(default_factory=dict)  # One click values. The first is applied when the GUI opens.
+    choices: tuple[str, ...] = ()  # suggestions only; any value may be typed
+    presets: dict[str, str] = field(default_factory=dict)  # one-click values; the first is applied when the GUI opens
 
     def __post_init__(self):
         if self.kind not in KINDS:

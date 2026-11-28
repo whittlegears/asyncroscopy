@@ -155,7 +155,7 @@ def build_command(config: Config) -> list[str]:
         args += ['--max-jobs', str(server.max_jobs)]
     for flag, value in (('--trace', server.trace), ('--annotations', server.annotations), ('--placements', server.placements)):
         if value is not None:
-            args.append(f'{flag}={value}')  # joined with = so an empty value still belongs to its flag
+            args.append(f'{flag}={value}')  # joined with = so an empty value keeps its flag
     return python_command(*args)
 
 

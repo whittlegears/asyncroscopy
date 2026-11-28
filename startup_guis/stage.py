@@ -13,7 +13,7 @@ class AdvancedMicroscopeGUI:
         self.root.geometry("900x530")
         self.root.configure(bg="#222222")
 
-        self.saved_stage_positions = {}  # Dictionary to store saved stage positions 
+        self.saved_stage_positions = {}
 
         # No default, so this window never drives an instrument nobody named.
         if not os.environ.get("TANGO_HOST", "").strip():
@@ -187,12 +187,12 @@ class AdvancedMicroscopeGUI:
 
     def set_defocus(self):
         """Set the defocus value."""
-        self.microscope.set_defocus(self.defocus * 1e-9)  # Convert nm to meters
+        self.microscope.set_defocus(self.defocus * 1e-9)  # nm to m
     
     def set_beam_shift(self):
         """Set the beam shift values."""
         pass
-        self.microscope.set_image_shift([self.beam_x*1e-9, self.beam_y*1e-9])  # Convert nm to meters
+        self.microscope.set_image_shift([self.beam_x*1e-9, self.beam_y*1e-9])  # nm to m
     
     def set_beam_tilt(self):
         """Set the beam tilt values."""
@@ -200,7 +200,7 @@ class AdvancedMicroscopeGUI:
             self.beam_alpha = 1000.0
         if self.beam_beta > 1000.0:
             self.beam_beta = 1000.0
-        self.microscope.set_beam_tilt([self.beam_alpha*1e-3, self.beam_beta*1e-3])  # Convert mrad to actual input value
+        self.microscope.set_beam_tilt([self.beam_alpha*1e-3, self.beam_beta*1e-3])  # from mrad
     
     def sync_ui_to_vars(self):
         move_stage = False

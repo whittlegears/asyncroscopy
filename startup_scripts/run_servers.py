@@ -257,9 +257,9 @@ def module_source(module_name: str) -> Path:
         spec = importlib.util.find_spec(module_name)
     except ModuleNotFoundError:
         spec = None
-    except Exception as exc:  # importing a parent package can fail in any way
+    except Exception as exc:  # importing a parent package can fail any way
         raise ValueError(f"module '{module_name}' could not be located: {type(exc).__name__}: {exc}") from None
-    if spec is not None and spec.submodule_search_locations:  # for a package, -m runs its __main__.py
+    if spec is not None and spec.submodule_search_locations:  # for a package, -m runs __main__.py
         for location in spec.submodule_search_locations:
             if (Path(location) / "__main__.py").is_file():
                 return Path(location) / "__main__.py"
@@ -273,7 +273,7 @@ def _check_importable(module: str, where: str) -> None:
     """Fail at load, not after the device timeout, when a server's module cannot be imported."""
     try:
         found, reason = importlib.util.find_spec(module) is not None, "not found"
-    except Exception as exc:  # running the package's __init__ can fail for its own reasons
+    except Exception as exc:  # the package's __init__ can fail for its own reasons
         found, reason = False, f"{type(exc).__name__}: {exc}"
     if not found:
         raise ValueError(
@@ -301,7 +301,7 @@ def find_device_class(path: Path, requested: str | None = None, fallback: str | 
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         and node.func.attr == "run_server" and isinstance(node.func.value, ast.Name)
     }
-    served &= set(classes) | set(imported)  # a call such as `device_class.run_server` names a variable, not a class
+    served &= set(classes) | set(imported)  # `device_class.run_server` names a variable, not a class
     if len(served) == 1:
         return served.pop()
     if fallback in classes:
@@ -496,7 +496,7 @@ def yaml_job_device(config: Config) -> DeviceConfig | None:
         if not load_spec(resolve_path(config.instrument.properties["yaml_path"][0])).jobs:
             return None
     except (SpecError, KeyError):
-        return None  # the instrument device starts, finds the same problem and reports it as FAULT
+        return None  # the instrument device finds it too and reports FAULT
     return DeviceConfig(
         key="job",
         class_name=f"{config.instrument.class_name}Job",
@@ -595,9 +595,9 @@ class ProcessInfo:
 
 @dataclass(frozen=True)
 class OtherStack:
-    identity: tuple[str, str]  # the config path, then the isolated directory or ""
+    identity: tuple[str, str]  # config path, then the isolated directory or ""
     pid: int
-    config: str  # for messages, relative to the repository where possible
+    config: str  # relative to the repository where possible
 
 
 def _normalized(path: Path) -> str:
@@ -705,7 +705,7 @@ def stack_conflicts(
         for stack in stacks.values():
             if not stack.identity[1]:
                 conflicts.append((f"{stack.config} (launcher pid {stack.pid}) uses the same Tango database file (neither stack is --isolated)", stack.pid))
-    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # maps another stack to the pid to stop and its ports
+    held: dict[tuple[str, str], tuple[int, list[int]]] = {}  # another stack -> pid to stop and its ports
     for port, pids in sorted(listeners.items()):
         for pid in sorted(pids):
             if pid in my_pids or pid not in snapshot:
@@ -721,7 +721,7 @@ def stack_conflicts(
                 continue
             tokens = snapshot[pid].tokens
             if any(marker in token for token in tokens for marker in ORPHAN_MARKERS):
-                continue  # left behind by an earlier stack whose launcher is gone
+                continue  # left by an earlier stack whose launcher is gone
             name = Path(tokens[0]).name if tokens else "a program"
             conflicts.append((f"port {port} is used by {name} (pid {pid}), which is not an asyncroscopy stack", pid))
     for owner, (pid, ports) in held.items():
@@ -895,7 +895,7 @@ def device_health(device_name: str) -> tuple[str, str]:
     try:
         proxy = tango.DeviceProxy(device_name)
         return str(proxy.state()), str(proxy.status()).strip()
-    except Exception as exc:  # It answered the ping a moment ago. Report why it cannot be read, as a fault.
+    except Exception as exc:  # it answered the ping just now: report why as a fault
         return "FAULT", f"State/Status could not be read: {exc}"
 
 
@@ -1139,7 +1139,7 @@ def main(argv: list[str] | None = None) -> int:
     if config.plugins:
         environment["ASYNCROSCOPY_PLUGINS"] = plugin_environment(config.plugins, environment.get("ASYNCROSCOPY_PLUGINS", ""))
     ready_times: dict[str, float] = {}
-    faults: dict[str, str] = {}  # device name -> Status, for devices that answered in FAULT
+    faults: dict[str, str] = {}  # device name -> Status, for devices in FAULT
     tiled_config = None
 
     log_dir: Path | None = None

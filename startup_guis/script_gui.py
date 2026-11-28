@@ -148,8 +148,8 @@ class ScriptGui(QMainWindow):
         self.command = ManagedCommand(self.enqueue_output, self.process_done)
         self.raw: dict = {}
         self.loaded_path: Path | None = None
-        self.fields: dict[str, tuple[Setting, object]] = {}  # maps a path to its setting and widget
-        self.shown: dict[str, str | bool] = {}  # maps a path to what the widget showed right after loading
+        self.fields: dict[str, tuple[Setting, object]] = {}  # path -> setting and widget
+        self.shown: dict[str, str | bool] = {}  # path -> what the widget showed after loading
         self.presets: dict[str, PresetToggle] = {}
         self.device_checks: dict[str, CheckBox] = {}
         self.device_shown: dict[str, bool] = {}

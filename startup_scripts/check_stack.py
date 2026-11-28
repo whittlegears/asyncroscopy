@@ -126,7 +126,7 @@ def unreachable(*urls: str) -> list[str]:
         parts = urllib.parse.urlsplit(url)
         try:
             socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
-        except (OSError, ValueError):  # ValueError means a port out of range
+        except (OSError, ValueError):  # port out of range
             down.append(url)
     return down
 

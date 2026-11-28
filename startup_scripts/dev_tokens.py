@@ -35,7 +35,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = PROJECT_DIR / "outputs" / "dev_tokens"
 DEV_ISSUER = "asyncroscopy-dev-tokens (not for production)"
 DEV_AUDIENCE = "asyncroscopy-mcp"
-MAX_TTL_S = 24 * 3600  # dev tokens are short lived and none should outlive a day
+MAX_TTL_S = 24 * 3600  # none should outlive a day
 BANNER = "[dev_tokens] DEVELOPMENT ONLY: a stand-in for the facility's token service. Never use these keys or tokens in production."
 
 
@@ -61,7 +61,7 @@ def init(key_dir: Path, force: bool = False) -> dict:
 def mint(key_dir: Path, subject: str, scopes: list[str], ttl_s: int = 900, issuer: str = DEV_ISSUER,
          audience: str = DEV_AUDIENCE, extra: dict | None = None) -> str:
     """An RS256 JWT signed with key_dir/private.pem. ``ttl_s`` may be negative (an expired token, for tests)."""
-    from joserfc import jwk, jwt  # FastMCP's own JWT library, so nothing new to install
+    from joserfc import jwk, jwt  # FastMCP's own JWT library
 
     if ttl_s > MAX_TTL_S:
         raise ValueError(f"dev tokens live at most {MAX_TTL_S} s")

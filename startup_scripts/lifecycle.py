@@ -123,7 +123,7 @@ def process_alive(pid: int) -> bool:
         if not handle:
             return False
         try:
-            return kernel32.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT means still running
+            return kernel32.WaitForSingleObject(handle, 0) == 0x102  # WAIT_TIMEOUT: still running
         finally:
             kernel32.CloseHandle(handle)
     try:
