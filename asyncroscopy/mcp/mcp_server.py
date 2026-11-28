@@ -37,7 +37,7 @@ from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
 from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, permissions, skills_tools, trace_tools, turns
-from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
+from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk, with_declared_limits
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
 from asyncroscopy.safety.permissions import default_approval_ttl_s
 from asyncroscopy.safety.policy import check_overrides, hard_blocked, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
@@ -671,7 +671,10 @@ class MCPServer:
         for prefix, commands in self.tools.items():
             for command_name, wrapped in commands.items():
                 try:
-                    tool_obj = Tool.from_function(wrapped, annotations=_annotations(self.descriptors[wrapped.__name__].acts))
+                    descriptor = self.descriptors[wrapped.__name__]
+                    tool_obj = Tool.from_function(wrapped, annotations=_annotations(descriptor.acts))
+                    hint = self.devices[prefix].hints.get(command_name, {}) if prefix in self.devices else {}
+                    tool_obj = tool_obj.model_copy(update={"parameters": with_declared_limits(tool_obj.parameters, hint)})
                     self.mcp.add_tool(tool_obj)
                     self.registered[tool_obj.name] = tool_obj
                     num_device_tools += 1
