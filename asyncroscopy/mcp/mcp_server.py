@@ -6,7 +6,6 @@ import inspect
 import io
 import re
 import json
-import socket
 import threading
 import time
 import traceback
@@ -39,7 +38,8 @@ from fastmcp.tools import tool, Tool, ToolResult
 from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
-from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.data.data_reader import describe_tiled_node, numpy_to_python
+from asyncroscopy.mcp.ports import report_busy_port
 from asyncroscopy.mcp.tool_log import ToolCallLog
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
@@ -389,25 +389,11 @@ class MCPServer:
         return Any
 
     @staticmethod
-    def _numpy_to_python(obj: Any) -> Any:
-        """Recursively convert numpy types to Python types for JSON serialization."""
-        if isinstance(obj, np.ndarray):
-            return MCPServer._numpy_to_python(obj.tolist())
-        if isinstance(obj, np.generic):
-            return obj.item()
-        if isinstance(obj, dict):
-            return {k: MCPServer._numpy_to_python(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple)):
-            conv = [MCPServer._numpy_to_python(v) for v in obj]
-            return tuple(conv) if isinstance(obj, tuple) else conv
-        return obj
-
-    @staticmethod
     def _normalize_command_result(out_type: CmdArgType, result: Any) -> Any:
         """Convert Tango command output into JSON-safe data for MCP transport."""
 
         # Convert numpy types (including nested containers) to native Python types
-        result = MCPServer._numpy_to_python(result)
+        result = numpy_to_python(result)
         if out_type != CmdArgType.DevEncoded:
             return result
 
@@ -543,7 +529,7 @@ class MCPServer:
             def wrapper(*args, **kwargs):
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
-                return _run({param_name: self._numpy_to_python(arg)}, arg)
+                return _run({param_name: numpy_to_python(arg)}, arg)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -722,36 +708,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def check_port_free(host: str, port: int) -> str | None:
-    """Return an error string if (host, port) cannot be bound, else None.
-
-    Catches the common failure where a previous MCP server (possibly started
-    from a different config) is still holding the port, before setup() prints
-    the "MCP ready" line that GUIs parse as success.
-    """
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError as exc:
-        return str(exc)
-    finally:
-        probe.close()
-    return None
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.transport == "streamable-http":
-        bind_error = check_port_free(args.http_host, args.http_port)
-        if bind_error:
-            # "MCP ERROR:" is parsed by startup GUIs; keep the prefix stable.
-            print(
-                f"MCP ERROR: http://{args.http_host}:{args.http_port} is already in use - "
-                f"another MCP server is likely still running with a different config. "
-                f"Stop it or choose a different port. ({bind_error})",
-                flush=True,
-            )
+        if report_busy_port(args.http_host, args.http_port, "MCP server"):
             return 1
 
     server = MCPServer(

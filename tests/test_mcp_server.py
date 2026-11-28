@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastmcp.tools import ToolResult
 
+from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp.mcp_server import COMMAND_TIMEOUT_MILLIS, MCPServer
 
 
@@ -390,7 +391,7 @@ class TestMCPSerialization:
             "list": [np.uint8(6)],
         }
 
-        converted = MCPServer._numpy_to_python(payload)
+        converted = numpy_to_python(payload)
 
         assert converted == {
             "array": [1, 2],
