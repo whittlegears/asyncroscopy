@@ -6,6 +6,7 @@ Nothing here imports anything outside the standard library.
 
 from __future__ import annotations
 
+import json
 import re
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
@@ -16,6 +17,7 @@ autoscript_port = 9095
 # HTTP header names ignore case, and servers read them lower-cased.
 CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
+RUN_KEY_HEADER = "X-Asyncroscopy-Run-Key"
 
 
 endpoint_url_names = ("operator", "agent_server", "workflow_operator", "tiled", "analysis")
@@ -64,6 +66,31 @@ _DATA_KEY = re.compile(r"^[\w.\-/]+\.(?:" + _SUFFIXES + r")$", re.IGNORECASE)
 def is_data_key(text: str) -> bool:
     """True when ``text`` (stripped) is one data key and nothing else."""
     return bool(_DATA_KEY.match(text.strip()))
+
+
+# The fields of a JSON reply that name data: an acquisition's key, a job's result keys.
+KEY_FIELDS = ("key", "image_key", "spectrum_key", "result_key")
+
+
+def reply_keys(reply: object, derived: bool = False) -> list[str]:
+    """The data keys a tool's reply names: the key on the first line of an acquisition's text, and in a JSON reply
+    the ``KEY_FIELDS`` and the ``keys`` list. ``derived`` adds the values of ``result_keys``: what an analysis job
+    made, such as a stitched map."""
+    if isinstance(reply, str):
+        try:
+            reply = json.loads(reply)
+        except ValueError:
+            first = reply.strip().split("\n", 1)[0].strip()
+            return [first] if first and is_data_key(first) else []
+    keys: list[str] = []
+    if isinstance(reply, dict):
+        keys += [str(reply[name]) for name in KEY_FIELDS if isinstance(reply.get(name), str) and reply[name]]
+        keys += [str(k) for k in reply.get("keys") or [] if isinstance(k, str) and k] if isinstance(reply.get("keys"), list) else []
+        found = reply.get("result_keys") if derived else None
+        keys += [str(v) for v in found.values() if isinstance(v, str) and v] if isinstance(found, dict) else []
+    elif isinstance(reply, str) and is_data_key(reply):
+        keys.append(reply)
+    return list(dict.fromkeys(keys))
 
 
 # The Tango attribute where a device describes its commands as JSON. See asyncroscopy.utils.commands.

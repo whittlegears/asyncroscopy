@@ -19,10 +19,11 @@ from typing import Any
 
 import numpy as np
 
+from asyncroscopy.core.names import reply_keys
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
+from asyncroscopy.sim.truth_score import inside_field, points_on_particles
 
 DEFAULT_TRACE_DIR = "outputs/trace"
-KEY_FIELDS = ("key", "image_key", "spectrum_key", "result_key")
 
 
 @dataclass
@@ -187,10 +188,8 @@ class _TiledConfig:
 
 
 def data_keys(event: dict) -> list[str]:
-    """Data keys an event references: ``result_key``, and ``key``/``image_key``/``spectrum_key``/``keys`` in its result."""
-    keys: list[str] = []
-    if event.get("result_key"):
-        keys.append(str(event["result_key"]))
+    """Data keys an event references: ``result_key``, and what its JSON result names (``asyncroscopy.core.names.reply_keys``)."""
+    keys = [str(event["result_key"])] if event.get("result_key") else []
     result = event.get("result")
     if isinstance(result, str):
         try:
@@ -198,11 +197,7 @@ def data_keys(event: dict) -> list[str]:
         except ValueError:
             result = None
     if isinstance(result, dict):
-        for name in KEY_FIELDS:
-            if isinstance(result.get(name), str) and result[name]:
-                keys.append(result[name])
-        if isinstance(result.get("keys"), list):
-            keys += [str(k) for k in result["keys"] if isinstance(k, str)]
+        keys += reply_keys(result)
     return list(dict.fromkeys(keys))
 
 
@@ -280,13 +275,10 @@ def match_particles(data: RunData, image: Image, k: float = 5.0) -> dict | None:
     ids, centres, radii = particles
     rows, cols = image.array.shape
     half_x, half_y = cols * pixel / 2, rows * pixel / 2
-    inside = (np.abs(centres[:, 0] - centre[0]) < half_x) & (np.abs(centres[:, 1] - centre[1]) < half_y)
+    inside = inside_field(centres, centre, half_x, half_y)
     peaks = detect_blobs(image.array, k=k)
     found: list[int] = []
     if len(peaks) and inside.any():
         xy = np.stack([centre[0] - half_x + (peaks[:, 1] + 0.5) * pixel, centre[1] - half_y + (peaks[:, 0] + 0.5) * pixel], axis=1)
-        for i in np.where(inside)[0]:
-            distance = np.hypot(xy[:, 0] - centres[i, 0], xy[:, 1] - centres[i, 1]).min()
-            if distance <= max(radii[i], 2 * pixel):
-                found.append(int(ids[i]))
+        found = [int(ids[i]) for i in np.where(inside & points_on_particles(xy, centres, radii, 2 * pixel))[0]]
     return {"in_field": [int(v) for v in ids[inside]], "found": found, "detections": len(peaks)}
