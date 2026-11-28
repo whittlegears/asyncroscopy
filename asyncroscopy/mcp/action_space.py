@@ -187,6 +187,8 @@ def build(server: MCPServer) -> dict[str, Any]:
                 action["returns"] = returns
             if hint.get("primary") is True:
                 action["primary"] = True
+            if hint.get("unsupported") is True:  # offered only on the operator endpoint; the device always refuses it
+                action["unsupported"] = True
             actions.append(action)
             if not tool.acts and not tool.action_role.startswith("job."):
                 read = {"name": command[4:] if command.lower().startswith("get_") else command, "device": prefix, "source": "tool", "tool": tool.name, "role": tool.action_role}

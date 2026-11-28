@@ -8,6 +8,7 @@ from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwi
 from asyncroscopy.instruments.electron_microscope.digital_twin_particles import DigitalTwinParticles
 from asyncroscopy.instruments.electron_microscope.digital_twin_tilt import DigitalTwinTilt
 from asyncroscopy.instruments.scanning_beam import unsupported_commands
+from asyncroscopy.mcp.action_space import build
 from asyncroscopy.mcp.mcp_server import MCPServer
 
 PARTICLES = "asyncroscopy/digitaltwinparticles/default"
@@ -31,12 +32,16 @@ def test_the_refusing_defaults_name_their_commands():
 def test_an_unsupported_command_is_not_offered_to_agents(tango_ctx):
     proxy = tango.DeviceProxy(tango_ctx.get_device_access(PARTICLES))
     assert json.loads(proxy.action_hints)["acquire_camera_image"]["unsupported"] is True
-    offered = {}
+    offered, spaces = {}, {}
     for role in ("agent", "operator"):
         server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", endpoint_role=role,
                            database=_Exported([tango_ctx.get_device_access(PARTICLES)]), verbose=False)
         server.setup(print_summary=False)
         offered[role] = set(server.descriptors)
+        spaces[role] = {a["tool"]: a for a in build(server)["actions"]}
     assert "DigitalTwinParticles_acquire_camera_image" not in offered["agent"]
     assert "DigitalTwinParticles_acquire_camera_image" in offered["operator"]
     assert "DigitalTwinParticles_blank_beam" in offered["agent"] and "DigitalTwinParticles_acquire_scanned_image" in offered["agent"]
+    assert spaces["operator"]["DigitalTwinParticles_acquire_camera_image"]["unsupported"] is True
+    assert "unsupported" not in spaces["operator"]["DigitalTwinParticles_acquire_scanned_image"]
+    assert not any(a.get("unsupported") for a in spaces["agent"].values())
