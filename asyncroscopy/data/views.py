@@ -118,9 +118,6 @@ class Kind:
     description: str = ""
 
 
-# finding datasets
-
-
 def _decode(value: Any) -> Any:
     """data_writer json-encodes list and dict attributes; decode them back."""
     if isinstance(value, str) and value[:1] in "[{":
@@ -302,9 +299,6 @@ def container_listing(node: Any, prefix: str = "", depth: int = 0) -> str:
     return "\n".join(line for line in lines if line)
 
 
-# reading
-
-
 def _stride_for(shape: tuple[int, ...], itemsize: int, target: int | None) -> int:
     """A common step that keeps the read under MAX_READ_BYTES and, if given, near ``target`` per axis."""
     if not shape:
@@ -390,9 +384,6 @@ def read_line(ds: Dataset, opts: ViewOptions, axis: Axis | None) -> tuple[np.nda
     return _numeric(_read(ds, slices)), start, step, "read " + _describe_slices(slices)
 
 
-# numbers to words
-
-
 def _fmt(value: float) -> str:
     return f"{value:.4g}"
 
@@ -431,7 +422,7 @@ def _csv(header: str, rows: list[tuple]) -> str:
     return "\n".join([header, *(",".join(_fmt(v) if isinstance(v, (float, np.floating)) else str(v) for v in row) for row in rows)])
 
 
-def _cap(text: str) -> str:
+def _cut_to_text_limit(text: str) -> str:
     if len(text) <= MAX_TEXT_CHARS:
         return text
     return text[: MAX_TEXT_CHARS - 80].rsplit("\n", 1)[0] + f"\n... (cut at {MAX_TEXT_CHARS} characters; narrow it with region or dataset)"
@@ -464,9 +455,6 @@ def to_pixels(values: np.ndarray, max_side: int) -> PILImage.Image:
         scale = max_side / max(image.size)
         image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), PILImage.BILINEAR)
     return image
-
-
-# peaks
 
 
 def energy_axis(attrs: dict) -> Axis | None:
@@ -688,9 +676,6 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         return "\n".join(lines), read
 
     return Kind(name, matches, png, text, description)
-
-
-# strings
 
 
 def _strings_png(ds: Dataset, opts: ViewOptions) -> tuple[bytes, str]:
@@ -962,9 +947,6 @@ def detect(ds: Dataset) -> Kind:
     raise ValueError(f"{ds.name}: no view for a {ds.family} of shape {list(ds.shape)} and type {ds.dtype}")
 
 
-# what the tools call
-
-
 def _map_text(node: Any) -> str:
     meta = _attrs(node)
     return (
@@ -1009,7 +991,7 @@ def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts
     summary["read"] = read
     if ds.attrs.get("beam_current_pa") == 0 or ds.attrs.get("beam_blanked") in (True, np.True_):
         summary["beam_blanked"] = True  # only detector noise, and the MCP server fails such an acquisition
-    summary["text"] = _cap("\n".join(header + [read] + ([body] if body else [])))
+    summary["text"] = _cut_to_text_limit("\n".join(header + [read] + ([body] if body else [])))
     return summary, png
 
 

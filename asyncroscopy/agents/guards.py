@@ -213,7 +213,6 @@ ALREADY_DONE = ("This exact plan already ran in this request and finished (job {
                 "them. Run it again only if the user asks for a second, separate one. Results: {results}")
 
 
-# waiting inside one tool call
 def _json(text: str) -> Any:
     try:
         return json.loads(text)
@@ -239,7 +238,7 @@ class JobWaitMiddleware(AgentMiddleware):
         self.stop = stop
         self.estimates: dict[str, float] = {}  # estimated duration in seconds for each job id, from run_job replies
 
-    def _cap(self, job_id: str) -> float:
+    def _wait_cap_s(self, job_id: str) -> float:
         estimate = self.estimates.get(job_id)
         cap = estimate * 1.5 + 120.0 if estimate else self.default_cap_s
         if self.deadline is not None:
@@ -301,7 +300,7 @@ class JobWaitMiddleware(AgentMiddleware):
             return result
         first, job_id = followed
         status, began, checks = first, time.monotonic(), 1
-        cap = self._cap(job_id)
+        cap = self._wait_cap_s(job_id)
         while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
             reply = await handler(self._wait_request(request, job_id))
             checks += 1
@@ -326,7 +325,7 @@ class JobWaitMiddleware(AgentMiddleware):
             return result
         first, job_id = followed
         status, began, checks = first, time.monotonic(), 1
-        cap = self._cap(job_id)
+        cap = self._wait_cap_s(job_id)
         while status.get("state") in ACTIVE_JOB_STATES and time.monotonic() - began < cap and not self._stopped():
             reply = handler(self._wait_request(request, job_id))
             checks += 1

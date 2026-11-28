@@ -91,7 +91,6 @@ class RunFile:
     def is_open(self) -> bool:
         return self._h5 is not None
 
-    # writing
     def open(self, attrs: dict, first_attrs: dict) -> None:
         """Open (or reopen, on a resume) the ``.partial`` file for writing and set its run attributes.
 
@@ -228,7 +227,6 @@ class RunFile:
             return self.final, f"the run file was in use, so it was copied to {self.final.name}; {self.partial.name} is left behind ({last})"
         return self.final, f"the run file was in use, so it was copied to {self.final.name} ({last})"
 
-    # reading
     def attr(self, name: str):
         """One file attribute, or None (also when there is no file yet)."""
         if self._h5 is not None:

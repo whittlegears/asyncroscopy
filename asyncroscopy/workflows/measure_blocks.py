@@ -18,7 +18,7 @@ PEAKS_CHARS = 3000
 ELEMENTS_LINE = "elements most consistent with these peaks"
 
 
-def _key(result, what: str) -> str:
+def _data_key(result, what: str) -> str:
     if not (isinstance(result, str) and DATA_KEY_IN_TEXT.fullmatch(result)):
         raise BlockFailed(f"{what} gave no data key: {str(result)[:300]}")
     return result
@@ -99,7 +99,7 @@ async def _image(ctx: BlockContext, args: dict, previous: dict | None) -> dict:
         result = await ctx.call("*_acquire_scanned_image", {"detector_list": list(args.get("detectors") or ["haadf"])})
     finally:
         await ctx.call_always("*_blank_beam")
-    return {"key": _key(result, "the image")}
+    return {"key": _data_key(result, "the image")}
 
 
 register_block(Block(
@@ -147,7 +147,7 @@ async def _spectrum_at(ctx: BlockContext, args: dict, previous: dict | None) -> 
         result = await ctx.call(str(args["tool"]), arguments)
     finally:
         await ctx.call_always("*_blank_beam")  # never leave the beam parked on the sample
-    return {"key": _key(result, str(args["tool"])), "xy_m": [x, y]}
+    return {"key": _data_key(result, str(args["tool"])), "xy_m": [x, y]}
 
 
 register_block(Block(

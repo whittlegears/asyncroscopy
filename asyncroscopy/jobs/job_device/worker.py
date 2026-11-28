@@ -33,7 +33,7 @@ class JobWorker:
         job["lease_until"] = time.time() + lease_seconds(self) if lease_seconds(self) > 0 else None
         self._save(job)
         self._trace.record(f"{type(self).__name__}.continue", True, time.time(), job_id=job.get("job_id"), run_id=job["reservation_id"],
-                           caller=job.get("caller"), **self._dry(job))
+                           caller=job.get("caller"), **self._trace_fields(job))
         return self._reply({"job_id": job.get("job_id"), "reservation_id": job["reservation_id"], "state": "running", "continued": True})
 
     def _hold_while_paused(self, job: dict, job_id: str, abort: threading.Event) -> str:
@@ -48,7 +48,7 @@ class JobWorker:
             self.on_suspend(job, "paused by a person")
         except Exception as exc:
             unsafe = f"{type(exc).__name__}: {exc}"
-            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._dry(job))
+            self._trace.record(f"{cls}.on_suspend", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=unsafe, **self._trace_fields(job))
         with self._lock:
             if job["state"] not in ("running", "paused"):  # aborting already
                 return "aborted"
@@ -57,7 +57,7 @@ class JobWorker:
                 job["last_error"] = f"paused, but the instrument was not made safe: {unsafe}"
             job["paused_since"] = time.time()
             self._save(job)
-        self._trace.record(f"{cls}.paused", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+        self._trace.record(f"{cls}.paused", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._trace_fields(job))
         limit = float(getattr(self, "pause_limit_s", 0.0) or 0.0)
         while not abort.wait(PAUSE_POLL_S):
             with self._lock:
@@ -70,7 +70,7 @@ class JobWorker:
                 else:
                     lapsed = False
             if lapsed:
-                self._trace.record(f"{cls}.pause_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._dry(job))
+                self._trace.record(f"{cls}.pause_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], **self._trace_fields(job))
                 return "aborted"
             with self._lock:
                 if not job.get("pause_requested"):
@@ -95,7 +95,7 @@ class JobWorker:
                     job["state"] = "aborting"
                     abort.set()
             if lapsed:
-                self._trace.record(f"{type(self).__name__}.lease_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], caller=job.get("caller"), **self._dry(job))
+                self._trace.record(f"{type(self).__name__}.lease_lapsed", True, time.time(), job_id=job_id, run_id=job["reservation_id"], caller=job.get("caller"), **self._trace_fields(job))
                 return
 
     def _renew(self, job: dict) -> None:
@@ -108,7 +108,7 @@ class JobWorker:
             self._worker(job, job_id)
 
     @staticmethod
-    def _dry(job: dict) -> dict:
+    def _trace_fields(job: dict) -> dict:
         """Trace fields every event of ``job`` carries: dry_run, and the agent run that started it (if known)."""
         return {"dry_run": bool(job.get("dry_run")), "run": job.get("run")}
 
@@ -122,7 +122,7 @@ class JobWorker:
             state = graph.invoke({"index": 0}, {"recursion_limit": recursion_limit(job)})["outcome"]
         except Exception as exc:  # any failure leaves the instrument safe and the job resumable
             job["last_error"] = {"code": "step_failed", "message": f"{type(exc).__name__}: {exc}"}
-            self._trace.record(f"{cls}.step", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=job["last_error"]["message"], result=traceback.format_exc(limit=3), **self._dry(job))
+            self._trace.record(f"{cls}.step", False, time.time(), job_id=job_id, run_id=job["reservation_id"], error=job["last_error"]["message"], result=traceback.format_exc(limit=3), **self._trace_fields(job))
             try:
                 self.on_stop(job, "failed")
             except Exception as stop_exc:  # keep the first failure and add this one to it
@@ -133,5 +133,5 @@ class JobWorker:
             job["finished"] = time.time()
             if generation == self._generation:  # after a restart the reloaded copy owns the file
                 self._save(job)
-        self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"), **self._dry(job))
+        self._trace.record(f"{cls}.{state}", state == "done", time.time(), job_id=job_id, run_id=job["reservation_id"], plan_id=job["plan_id"], result=job.get("result_keys"), **self._trace_fields(job))
         WORKER.job = WORKER.step = None

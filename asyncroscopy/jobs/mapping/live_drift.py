@@ -103,7 +103,6 @@ def needed_commands(plan: dict, profile: InstrumentProfile) -> tuple:
     return tuple(profile.image_shift_commands) if tracking(plan) else ()
 
 
-# During the job
 def _state(job: dict) -> dict:
     return job[KEY]
 

@@ -74,7 +74,6 @@ class Pipeline:
         self._warn = warn
         self._service: StitchService | None = None
 
-    # calls
     def service(self) -> StitchService:
         """The stitching backend, built the first time it is needed."""
         if self._service is None:
@@ -160,7 +159,6 @@ class Pipeline:
             raise AnalysisFailed(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
         return self.service().analysis_job_results(job_id=job_id)
 
-    # phases
     def stitch(self, job: dict, run: str, tiles: int) -> dict | None:
         pipeline = self.state(job)
         try:

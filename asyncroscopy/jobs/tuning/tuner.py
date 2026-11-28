@@ -116,7 +116,6 @@ class _Aborted(Exception):
     """abort was called; run_step returns None and the worker restores the snapshot."""
 
 
-# Strategies
 class Strategy:
     """How to tune. Subclass, set ``name``, implement ``exposures`` and ``run``, and register it.
 
@@ -266,7 +265,6 @@ class Corrector(Strategy):
         return {"names": names, "error_before_m": first, "error_after_m": error(measured), "iterations": iterations, "measured": measured}
 
 
-# The context a strategy tunes through
 class TuneContext:
     """Every instrument call a strategy can make, each bounded, counted, blanked and abortable."""
 
@@ -281,7 +279,6 @@ class TuneContext:
         self._defocus = float(self.snapshot["defocus_m"])
         self._stigmator = list(self.snapshot["stigmator_m"])
 
-    # bookkeeping
     def _check_abort(self) -> None:
         if self.device.aborting(self.job):
             raise _Aborted()
@@ -317,7 +314,6 @@ class TuneContext:
         if abs(best - centre) > half - margin:
             raise TuneFailed("peak_at_edge", f"the sharpest {what} ({best:.4g} m) is at the edge of the search range {centre:.4g} +/- {half:g} m: the error may be larger than {field}; widen it or start closer")
 
-    # optics
     def get_defocus(self) -> float:
         return self._defocus
 
@@ -349,7 +345,6 @@ class TuneContext:
             self._stigmator = nxt
             self.state["writes"] += 1
 
-    # measurements
     def image(self) -> np.ndarray:
         """One frame at the plan's field of view, size and dwell; the beam is on only while it is taken."""
         self._expose("image", 1)
@@ -516,7 +511,6 @@ def _dose_assumption(vendor: list[str], frames_per: dict, p: dict, calibrated: b
     )
 
 
-# The job device
 class Tuner(JobDevice):
     """Autofocus and stigmation as a job: a pluggable strategy, bounded steps, a dose budget, snapshot and restore."""
 
@@ -549,7 +543,6 @@ class Tuner(JobDevice):
         writes = sorted(name for name, strategy in STRATEGIES.all().items() if "corrector" in strategy.needs)
         return {"strategy": {"values": writes, "default": PLAN_DEFAULTS["strategy"]}}
 
-    # Plan
     def _capabilities(self, microscope) -> set:
         commands = {c.cmd_name for c in microscope.command_list_query()}
         caps = set()
@@ -633,7 +626,6 @@ class Tuner(JobDevice):
             drives.setdefault(self.corrector_device_address, []).extend(["measure_aberrations", "correct"])
         return drives
 
-    # Snapshot, run, restore
     @staticmethod
     def _reads_stigmator(microscope) -> bool:
         """Whether the microscope's stigmator can be read (and so snapshotted and restored): a backend may offer the
