@@ -35,7 +35,6 @@ import dataclasses
 import hashlib
 import importlib.util
 import inspect
-import json
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,6 +48,7 @@ from langgraph.graph import StateGraph
 from langgraph.types import RetryPolicy
 
 from asyncroscopy import settings
+from asyncroscopy.safety.permissions import canonical_json
 
 from .blocks import Block, BlockContext, BlockFailed, Unreachable, all_blocks
 from .checks import END, START, edges_of, lint
@@ -263,7 +263,7 @@ class Workflow:
         """
         blueprint = self.blueprint()
         digest = hashlib.sha256(self.source().encode())
-        digest.update(json.dumps(blueprint, sort_keys=True, separators=(",", ":"), default=str).encode())
+        digest.update(canonical_json(blueprint).encode())
         blocks = all_blocks()
         modules = {BlockContext.__module__: inspect.getmodule(BlockContext)}
         for name in sorted({str(n.get("block")) for n in blueprint["nodes"].values()}):

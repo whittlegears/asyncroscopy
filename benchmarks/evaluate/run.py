@@ -21,7 +21,7 @@ import numpy as np
 
 from asyncroscopy.core.names import reply_keys
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
-from asyncroscopy.sim.truth_score import inside_field, points_on_particles
+from asyncroscopy.sim.truth_score import inside_field, points_on_particles, particles as twin_particles
 
 DEFAULT_TRACE_DIR = "outputs/trace"
 
@@ -147,11 +147,7 @@ class RunData:
             return None
         cached = getattr(self, "_particles", None)
         if cached is None:
-            items = self.truth["particles"]
-            ids = np.array([int(p["id"]) for p in items])
-            centres = np.array([p["center_m"][:2] for p in items], dtype=np.float64)
-            radii = np.array([min(p.get("semi_axes_m", [1e-9])[:2]) for p in items], dtype=np.float64)
-            cached = self._particles = (ids, centres, radii)
+            cached = self._particles = twin_particles(self.truth)
         return cached
 
     def centre_m(self, image: Image) -> tuple[float, float] | None:

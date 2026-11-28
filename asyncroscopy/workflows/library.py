@@ -80,9 +80,8 @@ def action_of(tool: str, info: dict | None) -> dict | None:
 
 
 def matched_calls(rehearsal: dict, info: dict | None) -> list[dict]:
-    """A rehearsal's ``calls_made``, each instrument call with the instrument tool it matches on the endpoint ``info``
-    describes (``instrument_tool``, or None) and why it does not (``held_because``, or None). It matches the one tool
-    of that endpoint that is what the twin's tool was (``action_of``); none, or two or more, is no match."""
+    """A rehearsal's ``calls_made``, each with the one instrument tool on ``info`` whose ``action_of`` is the twin
+    tool's (``instrument_tool``), or why there is none (``held_because``)."""
     actions = rehearsal.get("actions") or {}
     out = []
     for call in rehearsal.get("calls_made") or []:
@@ -139,13 +138,7 @@ class Library:
         return found if isinstance(found, kind) else None
 
     def record_rehearsal(self, workflow: Workflow, record: dict, info: dict, results: dict | None = None) -> None:
-        """Save a finished run of ``workflow`` on a digital twin. ``record`` is the runner's record and ``info`` the
-        instrument endpoint's ``endpoint_info``, whose ``stack_id`` and ``stack_fingerprint`` say which stack it ran on.
-        ``results``: the run's results with what only the twin knows (its dose, time and twin score); the record's own
-        ``results`` when None.
-
-        Shipped workflows are skipped because they need no approval. Runs that did not reach an end are skipped too.
-        """
+        """Save a finished twin run of a proposed workflow as a rehearsal, under the stack ``info`` describes."""
         if workflow.name in all_workflows() or record.get("state") not in ("done", "failed", "stopped"):
             return
         entry = {"hash": record.get("hash"), "run_id": record.get("run_id"), "state": record.get("state"), "at": record.get("ended") or time.time(),
@@ -297,15 +290,8 @@ class Library:
 
     def propose(self, source: str, tool_names: list[str] | None = None, analysis_tool_names: list[str] | None = None,
                 request: str | None = None, context: str | None = None) -> dict:
-        """Check a workflow's text and keep it as a draft when it has no problems.
-
-        ``request`` is the words of the person who asked for this workflow. It is kept with the draft and shown to
-        whoever approves it. ``context`` is what the conversation established, as the proposing app summed it up;
-        it is kept and shown the same way, and never checked or run.
-
-        Returns the lint result with "draft", which is its path or None, and "status". ``problems`` are sentences
-        for the author to fix. A workflow with problems is not kept and none of it is run.
-        """
+        """Check a workflow's text and keep it as a draft, with ``request`` and ``context`` shown to the approver, when
+        it has no problems; returns the lint result with "draft" and "status"."""
         refused = {"ok": False, "name": None, "hash": None, "acts": False, "tools": [], "blocks": [], "draft": None, "status": None}
         try:
             workflow = load_source(source)
@@ -334,25 +320,10 @@ class Library:
     def approve(self, name: str, by: str, *, login: str | None = None, instrument: str | None = None, days: float | None = None,
                 require_rehearsal: bool = False, via: str = "cli", expected_hash: str | None = None,
                 instrument_info: dict | None = None, rehearsal_run_id: str | None = None) -> dict:
-        """Record a person's approval of the draft ``name`` as it is now. Returns the approval record.
+        """Record a person's approval of the draft ``name`` as it is now (``docs/MCP/workflow_approval.md``).
 
-        ``by`` is the person's name.
-        ``login`` is the account giving it, checked against ``approvers.json`` when that file exists.
-        ``instrument`` is the ``stack_id`` it is approved for. None or "any" means every instrument.
-        ``days`` is how long it holds. None means until revoked.
-        ``require_rehearsal`` refuses (ValueError) unless this exact code passed a rehearsal that counts for the
-        instrument endpoint whose ``endpoint_info`` is ``instrument_info`` (``rehearsal_problem``), and
-        ``rehearsal_run_id`` names the one a person reviewed: the latest such rehearsal, which ``review_workflow``
-        shows. The approval keeps a copy of that rehearsal (``rehearsed``), its calls matched to the instrument's tools
-        (``matched_calls``), so later rehearsals change nothing. Without ``rehearsal_run_id`` (the command line) it keeps
-        none, and no call of a hardware run is pre-approved.
-        ``via`` says where the approval was given ("cli", or the operator endpoint's name), and is kept in the record.
-        ``expected_hash`` is the hash of the code the person reviewed; when given, a draft that differs is refused
-        (ValueError), so a draft replaced after the review is never approved in its place.
-
-        The draft becomes the approved workflow of that name and its hash is what is approved. Raises KeyError when
-        there is no such draft, PermissionError when this login may not approve, and ValueError when the workflow
-        no longer passes its checks or ``by`` is empty.
+        Raises KeyError when there is no such draft, PermissionError when this login may not approve, and ValueError
+        when a check, the rehearsal or ``expected_hash`` refuses it.
         """
         if not str(by or "").strip():
             raise ValueError("an approval names the person who gives it")
@@ -413,12 +384,7 @@ class Library:
 
     def reject(self, name: str, reason: str, *, by: str | None = None, login: str | None = None, via: str = "cli",
                expected_hash: str | None = None) -> dict:
-        """Record a person's rejection of the workflow ``name`` as it is now, with their ``reason``. Returns the record.
-
-        An approved workflow loses its approval first (``revoke``). The text is kept as a draft, which still runs on a
-        twin. Raises KeyError when there is no such proposed workflow, ValueError for a shipped one or an empty
-        reason or a draft whose hash is not ``expected_hash``, and PermissionError when ``approvers.json`` exists and ``login`` is not in it.
-        """
+        """Record a person's rejection of ``name`` as it is now; an approval is revoked first and the text stays a draft."""
         if not str(reason or "").strip():
             raise ValueError("a rejection gives the reason, so whoever wrote the workflow can fix it")
         allowed = self.approvers()
@@ -438,10 +404,7 @@ class Library:
         return {"name": workflow.name, "status": DRAFT, **record}
 
     def revoke(self, name: str) -> dict:
-        """Withdraw an approval. The workflow becomes a draft again and its text is kept.
-
-        Raises KeyError when it is not approved.
-        """
+        """Withdraw an approval; the workflow becomes a draft again. Raises KeyError when it is not approved."""
         approvals = self._approvals()
         approved = self._file(APPROVED, str(name))
         if str(name) not in approvals and not approved.exists():

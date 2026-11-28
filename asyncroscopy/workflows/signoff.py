@@ -1,20 +1,5 @@
-"""From a rehearsal on a digital twin to a signed-off run on the instrument (``docs/MCP/twin_to_instrument.md``).
-
-A workflow server does three things here, each through the operator endpoint of the stack it acts on
-(``endpoint_info.urls.operator``), never through a tool an agent is given:
-
-- **Before and after a rehearsal** it reads the twin's truth (the operator-only ``export_ground_truth``), so the
-  rehearsal record keeps the twin's time, dose and twin score (``asyncroscopy.sim.truth_score``). The score is kept in
-  the library's rehearsal record only, which only ``review_workflow`` on the workflow operator endpoint returns.
-- **When an approved workflow starts on a real instrument** it pre-approves, for that run only, every instrument call
-  the rehearsal the person signed off made, as many times as it made it, under the instrument tool each matches
-  (``preapprove_run``, ``library.matched_calls``). The approval keeps its own copy of that rehearsal, and the run's
-  inputs must be the rehearsal's (``input_problem``). The run's calls carry the run id and a secret run key
-  (``X-Asyncroscopy-Run``, ``X-Asyncroscopy-Run-Key``); the key is in no reply, so no other caller can use the
-  pre-approvals even when it knows the run id.
-- **When that run ends or is stopped** it removes them (``end_run_preapproval``). They also expire after the stack's
-  ``mcp.approval_ttl_s``; a resumed run is granted them again, for the same run id.
-"""
+"""From a rehearsal on a digital twin to a signed-off run on the instrument, always through the operator endpoint of the
+stack acted on (``endpoint_info.urls.operator``); ``docs/MCP/twin_to_instrument.md`` is the contract."""
 
 from __future__ import annotations
 
@@ -50,8 +35,7 @@ def _marker_path(state_dir: Path, run_id: str) -> Path:
 
 
 async def twin_truth(operator: McpServer | str) -> tuple[dict | None, str | None]:
-    """(the twin's ``export_ground_truth`` document, None) or (None, why it could not be read). ``operator``: the
-    stack's operator endpoint, or why it cannot be used (``Endpoints.operator``)."""
+    """(the twin's ``export_ground_truth`` document, None) or (None, why it could not be read)."""
     if isinstance(operator, str):
         return None, operator
     try:
@@ -81,8 +65,7 @@ async def twin_truth(operator: McpServer | str) -> tuple[dict | None, str | None
 
 
 async def mark_rehearsal(state_dir: Path, run_id: str, operator: McpServer | str) -> None:
-    """Keep the twin's truth marker from before a rehearsal (``truth_marker``), beside the run's record. A resumed
-    rehearsal keeps the one from its start."""
+    """Keep the twin's truth marker from before a rehearsal; a resumed rehearsal keeps the one from its start."""
     path = _marker_path(state_dir, run_id)
     if path.exists():
         return
@@ -96,8 +79,7 @@ def forget_rehearsal(state_dir: Path, run_id: str) -> None:
 
 
 async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer | str) -> dict:
-    """A finished rehearsal's results: the runner's (data keys, map, calls, wall time) with the twin's time, dose and
-    twin score added. What the twin could not give is null, with the reason in ``twin_score.why``."""
+    """The runner's results with the twin's time, dose and twin score added."""
     results = dict(record.get("results") or {})
     path = _marker_path(state_dir, str(record.get("run_id")))
     try:
@@ -119,7 +101,7 @@ async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer |
 
 
 def signed_off_rehearsal(library: Library, name: str) -> tuple[dict | None, dict | None, str | None]:
-    """(the approval, the copy of the rehearsal it was given on, None) for an approved workflow, or why there is none."""
+    """(the approval, the rehearsal it was given on, None), or why there is none."""
     approval = library.approval(name)
     if not approval:
         return None, None, f"{name} has no approval"
@@ -132,9 +114,7 @@ def signed_off_rehearsal(library: Library, name: str) -> tuple[dict | None, dict
 
 
 def input_problem(library: Library, name: str, inputs: dict) -> str | None:
-    """Why a hardware run of the approved workflow ``name`` with ``inputs`` (defaults filled in) is refused: a sign-off
-    covers its rehearsal as rehearsed, so with the inputs that rehearsal ran with. None when they are the same, or the
-    approval carries no rehearsal."""
+    """Why a hardware run with ``inputs`` (defaults filled in) is refused: they are not the signed-off rehearsal's."""
     rehearsed = (library.approval(name) or {}).get("rehearsed")
     if not rehearsed or canonical_json(inputs) == canonical_json(rehearsed.get("inputs") or {}):
         return None
@@ -143,20 +123,17 @@ def input_problem(library: Library, name: str, inputs: dict) -> str | None:
 
 
 async def grant(operator: McpServer | str, library: Library, name: str, run_id: str, run_key: str, info: dict) -> dict:
-    """Pre-approve, for the hardware run ``run_id`` on the instrument whose endpoint_info is ``info``, the instrument
-    calls of the rehearsal ``name`` was signed off on, each as many times as the rehearsal made it, under the instrument
-    tool the approval recorded for it. A call whose tool, matched again now (``matched_calls``), is another one, or
-    none, is not pre-approved. Returns the run record's ``preapproval``: {"granted": true, "approved_by", "approver",
-    "rehearsal_run_id", "calls", "expires_at"} or {"granted": false, "why"}. Without it every call is permissioned as usual."""
+    """Pre-approve for ``run_id`` the signed-off rehearsal's instrument calls whose tool still matches the recorded one;
+    returns the run record's ``preapproval``."""
     approval, rehearsal, why = signed_off_rehearsal(library, name)
     if rehearsal is None:
         return {"granted": False, "why": why}
     if isinstance(operator, str):
         return {"granted": False, "why": operator}
-    now = matched_calls(rehearsal, info)
-    calls = [{"tool": found["instrument_tool"], "arguments": found["arguments"], "count": found.get("count") or 1}
-             for found, signed in zip(now, rehearsal["calls_made"])
-             if found.get("server") == "instrument" and found.get("instrument_tool") and found["instrument_tool"] == signed.get("instrument_tool")]
+    matched = matched_calls(rehearsal, info)
+    calls = [{"tool": match["instrument_tool"], "arguments": match["arguments"], "count": match.get("count") or 1}
+             for match, signed in zip(matched, rehearsal["calls_made"])
+             if match.get("server") == "instrument" and match.get("instrument_tool") and match["instrument_tool"] == signed.get("instrument_tool")]
     arguments = {"run_id": run_id, "run_key_sha256": run_key_sha256(run_key), "calls": calls,
                  "approved_by": signoff_name(name, str(approval["hash"])), "approver": str(approval.get("by") or ""),
                  "workflow": name, "hash": str(approval["hash"]), "rehearsal_run_id": rehearsal.get("run_id")}
@@ -172,7 +149,7 @@ async def grant(operator: McpServer | str, library: Library, name: str, run_id: 
 
 
 async def end(operator: McpServer | str, run_id: str) -> dict[str, Any] | None:
-    """Remove a hardware run's pre-approval; None when it could not be reached (the pre-approval then expires)."""
+    """Remove a hardware run's pre-approval; None when unreachable, so it expires instead."""
     if isinstance(operator, str):
         return None
     try:

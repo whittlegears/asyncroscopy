@@ -1,18 +1,5 @@
-"""Which tools the agent endpoint runs at once, which it holds for a person, and the calls it holds.
-
-A tool's permission is ``allow`` (runs at once), ``approve`` (held until a person approves that exact call) or
-``never`` (refused; not settable). ``docs/MCP/permissions.md`` is the contract.
-
-Two files, both keyed by the stack's ``stack_id``:
-
-- the permissions file (``mcp.permissions_file``, else ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
-  ``outputs/permissions/permissions.json``): what people set, ``{"groups": {...}, "tools": {name: permission}}``;
-- beside it, ``<name>.state.json``: the agent endpoint's tools as it last published them, the held calls, and the
-  calls a workflow sign-off pre-approves for one hardware run (``grant_run``; ``docs/MCP/twin_to_instrument.md``).
-
-The agent endpoint and the operator endpoint are separate processes, so every read and write takes a lock
-shared between processes (``<name>.lock``).
-"""
+"""Tool permissions (allow, approve, never), held calls and run pre-approvals of one stack, in files shared by the agent
+and operator endpoints under a lock; ``docs/MCP/permissions.md`` is the contract."""
 
 from __future__ import annotations
 
@@ -59,9 +46,7 @@ def seconds_of(text: str) -> float:
 
 
 def permission_and_source(name: str, entry: dict[str, Any], settings: dict[str, Any]) -> tuple[str, str]:
-    """(permission, where it came from), first match wins: the fixed hard-block set ("fixed"), a person's per-tool
-    setting ("tool"), the config's needs_approval ("config"), the group default ("group"). A ``fixed`` tool (the
-    endpoint's own contract tools, stop_all and the stops) always runs, also with source "fixed"."""
+    """(permission, its source); the order is the table in ``docs/MCP/permissions.md``."""
     if entry.get("never"):
         return "never", "fixed"
     if entry.get("fixed"):
@@ -79,7 +64,6 @@ def effective_permission(name: str, entry: dict[str, Any], settings: dict[str, A
 
 
 class PermissionStore:
-    """The permission settings and held calls of one stack."""
 
     def __init__(self, path: str | Path, stack_id: str, approval_ttl_s: float = default_approval_ttl_s,
                  clock: Callable[[], float] = time.time) -> None:
@@ -180,14 +164,8 @@ class PermissionStore:
 
     def request(self, tool: str, arguments: dict[str, Any], acts: bool, risk: str, requested_by: str | None,
                 signoff: dict[str, Any] | None = None, run: dict[str, str] | None = None) -> dict[str, Any]:
-        """A call of an ``approve`` tool: the request it makes or matches, with ``status`` pending, approved or denied.
-
-        A request matches the same tool, the same canonical arguments and the same caller (``requested_by``), so another
-        caller's identical call cannot use an approval meant for someone else. An approved request is consumed here, so
-        the call it approved runs once. ``signoff``: for a call of a hardware run that a workflow sign-off pre-approved
-        but that the sign-off does not cover, who signed off and why it is held; kept with a new request. ``run``: that
-        run's {"run_id", "run_key_sha256"}; such a request matches only a call of the same run with its key.
-        """
+        """The request a call of an ``approve`` tool makes or matches (same tool, arguments, caller and run); an
+        approved one is used up here."""
         digest = arguments_sha256(arguments)
         bound = {"run_id": (run or {}).get("run_id"), "run_key_sha256": (run or {}).get("run_key_sha256")}
         with self._locked():
@@ -254,8 +232,7 @@ class PermissionStore:
         return runs
 
     def _kept_alive(self, grant: dict[str, Any], mine: dict[str, Any]) -> bool:
-        """Move a grant's expiry to the TTL from now, never past ``max_run_preapproval_s`` after it was granted. Only
-        when less than half the TTL is left, so a run's thousands of calls write the file seldom."""
+        """Extend a grant's expiry; only once half the TTL is gone, so a run's many calls seldom write the file."""
         now = self.clock()
         ttl = self._ttl(mine)
         if seconds_of(grant["expires_at"]) - now >= ttl / 2:
@@ -267,8 +244,7 @@ class PermissionStore:
         return True
 
     def live_grant(self, run_id: str, run_key_digest: str) -> dict[str, Any] | None:
-        """The live pre-approval of ``run_id`` when ``run_key_digest`` is its key's, kept alive by this call of the run;
-        else None."""
+        """The live pre-approval of ``run_id`` for the right key, kept alive by this call."""
         with self._locked():
             state = self._read(self.state_path)
             grant = self._live_runs(state).get(str(run_id))
@@ -279,9 +255,7 @@ class PermissionStore:
         return dict(grant)
 
     def use_run_call(self, run_id: str, run_key_digest: str, call: str, allowed: int) -> bool:
-        """Use one of the ``allowed`` passes of the pre-approved ``call`` (its tool and argument digest) for ``run_id``.
-        False when the run has used them all, or its pre-approval is gone. What a run used is kept for
-        ``max_run_preapproval_s`` after its last use, also after ``end_run``, so a resumed run's new grant keeps the count."""
+        """Use one of the ``allowed`` passes of ``call``; the count outlives ``end_run`` so a resumed run keeps it."""
         with self._locked():
             state = self._read(self.state_path)
             grant = self._live_runs(state).get(str(run_id))
@@ -298,13 +272,8 @@ class PermissionStore:
 
     def grant_run(self, run_id: str, run_key_digest: str, calls: list[dict[str, Any]], approved_by: str, approver: str,
                   workflow: str, hash_: str, rehearsal_run_id: str | None = None) -> dict[str, Any]:
-        """Pre-approve, for the hardware run ``run_id`` only, every call a workflow's passing rehearsal made: each
-        ``{"tool", "arguments"}`` as the rehearsal sent it. A call of that run (its ``X-Asyncroscopy-Run`` header, with
-        the run key whose SHA-256 is ``run_key_digest``) of the same tool with the same arguments, once both are validated
-        by the gate, passes ``count`` times (default 1). It expires ``approval_ttl_s`` after the run's last call, at most
-        ``max_run_preapproval_s`` after it was granted, or when ``end_run`` removes it. A new grant for the same run (it
-        was resumed) replaces the old one, keeps what the run used, and moves the run's held requests to the new key.
-        Returns the grant with the number of passes as ``calls``."""
+        """Pre-approve the rehearsal's calls for the hardware run ``run_id``; a new grant for a resumed run replaces the
+        old one and moves its held requests to the new key."""
         if not str(run_id).strip() or len(str(run_key_digest)) != 64:
             raise ValueError("a run pre-approval needs the run id and the SHA-256 of the run key")
         if not str(approver or "").strip() or not str(approved_by).startswith("workflow_signoff:"):
@@ -328,7 +297,6 @@ class PermissionStore:
         return {k: v for k, v in grant.items() if k != "calls"} | {"calls": sum(c["count"] for c in kept)}
 
     def run_grant(self, run_id: str) -> dict[str, Any] | None:
-        """The live pre-approval of the hardware run ``run_id``, with its calls, or None."""
         if not run_id:
             return None
         with self._locked():
@@ -337,7 +305,6 @@ class PermissionStore:
         return dict(found) if found else None
 
     def end_run(self, run_id: str) -> dict[str, Any] | None:
-        """Remove the pre-approval of ``run_id`` (the run ended or was stopped). Returns what was removed, without its calls."""
         with self._locked():
             state = self._read(self.state_path)
             removed = self._live_runs(state).pop(str(run_id), None)

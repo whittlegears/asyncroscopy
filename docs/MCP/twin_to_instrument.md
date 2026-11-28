@@ -159,7 +159,8 @@ When a run on a simulated stack ends (`done`, `failed` or `stopped`), the rehear
   dose on any spot of the specimen after the run, from every exposure so far. `null` when the twin keeps no dose map
   or its truth could not be read.
 - `twin_score` (`asyncroscopy.sim.truth_score`, `version` changes when a number changes meaning). Always show
-  `label` with it. It is measured from the twin's `export_ground_truth` read before the run started and after it ended:
+  `label` with it. It is measured from the twin's `export_ground_truth` read before the run started and after it ended,
+  so what another client of the same twin did meanwhile is counted too:
   - `acquisitions`, `images`: what the twin recorded during the run, and how many of those were images;
   - `particles_total`, `particles_imaged`: the twin's particles, and those inside the true field of one of the run's images;
   - `features_reported`, `features_on_particles`, `feature_precision`: the features the run's `find_feature` nodes

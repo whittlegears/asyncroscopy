@@ -72,11 +72,11 @@ def device_code(dev_class: str, properties: Mapping[str, list[str]] | None) -> d
 
 def stack_fingerprint(devices: Mapping[str, DeviceInfo], simulated: bool) -> dict[str, Any]:
     properties = {prefix: device_properties(device.proxy) for prefix, device in sorted(devices.items())}
-    found = {
+    fingerprint = {
         "software": software(),
         "devices": {prefix: device_code(device.dev_class, properties[prefix]) for prefix, device in sorted(devices.items())},
         "config_digest": digest(properties),
         "unreadable_properties": sorted(prefix for prefix, values in properties.items() if values is None),
         "simulated": {"value": bool(simulated), "established_by": simulated_by},
     }
-    return {**found, "digest": digest(found)}
+    return {**fingerprint, "digest": digest(fingerprint)}

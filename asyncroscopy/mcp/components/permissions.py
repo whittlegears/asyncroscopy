@@ -1,11 +1,5 @@
-"""Permissions: the agent endpoint holds calls a person must approve; the operator endpoint lists and decides them.
-
-On the agent endpoint a middleware checks every tool call (and the tool ``call_tool`` runs) against the tool's
-effective permission (``asyncroscopy.safety.permissions``) before it runs. On the operator endpoint the person's
-tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_permission, set_group_permission, and
-preapprove_run and end_run_preapproval, which a workflow server sends for a signed-off workflow's hardware run.
-``docs/MCP/permissions.md`` and ``docs/MCP/twin_to_instrument.md`` are the contract.
-"""
+"""The permission gate on the agent endpoint and the person's permission tools on the operator endpoint;
+``docs/MCP/permissions.md`` and ``docs/MCP/twin_to_instrument.md`` are the contract."""
 
 from __future__ import annotations
 
@@ -41,14 +35,12 @@ always_run = frozenset({"endpoint_info", "action_space", "find_tools", "call_too
 
 
 def always_runs(t: ToolDescriptor) -> bool:
-    """Whether a tool is never held: the endpoint's contract tools, stop_all, and a command that declares it is a
-    stop (``stop``) or declares a stop role. A role the name rules inferred (``gun_off`` reads as a stop) is not enough."""
+    """Never held: contract tools, stop_all, and commands that declare a stop; a stop role inferred from a name is not enough."""
     return t.name in always_run or t.stop or (t.role_source == "annotation" and t.action_role in STOP_ROLES)
 
 
 def listed_in(rules: dict[str, list[str]], dev_class: str | None, command: str) -> bool:
-    """Whether a {class or "*": [command or "Class.command"]} mapping (``mcp.needs_approval``) names this command.
-    A native tool (``run_job``) has no class (None): only the "*" entries name it, by its tool name."""
+    """Whether ``mcp.needs_approval`` names this command; a native tool (no class) only through "*" entries."""
     if dev_class is None:
         return any(fnmatchcase(command, e) for e in rules.get("*", []))
     qualified = f"{dev_class}.{command}"
@@ -57,7 +49,6 @@ def listed_in(rules: dict[str, list[str]], dev_class: str | None, command: str) 
 
 
 def plan_of(arguments: dict[str, Any]) -> Any:
-    """The plan of a job submission: run_job's ``plan``, or the ``plan`` in a reserve's JSON ``request``."""
     if "plan" in arguments:
         return arguments["plan"]
     try:
@@ -67,7 +58,6 @@ def plan_of(arguments: dict[str, Any]) -> Any:
 
 
 def arguments_model(name: str, fn: Any) -> type[BaseModel]:
-    """The model of a tool function's arguments, as FastMCP validates them: their types and defaults, nothing else."""
     signature = inspect.signature(without_injected_parameters(fn), eval_str=True)
     empty = inspect.Parameter.empty
     fields = {p.name: (Any if p.annotation is empty else p.annotation, ... if p.default is empty else p.default)
@@ -83,8 +73,7 @@ def refusal(text: str, structured: dict[str, Any]) -> ToolResult:
 
 
 class Gate(Middleware):
-    """Holds or refuses a call by its tool's permission. A caller whose token may not run the tool at all is passed
-    on to be refused there (the token gate, or ``call_tool``), so nobody queues a request for a tool they could never run."""
+    """Holds or refuses a call by its tool's permission; a caller who may not run the tool at all is refused downstream."""
 
     def __init__(self, owner: Permissions) -> None:
         self.owner = owner
@@ -107,7 +96,6 @@ class Gate(Middleware):
 
 
 class SignoffStamp(Interceptor):
-    """Puts the sign-off that pre-approved a call on its trace event: approved_by, approver and the run."""
 
     order = 15
 
@@ -124,11 +112,9 @@ class Permissions:
         self.needs_approval = cfg.needs_approval
         self.store = PermissionStore(cfg.permissions_file, server.stack_id, cfg.approval_ttl_s)
         self.models: dict[str, type[BaseModel]] = {}
-        self.signoff_digests: dict[tuple[str, str], dict[str, dict[str, int]]] = {}
+        self.covered_by_grant: dict[tuple[str, str], dict[str, dict[str, int]]] = {}
 
     def attach(self) -> None:
-        """Put the gate on the agent and monitor endpoints (the operator endpoint is the person's own), inside the token
-        check so a refused caller holds nothing."""
         if self.server.endpoint_role in ("agent", "monitor"):
             self.server.mcp.add_middleware(Gate(self))
 
@@ -153,9 +139,8 @@ class Permissions:
         return {name: self.entry(name) for name in sorted(self.server.descriptors) if name in self.server.registered}
 
     def unmatched(self) -> list[str]:
-        """The ``needs_approval`` entries that name no command of their class and no native tool: of "*", or of a class
-        this stack runs (every command its devices have, offered here or not). A class the stack does not run cannot be
-        checked; a shared config names the twin's and the hardware's classes alike."""
+        """``needs_approval`` entries matching nothing; classes this stack does not run are skipped, as a shared config
+        names the twin's and the hardware's alike."""
         commands: dict[str, set[str]] = {}
         for device in self.server.devices.values():
             commands.setdefault(device.dev_class, set()).update(device.commands)
@@ -180,8 +165,7 @@ class Permissions:
         self.store.publish(self.catalog())
 
     def plan_needs_approval(self, name: str, arguments: dict[str, Any]) -> bool:
-        """Whether this call submits a job whose plan the job device says a person approves (its reserve's
-        ``approval_if``, ``JobDevice.approval_plans``): a Tuner plan whose strategy writes the corrector."""
+        """Whether this call submits a job whose plan matches its device's ``approval_if`` (``JobDevice.approval_plans``)."""
         t = self.server.descriptors[name]
         if t.native and name == "run_job":
             device = self.server.devices.get(str(arguments.get("device")))
@@ -197,23 +181,19 @@ class Permissions:
         return any(plan.get(field, rule.get("default")) in rule.get("values", []) for field, rule in rules.items())
 
     def effective(self) -> tuple[dict[str, str], dict[str, str]]:
-        """(each tool's effective permission, the group defaults), for endpoint_info."""
         settings = self.store.settings()
         return {name: effective_permission(name, entry, settings) for name, entry in self.catalog().items()}, settings["groups"]
 
     def validated(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """The arguments as the tool will run with them: validated, defaults filled in, each value in its declared type
-        (``1`` for a float is ``1.0``), as JSON. Raises pydantic's ValidationError."""
+        """The arguments as FastMCP will run them: validated, defaults filled in, as JSON."""
         if name not in self.models:
             self.models[name] = arguments_model(name, self.server.registered[name].fn)
         return self.models[name].model_validate(arguments).model_dump(mode="json")
 
     def rehearsed(self, grant: dict[str, Any]) -> dict[str, dict[str, int]]:
-        """{tool: {digest: count}} of a run pre-approval's calls, their arguments validated as a call's are; rehearsed
-        calls that validate the same add up, and one whose arguments do not validate here covers nothing. Kept per
-        grant, so a map's thousands of calls are validated once."""
+        """{tool: {digest: count}} of a grant's calls, validated once per grant; an invalid one covers nothing."""
         key = (grant["run_id"], grant["granted_at"])
-        if key not in self.signoff_digests:
+        if key not in self.covered_by_grant:
             covered: dict[str, dict[str, int]] = {}
             for call in grant["calls"]:
                 tool = call["tool"]
@@ -225,18 +205,12 @@ class Permissions:
                     continue
                 counts = covered.setdefault(tool, {})
                 counts[digest] = counts.get(digest, 0) + int(call.get("count") or 1)
-            self.signoff_digests = {k: v for k, v in self.signoff_digests.items() if k[0] != grant["run_id"]}
-            self.signoff_digests[key] = covered
-        return self.signoff_digests[key]
-
-    def check(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
-        """None when the call may run now, else the refusal or the held call to return in its place."""
-        return self.decide(name, arguments)[0]
+            self.covered_by_grant = {k: v for k, v in self.covered_by_grant.items() if k[0] != grant["run_id"]}
+            self.covered_by_grant[key] = covered
+        return self.covered_by_grant[key]
 
     def decide(self, name: str, arguments: dict[str, Any]) -> tuple[ToolResult | None, dict[str, Any] | None]:
-        """(``check``'s answer, the sign-off that let the call run or None). A call of an ``approve`` tool made by a
-        hardware run that a workflow sign-off pre-approved (``preapprove_run``) runs when the rehearsal made it, as many
-        times as the rehearsal made it. Every call of such a run, with its key, keeps its pre-approval alive."""
+        """(None or the refusal to return instead, the sign-off that let the call run)."""
         if name not in self.server.descriptors or name not in self.server.registered:
             return None, None
         run_id, run_key = self.server.run_id(), self.server._header(RUN_KEY_HEADER)

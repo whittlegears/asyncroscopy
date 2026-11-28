@@ -123,9 +123,9 @@ def test_a_held_call_is_matched_on_its_validated_arguments(stack):
     held = run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1})).structured_content
     assert held["status"] == "approval_required" and held["arguments"] == {"defocus": 1.0}
     assert run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1.0})).structured_content["request_id"] == held["request_id"]
-    listed = agent.permissions.check("list_data", {}).structured_content
+    listed = agent.permissions.decide("list_data", {})[0].structured_content
     assert listed["arguments"] == {"kind": None, "search": None, "limit": 20, "offset": 0}
-    assert agent.permissions.check("list_data", {"limit": 20}).structured_content["request_id"] == listed["request_id"]
+    assert agent.permissions.decide("list_data", {"limit": 20})[0].structured_content["request_id"] == listed["request_id"]
     refused = run(call(agent, "DigitalTwin_set_defocus", {"defocus": "near"}))
     assert refused.is_error and refused.structured_content == {"status": "invalid_arguments", "tool": "DigitalTwin_set_defocus"}
     assert {p["request_id"] for p in agent.permissions.store.pending()} == {held["request_id"], listed["request_id"]}
@@ -150,7 +150,7 @@ def test_a_native_tool_can_need_approval_and_an_entry_naming_nothing_is_refused(
     agent = stack("agent", SAMPLE, TUNER, needs_approval={"*": ["run_job"], "SAMPLE": ["load_sample"]})
     assert agent.discovery.endpoint_info()["tools"]["run_job"]["permission"] == "approve"
     plan = {"corrections": ["focus"], "strategy": "image_metric"}
-    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}).structured_content["status"] == "approval_required"
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0].structured_content["status"] == "approval_required"
     for wrong in ({"SAMPLE": ["get_doze"]}, {"*": ["no_such_tool"]}):
         with pytest.raises(ValueError, match="names no command of its class"):
             stack("agent", SAMPLE, needs_approval=wrong)
@@ -167,11 +167,11 @@ def test_a_job_that_would_write_the_corrector_waits_for_a_person(stack):
     reserve = run(call(agent, "Tuner_reserve", {"request": json.dumps({"plan": plan})}))
     assert reserve.structured_content["status"] == "approval_required"
     focus_only = {**plan, "strategy": "image_metric"}
-    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": focus_only}) is None
-    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": {"corrections": ["focus"]}}) is None
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": focus_only})[0] is None
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": {"corrections": ["focus"]}})[0] is None
     run(operator_call(operator, "approve_call", {"request_id": held.structured_content["request_id"]}))
-    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}) is None
-    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}).structured_content["status"] == "approval_required"
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0] is None
+    assert agent.permissions.decide("run_job", {"device": "Tuner", "plan": plan})[0].structured_content["status"] == "approval_required"
 
 
 def test_the_monitor_endpoint_holds_reads_as_the_agent_endpoint_does(stack):
@@ -191,7 +191,7 @@ def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
     assert "DigitalTwin_Disconnect" not in operator.registered
     info = agent.discovery.endpoint_info()
     assert info["tools"]["DigitalTwin_Disconnect"]["permission"] == "never"
-    refused = agent.permissions.check("DigitalTwin_Disconnect", {})
+    refused = agent.permissions.decide("DigitalTwin_Disconnect", {})[0]
     assert refused.is_error and refused.structured_content == {"status": "never", "tool": "DigitalTwin_Disconnect"}
     with pytest.raises(ToolError, match="allow, approve or default"):
         run(operator_call(operator, "set_permission", {"tool": "DigitalTwin_get_stage", "permission": "never"}))

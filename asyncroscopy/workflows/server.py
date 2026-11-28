@@ -60,12 +60,7 @@ GOING = ("running", "queued")  # a run in one of these has a process driving it,
 
 
 def requester() -> str | None:
-    """The caller named in the MCP request being served (an agent's X-Asyncroscopy-Caller), or None.
-
-    A run's instrument calls carry it, so the instrument's trace, the benchmarks and the evaluators credit the agent
-    that asked for the run; the run id still tells the workflow's calls apart. Over stdio there is no request header.
-    With mcp.auth the endpoint names the caller from this server's token instead, whatever is sent.
-    """
+    """The caller named in the MCP request being served (X-Asyncroscopy-Caller), or None; a run's calls carry it."""
     try:
         from fastmcp.server.dependencies import get_http_headers
 
@@ -181,18 +176,13 @@ class WorkflowServer:
             raise LookupError(f"there is no workflow named {name!r}; call list_workflows") from exc
 
     def _refusal(self, info: dict, name: str, status: str) -> str | None:
-        """Why this workflow may not run on this endpoint's stack, or None.
-
-        A twin runs anything. A real instrument needs ``hardware`` and a shipped or approved workflow.
-        """
+        """Why this workflow may not run on this stack: a real instrument needs ``hardware`` and a reviewed workflow."""
         if info.get("simulated") is True:
             return None
         return runner.twin_only_problem(info, hardware=self.hardware) or self.library.hardware_problem(name, status, info.get("stack_id"))
 
     async def _rehearsed(self, run_id: str, info: dict, workflow: Workflow, running, operator: McpServer | str, granted: bool) -> dict:
-        """Wait for the run ``run_id`` to end. A run on a digital twin is saved as a rehearsal for whoever approves later,
-        with its results and twin score. The pre-approval of a hardware run (``granted``) is removed once it ends or
-        stops; a run that waits for a person keeps it until it expires or the run is resumed."""
+        """Wait for ``run_id`` to end; save a twin run as a rehearsal and remove a hardware run's pre-approval."""
         try:
             record = await running
         except BaseException:
@@ -212,9 +202,7 @@ class WorkflowServer:
         return record
 
     async def _prepared(self, run_id: str, info: dict, status: str, workflow: Workflow, instrument_url: str | None):
-        """Open the run's endpoints and do what its stack needs first: the twin's truth marker before a rehearsal, the
-        rehearsal's pre-approvals before a signed-off workflow's hardware run. Returns (instrument, analysis, operator,
-        the run record's fields)."""
+        """Open the run's endpoints and take the twin's truth marker or grant the hardware run's pre-approvals."""
         operator = self.endpoints.operator(info)
         fields: dict[str, Any] = {"instrument_url": self.endpoints.url(instrument_url)}
         run_key = None
@@ -230,8 +218,7 @@ class WorkflowServer:
         return next((run_id for run_id, task in self.tasks.items() if not task.done()), None)
 
     async def _wait(self, run_id: str, wait_s: float, with_tiles: bool = False) -> dict:
-        """The run's reply once it ends or ``wait_s`` passes. Its placed tiles are left out unless ``with_tiles``:
-        an app drawing the map wants them, a model reading the reply does not."""
+        """The run's reply once it ends or ``wait_s`` passes; placed tiles only ``with_tiles``."""
         reply = await self._wait_reply(run_id, wait_s)
         progress = reply.get("progress")
         if not with_tiles and isinstance(progress, dict) and "tiles" in progress:
@@ -326,9 +313,7 @@ class WorkflowServer:
         return (await self.instrument_info(instrument_url) or {}).get("stack_fingerprint")
 
     def review(self, name: str, info: dict | None = None) -> dict:
-        """Everything a person needs to decide on the workflow ``name``, in one reply: the sign-off card. Read only.
-        Raises LookupError for no such workflow. ``info``: the instrument endpoint's endpoint_info, whose
-        stack_fingerprint a rehearsal must have run on to count and whose tools the rehearsed calls are matched to."""
+        """The sign-off card of ``name`` for the instrument ``info`` describes. Raises LookupError for no such workflow."""
         stack_fingerprint = (info or {}).get("stack_fingerprint")
         workflow, status = self._workflow(name)
         checked = workflow.lint()

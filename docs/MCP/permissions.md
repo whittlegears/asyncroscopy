@@ -17,7 +17,8 @@ releases a held call on the operator endpoint. An app only shows the held call a
 - **The permissions file has a `groups` and a `tools` section** under each `stack_id`:
   `{stack_id: {"groups": {...}, "tools": {name: permission}}}`.
 - **Held calls live beside the permissions file**, in `<name>.state.json`, with the agent endpoint's tool
-  list. The agent and operator endpoints are separate processes, so the operator endpoint reads both from there.
+  list. The agent and operator endpoints are separate processes, so the operator endpoint reads both from there,
+  and every read and write takes a lock both share (`<name>.lock`).
 - **The default path** is `$ASYNCROSCOPY_PERMISSIONS_FILE`, else `outputs/permissions/permissions.json`, when
   `mcp.permissions_file` is not set (the same pattern as the dose ledger), so tests and a second stack can keep
   their own. A relative `mcp.permissions_file` is read from the directory of the config that names it, not from

@@ -426,10 +426,7 @@ async def _clean_up(ctx: BlockContext, used: list) -> list[dict]:
 
 @contextlib.contextmanager
 def _run_lock(state_dir: Path, run_id: str):
-    """Hold a run's lock while it is driven, so no two processes (or two calls in one) drive it at once.
-
-    The operating system lets go of the lock when the process dies, so a run whose process died can be resumed.
-    """
+    """Hold a run's lock while it is driven; the OS releases it when the process dies, so the run can be resumed."""
     path = state_dir / "runs" / f"{run_id}.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a+b") as handle:
@@ -461,8 +458,7 @@ def tools_called(before: dict, calls: list[dict]) -> dict:
 
 
 def calls_made(before: list[dict], calls: list[dict]) -> list[dict]:
-    """Every distinct call of a run that succeeded, first made first: {"server" (instrument or analysis), "tool",
-    "arguments" (as canonical JSON: sorted keys), "count"}. A rehearsal's are what a sign-off covers on the instrument."""
+    """Every distinct call of a run that succeeded, first made first, with its count."""
     out = {(c["server"], c["tool"], canonical_json(c["arguments"])): dict(c) for c in before}
     for call in calls:
         if call.get("error"):
@@ -474,9 +470,7 @@ def calls_made(before: list[dict], calls: list[dict]) -> list[dict]:
 
 
 def results_of(record: dict) -> dict:
-    """What a run produced, in the same shape for a rehearsal on a twin and a run on an instrument, so the two can be
-    set side by side: every data key it acquired or derived, the stitched map's key, its instrument calls and its time.
-    ``wall_s`` is the time the run was driven (time spent waiting for a person is not counted)."""
+    """What a run produced, the same shape on a twin and an instrument (``docs/MCP/twin_to_instrument.md``)."""
     nodes = (record.get("blueprint") or {}).get("nodes") or {}
     outputs = record.get("outputs") or {}
     maps = [str(outputs[name]["map"]) for name, node in nodes.items()
