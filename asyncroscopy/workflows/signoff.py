@@ -88,6 +88,10 @@ async def mark_rehearsal(state_dir: Path, run_id: str, operator: McpServer | Non
     path.write_text(json.dumps({"marker": truth_marker(truth)} if truth is not None else {"why": why}), encoding="utf-8")
 
 
+def forget_rehearsal(state_dir: Path, run_id: str) -> None:
+    _marker_path(state_dir, run_id).unlink(missing_ok=True)
+
+
 async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer | None) -> dict:
     """A finished rehearsal's results: the runner's (data keys, map, calls, wall time) with the twin's time, dose and
     twin score added. What the twin could not give is null, with the reason in ``twin_score.why``."""

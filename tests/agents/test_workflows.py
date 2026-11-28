@@ -1445,3 +1445,20 @@ def test_a_workflow_server_acts_only_on_the_instrument_endpoints_it_was_configur
         endpoints.url("http://evil.example/mcp")
     assert endpoints.operator({"urls": {}}) is None
     assert endpoints.operator({"urls": {"operator": "http://127.0.0.1:8001/mcp"}}).url == "http://127.0.0.1:8001/mcp"
+
+
+def test_a_twin_marker_is_not_a_run_and_goes_when_the_rehearsal_raises(tmp_path):
+    from asyncroscopy.workflows import runner, signoff
+
+    server, _, _ = served(tmp_path)
+    run(signoff.mark_rehearsal(server.state_dir, "r1", None))
+    marker = server.state_dir / "runs" / "r1.twin_marker.json"
+    assert marker.exists()
+    assert all(r["run_id"] for r in runner.list_runs(server.state_dir))
+
+    async def raises():
+        raise RuntimeError("the twin went away")
+
+    with pytest.raises(RuntimeError):
+        run(server._rehearsed("r1", {"simulated": True}, get_workflow("map_grid"), raises(), None, False))
+    assert not marker.exists()

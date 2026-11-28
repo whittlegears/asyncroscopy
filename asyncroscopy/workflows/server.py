@@ -185,15 +185,18 @@ class WorkflowServer:
             return None
         return runner.twin_only_problem(info, hardware=self.hardware) or self.library.hardware_problem(name, status, info.get("stack_id"))
 
-    async def _rehearsed(self, info: dict, workflow: Workflow, running, operator: McpServer | None = None, granted: str | None = None) -> dict:
-        """Wait for a run to end. A run on a digital twin is saved as a rehearsal for whoever approves later, with its
-        results and twin score. The pre-approval of a hardware run (``granted``: its run id) is removed once it ends or
+    async def _rehearsed(self, run_id: str, info: dict, workflow: Workflow, running, operator: McpServer | str | None = None,
+                         granted: bool = False) -> dict:
+        """Wait for the run ``run_id`` to end. A run on a digital twin is saved as a rehearsal for whoever approves later,
+        with its results and twin score. The pre-approval of a hardware run (``granted``) is removed once it ends or
         stops; a run that waits for a person keeps it until it expires or the run is resumed."""
         try:
             record = await running
         except BaseException:
             if granted:
-                await signoff.end(operator, granted)
+                await signoff.end(operator, run_id)
+            if info.get("simulated") is True:
+                signoff.forget_rehearsal(self.state_dir, run_id)
             raise
         if info.get("simulated") is True:
             results = await signoff.rehearsal_results(self.state_dir, record, operator)
@@ -202,7 +205,7 @@ class WorkflowServer:
             except OSError:  # the runner already saved the run so losing the rehearsal is harmless
                 pass
         elif granted and record.get("state") != "waiting":
-            await signoff.end(operator, granted)
+            await signoff.end(operator, run_id)
         return record
 
     async def _prepared(self, run_id: str, info: dict, status: str, workflow: Workflow, instrument_url: str | None):
@@ -299,8 +302,8 @@ class WorkflowServer:
             return {"state": "refused", "problems": [problem]}
         instrument, analysis, operator, fields = await self._prepared(run_id, info, status, again, url)
         runner.update_run(run_id, self.state_dir, **fields)
-        granted = run_id if (fields.get("preapproval") or {}).get("granted") else None
-        self._start(run_id, lambda: self._rehearsed(info, again, runner.resume_workflow(
+        granted = bool((fields.get("preapproval") or {}).get("granted"))
+        self._start(run_id, lambda: self._rehearsed(run_id, info, again, runner.resume_workflow(
             run_id, instrument=instrument, analysis=analysis, state_dir=self.state_dir, find=self.library.workflow, answers=answers),
             operator, granted))
         return await self._wait(run_id, wait_s)
@@ -499,8 +502,8 @@ class WorkflowServer:
             run_id = uuid.uuid4().hex[:12]
             # Opened again so every call carries the run id, and the name of the caller that asked for the run.
             instrument, analysis, operator, fields = await server._prepared(run_id, info, status, workflow, instrument_url)
-            granted = run_id if (fields.get("preapproval") or {}).get("granted") else None
-            server._start(run_id, lambda: server._rehearsed(info, workflow, runner.run_workflow(
+            granted = bool((fields.get("preapproval") or {}).get("granted"))
+            server._start(run_id, lambda: server._rehearsed(run_id, info, workflow, runner.run_workflow(
                 workflow, dict(inputs or {}), instrument=instrument, analysis=analysis, run_id=run_id, state_dir=server.state_dir,
                 fields=fields), operator, granted))
             return await server._wait(run_id, wait_s)

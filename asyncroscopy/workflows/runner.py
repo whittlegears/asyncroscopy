@@ -184,7 +184,7 @@ def update_run(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR, **fields:
 
 
 def list_runs(state_dir: str | Path = DEFAULT_STATE_DIR) -> list[dict]:
-    runs = [json.loads(p.read_text(encoding="utf-8")) for p in (Path(state_dir) / "runs").glob("*.json")]
+    runs = [json.loads(p.read_text(encoding="utf-8")) for p in (Path(state_dir) / "runs").glob("*.json") if "." not in p.stem]
     shown = ("run_id", "workflow", "state", "started", "ended", "at_node")
     brief = [{k: r.get(k) for k in shown} for r in runs]
     return sorted(brief, key=lambda r: r["started"] or 0, reverse=True)
