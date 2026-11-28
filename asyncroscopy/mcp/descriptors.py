@@ -219,32 +219,32 @@ def _is_void(in_type: Any) -> bool:
 
 def with_declared_limits(parameters: dict, hint: dict) -> dict:
     """A tool's JSON input schema with the ranges, choices and units its command declares in ``action_hints``
-    (``args``: name, min, max, enum, units). Ranges and choices go in the standard ``minimum``, ``maximum`` and
-    ``enum`` (on an array's items when they hold for every item); units, and ranges that differ element by
-    element, go in the property's description. Only keywords every model provider accepts are used. An
-    argument matches the schema property of its name, or the only property there is. The device still enforces
-    every limit; this only lets a client see them before it calls."""
+    (``args``: name, min, max, enum, units). Ranges go in ``minimum`` and ``maximum`` (on an array's items when
+    one range holds for every item) and text choices in ``enum``; units, number choices and ranges that differ
+    element by element go in the property's description. Only keywords every model provider accepts are used.
+    The device still enforces every limit; this only lets a client see them before it calls."""
     properties = (parameters or {}).get("properties") or {}
     args = [a for a in (hint or {}).get("args") or [] if isinstance(a, dict)]
     if not properties or not args:
         return parameters
     out = {**parameters, "properties": dict(properties)}
     for arg in args:
-        name = arg.get("name") if arg.get("name") in properties else (next(iter(properties)) if len(properties) == 1 and len(args) == 1 else None)
+        name = _property_for(arg, properties, len(args))
         if name is None:
             continue
-        prop = dict(out["properties"][name])
-        target = _value_schema(prop)
-        if target is None:
+        prop = dict(properties[name])
+        value = _value_schema(prop)
+        if value is None:
             continue
-        if target.get("type") == "array":
-            target["items"] = dict(target.get("items") or {})
-            target = target["items"]
+        target = value
+        if value.get("type") == "array":
+            target = value["items"] = dict(value.get("items") or {})
         for key, keyword in (("min", "minimum"), ("max", "maximum")):
-            if isinstance(arg.get(key), (int, float)) and not isinstance(arg.get(key), bool):
+            if _is_number(arg.get(key)):
                 target[keyword] = arg[key]
-        if isinstance(arg.get("enum"), list):
-            target["enum"] = arg["enum"]
+        choices = arg.get("enum")
+        if isinstance(choices, list) and choices and all(isinstance(c, str) for c in choices):
+            target["enum"] = choices
         said = _limits_in_words(arg)
         if said and said not in (prop.get("description") or ""):
             prop["description"] = f"{prop['description'].rstrip('. ')}. {said}" if prop.get("description") else said
@@ -252,27 +252,50 @@ def with_declared_limits(parameters: dict, hint: dict) -> dict:
     return out
 
 
+def _property_for(arg: dict, properties: dict, count: int) -> str | None:
+    """The schema property an argument describes: the one of its name, else the only one there is."""
+    if arg.get("name") in properties:
+        return arg["name"]
+    if len(properties) == 1 and count == 1:
+        return next(iter(properties))
+    return None
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _limits_in_words(arg: dict) -> str:
-    """Units, and element-by-element ranges, as a sentence: "Units: m. Elements x, y, z: -0.001..0.001 m, ..."."""
-    units, low, high, elements = arg.get("units"), arg.get("min"), arg.get("max"), arg.get("elements")
-    if not any(isinstance(v, list) for v in (units, low, high)):
-        return f"Units: {units}." if isinstance(units, str) and units else ""
-    n = max(len(v) for v in (units, low, high, elements) if isinstance(v, list))
-    at = lambda v, i: (v[i] if i < len(v) else None) if isinstance(v, list) else v  # noqa: E731
+    """Units, number choices and element-by-element ranges as a sentence."""
+    units, low, high, elements, choices = (arg.get(k) for k in ("units", "min", "max", "elements", "enum"))
+    words = []
+    if isinstance(choices, list) and choices and not all(isinstance(c, str) for c in choices):
+        words.append("One of " + ", ".join(str(c) for c in choices) + ".")
+    lists = [v for v in (units, low, high) if isinstance(v, list)]
+    if not lists:
+        return " ".join(words + ([f"Units: {units}."] if isinstance(units, str) and units else []))
+    n = max(len(v) for v in lists + ([elements] if isinstance(elements, list) else []))
+    labels = _per_element(elements, n) if isinstance(elements, list) else [f"element {i}" for i in range(n)]
     parts = []
-    for i in range(n):
-        label = at(elements, i) if isinstance(elements, list) else f"element {i}"
-        span = f"{at(low, i)}..{at(high, i)}" if at(low, i) is not None or at(high, i) is not None else ""
-        parts.append(" ".join(str(p) for p in (f"{label}:" if span or at(units, i) else label, span, at(units, i)) if p))
-    return "Elements " + ", ".join(parts) + "."
+    for label, lo, hi, unit in zip(labels, _per_element(low, n), _per_element(high, n), _per_element(units, n)):
+        span = f"{lo}..{hi}" if lo is not None or hi is not None else ""
+        parts.append(f"{label}: {' '.join(p for p in (span, unit) if p)}" if span or unit else str(label))
+    return " ".join(words + ["Elements " + ", ".join(parts) + "."])
+
+
+def _per_element(value: Any, n: int) -> list:
+    """``value`` for each of ``n`` elements: a list padded with None, or one value repeated."""
+    return list(value) + [None] * (n - len(value)) if isinstance(value, list) else [value] * n
 
 
 def _value_schema(prop: dict) -> dict | None:
-    """The part of a property's schema that holds its value: itself, or its one non-null branch of an anyOf."""
-    if "anyOf" in prop:
-        branches = [b for b in prop["anyOf"] if b.get("type") != "null"]
-        if len(branches) != 1:
-            return None
-        prop["anyOf"] = [dict(b) if b is branches[0] else b for b in prop["anyOf"]]
-        return next(b for b in prop["anyOf"] if b.get("type") != "null")
-    return prop
+    """The part of a property's schema that holds its value: itself, or its one non-null branch of an anyOf
+    (copied into ``prop``, so it can be changed)."""
+    if "anyOf" not in prop:
+        return prop
+    branches = [i for i, b in enumerate(prop["anyOf"]) if b.get("type") != "null"]
+    if len(branches) != 1:
+        return None
+    prop["anyOf"] = list(prop["anyOf"])
+    prop["anyOf"][branches[0]] = dict(prop["anyOf"][branches[0]])
+    return prop["anyOf"][branches[0]]

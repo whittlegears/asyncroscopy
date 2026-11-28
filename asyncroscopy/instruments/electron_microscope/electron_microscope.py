@@ -177,56 +177,27 @@ class ElectronMicroscope(ScanningBeamInstrument):
         return {"units": "rad"}
 
     def _spectrum_detector_names(self) -> list[str]:
-        """The connected detectors acquire_spectrum takes: those the backend acquires itself (SPECTRUM_DETECTORS) and
-        any device that acquires its own spectrum."""
-        return sorted(name for name, proxy in self._detector_proxies.items()
-                      if name in SPECTRUM_DETECTORS or self._own_spectrum_command(proxy))
-
-    @staticmethod
-    def _own_spectrum_command(proxy) -> "str | None":
-        """The command a detector device takes a spectrum with by itself: the argument-free command its action_hints
-        give the role acquire.spectrum. None for a settings-only device (the backend then acquires, as for EDS)."""
-        try:
-            hints = json.loads(proxy.read_attribute("action_hints").value)
-        except Exception:
-            return None
-        for name, hint in sorted(hints.items()):
-            if isinstance(hint, dict) and hint.get("role") == "acquire.spectrum":
-                try:
-                    if proxy.command_query(name).in_type == tango.CmdArgType.DevVoid:
-                        return name
-                except Exception:
-                    continue
-        return None
+        return [name for name in SPECTRUM_DETECTORS if name in self._detector_proxies]
 
     @command(
         dtype_in=str,
         dtype_out=str,
-        doc_in=":param detector_name: A spectrum detector of this microscope, e.g. 'eds' (a refusal lists them).",
+        doc_in=":param detector_name: Spectrum detector name, e.g. 'eds'.",
         risk="high", role="acquire.spectrum", routine=True,
     )
     @hardware_call()
     def acquire_spectrum(self, detector_name: str) -> str:
         """Acquire a single spectrum and return its DATA/Tiled unique id."""
         detector_name = detector_name.lower().strip()
-        proxy = self._detector_proxies.get(detector_name)
-        own = self._own_spectrum_command(proxy) if proxy is not None else None
-        if proxy is None or (own is None and detector_name not in SPECTRUM_DETECTORS):
+        proxy = self._detector_proxies.get(detector_name) if detector_name in SPECTRUM_DETECTORS else None
+        if proxy is None:
             tango.Except.throw_exception(
                 'UnknownDetector',
                 f"No spectrum detector named '{detector_name}'. Spectrum detectors here: {self._spectrum_detector_names()}. "
                 "For a scanned image (haadf, bf, adf, se) use acquire_scanned_image.",
                 'acquire_spectrum()',
             )
-        if own is not None:
-            # The detector's own device acquires and saves the spectrum, at its own settings.
-            return self._acquire_through(proxy, own)
         return self._acquire_spectrum(detector_name, proxy.exposure_time)
-
-    def _acquire_through(self, proxy, command_name: str) -> str:
-        """A spectrum from a detector device that acquires it itself; its DATA key. A backend that must guard the beam
-        around it overrides this."""
-        return str(proxy.command_inout(command_name))
 
     @command(dtype_in=int, dtype_out=str, doc_in=":param points: Beam positions per side of the field (2 to the max_spectrum_image_points property).", risk="high", role="acquire.other", routine=True)
     @hardware_call()

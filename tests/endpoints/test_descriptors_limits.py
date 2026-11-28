@@ -28,3 +28,9 @@ def test_an_optional_argument_gets_them_on_its_value_and_nothing_is_guessed():
     two = {"properties": {"a": {"type": "number"}, "b": {"type": "number"}}}
     assert with_declared_limits(two, {"args": [{"name": "c", "max": 5}]}) == two  # no property of that name, and more than one
     assert with_declared_limits(two, {}) == two and with_declared_limits({}, {"args": [{"name": "a"}]}) == {}
+
+
+def test_number_choices_are_said_in_words_since_some_providers_refuse_an_enum_of_numbers():
+    params = {"properties": {"binning": {"type": "integer", "description": "Binning."}}}
+    out = with_declared_limits(params, {"args": [{"name": "binning", "enum": [1, 2, 4]}]})
+    assert out["properties"]["binning"] == {"type": "integer", "description": "Binning. One of 1, 2, 4."}

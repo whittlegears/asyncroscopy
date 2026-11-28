@@ -673,7 +673,7 @@ class MCPServer:
                 try:
                     descriptor = self.descriptors[wrapped.__name__]
                     tool_obj = Tool.from_function(wrapped, annotations=_annotations(descriptor.acts))
-                    hint = self.devices[prefix].hints.get(command_name, {}) if prefix in self.devices else {}
+                    hint = self.devices[prefix].hints.get(command_name, {})
                     tool_obj = tool_obj.model_copy(update={"parameters": with_declared_limits(tool_obj.parameters, hint)})
                     self.mcp.add_tool(tool_obj)
                     self.registered[tool_obj.name] = tool_obj

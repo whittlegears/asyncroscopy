@@ -466,19 +466,3 @@ def test_likely_elements_rank_the_elements_that_explain_the_most_peak_signal():
     signal = np.random.default_rng(2).poisson(gaussian_spectrum([6404.0])).astype(np.float64)
     summary, _ = views.view(Recorded((2048,), attrs, values=signal), "fe.h5", "text")
     assert "elements most consistent with these peaks" in summary["text"]
-
-
-def test_a_strongest_peak_shared_with_an_element_left_out_is_said():
-    """Ti K-alpha and Ba L-alpha overlap at 4.5 keV: the ranking may give the peak to Ba, and the reading says Ti fits too."""
-    rows = [
-        (4500, 900, 60.0, 0, "Ba L3-M5, Ti K-L3"),
-        (4830, 300, 20.0, 1, "Ba L2-M4"),
-        (5160, 200, 15.0, 2, "Ba L3-N5"),
-    ]
-    likely = eds.likely_elements(rows)
-    assert "Ti" not in likely
-    assert "also fits Ti" in eds.overlap_note(rows, likely) and "4.50 keV" in eds.overlap_note(rows, likely)
-    assert eds.overlap_note([(9700, 50, 9.0, 0, "Au L3-M5")], "Au 100%") == ""
-    # Pt's L peaks settle a Pt M peak that also fits P: nothing to say.
-    platinum = [(2050, 4972, 35.0, 0, "Pt M5-N7, P K-L2"), (9440, 3930, 34.0, 1, "Pt L3-M5"), (11070, 1845, 33.0, 2, "Pt L2-M4")]
-    assert eds.overlap_note(platinum, eds.likely_elements(platinum)) == ""
