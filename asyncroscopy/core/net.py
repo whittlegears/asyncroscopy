@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import urllib.parse
 
 LOOPBACK_FALLBACK = "127.0.0.1"
 WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean "every interface"; reached locally on loopback
@@ -68,3 +69,15 @@ def report_busy_port(host: str, port: int, server_kind: str) -> bool:
         print(f"MCP ERROR: http://{host}:{port} is already in use - another {server_kind} is likely still running "
               f"with a different config. Stop it or choose a different port. ({bind_error})", flush=True)
     return bool(bind_error)
+
+
+def unreachable(*urls: str) -> list[str]:
+    """The URLs nothing is listening on (a stack that was not started yet)."""
+    down = []
+    for url in urls:
+        parts = urllib.parse.urlsplit(url)
+        try:
+            socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
+        except (OSError, ValueError):  # ValueError: a port out of range
+            down.append(url)
+    return down

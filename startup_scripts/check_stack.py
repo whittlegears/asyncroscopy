@@ -21,14 +21,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import socket
 import sys
 import time
-import urllib.parse
 
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
+
+from asyncroscopy.core.net import unreachable
 
 FAILURES: list[str] = []
 
@@ -111,18 +111,6 @@ async def simulated_stack(operator: Client) -> tuple[bool, str]:
     structured = getattr(result, "structured_content", None)
     answer = structured.get("result") if isinstance(structured, dict) and "result" in structured else text(result).strip().lower()
     return answer is True or answer == "true", f"Approvals_get_simulated answered {answer!r}"
-
-
-def unreachable(*urls: str) -> list[str]:
-    """The URLs nothing is listening on (a stack that was not started yet)."""
-    down = []
-    for url in urls:
-        parts = urllib.parse.urlsplit(url)
-        try:
-            socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
-        except (OSError, ValueError):  # ValueError: a port out of range
-            down.append(url)
-    return down
 
 
 async def main(args: argparse.Namespace) -> int:

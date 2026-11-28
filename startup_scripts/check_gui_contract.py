@@ -15,7 +15,6 @@ import argparse
 import asyncio
 import json
 import re
-import socket
 import sys
 import urllib.error
 import urllib.parse
@@ -26,6 +25,8 @@ import numpy as np
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
+
+from asyncroscopy.core.net import unreachable
 
 AGENT = "http://127.0.0.1:8000/mcp"
 OPERATOR = "http://127.0.0.1:8001/mcp"
@@ -168,18 +169,6 @@ def tiled_side() -> None:
         check("resolveSpectrum finds a 1-D array with energy_offset_ev/energy_dispersion_ev", spec is not None, link)
     else:
         print("SKIP spectrum check: newest map has no linked EDS points")
-
-
-def unreachable(*urls: str) -> list[str]:
-    """The URLs nothing is listening on (a stack that was not started yet)."""
-    down = []
-    for url in urls:
-        parts = urllib.parse.urlsplit(url)
-        try:
-            socket.create_connection((parts.hostname, parts.port or (443 if parts.scheme == "https" else 80)), timeout=2).close()
-        except (OSError, ValueError):  # ValueError: a port out of range
-            down.append(url)
-    return down
 
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
