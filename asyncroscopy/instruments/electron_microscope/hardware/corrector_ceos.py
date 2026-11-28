@@ -18,8 +18,9 @@ class CEOSCorrector(CORRECTOR):
 
     ceos_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
-        doc="Hostname or IP address of the CEOS hardware server",
+        default_value="",
+        doc="Hostname or IP address of the CEOS hardware server. Set it under the corrector's "
+            "properties in the instrument YAML (ceos_host).",
     )
     ceos_port = device_property(
         dtype=int,
@@ -37,6 +38,11 @@ class CEOSCorrector(CORRECTOR):
         super().init_device()
 
     def _connect_backend(self) -> None:
+        if not self.ceos_host:
+            self._last_status = "No CEOS server address: set ceos_host under the corrector's properties in the YAML"
+            self.set_state(DevState.FAULT)
+            self.error_stream(self._last_status)
+            return
         try:
             with socket.create_connection(
                 (self.ceos_host, int(self.ceos_port)),

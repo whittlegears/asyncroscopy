@@ -68,3 +68,30 @@ def test_ceos_netstring_receiver_handles_fragmented_payload():
     socket = FragmentedSocket([raw[:3], raw[3:9], raw[9:]])
 
     assert CEOSCorrector._recv_netstring(socket) == raw
+
+
+def test_ceos_without_an_address_faults_and_says_where_to_set_it():
+    from tango import DevState
+
+    class Unconfigured:
+        ceos_host = ""
+        ceos_port = 9092
+        socket_timeout = 1.0
+        _last_status = ""
+        state = None
+        errors: list = []
+
+        def set_state(self, state):
+            self.state = state
+
+        def error_stream(self, message):
+            self.errors.append(message)
+
+    device = Unconfigured()
+    CEOSCorrector._connect_backend(device)
+    assert device.state == DevState.FAULT
+    assert "ceos_host" in device._last_status and "YAML" in device._last_status
+
+
+def test_ceos_has_no_built_in_server_address():
+    assert CEOSCorrector.TangoClassClass.device_property_list["ceos_host"][2] in ([], [""], "")
