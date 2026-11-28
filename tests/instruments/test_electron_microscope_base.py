@@ -11,6 +11,7 @@ import time
 import pytest
 import tango
 
+from asyncroscopy.instruments import scanning_beam
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope as EM
 from asyncroscopy.instruments.electron_microscope.jeol import JeolMicroscope
 from tests.fake_autoscript import FakeAutoScriptClient
@@ -175,5 +176,6 @@ def test_every_device_address_a_config_sets_is_connected_without_a_property_for_
                     "instrument_device_address": ["asyncroscopy/instrument/default"], "empty_device_address": []}
 
     monkeypatch.setattr(tango.Util, "instance", staticmethod(lambda *a: types.SimpleNamespace(get_database=FakeDb)))
+    monkeypatch.setattr(scanning_beam, "_has_database_server", lambda: True)
     monkeypatch.setattr(device, "get_name", lambda: "asyncroscopy/autoscriptmicroscope/default", raising=False)
     assert device._configured_addresses() == {"gif": "asyncroscopy/eels/default", "eds": "asyncroscopy/eds/default"}

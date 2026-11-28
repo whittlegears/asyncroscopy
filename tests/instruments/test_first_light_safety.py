@@ -365,5 +365,6 @@ def test_the_stage_proxy_gets_the_stage_timeout(monkeypatch):
     device.stage_device_address, device.data_device_address, device.stage_timeout_seconds = "s/t/1", "d/t/1", 240.0
     device._detector_proxies = {}
     device.info_stream = device.error_stream = device.debug_stream = lambda *a: None
+    device._configured_addresses = lambda: {}
     auto_script_module.AutoScriptMicroscope._connect_detector_proxies(device)
     assert timeouts == {"s/t/1": 240_000, "d/t/1": 3_600_000}
