@@ -38,6 +38,9 @@ def refusal(text: str, structured: dict[str, Any]) -> ToolResult:
 
 
 class Gate(Middleware):
+    """Holds or refuses a call by its tool's permission. A caller whose token may not run the tool at all is passed
+    on to be refused there (the token gate, or ``call_tool``), so nobody queues a request for a tool they could never run."""
+
     def __init__(self, owner: Permissions) -> None:
         self.owner = owner
 
@@ -46,6 +49,8 @@ class Gate(Middleware):
         arguments = dict(context.message.arguments or {})
         if name == "call_tool":
             name, arguments = str(arguments.get("name", "")), dict(arguments.get("arguments") or {})
+        if not self.owner.server.may_call(name):
+            return await call_next(context)
         held = self.owner.check(name, arguments)
         if held is not None:
             return held

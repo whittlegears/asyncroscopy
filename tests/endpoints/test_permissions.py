@@ -127,6 +127,16 @@ def test_held_calls_and_approvals_expire(tmp_path):
         store.approve(renewed["request_id"])
 
 
+def test_an_approval_is_used_only_by_the_caller_who_asked(tmp_path):
+    store = PermissionStore(tmp_path / "permissions.json", "tango://h:1")
+    alice = store.request("T", {"a": 1}, True, "high", "alice")
+    store.approve(alice["request_id"])
+    bob = store.request("T", {"a": 1}, True, "high", "bob")
+    assert bob["status"] == "pending" and bob["request_id"] != alice["request_id"]
+    assert store.request("T", {"a": 1}, True, "high", "alice")["status"] == "approved"
+    assert store.request("T", {"a": 1}, True, "high", "bob")["request_id"] == bob["request_id"]
+
+
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
     agent = stack("agent", TWIN)
     operator = stack("operator", TWIN)

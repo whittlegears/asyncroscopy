@@ -287,6 +287,32 @@ def test_every_permission_tool_needs_the_approve_role(stack, keys, name):
     assert name in tools(stack["operator"], token(keys, "operator-bob", "instrument:approve"))
 
 
+def test_a_caller_who_may_not_run_a_tool_queues_no_request_for_it(keys, tango_ctx, tmp_path, monkeypatch):
+    from asyncroscopy.safety.permissions import PermissionStore
+
+    twin = FakeTwin()
+    database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": ["asyncroscopy/digitaltwin/default"]})()})()
+    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: twin)
+    server = MCPServer("auth-held", "localhost", 1, blocked_classes=[], needs_approval={"DigitalTwin": ["move_stage"]},
+                       data_device_address="d", verbose=False, endpoint_role="agent", database=database, auth=keys["auth"],
+                       permissions_file=str(tmp_path / "permissions.json"))
+    server.setup(print_summary=False)
+    live = LiveServer(server)
+    try:
+        reader = token(keys, "reader", "instrument:read")
+        move = {"position": [3, 0, 0, 0, 0]}
+        for name, arguments in (("DigitalTwin_move_stage", move), ("call_tool", {"name": "DigitalTwin_move_stage", "arguments": move})):
+            error, text = call(live.url, reader, name, arguments)
+            assert error and "operate role" in text, text
+        store = PermissionStore(tmp_path / "permissions.json", server.stack_id)
+        assert store.pending() == []
+        error, text = call(live.url, token(keys, "alice", "instrument:operate"), "DigitalTwin_move_stage", move)
+        assert error and "waiting for a person" in text, text
+        assert [p["requested_by"] for p in store.pending()] == ["alice"]
+    finally:
+        live.stop()
+
+
 def test_call_tool_needs_the_role_of_the_tool_it_runs(stack, keys):
     reader = token(keys, "reader", "instrument:read")
     error, text = call(stack["agent"], reader, "call_tool", {"name": "DigitalTwin_move_stage", "arguments": {"position": [7, 0, 0, 0, 0]}})

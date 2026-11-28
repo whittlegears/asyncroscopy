@@ -31,7 +31,7 @@ releases a held call on the operator endpoint. An app only shows the held call a
 | Value | Meaning |
 | :-- | :-- |
 | `allow` | runs at once |
-| `approve` | held until a person approves that exact call (same tool, same arguments) |
+| `approve` | held until a person approves that exact call (same tool, same arguments, same caller) |
 | `never` | refused; cannot be set |
 
 Tools are in two groups: `reads` (`acts` is false) and `acts` (`acts` is true). Each group has a default,
@@ -106,7 +106,10 @@ waits for a person, and:
 ```
 
 The arguments are compared as canonical JSON (sorted keys, no spaces), so the same call is the same request
-however it is sent, also through `call_tool`.
+however it is sent, also through `call_tool`. A request also belongs to its caller (`requested_by`: the token's
+subject with `mcp.auth`, else the `X-Asyncroscopy-Caller` header): another caller's identical call makes its own
+request and cannot use this one's approval. A caller whose token may not run the tool at all is refused for that
+before the gate, so it never makes a request.
 
 - Sending the same call again while it waits gives the same `request_id`; no second request is made.
 - After a person approves it, the same call runs **once**: the approval is used up, and the next identical

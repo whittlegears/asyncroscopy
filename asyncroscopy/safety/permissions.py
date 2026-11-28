@@ -175,13 +175,16 @@ class PermissionStore:
     def request(self, tool: str, arguments: dict[str, Any], acts: bool, risk: str, requested_by: str | None) -> dict[str, Any]:
         """A call of an ``approve`` tool: the request it makes or matches, with ``status`` pending, approved or denied.
 
-        An approved request is consumed here, so the call it approved runs once.
+        A request matches the same tool, the same canonical arguments and the same caller (``requested_by``), so another
+        caller's identical call cannot use an approval meant for someone else. An approved request is consumed here, so
+        the call it approved runs once.
         """
         digest = arguments_sha256(arguments)
         with self._locked():
             state = self._read(self.state_path)
             requests = self._live_requests(state)
-            found = next((r for r in requests.values() if r["tool"] == tool and r["arguments_sha256"] == digest), None)
+            found = next((r for r in requests.values()
+                          if r["tool"] == tool and r["arguments_sha256"] == digest and r.get("requested_by") == requested_by), None)
             if found is not None and found["status"] == "approved":
                 del requests[found["request_id"]]
             elif found is None:
