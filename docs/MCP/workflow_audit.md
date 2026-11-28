@@ -95,9 +95,12 @@ The long-running branch already has graphs built this way under
     lattice guard refusing 10 pairs (1.46 px with the guard off); the scan-fit
     changes do not move it. Sparse texture can show several near-equal side
     peaks, and the mirror-peak and peak-count tests tried so far either missed
-    lattice matches in small windows or did not separate the two. Finishing it
-    needs a better periodicity test, or a decision on how much drift accuracy
-    to trade for lattice safety.
+    lattice matches in small windows or did not separate the two. Keeping the
+    suspect matches for placement (and only out of the scan fit) passes the
+    drift test (1.46 px) but misplaces lattice tiles by 11-42 px, so on a
+    lattice they must be refused. Finishing it needs a periodicity test that
+    tells sparse texture from a lattice, or a decision on how much drift
+    accuracy to trade for lattice safety.
 - **Not run on a microscope or with Gemma.** Everything here is tested on the
   digital twins and offline only.
   - Structured routing has not been tried with the local Gemma model; Ollama is
