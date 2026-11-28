@@ -60,6 +60,7 @@ class ProceduresConfig:
     instrument_url: str = "http://127.0.0.1:8000/mcp"
     analysis_url: str = "http://127.0.0.1:8003/mcp"
     analysis_transport: str = "sse"
+    ml_url: str = ""
     tool_names: dict[str, str] = field(default_factory=dict)
     limits: Limits = field(default_factory=Limits)
     name: str = "Calibration_Procedures"
@@ -100,10 +101,11 @@ def components_of(aberration: str) -> int:
 class Session:
     """Open connections to both MCP servers for one procedure run."""
 
-    def __init__(self, config: ProceduresConfig, instrument: Client, analysis: Client):
+    def __init__(self, config: ProceduresConfig, instrument: Client, analysis: Client, ml: Client | None = None):
         self.config = config
         self.instrument = instrument
         self.analysis = analysis
+        self.ml = ml
         self.instrument_tools: dict[str, Any] = {}
         self.analysis_tools: dict[str, Any] = {}
         self.acquisitions = 0
@@ -153,6 +155,15 @@ class Session:
     async def instrument_call(self, role: str, value: Any = None) -> Any:
         return await self._call(self.instrument, self.tool_for(role), value)
 
+    async def ml_call(self, name: str, arguments: dict) -> dict:
+        if self.ml is None:
+            raise ProcedureError("optimizer 'bayesian' needs the ML server: set ml_url in the procedures config")
+        tools = {tool.name: tool for tool in await self.ml.list_tools()}
+        if name not in tools:
+            raise ProcedureError(f"the ML server does not offer {name}")
+        reply = await self._call(self.ml, tools[name], arguments=arguments)
+        return json.loads(reply) if isinstance(reply, str) else reply
+
     async def analysis_call(self, name: str, arguments: dict) -> dict:
         reply = await self._call(self.analysis, self.analysis_tools[name], arguments=arguments)
         return json.loads(reply) if isinstance(reply, str) else reply
@@ -194,8 +205,14 @@ async def optimize(
     metric: str,
     detector: str,
     max_iterations: int,
+    optimizer: str = "trust_region",
 ) -> dict:
-    """Shared measure / model / propose loop. ``apply(point)`` sets the instrument to ``point``."""
+    """Shared measure / model / propose loop. ``apply(point)`` sets the instrument to ``point``.
+
+    ``optimizer`` "trust_region" fits a local quadratic through the pyTEMlib server and moves
+    within a shrinking trust region; "bayesian" asks the ML server's Gaussian-process
+    optimiser for each next setting inside ``bounds``. Either way the bounds are the limits.
+    """
     history: list[dict] = []
 
     async def measure_at(point: list[float], trial: str) -> float:
@@ -214,6 +231,15 @@ async def optimize(
 
     region = TrustRegion(step, [2 * value for value in step], [value / 16 for value in step])
     for iteration in range(max_iterations):
+        if optimizer == "bayesian":
+            suggestion = await session.ml_call(
+                "bo_suggest_next_setting",
+                {"points": [item["point"] for item in history], "scores": [item["score"] for item in history],
+                 "bounds": [list(pair) for pair in bounds], "maximize": True, "seed": iteration},
+            )
+            point = [min(max(value, low), high) for value, (low, high) in zip(suggestion["next_point"], bounds)]
+            await measure_at(point, f"bayesian {iteration}")
+            continue
         if region.exhausted:
             break
         previous_best = max(item["score"] for item in history)
@@ -252,26 +278,35 @@ def _check_metric(metric: str) -> None:
         raise ProcedureError(f"metric must be one of {list(METRICS)}")
 
 
+def _check_optimizer(optimizer: str) -> None:
+    if optimizer not in ("trust_region", "bayesian"):
+        raise ProcedureError("optimizer must be 'trust_region' or 'bayesian'")
+
+
 def _within(name: str, value: float, limit: float) -> None:
     if not 0 < value <= limit:
         raise ProcedureError(f"{name} must be > 0 and at most {limit:g} (configured limit); got {value:g}")
 
 
 class ProceduresServer:
-    """``instrument`` / ``analysis`` override the configured URLs with any target a fastmcp
+    """``instrument`` / ``analysis`` / ``ml`` override the configured URLs with any target a fastmcp
     Client accepts, such as an in-process FastMCP server."""
 
-    def __init__(self, config: ProceduresConfig, instrument: Any = None, analysis: Any = None):
+    def __init__(self, config: ProceduresConfig, instrument: Any = None, analysis: Any = None, ml: Any = None):
         self.config = config
+        self.ml_target = ml or config.ml_url or None
         self.instrument_target = instrument or config.instrument_url
         self.analysis_target = analysis or _transport(config.analysis_url, config.analysis_transport)
         self.mcp = FastMCP(config.name)
         self._register()
 
-    async def _open(self, stack: AsyncExitStack) -> Session:
+    async def _open(self, stack: AsyncExitStack, need_ml: bool = False) -> Session:
         instrument = await stack.enter_async_context(Client(self.instrument_target))
         analysis = await stack.enter_async_context(Client(self.analysis_target))
-        session = Session(self.config, instrument, analysis)
+        ml = None
+        if need_ml and self.ml_target:
+            ml = await stack.enter_async_context(Client(self.ml_target))
+        session = Session(self.config, instrument, analysis, ml)
         await session.discover()
         return session
 
@@ -280,20 +315,24 @@ class ProceduresServer:
 
         @self.mcp.tool()
         async def focus_stage_z(metric: str = "edge_sharpness", step_m: float = 50e-9, max_offset_m: float = 1e-6,
-                                max_iterations: int = 8, detector: str = "haadf") -> str:
+                                max_iterations: int = 8, detector: str = "haadf",
+                                optimizer: str = "trust_region") -> str:
             """Focus by moving the stage height (z) to maximise an image metric, then leave it at the best z.
 
             Starts at the current z, never moves further than max_offset_m from it, and moves the stage
             back to the starting z if anything fails. metric: contrast | entropy | high_frequency_power |
-            edge_sharpness. Returns the best z, the score gain and every measurement's data key.
+            edge_sharpness. optimizer: trust_region (local quadratic model) or bayesian (Gaussian process
+            on the ML server; both stay within the same limits). Returns the best z, the score gain and
+            every measurement's data key.
             """
             _check_metric(metric)
+            _check_optimizer(optimizer)
             _within("step_m", step_m, limits.stage_z_max_step_m)
             _within("max_offset_m", max_offset_m, limits.stage_z_max_offset_m)
             if step_m > max_offset_m:
                 raise ProcedureError("step_m must not exceed max_offset_m")
             async with AsyncExitStack() as stack:
-                session = await self._open(stack)
+                session = await self._open(stack, need_ml=optimizer == "bayesian")
                 start = [float(value) for value in await session.instrument_call("get_stage")]
 
                 async def apply(point: list[float]) -> None:
@@ -305,7 +344,7 @@ class ProceduresServer:
                 try:
                     result = await optimize(session, apply, [start[2]], [step_m],
                                             [(start[2] - max_offset_m, start[2] + max_offset_m)],
-                                            metric, detector, max_iterations)
+                                            metric, detector, max_iterations, optimizer)
                     await apply(result["best_point"])
                     completed = True
                 finally:
@@ -370,7 +409,7 @@ class ProceduresServer:
         @self.mcp.tool()
         async def tune_aberration(name: str, step_m: float = 1e-9, max_offset_m: float = 10e-9,
                                   metric: str = "edge_sharpness", max_iterations: int = 8,
-                                  detector: str = "haadf") -> str:
+                                  detector: str = "haadf", optimizer: str = "trust_region") -> str:
             """Tune one corrector aberration (e.g. C1, A1, A2, B2) to maximise an image metric.
 
             Moves the aberration by increments relative to its current value, never more than
@@ -379,9 +418,11 @@ class ProceduresServer:
             metric: edge_sharpness (default) or high_frequency_power; contrast is refused because
             it is not monotonic in aberration size. Refuses to run when the pixels (field of view /
             image size) are coarser than the configured limit, where aberrations barely change
-            the image.
+            the image. optimizer: trust_region (local quadratic model) or bayesian (Gaussian process on
+            the ML server); both stay within the same limits.
             """
             _check_metric(metric)
+            _check_optimizer(optimizer)
             if metric == "contrast":
                 raise ProcedureError("contrast is not a reliable aberration metric: it can rise as an aberration "
                                      "grows; use edge_sharpness or high_frequency_power")
@@ -392,7 +433,7 @@ class ProceduresServer:
             _within("step_m", step_m, min(limits.aberration_max_step_m, max_offset_m))
             dimensions = components_of(name)
             async with AsyncExitStack() as stack:
-                session = await self._open(stack)
+                session = await self._open(stack, need_ml=optimizer == "bayesian")
                 pixel_size_m = float(await session.instrument_call("get_fov")) / float(
                     await session.instrument_call("get_imsize"))
                 if pixel_size_m > limits.aberration_max_pixel_size_m:
@@ -413,7 +454,7 @@ class ProceduresServer:
                 try:
                     result = await optimize(session, apply, [0.0] * dimensions, [step_m] * dimensions,
                                             [(-max_offset_m, max_offset_m)] * dimensions,
-                                            metric, detector, max_iterations)
+                                            metric, detector, max_iterations, optimizer)
                     await apply(result["best_point"])
                     completed = True
                 finally:

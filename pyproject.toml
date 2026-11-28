@@ -69,6 +69,14 @@ ollama = [
     "langchain_ollama"
 ]
 
+# Install the machine-learning suggestions server (asyncroscopy/mcp/ml_server.py) with:
+#     uv sync --extra ml
+ml = [
+    "torch",
+    "gpytorch",
+    "botorch",
+]
+
 # Install SAM2 segmentation support with:
 #     uv sync --extra segment
 segment = [
