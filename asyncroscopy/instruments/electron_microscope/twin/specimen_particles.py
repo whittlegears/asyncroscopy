@@ -16,8 +16,8 @@ from ase import Atoms
 from .elements import ELEMENTS, bulk_cell
 from .specimen import FieldView, Specimen, SpecimenContext, ViewRequest, check_options, register_specimen
 
-DESIRED_ANGLES = [(0, 0, 0), (60, 0, 0), (45, 45, 45)]  # the first three particles' orientations
-DEFAULT_FOV_M = 20e-9  # the twin's starting field of view
+DESIRED_ANGLES = [(0, 0, 0), (60, 0, 0), (45, 45, 45)]  # first three particles' orientations
+DEFAULT_FOV_M = 20e-9
 
 
 def rotation_matrix(alpha, beta, gamma):
@@ -80,10 +80,10 @@ class ParticleWorld(Specimen):
         self._build(float(fov_m))
 
     def _build(self, fov_m: float) -> None:
-        fov_ang = fov_m * 1e10  # angstrom across
+        fov_ang = fov_m * 1e10
         world_z_ang = fov_ang * 0.5  # thin slab
         nx = ny = max(16, self.world_imsize)
-        vox_size = fov_ang / nx  # angstrom per voxel, the same on every axis
+        vox_size = fov_ang / nx  # per voxel, the same on every axis
         nz = max(1, int(round(world_z_ang / vox_size)))
         bulk_types = {element: bulk_cell(element) for element in self.elements}
 
@@ -109,7 +109,7 @@ class ParticleWorld(Specimen):
 
         placed_centers: list[tuple[float, float, float]] = []
         placed_particles: list[tuple] = []
-        particle_lookup: dict[int, dict] = {}  # metadata by label, with labels starting at 1
+        particle_lookup: dict[int, dict] = {}  # by label, labels from 1
 
         for _ in range(self.MAX_ATTEMPTS * n_particles):
             if len(placed_particles) >= n_particles:
@@ -126,7 +126,7 @@ class ParticleWorld(Specimen):
             i = len(placed_particles)
             angles = DESIRED_ANGLES[i] if i < len(DESIRED_ANGLES) else tuple(random.rand(3) * 360)
             placed_particles.append((btype, np.array([cx, cy, cz]), radius, angles))
-            label = i + 1  # labels start at 1 so 0 stays vacuum
+            label = i + 1  # 0 stays vacuum
             particle_lookup[label] = {
                 "btype": btype,
                 "composition": _composition(bulk_types[btype]),
@@ -209,7 +209,7 @@ class ParticleWorld(Specimen):
         positions -= world_centre_ang
         positions = positions @ R_stage.T
         positions += world_centre_ang
-        positions[:, 0] = np.mod(positions[:, 0], nx * vox)  # wrapped, so atoms never run out of the field
+        positions[:, 0] = np.mod(positions[:, 0], nx * vox)  # wrapped so atoms never leave the field
         positions[:, 1] = np.mod(positions[:, 1], ny * vox)
         atoms = self._atoms.copy()
         atoms.set_positions(positions)
@@ -262,7 +262,7 @@ class ParticleWorld(Specimen):
         for label, meta in self.particle_lookup.items():
             yx = np.argwhere(label_crop == label)
             if yx.size == 0:
-                continue  # not in this field
+                continue
             centre_crop = yx.mean(axis=0)
             records.append(
                 {

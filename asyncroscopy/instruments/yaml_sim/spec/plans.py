@@ -16,8 +16,8 @@ class JobPlan:
     """A job plan checked against the instrument file: which points, in what order, with which settings."""
 
     job: Job
-    axes: dict[str, tuple[float, float, int]]  # start, stop and points for each setting, the last one changing fastest
-    points: list[dict[str, float]] | None      # or an explicit list of points
+    axes: dict[str, tuple[float, float, int]]  # start, stop, points per setting; the last changes fastest
+    points: list[dict[str, float]] | None      # or explicit points
     settings: dict[str, Any]
     count: int
 

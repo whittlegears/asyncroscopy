@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 PROJECT_DIR = Path(__file__).resolve().parents[4]
 TYPES = {"float": float, "int": int, "bool": bool, "str": str}
-MAX_DURATION_S = 25.0  # the MCP server stops waiting for a command after 30 s
-MAX_STEP_DURATION_S = 3600.0  # one acquisition inside a job, where the agent waits for the job and not the call
+MAX_DURATION_S = 25.0  # the MCP server stops waiting after 30 s
+MAX_STEP_DURATION_S = 3600.0  # one acquisition in a job; the agent waits for the job, not the call
 MAX_POINTS = 1_000_000
 MAX_JOB_POINTS = 10_000_000
 SETTING_KEYS = {"default", "min", "max", "units", "type", "settable", "doc", "choices", "requires"}
@@ -34,17 +34,17 @@ AXIS_KEYS = {"start", "stop", "points", "label", "units"}
 PEAK_KEYS = {"position", "height", "fwhm", "width", "shape", "eta"}
 PEAK_SHAPES = {"gaussian", "lorentzian", "voigt"}
 SPOT_KEYS = {"count", "radius_px", "height", "x_m", "y_m", "per_um2", "radius_m"}
-SAMPLE_CELL_M = 1e-6  # spots fixed on the sample are drawn per square of this side, each from its own seed
-SAMPLE_CELLS_MAX = 40_000  # an image wider than this many cells is refused, which is a 200 um square
+SAMPLE_CELL_M = 1e-6  # side of a square whose fixed spots share one seed
+SAMPLE_CELLS_MAX = 40_000  # wider images are refused: a 200 um square
 JOB_KEYS = {"doc", "axes", "settings", "acquire", "settle_s", "max_points", "requires", "before_move", "after_move", "on_stop", "on_finish"}
 MAP_KEYS = {"image", "field_of_view", "stage", "before_move", "after_move", "safe", "settings", "budgets"}
 MAP_BUDGET_KEYS = {"per_tile", "per_revisit", "combine", "units", "doc"}
-MAP_COMMAND = "get_map_profile"  # the command a YAML device offers when its file can be mapped
+MAP_COMMAND = "get_map_profile"  # offered when the file can be mapped
 TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs", "map"}
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
 RESERVED_NAMES = {"hold", "release_hold", "start_step", "step_status", "stop_step", "connect", "disconnect", "instrument_type", "clock_s"}
-SETTLE_STEP = "_settle"  # the step a job runs for its settle_s. The leading underscore keeps it apart from every name a file may give
+SETTLE_STEP = "_settle"  # a job's settle_s step; the underscore keeps it apart from file names
 # get_ and list_ commands are low-risk reads, so one whose doc reads as an action would really run in a dry run.
 ACTION_VERBS = frozenset({
     "make", "move", "indent", "pick", "place", "aspirate", "dispense", "start", "run", "apply", "scan", "drive",
@@ -159,8 +159,8 @@ class Command:
     returns: Any = None
     returns_trees: Any = None
     duration: tuple[Any, ast.Expression | None] = (0.0, None)
-    role: str | None = None  # a canonical role from asyncroscopy.core.names.ROLES, or None to let the rules decide
-    risk: str | None = None  # low or high as the file says, or None to take it from the role
+    role: str | None = None  # a role from asyncroscopy.core.names.ROLES, or None for the rules
+    risk: str | None = None  # low or high as the file says, or None for the role's
 
     def declaration(self) -> dict:
         """What the command is, for the MCP server: {"risk", "role", "stop"} as far as the file says (see the
@@ -222,8 +222,8 @@ class InstrumentSpec:
     acquisitions: dict[str, Acquisition]
     jobs: dict[str, Job] = field(default_factory=dict)
     setting_requires: dict[str, list[tuple[str, ast.Expression]]] = field(default_factory=dict)
-    map: "MapSection | None" = None  # the file's map section if it has one, otherwise map_section infers one
-    warnings: list[str] = field(default_factory=list)  # things that load but are probably not what was meant, printed at load
+    map: "MapSection | None" = None  # the file's map section, else map_section infers one
+    warnings: list[str] = field(default_factory=list)  # loads but probably not meant; printed at load
 
     def command_names(self) -> list[str]:
         names = [f"get_{n}" for n in self.settings] + [f"set_{n}" for n, q in self.settings.items() if q.settable]
@@ -533,7 +533,7 @@ class MapBudget:
     name: str
     per_tile: tuple[Any, ast.Expression | None]
     per_revisit: tuple[Any, ast.Expression | None]
-    combine: str  # max counts the worst single image, as for a peak force. sum adds every image, as for wear or exposure
+    combine: str  # max: the worst single image (peak force); sum: every image (wear, exposure)
     units: str
     doc: str
 
@@ -677,7 +677,7 @@ def action_hints(spec: InstrumentSpec) -> dict:
             role = "stage.move" if name in axes else "optics.fov" if name == fov else "setting.set"
             hints[f"set_{name}"] = {"risk": "high", "role": role, "args": [_argument(quantity, axes.get(name))]}
     for name, cmd in spec.commands.items():
-        sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # maps each input to the setting it sets
+        sets = {value: target for target, (value, _tree) in cmd.sets.items() if isinstance(value, str)}  # each input to the setting it sets
         hints[name] = {**cmd.declaration(), "args": [_argument(q, axes.get(sets.get(q.name, ""))) for q in cmd.inputs]}
     if section is not None:
         hints[MAP_COMMAND] = {"risk": "low", "role": "setting.read"}
@@ -818,7 +818,7 @@ def load_spec(path: str | Path) -> InstrumentSpec:
                 f"(e.g. {verb}_{name[4:] if name.startswith('get_') else name[5:]}), or mark it high in the MCP config: "
                 f"mcp.safety.risk: {{\"<class_name>.{name}\": \"high\"}}"
             )
-    for message in spec.warnings:  # stderr, so the device server's console and the check below both show it
+    for message in spec.warnings:  # stderr, so the console and the check below both show it
         print(f"[yaml_sim] WARNING {message}", file=sys.stderr)
     return spec
 

@@ -46,7 +46,7 @@ BEAM_ADDRESSES = {
 }
 DEFAULT_MIN_FOV = 1e-9
 DEFAULT_MAX_FOV = 1e-4
-DEFAULT_MAX_IMAGE_SHIFT = 1e-6  # metres per axis, well inside a Spectra's beam-shift range
+DEFAULT_MAX_IMAGE_SHIFT = 1e-6  # per axis, well inside a Spectra's beam-shift range
 STAGE_ELEMENTS = ("x", "y", "z", "alpha", "beta")
 STAGE_UNITS = ("m", "m", "m", "deg", "deg")
 DETECTOR_TIMEOUT_MS = 12_000
@@ -330,7 +330,7 @@ class ScanningBeamInstrument(Instrument):
         if not detector_list:
             detector_list = [str(self.default_scan_detector)]
         scan = self._detector_proxies.get('scan')
-        region = list(check_scan(scan.imsize, scan.dwell_time, list(scan.scan_region)))  # a bad scan is refused before it reaches the instrument
+        region = list(check_scan(scan.imsize, scan.dwell_time, list(scan.scan_region)))  # refused before it reaches the instrument
         return self._acquire_scanned_image(scan.imsize, scan.dwell_time, detector_list, region, scan.output_format)
 
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"x_m": ..., "y_m": ...} for the dose at one stage point, or {} for the exposure count only.', risk="low", role="setting.read")
@@ -369,7 +369,7 @@ class ScanningBeamInstrument(Instrument):
             self._place_beam(position)
 
     @command(risk="low", role="beam.blank", stop=True)
-    @hardware_call(serialized=False)  # never waits for a running command because blanking is the safe state
+    @hardware_call(serialized=False)  # never waits for a running command: blanking is the safe state
     def blank_beam(self) -> None:
         """Blank beam."""
         self._blank_beam()

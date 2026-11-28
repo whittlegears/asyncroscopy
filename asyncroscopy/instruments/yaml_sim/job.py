@@ -37,10 +37,10 @@ from asyncroscopy.instruments.yaml_sim.spec import (
 )
 from asyncroscopy.jobs.job_device import JobDevice
 
-KEYS_IN_SUMMARY = 200  # newest data keys per acquisition listed in a job's results, the rest are in its step records
-CALL_TIMEOUT_S = 5.0  # a step-protocol call answers in milliseconds, so a slow one means the instrument is in trouble
-POLL_MIN_S = 0.002  # first wait between step_status calls, short so a quick set costs a few ms
-POLL_MAX_S = 0.05  # the wait doubles up to this, so an abort reaches a running step in about this long
+KEYS_IN_SUMMARY = 200  # newest keys per acquisition in a job's results; the rest are in step records
+CALL_TIMEOUT_S = 5.0  # a slow step-protocol call means the instrument is in trouble
+POLL_MIN_S = 0.002  # first wait between step_status calls
+POLL_MAX_S = 0.05  # doubles up to this, bounding how fast an abort lands
 
 
 class _Stopped(Exception):
@@ -58,7 +58,7 @@ class YamlJob(JobDevice):
     def init_device(self) -> None:
         JobDevice.init_device(self)
         self._plans: dict[str, JobPlan] = {}
-        self._holds: dict[str, threading.Event] = {}  # by job id, set when the job's hold is given back
+        self._holds: dict[str, threading.Event] = {}  # by job id, set when the hold is given back
         self.spec = None
         try:
             spec = load_spec(resolve_path(self.yaml_path))
@@ -129,7 +129,7 @@ class YamlJob(JobDevice):
             while not ended.wait(lease_s / 3.0) and worker.is_alive():
                 try:
                     self._instrument().hold(token)
-                except tango.DevFailed as exc:  # a step will report the lost hold, so keep trying in case the fault passes
+                except tango.DevFailed as exc:  # a step reports the lost hold; keep trying in case it passes
                     self.warn_stream(f"Could not renew the hold of job {token}: {exc.args[0].desc.strip()[:200] if exc.args else exc}")
 
     def _take_hold(self, job: dict) -> None:
@@ -193,13 +193,13 @@ class YamlJob(JobDevice):
         plan = self._plan(job)
         point = plan.point(index)
         try:
-            for name in plan.job.before_move:  # such as retracting a probe before the stage moves, and a refusal fails the job
+            for name in plan.job.before_move:  # e.g. retract a probe before a move; a refusal fails the job
                 self._step(job, name)
             for setting, value in point.items():
                 self._step(job, f"set_{setting}", value)
             if plan.job.settle_s:
                 self._step(job, SETTLE_STEP, plan.job.settle_s)
-            for name in plan.job.after_move:  # such as approaching the probe again at the new point
+            for name in plan.job.after_move:  # e.g. approach the probe again
                 self._step(job, name)
             keys = {}
             for name in plan.job.acquire:
@@ -211,7 +211,7 @@ class YamlJob(JobDevice):
         return {"index": index, "point": point, "keys": keys, "key": next(iter(keys.values()), None)}
 
     def on_stop(self, job: dict, reason: str) -> None:
-        if job["job_id"] not in self._holds:  # it never got the instrument, so there is nothing to undo
+        if job["job_id"] not in self._holds:  # never got the instrument: nothing to undo
             return
         try:
             problems = self._run_commands(job, self._plan(job).job.on_stop)

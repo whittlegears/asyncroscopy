@@ -23,9 +23,9 @@ from .specimen import Specimen, SpecimenContext, check_options, register_specime
 ANGSTROM = 1e-10
 
 PLACEMENT_TIME_LIMIT_S = 15.0  # longest the twin spends placing particles at start-up
-TEXTURE_FINEST_M = 0.5e-9  # the finest structure of the support film's texture
-TEXTURE_WAVES = 96  # plane waves summed for the texture, spread evenly over its range of lengths
-RELIEF_WAVES = 6  # plane waves summed for the height relief, from height_relief_scale_m down to a quarter of it
+TEXTURE_FINEST_M = 0.5e-9  # finest structure of the film's texture
+TEXTURE_WAVES = 96  # plane waves spread evenly over the texture's lengths
+RELIEF_WAVES = 6  # plane waves from height_relief_scale_m down to a quarter of it
 
 @dataclass
 class SampleParams:
@@ -324,7 +324,7 @@ class SampleModel(ParticleTable, Specimen):
         grid: dict[tuple[int, int], list[int]] = {}
         rows: list[tuple] = []
         misses, max_misses = 0, 2000
-        deadline = time.monotonic() + PLACEMENT_TIME_LIMIT_S  # a crowded sample keeps succeeding just often enough to never stop
+        deadline = time.monotonic() + PLACEMENT_TIME_LIMIT_S  # a crowded sample would never stop otherwise
         clustered = p.cluster_count > 0 and p.cluster_fraction > 0 and p.cluster_radius_m > 0
         centres = rng.uniform(-half, half, size=(p.cluster_count, 2)) if clustered else None
         for attempt in range(500 * target):
@@ -343,7 +343,7 @@ class SampleModel(ParticleTable, Specimen):
             else:
                 cx = float(rng.uniform(-half + margin, half - margin))
                 cy = float(rng.uniform(-half + margin, half - margin))
-            region = -1  # no regions: the sample is uniform
+            region = -1
             if self.regions is not None:
                 region = self.regions.index_at(cx, cy)
                 if rng.random() >= self.regions.density[region] / self.regions.density.max():
@@ -381,11 +381,11 @@ class SampleModel(ParticleTable, Specimen):
         self.theta = np.array([r[6] for r in rows], dtype=np.float64)
         self.elements = [r[7] for r in rows]
         self.euler = [r[8] for r in rows]
-        self.region_of = np.array([r[9] for r in rows], dtype=np.int64)  # -1 everywhere on a sample without regions
+        self.region_of = np.array([r[9] for r in rows], dtype=np.int64)  # -1 on a sample without regions
         self.z = np.array([ELEMENTS[e][0] for e in self.elements], dtype=np.float64)
         self.density = np.array([ELEMENTS[e][1] for e in self.elements], dtype=np.float64)
         self.bounds = (-half, half, -half, half)
-        self.requested_count = target  # can be more than were placed when the particles do not fit
+        self.requested_count = target  # more than placed when the particles do not fit
 
     def height_at(self, x: float | np.ndarray, y: float | np.ndarray) -> np.ndarray:
         gx, gy = self.params.height_gradient
@@ -398,7 +398,7 @@ class SampleModel(ParticleTable, Specimen):
 
     def ground_truth(self) -> dict:
         particles = self.particle_table()
-        for record, euler in zip(particles, self.euler):  # each particle's lattice orientation as ZXZ Euler angles
+        for record, euler in zip(particles, self.euler):  # ZXZ Euler angles of each particle's lattice
             record["euler_deg"] = [float(v) for v in euler]
         if self.regions is None:
             return {"known": True, "particles": particles}

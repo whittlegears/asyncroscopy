@@ -69,7 +69,7 @@ class IndentGrid(JobDevice):
         indenter = self._indenter()
         indenter.move_xy([step["x"], step["y"]])
         reply = indenter.indent(job["resolved_plan"]["load_n"])
-        if job.get("dry_run"):  # the indent was recorded but not made, so there is no reply to analyse
+        if job.get("dry_run"):  # recorded but not made: no reply to analyse
             return {"index": index, "x_m": step["x"], "y_m": step["y"], "indent": "skipped (dry run)"}
         return {"index": index, "x_m": step["x"], "y_m": step["y"], **json.loads(reply)}
 
@@ -79,7 +79,7 @@ class IndentGrid(JobDevice):
 
     def on_finish(self, job: dict) -> dict:
         self._indenter().retract()
-        return {}  # keys of anything saved to Tiled would go here
+        return {}
 
     def summary(self, job: dict) -> dict:
         indents = [job["step_results"][k] for k in sorted(job["step_results"], key=int)]

@@ -131,19 +131,19 @@ class JeolMicroscope(ElectronMicroscope):
         for name in detector_list:
             det = detector.Detector(name)
             if scan_region == full_frame:
-                det.set_scanmode(0)                          # full-frame Scan
+                det.set_scanmode(0)                          # full-frame scan
                 det.set_imaging_area(imsize, imsize)
             else:
                 extent = det.get_detectorsetting()['ImagingArea']['Width']
                 left, top, right, bottom = scan_region
-                det.set_scanmode(3)                          # Area (sub-region)
+                det.set_scanmode(3)                          # area (sub-region)
                 det.set_areamode_imagingarea(
                     Width=int((right - left) * extent),
                     Height=int((bottom - top) * extent),
                     X=int(left * extent),
                     Y=int(top * extent),
                 )
-            det.set_exposuretime_value(dwell_time * 1e6)     # PyJEM API takes microseconds while AutoScript takes seconds -- Lets keep default to seconds
+            det.set_exposuretime_value(dwell_time * 1e6)     # PyJEM takes microseconds
             settings = det.get_detectorsetting()
             area = settings['AreaModeImagingArea'] if scan_region != full_frame else settings['ImagingArea']
             pixels = self._decode_rawdata(det.snapshot_rawdata(), area['Width'], area['Height'])

@@ -6,7 +6,7 @@ connection and all communication with the Gatan DigitalMicrograph server.
 """
 
 import numpy as np
-from Pyro5.api import Proxy  # communication with Gatan server
+from Pyro5.api import Proxy
 from tango import DevState
 from tango.server import device_property
 
@@ -38,7 +38,7 @@ class EELS(EELSBase):
 
     def init_device(self) -> None:
         super().init_device()
-        self.instrument_id = self.get_name()  # what every dataset it saves records as instrument_id
+        self.instrument_id = self.get_name()  # recorded as each dataset's instrument_id
         self._eels_uri = (
             f"PYRO:eels_server@{self.hardware_host}:{self.hardware_port}"
         )

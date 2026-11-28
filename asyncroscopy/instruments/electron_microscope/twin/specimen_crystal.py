@@ -77,7 +77,7 @@ class CrystalSpecimen(Specimen):
         self.height_gradient = tuple(float(v) for v in height_gradient)
         n = int(grain_count)
         self.seeds = rng.uniform(-half, half, size=(n, 2))
-        self.rotation_rad = rng.uniform(0.0, np.pi / 2.0, size=n)  # a cubic [001] grain looks the same every 90 degrees
+        self.rotation_rad = rng.uniform(0.0, np.pi / 2.0, size=n)  # a cubic [001] grain repeats every 90 degrees
         self.thickness = thickness_m * (1.0 + thickness_variation * rng.uniform(-1.0, 1.0, size=n))
         self.tilt_mrad = np.abs(rng.normal(0.0, mosaic_spread_mrad, size=n))
         # Close to the zone axis the beam channels down the columns and scatters more to HAADF.
@@ -120,7 +120,7 @@ class CrystalSpecimen(Specimen):
         for g in np.unique(grains[grains >= 0]):
             c, s = np.cos(self.rotation_rad[g]), np.sin(self.rotation_rad[g])
             to_world = np.array([[c, -s], [s, c]])
-            local = (corners - self.seeds[g]) @ to_world  # rotate from the world frame into the grain frame
+            local = (corners - self.seeds[g]) @ to_world  # world frame into the grain frame
             i0, j0 = np.floor(local.min(axis=0) / a).astype(int) - 1
             i1, j1 = np.ceil(local.max(axis=0) / a).astype(int) + 1
             ii, jj = np.meshgrid(np.arange(i0, i1), np.arange(j0, j1), indexing="ij")

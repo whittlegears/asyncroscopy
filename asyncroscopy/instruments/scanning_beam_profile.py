@@ -47,7 +47,7 @@ class ScanningBeamProfile(InstrumentProfile):
 
     plan_fields = frozenset({"imsize", "dwell_s", "detectors", "dose_budget_e_per_a2", "z_m"})
     plan_defaults = {"imsize": 512, "dwell_s": 1e-6}
-    plan_example = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the current stage position
+    plan_example = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the stage position
     image_fields = frozenset({"imsize", "dwell_s", "detectors"})
     budget_fields = {"dose_budget_e_per_a2": DOSE_BUDGET}
     settings = BEAM_SETTINGS
@@ -273,7 +273,7 @@ class ScanningBeamProfile(InstrumentProfile):
         finally:
             microscope.blank_beam()
         if extras is None:
-            return None  # aborted part way through the spectrum image, so a resume redoes this tile
+            return None  # aborted mid spectrum image: a resume redoes this tile
         return {"image_key": image_key, "acquired": acquired, **self._store_extras(job, plan, tile, extras)}
 
     def _tile_extras(self, job: dict, plan: dict, tile: dict, microscope) -> dict | None:

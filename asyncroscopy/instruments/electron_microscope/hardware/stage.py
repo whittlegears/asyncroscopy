@@ -297,7 +297,7 @@ class STAGE(Device):
         if name and name not in self._holders:
             raise ValueError(f"unknown holder {name!r}; holders configured: {sorted(self._holders) or 'none (set the holders property)'}")
         self._reread_hardware_limits()
-        limits = self._limits_for(name)  # raises for a holder whose limits miss the stage travel, before anything changes
+        limits = self._limits_for(name)  # raises, before any change, if a holder's limits miss the stage travel
         for axis, value in zip(("x", "y", "z", "alpha", "beta"), self.read_position()):
             low, high = limits[axis]
             if not low <= float(value) <= high:

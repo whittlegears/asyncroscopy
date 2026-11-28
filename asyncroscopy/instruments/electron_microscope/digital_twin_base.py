@@ -100,7 +100,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self.instrument_id = self.get_name()  # saved with every dataset
         self.set_state(DevState.INIT)
 
-        self._init_device_attributes()  # sets up the detector proxies and the command lock
+        self._init_device_attributes()
         self._stem_mode = True
         self._manufacturer = "UTKTeam"
         self._beam_pos_x = 0.5
@@ -108,9 +108,9 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self._blanked = False
         self._defocus = 0.0
         self._imsize = 512
-        self._fov = 200e-10  # meters
+        self._fov = 200e-10  # m
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
-        self._truth_log: list[dict] = []  # what each acquisition really saw, for export_ground_truth only
+        self._truth_log: list[dict] = []  # for export_ground_truth only
         self._world_bounds_ang = {
             "x_min": -1.0,
             "x_max": 1.0,

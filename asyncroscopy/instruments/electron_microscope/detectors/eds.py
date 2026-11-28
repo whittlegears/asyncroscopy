@@ -35,7 +35,7 @@ class EDS(Device):
         Device.init_device(self)
         self.set_state(DevState.ON)
 
-        self._exposure_time: float = 1   # 1 s
+        self._exposure_time: float = 1   # s
 
         self.info_stream("EDS device initialised")
 

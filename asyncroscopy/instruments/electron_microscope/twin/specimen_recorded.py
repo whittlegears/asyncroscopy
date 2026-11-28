@@ -31,7 +31,7 @@ from .sample_model import ELEMENTS, ParticleTable
 from .specimen import Specimen, SpecimenContext, check_options, register_specimen
 
 ANGSTROM = 1e-10
-HAADF_30_PERCENT_WEIGHT = 1.6e4  # The weight that scatters 30 % to HAADF in the default renderer. It is minus ln 0.7 divided by 2.25e-5.
+HAADF_30_PERCENT_WEIGHT = 1.6e4  # weight scattering 30 % to HAADF in the default renderer: -ln 0.7 / 2.25e-5
 OPTIONS = {
     "path", "pixel_size_m", "dataset", "index", "labels_path", "center_m", "invert", "contrast_weight",
     "composition", "eds_areal_density", "support_thickness_m", "height_gradient", "seed",
@@ -98,7 +98,7 @@ def load_image(path: Path, dataset: str | None = None, index: int = 0) -> tuple[
     else:
         image = _load_picture(path)
     image = np.asarray(image, dtype=np.float64)
-    if image.ndim == 3 and image.shape[-1] in (3, 4):  # a colour image
+    if image.ndim == 3 and image.shape[-1] in (3, 4):
         image = image[..., :3].mean(axis=-1)
     elif image.ndim == 3:
         image = image[index]

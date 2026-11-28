@@ -74,10 +74,10 @@ class ViewRequest:
 
     stage: np.ndarray
     fov_angstrom: float = 0.0
-    imsize: int = 0  # pixels across, when the view is for an image
+    imsize: int = 0  # pixels across, for an image
     edge_crop: int = 0  # pixels of padding around that image
-    local_nm: tuple[np.ndarray, np.ndarray] | None = None  # the specimen-frame point each pixel sees, when the instrument worked it out
-    rotation: np.ndarray | None = None  # the stage's tilt as a 3x3 rotation matrix, when the source needs it
+    local_nm: tuple[np.ndarray, np.ndarray] | None = None  # specimen-frame point each pixel sees, when known
+    rotation: np.ndarray | None = None  # stage tilt as a 3x3 rotation, when the source needs it
 
 
 @dataclass
@@ -93,8 +93,8 @@ class FieldView:
 class Specimen:
     """A sample the twin can image. Subclasses fill in the geometry; the defaults are an empty specimen."""
 
-    source = ""  # registry name, selected by the twin's specimen property
-    render_modes: tuple[str, ...] = ("projected",)  # the twin renderers that can image it
+    source = ""  # registry name, chosen by the twin's specimen property
+    render_modes: tuple[str, ...] = ("projected",)  # twin renderers that can image it
     support_element = "C"
     support_thickness_m = 0.0
     height_gradient: tuple[float, float] = (0.0, 0.0)
@@ -183,9 +183,9 @@ class SpecimenContext:
     """What a source may take from the twin: its seed, the flat sample properties and the field of view as defaults."""
 
     rng: EventRng
-    sample: "SampleParams | None" = None  # the twin's flat sample properties, or None for the SampleParams defaults
+    sample: "SampleParams | None" = None  # the twin's flat sample properties, or None for the defaults
     base_dir: Path = field(default_factory=Path.cwd)
-    fov_m: float | None = None  # the field of view, for a specimen whose world spans it
+    fov_m: float | None = None  # for a specimen whose world spans the field
 
     def resolve(self, path: str | Path) -> Path:
         """A data path as written in a config: absolute, or relative to the working directory or the repository."""

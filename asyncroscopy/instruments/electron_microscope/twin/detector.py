@@ -18,7 +18,7 @@ import numpy as np
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-DRIFT_PERIODS_S = (600.0, 7200.0)  # the slowest and fastest swings of gain and offset
+DRIFT_PERIODS_S = (600.0, 7200.0)  # slowest and fastest swings of gain and offset
 DRIFT_WAVES = 5
 
 

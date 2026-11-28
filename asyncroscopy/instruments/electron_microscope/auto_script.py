@@ -156,16 +156,16 @@ class AutoScriptMicroscope(ElectronMicroscope):
     def _init_device_attributes(self) -> None:
         # Served without Tango's device lock, so blank_beam never queues behind a long command.
         super()._init_device_attributes()
-        self._blank_client = None  # a second AutoScript connection, used only to blank the beam
-        self._blank_count = 0  # counts blank_beam calls so that a running 4D-STEM scan stops when it changes
-        self._connected_versions = None  # what _versions read when Connect last reached AutoScript
+        self._blank_client = None  # a second AutoScript connection, only for blanking
+        self._blank_count = 0  # a change stops a running 4D-STEM scan
+        self._connected_versions = None  # what _versions read at the last Connect
 
     def _connect(self):
         self._connect_error = None
         self._connect_hardware()
         self._connect_detector_proxies()
         self.screen_current_calibration = None
-        self._measured_beam_current = None  # a dict with pa and at from the last screen current reading, where at is a time.time value
+        self._measured_beam_current = None  # pa and at (time.time) of the last screen current reading
         if self._connect_error:
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {self._connect_error}")
@@ -264,7 +264,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         unknown = [d for d in detector_list if d not in offered]
         if unknown:
             raise ValueError(f"no scanning detector {unknown} on this microscope; it offers {offered} (get_detectors); nothing was acquired")
-        attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # read before the frame so they say where and how it is taken
+        attrs = self._frame_attrs(imsize, dwell_time, scan_region)  # read before the frame so they describe it
         settings = StemAcquisitionSettings(dwell_time=dwell_time, detector_types=detector_list, size=imsize, region=Region(RegionCoordinateSystem.RELATIVE, Rectangle(*scan_region)))
         with self._beam_restored():
             adorned = self._microscope.acquisition.acquire_stem_images_advanced(settings)
@@ -281,7 +281,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             current = self.beam_current_fields()
         except Exception as exc:
             return {"frame_attrs_error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"}
-        try:  # The centre of the field is the stage plus this shift. A frame without it is placed as if the shift were zero.
+        try:  # field centre is stage plus this shift; without it the shift counts as zero
             shift = {"image_shift_m": [float(v) for v in self._get_image_shift()][:2]}
         except Exception as exc:
             self.debug_stream(f"frame recorded without image_shift_m: {exc}")
@@ -592,11 +592,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 f"no monochromator focus inside the calibrated {low_v:g} to {high_v:g} V gives {current:g} pA "
                 f"(roots {np.round(real, 3).tolist()}); recalibrate the screen current; nothing was written"
             )
-        return float(np.max(inside))  # the largest in-span root, as before
+        return float(np.max(inside))  # the largest in-span root
 
     def _set_screen_current(self, current) -> None:
         """set screen current in pA"""
-        self._measured_beam_current = None  # the monochromator focus sets the current, so the old reading no longer holds
+        self._measured_beam_current = None  # the monochromator focus sets the current
         if self.screen_current_calibration is None:
             self.warn_stream("Screen current calibration not available. running calibration (should take 15 seconds).")
             self._calibrate_screen_current()
@@ -622,7 +622,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
                 else:
                     conditions[f"aperture_{mechanism_type}"] = str(mechanism.aperture.name)
             return conditions
-        except Exception as error:  # we cannot tell what the current depends on, so no reading can be trusted
+        except Exception as error:  # cannot tell what the current depends on
             self.warn_stream(f"could not read the optics that set the beam current: {error}")
             return None
 
@@ -886,7 +886,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         if not self._is_stem():
             return "image_shift"
         chosen = getattr(self, "stem_shift_deflector", None)
-        chosen = chosen.strip().lower() if isinstance(chosen, str) and chosen.strip() else "image_shift"  # use the default when the property is missing
+        chosen = chosen.strip().lower() if isinstance(chosen, str) and chosen.strip() else "image_shift"  # default when the property is missing
         if chosen not in ("image_shift", "beam_shift"):
             raise ValueError(f"stem_shift_deflector must be image_shift or beam_shift, not {chosen!r}")
         return chosen

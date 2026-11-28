@@ -617,7 +617,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["column_valves"] = "Opened" if self._column_valves_open else "Closed"  # AutoScript's words
         parameters["screen"] = "Inserted" if self._screen_inserted else "Retracted"
         parameters["stage_moving"] = self._stage_moving()
-        parameters["simulated"] = True  # This is for clients. Job devices take the simulated property of the stack and never this.
+        parameters["simulated"] = True  # for clients; job devices read the stack's simulated property
         parameters["specimen_source"] = self._specimen.source  # what kind of sample, not what is on it
         return json.dumps(parameters)
 

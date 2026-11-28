@@ -59,7 +59,7 @@ def object_signal(weight: np.ndarray, detector: str, params: RenderParams) -> np
 
 class Renderer:
     def __init__(self, sample: Specimen, params: RenderParams) -> None:
-        self.sample = sample  # the specimen gives the projected weight and the renderer applies the instrument
+        self.sample = sample  # the specimen gives the weight, the renderer the instrument
         self.params = params
 
     def level_for(self, pixel_m: float) -> str:
@@ -113,7 +113,7 @@ class Renderer:
         support_weight = support_z ** self.params.z_exponent * support_rho
         weight += support_weight * support_angstrom
         texture = self.sample.support_texture(x_min, y_min, n, pixel_m)
-        if texture is not None:  # only the film's own thickness varies, the contamination does not
+        if texture is not None:  # only the film's thickness varies, not the contamination
             weight += support_weight * (float(self.sample.support_thickness_m) / ANGSTROM) * texture
         return x_min, y_min, n, weight
 

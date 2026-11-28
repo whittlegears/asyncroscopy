@@ -69,20 +69,20 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         self._read_stage()
         size = imsize
         self._imsize = imsize
-        fov      = self._fov * 1e10          # Å
+        fov_angstrom = self._fov * 1e10
         edge_crop = 20
-        beam_current     = 1000              # pA
+        beam_current_pa  = 1000
         blur_noise_level = 0.1
-        pixel_size       = fov / size
+        pixel_size       = fov_angstrom / size
 
         voltage = float(self.acceleration_voltage)
         ab = target_aberrations()
         ab['acceleration_voltage'] = voltage
-        ab['FOV']                  = fov / 10   # nm
+        ab['FOV']                  = fov_angstrom / 10   # nm
         ab['convergence_angle']    = 30         # mrad
         ab['wavelength']           = it.get_wavelength(ab['acceleration_voltage'])
 
-        random = self._specimen.random  # one stream with the sample, so a rebuild and what follows it repeat
+        random = self._specimen.random  # one stream with the sample, so a rebuild repeats
 
         def sub_pix_gaussian(size=10, sigma=0.2, dx=0.0, dy=0.0):
             coords = np.arange(size) - (size - 1) / 2.0
@@ -142,12 +142,12 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
-        field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=fov, imsize=size, edge_crop=edge_crop))
+        field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=fov_angstrom, imsize=size, edge_crop=edge_crop))
         xtal = field.atoms
         self._particle_records = field.records
 
         edge     = 2 * edge_crop * pixel_size
-        frame    = (0, fov + edge, 0, fov + edge)
+        frame    = (0, fov_angstrom + edge, 0, fov_angstrom + edge)
 
         potential = create_pseudo_potential(
             xtal, pixel_size, sigma=1, bounds=frame, atom_frame=11
@@ -163,7 +163,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         image = image[edge_crop:-edge_crop, edge_crop:-edge_crop]
 
         scan_time   = dwell_time * size * size
-        counts      = scan_time * (beam_current * 1e-12) / ELECTRON_CHARGE
+        counts      = scan_time * (beam_current_pa * 1e-12) / ELECTRON_CHARGE
         noisy_image = self._beam_signal(poisson_noise(image, counts=counts))
         blur_noise  = lowfreq_noise(noisy_image, noise_level=0.1, freq_scale=0.1)
         noisy_image += blur_noise * blur_noise_level
@@ -189,14 +189,14 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
 
     def _acquire_spectrum(self, detector_name: str, exposure_time: float) -> str:
         random = self._specimen.random
-        px, py = self.read_beam_pos()   # fractional [0, 1]
+        px, py = self.read_beam_pos()   # fractions in [0, 1]
         px_pix = px * self._imsize
         py_pix = py * self._imsize
 
         for rec in self._particle_records:
-            cx, cy = rec['center']   # pixels
-            r      = rec['radius']   # pixels
-            if (px_pix - cx)**2 + (py_pix - cy)**2 <= r**2:
+            cx_px, cy_px = rec['center']
+            radius_px = rec['radius']
+            if (px_pix - cx_px)**2 + (py_pix - cy_px)**2 <= radius_px**2:
                 raw   = {el: frac for el, frac in rec['composition'].items()}
                 total = sum(raw.values())
                 spectrum = {

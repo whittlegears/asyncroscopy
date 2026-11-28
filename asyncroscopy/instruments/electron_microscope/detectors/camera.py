@@ -79,7 +79,7 @@ class CAMERA(Device):
         Device.init_device(self)
         self.set_state(DevState.ON)
 
-        self._exposure_time: float = 1e-3   # 1 ms
+        self._exposure_time: float = 1e-3   # s
         self._imsize: int = 1024
         self._readout_area: str = "Full"
         self._camera_detector: str = "BM-Ceta"

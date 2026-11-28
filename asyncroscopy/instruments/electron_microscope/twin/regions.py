@@ -26,25 +26,25 @@ from dataclasses import dataclass
 
 import numpy as np
 
-SMALLEST_RADIUS = 0.5  # radius factor of a region whose particles are all the marker element
-LARGEST_RADIUS = 1.5  # radius factor of a region with none of it
-DENSITY_SPREAD = 0.8  # standard deviation of the log of a region's particle density
-FILM_CHANGE_RANGE = (-0.4, 1.0)  # a region's film is between 40 % thinner and 100 % thicker than nominal
-ELEMENT_MIX_EVENNESS = 0.5  # below 1, most regions are dominated by one or two elements
-HOLE = -1.0  # the film change that means there is no film
+SMALLEST_RADIUS = 0.5  # radius factor where every particle is the marker element
+LARGEST_RADIUS = 1.5  # radius factor where none is
+DENSITY_SPREAD = 0.8  # std of the log of a region's particle density
+FILM_CHANGE_RANGE = (-0.4, 1.0)  # 40 % thinner to 100 % thicker than nominal
+ELEMENT_MIX_EVENNESS = 0.5  # below 1, one or two elements dominate most regions
+HOLE = -1.0  # the film change meaning no film
 
 
 @dataclass
 class Regions:
     """``count`` regions over a square sample, each row of every array describing one region."""
 
-    seeds: np.ndarray  # (count, 2) the point each region grows from (m)
+    seeds: np.ndarray  # (count, 2) point each region grows from (m)
     density: np.ndarray  # (count,) relative particle density, 0 in a hole
-    film: np.ndarray  # (count,) relative change of the support film's thickness, HOLE where there is none
+    film: np.ndarray  # (count,) relative film thickness change, HOLE where none
     radius: np.ndarray  # (count,) factor on the particle radius
-    element_shares: np.ndarray  # (count, elements) share of each element among the region's particles
+    element_shares: np.ndarray  # (count, elements) share of each element in the region
     elements: tuple[str, ...]
-    marker: str  # the element whose share sets the particle size
+    marker: str  # its share sets the particle size
 
     @classmethod
     def draw(cls, rng: np.random.Generator, count: int, half_m: float, elements: tuple[str, ...], hole_fraction: float) -> "Regions":
@@ -58,7 +58,7 @@ class Regions:
         marker = int(rng.integers(len(elements)))
         radius = LARGEST_RADIUS - (LARGEST_RADIUS - SMALLEST_RADIUS) * element_shares[:, marker]
         holes = rng.random(count) < hole_fraction
-        holes[0] = False  # at least one region always has film and particles
+        holes[0] = False  # one region always has film and particles
         density[holes], film[holes] = 0.0, HOLE
         return cls(seeds, density, film, radius, element_shares, tuple(elements), elements[marker])
 

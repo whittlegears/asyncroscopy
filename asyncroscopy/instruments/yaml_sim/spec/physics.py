@@ -76,7 +76,7 @@ class SimInstrument:
             self._check(name, command.requires, scope)
             updates = {target: self.spec.settings[target].coerce(evaluate(tree, scope) if tree is not None else value) for target, (value, tree) in command.sets.items()}
             after = {**self.values, **updates}
-            for target in updates:  # a command that changes a guarded setting answers to its requires too
+            for target in updates:  # a guarded-setting change answers to its requires too
                 self._check(name, self.spec.setting_requires.get(target, []), {**scope, **after})
         self._wait(name, command.duration, scope, sleep=sleep)
         with self.lock:
@@ -119,7 +119,7 @@ class SimInstrument:
                 shape = peak.get("shape", "gaussian")
                 if "fwhm" in peak:
                     fwhm = max(abs(num(f"peaks[{i}].fwhm", peak["fwhm"])), 1e-30)
-                else:  # older files give width, which is a Gaussian's sigma
+                else:  # older files give width, a Gaussian's sigma
                     fwhm = max(abs(num(f"peaks[{i}].width", peak["width"])), 1e-30) * FWHM_PER_SIGMA
                 eta = {"gaussian": 0.0, "lorentzian": 1.0}.get(shape)
                 if eta is None:

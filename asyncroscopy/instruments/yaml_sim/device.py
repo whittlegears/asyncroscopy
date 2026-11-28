@@ -73,9 +73,9 @@ from asyncroscopy.instruments.yaml_sim.spec import (
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
 TANGO_TYPES = {float: CmdArgType.DevDouble, int: CmdArgType.DevLong64, bool: CmdArgType.DevBoolean, str: CmdArgType.DevString}
-DATA_TIMEOUT_MS = 15_000  # DATA registers a file in Tiled within about 10 s
-STOP_WAIT_S = 0.2  # how long stop_step waits for the step to end
-HOLD_WATCH_S = 0.05  # how often a hold's lease is checked
+DATA_TIMEOUT_MS = 15_000  # DATA registers a file within about 10 s
+STOP_WAIT_S = 0.2
+HOLD_WATCH_S = 0.05
 
 
 class _Stopped(Exception):
@@ -88,7 +88,7 @@ class _Hold:
 
     token: str
     expires: float
-    lapsed: bool = False  # true from the moment the lease ran out until the instrument is safe and free again
+    lapsed: bool = False  # from lease expiry until the instrument is safe and free
     ended: threading.Event = field(default_factory=threading.Event)
 
 
@@ -137,7 +137,7 @@ class YamlInstrument(Instrument):
         self.acquisition_save_directory = self.output_directory
         self.sim = None
         self.spec_hints: dict = {}
-        self._hold_lock = threading.RLock()  # guards _active_hold and _step, which Tango threads, the step worker and the watcher share
+        self._hold_lock = threading.RLock()  # guards _active_hold and _step across Tango, step worker and watcher threads
         self._active_hold: _Hold | None = None
         self._step: _Step | None = None
         self._scale = max(0.0, float(self.time_scale))
@@ -183,7 +183,7 @@ class YamlInstrument(Instrument):
 
     def _direct_sleep(self, seconds: float) -> None:
         """The simulated wait of a call made directly (not as a job step)."""
-        if self._active_hold is not None:  # free Tango's per-device monitor, so a job's short calls never wait behind this one
+        if self._active_hold is not None:  # frees Tango's per-device monitor so short calls never wait
             with tango.AutoTangoAllowThreads(self):
                 self._scaled_sleep(seconds)
         else:
@@ -264,7 +264,7 @@ class YamlInstrument(Instrument):
             try:
                 overrides = (json.loads(request) if request.strip() else {}).get("settings") or {}
                 return json.dumps(map_description(self.sim.spec, self.sim, overrides))
-            except (Refused, ValueError, AttributeError) as exc:  # a bad setting from the caller, so say why and never fail the device
+            except (Refused, ValueError, AttributeError) as exc:  # a bad setting from the caller: say why, never fail the device
                 return json.dumps({"error": str(exc)})
 
         doc = ("How a Mapper maps this instrument: its image acquisition, stage and field-of-view settings and limits, the commands run "
@@ -374,7 +374,7 @@ class YamlInstrument(Instrument):
             if step.stop.wait(seconds * self._scale):
                 raise _Stopped()
 
-        with tango.EnsureOmniThread():  # a thread Tango did not create, about to call the DATA device
+        with tango.EnsureOmniThread():  # a non-Tango thread about to call the DATA device
             try:
                 step.result = self._step_outcome(step, sleep) or ""
                 step.state = "done"

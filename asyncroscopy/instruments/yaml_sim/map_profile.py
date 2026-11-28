@@ -28,7 +28,7 @@ import tango
 
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, register_profile
 
-FOV_TOLERANCE = 1e-6  # how close, as a fraction, the field_of_view setting must bring the tile to fov_m
+FOV_TOLERANCE = 1e-6  # fraction the field_of_view setting must match fov_m to
 
 
 @register_profile
@@ -182,7 +182,7 @@ class YamlProfile(InstrumentProfile):
         return [float(device.command_inout(f"get_{stage['x']['setting']}")), float(device.command_inout(f"get_{stage['y']['setting']}"))]
 
     def clock_s(self) -> float:
-        return time.time()  # a YAML twin has no clock of its own, so its waits are real seconds
+        return time.time()  # a YAML twin has no clock: its waits are real seconds
 
     def acquire_tile(self, job: dict, tile: dict) -> dict | None:
         info = self._info(job["resolved_plan"])

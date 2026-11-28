@@ -32,7 +32,7 @@ CORRECTOR_TO_PYTEMLIB = {
 # The Spectra 300 datasheet quotes 50 pm resolution.
 IDEAL_PROBE_SIGMA_M = 0.05e-9 / 2.355
 
-FOCUS_DRIFT_PERIODS_S = (1200.0, 21600.0)  # the fastest and slowest swings of focus and astigmatism: 20 minutes to 6 hours
+FOCUS_DRIFT_PERIODS_S = (1200.0, 21600.0)  # fastest and slowest swings of focus and astigmatism
 FOCUS_DRIFT_WAVES = 5
 
 

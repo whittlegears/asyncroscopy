@@ -24,7 +24,7 @@ class LamellaParams:
     gridbar_width_nm: float = 220.0
     layer_period_nm: float = 45.0
     silicon_lattice_parameter_angstrom: float = 5.431  # unstrained
-    lattice_parameter_gradient_x_percent: float = 2.0  # end-to-end change across the lamella width
+    lattice_parameter_gradient_x_percent: float = 2.0  # end-to-end across the lamella width
     lattice_parameter_gradient_y_percent: float = 0.5
     crystal_rotation_deg: float = 1.5  # mean in-plane rotation
     crystal_rotation_gradient_x_deg: float = 4.0
@@ -33,10 +33,10 @@ class LamellaParams:
     crystal_tilt_y_mrad: float = -2.0
     crystal_tilt_gradient_x_mrad: float = 10.0
     crystal_tilt_gradient_y_mrad: float = -7.0
-    multislice_supercell_xy: int = 4  # unit cells in x and y for every probe position
+    multislice_supercell_xy: int = 4  # unit cells in x and y per probe position
     multislice_supercell_z: int = 8  # unit cells along the beam
     multislice_vacuum_angstrom: float = 2.0
-    frozen_phonon_sigma_angstrom: float = 0.03  # ASE rattle standard deviation before each multislice calculation
+    frozen_phonon_sigma_angstrom: float = 0.03  # ASE rattle std before each multislice run
 
 
 @register_specimen
