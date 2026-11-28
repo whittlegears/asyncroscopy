@@ -16,6 +16,7 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_INTEGRITY_KEY` | The seal key, as hex (wins over the key file) | none |
 | `ASYNCROSCOPY_INTEGRITY_KEY_FILE` | File holding the seal key; made on first use | `<outputs>/integrity/key` |
 | `ASYNCROSCOPY_DOSE_LEDGER` | The per-sample dose ledger | `<outputs>/dose/ledger.jsonl` |
+| `ASYNCROSCOPY_PERMISSIONS_FILE` | Permission settings shared by a stack's agent and operator endpoints, when `mcp.permissions_file` is not set (docs/MCP/permissions.md); held calls go in `<name>.state.json` beside it | `<outputs>/permissions/permissions.json` |
 | `ASYNCROSCOPY_MCP_URL` | Agent MCP endpoint | `http://127.0.0.1:8000/mcp` |
 | `ASYNCROSCOPY_OPERATOR_URL` | Operator MCP endpoint (benchmarks) | the stack's `operator:` |
 | `ASYNCROSCOPY_ANALYSIS_URL` | Analysis MCP server | what the endpoint reports |

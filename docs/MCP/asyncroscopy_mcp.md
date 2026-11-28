@@ -50,7 +50,9 @@ the MCP HTTP endpoint, the DATA device address, and the command blocklist.
 8. Registers the native tools of its components (`asyncroscopy/mcp/components/`).
 
 `endpoint_info` also carries `tools`: each tool's device, command, canonical role, risk and
-whether it acts, as discovery decided them, with `stem_devices` and `map_devices`. Agent programs
+whether it acts and, on the agent endpoint, its `permission`, as discovery decided them, with
+`device_kinds` (each device's kinds: stem, probe, envelope, map, stage), `urls` (the stack's other endpoints)
+and `command_timeout_s` ([permissions.md](permissions.md)). Agent programs
 read it once per run (`asyncroscopy/agents/catalog.py`) instead of guessing from tool names.
 
 ## Replies carry facts
@@ -82,11 +84,11 @@ tool for each step of a job:
   reservation. A plan and a resume together are refused.
 - `wait_for_job(job_id, device=None)`: waits on any job, an instrument job
   (`run_job`, `<device>_start`) or a stitching or scoring job on the analysis
-  server named by `mcp.analysis_url`. When the job is done, the reply also
+  server named by `mcp.urls.analysis`. When the job is done, the reply also
   has its results (`result_keys`, `summary`), so no `*_results` call follows.
   A job device that does not answer is skipped (and named if the job is not
   found elsewhere); an analysis server's error reply is passed on, not
-  swallowed. Without `mcp.analysis_url` agents get `analysis_job_status` and
+  swallowed. Without `mcp.urls.analysis` agents get `analysis_job_status` and
   `analysis_job_results` instead.
 - `endpoint_info()`: for agent programs, not given to models: each tool's risk
   as the risk policy sees it (with this deployment's `safety.risk`
@@ -134,13 +136,12 @@ tool for each step of a job:
 
 `<device>_reserve`, `_start`, `_job_status`, `_results`, `_release`,
 `list_skills` and `load_skill` stay on the endpoint for the `mapping` graph,
-SciAgentGUI and other clients. `configs/mcp_dt.yaml` hides from the agent
-endpoint the commands no agent needs (Tango `State`/`Status`, DATA's Tiled
-administration and
-`Mapper.get_reservation`) with `blocked_functions`; the operator endpoint
-(`configs/mcp_operator.yaml`) keeps them. `OPERATOR_ONLY` in
+SciAgentGUI and other clients. `configs/mcp_dt.yaml` lists DATA's Tiled administration and the
+corrector writes under `needs_approval`: the agent endpoint offers them and holds each call until a
+person approves it on the operator endpoint ([permissions.md](permissions.md)). `OPERATOR_ONLY` in
 `asyncroscopy/safety/policy.py` lists Tango's admin commands (`Init`, `Kill`,
-`RestartServer`), which no device declares; they are never offered on an agent endpoint.
+`RestartServer`), which no device declares; they are never offered on an agent endpoint, and with
+`Disconnect` they are never run anywhere (`policy.hard_blocked`).
 
 There is no package search, source introspection requirement, or separate
 AutoScript-specific MCP class.
@@ -224,18 +225,16 @@ coordinates are read with the analysis server's `map_info` and `get_region`.
 
 ## Safety Boundary
 
-MCP exposes hardware-control commands, so the YAML blocklist is part of the
-runtime safety boundary. Keep destructive or server-management commands blocked:
+MCP exposes hardware-control commands, so permissions are part of the runtime safety boundary
+([permissions.md](permissions.md)). `Init`, `Kill`, `RestartServer` and `Disconnect` are never run, whatever
+a config or a person says. List what a person must approve under `needs_approval`:
 
 ```yaml
 blocked_classes:
   - DataBase
   - DServer
-blocked_functions:
-  "*":
-    - Init
-    - Kill
-    - RestartServer
+needs_approval:
+  DATA: [configure, start_tiled_server, stop_tiled_server]
 ```
 
-Add project-specific exclusions before connecting an autonomous model client.
+Add project-specific entries before connecting an autonomous model client.

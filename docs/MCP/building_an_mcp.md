@@ -130,18 +130,14 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
+  needs_approval:
     DATA:
       - stop_tiled_server
 ```
 
-`blocked_classes` hides whole Tango classes. `blocked_functions` can hide global
-command names, class-specific command names, or fully qualified
-`Class.command` entries.
+`blocked_classes` hides whole Tango classes. `needs_approval` lists, by class (`"*"` for every class),
+command names, `Class.command` entries or globs that the agent endpoint holds until a person approves
+the call ([permissions.md](permissions.md)).
 
 ## Test Changes
 
