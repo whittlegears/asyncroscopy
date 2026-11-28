@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import importlib
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -49,13 +51,17 @@ from _common import (
 )
 from board import HISTORY, KINDS, parse_bar, previous_run, save_history
 from board import report as board_report
+import workflow_checks
 from workflow_checks import CHECKS, Call, Run, evaluate, unrequested, workflow_allow
 
 from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
+from asyncroscopy.mcp.fingerprint import digest
+from asyncroscopy.skills.registry import list_skills
 from benchmarks.evaluate import RunData
+from benchmarks.evaluate import evaluators as known_evaluators
 from benchmarks.evaluate import score_run as evaluator_scores
 
 if TYPE_CHECKING:
@@ -139,6 +145,44 @@ def _check_params(where: str, spec: dict) -> None:
         raise WorkflowError(f"{where}: check {spec['check']} {exc}; its parameters: {wanted or 'none'}") from exc
 
 
+def _names_used(code: Any) -> set[str]:
+    found = set(code.co_names)
+    for const in code.co_consts:
+        if inspect.iscode(const):
+            found |= _names_used(const)
+    return found
+
+
+def check_source(fn: Any) -> dict[str, str]:
+    """The source a check runs: its function and every function, class and value of workflow_checks it reaches by
+    name, as {name: source}. Code from other modules is not followed."""
+    sources: dict[str, str] = {}
+    todo = [fn.__name__]
+    while todo:
+        name = todo.pop()
+        if name in sources or name not in vars(workflow_checks):
+            continue
+        item = vars(workflow_checks)[name]
+        if inspect.ismodule(item) or ((inspect.isfunction(item) or inspect.isclass(item)) and inspect.getmodule(item) is not workflow_checks):
+            continue
+        if inspect.isfunction(item):
+            sources[name], codes = inspect.getsource(item), [item.__code__]
+        elif inspect.isclass(item):
+            sources[name] = inspect.getsource(item)
+            codes = [m.__code__ for m in vars(item).values() if inspect.isfunction(m)]
+        else:
+            sources[name], codes = repr(item), []
+        for code in codes:
+            todo += sorted(_names_used(code))
+    return dict(sorted(sources.items()))
+
+
+def task_hash(entry: dict) -> str:
+    """A benchmark's identity: its YAML entry as written (its reference included) and the source of the checks it uses."""
+    used = sorted({spec.get("check") for spec in entry.get("checks") or [] if isinstance(spec, dict) and spec.get("check") in CHECKS})
+    return digest({"entry": entry, "checks": {name: check_source(CHECKS[name]) for name in used}})
+
+
 def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> list[dict]:
     """Every workflow in the given YAML files (or directories of them), checked for typos."""
     stacks = load_stacks(paths) if stacks is None else stacks
@@ -150,6 +194,7 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             if not isinstance(wf, dict) or "name" not in wf:
                 raise WorkflowError(f"{where}: each workflow needs a name")
             where = f"{file.name}: {wf['name']}"
+            written = copy.deepcopy(wf)
             unknown = set(wf) - WORKFLOW_KEYS
             if unknown:
                 raise WorkflowError(f"{where}: unknown keys {sorted(unknown)}; allowed: {sorted(WORKFLOW_KEYS)}")
@@ -189,6 +234,7 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             wf.setdefault("timeout_s", 600)
             wf.setdefault("stack", "twin")
             wf["file"] = file.name
+            wf["task_hash"] = task_hash(written)
             wf["capability"] = file.stem  # one file per capability: the board groups by it
             workflows.append(wf)
     return workflows
@@ -939,6 +985,35 @@ def markdown(results: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def evaluator_versions(names: list[str]) -> dict[str, str]:
+    """{name: version} of the evaluators a run scores with, so scores of different versions are never mixed."""
+    known = known_evaluators()
+    return {name: known[name].version for name in names}
+
+
+def apply_skills(choice: str | None, off: str | None, environ: dict | None = None) -> dict:
+    """Set ASYNCROSCOPY_SKILLS and ASYNCROSCOPY_SKILLS_OFF for this run from --skills and --skills-off, and return
+    what the results keep: {"on", "off", "enabled"}. ``choice`` is on, off, or skill names (only those);
+    None leaves the environment as it is."""
+    environ = os.environ if environ is None else environ
+    hidden = [name.strip() for name in (off or "").split(",") if name.strip()]
+    if choice == "off":
+        environ["ASYNCROSCOPY_SKILLS"] = "0"
+    elif choice is not None:
+        environ["ASYNCROSCOPY_SKILLS"] = "1"
+        if choice != "on":
+            wanted = {name.strip() for name in choice.split(",") if name.strip()}
+            environ["ASYNCROSCOPY_SKILLS_OFF"] = ""
+            known = {skill.name for skill in list_skills()}
+            if wanted - known:
+                raise WorkflowError(f"--skills names no skill {sorted(wanted - known)}; skills here: {sorted(known)}")
+            hidden += sorted(known - wanted)
+    if off is not None or choice not in (None, "on", "off"):
+        environ["ASYNCROSCOPY_SKILLS_OFF"] = ",".join(hidden)
+    now = settings.get()
+    return {"on": now.skills, "off": list(now.skills_off), "enabled": [skill.name for skill in list_skills() if not skill.off]}
+
+
 def git_head() -> str:
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=HERE.parent, check=False).stdout.strip() or "?"
@@ -968,6 +1043,11 @@ async def main(args: argparse.Namespace) -> int:
     if not (HERE.parent / STACK["config"]).exists() and not Path(STACK["config"]).exists():
         print(f"stack {args.stack} needs {STACK['config']}, which this checkout does not have: fix config: in its stacks: entry")
         return 2
+    try:
+        skills = apply_skills(args.skills, args.skills_off)
+    except WorkflowError as exc:
+        print(exc)
+        return 2
     available = runners_available()
     if args.graph:
         available["custom"] = args.graph
@@ -992,13 +1072,18 @@ async def main(args: argparse.Namespace) -> int:
     await warm_up(config)
     baseline = await live.snapshot()
     EVALUATORS[:] = [n.strip() for n in args.evaluators.split(",") if n.strip()]
+    unknown_evaluators = sorted(set(EVALUATORS) - set(known_evaluators()))
+    if unknown_evaluators:
+        print(f"no evaluator {unknown_evaluators}; registered: {sorted(known_evaluators())}")
+        return 2
     SCORE_COLUMNS[:] = [c.strip() for c in args.score_columns.split(",") if c.strip()]
     if args.n != "bar" and not (args.n.isdigit() and int(args.n) >= 1):
         print(f"--n is a number of trials or 'bar', not {args.n!r}")
         return 2
     replaying = REFERENCE in (args.runners or [])
     results = {"model": args.model, "stack": args.stack, "git": git_head(), "n": args.n, "started": time.time(), "runners": available,
-               "evaluators": EVALUATORS, "score_columns": SCORE_COLUMNS, "workflows": {}}
+               "evaluators": evaluator_versions(EVALUATORS), "score_columns": SCORE_COLUMNS, "skills": skills,
+               "stack_fingerprint": (await config.info()).get("stack_fingerprint"), "workflows": {}}
     out = Path(args.out or HERE / "results" / f"workflows_{args.stack}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     for wf in workflows:
@@ -1007,7 +1092,7 @@ async def main(args: argparse.Namespace) -> int:
                 continue
             if runner != REFERENCE and (runner not in available or (runner in SINGLE_TURN and wf.get("turns"))):
                 why = f"no {runner} runner in this checkout" if runner not in available else f"{runner} takes one request; this workflow has turns"
-                results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": []}
+                results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": [], "task_hash": wf["task_hash"]}
                 continue
             rows = []
             # A replayed reference has no model in it, so one trial; --n bar runs as many trials as the workflow's bar counts.
@@ -1027,7 +1112,7 @@ async def main(args: argparse.Namespace) -> int:
             results["workflows"][f"{wf['name']}/{runner}"] = {
                 "passed": sum(r["ok"] for r in counted), "of": len(counted), "infra_errors": len(rows) - len(counted),
                 "capability": wf["capability"], "kind": wf.get("kind", KINDS[0]), "held_out": bool(wf.get("held_out")),
-                "bar": bar, "rows": rows,
+                "bar": bar, "rows": rows, "task_hash": wf["task_hash"],
             }
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     try:
@@ -1060,6 +1145,10 @@ if __name__ == "__main__":
     parser.add_argument("--n", default="1", help="Trials per workflow and runner: a number (default 1), or 'bar' for as many as each workflow's bar counts (5 unless it sets its own).")
     parser.add_argument("--no-held-out", action="store_true", help="Leave out workflows marked held_out: use it while tuning the agent.")
     parser.add_argument("--allow-hardware", action="store_true", help="Run even when the endpoint's stack does not say it is simulated.")
+    parser.add_argument("--skills", default=None,
+                        help="Agent skills for this run: on, off, or skill names separated by commas (only those). Sets ASYNCROSCOPY_SKILLS "
+                        "and ASYNCROSCOPY_SKILLS_OFF; left out, they stay as the environment has them (off unless set).")
+    parser.add_argument("--skills-off", default=None, help="Skill names or globs to hide, separated by commas (ASYNCROSCOPY_SKILLS_OFF).")
     parser.add_argument("--history", default=None, help="Directory finished runs are kept in (default: outputs/benchmarks/history).")
     # The agents' own default: ASYNCROSCOPY_MODEL, else the default agent profile's model.
     parser.add_argument("--model", default=settings.get().model or load_profile().model)

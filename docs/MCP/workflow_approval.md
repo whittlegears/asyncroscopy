@@ -9,8 +9,14 @@ the real instrument only after a person approves it. A person approves in one of
 Both write the same records in the same library (`outputs/workflows/library`: `approvals.json`,
 `rejections.json`, `approved/NAME.py`). The endpoint adds two checks the command line does not make:
 
-- an approval is refused unless this exact code ran to the end (state `done`) on a digital twin at least once (the
-  command line shows the rehearsals and warns when there is none, but does not refuse);
+- an approval is refused unless this exact code passed a rehearsal on the digital twin the endpoint is connected
+  to: the run reached `done` (no block failed), every cleanup call of its blocks succeeded, and the rehearsal's
+  `stack_fingerprint` digest is the instrument endpoint's now (`docs/MCP/permissions.md`). A rehearsal on another
+  stack, or on this one before its software, device code or properties changed, does not count, and the refusal
+  names the stacks it did pass on. When the endpoint is a real instrument (its fingerprint is not simulated), a
+  twin and the instrument can never share a fingerprint, so a rehearsal counts when it passed on a simulated stack
+  whose `software` (package version and commit) is the instrument's. The command line shows the rehearsals and warns when there is none, but does not
+  refuse;
 - `approve_workflow` and `reject_workflow` take the `expected_hash` that `review_workflow` returned for the code the
   person read, and refuse when the workflow is not that code any more. An agent can call `propose_workflow` again
   with the same name while the person is reading; without this check the person would approve code they never saw.
@@ -94,7 +100,8 @@ This tool only reads. The reply:
   "rejection": null,
   "rehearsals": [
     {"run_id": "3f2a...", "state": "done", "at": 1795817470.1, "calls": 14, "inputs": {"size_m": 5e-07},
-     "error": null, "problems": [], "this_code": true, "outputs": {"...": "shortened as in workflow_status"}}
+     "error": null, "problems": [], "this_code": true, "stack_id": "tango://localhost:9094", "stack_fingerprint": "9c1e...",
+     "passed": true, "this_stack": true, "outputs": {"...": "shortened as in workflow_status"}}
   ],
   "rehearsed": true,
   "can_approve": true,
@@ -111,14 +118,16 @@ This tool only reads. The reply:
 - `rejection` is `{"hash", "reason", "by", "login", "at", "via", "this_code"}` or `null`.
 - `rehearsals` lists the runs on a digital twin, oldest first, at most 10. `this_code` marks the runs of the
   code as it is now. `outputs` is read from the run's record, and is `null` when that record is gone. `problems`
-  are the problems that the run recorded.
+  are the problems that the run recorded. `stack_id` and `stack_fingerprint` (its digest) name the stack it ran on;
+  `this_stack` is true when that is the instrument endpoint's fingerprint now. `passed` is true when it reached `done`
+  and every cleanup call succeeded.
 - `hash` identifies this exact code (the module and every block it uses). Pass it back as `expected_hash`.
-- `rehearsed` is true when a run of this code reached `done`.
+- `rehearsed` is true when a run of this code passed on this stack's fingerprint.
 - `approval_expired` is true when the approval's `expires` has passed: the workflow no longer runs on an instrument
   and may be approved again.
 - `can_approve` and `why_not` say whether `approve_workflow` would accept it now; `approve_workflow` decides from
   this same reply, so the two never disagree. The reasons are: it is shipped, it is already approved and the
-  approval has not expired, it fails its checks, or it was never rehearsed to the end.
+  approval has not expired, it fails its checks, or it never passed a rehearsal on this stack's fingerprint.
 - `problems` are the workflow's own checks. They do not check it against the live endpoint's tools; the runner
   does that before every run.
 - Times (`at`) are Unix seconds.

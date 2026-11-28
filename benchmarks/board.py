@@ -83,7 +83,7 @@ def rows(results: dict) -> list[dict]:
                         | {"error" for r in trials if r.get("error") and not r.get("infra_error")})
         seconds = sorted(r.get("seconds", 0) for r in trials if not r.get("infra_error"))
         out.append({
-            "key": key, "name": name, "runner": runner, "passed": passed, "of": of, "bar": bar,
+            "key": key, "name": name, "runner": runner, "task_hash": value.get("task_hash"), "passed": passed, "of": of, "bar": bar,
             "verdict": verdict(passed, of, bar), "capability": value.get("capability") or "other",
             "kind": value.get("kind") or KINDS[0], "held_out": bool(value.get("held_out")),
             "failed_checks": failed, "median_s": seconds[len(seconds) // 2] if seconds else None,
@@ -125,10 +125,16 @@ def summary(results: dict) -> dict:
 
 def compare(new: dict, old: dict) -> dict:
     """What changed from ``old`` to ``new`` over the benchmarks both ran: the paired difference in pass rate
-    with its standard error, and the benchmarks whose verdict got worse or better."""
+    with its standard error, and the benchmarks whose verdict got worse or better.
+
+    A benchmark is paired only when both runs record the same ``task_hash``: one whose task changed between them
+    is listed in ``task_changed``, and one that a run records no hash for in ``task_unknown``; neither is compared."""
     before = {r["key"]: r for r in rows(old) if r["of"] > 0}
     after = {r["key"]: r for r in rows(new) if r["of"] > 0}
-    shared = sorted(set(before) & set(after))
+    both = sorted(set(before) & set(after))
+    task_unknown = [k for k in both if not (before[k]["task_hash"] and after[k]["task_hash"])]
+    task_changed = [k for k in both if k not in task_unknown and before[k]["task_hash"] != after[k]["task_hash"]]
+    shared = [k for k in both if k not in task_unknown and k not in task_changed]
     difference = mean_and_error([after[k]["passed"] / after[k]["of"] - before[k]["passed"] / before[k]["of"] for k in shared])
     rank = {FAIL: 0, UNPROVEN: 1, PASS: 2}
     worse = [k for k in shared if rank[after[k]["verdict"]] < rank[before[k]["verdict"]]]
@@ -136,7 +142,7 @@ def compare(new: dict, old: dict) -> dict:
     return {
         "shared": len(shared), "only_new": sorted(set(after) - set(before)), "only_old": sorted(set(before) - set(after)),
         "difference": difference[0] if difference else None, "difference_se": difference[1] if difference else None,
-        "worse": worse, "better": better,
+        "worse": worse, "better": better, "task_changed": task_changed, "task_unknown": task_unknown,
         "old": {"model": old.get("model"), "git": old.get("git"), "started": old.get("started")},
     }
 
@@ -173,12 +179,17 @@ def load_history(directory: Path, stack: str | None = None, model: str | None = 
     return sorted(found, key=lambda item: float(item[1].get("started") or 0))
 
 
+def _tasks(results: dict) -> set[tuple[str, str]]:
+    return {(key, value["task_hash"]) for key, value in (results.get("workflows") or {}).items() if value.get("task_hash")}
+
+
 def previous_run(results: dict, directory: Path) -> dict | None:
-    """The newest kept run of the same stack and model that started before ``results`` and shares a benchmark with it."""
-    keys = set(results.get("workflows") or {})
+    """The newest kept run of the same stack and model that started before ``results`` and shares a benchmark with
+    it: the same name, runner and task hash."""
+    keys = _tasks(results)
     started = float(results.get("started") or math.inf)
     earlier = [r for _, r in load_history(directory, results.get("stack"), results.get("model"))
-               if float(r.get("started") or 0) < started and keys & set(r.get("workflows") or {})]
+               if float(r.get("started") or 0) < started and keys & _tasks(r)]
     return earlier[-1] if earlier else None
 
 
@@ -218,6 +229,10 @@ def report(results: dict, old: dict | None = None) -> str:
     if old is not None:
         change = compare(results, old)
         lines += ["", f"## Since {change['old']['git']} ({change['old']['model']})", ""]
+        if change["task_changed"]:
+            lines.append(f"Not paired, the task changed: {', '.join(change['task_changed'])}.")
+        if change["task_unknown"]:
+            lines.append(f"Not paired, a run records no task hash: {', '.join(change['task_unknown'])}.")
         if not change["shared"]:
             lines.append("No benchmark in common.")
         else:
