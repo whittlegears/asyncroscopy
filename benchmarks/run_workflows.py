@@ -58,7 +58,7 @@ from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
-from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_operator_url
+from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_operator_url, devices_of_kind
 from asyncroscopy.mcp.fingerprint import digest
 from asyncroscopy.sim.truth_score import median_error
 from asyncroscopy.skills.registry import list_skills
@@ -353,7 +353,7 @@ class Live:
 
     async def run_map(self, plan: dict, timeout_s: float = 1800) -> dict:
         """Run a Mapper job to the end with whichever job tools the endpoint offers; returns its results."""
-        mapper = next((n[: -len("_reserve")] for n in sorted(self.names) if n.startswith("Mapper") and n.endswith("_reserve")), None)
+        mapper = next(iter(devices_of_kind(await self.instrument.call_json("endpoint_info"), "map")), None)
         if "run_job" in self.names:
             started = await self.instrument.call_json("run_job", {"device": mapper or "Mapper", "plan": plan})
             reservation = started.get("reservation_id")

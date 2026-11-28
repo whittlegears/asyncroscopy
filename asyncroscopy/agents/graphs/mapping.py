@@ -29,6 +29,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import DOSE
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from asyncroscopy.contracts import load, validate
+from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.core.map_analysis import AnalysisFailed, score_map, stitch_map
 
 ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
@@ -127,10 +128,8 @@ class MappingGraph:
     async def _mapper(self) -> str:
         """The Mapper's tool prefix: Mapper, or Mapper_<key> when an endpoint exports several."""
         if self._mapper_prefix is None:
-            if self._tool_names is None:
-                self._tool_names = {t.name for t in await self.instrument.list_tools()}
             configured = settings.get().mapper
-            candidates = sorted(n[: -len("_reserve")] for n in self._tool_names if n.startswith("Mapper") and n.endswith("_reserve"))
+            candidates = devices_of_kind(await self.instrument.call_json("endpoint_info"), "map")
             if configured:
                 if configured not in candidates:
                     raise RuntimeError(f"ASYNCROSCOPY_MAPPER={configured!r} is not one of {candidates}")
