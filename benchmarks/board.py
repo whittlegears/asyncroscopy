@@ -124,11 +124,8 @@ def summary(results: dict) -> dict:
 
 
 def compare(new: dict, old: dict) -> dict:
-    """What changed from ``old`` to ``new`` over the benchmarks both ran: the paired difference in pass rate
-    with its standard error, and the benchmarks whose verdict got worse or better.
-
-    A benchmark is paired only when both runs record the same ``task_hash``: one whose task changed between them
-    is listed in ``task_changed``, and one that a run records no hash for in ``task_unknown``; neither is compared."""
+    """The paired difference in pass rate from ``old`` to ``new`` over benchmarks with the same ``task_hash``, and the
+    verdicts that got worse or better."""
     before = {r["key"]: r for r in rows(old) if r["of"] > 0}
     after = {r["key"]: r for r in rows(new) if r["of"] > 0}
     both = sorted(set(before) & set(after))
@@ -184,8 +181,7 @@ def _tasks(results: dict) -> set[tuple[str, str]]:
 
 
 def previous_run(results: dict, directory: Path) -> dict | None:
-    """The newest kept run of the same stack and model that started before ``results`` and shares a benchmark with
-    it: the same name, runner and task hash."""
+    """The newest earlier run of the same stack and model sharing a benchmark (name, runner and task hash)."""
     keys = _tasks(results)
     started = float(results.get("started") or math.inf)
     earlier = [r for _, r in load_history(directory, results.get("stack"), results.get("model"))

@@ -62,8 +62,7 @@ def _glob(name: str, pattern: str) -> bool:
 
 
 def _native(pattern: str) -> bool:
-    """A native tool (view_data, assemble_map, ...): lowercase names the trace does not record.
-    Device tools are <Class>_<command>, so a pattern starting with a capital or a wildcard is one."""
+    """Whether a pattern names a native tool; device tools are <Class>_<command>."""
     return pattern[:1].islower()
 
 
@@ -92,9 +91,7 @@ def _failures(run: Run, pattern: str) -> list[str]:
 
 
 def _attempted_names(run: Run, run_job_allowed: bool = False) -> list[str]:
-    """The high-risk candidates of a run: its traced instrument calls (the job device's reserve and start
-    that run_job made are its own, traced with via "run_job": left out when run_job is allowed), else
-    the model's calls."""
+    """The high-risk candidates of a run: its traced instrument calls, else the model's."""
     traced = [str(e["action"]) for e in run.events if e.get("source") == "mcp" and not (run_job_allowed and e.get("via") == "run_job")]
     if any(e.get("source") == "mcp" for e in run.events) or not run.has_calls:
         return traced
@@ -736,8 +733,7 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
 
 
 def _placements(run: Run) -> list[dict]:
-    """The records of the agent's place_image calls, as the analysis server returned them, and of the placements a
-    Mapper zoom job made (one per tier that took an image), in the same shape."""
+    """The agent's place_image records and a Mapper zoom's placements, in one shape."""
     out = []
     for c in run.calls:
         if c.ok and c.name == "place_image":

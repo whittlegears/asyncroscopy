@@ -58,6 +58,7 @@ from asyncroscopy import settings
 from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
+from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_operator_url
 from asyncroscopy.mcp.fingerprint import digest
 from asyncroscopy.sim.truth_score import median_error
 from asyncroscopy.skills.registry import list_skills
@@ -88,7 +89,7 @@ STAGE_SETTLE_S = 600.0  # The longest a stage move home may take. The mapping tw
 TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # one file per failed run with its messages and calls
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
-STACK_DEFAULTS = {"mcp": "http://127.0.0.1:8000/mcp", "operator": "http://127.0.0.1:8001/mcp", "tiled": "http://127.0.0.1:9091"}
+STACK_DEFAULTS = {"mcp": DEFAULT_MCP_URL, "operator": default_operator_url, "tiled": DEFAULT_TILED_URI}
 # The stack being run, set by main. It holds the run_servers config and the addresses it serves.
 STACK: dict[str, str] = {**STACK_DEFAULTS, "name": "twin"}
 # Each setup map is side, field of view, per tile actions and scored. large_map has enough tiles to need zooming.
@@ -155,8 +156,7 @@ def _names_used(code: Any) -> set[str]:
 
 
 def check_source(fn: Any) -> dict[str, str]:
-    """The source a check runs: its function and every function, class and value of workflow_checks it reaches by
-    name, as {name: source}. Code from other modules is not followed."""
+    """{name: source} of a check and everything of workflow_checks it reaches by name."""
     sources: dict[str, str] = {}
     todo = [fn.__name__]
     while todo:
@@ -179,7 +179,7 @@ def check_source(fn: Any) -> dict[str, str]:
 
 
 def task_hash(entry: dict) -> str:
-    """A benchmark's identity: its YAML entry as written (its reference included) and the source of the checks it uses."""
+    """A benchmark's identity: its YAML entry as written and the source of its checks."""
     used = sorted({spec.get("check") for spec in entry.get("checks") or [] if isinstance(spec, dict) and spec.get("check") in CHECKS})
     return digest({"entry": entry, "checks": {name: check_source(CHECKS[name]) for name in used}})
 
@@ -980,15 +980,13 @@ def markdown(results: dict) -> str:
 
 
 def evaluator_versions(names: list[str]) -> dict[str, str]:
-    """{name: version} of the evaluators a run scores with, so scores of different versions are never mixed."""
+    """{name: version} of the evaluators a run scores with."""
     known = known_evaluators()
     return {name: known[name].version for name in names}
 
 
 def apply_skills(choice: str | None, off: str | None, environ: dict | None = None) -> dict:
-    """Set ASYNCROSCOPY_SKILLS and ASYNCROSCOPY_SKILLS_OFF for this run from --skills and --skills-off, and return
-    what the results keep: {"on", "off", "enabled"}. ``choice`` is on, off, or skill names (only those);
-    None leaves the environment as it is."""
+    """Set ASYNCROSCOPY_SKILLS and ASYNCROSCOPY_SKILLS_OFF from --skills and --skills-off; returns the results' ``skills``."""
     environ = os.environ if environ is None else environ
     hidden = [name.strip() for name in (off or "").split(",") if name.strip()]
     if choice == "off":
