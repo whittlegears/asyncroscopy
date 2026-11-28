@@ -7,7 +7,8 @@ Two files, both keyed by the stack's ``stack_id``:
 
 - the permissions file (``mcp.permissions_file``, else ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
   ``outputs/permissions/permissions.json``): what people set, ``{"groups": {...}, "tools": {name: permission}}``;
-- beside it, ``<name>.state.json``: the agent endpoint's tools as it last published them, and the held calls.
+- beside it, ``<name>.state.json``: the agent endpoint's tools as it last published them, the held calls, and the
+  calls a workflow sign-off pre-approves for one hardware run (``grant_run``; ``docs/MCP/twin_to_instrument.md``).
 
 The agent endpoint and the operator endpoint are separate processes, so every read and write takes a lock
 shared between processes (``<name>.lock``).
@@ -42,6 +43,10 @@ def canonical_json(arguments: dict[str, Any] | None) -> str:
 
 def arguments_sha256(arguments: dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical_json(arguments).encode("utf-8")).hexdigest()
+
+
+def run_key_sha256(run_key: str) -> str:
+    return hashlib.sha256(str(run_key).encode("utf-8")).hexdigest()
 
 
 def iso_utc(seconds: float) -> str:
@@ -172,12 +177,14 @@ class PermissionStore:
             del requests[request_id]
         return requests
 
-    def request(self, tool: str, arguments: dict[str, Any], acts: bool, risk: str, requested_by: str | None) -> dict[str, Any]:
+    def request(self, tool: str, arguments: dict[str, Any], acts: bool, risk: str, requested_by: str | None,
+                signoff: dict[str, Any] | None = None) -> dict[str, Any]:
         """A call of an ``approve`` tool: the request it makes or matches, with ``status`` pending, approved or denied.
 
         A request matches the same tool, the same canonical arguments and the same caller (``requested_by``), so another
         caller's identical call cannot use an approval meant for someone else. An approved request is consumed here, so
-        the call it approved runs once.
+        the call it approved runs once. ``signoff``: for a call of a hardware run that a workflow sign-off pre-approved
+        but that the sign-off does not cover, who signed off and why it is held; kept with a new request.
         """
         digest = arguments_sha256(arguments)
         with self._locked():
@@ -192,7 +199,7 @@ class PermissionStore:
                 found = {"request_id": str(uuid.uuid4()), "tool": tool, "arguments": json.loads(canonical_json(arguments)),
                          "arguments_sha256": digest, "acts": bool(acts), "risk": risk, "requested_at": iso_utc(now),
                          "expires_at": iso_utc(now + self._ttl(state[self.stack_id])), "requested_by": requested_by,
-                         "status": "pending"}
+                         "status": "pending", **({"signoff": dict(signoff)} if signoff else {})}
                 requests[found["request_id"]] = found
             self._write(self.state_path, state)
             return dict(found)
@@ -203,7 +210,8 @@ class PermissionStore:
             requests = self._live_requests(state)
             self._write(self.state_path, state)
         shown = ("request_id", "tool", "arguments", "acts", "risk", "requested_at", "expires_at", "requested_by")
-        return [{k: r.get(k) for k in shown} for r in sorted(requests.values(), key=lambda r: r["requested_at"]) if r["status"] == "pending"]
+        return [{**{k: r.get(k) for k in shown}, **({"signoff": r["signoff"]} if r.get("signoff") else {})}
+                for r in sorted(requests.values(), key=lambda r: r["requested_at"]) if r["status"] == "pending"]
 
     def _decide(self, request_id: str, status: str, reason: str | None = None) -> dict[str, Any]:
         with self._locked():
@@ -228,3 +236,50 @@ class PermissionStore:
 
     def deny(self, request_id: str, reason: str) -> dict[str, Any]:
         return self._decide(request_id, "denied", str(reason))
+
+    def _live_runs(self, state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        runs = state.setdefault(self.stack_id, {}).setdefault("runs", {})
+        now = self.clock()
+        for run_id in [r for r, grant in runs.items() if seconds_of(grant["expires_at"]) <= now]:
+            del runs[run_id]
+        return runs
+
+    def grant_run(self, run_id: str, run_key_digest: str, calls: list[dict[str, Any]], approved_by: str, approver: str,
+                  workflow: str, hash_: str, rehearsal_run_id: str | None = None) -> dict[str, Any]:
+        """Pre-approve, for the hardware run ``run_id`` only, every call a workflow's passing rehearsal made: each
+        ``{"tool", "arguments"}`` as the rehearsal sent it. A call of that run (its ``X-Asyncroscopy-Run`` header, with
+        the run key whose SHA-256 is ``run_key_digest``) of the same tool with the same arguments, once both are validated
+        by the gate, is not held. It expires after ``approval_ttl_s`` or when ``end_run`` removes it. A new grant for the
+        same run replaces the old one. Returns the grant without its calls."""
+        if not str(run_id).strip() or len(str(run_key_digest)) != 64:
+            raise ValueError("a run pre-approval needs the run id and the SHA-256 of the run key")
+        if not str(approver or "").strip() or not str(approved_by).startswith("workflow_signoff:"):
+            raise ValueError("a run pre-approval names the sign-off (approved_by workflow_signoff:<workflow>@<hash>) and the approver")
+        kept = [{"tool": str(c["tool"]), "arguments": json.loads(canonical_json(c.get("arguments") or {}))} for c in calls]
+        with self._locked():
+            state = self._read(self.state_path)
+            runs = self._live_runs(state)
+            now = self.clock()
+            grant = {"run_id": str(run_id), "run_key_sha256": str(run_key_digest), "approved_by": str(approved_by), "approver": str(approver).strip(),
+                     "workflow": str(workflow), "hash": str(hash_), "rehearsal_run_id": rehearsal_run_id, "granted_at": iso_utc(now),
+                     "expires_at": iso_utc(now + self._ttl(state[self.stack_id])), "calls": kept}
+            runs[str(run_id)] = grant
+            self._write(self.state_path, state)
+        return {k: v for k, v in grant.items() if k != "calls"} | {"calls": len(kept)}
+
+    def run_grant(self, run_id: str) -> dict[str, Any] | None:
+        """The live pre-approval of the hardware run ``run_id``, with its calls, or None."""
+        if not run_id:
+            return None
+        with self._locked():
+            state = self._read(self.state_path)
+            found = self._live_runs(state).get(str(run_id))
+        return dict(found) if found else None
+
+    def end_run(self, run_id: str) -> dict[str, Any] | None:
+        """Remove the pre-approval of ``run_id`` (the run ended or was stopped). Returns what was removed, without its calls."""
+        with self._locked():
+            state = self._read(self.state_path)
+            removed = self._live_runs(state).pop(str(run_id), None)
+            self._write(self.state_path, state)
+        return None if removed is None else {k: v for k, v in removed.items() if k != "calls"} | {"calls": len(removed["calls"])}

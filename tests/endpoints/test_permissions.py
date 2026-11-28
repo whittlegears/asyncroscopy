@@ -5,16 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import socket
 import subprocess
 import sys
-import threading
-import time
 from pathlib import Path
 
 import pytest
-import tango
-import uvicorn
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from langgraph.graph import END, START, StateGraph
@@ -23,7 +18,6 @@ from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
 from asyncroscopy.mcp.components.permissions import always_runs
 from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
-from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.permissions import PermissionStore, iso_utc, seconds_of
 from asyncroscopy.trace.writer import read_tool_log
 from asyncroscopy.workflows.blocks import Block, register_block
@@ -33,24 +27,6 @@ from asyncroscopy.workflows.runner import resume_workflow, run_workflow
 DOSE = "SAMPLE_get_dose"
 SAMPLE = "asyncroscopy/sample/mapping"
 TWIN = "asyncroscopy/digitaltwin/default"
-
-
-@pytest.fixture
-def stack(monkeypatch, tango_ctx, tmp_path):
-    """make(role, *devices, needs_approval=...) -> an MCPServer on the session devices, sharing one permissions file."""
-    monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: tango.DeviceProxy(tango_ctx.get_device_access(name)))
-    permissions_file = tmp_path / "permissions.json"
-
-    def make(role, *names, needs_approval=None, urls=None, **extra):
-        database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(names)})()})()
-        server = MCPServer("perm-test", "localhost", 1, blocked_classes=[], needs_approval=needs_approval or {},
-                           data_device_address="asyncroscopy/data/default", verbose=False, endpoint_role=role, database=database,
-                           permissions_file=str(permissions_file), urls=urls, **extra)
-        server.setup(print_summary=False)
-        return server
-
-    make.permissions_file = permissions_file
-    return make
 
 
 async def call(server, name, arguments=None):
@@ -295,32 +271,6 @@ def dose_workflow() -> Workflow:
 
     return Workflow(name="held_dose", summary="Read the dose once, through a tool a person must approve.", inputs={},
                     budget={"max_tool_calls": 20}, build=build)
-
-
-@pytest.fixture
-def served():
-    """serve(server) -> its HTTP address, from uvicorn in a thread on a free 127.0.0.1 port."""
-    running = []
-
-    def serve(server):
-        probe = socket.socket()
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        web = uvicorn.Server(uvicorn.Config(server.mcp.http_app(), host="127.0.0.1", port=port, log_level="warning"))
-        thread = threading.Thread(target=web.run, daemon=True)
-        thread.start()
-        running.append((web, thread))
-        deadline = time.monotonic() + 20
-        while not web.started:
-            assert time.monotonic() < deadline, "the test MCP server did not start"
-            time.sleep(0.05)
-        return f"http://127.0.0.1:{port}/mcp"
-
-    yield serve
-    for web, thread in running:
-        web.should_exit = True
-        thread.join(10)
 
 
 def test_a_workflow_pauses_on_a_held_call_and_resumes_once_it_is_approved(stack, served, tmp_path):

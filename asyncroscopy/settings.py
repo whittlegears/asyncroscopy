@@ -68,6 +68,7 @@ class Settings:
     operator_url: str | None
     analysis_url: str | None
     mcp_token: str | None = field(repr=False)
+    operator_token: str | None = field(repr=False)
     tiled_uri: str | None
     tiled_public_uri: str
     tiled_api_key: str | None = field(repr=False)
@@ -124,6 +125,7 @@ class Settings:
             operator_url=env.get("ASYNCROSCOPY_OPERATOR_URL") or None,
             analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,
             mcp_token=env.get("ASYNCROSCOPY_MCP_TOKEN") or None,
+            operator_token=env.get("ASYNCROSCOPY_OPERATOR_TOKEN") or None,
             tiled_uri=env.get("ASYNCROSCOPY_TILED_URI") or None,
             tiled_public_uri=env.get("ASYNCROSCOPY_TILED_PUBLIC_URI", "").strip().rstrip("/"),
             tiled_api_key=env.get("ASYNCROSCOPY_TILED_API_KEY"),  # "" is a key an operator set on purpose

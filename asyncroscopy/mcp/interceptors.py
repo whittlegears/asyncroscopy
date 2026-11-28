@@ -56,7 +56,7 @@ class Call:
 
 class Interceptor:
     """Base class: does nothing, applies to every tool. ``order`` places it in the list (lowest first):
-    10 the preview, 20 logging and the trace, 30 job checks,
+    10 the preview, 15 the workflow sign-off stamp, 20 logging and the trace, 30 job checks,
     50 job stamping after it, 60 the token subject."""
 
     order = 100

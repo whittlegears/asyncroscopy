@@ -47,10 +47,12 @@ NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "get_permissions": ("setting.read", "low", False, False),
     "set_permission": ("setting.set", "high", True, False),
     "set_group_permission": ("setting.set", "high", True, False),
+    "preapprove_run": ("other", "high", True, False),
+    "end_run_preapproval": ("other", "low", True, False),
 }
 # The operator endpoint's permission tools: the person's console, so a token needs the approve role for each.
 person_only_natives = frozenset({"list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
-                                 "set_group_permission"})
+                                 "set_group_permission", "preapprove_run", "end_run_preapproval"})
 # Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})
 

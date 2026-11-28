@@ -90,6 +90,7 @@ class AgentMCPServer:
         workflows_hardware: bool = False,
         endpoint_role: str = "agent",
         urls: dict[str, str | None] | None = None,
+        workflow_instruments: list[str] | None = None,
     ) -> None:
         """
         Args:
@@ -108,6 +109,9 @@ class AgentMCPServer:
             endpoint_role (str): "agent" (default) serves the swarm and the workflow tools. "operator" serves only
                 the workflow review, approve and reject tools, for a person; no swarm and no model.
             urls (dict): The other endpoints endpoint_info reports (``asyncroscopy.core.names.endpoint_url_names``), from the config.
+            workflow_instruments (list[str]): Other instrument endpoints, by URL, that workflows may run on and be
+                reviewed for (``instrument_url``), such as the real instrument a twin in ``mcp_urls`` is paired with.
+                No other URL is accepted.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -119,7 +123,8 @@ class AgentMCPServer:
             from asyncroscopy.workflows.server import Endpoints, WorkflowServer
 
             self.swarm = None
-            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="workflow-operator"), name=name)
+            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="workflow-operator",
+                                                      instruments=workflow_instruments), name=name)
             self.mcp = FastMCP(name)
             self._query_lock = asyncio.Lock()
             return
@@ -139,8 +144,8 @@ class AgentMCPServer:
         if workflows or workflows_hardware:
             from asyncroscopy.workflows.server import Endpoints, WorkflowServer
 
-            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow"),
-                                            hardware=workflows_hardware)
+            self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow",
+                                                      instruments=workflow_instruments), hardware=workflows_hardware)
 
         # Swarm must be initialized inside the server's own event loop
         @asynccontextmanager
@@ -160,16 +165,19 @@ class AgentMCPServer:
         return [StructuredTool.from_function(coroutine=fn, name=fn.__name__, description=fn.__doc__) for fn in self.workflows.tools()]
 
     def endpoint_info(self) -> dict:
-        """For apps, not models. On the agent server: role 'agent_server', the services it offers (services.workflows: key -> tool name)
-        and the other endpoints (urls). On the workflow operator endpoint: role 'operator', serves 'workflow_approvals',
-        the library and run folder it reads, the tools it offers."""
+        """For apps, not models. On the agent server: role 'agent_server', the services it offers (services.workflows: key -> tool name),
+        the other endpoints (urls) and the instrument endpoints workflows run on (workflow_instruments, the default first).
+        On the workflow operator endpoint: role 'operator', serves 'workflow_approvals', the library and run folder it
+        reads, the tools it offers and the instrument endpoints it reviews for (workflow_instruments)."""
         if self.endpoint_role == "agent":
             offered = {fn.__name__ for fn in self.workflows.tools()} if self.workflows is not None else set()
             workflows = {verb: name for verb, name in workflow_services.items() if name in offered}
-            return {"role": "agent_server", "urls": dict(self.urls), "services": {"workflows": workflows} if workflows else {}}
+            return {"role": "agent_server", "urls": dict(self.urls), "services": {"workflows": workflows} if workflows else {},
+                    "workflow_instruments": list(self.workflows.endpoints.instruments) if self.workflows is not None else []}
         return {"role": self.endpoint_role, "serves": "workflow_approvals", "urls": dict(self.urls),
                 "library": str(self.workflows.library.root.resolve()), "state_dir": str(self.workflows.state_dir.resolve()),
-                "tools": [fn.__name__ for fn in self.workflows.operator_tools()]}
+                "tools": [fn.__name__ for fn in self.workflows.operator_tools()],
+                "workflow_instruments": list(self.workflows.endpoints.instruments)}
 
     def action_space(self) -> dict:
         """For apps, not models: the workflow operator controls, in the instrument endpoints' action-space shape."""
@@ -328,6 +336,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--urls-json", default="{}", help='{"operator", "agent_server", "workflow_operator", "tiled", "analysis": URL}: the endpoints endpoint_info reports.')
     parser.add_argument("--allowed-hosts-json", default="[]", help="Hosts besides the bind host and this computer that requests may name in Host or Origin.")
+    parser.add_argument("--workflow-instruments-json", default="[]",
+                        help="Other instrument endpoint URLs workflows may run on (run_workflow's instrument_url), besides the first of --mcp-urls-json.")
     return parser.parse_args(argv)
 
 
@@ -367,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
         workflows_hardware=args.workflows_hardware,
         endpoint_role=args.endpoint_role,
         urls=json.loads(args.urls_json),
+        workflow_instruments=json.loads(args.workflow_instruments_json),
     )
     if args.transport == "streamable-http":
         print(

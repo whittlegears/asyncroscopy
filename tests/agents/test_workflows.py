@@ -14,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from asyncroscopy.workflows.blocks import Block, register_block
 from asyncroscopy.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
 from asyncroscopy.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
+from asyncroscopy.workflows.server import Endpoints
 from asyncroscopy.workflows.values import evaluate
 
 
@@ -461,12 +462,14 @@ def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
 
 
 # The MCP server an agent uses
-class FakeEndpoints:
+class FakeEndpoints(Endpoints):
     def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1", software="v1"):
+        super().__init__("fake://instrument", caller="workflow-test")
         self.instrument, self.analysis, self.simulated, self.stack_id = instrument, analysis, simulated, stack_id
         self.fingerprint, self.software = fingerprint, software
 
-    async def open(self, run_id=None):
+    async def open(self, run_id=None, caller=None, instrument_url=None, run_key=None):
+        self.url(instrument_url)
         return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id,
                                                 "stack_fingerprint": {"digest": self.fingerprint, "software": {"commit": self.software},
                                                                       "simulated": {"value": self.simulated}}}
@@ -1393,3 +1396,52 @@ def test_a_resumed_node_replays_its_completed_calls_unless_a_cleanup_ran_in_betw
     assert record["state"] == "done", record
     assert instrument.names().count("Twin_get_stage") == sent
     assert not (tmp_path / "runs" / f"{record['run_id']}.journal.json").exists()
+
+
+def test_the_review_shows_the_rehearsals_results_its_calls_and_what_changed_since_the_last_approval(tmp_path):
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+    from asyncroscopy.workflows.view import render_html
+
+    library = Library(tmp_path / "library")
+    instrument, analysis, _ = twin()
+    server = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "state", library=library)
+    review, _, _ = server.operator_tools()
+    assert library.propose(TEMPLATE, request=ASKED, context="the sample is gold on carbon")["ok"]
+    run_workflow_tool = {fn.__name__: fn for fn in server.tools()}["run_workflow"]
+    record = run(run_workflow_tool("tiles_only", {"size_m": 5e-7}, 30.0))
+    assert record["state"] == "done" and record["results"]["data_keys"] == [f"stem_image_HAADF_{n:04d}.h5" for n in range(1, 5)]
+    card = run(review(name="tiles_only"))
+    assert card["context_as_reported_by_agent"] == {"text": "the sample is gold on carbon", "this_code": True}
+    rehearsal = card["rehearsal"]
+    assert rehearsal["run_id"] == record["run_id"] and rehearsal["stack_fingerprint"]["digest"] == "twin-1"
+    assert rehearsal["results"]["data_keys"] == record["results"]["data_keys"] and rehearsal["results"]["map"] is None
+    score = rehearsal["results"]["twin_score"]
+    assert score["known"] is False and "no operator endpoint" in score["why"] and rehearsal["results"]["dose"] is None
+    moves = [c for c in rehearsal["calls_made"] if c["tool"] == "Twin_move_stage"]
+    assert len(moves) == 5 and all(c["server"] == "instrument" and c["count"] >= 1 for c in moves)
+    assert sum(c["count"] for c in rehearsal["calls_made"]) == record["calls"]
+    assert card["rehearsals"][-1]["results"] == rehearsal["results"]
+    page = render_html(library)
+    assert "<b>Last rehearsal</b>: 4 data key(s)" in page and "no twin score: the stack reports no operator endpoint" in page
+
+    library.approve("tiles_only", "sam")
+    library.revoke("tiles_only")
+    assert library.propose(TEMPLATE.replace("max_visits=400", "max_visits=300"), request=ASKED)["ok"]
+    card = run(review(name="tiles_only"))
+    assert card["last_approved"]["by"] == "sam" and card["last_approved"]["hash"] != card["hash"]
+    assert "-    graph.add_conditional_edges(\"tile\", use.when(\"tile.remaining > 0\", then=\"tile\", otherwise=\"home\", max_visits=400))" in card["diff_from_last_approved"]
+    assert "+    graph.add_conditional_edges(\"tile\", use.when(\"tile.remaining > 0\", then=\"tile\", otherwise=\"home\", max_visits=300))" in card["diff_from_last_approved"]
+    assert card["rehearsal"] is None and card["context_as_reported_by_agent"] is None
+
+
+def test_a_workflow_server_acts_only_on_the_instrument_endpoints_it_was_configured_with():
+    endpoints = Endpoints("http://127.0.0.1:8000/mcp", instruments=["http://127.0.0.1:9000/mcp", "http://127.0.0.1:8000/mcp"])
+    assert endpoints.instruments == ["http://127.0.0.1:8000/mcp", "http://127.0.0.1:9000/mcp"]
+    assert endpoints.url(None) == endpoints.url("") == "http://127.0.0.1:8000/mcp"
+    assert endpoints.url("http://127.0.0.1:9000/mcp") == "http://127.0.0.1:9000/mcp"
+    with pytest.raises(LookupError, match="not an instrument endpoint this workflow server acts on"):
+        endpoints.url("http://evil.example/mcp")
+    assert endpoints.operator({"urls": {}}) is None
+    assert endpoints.operator({"urls": {"operator": "http://127.0.0.1:8001/mcp"}}).url == "http://127.0.0.1:8001/mcp"

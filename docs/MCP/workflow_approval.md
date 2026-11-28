@@ -73,9 +73,14 @@ nothing was changed.
 
 ## Tools
 
-### `review_workflow(name: str)`
+### `review_workflow(name: str, instrument_url: str | null = null)`
 
-This tool only reads. The reply:
+This tool only reads. `instrument_url` is the instrument endpoint the approval would be for, one of the endpoints
+the server acts on (`endpoint_info.workflow_instruments`; the first when left out); a rehearsal must match its
+`stack_fingerprint`. The reply below is extended for the sign-off card with `instrument_url`,
+`context_as_reported_by_agent`, `last_approved`, `diff_from_last_approved`, `stack_fingerprint`, `rehearsal` (the
+latest passing rehearsal with its results and every call it made) and `results` on each rehearsal:
+[Twin to instrument](twin_to_instrument.md) gives their exact shapes. The reply:
 
 ```json
 {
@@ -132,12 +137,12 @@ This tool only reads. The reply:
   does that before every run.
 - Times (`at`) are Unix seconds.
 
-### `approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | null = null, days: float | null = null)`
+### `approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | null = null, days: float | null = null, instrument_url: str | null = null)`
 
 This tool approves the workflow the person reviewed. `expected_hash` is the `hash` from the `review_workflow` reply
 they read; the approval record keeps it as `hash`. `approver` is the person's name. `instrument` is the `stack_id` that
 the approval is for; `null` or `"any"` means every instrument. `days` is how long the approval holds; `null` means
-until it is revoked.
+until it is revoked. `instrument_url` is as for `review_workflow`; pass the value the review used.
 
 The tool refuses (`ok: false`) when:
 
@@ -163,7 +168,8 @@ The reply when it succeeds:
 
 `request` is the proposing agent's account of the user's request (`request_as_reported_by_agent` in the review),
 kept with the approval; it is not the person's own record. `rehearsed` is the last run of this code on a twin that
-reached `done`, with the inputs it ran with. `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
+reached `done` on a stack that counts for `instrument_url` (the review's `rehearsal`), with the inputs it ran with. Its
+calls are the ones a hardware run of the workflow gets pre-approved ([Twin to instrument](twin_to_instrument.md)). `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
 earlier rejection.
 
 ### `reject_workflow(name: str, reason: str, expected_hash: str)`
