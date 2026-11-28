@@ -40,7 +40,7 @@ from tango.server import device_property
 
 from asyncroscopy.contracts import ENVELOPE_VERSION
 from asyncroscopy.data.record import current_sample, record_fields
-from asyncroscopy.jobs.job_device import JobDevice, done_count
+from asyncroscopy.jobs.job_device import JobDevice, device_read_timeout_s, done_count
 from asyncroscopy.routines.grid import EDGE_TOLERANCE_M, inside_box
 
 from . import live_drift, plan as plans
@@ -105,7 +105,7 @@ class Mapper(JobDevice):
             return float(self.stage_sigma_m)
         if self.stage_device_address:
             try:
-                reported = float(self.proxy(self.stage_device_address, timeout_s=3.0).read_attribute("position_sigma_m").value)
+                reported = float(self.proxy(self.stage_device_address, timeout_s=device_read_timeout_s).read_attribute("position_sigma_m").value)
             except (tango.DevFailed, AttributeError, TypeError, ValueError):
                 reported = 0.0
             if reported > 0:
@@ -172,7 +172,7 @@ class Mapper(JobDevice):
             needs.setdefault(self.microscope_device_address, []).extend(shift_commands)
         for address, commands in needs.items():
             try:
-                offered = {str(n).lower() for n in self.proxy(address, timeout_s=3.0).get_command_list()}
+                offered = {str(n).lower() for n in self.proxy(address, timeout_s=device_read_timeout_s).get_command_list()}
             except Exception as exc:  # device down: the job's first step would fail the same way
                 raise ValueError(f"the {profile.name!r} instrument profile drives {address}, which did not answer ({str(exc).strip().splitlines()[0][:200]})") from None
             missing = [c for c in dict.fromkeys(commands) if c.lower() not in offered]
@@ -313,7 +313,7 @@ class Mapper(JobDevice):
         """Which sample is loaded (record.current_sample), from the SAMPLE device; nulls and why when it cannot say."""
         address = self.sample_device_address
         try:
-            sample = self.proxy(address, timeout_s=3.0) if address else None
+            sample = self.proxy(address, timeout_s=device_read_timeout_s) if address else None
         except Exception as exc:
             return {"sample_id": None, "sample_load_id": None, "sample_error": f"no proxy to {address}: {str(exc).splitlines()[0][:200]}"}
         return current_sample(sample)

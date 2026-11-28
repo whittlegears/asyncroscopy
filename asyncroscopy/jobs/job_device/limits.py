@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from .dry_run import device_read_timeout_s
 from .errors import JobError
 
 VIOLATIONS_SHOWN = 20
@@ -61,7 +62,7 @@ class LimitChecks:
     def _attribute_limits(self, device: str, attribute: str) -> tuple[float | None, float | None] | str:
         """(min, max) from the attribute's Tango config, or why they could not be read."""
         try:
-            config = self.proxy(device, timeout_s=3.0).get_attribute_config(attribute)
+            config = self.proxy(device, timeout_s=device_read_timeout_s).get_attribute_config(attribute)
         except Exception as exc:  # device down or no such attribute
             return f"could not read its limits: {exc}".splitlines()[0][:200]
         return _limit(config.min_value), _limit(config.max_value)

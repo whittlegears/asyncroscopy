@@ -55,6 +55,7 @@ recorded in a dry run even when its name says it only reads (an SPM ``get_image`
 from __future__ import annotations
 
 from .device import JobDevice
+from .dry_run import device_read_timeout_s
 from .errors import JobError
 from .progress import done_count, done_ranges_from, is_done, mark_done, read_last_steps, step_count
 from .suspenders import parse_suspenders, suspender_problem
@@ -64,6 +65,7 @@ __all__ = [
     "JobDevice",
     "JobError",
     "done_count",
+    "device_read_timeout_s",
     "done_ranges_from",
     "is_done",
     "lease_seconds",

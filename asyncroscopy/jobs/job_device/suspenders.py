@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Any
 
+from .dry_run import device_read_timeout_s
 
 SUSPENDER_KEYS = {"attr", "min", "max", "equals", "resume_after_s", "label"}
 
@@ -65,7 +66,7 @@ class SuspenderChecks:
         for index, suspender in enumerate(self._suspenders):
             device, attribute = suspender["attr"].rsplit("/", 1)
             try:
-                value = self.proxy(device, timeout_s=3.0).read_attribute(attribute).value
+                value = self.proxy(device, timeout_s=device_read_timeout_s).read_attribute(attribute).value
             except Exception as exc:
                 problems.append((index, f"{suspender['label']}: could not read {suspender['attr']} ({str(exc).splitlines()[0][:120]})"))
                 continue

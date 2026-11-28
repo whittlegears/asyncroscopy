@@ -9,6 +9,9 @@ import tango
 from asyncroscopy.jobs.recording_proxy import RecordingProxy
 from .worker import WORKER
 
+device_read_timeout_s = 3.0
+
+
 class DryRunCalls:
     """``proxy`` and the record of a dry run's calls."""
 
