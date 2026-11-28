@@ -26,8 +26,8 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ..graph import Steps, Workflow, WorkflowState
-from ..survey_blocks import MAX_SPECTRA_POINTS, MAX_SURVEY_TILES
+from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows.survey_blocks import MAX_SPECTRA_POINTS, MAX_SURVEY_TILES
 
 # Cap on visits of the tile node over the whole run. With batch 1 every tile is a visit, and every spectra stop and
 # every level adds one more, so any plan plan_survey accepts fits under it.

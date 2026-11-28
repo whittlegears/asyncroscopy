@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ..graph import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "map": {"type": "string", "doc": "The stitched map's key (scored: made with find_regions, or scored with score_map)."},

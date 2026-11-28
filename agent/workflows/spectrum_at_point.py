@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ..graph import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "x_m": {"type": "number", "min": -3.0e-3, "max": 3.0e-3, "doc": "Stage x of the point, metres, copied exactly from where it came from."},

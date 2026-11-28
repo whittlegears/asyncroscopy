@@ -2,7 +2,7 @@
 
 A workflow has one of three statuses.
 
-* **shipped** is a module under ``graphs/``. It is reviewed in the repository like any other code.
+* **shipped** is a module in ``agent/workflows/``. It is reviewed in the repository like any other code.
 * **approved** was proposed and then approved by a person. The approval names the workflow by its hash, which
   covers its code and the code of every block it uses. If either changes it is a draft again.
 * **draft** was proposed and is not approved, or changed after it was approved. It is kept with the words of the

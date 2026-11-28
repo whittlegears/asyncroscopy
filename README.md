@@ -41,7 +41,7 @@ On a real instrument use its config instead, for example `configs/Spectra300.yam
 | Long jobs (map acquisition) as reserve / start / job_status / abort / results / release | `Mapper` device, [asyncroscopy/contracts](asyncroscopy/contracts/README.md) |
 | An Instrument Trace of every agent call | [docs/Operation/trace.md](docs/Operation/trace.md) |
 | Stitching, zoomable maps in Tiled, region scoring and points of interest | analysis MCP server, [docs/Operation/agentic_mapping.md](docs/Operation/agentic_mapping.md) |
-| LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `asyncroscopy/skills`, `langgraph.json` |
+| LangGraph agents (`mapping`, `general`) that run in LangGraph Studio, and skills agents load on demand | `asyncroscopy/agents`, `agent/skills` (see `agent/README.md`), `langgraph.json` |
 | Calibrating the twin to your instrument | `asyncroscopy/calibration` |
 
 Start only the segmentation Tango device against an existing Tango/DATA/Tiled stack:

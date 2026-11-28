@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ..graph import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "size_m": {"type": "number", "default": 6.0e-7, "min": 5.0e-8, "max": 2.0e-5,

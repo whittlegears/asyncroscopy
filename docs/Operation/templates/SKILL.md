@@ -8,7 +8,7 @@ tools: [XRDTwin_get_status, XRDTwin_xray_on, XRDTwin_set_start_deg, XRDTwin_set_
 acts: true   # following it moves or exposes the instrument; false for a skill that only reads data
 ---
 
-<!-- Template: copy this file to asyncroscopy/skills/<name>/SKILL.md (or to <dir>/<name>/SKILL.md
+<!-- Template: copy this file to agent/skills/<name>/SKILL.md (or to <dir>/<name>/SKILL.md
      with <dir> listed in ASYNCROSCOPY_SKILLS_PATH), rename it, and replace the steps with your
      instrument's. Check it with: uv run python -m asyncroscopy.agents.skills lint <path>
      Agents get it automatically when a request contains its keywords. Agents never see

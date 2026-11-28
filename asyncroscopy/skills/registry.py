@@ -28,7 +28,8 @@ passages for that step (``asyncroscopy.skills.index``, see
 ``asyncroscopy.agents.skill_middleware``); ``load_skill`` remains for an
 agent whose matched skill did not fit, and for MCP clients.
 
-Skills come from this package's folders and from any directory listed in
+Skills come from ``<agent_dir>/skills`` (``$ASYNCROSCOPY_AGENT_DIR``, default the
+repository's ``agent/`` folder; see ``agent/README.md``) and from any directory listed in
 ``$ASYNCROSCOPY_SKILLS_PATH`` (``os.pathsep``-separated), so a lab can keep
 its own skills outside the repository; an outside skill replaces a packaged
 one with the same name. Each folder and file is read once and read again only when
@@ -188,17 +189,22 @@ def _parse(path: Path) -> Skill:
         skill.problem = f"written for envelope schema {skill.envelope_schema}, installed {ENVELOPE_VERSION}"
     if meta.get("run") is not None and skill.problem is None:
         skill.problem = ("its run list is a fixed procedure, and fixed procedures are LangGraph workflows now: write it as a workflow "
-                         "(asyncroscopy/workflows/graphs, or propose_workflow) and make this skill say when to run it")
+                         "(agent/workflows, or propose_workflow) and make this skill say when to run it")
     return skill
+
+
+def shipped_dir() -> Path:
+    """The shipped skills: ``<agent_dir>/skills`` (``$ASYNCROSCOPY_AGENT_DIR``, default the repository's ``agent/``)."""
+    return settings.get().agent_dir / "skills"
 
 
 def skill_dirs() -> list[Path]:
     """Folders skills are read from, in order: a later one's skill replaces an earlier one's of the same name."""
-    return [HERE, *settings.get().skills_path, settings.get().lab_skills]
+    return [shipped_dir(), *settings.get().skills_path, settings.get().lab_skills]
 
 
 def _source(base: Path) -> str:
-    if base == HERE:
+    if base == shipped_dir():
         return "shipped"
     return "lab" if base == settings.get().lab_skills else "path"
 

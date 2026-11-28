@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from langgraph.graph import END, START, StateGraph
 
-from ..graph import Steps, Workflow, WorkflowState
+from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
 
 INPUTS = {
     "overlap": {"type": "number", "default": 0.3, "min": 0.05, "max": 0.5, "doc": "Fraction of a tile shared with its neighbour."},
