@@ -71,6 +71,8 @@ def save_acquisition(
     The file, and each dataset, records ``acquisition_type``: the action role of the command acquiring it
     (``acting_role``; left out outside such a command). An ``.h5`` file also records ``primary_array``, the
     dataset shown by default (the first one). A TIFF file is a single array.
+
+    instrument_id never comes from device.get_name: a device made without Tango's own initialisation crashes on it.
     """
     if output_format not in (".h5", ".tiff"):
         raise ValueError(f"Unsupported output_format {output_format!r}; expected '.h5' or '.tiff'")
@@ -79,7 +81,6 @@ def save_acquisition(
     if not data_list:
         raise ValueError("save_acquisition called with no data to save (empty detector/data list)")
     attrs_list = dataset_attrs if isinstance(dataset_attrs, list) else [dataset_attrs] * len(data_list)
-    # Never device.get_name here: a device made without Tango's own initialisation crashes on it.
     instrument_id = getattr(device, "instrument_id", None) or type(device).__name__
     sample = current_sample(sample_of(device))
     role = _role()

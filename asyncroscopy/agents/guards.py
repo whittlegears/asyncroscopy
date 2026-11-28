@@ -89,7 +89,10 @@ def _digest(message: ToolMessage) -> str:
 
 
 def fit_messages(messages: list, budget_chars: int) -> list:
-    """The messages, shortened to fit ``budget_chars``; the first and latest requests always stay whole."""
+    """The messages, shortened to fit ``budget_chars``; the first and latest requests always stay whole.
+
+    After shortening, the while loop drops the oldest finished tool rounds, never a request.
+    """
     humans = [i for i, m in enumerate(messages) if getattr(m, "type", "") == "human"]
     first, last_human = (humans[0], humans[-1]) if humans else (None, None)
     tool_indexes = [i for i, m in enumerate(messages) if getattr(m, "type", "") == "tool"]
@@ -109,7 +112,6 @@ def fit_messages(messages: list, budget_chars: int) -> list:
             out.append(AIMessage(_text(m)[:OLD_TEXT_CHARS] + " ...", tool_calls=list(getattr(m, "tool_calls", None) or [])))
         else:
             out.append(m)
-    # Then drop the oldest finished tool rounds, never a request.
     while sum(_size(m) for m in out) > budget_chars:
         drop = None
         for i, m in enumerate(out):

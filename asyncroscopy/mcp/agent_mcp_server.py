@@ -110,6 +110,8 @@ class AgentMCPServer:
             workflow_instruments (list[str]): Other instrument endpoints, by URL, that workflows may run on and be
                 reviewed for (``instrument_url``), such as the real instrument a twin in ``mcp_urls`` is paired with.
                 No other URL is accepted.
+
+        The swarm is started in lifespan, because it must be built inside the server's own event loop.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -145,7 +147,6 @@ class AgentMCPServer:
             self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow",
                                                       instruments=workflow_instruments), hardware=workflows_hardware)
 
-        # The swarm must be built inside the server's own event loop.
         @asynccontextmanager
         async def lifespan(server: FastMCP):
             await self.swarm.start(self.mcp_urls)
@@ -190,7 +191,10 @@ class AgentMCPServer:
                 "instruments": [], "actions": actions, "state": [], "jobs": [], "warnings": []}
 
     def setup(self) -> None:
-        """Register the swarm tools on the FastMCP instance."""
+        """Register the swarm tools on the FastMCP instance.
+
+        The ready line is always printed: the startup GUI reads it.
+        """
         if self.endpoint_role == "operator":
             native = [*self.workflows.operator_tools(), self.endpoint_info, self.action_space]
             for tool_func in native:
@@ -205,7 +209,6 @@ class AgentMCPServer:
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
-        # Always printed: the startup GUI reads this line.
         print(f"MCP ready: {len(native)} tool(s) registered", flush=True)
         if self.workflows is not None:
             where = "simulated stacks and the real instrument" if self.workflows.hardware else "simulated stacks only"

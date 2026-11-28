@@ -15,6 +15,8 @@ A device command's facts come from, in order:
    Tango's own State, Status (low, read) and Init (high, operator only) need no declaration;
 3. the safety policy's name rules (``asyncroscopy.safety.policy``), only for what a device leaves out (a
    third-party device). Unknown is high. The server prints, at startup, which commands fell back to the rules.
+
+NATIVE gives (role, risk, acts, starts a job) for each native tool.
 """
 
 from __future__ import annotations
@@ -30,7 +32,6 @@ from asyncroscopy.core.names import ACTION_HINTS, READ_ROLES, TANGO_ADMIN, TANGO
 from asyncroscopy.mcp.action_roles import role_for
 from asyncroscopy.safety import policy
 
-# (role, risk, acts, starts a job) for each native tool.
 NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "run_job": ("job.run", "high", True, True),
     "wait_for_job": ("job.status", "low", False, False),

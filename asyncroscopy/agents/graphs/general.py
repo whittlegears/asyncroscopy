@@ -6,6 +6,8 @@ skills up: before every model call ``SkillMiddleware`` puts the skills that
 match the request, and those the task has since needed (a failed call, data to
 read), into the system prompt, with notes from the instrument's
 memory (``asyncroscopy.agents.memory``).
+
+SEARCH_RULE is kept short: naming every other tool leaves a small model no room to answer.
 """
 
 from __future__ import annotations
@@ -39,7 +41,6 @@ Rules:
 - Do every step the user asked for, in order, before answering; never say a step was done unless a tool call did it.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone.{extra}"""
 
-# Kept short: naming every other tool leaves a small model no room to answer.
 SEARCH_RULE = """
 - Your tools are a selection. If none fits the request, call find_tools with one or two words (e.g. "holder", "dose", "jobs") and then call_tool with the name it gives; never say the instrument cannot do something before searching."""
 

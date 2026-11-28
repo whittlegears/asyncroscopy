@@ -257,6 +257,7 @@ class TraceStream:
                 self._scan_file(f)
 
     def _scan_file(self, f: _File) -> None:
+        """A file read already under another name is taken as read: its owner reads the rest."""
         for _ in range(3):  # a rotation between stat and open is retried
             st = _stat(f.path)
             if f.known:
@@ -266,7 +267,6 @@ class TraceStream:
                     if st is None:
                         return
                     if st.st_ino and st.st_ino in self._tracked_inos(but=f) and _logical(f.path) != f.path.name:
-                        # Read already under another name: its owner reads the rest, and this name takes it as read.
                         f.ino, f.head, f.read_off, f.known = st.st_ino, self._head(f.path), st.st_size, True
                         if not f.pending:  # otherwise the cursor moves when the old file drains
                             f.committed = self._commit(f, st.st_size, None, f.last_t)

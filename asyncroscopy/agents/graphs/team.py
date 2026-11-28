@@ -188,6 +188,7 @@ class TeamGraph:
         return {"plan": steps or heuristic_plan(state["request"], roles), "step": 0, "notes": [], "trace": [], "retried": False, "skills_applied": []}
 
     async def work(self, state: TeamState) -> TeamState:
+        """run_keeping_partial keeps a failed step's calls, so the retry knows about any job it started."""
         step = state["plan"][state["step"]]
         tools = (await self.tools_by_role())[step["agent"]]
         notes = list(state.get("notes", []))
@@ -199,7 +200,6 @@ class TeamGraph:
                 task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
                         ". Wait for it with wait_for_job (its reply has the results); do not start another job."
         agent = self.specialist(step["agent"], tools, task, notes)
-        # A failed step keeps its calls, so the retry knows about any job it started.
         result, failed = await run_keeping_partial(agent, {"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
         messages, applied = result.get("messages", []), result.get("skills_applied") or []
         calls = trace_from_messages(messages)

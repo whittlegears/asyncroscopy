@@ -161,6 +161,7 @@ def _cached_skill(path: Path) -> Skill:
 
 
 def _parse(path: Path) -> Skill:
+    """A skill that does not say whether it acts counts as acting, as an unknown command counts as high risk."""
     meta, _body = read_front_matter(path)
     for key in ("name", "description"):
         if not meta.get(key):
@@ -181,7 +182,6 @@ def _parse(path: Path) -> Skill:
         new_map=bool(meta.get("new_map", False)),
         enabled=bool(meta.get("enabled", True)),
     )
-    # A skill that does not say counts as acting, as an unknown command counts as high risk.
     skill.acts = bool(meta["acts"]) if "acts" in meta else True
     installed = _installed_version()
     if skill.min_asyncroscopy and installed and _version_tuple(installed) < _version_tuple(str(skill.min_asyncroscopy)):

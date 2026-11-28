@@ -20,7 +20,10 @@ def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str],
     ``offered``: every tool of the endpoint; ``tools``: the LangChain tools (job_wait calls wait_for_job);
     ``catalog``: what the endpoint's tools are (the claim check knows from it which calls acquire or move);
     ``memory``: ``Memory.notes_for``, given the profile's notes budget; ``profile``: the agent profile, whose
-    skill limits and tool gates the skills middleware applies (none of either when None)."""
+    skill limits and tool gates the skills middleware applies (none of either when None).
+
+    claim_check comes last in makers, so it wraps the model call itself.
+    """
     limits = profile.skills if profile is not None else None
     gates = profile.tool_gates if profile is not None else ()
     notes = memory
@@ -32,7 +35,6 @@ def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str],
         "user_words": lambda: UserWordsMiddleware(tools),
         "job_wait": lambda: JobWaitMiddleware(tools, deadline=deadline),
         "empty_reply": EmptyReplyMiddleware,
-        # Last, so it wraps the model call itself.
         "claim_check": lambda: ClaimCheckMiddleware(tool_names, enabled=claim_check, catalog=catalog),
     }
     unknown = [n for n in names if n not in makers]

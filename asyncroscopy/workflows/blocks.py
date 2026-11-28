@@ -3,6 +3,9 @@
 A block declares its inputs, its outputs and the tools it calls. Tool names are glob patterns, as in skills. With
 these a workflow can be checked before anything runs. A block's ``run`` reaches the instrument only through
 ``BlockContext.call``.
+
+LIVE_SCAN_QUESTION offers one option only: an answered step retries before it reads the answer, so stopping takes
+stop_workflow.
 """
 
 from __future__ import annotations
@@ -151,7 +154,6 @@ def parse_reply(text: str) -> Any:
 
 
 LIVE_SCAN = re.compile(r"scan ?task is already active|another scan (?:task )?is (?:already )?(?:active|running)", re.IGNORECASE)
-# One option only: an answered step retries before it reads the answer, so stopping takes stop_workflow.
 LIVE_SCAN_QUESTION = {
     "question": "The microscope's own scan (live view) is running, so the workflow cannot take its image. "
                 "Stop the live scan in the microscope software, then choose continue (or stop the run).",

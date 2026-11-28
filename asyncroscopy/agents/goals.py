@@ -44,6 +44,9 @@ image allows acquiring, settings and the beam; "go to" a stage move). Unsure
 means fewer criteria: the retry must never push work the request did not ask
 for. A goal file is the precise way to state criteria. "Do not wait" (or
 ``leave_running``) keeps the goal from aborting the job it started.
+
+NEW_MAP and the patterns after it match only what a sentence says plainly: a wrong criterion makes the retry push
+actions nobody wanted.
 """
 
 from __future__ import annotations
@@ -73,7 +76,6 @@ HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
 CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
 DEFAULT_CATEGORIES = ["job"]
 
-# Only what a sentence says plainly: a wrong criterion makes the retry push actions nobody wanted.
 NEW_MAP = re.compile(
     r"\b(?:map|survey)\s+(?:a|an|the\s+(?:area|sample|region|square|whole|surface|flake)|this\s+(?:area|sample|region)|around|here|\d)"
     r"|\b(?:make|take|acquire|record|do|perform|run|start|get)\s+(?:a|an|another|one|new)\s+(?:[\w-]+\s+){0,3}?(?:map|survey)\b"

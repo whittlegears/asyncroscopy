@@ -86,7 +86,10 @@ def _prepare_image(image: np.ndarray) -> np.ndarray:
 
 
 def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
-    """Convert overlapping SAM2 masks into one integer-labeled image."""
+    """Convert overlapping SAM2 masks into one integer-labeled image.
+
+    Masks are labelled largest first, so small masks win where SAM2 regions overlap.
+    """
     labels = np.zeros(shape, dtype=np.uint32)
     for label, area in enumerate(areas, start=1):
         mask = np.asarray(area["segmentation"], dtype=bool)
@@ -94,7 +97,6 @@ def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
             raise ValueError(
                 f"SAM2 returned mask shape {mask.shape}; expected image shape {shape}"
             )
-        # Largest first, so small masks win where SAM2 regions overlap.
         labels[mask] = label
     return labels
 

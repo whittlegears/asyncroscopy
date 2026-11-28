@@ -30,7 +30,7 @@ class TraceTools:
         self.follow = list(cfg.trace_follow)
 
     def natives(self) -> list:
-        # Only the operator endpoint offers this because the trace records the arguments of every caller.
+        """Only the operator endpoint offers trace_since, because the trace records the arguments of every caller."""
         return [self.trace_since] if self.server.endpoint_role == "operator" and self.follow else []
 
     @tool()

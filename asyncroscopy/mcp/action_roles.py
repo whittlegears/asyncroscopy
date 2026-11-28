@@ -12,6 +12,8 @@ in order:
 
 The vocabulary is kept short on purpose: add a role only when a controller needs to tell two
 tools apart that the existing roles lump together.
+
+_BEAM_OFF leaves out a gun, filament, high tension or emission source, because it takes hours to come back.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ from __future__ import annotations
 from asyncroscopy.core.names import ENVELOPE_VERBS
 from asyncroscopy.safety.policy import OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
 
-# A gun, filament, high tension or emission source is left out because it takes hours to come back.
 _BEAM_OFF = OFF_OBJECTS - {"gun", "filament", "hv", "emission", "source"}
 _JOB_ROLES = {"reserve": "job.reserve", "start": "job.start", "job_status": "job.status", "abort": "job.abort",
               "results": "job.results", "release": "job.release", "get_reservation": "job.status"}

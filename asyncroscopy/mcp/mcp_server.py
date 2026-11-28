@@ -5,6 +5,8 @@ The server discovers the devices in the Tango database, decides once what each c
 ordered list of interceptors (``asyncroscopy.mcp.interceptors``): the job checks,
 logging and the trace, an acquisition's preview. The native tools (data, jobs, discovery, skills,
 the trace and the emergency stop) come from the components in ``asyncroscopy.mcp.components``.
+
+COMMAND_TIMEOUT_MILLIS is longer than Tango's 3 s default, which a cold first acquisition on the twin exceeds.
 """
 
 from __future__ import annotations
@@ -45,7 +47,6 @@ from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
-# Longer than Tango's 3 s default, which a cold first acquisition on the twin exceeds.
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_LIMITS = ("max_duration_s", "max_dose_e_per_a2")
 
@@ -457,7 +458,10 @@ class MCPServer:
         return descriptor
 
     def _create_wrapper(self, func: Callable, cmd_info: CommandInfo, command_name: str, dev_class: str, tool_prefix: str | None = None) -> Callable:
-        """A tool function, with a proper signature and description, for one Tango command."""
+        """A tool function, with a proper signature and description, for one Tango command.
+
+        __annotations__ leaves out VAR_KEYWORD parameters, so Pydantic allows dynamic extra fields.
+        """
         prefix = tool_prefix or dev_class
         in_type, in_desc, out_type = cmd_info.in_type, cmd_info.in_type_desc, cmd_info.out_type
         local_summary, local_in = local_docs.describe(dev_class, command_name)
@@ -490,7 +494,6 @@ class MCPServer:
 
         wrapper, params = self._wrapper_and_params(_run, in_type, py_type, param_name, arg_type, clean_desc if json_string else None)
 
-        # Annotations without VAR_KEYWORD parameters, so Pydantic allows dynamic extra fields.
         wrapper.__annotations__ = {p.name: p.annotation for p in params if p.kind != inspect.Parameter.VAR_KEYWORD}
         wrapper.__annotations__["return"] = py_return_type
         wrapper.__signature__ = inspect.Signature(parameters=params, return_annotation=py_return_type)
@@ -502,7 +505,10 @@ class MCPServer:
     @staticmethod
     def _wrapper_and_params(_run: Callable, in_type: CmdArgType, py_type: Any, param_name: str, arg_type: Any,
                             json_desc: str | None) -> tuple[Callable, list[inspect.Parameter]]:
-        """The function a tool call lands in and its parameters; ``json_desc`` describes a JSON string parameter."""
+        """The function a tool call lands in and its parameters; ``json_desc`` describes a JSON string parameter.
+
+        FastMCP does not allow **kwargs, so the fields come from the description's example.
+        """
         if in_type == CmdArgType.DevVoid:
             def wrapper():
                 return _run({})
@@ -515,7 +521,6 @@ class MCPServer:
 
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
         elif json_desc is not None:
-            # FastMCP does not allow **kwargs, so the fields come from the description's example.
             fields = [f for f in dict.fromkeys(re.findall(r'"(\w+)"\s*:', json_desc)) if f != param_name]
 
             def wrapper(*args, **kwargs):
@@ -596,7 +601,10 @@ class MCPServer:
         return found
 
     def setup(self, print_summary: bool = True) -> None:
-        """Discover the devices, decide what each command is, and add every tool to the MCP instance."""
+        """Discover the devices, decide what each command is, and add every tool to the MCP instance.
+
+        The ready line is always printed: the startup GUI reads it (run_mcp.STATUS_PATTERNS).
+        """
         raw_tools = self._find_tools()
         self.tools = {
             prefix: {command: self._create_wrapper(func, cmd_info, command, self.devices[prefix].dev_class, tool_prefix=prefix)
@@ -637,7 +645,6 @@ class MCPServer:
         self._warn_about_risks()
         self._report_fallbacks()
         self.permissions.publish()
-        # Always printed: the startup GUI reads this line (run_mcp.STATUS_PATTERNS).
         ready = "MCP operator endpoint ready" if self.endpoint_role == "operator" else "MCP ready"
         print(f"{ready}: {len(natives) + num_device_tools} tool(s) registered", flush=True)
         if print_summary and self.verbose:
@@ -743,6 +750,7 @@ def stack_simulated(tango_host: str, tango_port: int, _unused: str | None = None
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Startup GUIs parse the "MCP ERROR:" prefix, so keep it stable."""
     args = parse_args(argv)
     auth = json.loads(args.auth_json) if args.auth_json else None
     if args.transport == "streamable-http":
@@ -757,7 +765,6 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         bind_error = check_port_free(args.http_host, args.http_port)
         if bind_error:
-            # "MCP ERROR:" is parsed by startup GUIs; keep the prefix stable.
             print(f"MCP ERROR: http://{args.http_host}:{args.http_port} is already in use - another MCP server is likely still running "
                   f"with a different config. Stop it or choose a different port. ({bind_error})", flush=True)
             return 1

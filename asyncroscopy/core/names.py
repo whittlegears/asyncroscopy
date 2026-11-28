@@ -2,6 +2,8 @@
 data-key patterns, the canonical action roles, and the default endpoint addresses.
 
 Nothing here imports anything outside the standard library.
+
+stop_all calls the STOP_ROLES commands that take no argument, and they are never held.
 """
 
 from __future__ import annotations
@@ -112,7 +114,6 @@ ROLES: dict[str, str] = {
     "data.read": "read stored data (by key)",
     "other": "anything the rules do not place",
 }
-# stop_all calls the ones that take no argument, and they are never held.
 STOP_ROLES = frozenset({"beam.blank", "probe.retract", "safe_stop"})
 READ_ROLES = frozenset({"stage.read", "setting.read", "data.read", "job.status", "job.results"})
 

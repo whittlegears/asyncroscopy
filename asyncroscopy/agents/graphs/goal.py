@@ -129,6 +129,9 @@ class GoalGraph:
         return await (await self.checker()).facts([Call.from_dict(c) for c in trace])
 
     async def work(self, state: GoalState) -> GoalState:
+        """recorded comes from the ledger, because only the ledger knows every job started, even by a step stopped part
+        way.
+        """
         started = state.get("started") or time.monotonic()
         remaining = self.goal.budget.max_seconds - (time.monotonic() - started)
         trace = list(state.get("trace", []))
@@ -146,7 +149,6 @@ class GoalGraph:
             answer, calls = f"stopped: the time budget of {self.goal.budget.max_seconds:.0f} s ran out", []
         except Exception as exc:
             answer, calls = f"the agent failed: {type(exc).__name__}: {str(exc)[:300]}", []
-        # Only the ledger knows every job started, even by a step stopped part way.
         recorded = [Call.from_dict(c) for c in self.config.ledger[ledger_start:]]
         if len(recorded) > len(calls):
             calls = recorded

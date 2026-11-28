@@ -27,6 +27,8 @@ data, ``pixel_size_m`` on images). For anything else, register a kind::
 A kind's ``png`` returns (PNG bytes, what was read) or (PNG bytes, what was read,
 a short text summary); the summary goes with the picture, so an agent that cannot
 see images still learns the statistics and peaks.
+
+The shipped kinds (kinds.eds) are imported at the end, because they build on everything above.
 """
 
 from __future__ import annotations
@@ -458,14 +460,17 @@ def to_pixels(values: np.ndarray, max_side: int) -> PILImage.Image:
 
 
 def energy_axis(attrs: dict) -> Axis | None:
-    """The calibrated axis of a 1-D dataset, from any naming convention this repository writes."""
+    """The calibrated axis of a 1-D dataset, from any naming convention this repository writes.
+
+    Thermo Fisher EDS files saved through AutoScript store the first channel energy (OffsetEnergy) and the channel width
+    (Dispersion) as text in eV.
+    """
     try:
         if "energy_offset_ev" in attrs and "energy_dispersion_ev" in attrs:
             return Axis(float(attrs["energy_offset_ev"]), float(attrs["energy_dispersion_ev"]), "energy", "eV")
         if "dispersion" in attrs and ("start_energy" in attrs or "offset" in attrs):
             return Axis(float(attrs.get("start_energy", attrs.get("offset"))), float(attrs["dispersion"]), "energy", str(attrs.get("energy_units", "eV")))
         if "Dispersion" in attrs and "OffsetEnergy" in attrs:
-            # Thermo Fisher EDS files saved through AutoScript store the first channel energy and the channel width as text in eV.
             if float(attrs["Dispersion"]) > 0:
                 return Axis(float(attrs["OffsetEnergy"]), float(attrs["Dispersion"]), "energy", "eV")
         if "axis_offset" in attrs and "axis_scale" in attrs:
@@ -1001,5 +1006,4 @@ def summarize(node: Any, key: str) -> dict:
     return entry
 
 
-# Imported last, because the shipped kinds build on everything above.
 from asyncroscopy.data.kinds import eds as _eds  # noqa: E402,F401

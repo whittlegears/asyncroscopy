@@ -497,6 +497,9 @@ def _pending(snapshot: Any) -> list[dict]:
 
 async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx: BlockContext, config: dict, used: list, save, durable: bool,
                          start: bool, answers: dict) -> dict:
+    """ctx.cleaned is kept when the run cleaned up as it gave the instrument back; a blank now could land in the next
+    run's tile.
+    """
     run_id = record["run_id"]
     async with _checkpointer(state_dir, durable) as (saver, is_durable):
         graph = workflow.compile(ctx, saver)
@@ -534,7 +537,6 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             state = "waiting"
         if state != "waiting":
             ctx.journal.clear()
-        # Cleaned up already when it gave the instrument back; a blank now could land in the next run's tile.
         cleanup = list(ctx.cleaned) if ctx.cleaned is not None else await _clean_up(ctx, used)
         if state != "done":  # ended part way: undo what it has not undone itself
             for name, entry in ctx.restores.items():

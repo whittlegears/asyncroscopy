@@ -20,6 +20,8 @@ points, add a node between ``tile`` and the edge back.
 
 A plan of more than ``ask_over`` images is put to a person before the first move. The run puts the instrument
 back as it found it and blanks the beam.
+
+VISITS counts every tile, spectra stop and level as a visit, so any plan plan_survey accepts fits under it.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ from langgraph.graph import END, START, StateGraph
 from asyncroscopy.workflows.graph import Steps, Workflow, WorkflowState
 from asyncroscopy.workflows.survey_blocks import MAX_SPECTRA_POINTS, MAX_SURVEY_TILES
 
-# Every tile, spectra stop and level is a visit, so any plan plan_survey accepts fits under this cap.
 VISITS = MAX_SURVEY_TILES + MAX_SPECTRA_POINTS + 10
 
 INPUTS = {

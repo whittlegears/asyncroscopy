@@ -3,6 +3,11 @@
 Everything that reads or registers data goes through ``connect`` (or ``node_for_key``),
 never ``tiled.client.from_uri`` directly, so a Tiled outage gives the same clear message
 everywhere instead of a raw HTTP error or a hang.
+
+TIMEOUT_S is in seconds, converted to the Timeout of whichever HTTP library the installed Tiled client uses.
+TILED_RETRY_ATTEMPTS and TILED_RETRY_TIMEOUT are lowered because Tiled retries a connection error for up to 45 s by
+default, longer than the devices and the MCP bridge wait. CONNECTION_ERRORS leaves out OSError, which also covers
+FileExistsError, FileNotFoundError and TimeoutError.
 """
 
 from __future__ import annotations
@@ -26,12 +31,10 @@ except ImportError:
 from asyncroscopy import settings
 from asyncroscopy.core.net import is_loopback_host
 
-# Seconds, converted to the Timeout of whichever HTTP library the installed Tiled client uses.
 TIMEOUT_S = {"connect": 3.0, "read": 15.0, "write": 15.0, "pool": 3.0}
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
 
-# Tiled retries a connection error for up to 45 s by default, longer than the devices and the MCP bridge wait.
 os.environ.setdefault("TILED_RETRY_ATTEMPTS", "2")
 os.environ.setdefault("TILED_RETRY_TIMEOUT", "3")
 
@@ -105,7 +108,6 @@ def about(uri: str, timeout_s: float = 2.0) -> dict | None:
     return None
 
 
-# Not OSError, which also covers FileExistsError, FileNotFoundError and TimeoutError.
 CONNECTION_ERRORS = tuple(
     error for error in (httpx.TransportError, getattr(httpx2, "TransportError", None), ConnectionError) if error is not None
 )
@@ -189,7 +191,10 @@ def uri_from_data_device(address: str) -> str:
 
 
 def node_for_key(key: str, uri: str) -> Any:
-    """The Tiled node for ``key``; DataKeyNotFound names close keys, TiledUnavailable if Tiled does not answer."""
+    """The Tiled node for ``key``; DataKeyNotFound names close keys, TiledUnavailable if Tiled does not answer.
+
+    A key found in the listing is read again, because it can be registered between the lookup and the listing.
+    """
     client = connect(uri)
     try:
         return client[key]
@@ -202,7 +207,6 @@ def node_for_key(key: str, uri: str) -> Any:
     except Exception:
         close = []
     if key in close:
-        # The key can be registered between the lookup and the listing, so read it again.
         try:
             return client[key]
         except KeyError:

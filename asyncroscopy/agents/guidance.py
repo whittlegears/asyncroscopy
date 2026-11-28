@@ -126,12 +126,14 @@ def render_error(text: str, keep_facts: bool = False) -> str:
 
 
 def _blanked_prose(body: dict) -> str:
-    """The sentence for a beam_blanked error: unblank, retake, and do not use the noise-only file."""
+    """The sentence for a beam_blanked error: unblank, retake, and do not use the noise-only file.
+
+    The retake comes first and the key last: given the key first, a model views and reports the noise.
+    """
     actions = [a.get("tool") for a in body.get("next_actions") or [] if isinstance(a, dict)]
     unblank = actions[0] if actions else "the beam unblank command"
     retake = actions[1] if len(actions) > 1 else "the acquisition"
     key = next((w.get("key") for w in body.get("warnings") or [] if isinstance(w, dict) and w.get("code") == "noise_only_file"), "")
-    # The retake first and the key last: given the key first, a model views and reports the noise.
     return (f"Not acquired: the beam is blanked. Next call {unblank}, then {retake} again with the same arguments, and use the key "
             f"that call returns. (The noise-only file {key} was saved; do not view or report it.)")
 

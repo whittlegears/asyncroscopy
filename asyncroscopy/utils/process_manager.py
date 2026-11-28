@@ -267,7 +267,11 @@ class ProcessManager:
         cwd: Path | str | None = PROJECT_DIR,
         **kwargs: Any,
     ) -> ManagedProcess:
-        """Launches a child process, sets group/session execution, and records state."""
+        """Launches a child process, sets group/session execution, and records state.
+
+        self.save() runs at once, so if the launcher dies ungracefully (crash, force-kill) the next launch's
+        _cleanup_stale_state() finds this PID on disk and reaps it.
+        """
         popen_kwargs: dict = {"env": env, "cwd": cwd, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
         popen_kwargs.update(kwargs)
 
@@ -293,9 +297,6 @@ class ProcessManager:
         prefix = f"[{key}] " if self.echo_output else None
         self._drain(proc.stdout, managed.stdout_lines, prefix)
         self._drain(proc.stderr, managed.stderr_lines, prefix)
-        # Saved now, so the next launch can reap this PID if the launcher dies.
-        # ungracefully (crash, force-kill), the next launch's
-        # _cleanup_stale_state() needs its PID on disk to find and reap it.
         self.save()
         return managed
 
@@ -443,7 +444,10 @@ class ProcessManager:
             return False
 
     def _kill_stale_pid(self, pid: int):
-        """Kill orphan process groups from a crash: only the group reaches the device server behind a ``uv run`` wrapper."""
+        """Kill orphan process groups from a crash: only the group reaches the device server behind a ``uv run`` wrapper.
+
+        It never signals our own process group, because that would stop this launcher.
+        """
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -456,7 +460,6 @@ class ProcessManager:
                 return
 
             if pgid == os.getpgid(0):
-                # Never signal our own process group, because that would stop this launcher.
                 try:
                     os.kill(pid, signal.SIGTERM)
                 except (ProcessLookupError, PermissionError):

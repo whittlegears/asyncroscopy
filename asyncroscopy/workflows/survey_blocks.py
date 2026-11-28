@@ -192,7 +192,10 @@ class _Visit:
         return ok
 
     async def take_tile(self, plan: dict, centre: list[float], index: int, check: bool) -> None:
-        """Take tile ``index`` of a level, check it against the tile before it and count how that went."""
+        """Take tile ``index`` of a level, check it against the tile before it and count how that went.
+
+        It goes back to this tile's field, so spectra taken after the visit land on the tile they are filed under.
+        """
         field, field_at, offset = _tile(plan, centre, index)
         if field != self.field:
             await self.go_to(field, field_at)
@@ -207,7 +210,6 @@ class _Visit:
             self.counts["unchecked"] += 1
         else:
             self.counts["matched" if await self.fits_with_bridges(tile, before, index) else "unmatched"] += 1
-            # Go back to this tile, so spectra taken after the visit land on the tile they are filed under.
             if self.field != field:
                 await self.go_to(field, field_at)
             self.shift = tile_shift

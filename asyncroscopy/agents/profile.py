@@ -11,6 +11,8 @@ tool descriptions and longer instructions well: it extends ``small`` and turns t
 Choose one with ASYNCROSCOPY_AGENT_PROFILE (a name in agents/profiles, or a path to a YAML file); without it,
 ``capable`` (gemma4:31b).
 A profile may start from another with ``extends: <name>`` and change only what differs.
+
+In REPLIES, notes replaces a reply's structured fields with sentences; facts_and_notes keeps both.
 """
 
 from __future__ import annotations
@@ -24,7 +26,6 @@ from pathlib import Path
 from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, ToolLists, profile_data, tool_lists
 
 MIDDLEWARE = ("skills", "user_words", "job_wait", "empty_reply", "claim_check")
-# notes replaces a reply's structured fields with sentences; facts_and_notes keeps both.
 REPLIES = ("notes", "facts_and_notes")
 
 

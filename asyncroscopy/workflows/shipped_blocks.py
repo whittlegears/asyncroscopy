@@ -33,6 +33,7 @@ def _numbers(value, count: int, what: str) -> list[float]:
 
 
 async def _plan_grid(ctx: BlockContext, args: dict, previous: dict | None) -> dict:
+    """A grid the image shift cannot reach now is refused before anything moves."""
     size, fov, overlap = float(args["size_m"]), float(args["fov_m"]), float(args["overlap"])
     if not 0.0 <= overlap < 0.9:
         raise BlockFailed(f"overlap {overlap} must be from 0 to below 0.9")
@@ -58,7 +59,6 @@ async def _plan_grid(ctx: BlockContext, args: dict, previous: dict | None) -> di
     if isinstance(start_fov, bool) or not isinstance(start_fov, (int, float)) or not start_fov > 0:
         raise BlockFailed(f"the field of view was not a number above 0: {str(start_fov)[:200]}")
     if _move_by(args) == "image_shift":
-        # Refuse a grid the image shift cannot reach now, before anything moves.
         reach = await ctx.call("*_get_image_shift_limit")
         if isinstance(reach, bool) or not isinstance(reach, (int, float)) or not (math.isfinite(reach) and reach > 0):
             raise BlockFailed(f"the instrument's image shift limit was not a number above 0: {str(reach)[:200]}")
@@ -105,7 +105,10 @@ async def _put_back(ctx: BlockContext, pattern: str, arguments: dict) -> None:
 
 
 async def _expose(ctx: BlockContext, args: dict, index: int) -> str:
-    """Unblank the beam, take one scanned image and blank again. Returns the image's data key."""
+    """Unblank the beam, take one scanned image and blank again. Returns the image's data key.
+
+    The beam is blanked even after a failure; the error still says why the tile failed.
+    """
     key, failure = None, None
     try:
         await ctx.call("*_unblank_beam")
@@ -120,7 +123,6 @@ async def _expose(ctx: BlockContext, args: dict, index: int) -> str:
             failure = exc
     except BaseException as exc:
         failure = exc
-    # Blank even after a failure; the error still says why the tile failed.
     try:
         await ctx.call_always("*_blank_beam")
     except Exception as blank_error:
@@ -136,6 +138,9 @@ async def _expose(ctx: BlockContext, args: dict, index: int) -> str:
 
 
 async def _acquire_tile(ctx: BlockContext, args: dict, previous: dict | None) -> dict:
+    """The field of view is set on every tile, because a run that failed put the old one back before it was resumed. The
+    image shift is put back after every tile, so a stopped run never leaves it shifted.
+    """
     tiles = args["tiles"]
     index = int(previous["index"]) + 1 if previous else 0
     keys = list(previous["keys"]) if previous else []
@@ -148,7 +153,6 @@ async def _acquire_tile(ctx: BlockContext, args: dict, previous: dict | None) ->
     home_shift = _numbers(args.get("start_shift_m") or [0.0, 0.0], 2, "start_shift_m")[:2]
     home_fov = args.get("start_fov_m")
     try:
-        # Set on every tile because a run that failed put the old field of view back before it was resumed.
         await ctx.call("*_set_fov", {"fov": float(args["fov_m"])})
         if by_shift:
             origin = _numbers(args.get("origin_xy_m"), 2, "origin_xy_m (plan_grid's start_xy_m)")
@@ -158,7 +162,6 @@ async def _acquire_tile(ctx: BlockContext, args: dict, previous: dict | None) ->
                 reported = [origin[0] + shift[0], origin[1] + shift[1]]
                 key = await _expose(ctx, args, index)
             finally:
-                # Put the image shift back after every tile so a stopped run never leaves it shifted.
                 await _put_back(ctx, "*_set_image_shift", {"shift": home_shift})
         else:
             await ctx.call("*_move_stage", {"position": [x, y, *rest]})

@@ -266,6 +266,7 @@ class Jobs:
         )
 
     def _wait_on_device(self, proxy: DeviceProxy, job_id: str, status: dict, deadline: float) -> dict[str, Any]:
+        """Poll job_status rather than block in the device, so abort stays immediate."""
         while True:
             if "error" in status:
                 return status
@@ -278,11 +279,13 @@ class Jobs:
             if time.monotonic() >= deadline:  # still active: wait again
                 return {**status, "next_actions": [wait_action(job_id)]}
             time.sleep(1.0)
-            # Poll job_status and do not block in the device, so abort stays immediate.
             status = json.loads(proxy.job_status(json.dumps({"job_id": job_id})))
 
     def _wait_on_analysis(self, job_id: str, budget: float) -> dict[str, Any]:
-        """Wait on a stitching or scoring job of the analysis server; when it is done, add its results."""
+        """Wait on a stitching or scoring job of the analysis server; when it is done, add its results.
+
+        asyncio.run is used, because sync tools run in FastMCP's worker threads, which have no event loop of their own.
+        """
         from fastmcp import Client
 
         def text(reply: Any) -> str:
@@ -313,7 +316,6 @@ class Jobs:
                 return status
 
         try:
-            # Sync tools run in FastMCP's worker threads, which have no event loop of their own.
             status = asyncio.run(call())
         except Exception as exc:
             raise ToolError(f"the analysis server at {self.analysis} did not answer ({type(exc).__name__}: {exc}); call wait_for_job again shortly") from exc
@@ -336,7 +338,10 @@ def resume_with(device: str, reply: Any) -> Any:
 
 def with_caller(request: Any, caller: str | None, run: str | None = None, risk_overrides: dict | None = None) -> Any:
     """Tell a job who asked and from which agent run, so its trace links to the run. At reserve,
-    ``risk_overrides`` are this endpoint's high patterns, which the job's dry run applies."""
+    ``risk_overrides`` are this endpoint's high patterns, which the job's dry run applies.
+
+    Only the request header may name the run, so a run in the request body is dropped.
+    """
     body = _json_object(request)
     if body is None:
         return request
@@ -344,7 +349,6 @@ def with_caller(request: Any, caller: str | None, run: str | None = None, risk_o
         return request  # nothing to add: pass it through
     if caller:
         body["caller"] = caller
-    # Only the request header may name the run, so one in the request body is dropped.
     body.pop("run", None)
     if run:
         body["run"] = run
@@ -369,12 +373,12 @@ class JobChecks(_EnvelopeOnly):
     order = 30
 
     def before_call(self, call: Call) -> Any:
+        """Whoever reserved the device, a start or resume on this endpoint keeps to its job limits (limit_start)."""
         if call.tool.command != "start" or not call.call_args:
             return None
         server, device = self.jobs.server, call.tool.device or ""
         request = str(call.call_args[0])
         if self.jobs.job_limits and server.endpoint_role == "agent":
-            # Whoever reserved it, a start or resume on this endpoint keeps to its job limits.
             refused = self.jobs.limit_start(device, call.call_args[0])
             if refused is not None:
                 if server.trace is not None:

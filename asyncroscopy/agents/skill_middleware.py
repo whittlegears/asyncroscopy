@@ -43,6 +43,9 @@ how much text a prompt carries (``skills``) and which tools are held back unless
 (``tool_gates``). A small model is helped by a short prompt and few tools; a capable one is not. These hold for
 every model: a request that only asks about data
 gets no skill that acts, and the whole call is kept inside the context.
+
+Below MIN_MESSAGES_CHARS, unused tools are dropped, largest first, before Ollama cuts the start of the prompt.
+STEPS_PER_TOOL_ROUND is 3, because the middleware adds a node before every model call.
 """
 
 from __future__ import annotations
@@ -67,7 +70,6 @@ from asyncroscopy.skills.registry import Skill, list_skills, read_only_request, 
 
 ASKS_ABOUT_DATA = re.compile(r"\b(?:what is in|look at|inspect|show me|analy[sz]e|peaks?|elements?|composition|latest (?:image|spectrum|data))\b", re.I)
 ASKS_FOR_REGIONS = re.compile(r"\b(?:\d+|three|two|five|the) (?:most )?(?:interesting|notable|unusual) (?:regions?|areas?|features?|spots?)\b|\bregions? of interest\b|\bwhere to look\b", re.I)
-# Below this, unused tools are dropped, largest first, before Ollama cuts the start of the prompt.
 MIN_MESSAGES_CHARS = 6000
 ALWAYS_OFFERED = ("view_data", "wait_for_job", "load_skill")
 PASSAGE_SKILLS = frozenset({"recover_from_errors", "inspect_data"})
@@ -77,7 +79,6 @@ EVENT_BOOST = 3.0  # what an event adds to its skill's passages in the search
 REPLY_CHARS = 800
 REPLY_WEIGHT = 0.6
 MAX_APPLIED = SkillLimits().at_most  # the default profile's limit
-# The middleware adds a node before every model call, so a tool round is three graph steps.
 STEPS_PER_TOOL_ROUND = 3
 
 
@@ -241,6 +242,9 @@ class SkillMiddleware(AgentMiddleware):
         return await asyncio.to_thread(self._update, state)
 
     def _prompted(self, request):
+        """with_advice puts the advice after the conversation, so the prompt's start stays the same and Ollama's cache
+        reads only what is new.
+        """
         state = request.state
         applied = state.get("skills_applied") or self.skills_for(state["messages"])
         notes = self._notes_for(_request(state["messages"]))
@@ -263,7 +267,6 @@ class SkillMiddleware(AgentMiddleware):
         room = context_chars(self.num_ctx) - len(prompt) - len(advice) - tools_chars(tools)
         fitted = fit_messages(messages, max(2000, room))
         if advice:
-            # After the conversation, so the prompt's start stays the same and Ollama's cache reads only what is new.
             fitted = with_advice(fitted, advice)
         return request.override(system_message=SystemMessage(prompt), tools=tools, messages=fitted)
 

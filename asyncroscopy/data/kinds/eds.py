@@ -3,6 +3,9 @@
 The generic views (``asyncroscopy.data.views``) find peaks; this module says which X-ray lines could make them, which
 are detector artefacts (Si escape, sum peaks, the window's rise of the continuum), and which elements best explain
 them. ``spectrum`` and ``spectrum_image`` are re-registered with this knowledge, ``composition`` is added.
+
+WINDOW_RISE_EV: the detector window bends the continuum into a broad rise near 0.6 keV, so a peak below it must stand
+clear of a fitted curve.
 """
 
 from __future__ import annotations
@@ -32,7 +35,6 @@ from asyncroscopy.data.views import (
     spectrum_image_kind,
 )
 
-# The detector window bends the continuum into a broad rise near 0.6 keV, so a peak below it must stand clear of a fitted curve.
 WINDOW_RISE_EV = 1200.0
 RISE_HALF_WIDTHS = 3.0
 RISE_SIGMA = 3.0

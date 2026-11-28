@@ -14,6 +14,9 @@ Anything else is reported as a problem with its line number and the module is no
 blocks and edges to a graph, so building it is safe. ``lint`` then checks the graph like a shipped one.
 
 This module decides what counts as a workflow. ``library.py`` decides whether it may run on an instrument.
+
+OUR_MODULES keeps asyncroscopy.agents.workflows, the package's earlier name, so drafts kept in a library with that
+import still load.
 """
 
 from __future__ import annotations
@@ -29,7 +32,6 @@ from .checks import NAME
 
 GRAPH_NAMES = {"END", "START", "StateGraph"}
 OUR_NAMES = {"Steps", "Workflow", "WorkflowState"}
-# The package was asyncroscopy.agents.workflows before; drafts kept in a library with that import still load.
 OUR_MODULES = {"asyncroscopy.workflows", "asyncroscopy.workflows.graph", "graph", "asyncroscopy.agents.workflows", "asyncroscopy.agents.workflows.graph"}
 GRAPH_CALLS = {"add_node", "add_edge", "add_conditional_edges"}
 WORKFLOW_KEYS = {"name", "summary", "inputs", "budget", "build"}
@@ -347,12 +349,14 @@ def check_source(source: str) -> list[str]:
 
 
 def load_source(source: str) -> Workflow:
-    """Build the workflow from a module's text. Raises ``NotAWorkflow`` when the text is not one."""
+    """Build the workflow from a module's text. Raises ``NotAWorkflow`` when the text is not one.
+
+    Imports are dropped from tree.body: their names are passed in, and there are no builtins to import with.
+    """
     problems = check_source(source)
     if problems:
         raise NotAWorkflow(problems)
     tree = ast.parse(source)
-    # Imports are dropped: their names are passed in below, and there are no builtins to import with.
     tree.body = [statement for statement in tree.body if not isinstance(statement, ast.ImportFrom)]
     scope: dict[str, Any] = {"__builtins__": {}, "__name__": "proposed_workflow", "END": END, "START": START, "StateGraph": StateGraph,
                              "Steps": Steps, "Workflow": Workflow, "WorkflowState": WorkflowState}

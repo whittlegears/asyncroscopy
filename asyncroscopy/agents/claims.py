@@ -308,7 +308,10 @@ def _setting_mentions(sentence: str, settings: _Settings):
 
 
 def _final_setting_claim(m, name: str, phrase: str, settings: _Settings) -> Claim | None:
-    """A claim when the stated value is not the last one set or read."""
+    """A claim when the stated value is not the last one set or read.
+
+    setter names the exact call, because a vague correction gets the same answer back.
+    """
     stated = float(m.group("num").replace("−", "-"))
     unit = m.group("unit")
     scale = _scale(unit)
@@ -318,7 +321,6 @@ def _final_setting_claim(m, name: str, phrase: str, settings: _Settings) -> Clai
     actual, source = settings.last[name]
     if _matches(stated, scale, actual) is not False:
         return None
-    # A vague correction gets the same answer back, so name the exact call.
     setter = f"{source.split('_')[0]}_set_{name}"
     target = json.dumps({name: stated * scale if scale else stated})
     return Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source}); "
@@ -401,14 +403,17 @@ def _acquired_at_claims(answer: str, settings: _Settings, request: str = "") -> 
 
 
 def _failed_acquisition_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
-    """A key given as a result that only a failed acquisition named (saved with the beam blanked: noise, not the sample)."""
+    """A key given as a result that only a failed acquisition named (saved with the beam blanked: noise, not the sample).
+
+    why keeps only the error's first sentence: told to acquire again, the model takes one more image and still lists
+    this key.
+    """
     made = {k for c in calls if c.ok and catalog.category(c.name) in ("acquire", "job") for k in DATA_KEY_IN_TEXT.findall(c.result)}
     failed = {k: c.result for c in calls if c.error and catalog.category(c.name) == "acquire" for k in DATA_KEY_IN_TEXT.findall(c.result) if k not in made}
     claims = []
     for sentence in _sentences(answer):
         for key in dict.fromkeys(DATA_KEY_IN_TEXT.findall(sentence)):
             if key in failed and not NEGATION.search(sentence):
-                # Only the first sentence: told to acquire again, the model takes one more image and still lists this key.
                 why = failed[key].split("ToolError:", 1)[-1].strip().split(". ")[0][:120]
                 claims.append(Claim("failed_acquisition", key, f"that acquisition failed ({why}), so this file is not a result: leave this key "
                                                                 "out and report the key of the successful acquisition that replaced it; "
@@ -579,7 +584,12 @@ def _zoom_claims(request: str, calls, catalog: ToolCatalog) -> list[Claim]:
 
 
 def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
-    """The request asks where things are, a reply gave positions, and the answer states none."""
+    """The request asks where things are, a reply gave positions, and the answer states none.
+
+    headed counts only a header's unit, because names like x_m and spectrum end in unit letters. A stated position
+    matches within 2% and 1 nm for rounding; looser lets a tile number read in µm match every point. The claim does not
+    tell the model to make the call, because a second list_pois reply can fill a small context.
+    """
     if not POSITION_QUESTION.search(request):
         return []
     found: dict[str, set] = {}  # distinct positions per tool
@@ -594,16 +604,13 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     if not values:
         return []
     text = MAP_KEY.sub(" ", DATA_KEY_IN_TEXT.sub(" ", answer))
-    # Only a header's unit counts, because names like x_m and spectrum end in unit letters.
     headed = {_scale(m["header"] or m["phrase"]) for m in HEADER_UNIT.finditer(text)} - {None}
     for m in re.finditer(NUMBER + UNIT, text):
         stated = abs(float(m["num"].replace("−", "-")))
         scales = [_scale(m["unit"])] if m["unit"] else [1.0, *headed]
-        # 2% and 1 nm for rounding; looser lets a tile number read in µm match every point.
         if stated and any(abs(stated * scale - value) <= 0.02 * value + 1e-9 for scale in scales if scale for value in values):
             return []
     tool, points = list(found.items())[-1]
-    # Not told to make the call: a second list_pois reply can fill a small context.
     return [Claim("missing_positions", "the positions asked for",
                   f"the request asks where, and the {tool} reply above gave x_m, y_m for {len(points)} point(s), but the "
                   f"answer states none of them; do not call {tool} again: answer now, listing each point's id with its "

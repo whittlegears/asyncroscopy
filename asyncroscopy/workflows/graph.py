@@ -27,6 +27,8 @@ Each node and router ``Steps`` makes carries which block it runs and what it is 
 ``Workflow.blueprint`` reads that back from the graph, together with the graph's edges. ``lint`` checks the blueprint before anything runs, and a run's
 record keeps it. ``Workflow.hash`` covers the module's source and the code of every block it uses. An approval
 names that hash, so changing either makes it a different workflow.
+
+TRANSPORT_RETRY retries only when the call never reached the endpoint, so it cannot have acted.
 """
 
 from __future__ import annotations
@@ -54,7 +56,6 @@ from .blocks import Block, BlockContext, BlockFailed, Unreachable, all_blocks
 from .checks import END, START, edges_of, lint
 from .values import check_inputs, evaluate, fill
 
-# Retried only when the call never reached the endpoint, so it cannot have acted.
 TRANSPORT_RETRY = RetryPolicy(max_attempts=4, initial_interval=2.0, backoff_factor=2.0, max_interval=30.0, jitter=True,
                               retry_on=lambda exc: isinstance(exc, Unreachable))
 

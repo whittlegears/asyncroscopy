@@ -168,7 +168,10 @@ def search(parts: Sequence[tuple[str, float]], skills: Sequence[Skill], *, k: in
 
 def passages_text(passages: Sequence[Passage], budget: int) -> tuple[str, list[Passage]]:
     """The passages written for a prompt, in their manual's order within each skill, while they fit in ``budget``.
-    Returns (text, the passages that fit)."""
+    Returns (text, the passages that fit).
+
+    Each passage label leaves out the skill's name, because a model may call the name as a tool.
+    """
     fitted, used = [], 0
     for passage in passages:
         size = len(passage.text) + len(passage.label) + 8
@@ -180,7 +183,6 @@ def passages_text(passages: Sequence[Passage], budget: int) -> tuple[str, list[P
     for i, passage in enumerate(fitted):
         first.setdefault(passage.skill, i)  # skills in order of their best passage
     fitted.sort(key=lambda p: (first[p.skill], p.order))
-    # The label leaves out the skill's name, because a model may call the name as a tool.
     return "\n\n".join(f"--- {p.label} ---\n{p.text}" for p in fitted), fitted
 
 

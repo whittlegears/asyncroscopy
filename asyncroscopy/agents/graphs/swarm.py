@@ -187,8 +187,10 @@ class AgentSwarm:
             use_init_chat_model (bool): Initialize the model through LangChain's
                 ``init_chat_model`` (OpenAI, Anthropic, ...) instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+
+        The context length is always set, from the profile, because Ollama's default context cuts long tool lists
+        without warning.
         """
-        # Ollama's default context cuts long tool lists without warning, so always set it: the profile's.
         profile = load_profile(settings.get().agent_profile)
         self.model = model or profile.model
         self.model_provider = model_provider

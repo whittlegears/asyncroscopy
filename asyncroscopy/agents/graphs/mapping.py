@@ -8,6 +8,8 @@ defaults before anything moves.
 
 Inputs (state): ``request`` (text), optionally ``plan`` (skip the model) and
 ``score`` (rank regions afterwards). Output: ``report`` plus keys and points.
+
+graph, at the end, is used by langgraph.json and LangGraph Studio.
 """
 
 from __future__ import annotations
@@ -203,7 +205,12 @@ class MappingGraph:
 
     @staticmethod
     def _complete_plan(plan: dict, context: dict, request: str, from_model: bool = True) -> dict:
-        """Fill gaps and repair slips (units, swapped corners) in a model's plan; a plan passed in keeps its size and per_tile."""
+        """Fill gaps and repair slips (units, swapped corners) in a model's plan; a plan passed in keeps its size and per_tile.
+
+        The size the request states is always the size mapped, because small models fall back to the whole sample. The
+        whole sample is hours of beam time, so it is mapped only when the request asks (WHOLE_SAMPLE). A dose limit the
+        user states always goes in the plan, so the Mapper refuses a plan above it.
+        """
         allowed = {"box_m", "size_m", "centre_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
         fov_max_m, coord_max_m = _plausible_limits(context)
@@ -223,7 +230,6 @@ class MappingGraph:
             box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         else:
             box = None
-        # The stated size is always the size mapped, because small models fall back to the whole sample.
         size = MappingGraph._requested_size(request) if from_model else None
         if size is not None:
             width, height = size
@@ -233,7 +239,6 @@ class MappingGraph:
                 x, y = stage_xy
             box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         if box is None:
-            # The whole sample is hours of beam time, so map it only when the request asks.
             if not WHOLE_SAMPLE.search(request):
                 raise ValueError("the plan gives no area (box_m or size_m) and the request does not ask for the whole sample")
             box = context.get("sample_bounds_m")
@@ -247,7 +252,6 @@ class MappingGraph:
                 mid = (box[lo] + box[hi]) / 2
                 box[lo], box[hi] = mid - fov / 2, mid + fov / 2
         plan["box_m"] = box
-        # A dose limit the user states always goes in the plan, so the Mapper refuses a plan above it.
         stated = DOSE.search(request) if from_model else None
         if stated:
             limit = float(stated.group(1))
@@ -358,8 +362,8 @@ class MappingGraph:
         return {"pois": list(state.get("pois", [])) + scored["pois"]}
 
     async def report(self, state: MapState) -> MapState:
+        """_release frees the instrument, so the next reserve does not find it busy."""
         if state.get("error"):
-            # Free the instrument so the next reserve does not find it busy.
             await self._release(state)
             return {"report": f"Map not completed: {state['error']}"}
         plan = state["plan"]
@@ -429,5 +433,4 @@ def build_graph(config: AgentConfig | None = None) -> CompiledStateGraph:
     return MappingGraph(config).build()
 
 
-# Used by langgraph.json and LangGraph Studio.
 graph = build_graph()

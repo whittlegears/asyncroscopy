@@ -19,6 +19,10 @@ default client timeout. Callers that invoke ``start_tiled_server`` directly
 should set an extended timeout on their DATA ``DeviceProxy``. Changing
 ``host``, ``port`` or ``save_path`` while a managed server runs restarts it in
 the background; ``get_config`` shows when it is serving the new settings.
+
+REGISTER_WAIT_SECONDS is well inside the 12 s the instrument devices give DATA; a slower registration carries on in the
+background. TILED_WRITTEN matches Tiled's own storage for the analysis server's maps and point stores, never
+acquisitions to register.
 """
 
 from __future__ import annotations
@@ -53,7 +57,6 @@ from tango.server import Device, attribute
 from tiled.client.register import identity, register
 
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
-# Well inside the 12 s the instrument devices give DATA; a slower registration carries on in the background.
 REGISTER_WAIT_SECONDS = 8.0
 REGISTER_TIMEOUT_SECONDS = 20
 RECENT_WRITE_SECONDS = 10.0  # files this new may still be being written
@@ -78,9 +81,9 @@ class DATA(Device):
     tiled_server = attribute(label="Tiled Server", dtype=str, access=AttrWriteType.READ, doc="yes if the configured Tiled HTTP data server responds, otherwise no.")
 
     def init_device(self) -> None:
+        """The Tiled state and its locks carry over, because Tango's Init reruns init_device on this object."""
         Device.init_device(self)
         self.set_state(DevState.ON)
-        # Tango's Init reruns init_device on this object, so the Tiled state and its locks carry over.
         restart_tiled = getattr(self, "_restart_tiled_after_init", False)
         self._tiled_lock = getattr(self, "_tiled_lock", None) or threading.RLock()
         self._register_lock = getattr(self, "_register_lock", None) or threading.Lock()
@@ -856,7 +859,6 @@ def _live_owner(process) -> str | None:
         return f"a process that cannot be inspected ({type(exc).__name__})"
 
 
-# Tiled's own storage for the analysis server's maps and point stores, never acquisitions to register.
 TILED_WRITTEN = re.compile(r".+_(?:map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?|points)")
 
 
