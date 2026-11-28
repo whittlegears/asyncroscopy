@@ -43,6 +43,7 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
 from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
 from asyncroscopy.core.net import WILDCARD_HOSTS
+from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR
 
 import h5py
 import psutil
@@ -52,7 +53,6 @@ from tango.server import Device, attribute
 from tiled.client.register import identity, register
 
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
-DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # REGISTRABLE_SUFFIXES are the suffixes Tiled 0.2 registers from a file. They come from tiled.mimetypes plus
 # image/tiff from the stdlib. Tiled skips other files silently.
@@ -76,7 +76,6 @@ RESTART_WINDOW_SECONDS = 600.0
 class DATA(Device):
     """Tango bridge to the Tiled HTTP data server."""
 
-    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     host = attribute(label="Tiled Host", dtype=str, access=AttrWriteType.READ_WRITE, doc="Hostname or IP address for the Tiled HTTP data server.")
@@ -711,7 +710,8 @@ class DATA(Device):
     def _parse_uri(uri: str) -> tuple[str, int]:
         without_scheme = uri.split("://", 1)[-1].strip("/")
         host, _, port = without_scheme.partition(":")
-        return host or "127.0.0.1", int(port or 9091)
+        default = urlparse(DEFAULT_TILED_URI)
+        return host or default.hostname, int(port or default.port)
 
     @staticmethod
     def _tiled_command() -> list[str]:

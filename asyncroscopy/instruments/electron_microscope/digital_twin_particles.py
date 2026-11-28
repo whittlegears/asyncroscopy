@@ -14,7 +14,7 @@ from tango.server import device_property
 
 from asyncroscopy.data.data_writer import save_acquisition
 from asyncroscopy.instruments.electron_microscope.digital_twin_base import ElectronMicroscopeTwin
-from asyncroscopy.instruments.electron_microscope.twin.optics import TARGET_ABERRATIONS_V
+from asyncroscopy.instruments.electron_microscope.twin.optics import target_aberrations
 from asyncroscopy.instruments.electron_microscope.twin.sample_model import SampleParams
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
@@ -76,7 +76,7 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         pixel_size       = fov / size
 
         voltage = float(self.acceleration_voltage)
-        ab = pt.get_target_aberrations("Spectra300", TARGET_ABERRATIONS_V)
+        ab = target_aberrations()
         ab['acceleration_voltage'] = voltage
         ab['FOV']                  = fov / 10   # nm
         ab['convergence_angle']    = 30         # mrad

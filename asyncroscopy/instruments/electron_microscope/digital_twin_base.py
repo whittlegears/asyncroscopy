@@ -21,6 +21,7 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import Device, attribute, device_property
 
+from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.scanning_beam import check_beam_position, hardware_call, refuses, unsupported
 from asyncroscopy.instruments.scanning_beam_twin import TwinBlanker
@@ -28,7 +29,6 @@ from asyncroscopy.utils.commands import command
 from asyncroscopy.instruments.electron_microscope.twin.specimen import SpecimenContext, build_specimen, parse_specimen
 from asyncroscopy.sim.rng import EventRng
 
-DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 DEFAULT_GROUND_TRUTH_DIR = "outputs/twin_ground_truth"
 
 

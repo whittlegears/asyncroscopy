@@ -27,6 +27,7 @@ import tango
 from tango import AttrWriteType, DevState
 from tango.server import attribute, device_property
 
+from asyncroscopy.core.names import autoscript_port
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
@@ -87,7 +88,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
     )
     hardware_port = device_property(
         dtype=int,
-        default_value=9095,
+        default_value=autoscript_port,
         doc="Port of the AutoScript microscope server",
     )
     # The AutoScript 1.18 client waits for every reply with no time limit (neither perform_call nor connect takes one),

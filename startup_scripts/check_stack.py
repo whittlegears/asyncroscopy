@@ -30,6 +30,8 @@ from fastmcp import Client
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports import StreamableHttpTransport
 
+from asyncroscopy.core.names import DEFAULT_MCP_URL
+
 FAILURES: list[str] = []
 
 
@@ -218,7 +220,7 @@ async def main(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--agent", default="http://127.0.0.1:8000/mcp")
+    parser.add_argument("--agent", default=DEFAULT_MCP_URL)
     parser.add_argument("--operator", default="", help="Optional operator endpoint (configs/mcp_operator.yaml, e.g. http://127.0.0.1:8001/mcp) to also check.")
     parser.add_argument("--timeout", type=float, default=300.0, help="Seconds to wait for each job.")
     parser.add_argument("--analysis", default="", help="Analysis MCP server URL (e.g. http://127.0.0.1:8003/mcp) to also check stitching and scoring.")

@@ -38,8 +38,8 @@ class JeolMicroscope(ElectronMicroscope):
     )
     hardware_port = device_property(
         dtype=int,
-        default_value=9095,
-        doc='Port of the JEOL microscope control server.',
+        default_value=0,
+        doc='Not used: the PyJEM detector REST service has its own default port.',
     )
     hardware_timeout_seconds = device_property(
         dtype=int,

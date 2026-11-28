@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import re
 
-# endpoints and headers
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
+autoscript_port = 9095
 # Who is calling and which agent run the call belongs to. With mcp.auth the token's subject replaces the caller.
 # Agents send both with every call, and run_job uses them to find a held start again.
 # HTTP header names ignore case, and servers read them lower-cased.
@@ -44,7 +44,6 @@ def tool_name(prefix: str, command: str) -> str:
     return f"{prefix}_{command}".replace("/", "_").replace("-", "_")
 
 
-# the job envelope
 # A device that implements every one of these runs jobs.
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
 # Job states. A worker owns a job in RUNNING_JOB_STATES. ACTIVE_JOB_STATES adds a reservation
@@ -53,7 +52,6 @@ RUNNING_JOB_STATES = frozenset({"queued", "running", "aborting", "paused_suspend
 ACTIVE_JOB_STATES = RUNNING_JOB_STATES | {"reserved"}
 FINISHED_JOB_STATES = frozenset({"done", "failed", "aborted"})
 
-# data keys
 # File types the DATA device registers with Tiled. An acquisition's result is a key ending in one.
 REGISTRABLE_SUFFIXES = (".h5", ".hdf5", ".hdf", ".nxs", ".tif", ".tiff")
 _SUFFIXES = "|".join(sorted((re.escape(s[1:]) for s in REGISTRABLE_SUFFIXES), key=len, reverse=True))
@@ -68,7 +66,6 @@ def is_data_key(text: str) -> bool:
     return bool(_DATA_KEY.match(text.strip()))
 
 
-# canonical action roles
 # The Tango attribute where a device describes its commands as JSON. See asyncroscopy.utils.commands.
 ACTION_HINTS = "action_hints"
 

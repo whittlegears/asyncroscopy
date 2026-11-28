@@ -9,6 +9,7 @@ import math
 from tango import DevState
 from tango.server import device_property
 
+from asyncroscopy.core.names import autoscript_port
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
 from asyncroscopy.utils.commands import command
 # AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
@@ -51,7 +52,7 @@ class AutoScriptSTAGE(STAGE):
     )
     hardware_port = device_property(
         dtype=int,
-        default_value=9095,
+        default_value=autoscript_port,
         doc="Port of the AutoScript microscope server",
     )
     simulated = device_property(
