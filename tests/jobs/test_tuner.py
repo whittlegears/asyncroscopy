@@ -307,7 +307,6 @@ def test_abort_mid_search_restores_the_snapshot(fresh, tuner_proxy):
     call(tuner_proxy, "release", {"reservation_id": reserved["reservation_id"]})
 
 
-# An example strategy registered from a test
 class HillClimb(Strategy):
     """Step the defocus while the image gets sharper; turn round and halve the step when it does not."""
 

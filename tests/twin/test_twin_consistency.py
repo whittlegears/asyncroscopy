@@ -50,7 +50,6 @@ def test_the_texture_is_the_same_wherever_it_is_asked_for():
     assert np.array_equal(whole, _sample(support_texture=0.3).support_texture(0.0, 0.0, 64, 1e-8))
 
 
-# Survey and atomic drawings agree at the switch
 def _largest_particle(sample: SampleModel) -> int:
     return int(np.argmax(sample.semi_axes[:, 0] * sample.semi_axes[:, 1]))
 

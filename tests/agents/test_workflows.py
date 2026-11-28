@@ -98,7 +98,6 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# The graph and its checks
 def test_the_map_is_a_langgraph_graph_built_from_blocks_and_lints_clean():
     workflow = get_workflow("map_grid")
     assert "map_grid" in all_workflows()
@@ -231,7 +230,6 @@ def test_lint_against_the_endpoints_tools():
     assert problems == ["the instrument endpoint offers no tool matching *_move_stage, which a block of this workflow calls"]
 
 
-
 def test_a_node_switched_off_by_the_runs_inputs_needs_no_tool():
     from asyncroscopy.workflows.checks import switched_off_nodes
 
@@ -268,7 +266,6 @@ def test_blocks_describe_their_ports():
     assert blocks["acquire_tile"]["outputs"]["remaining"] == "integer"
 
 
-# Running
 def test_map_workflow_runs_tile_by_tile_and_stitches(tmp_path):
     instrument, analysis, state = twin()
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
@@ -469,7 +466,6 @@ def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
     assert get_workflow("map_grid").hash() != before
 
 
-# The MCP server an agent uses
 class FakeEndpoints(Endpoints):
     def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1", software="v1"):
         super().__init__("fake://instrument", caller="workflow-test")
@@ -588,7 +584,6 @@ def test_a_stack_that_is_not_simulated_runs_only_when_hardware_is_allowed_on_pur
     assert reply["state"] != "refused" and instrument.log
 
 
-# Workflows inside the agent process
 def test_the_agent_server_runs_workflows_itself_so_no_workflow_server_is_needed(tmp_path):
     pytest.importorskip("langchain_core")
     from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer, main
@@ -890,7 +885,6 @@ def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):
     assert main(["approve", "nope", *here]) == 1
 
 
-# Parallel steps, any tool as a step and questions for a person
 class SlowServer(FakeServer):
     """A fake endpoint whose calls take a moment. It counts how many ran at once."""
 
