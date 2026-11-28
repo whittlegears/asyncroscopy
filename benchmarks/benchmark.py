@@ -82,7 +82,7 @@ def reference_run(wf: dict) -> Run:
     calls, events, results = [], [], {}
     for i, call in enumerate(reference_calls(wf), 1):
         ok, result = bool(call.get("ok", True)), str(call.get("result", ""))
-        args = render(dict(call.get("args") or {}), results)  # {result_1}: what call 1 returned, as in a replay
+        args = render(dict(call.get("args") or {}), results)  # {result_1}: what call 1 returned
         calls.append(Call(str(call["tool"]), args, result, not ok))
         results[f"result_{i}"] = result
         if not str(call["tool"])[:1].islower():

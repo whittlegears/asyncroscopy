@@ -79,11 +79,11 @@ WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_
 REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skills", "risks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
-SURVEY_FOV_M = 6.0e-7  # gives survey_image room for two zoom steps down to atomic columns
+SURVEY_FOV_M = 6.0e-7  # room for two zoom steps down to atomic columns
 # Taken where the run starts, so the stage is homed first: a move after the survey adds a landing error no real zoom has.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
-STAGE_SETTLE_S = 600.0  # The longest a stage move home may take. The mapping twin moves 5 um/s in real time.
+STAGE_SETTLE_S = 600.0  # longest move home; the mapping twin moves 5 um/s in real time
 TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # one file per failed run with its messages and calls
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
@@ -97,8 +97,8 @@ SETUP_MAPS = {
 TEAM_MODULE = "asyncroscopy.agents.graphs.team"  # planner, specialists and reporter
 GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, retry with feedback
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
-REFERENCE = "reference"  # no model: the workflow's reference calls, made on the stack (only with --runners reference)
-CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
+REFERENCE = "reference"  # no model: the reference calls (only with --runners reference)
+CHAT_TOOL_ROUNDS = 40  # tool calls one chat turn may make
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
 
@@ -227,14 +227,14 @@ def load_workflows(paths: list[Path], stacks: dict[str, dict] | None = None) -> 
             wf.setdefault("stack", "twin")
             wf["file"] = file.name
             wf["task_hash"] = task_hash(written)
-            wf["capability"] = file.stem  # one file per capability: the board groups by it
+            wf["capability"] = file.stem  # the board groups by it
             workflows.append(wf)
     return workflows
 
 
 def _fact(facts: dict, name: str) -> Any:
     value = facts.get(name)
-    if value is None:  # a missing value in a request is a broken setup and not a test of the agent
+    if value is None:  # a missing value is a broken setup, not an agent test
         raise InfraError(f"placeholder {{{name}}} has no value: the setup did not produce it")
     return value
 
@@ -266,7 +266,7 @@ class Live:
         self.operator = McpServer(STACK["operator"], {"X-Asyncroscopy-Caller": "workflow-operator"})
         self.names: set[str] = set()
         self.operator_names: set[str] = set()
-        self.risks: dict[str, str] | None = None  # the endpoint's own tool risks from endpoint_info
+        self.risks: dict[str, str] | None = None  # from endpoint_info
         self.setup_cache: dict[str, dict] = {}
 
     async def discover(self) -> None:
@@ -331,7 +331,7 @@ class Live:
                 if isinstance(parameters, str):
                     parameters = json.loads(parameters)
             except Exception:
-                return  # parameters that do not answer or parse give nothing to wait on
+                return  # nothing to wait on
             if not (isinstance(parameters, dict) and parameters.get("stage_moving")):
                 return
             await asyncio.sleep(1.0)
@@ -434,7 +434,7 @@ class Live:
     async def setup(self, name: str) -> dict:
         if name in self.setup_cache and name not in IN_PLACE_SETUPS:
             return self.setup_cache[name]
-        if name in ("image", "survey_image"):  # image uses the field of view the instrument has and survey_image uses SURVEY_FOV_M
+        if name in ("image", "survey_image"):  # survey_image uses SURVEY_FOV_M
             if name == "survey_image":
                 await self.text(self.tool("_set_fov"), {"fov": SURVEY_FOV_M})
             await self.required(self.tool("_unblank_beam"), {})  # a blanked beam images noise
@@ -512,7 +512,7 @@ def data_truth(keys: list[str]) -> dict:
                 continue
             values = np.asarray(ds.node.read(), dtype=np.float64)
             axis = views.energy_axis({**ds.parent_attrs, **ds.attrs})
-        except Exception as exc:  # the truth is missing so checks that need it fail with the reason
+        except Exception as exc:  # no truth: checks that need it fail with the reason
             spectra[key] = {"error": f"{type(exc).__name__}: {exc}"}
             continue
         line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
@@ -523,7 +523,7 @@ def data_truth(keys: list[str]) -> dict:
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
         if xray:
             entry["peaks_ev"] = [round(row[0], 1) for row in rows]
-            likely = eds.likely_elements(rows)  # the elements view_data names and not every line that could fit a peak
+            likely = eds.likely_elements(rows)  # the elements view_data names, not every fitting line
             entry["elements"] = sorted(part.split(" ")[0] for part in likely.split(", ")) if likely else []
             entry["could_be"] = sorted({el for row in rows for el in eds.note_elements(row[4])})
         spectra[key] = entry
@@ -723,7 +723,7 @@ async def _run_chat(factory: str, config: AgentConfig, wf: dict, facts: dict, ca
     messages, run.final, run.skills = await asyncio.wait_for(run_chat_graph(factory, config, wf, facts, caller, started), wf["timeout_s"])
     run.calls = trace_from_messages(messages)
     transcript[:] = [transcript_entry(m) for m in messages]
-    if not (run.final or "").strip():  # keep what the model sent last to see why it gave no answer
+    if not (run.final or "").strip():  # keep the model's last message to see why
         facts["last_messages"] = [message_summary(m) for m in messages[-3:]]
 
 
@@ -814,7 +814,7 @@ async def _stitch_results(live: Live, wf: dict, run: Run, stitched_here: list[st
             try:
                 meta, shape = map_metadata_and_tile_shape(key)
                 stitch[key] = stitch_truth(meta, shape, [step for run_id, step in steps if f"map_{run_id}" == Path(meta["run"]).stem], truth_doc)
-            except Exception as exc:  # recorded so the check fails with the reason
+            except Exception as exc:  # so the check fails with the reason
                 stitch[key] = {"error": f"{type(exc).__name__}: {exc}"}
     return stitch
 
@@ -832,7 +832,7 @@ def _run_checks(wf: dict, runner: str, run: Run, facts: dict, stitch: dict) -> d
 
 def _run_scores(caller: str, run: Run) -> dict:
     """Score a run with the extra evaluators."""
-    try:  # These are extra columns only. A failing evaluator is recorded and the verdict stays as the checks gave it.
+    try:  # extra columns only; a failing evaluator leaves the verdict
         return evaluator_scores(RunData(caller, run.events, tiled_uri=STACK.get("tiled")), EVALUATORS)
     except Exception as exc:
         return {"error": f"{type(exc).__name__}: {exc}"}
@@ -863,10 +863,10 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         error = f"timed out after {wf['timeout_s']} s"
     except InfraError:
         raise
-    except Exception as exc:  # a crash or the recursion limit counts as a failed run
+    except Exception as exc:  # crash or recursion limit: a failed run
         error = f"{type(exc).__name__}: {exc}"
     seconds = round(time.time() - started, 1)
-    if error and len(config.ledger) > len(run.calls):  # the run stopped part way so keep every call whose reply arrived
+    if error and len(config.ledger) > len(run.calls):  # stopped part way: keep every call whose reply arrived
         run.calls = [Call.from_dict(c) for c in config.ledger]
     await asyncio.sleep(1.0)  # let the last trace lines land
     mine_runs = await _collect_trace(live, run, facts, started, caller)
@@ -887,7 +887,7 @@ async def run_once(live: Live, wf: dict, runner: str, factory: str, baseline: di
         "checks": checks,
         "tool_calls": len(names),
         "tool_names": names,
-        "sleepwalking": unrequested(run, workflow_allow(wf)),  # with this workflow's own allow list
+        "sleepwalking": unrequested(run, workflow_allow(wf)),  # this workflow's own allow list
         "skills": run.skills,
         "final": (run.final or "")[-600:],
         "scores": scores,
@@ -1050,7 +1050,7 @@ async def main(args: argparse.Namespace) -> int:
                 try:
                     await ensure_healthy(live, baseline)
                     row = await run_once(live, wf, runner, available.get(runner, ""), baseline)
-                except Exception as exc:  # a setup or stack failure is recorded and the suite goes on
+                except Exception as exc:  # setup or stack failure recorded; the suite goes on
                     row = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "infra_error": isinstance(exc, InfraError),
                            "seconds": 0, "checks": {}, "tool_names": [], "sleepwalking": []}
                 rows.append(row)
@@ -1066,7 +1066,7 @@ async def main(args: argparse.Namespace) -> int:
             out.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
     try:
         await live.restore(baseline)
-    except InfraError as exc:  # every row is in; a stage left away from home is reported, not a reason to lose the table
+    except InfraError as exc:  # a stage left away from home is reported, not fatal
         print(f"warning: the instrument was not put back as the suite found it: {exc}", flush=True)
     results["passed"] = sum(v["passed"] for v in results["workflows"].values())
     results["of"] = sum(v["of"] for v in results["workflows"].values())

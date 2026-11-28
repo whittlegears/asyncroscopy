@@ -14,19 +14,19 @@ from benchmarks.hackathon.task import Image, Spectrum
 
 LINE_EV = {"Si": 1740.0, "Fe": 6404.0, "Ni": 7478.0, "Cu": 8048.0, "Pd": 2839.0, "Ag": 2984.0, "Pt": 9442.0, "Au": 9713.0}
 LINE_HALF_WIDTH_EV = 100.0  # counts within this of the line are the element's
-MIN_LINE_COUNTS = 40  # fewer than this in the best line: the beam was not on a particle
-MIN_LINE_LEAD = 3.0  # and the best line must have this many times the counts of the next
+MIN_LINE_COUNTS = 40  # fewer in the best line: the beam missed the particles
+MIN_LINE_LEAD = 3.0  # times the next line's counts
 
-MIN_PARTICLE_COUNTS = 6.0  # a particle's smoothed peak stands at least this many counts above the film
+MIN_PARTICLE_COUNTS = 6.0  # counts above the film of a particle's smoothed peak
 MIN_PARTICLE_PIXELS = 6
-HOLE_VARIANCE = 0.5  # the film's shot noise makes a film image noisier than this; a hole shows only read noise
+HOLE_VARIANCE = 0.5  # a hole shows only read noise; film is noisier than this
 
 
 @dataclass
 class Particle:
-    column: float  # where it is in the image (pixels)
+    column: float  # pixels
     row: float
-    radius_m: float  # from the area above half its peak, which is about 0.75 of the true radius when in focus
+    radius_m: float  # from the area above half its peak, about 0.75 of the true radius in focus
 
 
 def find_particles(image: Image) -> list[Particle]:

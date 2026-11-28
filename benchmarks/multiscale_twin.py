@@ -32,7 +32,7 @@ from typing import Any
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import mosaic_twin  # noqa: E402  (twin_properties, the in-process twin set-up)
+import mosaic_twin
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = "asyncroscopy/digitaltwin/multiscale"
@@ -61,7 +61,7 @@ def where_in(frame: tuple[np.ndarray, np.ndarray], point_xy: np.ndarray) -> np.n
     rows, cols = np.indices(xs.shape)
     design = np.stack([rows.ravel(), cols.ravel(), np.ones(rows.size)], axis=1).astype(np.float64)
     coef, *_ = np.linalg.lstsq(design, np.stack([xs.ravel(), ys.ravel()], axis=1), rcond=None)
-    linear, offset = coef[:2].T, coef[2]  # a sample point is linear times its row and col, plus offset
+    linear, offset = coef[:2].T, coef[2]  # linear times row and col, plus offset
     return np.linalg.solve(linear, np.asarray(point_xy, dtype=np.float64) - offset)
 
 
@@ -114,7 +114,7 @@ def run(args: argparse.Namespace) -> dict:
             zero = np.zeros(2)
             parent, parent_record = acquire(device, saved, fovs[0], args.imsize, args.dwell, zero)
             parent_frame = recorder.frames[parent_record["index"]]
-            reach = 0.4 * fovs[0]  # aim children over the middle 80 % of the survey tile
+            reach = 0.4 * fovs[0]  # the middle 80 % of the survey tile
             for _ in range(args.children):
                 shift2 = rng.uniform(-reach, reach, 2)
                 child, child_record = acquire(device, saved, fovs[1], args.imsize, args.dwell, shift2)

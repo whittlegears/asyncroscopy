@@ -39,7 +39,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 DEVICE = "asyncroscopy/digitaltwin/benchmark"
-MISPLACED_PX = 2.0  # a tile further than this from the shared affine fit counts as misplaced
+MISPLACED_PX = 2.0  # further from the shared affine fit counts as misplaced
 THRESHOLDS = {
     "placement_median_px": 0.3,
     "placement_p95_px": 0.7,
@@ -143,7 +143,7 @@ def _affine_residual(estimate: np.ndarray, true: np.ndarray) -> np.ndarray:
     design = np.hstack([true, np.ones((len(true), 1))])
     keep = np.ones(len(true), bool)
     for _ in range(10):
-        if keep.sum() < 3:  # too few tiles are near the fit to refine it so keep the plain least squares fit
+        if keep.sum() < 3:  # too few near the fit: keep plain least squares
             coeffs, *_ = np.linalg.lstsq(design, estimate, rcond=None)
             return np.hypot(*(estimate - design @ coeffs).T)
         coeffs, *_ = np.linalg.lstsq(design[keep], estimate[keep], rcond=None)
@@ -163,7 +163,7 @@ def placement_errors(positions_px: np.ndarray, records: list[dict], pixel_m: flo
     offset_only = np.hypot(*diff.T)
     local = _affine_residual(drawn, true)
     placed = local <= MISPLACED_PX
-    if not placed.any():  # with stage positions alone no tile is within 2 px of any fit so report every tile
+    if not placed.any():  # stage positions alone fit no tile within 2 px: report every tile
         placed = np.ones(len(local), bool)
     return {
         "median_px": float(np.median(offset_only)), "p95_px": float(np.percentile(offset_only, 95)), "max_px": float(offset_only.max()),
@@ -184,7 +184,7 @@ def seam_ratio(canvas: np.ndarray, tops: np.ndarray, imsize: int, margin: int = 
             if 0 < r < h:
                 edge_rows[r] = True
     covered = canvas > 0
-    step_x = np.abs(np.diff(canvas, axis=1))  # column j of step_x is the step between canvas columns j and j + 1
+    step_x = np.abs(np.diff(canvas, axis=1))  # column j is the step between columns j and j + 1
     step_y = np.abs(np.diff(canvas, axis=0))
     near_col = np.convolve(edge_cols, np.ones(2 * margin + 1), "same") > 0
     near_row = np.convolve(edge_rows, np.ones(2 * margin + 1), "same") > 0

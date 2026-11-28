@@ -81,7 +81,7 @@ CONDITIONS = {
 }
 TUNE_PLAN = {
     "strategy": "image_metric",
-    "dose_budget_e_per_a2": 1e7,  # the bench measures dose and does not limit it
+    "dose_budget_e_per_a2": 1e7,  # measured, not limited
     "max_steps": 1000,
     "focus_range_m": 4e-7,
     "stig_range_m": 1.5e-7,
@@ -90,8 +90,8 @@ TUNE_PLAN = {
     "dwell_s": 1e-6,
 }
 ACQUIRE = {"fov_m": 1e-7, "imsize": 256, "dwell_s": 4e-6}  # one map tile
-MAP_GRID = 9  # tiles per side, 100 nm apart with no overlap
-FOCUS_FIELD_M = (0.52e-6, 0.0)  # a field off the map where the tuning is done
+MAP_GRID = 9  # tiles per side, 100 nm apart, no overlap
+FOCUS_FIELD_M = (0.52e-6, 0.0)  # a field off the map for tuning
 TWIN = {
     "sample_seed": 77,
     "sample_size_xy": 1.2e-6,
@@ -101,7 +101,7 @@ TWIN = {
     "time_scale": 0.0,
 }
 STAGE_MOVE_OVERHEAD_S = 1.0  # move and settle
-DEPTH_OF_FIELD_M = 20e-9  # The resolution evaluator's in focus tolerance. The policy also uses it as its staleness bound.
+DEPTH_OF_FIELD_M = 20e-9  # the resolution evaluator's in-focus tolerance, also the staleness bound
 OBJECTIVES = ("information", "information_in_focus")
 
 
@@ -129,7 +129,7 @@ class FocusDriftTwin(DigitalTwin):
 
     def _scan_frame(self, imsize: int, dwell_time: float, scan_region: Sequence[float]) -> dict:
         self._clock.advance(getattr(self, "_frame_overhead_s", 0.0))  # set-up, settle and read-out of a frame
-        self.last_frame_focus = self._focus_truth()  # the hidden focus error this frame is taken with
+        self.last_frame_focus = self._focus_truth()  # hidden focus error of this frame
         return super()._scan_frame(imsize, dwell_time, scan_region)
 
 
@@ -247,7 +247,7 @@ class Bench:
         truth["focus_by_acquisition"] = focus_by_acquisition
         data = RunData(trial, events, truth=truth)
         scores = score_run(data, [get_evaluator("information", duration_s=budget_s), "resolution", "dose", "time"])
-        for key in keys:  # the frames are scored so remove them to keep the disk small
+        for key in keys:  # scored: remove to keep the disk small
             try:
                 os.remove(key)
             except OSError:

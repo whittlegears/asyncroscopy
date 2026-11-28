@@ -64,7 +64,7 @@ def check(task: dict, plan: dict | None, state: dict, centre: list[float]) -> di
         not_huge = (x1 - x0) <= SIDE_M * 1.6 and (y1 - y0) <= SIDE_M * 1.6
         checks["box_matches_request"] = covers and not_huge
         checks["eds_as_asked"] = ("eds_point" in plan.get("per_tile", [])) == task["eds"]
-    else:  # no plan, or a box the Mapper itself would reject
+    else:  # no plan, or a box the Mapper would reject
         checks["box_matches_request"] = checks["eds_as_asked"] = False
     candidates = [p for p in state.get("pois", []) if p.get("kind") == "candidate"]
     checks["explored_as_asked"] = (len(candidates) > 0) == task["score"]
@@ -92,7 +92,7 @@ async def general_trial(config: AgentConfig, task: dict) -> dict:
     try:
         state = await graph.ainvoke({"messages": [HumanMessage(task["request"] + " Tell me the map key at the end.")]}, {"recursion_limit": recursion_limit(25)})
         messages = state["messages"]
-    except Exception as exc:  # recursion limit or a crash counts as a failed trial
+    except Exception as exc:  # recursion limit or crash: a failed trial
         return {"seconds": round(time.time() - started, 1), "ok": False, "error": f"{type(exc).__name__}: {exc}", "checks": {}}
     calls = [c for m in messages for c in (getattr(m, "tool_calls", None) or [])]
     reserve = next((c for c in reversed(calls) if c["name"] in ("run_job", "Mapper_reserve")), None)

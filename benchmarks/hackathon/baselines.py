@@ -22,10 +22,10 @@ from scipy import ndimage
 from benchmarks.hackathon.analysis import find_particles, identify, is_hole
 from benchmarks.hackathon.task import GRID, Answer, BudgetSpent, Microscope, cell_centres, cell_of
 
-SPECTRA_PER_IMAGE = 3  # taken straight after the image, before the sample drifts off the particles
-PERIODIC_EVERY = 4  # the periodic controller focuses every this many images
-SURFACE_REACH_M = 1.0e-6  # the surface controller trusts its model this far from the nearest place it focused
-SURFACE_NEIGHBOURS = 10  # and fits its surface to this many of the nearest such places
+SPECTRA_PER_IMAGE = 3  # taken before the sample drifts off the particles
+PERIODIC_EVERY = 4  # images between periodic focuses
+SURFACE_REACH_M = 1.0e-6  # how far the surface model is trusted from the nearest focus
+SURFACE_NEIGHBOURS = 10  # nearest focus places the surface fits
 
 
 class FocusOnce:
@@ -69,7 +69,7 @@ class FocusFromSurface:
         dx, dy = (places[nearest, 0] - x_m) / SURFACE_REACH_M, (places[nearest, 1] - y_m) / SURFACE_REACH_M
         terms = np.stack([np.ones_like(dx), dx, dy, dx * dx, dx * dy, dy * dy], axis=1)
         fit, *_ = np.linalg.lstsq(terms, np.array(self.defocus_m)[nearest], rcond=None)
-        microscope.set_defocus(fit[0])  # the surface's value here, where dx and dy are 0
+        microscope.set_defocus(fit[0])  # the surface's value here
 
 
 @dataclass
@@ -79,7 +79,7 @@ class Notes:
     visited: np.ndarray = field(default_factory=lambda: np.zeros((GRID, GRID), bool))
     hole: np.ndarray = field(default_factory=lambda: np.zeros((GRID, GRID), bool))
     radius_m: np.ndarray = field(default_factory=lambda: np.full((GRID, GRID), np.nan))  # mean particle radius
-    identified: dict = field(default_factory=dict)  # element -> (GRID, GRID) count of particles identified as it
+    identified: dict = field(default_factory=dict)  # element -> (GRID, GRID) count identified as it
 
 
 def serpentine() -> list[tuple[float, float]]:

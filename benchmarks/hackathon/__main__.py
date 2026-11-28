@@ -25,7 +25,7 @@ from benchmarks.hackathon.baselines import BASELINES
 from benchmarks.hackathon.score import score, truth_maps
 
 OUT = task.ROOT / "outputs" / "hackathon"
-SURVEY_SHRINK = 4  # the survey picture shows every image at a quarter of its size
+SURVEY_SHRINK = 4  # survey shows images at a quarter size
 
 
 def load_controller(spec: str) -> tuple[str, Callable]:

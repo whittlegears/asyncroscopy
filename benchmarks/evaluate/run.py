@@ -102,7 +102,7 @@ class RunData:
                 array = np.asarray(array)
                 if array.ndim == 2 and array.size >= 64:
                     images.append(Image(key, name, array.astype(np.float64), dict(attrs or {})))
-        except Exception as exc:  # Data that cannot be read is reported. The evaluators score what they can.
+        except Exception as exc:  # unreadable data is reported; evaluators score what they can
             self.missing[key] = f"{type(exc).__name__}: {exc}"[:200]
         self._cache[key] = images
         return images

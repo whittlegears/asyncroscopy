@@ -175,7 +175,7 @@ def _render_particles(shape, particles, pixel_nm) -> np.ndarray:
 
 def _cell_particles(rng: np.random.Generator, kind: str, window: int) -> tuple[list[dict], float, float | None]:
     """The particles, pixel size and peak scale of one feature kind."""
-    if kind == "separated":  # the twin's sample has particles about 6.4 px in radius at 0.25 nm per pixel
+    if kind == "separated":  # twin particles about 6.4 px radius at 0.25 nm per pixel
         return _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0)), _PIXEL_NM, None
     if kind == "crowded":
         return _place_particles(rng, window, int(rng.integers(8, 15)), lambda g: np.clip(g.normal(8.0, 2.0), 4.0, 14.0), overlap=True), _PIXEL_NM, None
@@ -189,7 +189,7 @@ def _cell_particles(rng: np.random.Generator, kind: str, window: int) -> tuple[l
         return _place_particles(rng, window, 1 if a > 14 else int(rng.integers(1, 4)), lambda g: a * g.uniform(0.9, 1.0)), 1.6 / a, None
     if kind == "low_contrast":
         particles = _place_particles(rng, window, int(rng.integers(2, 6)), lambda g: np.clip(g.normal(6.4, 0.8), 4.0, 9.0))
-        scale = float(rng.uniform(4.0, 8.0)) * np.sqrt(_SUPPORT_NM * _signal_per_nm("C"))  # the peak is 4 to 8 times the background noise
+        scale = float(rng.uniform(4.0, 8.0)) * np.sqrt(_SUPPORT_NM * _signal_per_nm("C"))  # peak 4 to 8 times the background noise
         return particles, _PIXEL_NM, scale
     raise ValueError(f"unknown feature kind {kind!r}")
 

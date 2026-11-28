@@ -33,7 +33,7 @@ except ImportError:  # imported as benchmarks.workflow_checks
 
 from ase.data import atomic_names, chemical_symbols
 
-from asyncroscopy.agents.goals import MAP_KEY, Call  # Call is the one record of a tool call and its reply
+from asyncroscopy.agents.goals import MAP_KEY, Call  # the one record of a tool call and its reply
 
 NOT_APPLICABLE = "n/a"
 
@@ -44,9 +44,9 @@ class Run:
     events: list[dict] = field(default_factory=list)
     facts: dict = field(default_factory=dict)
     final: str = ""
-    has_calls: bool = True  # False for runners whose calls are not the model's, like the mapping graph
-    skills: list[str] = field(default_factory=list)  # skills the agent was given, not only the ones it loaded
-    risks: dict | None = None  # the endpoint's tool risk table from endpoint_info, so overrides count
+    has_calls: bool = True  # False when the calls are not the model's, like the mapping graph
+    skills: list[str] = field(default_factory=list)  # given to the agent, not only loaded
+    risks: dict | None = None  # from endpoint_info, so overrides count
 
 
 CHECKS: dict[str, Callable[..., tuple[bool, str]]] = {}
@@ -382,7 +382,7 @@ def zoomed_on_region(run: Run, tol: float = 2.0e-7) -> tuple[bool, str]:
         elif action.endswith("_acquire_scanned_image") and (aimed_xy or last_xy) is not None and near(aimed_xy or last_xy):
             if first_fov is None or (last_fov is not None and last_fov < first_fov):
                 return True, f"image at {aimed_xy or last_xy} with fov {last_fov}"
-    for step in _step_results(run):  # the map job's own revisit of the regions it found
+    for step in _step_results(run):  # the map job's own revisit of its regions
         if step.get("phase") == "revisit" and step.get("image") and step.get("stage_xy_m") and near(step["stage_xy_m"]):
             if first_fov is None or (_number(step.get("fov_m")) is not None and _number(step.get("fov_m")) < first_fov):
                 return True, f"the map job imaged the region at {step['stage_xy_m']} with fov {step.get('fov_m')}"
@@ -425,7 +425,7 @@ def no_writes(run: Run) -> tuple[bool, str]:
 
 def _poi_records(run: Run, only_setup_map: bool = False) -> list[dict]:
     records = run.facts.get("poi_records") or {}
-    if only_setup_map and run.facts.get("setup_map") in records:  # the map the request named and not one the run made
+    if only_setup_map and run.facts.get("setup_map") in records:  # the map the request named, not one the run made
         return list(records[run.facts["setup_map"]])
     return [p for pois in records.values() for p in pois]
 
@@ -715,7 +715,7 @@ def _placements(run: Run) -> list[dict]:
             if isinstance(record, dict) and record.get("child"):
                 out.append(record)
     seen = set()
-    for step in _step_results(run):  # the job and its writer may both trace a step so keep one record per image
+    for step in _step_results(run):  # job and writer may both trace a step: one record per image
         if step.get("phase") == "zoom" and step.get("image") and isinstance(step.get("placement"), dict) and step["image"] not in seen:
             seen.add(step["image"])
             out.append({**step["placement"], "child": step["image"], "parent": step.get("parent"), "child_pixel_m": step.get("pixel_m")})

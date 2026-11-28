@@ -34,14 +34,14 @@ ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "configs" / "digital_twin_heterogeneous.yaml"
 DEVICE = "asyncroscopy/digitaltwin/hackathon"
 
-GRID = 16  # the answer's maps are GRID x GRID cells over the area
-AREA_M = 8.0e-6  # the square area to map, centred on the stage origin (the whole sample)
-FOV_M = 4.0e-7  # every image is this wide
-IMSIZE = 256  # and this many pixels across
+GRID = 16  # GRID x GRID cells over the area
+AREA_M = 8.0e-6  # square centred on the stage origin: the whole sample
+FOV_M = 4.0e-7
+IMSIZE = 256  # pixels across
 DWELL_S = 1.0e-6
-SPECTRUM_S = 0.5  # exposure of one EDS spectrum
-BUDGET_S = 700.0  # simulated seconds a controller may spend: not enough to image every cell and focus often
-ELEMENTS = ("Au", "Pt", "Fe", "Pd")  # what the particles may be made of (the configuration's particle_elements)
+SPECTRUM_S = 0.5  # one EDS spectrum's exposure
+BUDGET_S = 700.0  # simulated seconds; too few to image every cell and focus often
+ELEMENTS = ("Au", "Pt", "Fe", "Pd")  # the configuration's particle_elements
 
 
 class BudgetSpent(RuntimeError):
@@ -50,7 +50,7 @@ class BudgetSpent(RuntimeError):
 
 @dataclass
 class Image:
-    pixels: np.ndarray  # raw counts, [row, column]; rows run along +y and columns along +x
+    pixels: np.ndarray  # raw counts [row, column]; rows along +y, columns along +x
     x_m: float  # where the stage says the image is centred
     y_m: float
     pixel_m: float
@@ -66,7 +66,7 @@ class Spectrum:
 class Answer:
     marker_element: str
     size_ratio: float
-    share_map: np.ndarray  # (GRID, GRID) floats in 0..1, [row, column] like an image
+    share_map: np.ndarray  # (GRID, GRID) in 0..1, [row, column]
     hole_map: np.ndarray  # (GRID, GRID) booleans
 
 
@@ -89,10 +89,10 @@ class Microscope:
         self._device = device
         self._saved: list = []  # what the twin's last acquisition wrote
         self._start_s = device._clock.now()
-        self.elements = elements  # the elements the particles may be made of
+        self.elements = elements
         self.budget_s = float(budget_s)
         self.autofocus_runs = 0
-        self.images_taken: list[Image] = []  # every image so far, for drawing the survey afterwards
+        self.images_taken: list[Image] = []  # for drawing the survey afterwards
 
     @property
     def used_s(self) -> float:

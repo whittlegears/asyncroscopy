@@ -34,8 +34,8 @@ def _sharp_features(image) -> tuple[int, float, str]:
     return int(sharp), float(value), reason
 
 
-IN_FOCUS_M = 20e-9  # Focus error below this counts as in focus. It is about the depth of field of a 30 mrad probe.
-IN_FOCUS_SCORE = 0.5  # Used when the twin gives no focus truth. A pyTEMlib baseline score at or above this counts as in focus.
+IN_FOCUS_M = 20e-9  # about the depth of field of a 30 mrad probe
+IN_FOCUS_SCORE = 0.5  # pyTEMlib baseline score threshold when the twin gives no focus truth
 
 
 def in_focus(data: RunData, image: Image, tolerance_m: float = IN_FOCUS_M, sharp_score: float = IN_FOCUS_SCORE) -> dict:
@@ -75,10 +75,10 @@ class Information(Evaluator):
         "images": ("images", "max"),
     }
     option_names = ("k_sigma", "duration_s", "in_focus_m", "in_focus_score")
-    k_sigma = 5.0  # detection threshold, in noise standard deviations
+    k_sigma = 5.0  # in noise standard deviations
     in_focus_m = IN_FOCUS_M
     in_focus_score = IN_FOCUS_SCORE
-    duration_s = None  # Time to divide by. None means the run's instrument clock span with tuning time included.
+    duration_s = None  # None: the run's instrument clock span, tuning included
 
     def _image_scores(self, data: RunData, image) -> tuple[dict, str]:
         matched = match_particles(data, image, k=float(self.k_sigma))
@@ -207,8 +207,8 @@ class Dose(Evaluator):
         "job_dose_e_per_a2": ("e/A^2", "min"),
     }
     option_names = ("threshold_e_per_a2", "cell_m")
-    threshold_e_per_a2 = 1000.0  # A budget for a beam sensitive specimen. Set it per specimen.
-    cell_m = None  # Grid cell size. None means a quarter of the smallest field of view.
+    threshold_e_per_a2 = 1000.0  # a beam-sensitive specimen's budget; set per specimen
+    cell_m = None  # None: a quarter of the smallest field of view
 
     def score_event(self, event: dict, data: RunData) -> dict[str, Score]:
         doses = [d for d in (image.frame_dose_e_per_a2() for image in data.images(event)) if d is not None]

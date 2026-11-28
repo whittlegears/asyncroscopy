@@ -84,7 +84,7 @@ class SyntheticRun:
         self.times = np.arange(n, dtype=np.float64)  # one tile per second
         walk = np.cumsum(rng.normal(0, 0.15 * drift_px_per_tile, size=(n, 2)), axis=0)
         self.drift = np.outer(self.times, [drift_px_per_tile, 0.6 * drift_px_per_tile]) + walk
-        self.truth = self.commanded + rng.normal(0, 0.05 * tile, size=(n, 2))  # Where each tile's content really is. The stage misses its target.
+        self.truth = self.commanded + rng.normal(0, 0.05 * tile, size=(n, 2))  # where each tile's content really is: the stage misses
         self.reported = self.truth + self.drift + rng.normal(0, stage_noise * tile, size=(n, 2))
         extent = side * step + tile + abs(self.drift).max() + 100
         self.scene = Scene(extent, density=density, seed=seed)
