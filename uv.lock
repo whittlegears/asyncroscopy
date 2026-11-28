@@ -565,8 +565,8 @@ requires-dist = [
     { name = "pyqt6", specifier = ">=6.8,<6.10" },
     { name = "pyro5", specifier = ">=5.17" },
     { name = "pytango", specifier = "==10.1.2" },
-    { name = "pytemlib", git = "https://github.com/whittlegears/pyTEMlib.git?rev=8bddb416b255a2e983200395c2ba209d909d4aad" },
-    { name = "pytemlib-mcp", git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=8bddb416b255a2e983200395c2ba209d909d4aad" },
+    { name = "pytemlib", git = "https://github.com/whittlegears/pyTEMlib.git?rev=e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24" },
+    { name = "pytemlib-mcp", git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "quantem", marker = "extra == 'diffraction'", specifier = ">=0.1.9" },
@@ -7106,7 +7106,7 @@ wheels = [
 [[package]]
 name = "pytemlib"
 version = "0.2026.9.0"
-source = { git = "https://github.com/whittlegears/pyTEMlib.git?rev=8bddb416b255a2e983200395c2ba209d909d4aad#8bddb416b255a2e983200395c2ba209d909d4aad" }
+source = { git = "https://github.com/whittlegears/pyTEMlib.git?rev=e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24#e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24" }
 dependencies = [
     { name = "ase" },
     { name = "ipympl" },
@@ -7137,7 +7137,7 @@ dependencies = [
 [[package]]
 name = "pytemlib-mcp"
 version = "0.1.0"
-source = { git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=8bddb416b255a2e983200395c2ba209d909d4aad#8bddb416b255a2e983200395c2ba209d909d4aad" }
+source = { git = "https://github.com/whittlegears/pyTEMlib.git?subdirectory=pytemlib_mcp&rev=e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24#e9213cf6118fa7d1c3aa23302b6e5841ec5b2d24" }
 dependencies = [
     { name = "dask" },
     { name = "fastmcp" },
