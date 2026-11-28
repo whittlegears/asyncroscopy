@@ -1,7 +1,9 @@
 # Permissions and the endpoint contract
 
 Asyncroscopy decides, on the server, whether a tool call runs at once, waits for a person, or never runs. It
-does so for every client of the agent endpoint alike: an app, `query_agent`, a workflow, a script. A person
+does so for every client of the agent endpoint alike: an app, `query_agent`, a workflow, a script. The monitor
+endpoint, which offers only reads, is gated the same way with the same settings, so setting `reads` to `approve`
+holds reads there too. A person
 releases a held call on the operator endpoint. An app only shows the held call and the settings.
 
 ## Deviations from the 2026-11-28 contract

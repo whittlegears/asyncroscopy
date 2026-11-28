@@ -196,6 +196,17 @@ def test_a_job_that_would_write_the_corrector_waits_for_a_person(stack):
     assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}).structured_content["status"] == "approval_required"
 
 
+def test_the_monitor_endpoint_holds_reads_as_the_agent_endpoint_does(stack):
+    agent, operator = held_pair(stack)
+    monitor = stack("monitor", SAMPLE)
+    assert not run(call(monitor, "SAMPLE_get_sample")).is_error
+    run(operator_call(operator, "set_group_permission", {"group": "reads", "permission": "approve"}))
+    held = run(call(monitor, "SAMPLE_get_sample")).structured_content
+    assert held["status"] == "approval_required"
+    assert [p["request_id"] for p in run(operator_call(operator, "list_pending_approvals"))["result"]] == [held["request_id"]]
+    assert not run(call(monitor, "endpoint_info")).is_error
+
+
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
     agent = stack("agent", TWIN)
     operator = stack("operator", TWIN)

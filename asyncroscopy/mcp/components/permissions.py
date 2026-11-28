@@ -98,8 +98,9 @@ class Permissions:
         self.models: dict[str, type[BaseModel]] = {}
 
     def attach(self) -> None:
-        """Put the gate on the agent endpoint, inside the token check so a refused caller holds nothing."""
-        if self.server.endpoint_role == "agent":
+        """Put the gate on the agent and monitor endpoints (the operator endpoint is the person's own), inside the token
+        check so a refused caller holds nothing."""
+        if self.server.endpoint_role in ("agent", "monitor"):
             self.server.mcp.add_middleware(Gate(self))
 
     def natives(self) -> list:
