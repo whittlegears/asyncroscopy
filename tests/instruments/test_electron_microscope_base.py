@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+import types
 import threading
 import time
 
@@ -110,3 +112,68 @@ def test_only_a_spectrum_detector_takes_a_spectrum_and_the_refusal_names_the_rig
     message = refused.value.args[0].desc
     assert f"No spectrum detector named '{name}'" in message and "acquire_scanned_image" in message
     assert "'scan'" not in message.split("Spectrum detectors here:")[1]
+
+
+class _FakeDetector:
+    """A detector device: its action_hints say which command takes a spectrum by itself."""
+
+    exposure_time = 0.5
+
+    def __init__(self, hints):
+        self.hints = hints
+        self.calls = []
+
+    def read_attribute(self, name):
+        assert name == "action_hints"
+        return types.SimpleNamespace(value=json.dumps(self.hints))
+
+    def command_query(self, name):
+        return types.SimpleNamespace(in_type=tango.CmdArgType.DevVoid)
+
+    def command_inout(self, name, *args):
+        self.calls.append(name)
+        return f"{name}-key"
+
+
+def test_a_detector_device_that_acquires_its_own_spectrum_is_used_whatever_it_is_called(autoscript):
+    """No detector name is built in: a device whose action_hints declare an acquire.spectrum command is a spectrum detector."""
+    device, client = autoscript
+    gatan = _FakeDetector({"acquire_eels_spectrum": {"role": "acquire.spectrum"}, "get_eels_dispersion": {"role": "setting.read"}})
+    device._detector_proxies["gif"] = gatan
+    client.optics.blanker.blank()
+    assert device.acquire_spectrum("GIF") == "acquire_eels_spectrum-key"
+    assert gatan.calls == ["acquire_eels_spectrum"]
+    assert client.optics.blanker.is_beam_blanked
+    assert "gif" in device._spectrum_detector_names()
+
+
+def test_a_settings_only_device_is_not_a_spectrum_detector(autoscript):
+    device, _ = autoscript
+    device._detector_proxies["camera"] = _FakeDetector({"get_exposure": {"role": "setting.read"}})
+    with pytest.raises(tango.DevFailed) as refused:
+        device.acquire_spectrum("camera")
+    assert "No spectrum detector named 'camera'" in refused.value.args[0].desc
+
+
+def test_a_scanned_image_is_refused_in_tem_mode(autoscript):
+    device, client = autoscript
+    client.optics.optical_mode = "Tem"
+    with pytest.raises(ValueError, match="STEM mode only"):
+        device._acquire_scanned_image(64, 1e-6, ["haadf"])
+
+
+def test_every_device_address_a_config_sets_is_connected_without_a_property_for_it(autoscript, monkeypatch):
+    """run_servers sets <key>_device_address for every support device; the instrument connects each, declared or not."""
+    device, _ = autoscript
+
+    class FakeDb:
+        def get_device_property_list(self, name, wildcard):
+            return types.SimpleNamespace(value_string=["gif_device_address", "eds_device_address", "instrument_device_address", "empty_device_address"])
+
+        def get_device_property(self, name, names):
+            return {"gif_device_address": ["asyncroscopy/eels/default"], "eds_device_address": ["asyncroscopy/eds/default"],
+                    "instrument_device_address": ["asyncroscopy/instrument/default"], "empty_device_address": []}
+
+    monkeypatch.setattr(tango.Util, "instance", staticmethod(lambda *a: types.SimpleNamespace(get_database=FakeDb)))
+    monkeypatch.setattr(device, "get_name", lambda: "asyncroscopy/autoscriptmicroscope/default", raising=False)
+    assert device._configured_addresses() == {"gif": "asyncroscopy/eels/default", "eds": "asyncroscopy/eds/default"}

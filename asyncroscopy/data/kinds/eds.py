@@ -220,12 +220,36 @@ def likely_elements(rows: list[tuple], share: float = 0.25) -> str:
     return ", ".join(f"{e} {100.0 * score[e] / total:.0f}%" for e in ranked)
 
 
+def overlap_note(rows: list[tuple], likely: str) -> str:
+    """When the strongest peak also fits an element the ranking left out, and the element that took it has little else to
+    show for itself, say so: the ranking gives a shared peak to one element, and a Ti K-alpha read as Ba L-alpha dropped
+    Ti from the list although it was the strongest peak (2026-11-27)."""
+    named = [r for r in rows if note_elements(r[4])]
+    if not named:
+        return ""
+    strongest = max(named, key=lambda r: float(r[2]))
+    ranked = {part.split(" ")[0] for part in likely.split(", ") if part}
+    others = sorted(note_elements(strongest[4]) - ranked)
+    claimed = note_elements(strongest[4]) & ranked
+    if not others or not claimed:
+        return ""
+    # Only when the ranked element rests on this peak: its other peaks together are weaker than this one. A Pt
+    # spectrum's M peak also fits P, but Pt's L peaks settle it.
+    elsewhere = {e: sum(float(r[2]) for r in named if r is not strongest and e in note_elements(r[4])) for e in claimed}
+    if all(v >= float(strongest[2]) for v in elsewhere.values()):
+        return ""
+    return (f"the strongest peak ({float(strongest[0]) / 1000:.2f} keV) also fits {', '.join(others)}: "
+            "these lines overlap, so the peaks alone cannot tell them apart")
+
+
 def _reading(rows: list[PeakRow], total: float) -> list[str]:
     likely = likely_elements(rows)
     if likely:
         # The ranking says which elements the peaks point to, strongest first.
         # It is still only a reading of the peaks, and a light element can hide.
-        return [f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}"]
+        reading = [f"elements most consistent with these peaks (the share of the peak signal each one explains): {likely}"]
+        overlap = overlap_note(rows, likely)
+        return reading + [overlap] if overlap else reading
     # Say so when no peak is a real line, or the data rows get read as lines.
     return [f"no X-ray line of any element detected above noise at this exposure (total {_fmt(total)} counts); "
             "a longer exposure is needed to rule elements out"]

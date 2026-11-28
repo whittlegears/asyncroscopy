@@ -11,14 +11,14 @@ Addresses used below (from `configs/Spectra300.yaml`):
 
 | What | Address | Who may reach it |
 | :-- | :-- | :-- |
-| AutoScript server | 10.46.217.241:9095 (confirm, see step 3) | this PC |
+| AutoScript server | `ASYNCROSCOPY_MICROSCOPE_HOST`:9095 (confirm, see step 3) | this PC |
 | Tango database | listens on every interface, port 9094 | this PC only (firewall, step 4) |
 | Tiled (data) | 127.0.0.1:9091 | this PC only |
 | analysis server | 127.0.0.1:8003 | this PC only (no login) |
 | Agent MCP endpoint (`configs/mcp.yaml`); SciAgentGUI uses it too | 127.0.0.1:8000 | this PC only, unless tokens are set up |
 | Operator MCP endpoint (`configs/mcp_operator.yaml`), optional, not started by default | 127.0.0.1:8001 | this PC only, always |
 | Read-only monitor endpoint (`configs/mcp_monitor.yaml`) | 127.0.0.1:8002 | this PC only |
-| CEOS corrector server | 10.46.217.241:9092 in the config (confirm, see step 3) | this PC |
+| CEOS corrector server | `ASYNCROSCOPY_MICROSCOPE_HOST`:9092 in the config (confirm, see step 3) | this PC |
 
 ## Rules for the Claude on the microscope PC
 
@@ -159,7 +159,7 @@ Why Tiled is on 127.0.0.1: everything that reads it runs on this PC. The device 
 the address from the DATA device, and the analysis server is started with `--tiled http://127.0.0.1:9091`.
 Tiled runs with `--public`, so on a LAN address anyone on the facility network could read the data. To serve other
 machines later: set `tiled.host: 0.0.0.0` (this PC still reaches it on 127.0.0.1), set
-`ASYNCROSCOPY_TILED_PUBLIC_URI=http://10.46.217.241:9091` before `run_servers.py`, and open port 9091 only to
+`ASYNCROSCOPY_TILED_PUBLIC_URI=http://<this PC's address>:9091` before `run_servers.py`, and open port 9091 only to
 those machines.
 
 ## 3. Config checks (with the operator)
@@ -172,7 +172,7 @@ Open `configs/Spectra300.yaml` and confirm each item with the operator or the fa
    version it runs. The client in this install is 1.18 (`stubs/AutoScript_v_1.18`, set in `pyproject.toml`
    under `[tool.uv.sources]`). A server on another major.minor version needs the matching client wheels. The
    pre-flight (step 6) reads the server's version and fails on a mismatch.
-3. **CEOS.** `devices.corrector.properties.ceos_host` and `ceos_port` (10.46.217.241:9092 in the config). CEOS
+3. **CEOS.** `devices.corrector.properties.ceos_host` and `ceos_port` (`ASYNCROSCOPY_MICROSCOPE_HOST`, port 9092, in the config). CEOS
    usually runs on the corrector PC, not this one. Get its real address. `socket_timeout: 30` bounds a stalled
    reply.
 4. **Stage holder limits.** No holder is configured, so only the generic limits apply (alpha ±35°, beta ±20°,
@@ -292,7 +292,7 @@ It prints one line per check: `PASS`, `FAIL`, `WARN` or `SKIP`, then `PRE-FLIGHT
 `PRE-FLIGHT FAILED: <n> check(s): ...` (exit code 1). It checks:
 
 * the YAML says `simulated: false`, and `ASYNCROSCOPY_TILED_API_KEY` is set and not `secret`;
-* the Tango database answers at 10.46.217.241:9094 and at localhost:9094;
+* the Tango database answers at the microscope address (`ASYNCROSCOPY_MICROSCOPE_HOST`) on port 9094 and at localhost:9094;
 * every configured device answers and is not in FAULT (its Status is printed when it is not ON);
 * the AutoScript client version in this install, that the AutoScript port accepts a connection, and the
   server's version against the client's;

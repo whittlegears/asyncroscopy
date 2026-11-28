@@ -26,6 +26,15 @@ import tango
 # The DATA device must never reach a developer's running Tiled, which by default is at
 # 127.0.0.1:9091. Point it at a closed local port for the whole session.
 os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
+# Lab machine addresses for the shipped configs' ${NAME} placeholders: documentation addresses (RFC 5737)
+# that reach nothing. They override any real configs/site.env on the machine running the tests.
+os.environ.update({
+    "ASYNCROSCOPY_MICROSCOPE_HOST": "192.0.2.10",
+    "ASYNCROSCOPY_GATAN_HOST": "192.0.2.11",
+    "ASYNCROSCOPY_TALOS_HOST": "192.0.2.12",
+    "ASYNCROSCOPY_F200_HOST": "192.0.2.13",
+    "ASYNCROSCOPY_SEGMENTATION_HOST": "192.0.2.14",
+})
 os.environ["ASYNCROSCOPY_SKILLS"] = "1"  # skills are off by default but the tests still cover them
 # A developer's lab skills (and the skills switched off there) never reach the tests.
 os.environ["ASYNCROSCOPY_LAB_SKILLS"] = tempfile.mkdtemp(prefix="asyncroscopy-lab-skills-")

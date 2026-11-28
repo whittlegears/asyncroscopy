@@ -92,6 +92,15 @@ Set `tango.reset_database_file: true` to delete a stale local
 `tango_database.db` / `Tango_database.db` before starting the Tango database.
 The GUI exposes the same setting as **Delete tango_database.db before start**.
 
+### Lab addresses
+
+The configs in git hold no machine addresses. They write `"${ASYNCROSCOPY_MICROSCOPE_HOST}"` and similar names instead. Before you start a real instrument, give those names values in one of two ways:
+
+1. Copy `configs/site.env.example` to `configs/site.env` and fill it in. Git ignores `configs/site.env`. Ask the team for the filled-in copy; it is kept somewhere private.
+2. Or set environment variables with the same names. They override the file.
+
+If a name has no value, startup stops and names it. Notebooks read the same names from the environment. A test fails if a config, notebook or doc in git contains a lab address.
+
 ## MCP
 
 MCP has its own config: [configs/mcp.yaml](../../configs/mcp.yaml).

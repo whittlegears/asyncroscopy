@@ -10,6 +10,6 @@ pytemlib:
   host: 127.0.0.1
   port: 8003
   # Tiled on the microscope PC
-  tiled: http://10.46.217.241:9091
+  tiled: "http://${ASYNCROSCOPY_MICROSCOPE_HOST}:9091"
   # Maps are saved in this folder so Tiled is only read and needs no key
   local_runs: outputs/maps

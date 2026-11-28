@@ -12,6 +12,7 @@ from asyncroscopy.safety.policy import is_read_only
 from startup_scripts import preflight_hardware as preflight
 
 ROOT = Path(__file__).resolve().parents[2]
+LAB = "192.0.2.10"  # ASYNCROSCOPY_MICROSCOPE_HOST in tests/conftest.py
 SPECTRA = ROOT / "configs" / "Spectra300.yaml"
 MCP_YAMLS = [ROOT / "configs" / "mcp.yaml", ROOT / "configs" / "mcp_operator.yaml"]
 KEY = "lab-test-key"
@@ -67,9 +68,9 @@ class Stack:
         self.server_version = "1.18.0.5236"
         self.client_version = "1.18.0"
         self.tiled_key = KEY
-        self.open_ports = {("10.46.217.241", 9095), ("10.46.217.241", 9092), ("127.0.0.1", 9091), ("127.0.0.1", 8003)}
+        self.open_ports = {(LAB, 9095), (LAB, 9092), ("127.0.0.1", 9091), ("127.0.0.1", 8003)}
         self.mcp_calls: list[str] = []
-        self.databases: set[str] = {"10.46.217.241", "localhost"}
+        self.databases: set[str] = {LAB, "localhost"}
 
     def probes(self) -> preflight.Probes:
         return preflight.Probes(
@@ -128,12 +129,12 @@ def test_a_healthy_stack_passes_and_only_reads(stack):
     assert rows["stage position"][0] == "PASS" and "x=1.000 um" in rows["stage position"][1]
     assert rows["beam current"][0] == "WARN"  # not measured yet, so it warns and does not fail
     assert rows["autoscript server version"][0] == "PASS"
-    assert "7521" in rows["autoscript server port 10.46.217.241:9095"][1]
+    assert "7521" in rows["autoscript server port 192.0.2.10:9095"][1]
     assert rows["tiled accepts the API key"][0] == "PASS"
     # The MCP endpoints were not running so they are skipped and not failed.
     assert [r for r, name, _ in report.rows if name.startswith("mcp ")] == ["SKIP", "SKIP"]
     # Every configured device was asked for its State.
-    assert sum(1 for _cls, name in stack.log if name == "State") == 11
+    assert sum(1 for _cls, name in stack.log if name == "State") == 12
 
     sent = [(cls, name) for cls, name in stack.log if name != "set_timeout_millis" and not name.startswith("read:")]
     assert sent and all(is_read_only(cls, name) for cls, name in sent), sent
@@ -162,7 +163,7 @@ def test_a_faulted_device_fails_and_its_status_is_printed(stack):
 
 
 def test_tango_only_on_the_lan_address_fails_localhost(stack):
-    stack.databases = {"10.46.217.241"}
+    stack.databases = {LAB}
     report = preflight.run(SPECTRA, MCP_YAMLS, stack.probes())
     assert report.failures == ["tango database at localhost:9094"]
 
@@ -203,12 +204,12 @@ def test_autoscript_server_is_not_contacted_when_asked_not_to(stack):
 
 
 def test_unreachable_ceos_and_analysis_server_fail_and_running_endpoints_are_listed(stack):
-    stack.open_ports -= {("10.46.217.241", 9092), ("127.0.0.1", 8003)}
+    stack.open_ports -= {(LAB, 9092), ("127.0.0.1", 8003)}
     stack.open_ports |= {("127.0.0.1", 8000), ("127.0.0.1", 8001)}
 
     report = preflight.run(SPECTRA, MCP_YAMLS, stack.probes())
 
-    assert set(report.failures) == {"ceos at 10.46.217.241:9092", "analysis server (mapper) at http://127.0.0.1:8003/mcp"}
+    assert set(report.failures) == {"ceos at 192.0.2.10:9092", "analysis server (mapper) at http://127.0.0.1:8003/mcp"}
     assert stack.mcp_calls == ["http://127.0.0.1:8000/mcp", "http://127.0.0.1:8001/mcp"]
     rows = results(report)
     assert rows["mcp agent endpoint (mcp.yaml) at http://127.0.0.1:8000/mcp"] == ("PASS", "2 tools")

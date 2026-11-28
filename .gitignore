@@ -256,3 +256,6 @@ benchmarks/results/*
 
 # Site settings that are not shared
 configs/local/
+
+# Lab machine addresses (see configs/site.env.example)
+configs/site.env

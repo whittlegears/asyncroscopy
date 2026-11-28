@@ -16,7 +16,7 @@ instrument:
   class_name: JeolMicroscope
   file: asyncroscopy/instruments/electron_microscope/jeol.py
   description: "JEOL JEM-F200 (S)TEM via PyJEM"
-  hardware_host: 10.46.217.241   # F200 control-server IP; localhost when run on the scope PC
+  hardware_host: "${ASYNCROSCOPY_F200_HOST}"   # F200 control-server IP; localhost when run on the scope PC
   hardware_port: 9095
   timeout_seconds: 120
 

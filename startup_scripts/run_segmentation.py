@@ -19,6 +19,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
+from startup_scripts.config_schema import fill_placeholders  # noqa: E402
 
 DEVICE_NAME = "asyncroscopy/segment/default"
 INSTANCE_NAME = "segment_instance"
@@ -44,7 +45,7 @@ def load_config(path: Path) -> SegmentationConfig:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = fill_placeholders(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
     tango_config = raw.get("tango")
     if not isinstance(tango_config, dict):
         raise KeyError("Config is missing the 'tango' section")

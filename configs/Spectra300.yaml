@@ -6,7 +6,7 @@ instrument:
   class_name: AutoScriptMicroscope
   file: asyncroscopy/instruments/electron_microscope/auto_script.py
   description: "Thermo Fisher Spectra 300 TEM"
-  hardware_host: 10.46.217.241
+  hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
   hardware_port: 9095
   timeout_seconds: 120
 
@@ -17,7 +17,7 @@ devices:
     class_name: AutoScriptAPERTURE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript
     properties:
-      hardware_host: 10.46.217.241
+      hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
       hardware_port: 9095
   camera:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
   # The CEOS server usually runs on the corrector PC: confirm its address and port before first light.
@@ -25,11 +25,19 @@ devices:
     class_name: CEOSCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos
     properties:
-      ceos_host: 10.46.217.241
+      ceos_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
       ceos_port: 9092
       socket_timeout: 30
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
+  # The Gatan EELS server on the Gatan PC. The microscope's acquire_spectrum('eels') runs through this device.
+  # Without the Gatan server the device still starts, and EELS calls say it cannot be reached.
+  eels:
+    module_name: asyncroscopy.instruments.electron_microscope.detectors.eels_gatan
+    properties:
+      hardware_host: "${ASYNCROSCOPY_GATAN_HOST}"
+      hardware_port: 9092
+      data_device_address: asyncroscopy/data/default
   # Background map jobs (reserve/start/status/abort/results/release) on the Spectra 300, as on the twin
   # (configs/digital_twin_mapping.yaml). A dose budget needs a measured beam current here: insert the
   # screen and call get_screen_current first (docs/Operation/agentic_mapping.md, "Dose budget and beam current").
@@ -69,11 +77,11 @@ devices:
     class_name: AutoScriptSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript
     properties:
-      hardware_host: 10.46.217.241
+      hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
       hardware_port: 9095
 
 tango:
-  host: 10.46.217.241
+  host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
   port: 9094
   # Listen on every interface, so the operator and monitor endpoints on this PC reach it as localhost.
   # Firewall 9094 to the microscope PC: Tango itself has no access control.
@@ -84,7 +92,7 @@ tango:
 # endpoints, which take the address from the DATA device, and the analysis server, started with
 # --tiled http://127.0.0.1:9091). Tiled runs with --public, so a LAN address would let anyone on the facility network
 # read the data. To serve other machines later: host 0.0.0.0 (still reached here on 127.0.0.1), set
-# ASYNCROSCOPY_TILED_PUBLIC_URI=http://10.46.217.241:9091 for the clients, and open 9091 only to those machines.
+# ASYNCROSCOPY_TILED_PUBLIC_URI=http://<this PC's address>:9091 for the clients, and open 9091 only to those machines.
 # Set the same ASYNCROSCOPY_TILED_API_KEY (never the default 'secret') in the shell of run_servers, both MCP
 # endpoints and the analysis server (docs/Operation/first_light_runbook.md).
 tiled:

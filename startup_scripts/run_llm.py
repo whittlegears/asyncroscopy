@@ -22,7 +22,7 @@ if str(PROJECT_DIR) not in sys.path:
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
 from asyncroscopy.core.names import endpoint_urls  # noqa: E402
 from asyncroscopy.core.net import is_loopback_host  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
@@ -101,6 +101,7 @@ def load_config(path: Path) -> Config:
         raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     except yaml.YAMLError as exc:
         raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
+    raw = fill_placeholders(raw)
     values = read_settings(raw, SETTINGS)
     problems = []
     # Every key lives under agent, so a typo there would otherwise be silently ignored.
