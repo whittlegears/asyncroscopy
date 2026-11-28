@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 DEFAULT_BAR = {"pass": 4, "of": 5}
-# Kept runs go under outputs/, which git ignores, beside the trace and the failed runs' transcripts.
 HISTORY = Path(__file__).resolve().parents[1] / "outputs" / "benchmarks" / "history"
 KINDS = ("capability", "regression")
 PASS, FAIL, UNPROVEN, SKIPPED = "pass", "fail", "unproven", "skipped"

@@ -47,7 +47,6 @@ import json
 import sys
 from pathlib import Path
 
-# Add benchmarks/ so the runner's modules import the same way they do when it is run as a script.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import board
 from run_workflows import WORKFLOW_DIR, InfraError, WorkflowError, load_workflows, reference_calls, render
@@ -56,7 +55,6 @@ from workflow_checks import Call, Run, evaluate
 HERE = Path(__file__).resolve().parent
 MINE = HERE / "mine"  # your own benchmarks, one file per capability
 HISTORY = board.HISTORY
-# Readings no request would ask for, so a check on a target value cannot pass by accident.
 BEFORE = {"stage": [1.13e-7, -7.7e-8, 0.0, 0.0, 0.0], "fov": 1.234e-6, "defocus": 1.1e-8}
 NULL_ANSWER = "Done."
 

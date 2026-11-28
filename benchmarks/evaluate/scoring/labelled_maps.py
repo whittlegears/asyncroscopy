@@ -66,12 +66,10 @@ TUNING_SEEDS = (0, 1, 2)
 HELDOUT_SEEDS = tuple(range(3, 30))
 DEFAULT_SEEDS = HELDOUT_SEEDS
 DEFAULT_K = 5
-# This threshold is proposed and not yet agreed. It asks for 4 of the top 5 regions to be clean features.
-# A scorer that ranks at random does that on about 2.7 % of maps.
+# Proposed, not yet agreed: 4 of the top 5 regions clean, which random ranking passes on about 2.7 % of maps.
 DEFAULT_THRESHOLD = 0.8
 
 # HAADF counts scale with Z^1.7 times atoms per cubic angstrom times thickness in nm.
-# 3 nm of carbon support gives about 16 counts per pixel and the centre of a typical Au particle about 330.
 _ELEMENTS = {"C": (6, 0.100), "Fe": (26, 0.085), "Pt": (78, 0.066), "Au": (79, 0.059)}
 _COUNTS = 2.6
 _PIXEL_NM = 0.25
@@ -133,8 +131,6 @@ def _overlap(a, b) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
-# synthetic labelled maps
-
 FEATURE_KINDS = ("separated", "crowded", "small", "large", "sampling", "low_contrast")
 NEGATIVE_KINDS = ("empty", "defocused", "contaminated")
 CLASSES = ("feature",) + NEGATIVE_KINDS
@@ -189,8 +185,6 @@ def _cell_particles(rng: np.random.Generator, kind: str, window: int) -> tuple[l
         a = float(rng.uniform(16.0, 32.0))
         return _place_particles(rng, window, 1 if a > 22 else 2, lambda g: a * g.uniform(0.9, 1.0)), _PIXEL_NM, None
     if kind == "sampling":
-        # The twin's 1.6 nm particles at a pixel size that makes them 2 to 40 px in radius.
-        # Counts per pixel stay as at 0.25 nm because the dwell time is assumed to follow the pixel size.
         a = float(np.exp(rng.uniform(np.log(2.0), np.log(40.0))))
         return _place_particles(rng, window, 1 if a > 14 else int(rng.integers(1, 4)), lambda g: a * g.uniform(0.9, 1.0)), 1.6 / a, None
     if kind == "low_contrast":
@@ -256,9 +250,6 @@ def make_labelled_map(seed: int, grid: int = 10, window: int = 96, pixel_size_m:
         (good if kind in FEATURE_KINDS else bad).append({"kind": kind, "box_px": box})
     image = rng.poisson(np.clip(image, 0, None)).astype(np.float64)
     return LabelledMap(image, window, particles, bad, pixel_size_m, seed, good)
-
-
-# metrics
 
 
 class RandomScorer:

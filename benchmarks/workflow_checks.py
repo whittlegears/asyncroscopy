@@ -423,12 +423,6 @@ def no_writes(run: Run) -> tuple[bool, str]:
     return not writes, f"writes: {writes}" if writes else "none"
 
 
-# facts.poi_records maps each map key to its POIs as list_pois returns them.
-# facts.map_info maps each map key to its map_info reply.
-# The runner fetches both from the analysis server after the run.
-# So these check what the map shows and not what the agent said.
-
-
 def _poi_records(run: Run, only_setup_map: bool = False) -> list[dict]:
     records = run.facts.get("poi_records") or {}
     if only_setup_map and run.facts.get("setup_map") in records:  # the map the request named and not one the run made
@@ -598,7 +592,6 @@ def answer_number_near(run: Run, fact: str, tol: float) -> tuple[bool, str]:
     if truth is None:
         return False, f"no truth for {fact}"
     numbers = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?", run.final or "")]
-    # A length fact in nm may be answered in metres, as the tools give it.
     readings = numbers + ([n * 1e9 for n in numbers if 0 < abs(n) < 1e-3] if fact.endswith("_nm") else [])
     close = [n for n in readings if abs(n - truth) <= tol]
     return bool(close), f"truth {truth:.4g}; answer numbers {numbers[:8]}"
@@ -660,7 +653,6 @@ def answer_peak_near(run: Run, position: float, tol: float) -> tuple[bool, str]:
 ELEMENT = r"(?<![A-Za-z]){sym}(?![a-z])"
 NO_PEAKS = (r"no (clear |significant |detectable )?peaks|no peaks? (were |was )?detected|not enough counts|too few counts|longer exposure|"
             r"below (the )?noise|unidentified|could not be identified|no element")
-# A name that is also a common English word is matched by its symbol only.
 NAMED_ELEMENTS = {sym: ("" if name in ("Lead", "Tin") else name) for sym, name in zip(chemical_symbols[1:], atomic_names[1:])}
 
 

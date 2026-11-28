@@ -225,7 +225,6 @@ class Dose(Evaluator):
             dose, centre, fov = image.frame_dose_e_per_a2(), data.centre_m(image), image.fov_m
             if dose is not None and centre is not None and fov is not None:
                 frames.append((dose, centre, fov))
-        # Jobs like the Tuner report their own dose. It is counted but not placed because their events carry no field position.
         job = 0.0
         for event in data.events:
             if str(event.get("action", "")).endswith(".step") and event.get("ok"):

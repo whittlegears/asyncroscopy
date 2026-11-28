@@ -124,7 +124,6 @@ def run(args: argparse.Namespace) -> dict:
                 if placed2.status == "placed":
                     entry2["error_px"] = float(np.hypot(*(np.array(placed2.translation_px) - true2)))
                 results["tier2"].append(entry2)
-                # One grandchild inside this child, aimed at a point over its middle 60 %.
                 shift3 = shift2 + rng.uniform(-0.3 * fovs[1], 0.3 * fovs[1], 2)
                 grandchild, grand_record = acquire(device, saved, fovs[2], args.imsize, args.dwell, shift3)
                 child_frame = recorder.frames[child_record["index"]]
@@ -134,7 +133,6 @@ def run(args: argparse.Namespace) -> dict:
                 if placed3.status == "placed":
                     entry3["error_px"] = float(np.hypot(*(np.array(placed3.translation_px) - true3)))
                     if placed2.status == "placed":
-                        # Chain both placements to get the grandchild's centre in the survey and compare it with the truth there.
                         in_child = np.array(placed3.translation_px)
                         via = np.array(placed2.translation_px) + (in_child - (args.imsize - 1) / 2.0) * pixels[1] / pixels[0]
                         truth_survey = where_in(parent_frame, np.array(grand_record["center_true_m"]))
@@ -169,7 +167,6 @@ def verdict(result: dict) -> dict[str, bool]:
         "tier2_placed_share": t2["placed_share"] >= THRESHOLDS["placed_share"],
         "tier3_placed_share": t3["placed_share"] >= THRESHOLDS["placed_share"],
         "wrong_placements": t2["wrong"] + t3["wrong"] <= THRESHOLDS["wrong"],
-        # Each step may be off by p95_parent_px of its parent's pixels. A chain may be off by their sum in survey pixels.
         "atomic_image_in_survey_after_two_placements": chained["median"] is not None
         and chained["p95"] <= THRESHOLDS["p95_parent_px"] * (1.0 + result["pixels_m"][1] / result["pixels_m"][0]),
     }

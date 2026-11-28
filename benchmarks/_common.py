@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 TRACE_DIR = Path("outputs/trace")
 
-# These errors come from the stack and not the agent. Rows with them are left out of the pass rate.
 INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error",
                 "API_DeviceTimedOut", "Not able to acquire serialization")
 

@@ -36,7 +36,6 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-# Add benchmarks/ so _common can be imported. _common also puts the project on sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np
 import yaml
@@ -77,13 +76,11 @@ HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
 WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks",
                  "kind", "held_out", "bar", "reference"}
-# A reference is a made-up run that must pass the checks (benchmark.py validate checks it; it never touches a stack).
 REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skills", "risks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
 SURVEY_FOV_M = 6.0e-7  # gives survey_image room for two zoom steps down to atomic columns
-# These setups are taken where the run starts so the stage is homed before them and not after.
-# A stage move after the survey would add a landing error that no real zoom has. They are never reused from a cache.
+# Taken where the run starts, so the stage is homed first: a move after the survey adds a landing error no real zoom has.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
 STAGE_SETTLE_S = 600.0  # The longest a stage move home may take. The mapping twin moves 5 um/s in real time.
@@ -91,9 +88,7 @@ TRANSCRIPTS = HERE.parent / "outputs" / "live" / "transcripts"  # one file per f
 TRANSCRIPT_TEXT_CHARS = 4000
 STACK_KEYS = {"config", "mcp", "operator", "tiled"}
 STACK_DEFAULTS = {"mcp": DEFAULT_MCP_URL, "operator": default_operator_url, "tiled": DEFAULT_TILED_URI}
-# The stack being run, set by main. It holds the run_servers config and the addresses it serves.
 STACK: dict[str, str] = {**STACK_DEFAULTS, "name": "twin"}
-# Each setup map is side, field of view, per tile actions and scored. large_map has enough tiles to need zooming.
 SETUP_MAPS = {
     "map": (4.8e-7, 1.6e-7, ["eds_point"], True),
     "map_plain": (6.0e-7, 1.6e-7, [], False),
@@ -104,8 +99,6 @@ GOAL_MODULE = "asyncroscopy.agents.graphs.goal"  # check the goal from facts, re
 SINGLE_TURN = {"mapping", "team", "goal"}  # runners that take one request, not a conversation
 REFERENCE = "reference"  # no model: the workflow's reference calls, made on the stack (only with --runners reference)
 CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
-# These evaluators are scored on every run's trace as extra columns. They never change pass or fail.
-# The default reads no data. Others read the run's images from Tiled and are set by --evaluators.
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
 
@@ -511,7 +504,6 @@ def data_truth(keys: list[str]) -> dict:
 
     uri = STACK["tiled"]
     spectra, strongest = {}, None
-    # Take the newest keys. A map with a spectrum per tile puts its tiles before the spectrum the answer is about.
     for key in keys[-6:]:
         try:
             node = tiled_client.node_for_key(key, uri)
@@ -526,7 +518,6 @@ def data_truth(keys: list[str]) -> dict:
         line_axis = axis or views.Axis(0.0, 1.0, "channel", "")
         positions = line_axis.offset + line_axis.scale * np.arange(len(values), dtype=np.float64)
         xray = line_axis.units == "eV" and eds.is_xray(ds)
-        # Use view_data's own peak function so the truth and what the agent read agree.
         rows = eds.line_peaks(positions, values, line_axis) if xray else views.line_peaks(positions, values, line_axis)
         strongest = rows[0][0] if rows else float(positions[int(np.argmax(values))])
         entry = {"strongest": strongest, "units": line_axis.units, "peaks": [round(row[0], 4) for row in rows]}
@@ -760,7 +751,6 @@ async def replay_reference(config: AgentConfig, wf: dict, run: Run) -> None:
     for i, call in enumerate(reference_calls(wf), 1):
         name, args = str(call["tool"]), render(dict(call.get("args") or {}), results)
         if name not in offered and not name[:1].islower():
-            # A device tool is <Class>_<command>, and the class is the stack's: the one tool with that command is meant.
             same = sorted(n for n in offered if not n[:1].islower() and n.partition("_")[2] == name.partition("_")[2])
             name = same[0] if len(same) == 1 else name
         on_instrument = name in offered or analysis is None or not name[:1].islower()  # an unknown device tool fails there
@@ -799,7 +789,6 @@ async def _collect_trace(live: Live, run: Run, facts: dict, started: float, call
 
 async def _collect_pois(live: Live, wf: dict, run: Run, facts: dict, mine_runs: list[str]) -> list[str]:
     """Record the points of every map a run touched and give the maps it stitched."""
-    # The maps this run touched are those named in its replies or answer, stitched from its runs or set up for it.
     map_keys = {m for c in run.calls for m in MAP_KEY.findall(c.result)} | set(MAP_KEY.findall(run.final))
     map_keys |= {f"{Path(r).stem}_map" for r in mine_runs}
     if facts.get("setup_map"):
@@ -820,7 +809,6 @@ async def _stitch_results(live: Live, wf: dict, run: Run, stitched_here: list[st
     stitch = {}
     if stitched_here and any(c.get("check") == "stitch_accuracy" for c in wf["checks"]):
         truth_doc = await live.ground_truth()
-        # Each tile gives a run id and a step result. A run file is map_<run id>.h5 and its map is map_<run id>_map.
         steps = [(e.get("run_id"), json.loads(e["result"])) for e in run.events if str(e.get("action", "")).endswith(".step") and e.get("ok") and e.get("result")]
         for key in stitched_here if truth_doc is not None else []:
             try:
@@ -992,7 +980,6 @@ async def main(args: argparse.Namespace) -> int:
         print(f"no stack {args.stack!r}; declared: {sorted(stacks)} (benchmarks/stacks.yaml, or stacks: in a workflow file)")
         return 2
     STACK.update(stacks[args.stack])
-    # Environment overrides win over the stack file. The comments in configs/mcp_*_operator.yaml use them.
     env = settings.get()
     for field, value in (("operator", env.operator_url), ("tiled", env.tiled_uri)):
         if value:
@@ -1058,7 +1045,6 @@ async def main(args: argparse.Namespace) -> int:
                 results["workflows"][f"{wf['name']}/{runner}"] = {"passed": 0, "of": 0, "skipped": why, "rows": [], "task_hash": wf["task_hash"]}
                 continue
             rows = []
-            # A replayed reference has no model in it, so one trial; --n bar runs as many trials as the workflow's bar counts.
             bar = {"pass": 1, "of": 1} if runner == REFERENCE else parse_bar(wf.get("bar"))
             for i in range(1 if runner == REFERENCE else bar["of"] if args.n == "bar" else int(args.n)):
                 try:
@@ -1113,7 +1099,6 @@ if __name__ == "__main__":
                         "and ASYNCROSCOPY_SKILLS_OFF; left out, they stay as the environment has them (off unless set).")
     parser.add_argument("--skills-off", default=None, help="Skill names or globs to hide, separated by commas (ASYNCROSCOPY_SKILLS_OFF).")
     parser.add_argument("--history", default=None, help="Directory finished runs are kept in (default: outputs/benchmarks/history).")
-    # The agents' own default: ASYNCROSCOPY_MODEL, else the default agent profile's model.
     parser.add_argument("--model", default=settings.get().model or load_profile().model)
     parser.add_argument("--out", default=None, help="Results JSON (a .md table is written next to it).")
     parser.add_argument("--list", action="store_true", help="List the workflows that would run and exit (no stack needed).")

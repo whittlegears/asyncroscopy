@@ -12,7 +12,6 @@ from scipy import ndimage
 
 from benchmarks.hackathon.task import Image, Spectrum
 
-# The strongest X-ray line of each element the twin knows that falls inside its 0-20 keV spectrum (eV).
 LINE_EV = {"Si": 1740.0, "Fe": 6404.0, "Ni": 7478.0, "Cu": 8048.0, "Pd": 2839.0, "Ag": 2984.0, "Pt": 9442.0, "Au": 9713.0}
 LINE_HALF_WIDTH_EV = 100.0  # counts within this of the line are the element's
 MIN_LINE_COUNTS = 40  # fewer than this in the best line: the beam was not on a particle
@@ -34,7 +33,6 @@ def find_particles(image: Image) -> list[Particle]:
     """The bright blobs of an image and a size for each."""
     film = np.median(image.pixels)
     smooth = ndimage.gaussian_filter(image.pixels, 1.0)
-    # Half the peak threshold finds each blob; the film's own texture and noise stay below the full threshold.
     labels, _count = ndimage.label(smooth > film + MIN_PARTICLE_COUNTS / 2.0)
     particles = []
     for number, blob in enumerate(ndimage.find_objects(labels), start=1):
