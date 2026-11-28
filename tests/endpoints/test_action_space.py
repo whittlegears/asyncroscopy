@@ -139,6 +139,43 @@ def test_every_client_sees_the_declared_limits_in_the_tool_schemas(serve):
         assert (value["minimum"], value["maximum"]) == (-0.002, 0.002)
 
 
+def test_a_listing_shows_the_limits_the_device_declares_now(serve, monkeypatch):
+    """A device restarted with new limits shows them at the next listing; one that cannot be read keeps the last."""
+    import asyncio
+    import json
+    import types
+
+    from fastmcp import Client
+
+    from asyncroscopy.mcp import limits
+
+    server = serve("asyncroscopy/digitaltwin/default")
+    monkeypatch.setattr(limits, "REREAD_AFTER_S", 0.0)
+
+    class Restarted:
+        def __init__(self, hints):
+            self.hints = hints
+
+        def get_attribute_list(self):
+            if self.hints is None:
+                raise RuntimeError("device down")
+            return ["action_hints"]
+
+        def read_attribute(self, _name):
+            return types.SimpleNamespace(value=json.dumps(self.hints))
+
+    async def fov_schema():
+        async with Client(server.mcp) as client:
+            tool = next(t for t in await client.list_tools() if t.name == "DigitalTwin_set_fov")
+        (schema,) = tool.inputSchema["properties"].values()
+        return next((b for b in schema.get("anyOf", []) if b.get("type") != "null"), schema)
+
+    server.devices["DigitalTwin"].proxy = Restarted({"set_fov": {"args": [{"name": "fov", "min": 2e-9, "max": 5e-5, "units": "m"}]}})
+    assert asyncio.run(fov_schema())["maximum"] == 5e-5
+    server.devices["DigitalTwin"].proxy = Restarted(None)
+    assert asyncio.run(fov_schema())["maximum"] == 5e-5
+
+
 def test_state_lists_reads_and_attributes_with_units(serve):
     space = action_space.build(serve("asyncroscopy/afm/default"))
     state = {(s["source"], s["name"]): s for s in space["state"]}

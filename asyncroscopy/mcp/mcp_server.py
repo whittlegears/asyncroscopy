@@ -37,7 +37,8 @@ from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
 from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, permissions, skills_tools, trace_tools, turns
-from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk, with_declared_limits
+from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
+from asyncroscopy.mcp.limits import Limits
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
 from asyncroscopy.safety.permissions import default_approval_ttl_s
 from asyncroscopy.safety.policy import check_overrides, hard_blocked, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
@@ -668,13 +669,13 @@ class MCPServer:
             if self.verbose:
                 print(f"Registered native tool: {name}")
         num_device_tools = 0
+        self.limits = Limits(self)
         for prefix, commands in self.tools.items():
             for command_name, wrapped in commands.items():
                 try:
                     descriptor = self.descriptors[wrapped.__name__]
                     tool_obj = Tool.from_function(wrapped, annotations=_annotations(descriptor.acts))
-                    hint = self.devices[prefix].hints.get(command_name, {})
-                    tool_obj = tool_obj.model_copy(update={"parameters": with_declared_limits(tool_obj.parameters, hint)})
+                    tool_obj = self.limits.add(tool_obj, prefix, command_name)
                     self.mcp.add_tool(tool_obj)
                     self.registered[tool_obj.name] = tool_obj
                     num_device_tools += 1
@@ -682,6 +683,7 @@ class MCPServer:
                     if self.verbose:
                         print(f"Failed to wrap {prefix}.{command_name}: {e}")
                         traceback.print_exc()
+        self.mcp.add_middleware(self.limits)
         self._warn_about_risks()
         self._report_fallbacks()
         self.permissions.publish()
