@@ -23,13 +23,17 @@ Risk is decided by ``Class.command`` patterns, first match wins:
    ``AbortScan``, ``abort_approach``, ``beam_off`` and ``shutter_close`` are
    low; ``Off``, ``brake_off``, ``vacuum_off``, ``disengage_motor``,
    ``retract_shutter``, ``BeamStopMove``, ``stop_retract``, ``retract_approach``
-   and ``estop_ack`` are not. Mark other stops low with ``mcp.safety.risk``;
+   and ``estop_ack`` are not: ``retract_shutter`` opens a beam path, ``retract_stage``
+   moves an axis, ``shutter_off`` may leave an unpowered shutter open, and a bare
+   ``Off`` on a stage drops holding torque. Mark other stops low with ``mcp.safety.risk``;
 3. the job-envelope verbs other than ``start``, low on devices that implement
    the envelope (the MCP server knows which those are);
 4. Tango's ``State`` and ``Status``, and the read-only naming convention of
    this code base (``get_*``, ``list_*``), plus, on a device that acquires
    scanned images, a few STEM commands that neither move hardware nor expose
-   the sample (STEM_LOW);
+   the sample (STEM_LOW; on an optical microscope ``set_defocus`` drives the
+   objective, and ``place_beam`` is left out because with the beam unblanked it
+   parks the probe on one spot);
 5. everything else is high: a new or renamed command counts as high (token
    auth needs the operate role for it, and a job's dry run records it).
 
@@ -47,8 +51,6 @@ from typing import Iterable
 
 from asyncroscopy.core.names import ENVELOPE_VERBS
 
-# A safe stop is recognised by an allow-list, and anything else is high like any unknown name.
-# It needs exactly one stop verb, and every other word must be an object that verb may take.
 STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
 RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample, and take hardware objects only
 STOP_OBJECTS = frozenset({
@@ -56,42 +58,25 @@ STOP_OBJECTS = frozenset({
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
     "indenter", "head", "objective", "robot", "xray", "source",
 })
-# What retract or withdraw may move away from the sample. It must name one, because a bare
-# Retract lifts the tip on an SPM but a syringe pump's Withdraw aspirates.
-# A bare one or "retract_now" is low only on a probe device. See is_probe_device.
-# retract_shutter opens a beam path, retract_stage or retract_robot moves an axis or an arm,
-# and retract_screen uncovers the detectors.
 RETREAT_OBJECTS = frozenset({"tip", "probe", "head", "z", "indenter", "objective", "needle", "now"})
-# Words that make a device a probe instrument, where a bare retract or withdraw lifts the probe off the sample.
 PROBE_WORDS = frozenset({"approach", "engage", "indent"})
-# What "disengage" may take. It must name one, because disengage_motor or a bare Disengage can free an axis.
 DISENGAGE_OBJECTS = frozenset({"tip", "probe", "head"})
-# What "off" may switch off, which is a source of energy. "stage_off", "z_off" and "shutter_off" are not stops.
-# A shutter without power may open, so close it with close_shutter.
 OFF_OBJECTS = frozenset({"beam", "emission", "lamp", "light", "led", "illumination", "laser", "gun", "filament", "hv", "xray", "source"})
 MOTION_OBJECTS = frozenset({"approach", "move", "motion", "movement", "scan", "scanning", "acquisition", "acquire", "job", "run", "travel", "focus", "autofocus", "live", "indent", "imaging", "exposure", "protocol"})
 STOP_PAIRS = (frozenset({"close", "shutter"}), frozenset({"blank", "beam"}), frozenset({"safe", "state"}))
-# "emergency" qualifies a stop verb, as in emergency_stop, and is never one by itself.
 MODIFIERS = frozenset({"emergency"})
 
 ENVELOPE_LOW = ("reserve", "job_status", "results", "release", "renew_lease")
 
 DEFAULT_RISK: list[tuple[str, str]] = [
-    # Read-only by naming convention.
     ("*.get_*", "low"),
     ("*.list_*", "low"),
     ("*.ping", "low"),
     ("*.state", "low"),
     ("*.status", "low"),
 ]
-# STEM settings that neither move hardware nor expose the sample. They are low only on a device that
-# acquires scanned images, since on an optical microscope set_defocus drives the objective.
-# place_beam is left out because with the beam unblanked it parks the probe on one spot.
 STEM_LOW = frozenset({"set_fov", "set_defocus"})
 
-# Never offered on the agent endpoint, whatever the config says. These are Tango's own admin commands,
-# which no device declares. Restarting a device resets its state.
-# A device declares anything else it keeps from agents itself, by passing operator_only=True to command.
 OPERATOR_ONLY: list[str] = [
     "*.init",
     "*.kill",
@@ -131,7 +116,7 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
         return False
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
-    # A motion is stopped only when it follows the verb. "abort_approach" stops and "approach_stop" approaches.
+    # A motion is stopped only after the verb: abort_approach stops, approach_stop approaches.
     if verbs[0] == "off":  # a bare Off cuts power, and on a stage that drops holding torque
         return bool(before) and before <= OFF_OBJECTS
     if verbs[0] == "disengage":

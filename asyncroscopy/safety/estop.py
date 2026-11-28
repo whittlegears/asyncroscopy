@@ -20,7 +20,6 @@ from concurrent.futures import ThreadPoolExecutor, wait as wait_all
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-# How long each phase waits for every device to answer before it reports the ones that did not.
 STOP_ALL_WAIT_S = 20.0
 ABORT_ALL = "abort_all"  # the job envelope's stop for every job of a device
 FINISHED = ("aborted", "done", "failed")
@@ -71,8 +70,7 @@ def stop_all(targets: list[StopTarget], *, who: str,
 
     work = [t for t in targets if t.energy or t.other]
     if work:
-        # Every device at once. First sources off, then its jobs and probes.
-        # Once all of that has returned, sources off again in case a late job step switched one back on.
+        # Sources off again at the end, in case a late job step switched one back on.
         pool = ThreadPoolExecutor(max_workers=len(work), thread_name_prefix="stop_all")
         phases = ({t.prefix: (t, [*t.energy, *t.other]) for t in work}, {t.prefix: (t, list(t.energy)) for t in work if t.energy})
         hung: set[str] = set()

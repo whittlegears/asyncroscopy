@@ -14,9 +14,6 @@ DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
 DEFAULT_TILED_URI = "http://127.0.0.1:9091"
 default_operator_url = "http://127.0.0.1:8001/mcp"
 autoscript_port = 9095
-# Who is calling and which agent run the call belongs to. With mcp.auth the token's subject replaces the caller.
-# Agents send both with every call, and run_job uses them to find a held start again.
-# HTTP header names ignore case, and servers read them lower-cased.
 CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
 RUN_KEY_HEADER = "X-Asyncroscopy-Run-Key"
@@ -39,7 +36,6 @@ def devices_of_kind(endpoint_info: dict, kind: str) -> list[str]:
     return sorted(prefix for prefix, kinds in (endpoint_info.get("device_kinds") or {}).items() if kind in (kinds or []))
 
 
-# The agent graphs one request can name, besides the swarm the agent MCP server runs by default.
 AGENT_GRAPHS = ("mapping", "general", "team")
 
 
@@ -48,20 +44,14 @@ def tool_name(prefix: str, command: str) -> str:
     return f"{prefix}_{command}".replace("/", "_").replace("-", "_")
 
 
-# A device that implements every one of these runs jobs.
 ENVELOPE_VERBS = frozenset({"reserve", "start", "job_status", "abort", "results", "release"})
-# Job states. A worker owns a job in RUNNING_JOB_STATES. ACTIVE_JOB_STATES adds a reservation
-# not yet started. FINISHED_JOB_STATES never change again.
 RUNNING_JOB_STATES = frozenset({"queued", "running", "aborting", "paused_suspended", "paused"})
 ACTIVE_JOB_STATES = RUNNING_JOB_STATES | {"reserved"}
 FINISHED_JOB_STATES = frozenset({"done", "failed", "aborted"})
 
-# File types the DATA device registers with Tiled. An acquisition's result is a key ending in one.
 REGISTRABLE_SUFFIXES = (".h5", ".hdf5", ".hdf", ".nxs", ".tif", ".tiff")
 _SUFFIXES = "|".join(sorted((re.escape(s[1:]) for s in REGISTRABLE_SUFFIXES), key=len, reverse=True))
-# A data key inside free text, such as a tool reply or a model's answer.
 DATA_KEY_IN_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-.]*\.(?:" + _SUFFIXES + r")" + r"(?![A-Za-z0-9_])")
-# A whole string that is a data key. It may name a folder, as in "run_1/tile_0003.h5".
 _DATA_KEY = re.compile(r"^[\w.\-/]+\.(?:" + _SUFFIXES + r")$", re.IGNORECASE)
 
 
@@ -70,7 +60,6 @@ def is_data_key(text: str) -> bool:
     return bool(_DATA_KEY.match(text.strip()))
 
 
-# The fields of a JSON reply that name data: an acquisition's key, a job's result keys.
 KEY_FIELDS = ("key", "image_key", "spectrum_key", "result_key")
 
 
@@ -95,11 +84,8 @@ def reply_keys(reply: object, derived: bool = False) -> list[str]:
     return list(dict.fromkeys(keys))
 
 
-# The Tango attribute where a device describes its commands as JSON. See asyncroscopy.utils.commands.
 ACTION_HINTS = "action_hints"
 
-# What a tool with each role does, as shown in the action space and the docs.
-# Add a role only when a controller needs to tell two tools apart that these lump together.
 ROLES: dict[str, str] = {
     "stage.move": "move the sample stage (all axes, or one)",
     "stage.read": "read the stage position",
@@ -126,13 +112,10 @@ ROLES: dict[str, str] = {
     "data.read": "read stored data (by key)",
     "other": "anything the rules do not place",
 }
-# Roles whose commands stop something. stop_all calls the ones that take no argument, and they are never held.
+# stop_all calls the ones that take no argument, and they are never held.
 STOP_ROLES = frozenset({"beam.blank", "probe.retract", "safe_stop"})
-# Roles whose commands only observe. A command declared with one of these changes nothing.
 READ_ROLES = frozenset({"stage.read", "setting.read", "data.read", "job.status", "job.results"})
 
-# Commands every Tango device has. Nobody declares them, so the MCP server knows them by name.
-# State and Status read. Init restarts the device, which loses its state.
 TANGO_READS = frozenset({"State", "Status"})
 TANGO_ADMIN = frozenset({"Init"})
 
