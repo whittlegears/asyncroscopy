@@ -21,6 +21,8 @@ from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.permissions import PermissionStore, iso_utc, seconds_of
+from asyncroscopy.trace.writer import read_tool_log
+from asyncroscopy.workflows.blocks import Block, register_block
 from asyncroscopy.workflows.graph import Workflow, WorkflowState
 from asyncroscopy.workflows.runner import resume_workflow, run_workflow
 
@@ -35,11 +37,11 @@ def stack(monkeypatch, tango_ctx, tmp_path):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: tango.DeviceProxy(tango_ctx.get_device_access(name)))
     permissions_file = tmp_path / "permissions.json"
 
-    def make(role, *names, needs_approval=None, urls=None):
+    def make(role, *names, needs_approval=None, urls=None, **extra):
         database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(names)})()})()
         server = MCPServer("perm-test", "localhost", 1, blocked_classes=[], needs_approval=needs_approval or {},
                            data_device_address="asyncroscopy/data/default", verbose=False, endpoint_role=role, database=database,
-                           permissions_file=str(permissions_file), urls=urls)
+                           permissions_file=str(permissions_file), urls=urls, **extra)
         server.setup(print_summary=False)
         return server
 
@@ -265,3 +267,54 @@ def test_the_agent_server_reports_its_role_and_every_workflow_tool_as_a_service(
     offered = {fn.__name__ for fn in server.workflows.tools()}
     assert set(info["services"]["workflows"].values()) == offered
     assert info["services"]["workflows"]["list_runs"] == "list_runs" and "skills" not in info["services"]
+
+
+async def _three_reads(ctx, args, previous):
+    sample = await ctx.call("SAMPLE_get_sample")
+    here = await ctx.call(DOSE, {"request": "{}"})
+    there = await ctx.call(DOSE, {"request": '{"x_m":0.0,"y_m":0.0}'})
+    return {"sample": sample, "here": here, "there": there}
+
+
+three_reads = register_block(Block(name="test_three_reads", summary="Three reads in one node, two of them held.", run=_three_reads,
+                                   outputs={"sample": "any", "here": "any", "there": "any"}, tools=("SAMPLE_get_sample", DOSE)))
+
+
+def three_reads_workflow() -> Workflow:
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("reads", use.block("test_three_reads"))
+        graph.add_edge(START, "reads")
+        graph.add_edge("reads", END)
+        return graph
+
+    return Workflow(name="held_three_reads", summary="One node with an allowed call and two held ones.", inputs={},
+                    budget={"max_tool_calls": 20}, build=build)
+
+
+def test_a_resumed_node_sends_each_call_once_and_each_approval_is_used_once(stack, served, tmp_path):
+    log = tmp_path / "tools.jsonl"
+    agent = stack("agent", SAMPLE, needs_approval={"SAMPLE": ["get_dose"]}, tool_log_path=str(log))
+    operator = stack("operator", SAMPLE)
+    address = served(agent)
+    workflow = three_reads_workflow()
+    journal = tmp_path / "runs" / "three1.journal.json"
+
+    def endpoint():
+        return McpServer(address, {CALLER_HEADER: "workflow-test", RUN_HEADER: "three1"})
+
+    record = run(run_workflow(workflow, {}, instrument=endpoint(), state_dir=tmp_path, run_id="three1"))
+    held = []
+    for _ in range(2):
+        assert record["state"] == "waiting", record
+        [waiting] = record["approvals"]
+        held.append(waiting)
+        run(operator_call(operator, "approve_call", {"request_id": waiting["request_id"]}))
+        record = run(resume_workflow("three1", instrument=endpoint(), state_dir=tmp_path, find=lambda name: workflow))
+    assert record["state"] == "done", record
+    assert [h["arguments"] for h in held] == [{"request": "{}"}, {"request": '{"x_m":0.0,"y_m":0.0}'}]
+    ran = [(row["tool"], json.dumps(row["arguments"], sort_keys=True)) for row in read_tool_log(log)]
+    assert sorted(ran) == sorted([("SAMPLE_get_sample", "{}"), (DOSE, json.dumps({"request": "{}"})),
+                                  (DOSE, json.dumps({"request": '{"x_m":0.0,"y_m":0.0}'}))]), ran
+    assert run(operator_call(operator, "list_pending_approvals"))["result"] == []
+    assert not journal.exists()

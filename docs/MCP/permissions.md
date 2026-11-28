@@ -120,6 +120,14 @@ with "Waiting for a person to approve:" and each held tool, its arguments and it
 as `waiting`, with the held call in `approvals`; once a person approves it, `resume_workflow(run_id)` sends
 it again and the run goes on.
 
+LangGraph runs the waiting node again from its first line. The calls that node completed before it stopped are
+not sent again: the run keeps a call journal (`runs/<run_id>.journal.json` beside the run record, so it survives a
+restart), keyed by node, the call's place in the node, the tool and its canonical arguments, and a call that matches
+gets its recorded reply. The held call is the first one sent again, and it uses its approval; an earlier approval
+is never asked for again. When something ran after the node stopped (its own cleanup, the runner's `always` tools
+such as blanking the beam, or its restores), it may have undone what the recorded calls did, so the journal is
+dropped and the node runs again from its first line. The journal is removed when the run ends or is stopped.
+
 ## The operator endpoint
 
 These tools are in the operator endpoint's `action_space` (device null), beside `stop_all`:

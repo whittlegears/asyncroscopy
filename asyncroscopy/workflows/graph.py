@@ -141,10 +141,12 @@ class Steps:
                 raise BlockFailed(f"node {node}: {exc.args[0]}") from exc
             defaults = {k: v["default"] for k, v in chosen.inputs.items() if "default" in v}
             args = {**defaults, **args}
-            if ctx is not None:
+            if ctx is None:
+                result = await chosen.run(ctx, args, outputs.get(node))
+            else:
                 ctx.step = node
-            result = await chosen.run(ctx, args, outputs.get(node))
-            if ctx is not None:
+                with ctx.journal.node(node):
+                    result = await chosen.run(ctx, args, outputs.get(node))
                 ctx.loop = loop_progress(node, result) or ctx.loop
                 note_tiles(ctx.tiles, result, args)
             missing = sorted(set(chosen.outputs) - set(result or {}))

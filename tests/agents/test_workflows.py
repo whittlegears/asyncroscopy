@@ -1294,3 +1294,41 @@ def test_review_and_approve_agree_on_an_expired_approval(tmp_path, monkeypatch):
     assert review["approval_expired"] and review["can_approve"] and review["why_not"] is None
     renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
     assert renewed["ok"] and renewed["approval"]["expires"] is None
+
+
+def _ask_between(ctx, args, previous):
+    async def run_it():
+        first = await ctx.call("Twin_get_stage")
+        answer = ctx.ask({"id": "go", "question": "Go on?", "options": ["yes"]})
+        return {"stage": first, "answer": answer, "again": await ctx.call("Twin_get_stage")}
+    return run_it()
+
+
+def _journal_workflow(name: str, always: tuple) -> Workflow:
+    from asyncroscopy.workflows.blocks import Block, register_block
+
+    block = register_block(Block(name=f"test_{name}", summary="A read, a question, a read.", run=_ask_between,
+                                 outputs={"stage": "any", "answer": "any", "again": "any"}, tools=("Twin_get_stage",), always=always))
+
+    def build(use):
+        graph = StateGraph(WorkflowState)
+        graph.add_node("ask", use.block(block.name))
+        graph.add_edge(START, "ask")
+        graph.add_edge("ask", END)
+        return graph
+
+    return Workflow(name=name, summary="One node that asks between two reads.", inputs={}, budget={"max_tool_calls": 10}, build=build)
+
+
+@pytest.mark.parametrize(("always", "sent"), [((), 2), (("Twin_blank_beam",), 3)])
+def test_a_resumed_node_replays_its_completed_calls_unless_a_cleanup_ran_in_between(tmp_path, always, sent):
+    instrument, _analysis, _ = twin()
+    workflow = _journal_workflow(f"journal_{len(always)}", always)
+    record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
+    assert record["state"] == "waiting" and instrument.names().count("Twin_get_stage") == 1
+    question = record["questions"][0]["id"]
+    record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow,
+                                 answers={question: "yes"}))
+    assert record["state"] == "done", record
+    assert instrument.names().count("Twin_get_stage") == sent
+    assert not (tmp_path / "runs" / f"{record['run_id']}.journal.json").exists()

@@ -21,6 +21,10 @@ The runner adds these to a bare graph.
 - **Held calls wait.** A call the endpoint holds for a person's approval (``approval_required``) stops the run as
   ``waiting``, with the held call in ``approvals``. Once a person approves it, ``resume_workflow(run_id)`` sends it
   again, and it runs.
+- **Calls are not sent twice.** The waiting node runs again from its first line on resume. The calls it completed
+  before it stopped get their recorded replies from the run's call journal (``blocks.CallJournal``,
+  ``runs/<run_id>.journal.json``) instead of being sent again, unless something ran in between that may have undone
+  them (its cleanup, the ``always`` tools). The journal is removed when the run ends or is stopped.
 
 Questions and held calls are LangGraph interrupts, so nothing stays open while the run waits and the wait survives
 a restart.
@@ -47,7 +51,7 @@ from langgraph.types import Command, interrupt
 from asyncroscopy.core.fileio import file_lock
 
 from asyncroscopy.agents.mcp_tools import McpServer
-from .blocks import BlockContext, BlockFailed, Stopped, all_blocks
+from .blocks import BlockContext, BlockFailed, CallJournal, Stopped, all_blocks
 from .checks import switched_off_nodes
 from .turns import Turn, acting_ahead
 from .graph import Workflow, get_workflow, recursion_limit
@@ -158,6 +162,10 @@ def _stop_path(state_dir: Path, run_id: str) -> Path:
     return state_dir / "runs" / f"{run_id}.stop"
 
 
+def _journal_path(state_dir: Path, run_id: str) -> Path:
+    return state_dir / "runs" / f"{run_id}.journal.json"
+
+
 def read_run(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict:
     """The record of a run with its workflow, inputs, state and latest outputs. Raises KeyError for an unknown run."""
     path = _record_path(Path(state_dir), run_id)
@@ -186,6 +194,7 @@ def stop_workflow(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> dic
         record.pop("approvals", None)
         record.update(state="stopped", error="stopped by the operator while it waited for an answer", ended=time.time())
         _record_path(Path(state_dir), run_id).write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
+        _journal_path(Path(state_dir), run_id).unlink(missing_ok=True)
         return record
     return {"run_id": run_id, "stopping": True}
 
@@ -325,7 +334,10 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
         deadline=began + float(budget["max_seconds"]) - record["seconds_before"] if budget.get("max_seconds") else None,
         on_ask=lambda question: interrupt({"ask": question}),
         on_hold=lambda held: interrupt({"approval": held}),
+        journal=CallJournal(_journal_path(state_dir, run_id)),
     )
+    if start:
+        ctx.journal.clear()
     config = {"configurable": {"thread_id": run_id}, "recursion_limit": recursion_limit(blueprint)}
     used = [all_blocks()[b["block"]] for b in blueprint["nodes"].values()]
     ctx.acts = any(block.acts for block in used)
@@ -470,7 +482,6 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             # Each waiting node is resumed by its own id. A question with no answer yet keeps waiting.
             answered = [q for q in questions if q["id"] in answers]
             resume = {q["id"]: answers[q["id"]] for q in answered}
-            resume.update({h["id"]: h["request_id"] for h in _held(snapshot)})
             first = Command(resume=resume) if resume else None
             if answers:
                 record["answered"] = [*(record.get("answered") or []),
@@ -495,6 +506,8 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
         held = _held(snapshot)
         if state == "done" and (questions or held):
             state = "waiting"
+        if state != "waiting":
+            ctx.journal.clear()
         # A run that gave the instrument back early cleaned up then, while it was still its own: a blank now would
         # land in the middle of the next run's tile.
         cleanup = list(ctx.cleaned) if ctx.cleaned is not None else await _clean_up(ctx, used)
