@@ -31,8 +31,8 @@ class ToolService:
     def __init__(self, handler, pipeline=None):
         self.handler, self.pipeline = handler, pipeline
 
-    def __getattr__(self, tool):
-        return lambda **arguments: self.handler(self.pipeline, tool, arguments)
+    def call(self, tool, arguments):
+        return self.handler(self.pipeline, tool, arguments)
 
     def close(self):
         pass

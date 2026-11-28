@@ -32,7 +32,8 @@ def test_a_pipeline_runs_on_a_registered_backend_with_no_mcp():
         def __init__(self, url):
             self.url, self.closed = url, False
 
-        def list_pois(self, map, kind, limit):
+        def call(self, tool, arguments):
+            assert tool == "list_pois" and arguments == {"map": "m", "kind": "candidate", "limit": 500}
             return {"pois": [{"id": "a", "x_m": 0.0, "y_m": 0.0, "score": 2.0}, {"id": "b", "x_m": 1e-9, "y_m": 0.0, "score": 1.0}]}
 
         def close(self):

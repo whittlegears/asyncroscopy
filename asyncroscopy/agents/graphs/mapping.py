@@ -1,4 +1,4 @@
-"""Map a sample from one sentence: plan -> reserve -> start -> wait -> stitch -> score -> report.
+"""Map a sample from one sentence: plan -> reserve -> start -> wait -> points -> score -> report.
 
 The language model only turns the request into a map plan. Every instrument
 and analysis call is made by graph code through the MCP endpoints, so a
@@ -29,6 +29,7 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import DOSE
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from asyncroscopy.contracts import load, validate
+from asyncroscopy.core.map_analysis import AnalysisFailed, score_map, stitch_map
 
 ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
 MAX_POLL_MISSES = 5  # consecutive failed status polls before the graph gives up on a job
@@ -367,21 +368,18 @@ class MappingGraph:
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}", "released": True}
         keys = results.get("result_keys", {})
         summary = results.get("summary", {})
-        # A failed stitch in the job leaves no map key, so the stitch node tries again here.
+        # A failed stitch in the job leaves no map key, so the points node stitches the run.
         return {"run_key": keys.get("run") or keys.get("run_file"), "map_key": keys.get("map") or summary.get("map"), "released": True}
 
-    async def stitch(self, state: MapState) -> MapState:
+    async def points(self, state: MapState) -> MapState:
         # The Mapper job stitches its own run and links every EDS spectrum as a point of interest.
-        # Stitch here only when the job had no analysis endpoint to do it.
+        # Its run is stitched here only when the job left no map (no analysis endpoint, or a failed stitch).
         map_key = state.get("map_key")
         if not map_key:
-            job = await self.analysis.call_json("assemble_map", {"run": state["run_key"]})
-            if "error" in job:
-                return {"error": f"stitching was refused: {job['error']['message']}"}
-            results = await self._analysis_job(job["job_id"])
-            if results.get("state") != "done":
-                return {"error": f"stitching {results.get('state')}"}
-            map_key = results["result_keys"]["map"]
+            try:
+                map_key = (await stitch_map(self.analysis.call_json, state["run_key"]))["map"]
+            except AnalysisFailed as exc:
+                return {"error": f"stitching {state['run_key']} failed: {exc}"}
         # Ask only for the count of EDS points, because a large map has thousands of them.
         eds = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "eds_point", "limit": 0})
         candidates = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "candidate"})
@@ -390,13 +388,11 @@ class MappingGraph:
         return {"map_key": map_key, "eds_points": int(eds["total"]), "pois": [p for p in candidates["pois"] if isinstance(p, dict)]}
 
     async def score(self, state: MapState) -> MapState:
-        job = await self.analysis.call_json("score_map", {"map": state["map_key"], "top_k": 3})
-        if "error" in job:
-            return {"error": f"scoring was refused: {job['error']['message']}"}
-        results = await self._analysis_job(job["job_id"])
-        if results.get("state") != "done":
-            return {"error": f"the map {state['map_key']} was stitched, but scoring {results.get('state')}"}
-        return {"pois": list(state.get("pois", [])) + results.get("summary", {}).get("added_pois", [])}
+        try:
+            scored = await score_map(self.analysis.call_json, state["map_key"], 3)
+        except AnalysisFailed as exc:
+            return {"error": f"the map {state['map_key']} was stitched, but scoring failed: {exc}"}
+        return {"pois": list(state.get("pois", [])) + scored["pois"]}
 
     async def report(self, state: MapState) -> MapState:
         if state.get("error"):
@@ -421,22 +417,6 @@ class MappingGraph:
         return {"report": "\n".join(lines)}
 
     # helpers
-    async def _analysis_job(self, job_id: str) -> dict:
-        deadline = time.time() + settings.get().analysis_wait_s
-        while True:
-            status = await self.analysis.call_json("analysis_job_status", {"job_id": job_id})
-            if "error" in status:  # for example unknown_job after the analysis server restarted
-                return {"state": "lost", "error": status["error"]}
-            if status.get("state") in {"done", "failed", "aborted"}:
-                break
-            if time.time() > deadline:
-                await self.analysis.call_json("analysis_job_abort", {"job_id": job_id})
-                return {"state": "timed out"}
-            await asyncio.sleep(settings.get().poll_s)
-        results = await self.analysis.call_json("analysis_job_results", {"job_id": job_id})
-        results["state"] = status["state"]
-        return results
-
     async def _release(self, state: MapState) -> None:
         """Stop the job if it may still be running, then release the reservation.
 
@@ -474,7 +454,7 @@ class MappingGraph:
     # graph
     def build(self) -> CompiledStateGraph:
         graph = StateGraph(MapState)
-        for name in ("gather_context", "make_plan", "reserve", "start", "wait", "stitch", "score", "report"):
+        for name in ("gather_context", "make_plan", "reserve", "start", "wait", "points", "score", "report"):
             graph.add_node(name, self._guarded(getattr(self, name)))
         ok = lambda nxt: (lambda s: "report" if s.get("error") else nxt)
         graph.add_edge(START, "gather_context")
@@ -482,8 +462,8 @@ class MappingGraph:
         graph.add_conditional_edges("make_plan", ok("reserve"), ["reserve", "report"])
         graph.add_conditional_edges("reserve", ok("start"), ["start", "report"])
         graph.add_conditional_edges("start", ok("wait"), ["wait", "report"])
-        graph.add_conditional_edges("wait", ok("stitch" if self.analysis else "report"), ["stitch", "report"])
-        graph.add_conditional_edges("stitch", lambda s: "report" if s.get("error") or not s.get("score") else "score", ["score", "report"])
+        graph.add_conditional_edges("wait", ok("points" if self.analysis else "report"), ["points", "report"])
+        graph.add_conditional_edges("points", lambda s: "report" if s.get("error") or not s.get("score") else "score", ["score", "report"])
         graph.add_edge("score", "report")
         graph.add_edge("report", END)
         return graph.compile()

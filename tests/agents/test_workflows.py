@@ -316,6 +316,14 @@ def test_the_stitch_is_given_the_stage_error_when_the_caller_states_it(tmp_path)
     assert analysis.log[1] == ("assemble_map", {"run": "map_abc", "refine": True, "stage_sigma_m": 2e-7})
 
 
+def test_a_stitch_the_analysis_server_fails_fails_the_run_with_its_reason(tmp_path):
+    instrument, analysis, _ = twin()
+    analysis.tools["analysis_job_status"] = lambda a: {"job_id": "j1", "state": "failed", "last_error": {"message": "no overlap matched"}}
+    record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
+    assert record["state"] == "failed" and "stitching map_abc failed" in record["error"] and "no overlap matched" in record["error"]
+    assert "analysis_job_results" not in analysis.names()
+
+
 def test_a_refused_run_makes_no_call(tmp_path):
     instrument, analysis, _ = twin()
     record = run(run_workflow("map_grid", {"size_m": 1.0}, instrument=instrument, analysis=analysis, state_dir=tmp_path))

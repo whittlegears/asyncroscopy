@@ -11,23 +11,23 @@
 5. zoom (a ``zoom`` plan): each tier finds the parent image's most distinct feature (``find_features``),
    aims the image at it by image shift, images it and places it on its parent (``place_image``).
 
-Analysis calls go through a ``StitchService`` (stitch_service.py): by default the analysis server over MCP, built the
-first time it is needed. Each phase waits for its analysis job with
-backoff and an overall deadline that grows with the map, checking for an abort between waits. The analysis
-job's id is saved in the job before waiting, so a resumed job waits for that same job (or, if another
-client already started one on the same run, adopts it) instead of starting a second. If the analysis
-server is down, restarted or too slow, the job still ends done with every tile safe; ``stitch_error`` says
-why and how to retry. Scoring and revisits are idempotent: a resumed job never images a region twice or
-adds its points twice.
+Every phase calls the analysis server through a ``StitchService`` (stitch_service.py): by default the analysis server
+over MCP, built the first time it is needed. Stitch and score go through asyncroscopy.core.map_analysis, the one stitch
+and score path every caller shares: it waits for the analysis job with backoff and a stall limit, checking for an abort
+between waits. The analysis job's id is saved in the job before waiting, so a resumed job waits for that same job (or, if
+another client already started one on the same run, adopts it) instead of starting a second. If the analysis server is
+down, restarted or too slow, the job still ends done with every tile safe; ``stitch_error`` says why and how to retry.
+Scoring and revisits are idempotent: a resumed job never images a region twice or adds its points twice.
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 import threading
-import time
 from collections.abc import Callable
 
+from asyncroscopy.core.map_analysis import AnalysisFailed, AnalysisUnreachable, score_map, start_job, stitch_arguments, stitch_map
 from asyncroscopy.routines.drift import drift_at
 from asyncroscopy.routines.grid import EDGE_TOLERANCE_M
 
@@ -35,10 +35,6 @@ from . import live_drift
 from .profile import InstrumentProfile
 from .stitch_service import STITCH_SERVICES, StitchService
 
-ANALYSIS_WAIT_S = 5.0  # longest one wait on an analysis job; abort is checked between waits
-ANALYSIS_BACKOFF_S = (1.0, 2.0, 5.0, 10.0, 20.0)  # after a failed call to the analysis server
-STITCH_STALL_S = 600.0  # the longest a stitch may go without progress before it counts as failed
-SCORE_STALL_S = 900.0
 REVISIT_EDGE_SHIFT = 0.8  # a revisit image may sit this fraction of its half-width off a region near the box edge
 ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multiples of its own field of view across
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
@@ -46,10 +42,6 @@ ZOOM_CANDIDATES = 8  # features asked for at each tier. The first whose finer im
 REGION_FIELDS = ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")
 # What a dry run reports in place of every image and spectrum.
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
-
-
-class AnalysisFailed(RuntimeError):
-    """The analysis server could not do (or finish) the job; the message says why and how to retry."""
 
 
 class Pipeline:
@@ -93,89 +85,38 @@ class Pipeline:
 
     def stitch_arguments(self, job: dict, run: str) -> dict:
         """assemble_map's arguments: the run, bounded by the stage error the plan was resolved with."""
-        return {"run": run, "stage_sigma_m": float(job["resolved_plan"]["stage_sigma_m"]), "max_drift_m_per_s": self.max_drift_m_per_s, "eds_pois": True}
+        return stitch_arguments(run, stage_sigma_m=float(job["resolved_plan"]["stage_sigma_m"]), max_drift_m_per_s=self.max_drift_m_per_s, eds_pois=True)
 
-    def _submit(self, job: dict, slot: str, start: Callable[[], dict]) -> str:
-        """Start (or adopt) an analysis job and save its id in the job before waiting on it."""
-        pipeline = self.state(job)
-        if pipeline.get(slot):
-            return pipeline[slot]  # a resumed job waits for the analysis job it already started
-        started = None
-        last: Exception | None = None
-        for delay in (0.0, *ANALYSIS_BACKOFF_S):
-            time.sleep(delay)
-            if self._aborting(job):
-                raise AnalysisFailed("aborted")
-            try:
-                started = start()
-                break
-            except Exception as exc:  # the server is down or slow, so try again
-                last = exc
-        if started is None:
-            raise AnalysisFailed(f"the analysis server at {self.url} did not answer ({type(last).__name__}: {last})")
-        if "error" in started:
-            if started["error"].get("code") == "busy" and started.get("job_id"):
-                started = {"job_id": started["job_id"]}  # an analysis job is already running on this, so wait for that one
-            else:
-                raise AnalysisFailed(started["error"].get("message", str(started["error"])))
-        with self._lock:
-            pipeline[slot] = started["job_id"]
-            self._save(job)
-        return started["job_id"]
+    async def _analyse(self, tool: str, arguments: dict) -> dict:
+        """One call to the analysis server, off this thread; any failure to get a reply is AnalysisUnreachable."""
+        try:
+            return await asyncio.to_thread(self.service().call, tool, arguments)
+        except Exception as exc:
+            raise AnalysisUnreachable(f"the analysis server at {self.url}: {type(exc).__name__}: {exc}") from exc
 
-    def _await(self, job: dict, job_id: str, stall_s: float) -> dict | None:
-        """Results of an analysis job; None if this job was aborted; AnalysisFailed if it failed, vanished or stalled.
-
-        Only a job whose progress stops moving for stall_s fails: a fixed total gave up on a 2704-tile stitch
-        at 78 % that finished minutes later."""
-        deadline = time.monotonic() + stall_s
-        done = None
-        failures = 0
-        while True:
-            if self._aborting(job):
-                try:
-                    self.service().analysis_job_abort(job_id=job_id)
-                except Exception as exc:
-                    self._warn(f"could not abort analysis job {job_id}: {exc}")
-                return None
-            if time.monotonic() > deadline:
-                raise AnalysisFailed(f"analysis job {job_id} made no progress for {stall_s:.0f} s")
-            try:
-                status = self.service().analysis_job_status(job_id=job_id, wait_s=ANALYSIS_WAIT_S)
-                failures = 0
-            except Exception as exc:
-                failures += 1
-                if failures > len(ANALYSIS_BACKOFF_S):
-                    raise AnalysisFailed(f"lost the analysis server at {self.url} ({type(exc).__name__}: {exc})") from exc
-                time.sleep(ANALYSIS_BACKOFF_S[failures - 1])
-                continue
-            if "error" in status or "state" not in status:
-                raise AnalysisFailed(f"the analysis server no longer knows job {job_id} ({(status.get('error') or {}).get('message', status)}); it may have restarted")
-            if status["state"] in {"done", "failed", "aborted", "released"}:
-                break
-            progress = (status.get("progress") or {}).get("done")
-            if progress != done:
-                done, deadline = progress, time.monotonic() + stall_s
-        if status["state"] != "done":
-            raise AnalysisFailed(f"the analysis job ended {status['state']}: {(status.get('last_error') or {}).get('message', '')}")
-        return self.service().analysis_job_results(job_id=job_id)
+    def _wait_options(self, job: dict, slot: str) -> dict:
+        """How a shared stitch or score runs for this job: it resumes the analysis job saved in ``slot``, saves the id of a
+        new one there before waiting, and stops when this job aborts."""
+        def keep(job_id: str) -> None:
+            with self._lock:
+                self.state(job)[slot] = job_id
+                self._save(job)
+        return {"job_id": self.state(job).get(slot), "on_started": keep, "stopping": lambda: self._aborting(job), "warn": self._warn}
 
     # phases
     def stitch(self, job: dict, run: str, tiles: int) -> dict | None:
         pipeline = self.state(job)
+        arguments = self.stitch_arguments(job, run)
         try:
-            arguments = self.stitch_arguments(job, run)
-            results = self._await(job, self._submit(job, "stitch_job", lambda: self.service().assemble_map(**arguments)), STITCH_STALL_S)
+            stitched = asyncio.run(stitch_map(self._analyse, **arguments, **self._wait_options(job, "stitch_job")))
         except AnalysisFailed as exc:  # the tiles are safe, the job goes on
-            if str(exc) == "aborted":
-                return None
             pipeline["stitch_error"] = f"{exc}. The tiles are in {run}; stitch them later with assemble_map(run={run!r})."
             pipeline.pop("stitch_job", None)
             return {"phase": "stitch", "ok": False}
-        if results is None:
+        if stitched is None:
             return None  # aborted while stitching, and a resume waits for the same stitch
-        pipeline["map"] = results["result_keys"]["map"]
-        summary = results.get("summary", {})
+        pipeline["map"] = stitched["map"]
+        summary = stitched["summary"]
         pipeline["drift_fit"] = summary.get("drift")  # kept for revisits; the reply shows only its totals
         pipeline["stitching"] = {k: v for k, v in summary.items() if k in ("tiles", "levels", "canvas_shape", "matches_used", "median_residual_px", "p95_residual_px", "fallback_tiles", "eds_pois", "solver", "drift_unmeasured")}
         if summary.get("drift"):
@@ -187,9 +128,9 @@ class Pipeline:
     def stitch_released(self, job: dict, run: str) -> None:
         """Start a stitch of a released job's tiles; nobody waits for it (results name its analysis job)."""
         try:
-            started = self.service().assemble_map(**self.stitch_arguments(job, run))
+            job_id = asyncio.run(start_job(self._analyse, "assemble_map", self.stitch_arguments(job, run)))
             with self._lock:
-                job["result_keys"]["map_job"] = started.get("job_id")
+                job["result_keys"]["map_job"] = job_id
         except Exception as exc:
             with self._lock:
                 self.state(job)["stitch_error"] = f"{type(exc).__name__}: {exc}. Stitch the tiles with assemble_map(run={run!r})."
@@ -204,18 +145,16 @@ class Pipeline:
             return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}  # already scored before a resume
         n = int(job["resolved_plan"]["find_regions"])
         # The job's tag lets a retry replace the regions it added before.
-        arguments = {"map": pipeline["map"], "top_k": n, "tag": job["reservation_id"]}
+        map_key, tag = pipeline["map"], job["reservation_id"]
         try:
-            results = self._await(job, self._submit(job, "score_job", lambda: self.service().score_map(**arguments)), SCORE_STALL_S)
+            scored = asyncio.run(score_map(self._analyse, map_key, n, tag, **self._wait_options(job, "score_job")))
         except AnalysisFailed as exc:
-            if str(exc) == "aborted":
-                return None
             pipeline["score_error"] = f"{exc}. Score again with score_map(map={pipeline['map']!r}, top_k={n})."
             pipeline.pop("score_job", None)
             return {"phase": "score", "ok": False}
-        if results is None:
+        if scored is None:
             return None
-        pipeline["regions"] = [{k: p.get(k) for k in REGION_FIELDS} for p in results.get("summary", {}).get("added_pois", [])]
+        pipeline["regions"] = [{k: p.get(k) for k in REGION_FIELDS} for p in scored["pois"]]
         return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}
 
     def select(self, job: dict) -> dict:
@@ -224,7 +163,7 @@ class Pipeline:
         if "regions" in pipeline:
             return {"phase": "select", "regions": len(pipeline["regions"])}  # already chosen before a resume
         revisit = job["resolved_plan"]["revisit"]
-        reply = self.service().list_pois(map=revisit["map"], kind="candidate", limit=500)
+        reply = self.service().call("list_pois", {"map": revisit["map"], "kind": "candidate", "limit": 500})
         candidates = sorted((p for p in reply.get("pois", []) if p.get("score") is not None), key=lambda p: p["score"], reverse=True)
         # Scoring a map twice stores the same regions again under new ids.
         # Regions closer than half a field of view share one image, so only the best of them is kept.
@@ -252,10 +191,11 @@ class Pipeline:
                 continue
             region = regions[visit["region"]]
             try:
-                poi = self.service().add_poi(
-                    map=pipeline["map"], x_m=float(region["x_m"]), y_m=float(region["y_m"]), kind="high_mag", reason=f"higher-magnification image of region {region['id']}",
-                    links=[visit["image"], f"poi:{region['id']}"], id=f"{job['reservation_id']}:revisit:{region['id']}",
-                )
+                poi = self.service().call("add_poi", {
+                    "map": pipeline["map"], "x_m": float(region["x_m"]), "y_m": float(region["y_m"]), "kind": "high_mag",
+                    "reason": f"higher-magnification image of region {region['id']}", "links": [visit["image"], f"poi:{region['id']}"],
+                    "id": f"{job['reservation_id']}:revisit:{region['id']}",
+                })
                 with self._lock:
                     visit["poi"] = poi.get("id")
                     visit.pop("poi_error", None)
@@ -349,7 +289,7 @@ class Pipeline:
         fov = float(tier["fov_m"])
         record: dict = {"tier": k, "parent": parent, "fov_m": fov, "pixel_m": fov / int(tier["imsize"]) if tier.get("imsize") else None}
         low, high = ZOOM_FEATURE_SIZE
-        found = self.service().find_features(image=parent, n=ZOOM_CANDIDATES, min_size_m=low * fov, max_size_m=high * fov)
+        found = self.service().call("find_features", {"image": parent, "n": ZOOM_CANDIDATES, "min_size_m": low * fov, "max_size_m": high * fov})
         if "error" in found:
             return {**record, "stopped": f"find_features refused {parent}: {found['error'].get('message', found['error'])}"}
         if not found.get("features"):
@@ -377,7 +317,7 @@ class Pipeline:
             return {**record, "acquisition": DRY_RUN_SKIPPED}
         record["image"] = profile.acquire_revisit(job, tier)
         window = ZOOM_WINDOW_SHARE * parent_fov
-        placed = self.service().place_image(image=record["image"], parent=parent, centre_xy_m=target, window_m=window)
+        placed = self.service().call("place_image", {"image": record["image"], "parent": parent, "centre_xy_m": target, "window_m": window})
         if "error" in placed:
             placed = {"status": "unplaced", "reason": placed["error"].get("message", str(placed["error"]))}
         record["placement"] = {key: placed[key] for key in ("status", "reason", "score", "ambiguity", "centre_xy_m", "shift_from_prediction_m", "id") if key in placed}

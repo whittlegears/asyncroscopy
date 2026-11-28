@@ -176,6 +176,8 @@ core  <-  contracts / trace / data / safety  <-  instruments / jobs  <-  mcp  <-
   profile beside it); `ElectronMicroscope` and `ScanningElectronMicroscope` add what is their own. `instruments/common/sample.py`
   is the SAMPLE device (which sample is loaded, and its dose). The Mapper's analysis goes through
   `jobs/mapping/stitch_service.py`, so `jobs/` needs no MCP client (`stitch_mcp.py` is loaded on first use).
+  Stitching and scoring have one path, `core/map_analysis.py` (`stitch_map`, `score_map`): the Mapper's pipeline, the
+  `stitch_map` workflow block and the mapping graph all call it, each with its own way of reaching the analysis server.
 * `mcp/` serves the devices: `mcp_server.py` (discovery, wrapping, interceptors), `descriptors.py`,
   and `components/` for the native tools. It learns what an instrument is only from the devices
   it discovers (their declarations), never by importing `instruments/`.
