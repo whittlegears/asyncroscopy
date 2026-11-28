@@ -228,8 +228,10 @@ class PolycrystallineGoldDigitalTwin(DigitalTwin):
         image -= image.min()
         image /= image.sum() if image.sum() > 0 else 1.0
         noisy = rng.poisson(image * counts).astype(np.float32)
-        noisy -= noisy.min()
-        noisy /= noisy.max() if noisy.max() > 0 else 1.0
+        # Scale by the dose, which does not depend on the probe. Scaling by the image's own
+        # maximum made the added detector noise larger or smaller relative to the signal as the
+        # probe changed, so aberration-sensitive metrics ranked worse probes as sharper.
+        noisy /= counts / noisy.size
         noise = rng.normal(0.0, 0.1, noisy.shape)
         noise_fft = np.fft.fft2(noise)
         frequencies = np.fft.fftfreq(imsize)

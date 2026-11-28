@@ -2,6 +2,8 @@ import json
 import os
 import signal
 import subprocess
+import shutil
+import pytest
 
 from asyncroscopy.utils import process_manager
 from asyncroscopy.utils.process_manager import ProcessManager, ManagedProcess
@@ -215,3 +217,41 @@ def test_stop_processes_on_port(tmp_path, monkeypatch):
         assert count == 2
         assert 1001 in killed_pids
         assert 1002 in killed_pids
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("lsof") is None, reason="needs lsof on a POSIX system")
+def test_stop_processes_on_port_spares_connected_clients(tmp_path):
+    import socket
+    import sys
+    import time
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    listener = subprocess.Popen(
+        [sys.executable, "-c",
+         "import socket, time\n"
+         f"s = socket.socket(); s.bind(('127.0.0.1', {port})); s.listen(); c, _ = s.accept(); time.sleep(60)"],
+        start_new_session=True)
+    client = None
+    try:
+        for _ in range(50):
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.1).close()
+                break
+            except OSError:
+                time.sleep(0.1)
+        client = subprocess.Popen(
+            [sys.executable, "-c",
+             f"import socket, time\nc = socket.create_connection(('127.0.0.1', {port})); time.sleep(60)"],
+            start_new_session=True)
+        time.sleep(0.5)
+
+        count = ProcessManager(name="test_run", state_dir=tmp_path).stop_processes_on_port(port)
+
+        listener.wait(timeout=10)
+        assert count == 1
+        assert client.poll() is None, "a process merely connected to the port was killed"
+    finally:
+        for process in (listener, client):
+            if process is not None and process.poll() is None:
+                process.kill()

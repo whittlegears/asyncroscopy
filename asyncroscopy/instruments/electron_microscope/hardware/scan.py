@@ -73,13 +73,13 @@ class SCAN(Device):
         return self._dwell_time
 
     def write_dwell_time(self, value: float) -> None:
-        self._dwell_time = value
+        self._dwell_time = self._validate_dwell_time(value)
 
     def read_imsize(self) -> int:
         return self._imsize
 
     def write_imsize(self, value: int) -> None:
-        self._imsize = value
+        self._imsize = self._validate_imsize(value)
 
     def read_scan_region(self) -> list[float]:
         return self._scan_region
@@ -91,11 +91,31 @@ class SCAN(Device):
         return self._output_format
 
     def write_output_format(self, value: str) -> None:
-        self._output_format = value
+        self._output_format = self._validate_output_format(value)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_dwell_time(value) -> float:
+        dwell_time = float(value)
+        if not 1e-9 <= dwell_time <= 10:
+            raise ValueError("dwell_time must be between 1e-9 and 10 seconds")
+        return dwell_time
+
+    @staticmethod
+    def _validate_imsize(value) -> int:
+        imsize = int(value)
+        if imsize != value or imsize <= 0:
+            raise ValueError("imsize must be a positive whole number of pixels")
+        return imsize
+
+    @staticmethod
+    def _validate_output_format(value) -> str:
+        if value not in (".h5", ".tiff"):
+            raise ValueError("output_format must be '.h5' or '.tiff'")
+        return value
 
     @staticmethod
     def _validate_scan_region(value) -> list[float]:
@@ -124,6 +144,34 @@ class SCAN(Device):
     @command(dtype_out=float)
     def get_dwell_time(self) -> float:
         return self.read_dwell_time()
+
+    @command(dtype_in=int, doc_in="Image width in pixels for the next scan, e.g. 512.")
+    def set_imsize(self, imsize: int) -> None:
+        self.write_imsize(imsize)
+
+    @command(dtype_out=int)
+    def get_imsize(self) -> int:
+        return self.read_imsize()
+
+    @command(
+        dtype_in=(float,),
+        doc_in="Relative scan rectangle [left, top, width, height], each in [0, 1]; "
+               "[0, 0, 1, 1] scans the full field of view.",
+    )
+    def set_scan_region(self, scan_region) -> None:
+        self.write_scan_region(scan_region)
+
+    @command(dtype_out=(float,))
+    def get_scan_region(self):
+        return self.read_scan_region()
+
+    @command(dtype_in=str, doc_in="'.h5' (one file, a group per detector) or '.tiff' (one file per detector).")
+    def set_output_format(self, output_format: str) -> None:
+        self.write_output_format(output_format)
+
+    @command(dtype_out=str)
+    def get_output_format(self) -> str:
+        return self.read_output_format()
 
 # ----------------------------------------------------------------------
 # Server entry point
