@@ -129,7 +129,7 @@ def test_a_node_that_raises_ends_in_a_report_and_releases():
     async def broken(state):
         raise RuntimeError("tiled is down")
 
-    g.points = broken  # build looks nodes up by name so the patched one is used
+    g.points = broken  # build looks nodes up by name
     state = run(g, {"request": "map the sample", "plan": dict(PLAN)})
     assert "broken failed: RuntimeError" in state["report"]
     assert state["report"].startswith("Map not completed") and "tiled is down" in state["report"]
@@ -175,7 +175,7 @@ def test_plan_completion_repairs_small_model_slips(model_plan, request_text, exp
     plan = MappingGraph._complete_plan(model_plan, context, request_text)
     for key, value in expect.items():
         numeric = isinstance(value, (int, float)) or (isinstance(value, list) and all(isinstance(v, (int, float)) for v in value))
-        assert plan.get(key, []) == (pytest.approx(value) if numeric else value)  # no per_tile field means images only
+        assert plan.get(key, []) == (pytest.approx(value) if numeric else value)  # no per_tile means images only
 
 
 SEM_CONTEXT = {"stage_position_m": [0.025, 0.012, 0.004, 0, 0], "fov_m": 1e-3, "microscope": "SEM", "eds": False}
@@ -186,7 +186,7 @@ def test_an_sem_scale_plan_in_metres_is_not_rescaled(context):
     plan = {"box_m": [0.020, 0.030, 0.010, 0.014], "fov_m": 2e-3}
     got = MappingGraph._complete_plan(dict(plan), context, "map this 10 x 4 mm area", from_model=True)
     assert got["fov_m"] == pytest.approx(2e-3)  # 2 mm stays 2 mm, not 2 nm
-    assert got["box_m"] == pytest.approx(plan["box_m"])  # a stage at x = 25 mm stays there, not at 25 nm
+    assert got["box_m"] == pytest.approx(plan["box_m"])  # x = 25 mm stays there, not 25 nm
     centred = MappingGraph._complete_plan({"size_m": [0.01, 0.004], "fov_m": 2e-3}, context, "", from_model=False)
     assert centred["box_m"] == pytest.approx([0.020, 0.030, 0.010, 0.014])
     assert "per_tile" not in got and "per_tile" not in centred  # the sem profile refuses even an empty per_tile

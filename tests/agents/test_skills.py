@@ -63,7 +63,7 @@ def test_mcp_skill_tools(monkeypatch):
         server.skills.load_skill("nope")
     assert "Skills here at startup: " in server.skills.load_skill_description() and "mapping" in server.skills.load_skill_description()
     server.tools = {}
-    assert "mapping" not in server.skills.load_skill_description()  # a skill this endpoint cannot run is not offered
+    assert "mapping" not in server.skills.load_skill_description()  # not offered where it cannot run
 
 
 def test_chosen_skills_go_into_the_prompt_in_full_while_they_fit(tmp_path, monkeypatch):

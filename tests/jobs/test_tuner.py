@@ -97,7 +97,7 @@ def setup_error(twin, device, seed: int, c1_m: float, a1_m=(0.0, 0.0)):
     x = -4e-7 + 2e-7 * (seed % 5)
     y = -1.5e-7 if seed < 5 else 1.5e-7
     twin.move_stage([x, y, 0.0, 0.0, 0.0])
-    twin.set_defocus(0.0)  # on a new specimen the defocus from the last seed means nothing
+    twin.set_defocus(0.0)  # a new specimen: the last seed's defocus means nothing
     twin.set_stigmator([0.0, 0.0])
     device.set_focus_error(c1_m, a1_m)
     return x, y
@@ -143,7 +143,7 @@ def test_twin_hides_its_focus_error_and_blurs_with_it(fresh, tuner_twin):
     assert twin.get_defocus() == 0.0  # the error is not reported
     truth = json.loads(twin.export_ground_truth())["focus"]
     assert truth["hidden_error"]["c1_m"] == pytest.approx(150e-9)
-    assert truth["c1_m"] == pytest.approx(150e-9, abs=1e-12)  # the stage is at x = y = 0 so height adds nothing
+    assert truth["c1_m"] == pytest.approx(150e-9, abs=1e-12)  # stage at x = y = 0: height adds nothing
 
     def score():
         twin.unblank_beam()
@@ -241,7 +241,7 @@ def test_a_wrong_sign_corrector_stops_and_restores_the_snapshot(fresh, wrongsign
     assert after["C1"] == pytest.approx(start["C1"], abs=1e-15)
     assert after["A1"] == pytest.approx(start["A1"], abs=1e-15)
     assert twin.get_defocus() == pytest.approx(7e-9)  # the microscope's own focus untouched
-    assert tune["steps"] == 3  # sharpness, one measurement and one measured correction, then it stopped at the first growth
+    assert tune["steps"] == 3  # sharpness, a measurement and a correction, then stop at the first growth
     assert json.loads(twin.get_parameters())["beam_blanked"] is True
 
 
@@ -253,7 +253,7 @@ def test_over_budget_plan_is_refused_before_the_beam_is_unblanked(fresh, tuner_p
     assert reply["error"]["code"] == "plan_rejected"
     assert "above the budget" in reply["error"]["message"] and "33 frames" in reply["error"]["message"]
     after = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
-    assert after == before  # nothing imaged, no dose, the beam still blanked, nothing moved
+    assert after == before  # nothing imaged, no dose, beam blanked, nothing moved
     assert "unknown plan field" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "focus_rnage_m": 1e-7}})["error"]["message"]
     assert "dose_budget_e_per_a2 is required" in call(tuner_proxy, "reserve", {"plan": {"strategy": "vendor_autofocus"}})["error"]["message"]
     assert "unknown strategy" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "strategy": "magic"}})["error"]["message"]
@@ -343,7 +343,7 @@ def test_a_forty_line_example_strategy_registered_from_a_test(fresh, tuner_proxy
         assert status["state"] == "done", status
         tune = results["summary"]["tune"]
         assert tune["sharpness_after"] > tune["sharpness_before"]
-        assert abs(device._focus_truth()["c1_m"]) < 30e-9  # a crude search, but far better than 160 nm
+        assert abs(device._focus_truth()["c1_m"]) < 30e-9  # crude, but far better than 160 nm
     finally:
         STRATEGIES.unregister("hill_climb_example")
 
@@ -376,6 +376,6 @@ def test_run_job_runs_a_tune_through_the_mcp_server(fresh, tuner_proxy, monkeypa
 def test_a_dry_run_tune_is_refused_at_reserve_by_name(tuner_proxy):
     refused = call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "dry_run": True}})
     assert refused["error"]["code"] == "dry_run_unsupported" and "Tuner does not support dry runs" in refused["error"]["message"]
-    reserved = call(tuner_proxy, "reserve", {"plan": FOCUS_PLAN})  # the refused dry run reserved nothing, so a real tune reserves at once
+    reserved = call(tuner_proxy, "reserve", {"plan": FOCUS_PLAN})  # the refused dry run reserved nothing
     assert "reservation_id" in reserved, reserved
     call(tuner_proxy, "release", {"reservation_id": reserved["reservation_id"]})

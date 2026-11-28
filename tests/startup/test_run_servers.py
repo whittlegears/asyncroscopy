@@ -139,9 +139,9 @@ def test_load_mcp_config():
     config = run_mcp.load_config(run_mcp.PROJECT_DIR / "configs" / "mcp.yaml")
 
     assert config.mcp.name == "Spectra300_MCP"
-    assert config.tango_host == "localhost"  # the instrument's address is written only in configs/Spectra300.yaml
+    assert config.tango_host == "localhost"  # the instrument's address is only in configs/Spectra300.yaml
     assert config.tango_port == 9094
-    assert config.mcp.http_host == "127.0.0.1"  # This is a hardware endpoint. Other machines reach it only with allow_remote_bind.
+    assert config.mcp.http_host == "127.0.0.1"  # a hardware endpoint: remote only with allow_remote_bind
     assert config.mcp.allow_remote_bind is False
     assert config.mcp.http_port == 8000
     assert config.mcp.blocked_classes == ["DataBase", "DServer"]
@@ -298,7 +298,7 @@ def test_instrument_kept_outside_the_repository_is_given_by_module_name(tmp_path
     assert config.module_name == "mylab.optiscope" and config.class_name == "OptiScope"
     with pytest.raises(KeyError, match="class_name"):
         run_servers._instrument_config({"module_name": "mylab.optiscope"})
-    with pytest.raises(ValueError, match="PYTHONPATH"):  # a typo is caught at load, not after the device timeout
+    with pytest.raises(ValueError, match="PYTHONPATH"):  # caught at load, not after the device timeout
         run_servers._instrument_config({"module_name": "mylab.optiscop", "class_name": "OptiScope"})
     with pytest.raises(ValueError, match="PYTHONPATH"):
         run_servers._instrument_config({"module_name": "nolab.optiscope", "class_name": "OptiScope"})
@@ -334,7 +334,7 @@ def test_a_second_non_isolated_stack_would_share_the_twins_database_file():
     snapshot = twin_running()
     mine = run_servers.stack_identity(RAMAN, None)
     conflicts = run_servers.stack_conflicts(snapshot, mine, me(snapshot, "configs/yaml_sim_raman.yaml"), {9194: set(), 9191: set()}, share_database_file=True)
-    assert len(conflicts) == 1 and "same Tango database file" in conflicts[0][0] and conflicts[0][1] == 100  # 100 is the uv wrapper. Stopping it stops the tree.
+    assert len(conflicts) == 1 and "same Tango database file" in conflicts[0][0] and conflicts[0][1] == 100  # 100 is the uv wrapper; stopping it stops the tree
     assert "digital_twin_mapping.yaml" in conflicts[0][0]
 
 
@@ -473,7 +473,7 @@ def test_load_pytemlib_config():
 
     assert (config.pytemlib.transport, config.pytemlib.host, config.pytemlib.port) == ("streamable-http", "127.0.0.1", 8003)
     assert config.pytemlib.tiled == "http://localhost:9091"
-    assert config.pytemlib.trace is None and config.pytemlib.max_jobs is None  # left out means the server default
+    assert config.pytemlib.trace is None and config.pytemlib.max_jobs is None  # left out: the server default
 
 
 def pytemlib_config(**values):

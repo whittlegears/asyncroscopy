@@ -31,7 +31,7 @@ def test_a_bar_is_read_from_a_mapping_or_a_fraction():
 
 @pytest.mark.parametrize("passed, of, expected", [
     (5, 5, "pass"), (4, 5, "pass"), (3, 5, "fail"), (8, 10, "pass"), (7, 10, "fail"),
-    (3, 3, "unproven"),   # too few trials to meet a 4 of 5 bar
+    (3, 3, "unproven"),   # too few trials for a 4 of 5 bar
     (1, 3, "fail"),       # two more passes would still be 3 of 5
     (2, 3, "unproven"),
     (0, 0, "skipped"),

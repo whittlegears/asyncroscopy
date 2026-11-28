@@ -223,7 +223,7 @@ def test_run_job_and_the_unified_wait_are_read_as_facts():
     facts = Facts.from_calls(calls, CATALOG)
     assert facts.jobs == {"j9": {"device": "Mapper", "state": "done", "kind": "instrument"}, "a9": {"device": "analysis", "state": "done", "kind": "assemble"}}
     assert facts.dose_e_per_a2 == 7.5 and facts.map_keys == {"map_r9_map"} and "map_r9.h5" in facts.data_keys
-    assert facts.high_risk == ["run_job"]  # starting a job is allowed when the goal asks for one
+    assert facts.high_risk == ["run_job"]  # a job is allowed when the goal asks for one
     assert check(Goal("x", [{"kind": "no_unrequested"}]), calls, "", FakeServer()).met
 
 
@@ -235,9 +235,9 @@ def test_take_an_image_here_is_met_by_the_acquisition_it_needs():
     ]
     goal = Goal.from_text("Take a HAADF image here")
     verdict = check(goal, calls, "Saved as stem_image_HAADF_20261028T1.h5.", None)
-    assert verdict.met, verdict.results  # acquiring, its settings and unblanking are what the goal asked for
+    assert verdict.met, verdict.results  # acquiring, its settings and unblanking are what the goal asked
     moved = calls + [Call("DigitalTwin_move_stage", {"position": [1e-6, 0, 0, 0, 0]}, "ok")]
-    assert "move_stage" in check(goal, moved, "", None).feedback()  # the goal said here so no move is allowed
+    assert "move_stage" in check(goal, moved, "", None).feedback()  # the goal said here, so no move is allowed
 
 
 def test_an_old_spectrum_found_by_listing_does_not_meet_take_a_spectrum():
@@ -265,7 +265,7 @@ def test_a_read_only_goal_wants_no_data_and_allows_no_action():
 
 def test_risk_comes_from_the_endpoints_catalog_never_from_a_name():
     calls = [Call("DigitalTwin_set_fov", {"fov": 2e-7}, "ok"), Call("DigitalTwin_acquire_scanned_image", {}, "img_1.h5")]
-    assert Facts.from_calls(calls).high_risk == []  # without a catalog nothing is known or guessed
+    assert Facts.from_calls(calls).high_risk == []  # without a catalog nothing is guessed
     assert Facts.from_calls(calls, CATALOG).high_risk == ["DigitalTwin_acquire_scanned_image"]  # on a STEM set_fov does not expose the sample
 
 
@@ -329,7 +329,7 @@ def test_cli_goal_sets_the_budget_and_exits_by_the_verdict(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["run", "mapping", "--goal", "map here"])
     with pytest.raises(SystemExit) as refused:
         run_module.main()
-    assert refused.value.code == 2  # the mapping graph is a fixed workflow and not a goal worker
+    assert refused.value.code == 2  # the mapping graph is a fixed workflow, not a goal worker
 
 
 def test_agent_server_goal_accepts_text_or_json(monkeypatch):
@@ -448,7 +448,7 @@ def test_a_job_started_before_a_timeout_is_known_from_the_ledger_and_stopped():
     server = AbortingServer()
     config = AgentConfig(analysis_url="")
 
-    async def worker(request, remaining_s):  # the team was mid step so its state has no trace yet
+    async def worker(request, remaining_s):  # mid step, so its state has no trace yet
         config.ledger.append({"name": "run_job", "args": {"device": "Mapper", "plan": {}}, "result": json.dumps({"job_id": "j8", "state": "running"}), "error": False})
         raise asyncio.TimeoutError()
 

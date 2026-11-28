@@ -95,7 +95,7 @@ def test_a_spectrum_on_a_feature_surveys_finds_measures_reads_and_puts_the_field
     assert record["state"] == "done", record
     assert instrument.names()[:4] == ["Twin_get_fov", "Twin_set_fov", "Twin_unblank_beam", "Twin_acquire_scanned_image"]
     assert analysis.names() == ["find_features"]
-    assert state["parked"] == [4e-7, -2e-7] and state["blanked"] and state["fov"] == 5e-8  # the field of view is put back
+    assert state["parked"] == [4e-7, -2e-7] and state["blanked"] and state["fov"] == 5e-8  # the field of view is restored
     outputs = record["outputs"]
     assert outputs["spectrum"]["key"] == "spectrum_eds_0001.h5" and outputs["peaks"]["elements"].endswith("Au 100%")
     assert "data (sums" not in outputs["peaks"]["peaks"]  # the channel table is left out
@@ -196,7 +196,7 @@ def test_a_run_that_fails_after_zooming_puts_the_field_back_and_a_resume_zooms_a
     record = asyncio.run(run_workflow(get_workflow("spectrum_on_feature"), {}, instrument=instrument, analysis=analysis,
                                       state_dir=tmp_path, run_id="zoomed"))
     assert record["state"] == "failed" and state["blanked"]
-    assert state["fov"] == 5e-8  # put back although fov_back never ran
+    assert state["fov"] == 5e-8  # restored although fov_back never ran
     assert record["restores"]["fov"]["restore"]["arguments"] == {"fov": 5e-8}
     instrument.tools["Twin_acquire_spectrum"] = good
     instrument.log.clear()

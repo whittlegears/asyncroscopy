@@ -127,7 +127,7 @@ def test_a_healthy_stack_passes_and_only_reads(stack):
     assert report.failures == []
     rows = results(report)
     assert rows["stage position"][0] == "PASS" and "x=1.000 um" in rows["stage position"][1]
-    assert rows["beam current"][0] == "WARN"  # not measured yet, so it warns and does not fail
+    assert rows["beam current"][0] == "WARN"  # not measured yet: warns, does not fail
     assert rows["autoscript server version"][0] == "PASS"
     assert "7521" in rows["autoscript server port 192.0.2.10:9095"][1]
     assert rows["tiled accepts the API key"][0] == "PASS"

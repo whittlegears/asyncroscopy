@@ -20,7 +20,7 @@ def _address(text: str):
     try:
         return ipaddress.ip_address(text)
     except ValueError:
-        return None  # not an address, e.g. a version such as 1.15.0.484
+        return None  # not an address, e.g. version 1.15.0.484
 
 
 def test_no_lab_addresses_in_configs_notebooks_or_docs():

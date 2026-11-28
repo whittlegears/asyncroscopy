@@ -65,7 +65,7 @@ def test_retrieval_is_fast():
     start = time.perf_counter()
     for _ in range(20):
         search([("map a square and take spectra", 1.0), ("Error: busy", 0.6)], usable())
-    assert (time.perf_counter() - start) / 20 < 0.05  # well under a model call; about 3 ms here
+    assert (time.perf_counter() - start) / 20 < 0.05  # well under a model call
 
 
 def test_rank_texts_puts_the_rarer_shared_word_first():

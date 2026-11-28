@@ -98,7 +98,7 @@ def test_while_held_every_direct_set_and_acquire_is_refused_with_a_clear_tango_e
                 attempt()
             assert raised.value.args[0].reason == "InstrumentHeld" and "busy: job job-a holds this instrument" in raised.value.args[0].desc
         assert instrument.exposure_s == 1.0 and instrument.get_exposure_s() == 1.0  # reading still works
-        instrument.open_beam()  # commands still work too and switching a beam or laser off matters most
+        instrument.open_beam()  # switching a beam or laser off matters most
         with pytest.raises(tango.DevFailed, match="job-a holds this instrument"):
             instrument.hold("job-b")  # one job at a time
     finally:
@@ -121,7 +121,7 @@ def test_step_commands_need_the_holders_token(instrument):
         start(instrument, "job-a", "acquire_counts")
         assert wait_until(lambda: status(instrument)["state"] == "done")
         assert json.loads(status(instrument)["result"]) == {"counts": 100.0}
-        start(instrument, "job-a", "set_stage_x_m", 5.0)  # out of range so the refusal is the step's outcome
+        start(instrument, "job-a", "set_stage_x_m", 5.0)  # out of range: the refusal is the step's outcome
         assert wait_until(lambda: status(instrument)["state"] == "failed")
         assert "stage_x_m = 5" in status(instrument)["error"]
     finally:
@@ -183,7 +183,7 @@ def test_a_step_may_run_far_longer_than_one_tango_call_is_allowed(instrument, jo
         time.sleep(0.02)
         assert time.monotonic() - started < 30.0
     assert job_state(job_device, job_id) == "done", call(job_device, "job_status", job_id=job_id)
-    assert time.monotonic() - started > 1.5  # the step took its simulated time at 0.02 real seconds per second
+    assert time.monotonic() - started > 1.5  # simulated time at 0.02 real seconds per second
     assert slowest < 0.5
     keys = call(job_device, "results", job_id=job_id)["summary"]["keys"]["acquire_counts"]
     assert json.loads(keys[0]) == {"counts": 12000.0}

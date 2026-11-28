@@ -22,7 +22,7 @@ SUPER_X = {"Dispersion": "5", "OffsetEnergy": "-250", "detector": "eds", "acquis
 
 def super_x_spectrum(lines_ev: list[float]) -> np.ndarray:
     energy = -250.0 + 5.0 * np.arange(4096)
-    counts = 2.0 + 4000.0 * np.exp(-0.5 * (energy / 12.0) ** 2)  # the zero-energy peak every spectrum has
+    counts = 2.0 + 4000.0 * np.exp(-0.5 * (energy / 12.0) ** 2)  # the zero-energy peak
     for line in lines_ev:
         counts = counts + 1500.0 * np.exp(-0.5 * ((energy - line) / 55.0) ** 2)
     return np.random.default_rng(3).poisson(counts).astype(np.uint32)

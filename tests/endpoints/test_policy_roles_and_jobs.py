@@ -517,8 +517,8 @@ class TestRunJob:
             return json.dumps({"schema_version": "1.1.0", "job_id": "j-" + body["reservation_id"], "state": "queued"})
 
         class Device:
-            finished = False  # set True when the job is done before run_job looks
-            start_fails = ""  # set to raise or error to make the start fail
+            finished = False  # done before run_job looks
+            start_fails = ""  # raise or error to fail the start
 
             def __init__(self):
                 self.released = []
@@ -555,7 +555,7 @@ class TestRunJob:
         assert [c[0] for c in calls] == ["reserve", "start"]
 
     def test_wait_false_returns_at_once_with_the_job_id(self, server_factory, monkeypatch):
-        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 30.0)  # never reached because nothing waits
+        monkeypatch.setattr("asyncroscopy.mcp.components.jobs.RUN_JOB_WAIT_S", 30.0)  # never reached: nothing waits
         server, calls = self.mapper_server(server_factory)
         began = time.monotonic()
         reply = server.jobs.run_job("Mapper", {"fov_m": 2e-7}, wait=False)
@@ -633,7 +633,7 @@ class TestRunJobResume:
         server, calls = TestRunJob.mapper_server(server_factory)
         server.devices["Mapper"].proxy.finished = True
         reply = server.jobs.run_job("Mapper", resume="r7")
-        assert reply["state"] == "done" and calls == [("start", "r7")]  # no reserve because the reservation holds the plan
+        assert reply["state"] == "done" and calls == [("start", "r7")]  # no reserve: the reservation holds the plan
 
     def test_a_failed_resume_keeps_the_reservation(self, server_factory):
         server, calls = TestRunJob.mapper_server(server_factory)
@@ -757,7 +757,7 @@ def test_an_spm_stage_move_is_refused_while_the_tip_is_engaged():
 def test_stop_all_stops_every_device_and_reports_what_it_could_not(server_factory, monkeypatch):
     monkeypatch.setattr("asyncroscopy.safety.estop.STOP_ALL_WAIT_S", 1.0)
     server = server_factory()
-    server.config.risk_overrides = {"*": "high"}  # a deployment that marks everything high must not hold up the e-stop
+    server.config.risk_overrides = {"*": "high"}  # marking everything high must not hold up the e-stop
     done = []
 
     class Device:
@@ -791,7 +791,7 @@ def test_stop_all_stops_every_device_and_reports_what_it_could_not(server_factor
         server.tools[prefix] = {c: server._create_wrapper(lambda *a: done.append("through the wrapper"), cmd_info(in_type=t), c, prefix) for c, t in types.items()}
     started = time.monotonic()
     reply = server.estop.stop_all()
-    assert time.monotonic() - started < 3.0  # A hung device does not hold up the report. The two phases take 1 s each.
+    assert time.monotonic() - started < 3.0  # a hung device does not hold up the report; each phase takes 1 s
     assert "through the wrapper" not in done  # stop_all calls the devices directly
     assert not set(done) & {"GunCtl_hv_off", "GunCtl_filament_off", "GunCtl_stop", "GunCtl_estop", "DigitalTwin_unblank_beam", "Raman_laser_on", "AFMTwin_approach_tip"}
     assert done.count("DigitalTwin_blank_beam") == 2 and done.count("Raman_laser_off") == 2 and done.count("Raman_close_shutter") == 2

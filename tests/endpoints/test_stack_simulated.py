@@ -32,5 +32,5 @@ def test_one_real_actuating_device_makes_the_stack_real():
     assert _server({"Twin": (True, True), "Stage": (True, True)}).stack_simulated()
     assert not _server({"Twin": (True, True), "Stage": (False, True)}).stack_simulated()
     assert not _server({"Twin": (True, True), "Stage": (None, True)}).stack_simulated()
-    assert _server({"Twin": (True, True), "Readout": (False, False)}).stack_simulated()  # a device that only reads does not decide
+    assert _server({"Twin": (True, True), "Readout": (False, False)}).stack_simulated()  # a read-only device does not decide
     assert not _server({}).stack_simulated()

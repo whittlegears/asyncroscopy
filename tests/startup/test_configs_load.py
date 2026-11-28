@@ -30,7 +30,7 @@ def test_config_loads(path):
         config = _launcher("run_servers").load_config(path)
         if config.instrument.file is not None:
             assert config.instrument.file.exists(), f"{path.name}: instrument file {config.instrument.file} missing"
-        else:  # given as module_name and load_config checked it imports
+        else:  # module_name, checked by load_config
             assert importlib.util.find_spec(config.instrument.module_name), f"{path.name}: {config.instrument.module_name} not importable"
         yaml_path = config.instrument.properties.get("yaml_path")
         if yaml_path:

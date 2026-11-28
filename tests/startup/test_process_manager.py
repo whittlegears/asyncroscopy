@@ -193,13 +193,13 @@ def test_a_reused_process_id_in_a_stale_state_file_is_left_alone(tmp_path, monke
     try:
         state_file = tmp_path / "test_run.json"
         state_file.write_text(json.dumps([bystander.pid, 2**22 - 2]), encoding="utf-8")
-        os.utime(state_file, (time.time() - 3600, time.time() - 3600))  # recorded an hour before the bystander started
+        os.utime(state_file, (time.time() - 3600, time.time() - 3600))  # an hour before the bystander started
         with ProcessManager(name="test_run", state_dir=tmp_path):
             assert not state_file.exists()
         assert killed == []
 
         state_file.write_text(json.dumps([bystander.pid]), encoding="utf-8")
-        os.utime(state_file, (time.time() + 60, time.time() + 60))  # The file was recorded after the process started, so it is this launcher's own orphan.
+        os.utime(state_file, (time.time() + 60, time.time() + 60))  # recorded after the process started: this launcher's own orphan
         with ProcessManager(name="test_run", state_dir=tmp_path):
             pass
         assert killed == [bystander.pid]
@@ -333,7 +333,7 @@ def _drained(stream, *prefix):
     import time
     from collections import deque
 
-    class Closing:  # The drain thread closes the stream when it ends, which gives a visible "done" flag.
+    class Closing:  # the drain thread closes the stream when it ends: a visible done flag
         closed = False
 
         def readline(self):

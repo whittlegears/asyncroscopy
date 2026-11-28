@@ -63,7 +63,7 @@ def test_a_dry_run_records_every_move_and_indent_and_makes_none(grid, tango_ctx)
     assert status["state"] == "done", status
     results = call(proxy, "results", job_id=job_id)
     assert results["dry_run"]["recorded"] == 8 * 2 and results["dry_run"]["failed_checks"] == 0  # moves and indents
-    assert results["dry_run"]["performed"] == 1  # the final retract runs because making the tip safe is never rehearsed
+    assert results["dry_run"]["performed"] == 1  # the final retract runs: making the tip safe is never rehearsed
     assert all(i["hardness_gpa"] is None for i in results["summary"]["indents"])
     assert list(indenter.get_position()) == [1e-5, 1e-5]
     call(proxy, "release", reservation_id=reserved["reservation_id"])
@@ -139,7 +139,7 @@ def test_a_resolve_plan_bug_is_the_devices_not_the_callers():
 def test_a_failed_state_save_on_start_leaves_the_reservation_startable():
     import threading
 
-    class Envelope:  # JobDevice's envelope logic only, no Tango server
+    class Envelope:  # envelope logic only, no Tango server
         _start, _parse, _active, _job = JobDevice._start, JobDevice._parse, JobDevice._active, JobDevice._job
 
     grid = Envelope()
@@ -158,7 +158,7 @@ def test_a_failed_state_save_on_start_leaves_the_reservation_startable():
 def test_a_worker_that_cannot_start_leaves_the_reservation_startable(monkeypatch):
     import threading
 
-    class Envelope:  # JobDevice's envelope logic only, no Tango server
+    class Envelope:  # envelope logic only, no Tango server
         _start, _parse, _active, _job = JobDevice._start, JobDevice._parse, JobDevice._active, JobDevice._job
 
     grid = Envelope()

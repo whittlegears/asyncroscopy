@@ -101,7 +101,7 @@ def test_untracked_placement_error_grows_with_the_drift(untracked):
     reserved, results, images, _moves = untracked
     errors = placement_errors(images)
     print(f"\nuntracked: max placement error {errors.max():.3f} fov, last tile {errors[-1]:.3f} fov")
-    assert errors.max() > 0.3  # the baseline is 21 nm of drift on 50 nm tiles
+    assert errors.max() > 0.3  # 21 nm of drift on 50 nm tiles
     assert errors[-1] > errors[len(errors) // 2] > errors[1]  # it grows with time
     assert "drift_tracking" not in results["summary"]  # off by default
 

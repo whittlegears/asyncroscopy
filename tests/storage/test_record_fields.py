@@ -141,7 +141,7 @@ def test_a_partial_scan_region_is_read_as_left_top_width_height():
     assert exposure_of({**attrs, "scan_region": [0.6, 0.0, 0.4, 1.0]})["box_m"] == pytest.approx([1e-7, 5e-7, -5e-7, 5e-7])
     assert exposure_of({**attrs, "scan_region": [0.25, 0.25, 0.5, 0.5]})["box_m"] == pytest.approx([-2.5e-7, 2.5e-7, -2.5e-7, 2.5e-7])
     assert exposure_of({**attrs, "scan_region": [0.0, 0.0, 0.0, 1.0]}) is None
-    unplaced = {k: v for k, v in attrs.items() if k != "axes"}  # without axes the row direction is unknown so the whole field is used
+    unplaced = {k: v for k, v in attrs.items() if k != "axes"}  # no axes: row direction unknown, whole field used
     assert exposure_of({**unplaced, "scan_region": [0.6, 0.0, 0.4, 1.0]})["box_m"] == pytest.approx([-5e-7, 5e-7, -5e-7, 5e-7])
     spot = {"stage_reported_m": [0.0, 0.0], "fov_m": 1e-6, "beam_position": [0.75, 0.5], "real_time_s": 1.0, "beam_current_pa": 10.0}
     assert exposure_of(spot) is None and exposure_of({**spot, "axes": "rows=+y, columns=+x"})["box_m"][0] == pytest.approx(2.5e-7 - 5e-9)

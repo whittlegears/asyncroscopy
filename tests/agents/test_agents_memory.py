@@ -44,7 +44,7 @@ def test_instrument_notes_are_seeded_once_and_retrieved_by_relevance_within_a_ca
     from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwin
     from asyncroscopy.jobs.mapping.mapper import Mapper
 
-    assert not memory.seed_instrument(catalog({}).unknown())  # nothing is written when the endpoint is unknown
+    assert not memory.seed_instrument(catalog({}).unknown())  # nothing written for an unknown endpoint
     assert memory.seed_instrument(catalog({"Mapper": Mapper, "DigitalTwin": DigitalTwin}, natives=["run_job", "view_data"]), stem=True)
     assert not memory.seed_instrument(catalog({}))  # a person's edits are never overwritten
     text = memory.instrument_file.read_text(encoding="utf-8")
@@ -165,7 +165,7 @@ RAMAN = __import__("pathlib").Path(__file__).parents[1] / "data" / "raman"
 
 
 def test_notes_never_hand_an_old_key_to_a_new_run(memory):
-    memory.add_lesson("map_r7.h5 had no spectra")  # a key in a lesson is taken out before it is written
+    memory.add_lesson("map_r7.h5 had no spectra")  # a key in a lesson is removed before writing
     memory.record_experiment("run1", "map the flake", "a map", ["run_job"], ["map_4f2a9c1d7e3b_map", "spectrum_eds_1.h5"], "met", [])
     notes = memory.notes_for("map the flake")
     assert "map_4f2a9c1d7e3b_map" not in notes and "spectrum_eds_1.h5" not in notes and "map_r7.h5" not in notes

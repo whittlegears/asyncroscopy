@@ -195,7 +195,7 @@ class _Defocus(_Node):
 class _Blanker(_Node):
     def __init__(self, record: _Recorder, path: str) -> None:
         super().__init__(record, path)
-        object.__setattr__(self, "_blanked", False)  # a column as the operator leaves it
+        object.__setattr__(self, "_blanked", False)  # as the operator leaves the column
 
     def blank(self) -> None:
         self._rec("blank", "call")

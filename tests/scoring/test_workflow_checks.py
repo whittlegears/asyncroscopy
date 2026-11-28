@@ -371,7 +371,7 @@ def test_stitch_truth_measures_placement_against_where_the_twin_really_imaged():
     rng = np.random.default_rng(0)
     pixel, side, n = 1e-9, 128, 9
     true = rng.uniform(0, 3e-7, size=(n, 2))
-    reported = true + rng.normal(0, 3e-8, size=(n, 2))  # the stage readout is off by about 30 px
+    reported = true + rng.normal(0, 3e-8, size=(n, 2))  # readout off by about 30 px
     positions = np.stack([true[:, 1], true[:, 0]], axis=1) / pixel - side / 2 + rng.normal(0, 0.3, size=(n, 2)) + 7.0  # a common offset is allowed
     truth = {"acquisitions": [{"kind": "image", "center_true_m": list(t), "reported_m": [*r, 0, 0, 0]} for t, r in zip(true, reported)]}
     steps = [{"index": i, "stage_reported_m": [*reported[i], 0, 0, 0]} for i in range(n)]
@@ -420,7 +420,7 @@ def test_answer_peak_near_needs_the_peak_in_the_data_and_in_the_answer():
     assert not CHECKS["answer_peak_near"](Run(calls=read, facts={"truth": truth}, final="It is at 1582 cm-1."), position=2690, tol=20)[0]
     assert not CHECKS["answer_peak_near"](Run(calls=read, facts={"truth": truth}, final="3000"), position=3000, tol=20)[0]  # not in the data
     parroted = CHECKS["answer_peak_near"](Run(facts={"truth": truth}, final="The 2D band is near 2690 cm-1."), position=2690, tol=20)
-    assert not parroted[0] and "never read" in parroted[1]  # the skill's own text says "2D near 2690"
+    assert not parroted[0] and "never read" in parroted[1]  # the skill's text says "2D near 2690"
 
 
 def test_skill_loaded_counts_skills_given_automatically():
@@ -432,12 +432,12 @@ def test_run_jobs_gated_start_is_allowed_with_run_job_and_overrides_count():
     from benchmarks._common import sleepwalking
 
     via = [mcp("Mapper_reserve", via="run_job"), mcp("Mapper_start", via="run_job")]  # what one run_job leaves in the trace
-    assert CHECKS["no_sleepwalking"](Run(events=via, risks=RISKS))[0]  # the mapping skill allows run_job, so its own start
+    assert CHECKS["no_sleepwalking"](Run(events=via, risks=RISKS))[0]  # the mapping skill allows run_job
     assert not CHECKS["no_sleepwalking"](Run(events=via, risks=RISKS), allow=["view_data"])[0]
     direct = [mcp("Mapper_reserve"), mcp("Mapper_start")]  # a model calling the envelope itself
     assert not CHECKS["no_sleepwalking"](Run(events=direct, risks=RISKS))[0]
     assert CHECKS["no_sleepwalking"](Run(events=direct, has_calls=False, risks=RISKS))[0]  # the fixed mapping graph runs its own job
-    assert sleepwalking(["DigitalTwin_set_fov"], []) == []  # without the endpoint's table nothing is judged from a name
+    assert sleepwalking(["DigitalTwin_set_fov"], []) == []  # no endpoint table: nothing judged from a name
     assert sleepwalking(["DigitalTwin_set_fov"], [], {"DigitalTwin_set_fov": "low"}) == []  # the endpoint's own table wins
     assert sleepwalking(["Opentrons_get_tip"], [], {"Opentrons_get_tip": "high"}) == ["Opentrons_get_tip"]  # an override to high
 
@@ -448,7 +448,7 @@ def test_the_truth_peak_is_the_one_view_data_lists_first():
     x = np.arange(2048, dtype=float)
     y = 5 + 400 * np.exp(-0.5 * ((x - 300) / 3) ** 2) + 900 * np.exp(-0.5 * ((x - 1500) / 3) ** 2)
     peaks = sorted(views.find_peaks(np.random.default_rng(1).poisson(y).astype(float), 3.0), key=lambda p: p.net, reverse=True)
-    assert abs(peaks[0].index - 1500) <= 2  # the strongest by net counts, as the text view lists it first
+    assert abs(peaks[0].index - 1500) <= 2  # strongest by net counts, listed first
 
 
 def test_a_length_in_nm_answered_in_metres_is_near():

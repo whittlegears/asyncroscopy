@@ -48,5 +48,5 @@ def test_render_time_budget(tmp_path):
     results = RESULTS if settings.get().write_benchmarks else tmp_path / RESULTS.name
     results.parent.mkdir(parents=True, exist_ok=True)
     results.write_text(json.dumps({k: round(v, 4) for k, v in timings.items()}, indent=2))
-    assert timings["survey_1um_512"] < 5.0  # the limit is loose because shared CI runners are slow
+    assert timings["survey_1um_512"] < 5.0  # loose: shared CI runners are slow
     assert timings["atomic_10nm_512"] < 10.0

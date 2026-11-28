@@ -123,7 +123,7 @@ def test_procedural_specimen_is_bit_identical_to_the_golden_run(tango_ctx, monke
     for name in ("survey_haadf", "survey_bf", "survey2_haadf", "atomic_haadf", "spectrum"):
         if same_build:
             assert np.array_equal(run[name], golden[name]), f"{name} changed: the procedural specimen is no longer bit-identical"
-        else:  # Another platform's FFT and BLAS may round differently. The sample and the count statistics still match.
+        else:  # another platform's FFT and BLAS may round differently; statistics still match
             assert np.allclose(run[name], golden[name], rtol=1e-3, atol=3.0), name
 
 
@@ -240,10 +240,10 @@ def test_a_procedural_seed_option_changes_the_sample_and_nothing_else():
 
 def test_recorded_images_load_from_every_format_with_their_pixel_size(tmp_path):
     image, pixel = load_image(EXAMPLE_IMAGE)
-    assert image.shape == (256, 256) and pixel is None  # a PNG carries no pixel size so the option gives it
+    assert image.shape == (256, 256) and pixel is None  # a PNG has no pixel size: the option gives it
     np.save(tmp_path / "a.npy", image)
     np.savez(tmp_path / "a.npz", image=image, pixel_size_m=EXAMPLE_PIXEL)
-    with h5py.File(tmp_path / "a.h5", "w") as h5:  # a Mapper run file holds a stack of tiles with the pixel size in attrs
+    with h5py.File(tmp_path / "a.h5", "w") as h5:  # a Mapper run file: tiles with the pixel size in attrs
         dset = h5.create_dataset("tiles", data=np.stack([image * 0, image]))
         dset.attrs["pixel_size_m"] = EXAMPLE_PIXEL
     built = {}
@@ -352,7 +352,7 @@ def _run_map(mapper) -> dict:
 def _material_under_beam(truth: dict) -> np.ndarray:
     """For each EDS point of the run, whether the specimen had anything under the beam (from its ground truth)."""
     points = [a["beam_true_m"] for a in truth["acquisitions"] if a["kind"] == "spectrum"]
-    if truth["specimen"]["source"] == "crystal":  # a continuous film over the whole sample area
+    if truth["specimen"]["source"] == "crystal":  # a continuous film over the whole sample
         x_min, x_max, y_min, y_max = truth["sample_bounds_m"]
         return np.array([x_min <= x <= x_max and y_min <= y <= y_max for x, y in points])
     labels = Labels(truth["particles"])

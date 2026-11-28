@@ -205,7 +205,7 @@ def test_a_bad_condition_pauses_the_job_which_resumes_once_it_has_been_good_long
     reservation = job.call("reserve", {"plan": {"xs": [0.0] * 6}})["reservation_id"]
     job_id = job.call("start", {"reservation_id": reservation})["job_id"]
     deadline = time.time() + 10.0
-    while len(job.ran) < 2:  # a worker that fails before its steps must fail this test, not hang it
+    while len(job.ran) < 2:  # fails rather than hangs if the worker fails early
         assert time.time() < deadline, job.call("status", {"job_id": job_id})
         time.sleep(0.005)
     beam.values["current"] = 2.0  # beam lost
@@ -352,7 +352,7 @@ def test_a_dry_run_records_a_read_named_command_the_deployment_marks_high(tmp_pa
     job_id = job.call("start", {"reservation_id": reserved["reservation_id"]})["job_id"]
     job.wait_for(job_id, {"done"})
     record = job._jobs[reserved["reservation_id"]]["step_results"]["0"]
-    assert afm.calls == ["get_stage"]  # the scan was recorded and not run but the plain read passed through
+    assert afm.calls == ["get_stage"]  # recorded, not run; the plain read passed through
     assert record == {"stage": [0.0, 0.0], "image": DRY_RUN_PLACEHOLDER}
     assert job._jobs[reserved["reservation_id"]]["dry_run_calls"]["recorded"] == 1
 

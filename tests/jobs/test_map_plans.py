@@ -82,7 +82,7 @@ def test_given_points_are_imaged_without_mapping(mapper_proxy, mapping_twin_prox
 
 
 def test_one_given_point_is_imaged_even_when_rounding_makes_its_box_a_hair_narrower_than_the_image(mapper_proxy, mapping_twin_proxy, analysis):
-    point = [-2.021e-07, 3.52e-08]  # the box is point +/- 1e-8, and 3.52e-8 +/- 1e-8 is 1.9999999999999997e-8 wide
+    point = [-2.021e-07, 3.52e-08]  # 3.52e-8 +/- 1e-8 is 1.9999999999999997e-8 wide
     _reserved, results = run(mapper_proxy, {"revisit": {"fov_m": 2e-8, "points": [point]}})
     assert results["summary"]["revisits"]["imaged"] == 1, results["summary"]
 

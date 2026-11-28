@@ -245,7 +245,7 @@ def test_a_dose_budgeted_map_checks_the_current_again_at_start_and_on_resume(map
     budgeted = reserve["estimate"]["beam_current_pa"]
     original = DigitalTwin._get_parameters
 
-    def raised(self):  # someone turned the current up after the plan was reserved
+    def raised(self):  # current turned up after the reservation
         parameters = json.loads(original(self))
         parameters["beam_current_pa"] = budgeted * 2
         return json.dumps(parameters)
@@ -386,7 +386,7 @@ def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(t
     started = call(leased, "start", {"reservation_id": reserve["reservation_id"]})
     call(leased, "pause", {"job_id": started["job_id"]})
     paused = wait(leased, started["job_id"], states=("paused",))
-    time.sleep(2.0)  # longer than lease_s with nobody checking, but a paused job's lease does not lapse
+    time.sleep(2.0)  # past lease_s unwatched, but a paused job's lease does not lapse
     assert json.loads(leased.get_jobs())["jobs"][0]["state"] == "paused"
     status = wait(leased, started["job_id"], timeout=30)
     assert status["state"] == "aborted" and status["last_error"]["code"] == "pause_lapsed"
@@ -398,7 +398,7 @@ def test_a_forgotten_pause_is_aborted_after_pause_limit_s_and_not_by_the_lease(t
 def test_a_plan_whose_overlap_is_smaller_than_the_stage_error_is_warned_about():
     from asyncroscopy.jobs.mapping.plan import overlap_warning
 
-    warning = overlap_warning(0.3, 5.6e-7, 2.9e-7)  # with 560 nm tiles neighbours often do not overlap
+    warning = overlap_warning(0.3, 5.6e-7, 2.9e-7)  # 560 nm tiles: neighbours often do not overlap
     assert warning and "left unplaced" in warning and "560 nm" in warning
-    assert overlap_warning(0.5, 1.2e-5, 2.9e-7) is None  # with 12 um tiles at half overlap every pair is found
+    assert overlap_warning(0.5, 1.2e-5, 2.9e-7) is None  # 12 um tiles at half overlap: every pair found
     assert overlap_warning(0.15, 2e-7, 1e-9) is None  # an accurate stage

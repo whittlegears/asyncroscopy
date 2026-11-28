@@ -24,7 +24,7 @@ def test_a_plain_manual_is_saved_with_front_matter_and_is_used_like_any_skill(la
     skill = named("tilt_series")
     assert skill.source == "lab" and skill.available and skill.description == "Take a tilt series of the region."
     assert load_skill("tilt_series").startswith("# Tilt series")
-    assert skill.acts  # a skill that does not say it only reads counts as acting
+    assert skill.acts  # not declared read-only counts as acting
     assert any(p.skill == "tilt_series" for p, _ in search([("take a tilt series", 1.0)], list_skills()))
 
 

@@ -132,7 +132,7 @@ def test_a_wedged_device_is_re_homed_or_the_row_is_infra(monkeypatch):
     recovered = FakeLive()
     recovered.health = lambda: _value(next(answers))
     asyncio.run(run_workflows.ensure_healthy(recovered, {"stage": [1, 0, 0, 0, 0]}))
-    assert recovered.restored == [{"stage": [1, 0, 0, 0, 0]}]  # re-homed once it answered again
+    assert recovered.restored == [{"stage": [1, 0, 0, 0, 0]}]  # re-homed once it answered
     assert _common.is_infra_error("DevFailed: API_DeviceTimedOut while calling acquire")
 
 

@@ -47,11 +47,11 @@ def test_tools_are_split_by_role_and_redundant_or_operator_only_tools_are_hidden
                    "list_skills", "skills_for", "notes_for", "DigitalTwin_State"):
         assert roles[hidden] is None, hidden
     assert role_of("Mapper_abort") == "operator"  # stopping stays possible
-    assert role_of("XRDTwin_acquire_diffractogram") == "operator"  # a YAML-defined instrument lands in a role too
+    assert role_of("XRDTwin_acquire_diffractogram") == "operator"  # a YAML instrument lands in a role too
     assert role_of("XRDTwin_set_start_deg") is None and role_of("DigitalTwin_set_image_shift") is None  # the STEM tool list is curated
     assert role_of("XRDTwin_set_start_deg", stem=False) == "operator"  # other instruments get every device command
     assert role_of("XRDTwin_State", stem=False) is None and role_of("XRDTwinJob_reserve", stem=False) is None
-    assert role_of("made_up_tool", stem=False) is None  # the endpoint does not offer it so no role gets it
+    assert role_of("made_up_tool", stem=False) is None  # not offered, so no role gets it
 
 
 def test_heuristic_plan_maps_then_analyses():
@@ -102,7 +102,7 @@ def make_team(model_replies, scripts, monkeypatch):
 
     monkeypatch.setattr(graph.config, "tools", tools)
 
-    async def info():  # a test must not depend on whatever stack is running
+    async def info():  # independent of any running stack
         return {"urls": {"analysis": "http://127.0.0.1:8003/mcp"}}
 
     monkeypatch.setattr(graph.config, "info", info)
@@ -151,7 +151,7 @@ def test_an_unusable_plan_falls_back_and_a_failed_step_is_retried_once(monkeypat
     state = asyncio.run(graph.build().ainvoke({"request": "acquire an image here"}))
     assert [b[0] for b in built] == ["operator", "operator"]
     assert "first try at this step failed" in attempts[1] and "Recursion limit" in attempts[1]
-    assert "Steps run" in state["answer"]  # an empty report from the model falls back to the notes
+    assert "Steps run" in state["answer"]  # an empty report falls back to the notes
 
 
 def test_a_specialist_gets_its_rules_the_notes_and_skills_found_for_each_call(monkeypatch, tmp_path):

@@ -26,7 +26,7 @@ class ImageServer(McpServer):
         return [SimpleNamespace(name="segment_sam", description="Segment an image.",
                                 inputSchema={"type": "object", "properties": {"dataset": {"type": "string"}}})]
 
-    def _client(self):  # McpServer.call itself runs; only the transport is replaced
+    def _client(self):  # only the transport is replaced
         class Client:
             async def __aenter__(self):
                 return self

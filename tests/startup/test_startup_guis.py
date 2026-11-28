@@ -12,11 +12,11 @@ import yaml
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from startup_guis.qt_compat import QApplication  # noqa: E402
-from startup_guis.script_gui import ScriptGui  # noqa: E402
-from startup_guis.shared import ManagedCommand  # noqa: E402
-from startup_scripts import run_pytemlib, run_llm, run_mcp, run_servers  # noqa: E402
-from startup_scripts.config_schema import DeviceTable, Setting, read_settings  # noqa: E402
+from startup_guis.qt_compat import QApplication
+from startup_guis.script_gui import ScriptGui
+from startup_guis.shared import ManagedCommand
+from startup_scripts import run_pytemlib, run_llm, run_mcp, run_servers
+from startup_scripts.config_schema import DeviceTable, Setting, read_settings
 
 CONFIGS = run_servers.PROJECT_DIR / "configs"
 SCRIPTS = (run_servers, run_mcp, run_llm, run_pytemlib)
@@ -54,7 +54,7 @@ def test_every_config_round_trips_unchanged(gui, script):
     names = [p for p in sorted(CONFIGS.glob("*.yaml")) if script.is_config(yaml.safe_load(p.read_text()))]
     assert names
     window = gui(script, names[0])
-    read = getattr(script, "read_config", lambda p: yaml.safe_load(p.read_text()))  # read_config merges in the extends chain of a server config.
+    read = getattr(script, "read_config", lambda p: yaml.safe_load(p.read_text()))  # read_config merges a server config's extends chain
     for path in names:
         window.load_config_from_path(path)
         assert window.current_config() == read(path), path.name
@@ -156,14 +156,14 @@ def test_mcp_gui_opens_on_the_digital_twin_host_and_says_so(gui, tmp_path):
     assert window.current_config()["tango"]["host"] == "localhost"
     raw = yaml.safe_load((CONFIGS / "mcp_dt.yaml").read_text())
     raw["tango"]["host"] = "10.0.0.5"
-    assert gui(run_mcp, write(tmp_path, raw)).current_config()["tango"]["host"] == "10.0.0.5"  # An explicit file is used as written.
+    assert gui(run_mcp, write(tmp_path, raw)).current_config()["tango"]["host"] == "10.0.0.5"  # an explicit file is used as written
 
 
 def test_pytemlib_gui_shows_every_option_and_starts_what_was_edited(gui):
     window = gui(run_pytemlib)
     assert window.loaded_path == run_pytemlib.DEFAULT_CONFIG_PATH and window.validity.text() == "Config is valid."
     assert set(window.fields) == {s.path for s in run_pytemlib.SETTINGS}
-    assert window.get_shown("pytemlib.port") == "8003" and window.get_shown("pytemlib.max_jobs") == ""  # unset means the server default
+    assert window.get_shown("pytemlib.port") == "8003" and window.get_shown("pytemlib.max_jobs") == ""  # unset: the server default
     window.set_shown("pytemlib.port", 8103)
     window.set_shown("pytemlib.local_roots", "outputs, data")
     window.set_shown("pytemlib.max_jobs", 3)

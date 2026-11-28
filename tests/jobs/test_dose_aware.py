@@ -97,7 +97,7 @@ def test_autoscript_reports_default_current_until_the_screen_measures_it(autoscr
 
 def test_fake_refuses_an_out_of_range_screen_current_root(autoscript):
     device, client = autoscript
-    with pytest.raises(ValueError, match="insert the screen"):  # a retracted screen measures nothing to fit
+    with pytest.raises(ValueError, match="insert the screen"):  # a retracted screen measures nothing
         EM.calibrate_screen_current(device)
     client.detectors.screen.insert()
     EM.calibrate_screen_current(device)
@@ -153,7 +153,7 @@ def test_budgeted_plan_with_an_assumed_current_is_refused_on_a_stack_that_is_not
     microscope = RecordingMicroscope({"defocus_m": 0.0})  # reports no current and does not say it is simulated
     with pytest.raises(ValueError, match="beam current is assumed"):
         resolve(microscope, {**PLAN, "dose_budget_e_per_a2": 1e3})
-    assert microscope.calls == ["get_parameters"]  # refused at reserve so nothing moved or unblanked
+    assert microscope.calls == ["get_parameters"]  # refused at reserve: nothing moved or unblanked
 
     plan = resolve(microscope, PLAN)  # without a budget the estimate says what it assumed
     assert plan["estimate"]["beam_current_source"] == "default" and plan["estimate"]["beam_current_reason"]

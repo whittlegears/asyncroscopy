@@ -117,7 +117,7 @@ def test_the_timeout_is_one_the_tiled_client_can_use():
     assert (timeout.connect, timeout.read) == (tiled_client.TIMEOUT_S["connect"], tiled_client.TIMEOUT_S["read"])
     with tiled_http().Client(timeout=timeout) as client:
         with pytest.raises(tiled_http().TransportError):
-            client.get("http://127.0.0.1:9")  # nothing listens on the discard port so this must be a transport error
+            client.get("http://127.0.0.1:9")  # nothing listens on the discard port: a transport error
 
 
 def test_connect_fails_at_once_when_nothing_listens_locally(monkeypatch):
@@ -205,7 +205,7 @@ def test_uri_from_a_busy_data_device_falls_back_to_the_cached_one(monkeypatch):
     monkeypatch.setattr("tango.DeviceProxy", Proxy)
     assert tiled_client.uri_from_data_device("asyncroscopy/data/default") == "http://127.0.0.1:9091"
     Proxy.busy = True
-    tiled_client._uris["asyncroscopy/data/default"] = ("http://127.0.0.1:9091", 0.0)  # expired, so it asks again
+    tiled_client._uris["asyncroscopy/data/default"] = ("http://127.0.0.1:9091", 0.0)  # expired: it asks again
     assert tiled_client.uri_from_data_device("asyncroscopy/data/default") == "http://127.0.0.1:9091"
 
 

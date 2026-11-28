@@ -347,7 +347,7 @@ def test_roles_follow_the_tool_descriptors():
     assert required_role(describe_native("view_data")) == "read"
     assert {required_role(describe_native(n)) for n in ("list_pending_approvals", "approve_call", "deny_call", "get_permissions",
                                                          "set_permission", "set_group_permission")} == {"approve"}
-    assert required_role(None) == "operate"  # a tool the endpoint does not know counts as high
+    assert required_role(None) == "operate"  # an unknown tool counts as high
 
 
 def test_auth_config_is_checked(keys, tmp_path):

@@ -82,7 +82,7 @@ def analysis(monkeypatch):
     servers = []
 
     def fake(self, tool, arguments):
-        if not servers:  # the analysis server may only read run files under its roots
+        if not servers:  # the analysis server reads run files only under its roots
             servers.append(InProcessAnalysis([Path(arguments["run"]).parent]))
         return servers[0](self, tool, arguments)
 
@@ -113,10 +113,10 @@ def test_an_afm_maps_stitches_and_revisits_with_the_tip_lifted_for_every_move(af
         assert h5["tiles"].attrs["pixel_size_m"] == pytest.approx(1e-6 / 128)
         commanded, reported = h5["commanded_xy_m"][()], h5["stage_reported_m"][()][:, :2]
         assert np.allclose(commanded, reported) and np.allclose(np.abs(commanded), 3e-7)
-        assert 1e-8 < float(np.max(h5["tiles"][()])) < 1e-7  # heights are in metres and the bumps are 20 nm
+        assert 1e-8 < float(np.max(h5["tiles"][()])) < 1e-7  # metres; bumps are 20 nm
     assert summary["regions"]["count"] == 1
     assert summary["revisits"]["imaged"] + summary["revisits"]["skipped"] == 1
-    assert afm_twin_proxy.scan_size_m == pytest.approx(1e-6)  # the revisit's smaller scan was put back
+    assert afm_twin_proxy.scan_size_m == pytest.approx(1e-6)  # the revisit's smaller scan was restored
 
 
 def test_an_afm_plan_over_its_time_or_tip_force_budget_is_refused_before_anything_moves(afm_mapper_proxy, afm_twin_proxy, afm_log):
@@ -127,7 +127,7 @@ def test_an_afm_plan_over_its_time_or_tip_force_budget_is_refused_before_anythin
     assert hard["error"]["code"] == "plan_rejected" and "up to 20 nN" in hard["error"]["message"] and "above the budget of 15 nN" in hard["error"]["message"]
     dose = call(afm_mapper_proxy, "reserve", {"plan": {**AFM_PLAN, "stitch": False, "dose_budget_e_per_a2": 10}})
     assert dose["error"]["code"] == "plan_rejected" and "'dose_budget_e_per_a2' not used" in dose["error"]["message"]
-    assert afm_log == []  # refused at reserve so nothing was set or run
+    assert afm_log == []  # refused at reserve: nothing set or run
     assert (afm_twin_proxy.stage_x_m, afm_twin_proxy.stage_y_m, afm_twin_proxy.tip_engaged) == before
 
 
@@ -191,7 +191,7 @@ def test_a_spectrometer_named_as_an_imaging_detector_is_refused_with_the_field_f
     assert "records spectra" in refused["error"]["message"] and '"per_tile": ["eds_point"]' in refused["error"]["message"]
     accepted = call(mapper_proxy, "reserve", {"plan": {**plan, "detectors": ["haadf"]}})
     assert "reservation_id" in accepted, accepted
-    call(mapper_proxy, "release", {"reservation_id": accepted["reservation_id"]})  # the Mapper is shared by later tests
+    call(mapper_proxy, "release", {"reservation_id": accepted["reservation_id"]})  # later tests share the Mapper
 
 def test_the_image_shift_a_map_may_use_is_the_instruments_own(sem_mapper_proxy, sem_twin_proxy):
     assert sem_twin_proxy.image_shift_limit_m == pytest.approx(1e-6)

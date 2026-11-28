@@ -182,7 +182,7 @@ def test_a_node_knows_its_name_from_the_graph_and_langgraph_knows_where_a_condit
     assert workflow.lint()["ok"], workflow.lint()["problems"]
     assert {"from": "first", "when": "first.result != 0", "to": "second", "otherwise": "END"} in workflow.blueprint()["edges"]
     drawn = workflow.compile(None).get_graph().draw_mermaid()
-    assert "first -.-> second" in drawn and "first -.-> __end__" in drawn  # the targets come from the router, not a list
+    assert "first -.-> second" in drawn and "first -.-> __end__" in drawn  # targets come from the router
 
     def two_conditions(use):
         graph = build(use)
@@ -275,7 +275,7 @@ def test_map_workflow_runs_tile_by_tile_and_stitches(tmp_path):
     assert fovs == [3e-7] * 4 + [5.8e-9] and state["fov"] == 5.8e-9
     assert "Twin_move_stage" not in instrument.names() and state["stage"][:2] == [1e-6, 2e-6] and state["shift"] == [0.0, 0.0]
     every = [args["shift"] for name, args in instrument.log if name == "Twin_set_image_shift"]
-    assert every[1:8:2] == [[0.0, 0.0]] * 4 and every[8] == [0.0, 0.0]  # the shift is reset after every tile
+    assert every[1:8:2] == [[0.0, 0.0]] * 4 and every[8] == [0.0, 0.0]  # shift reset after every tile
     shifts = every[0:8:2]
     assert shifts[0][0] < shifts[1][0] and shifts[2][0] > shifts[3][0]  # serpentine
     assert max(abs(v) for xy in shifts for v in xy) == pytest.approx(1.05e-7)
@@ -337,8 +337,8 @@ def test_a_failed_tile_blanks_the_beam_and_resumes_at_that_tile(tmp_path):
     before = len(instrument.log)
     record = run(resume_workflow(record["run_id"], instrument=instrument, analysis=analysis, state_dir=tmp_path))
     assert record["state"] == "done" and len(record["outputs"]["tile"]["keys"]) == 4
-    assert state["taken"] == 4  # the two finished tiles were not taken again
-    assert [a["fov"] for n, a in instrument.log[before:] if n == "Twin_set_fov"] == [3e-7, 3e-7, 5.8e-9]  # set again, then put back
+    assert state["taken"] == 4  # finished tiles not taken again
+    assert [a["fov"] for n, a in instrument.log[before:] if n == "Twin_set_fov"] == [3e-7, 3e-7, 5.8e-9]  # set again, then restored
     assert state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
     assert read_run(record["run_id"], tmp_path)["state"] == "done"
 
@@ -443,7 +443,7 @@ def test_a_restore_that_fails_is_named_in_the_record(tmp_path):
     instrument.tools["Twin_set_image_shift"] = lambda a: "Error: shift refused" if a["shift"] == [0.0, 0.0] else shift(a)
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
     assert record["unrestored"] and record["unrestored"][0]["tool"] == "*_set_image_shift" and "shift refused" in record["unrestored"][0]["error"]
-    assert record["state"] == "failed" and state["blanked"]  # The next shift back to the centre fails the run and the beam is still blanked.
+    assert record["state"] == "failed" and state["blanked"]  # the next shift back fails the run; the beam stays blanked
 
 
 def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
@@ -680,7 +680,7 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
 
     with pytest.raises(ValueError, match="names the person"):
         library.approve("tiles_only", "")
-    record = library.approve("tiles_only", "sam")  # only a person approves and no tool can
+    record = library.approve("tiles_only", "sam")  # only a person approves
     assert record["by"] == "sam" and record["hash"] == library.workflow("tiles_only").hash() and library.find("tiles_only")[1] == "approved"
     assert record["rehearsed"] is None and record["instrument"] == "any" and record["expires"] is None
     assert record["request"] == ASKED
@@ -851,7 +851,7 @@ def test_the_command_line_shows_a_person_what_they_approve(tmp_path, capsys):
     source.write_text(TEMPLATE, encoding="utf-8")
     library = ["--library", str(tmp_path / "library")]
     assert main(["propose", str(source), "--request", ASKED, *library]) == 0
-    assert main(["approve", "tiles_only", *library]) == 1  # without a terminal or --yes nothing is approved
+    assert main(["approve", "tiles_only", *library]) == 1  # no terminal or --yes: nothing approved
     out = capsys.readouterr()
     assert "graph = StateGraph(WorkflowState)" in out.out and '"hash"' in out.out and ASKED in out.out
     assert "never run to the end on a digital twin" in out.out and "instrument any, until revoked" in out.out and "not approved" in out.err
@@ -904,7 +904,7 @@ def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_perso
     from asyncroscopy.workflows.runner import check_answers
 
     assert check_source(TEMPLATE_PARALLEL) == []
-    workflow = load_source(TEMPLATE_PARALLEL)  # the second example shown to models must also pass
+    workflow = load_source(TEMPLATE_PARALLEL)  # the second example must also pass
     blueprint, checked = workflow.blueprint(), workflow.lint()
     assert checked["ok"], checked["problems"]
     assert {"*_acquire_scanned_image", "*_set_fov", "*_acquire_spectrum", "*_acquire_eels_spectrum"} == set(checked["tools"])
@@ -1063,13 +1063,13 @@ def test_a_running_map_reports_its_step_its_tiles_done_of_total_and_its_newest_i
     seen = []
 
     def watch(n):
-        seen.append(runner.progress("watched"))  # before acquisition n (0-based) is taken
+        seen.append(runner.progress("watched"))  # before acquisition n (0-based)
 
     instrument, analysis, _ = twin(on_acquire=watch)
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, run_id="watched", state_dir=tmp_path))
     assert record["state"] == "done"
     assert seen[0]["step"] == "tile" and "loop" not in seen[0] and "latest_image" not in seen[0]
-    assert seen[2]["loop"] == {"node": "tile", "done": 2, "total": 4}  # two tiles taken, the third under way
+    assert seen[2]["loop"] == {"node": "tile", "done": 2, "total": 4}  # two taken, the third under way
     assert seen[2]["latest_image"] == "stem_image_HAADF_0002.h5"
     assert runner.progress("watched") is None  # a finished run is no longer live
 
@@ -1241,7 +1241,7 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
 
     assert run(as_the_agent("propose_workflow", user_request=ASKED, source=TEMPLATE))["ok"]
     review = run(as_the_person("review_workflow", name="tiles_only"))
-    asked = review["request_as_reported_by_agent"]  # the proposing agent's words, not a record the person made
+    asked = review["request_as_reported_by_agent"]  # the agent's words, not the person's record
     assert review["ok"] and review["status"] == "draft" and review["source"] == TEMPLATE and asked["text"] == ASKED and "request" not in review
     assert asked["at"] > 0 and asked["this_code"] and set(review["graph"]) == {"nodes", "edges"}
     assert review["rehearsals"] == [] and not review["rehearsed"] and not review["can_approve"] and "never run to the end" in review["why_not"]

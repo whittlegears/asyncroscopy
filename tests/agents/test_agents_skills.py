@@ -33,7 +33,7 @@ def test_selection_respects_the_agents_tools_and_the_endpoint():
     indenter = {"IndentGrid_reserve", "run_job", "view_data", "list_data"}
     assert "mapping" not in [s.name for s in select_skills("map the sample", indenter)]
     analyst = {"view_data", "list_data", "score_map", "map_info", "get_region", "list_pois", "add_poi"}
-    assert select_skills("find interesting regions", analyst) == []  # explore_regions needs a Mapper on the endpoint
+    assert select_skills("find interesting regions", analyst) == []  # explore_regions needs a Mapper
     assert [s.name for s in select_skills("find interesting regions", analyst, endpoint_tools=STEM)][:1] == ["explore_regions"]
     assert select_skills("hello there", STEM) == []
 
@@ -81,7 +81,7 @@ def test_the_number_and_size_of_skills_are_capped():
     skills = skills_for(messages, STEM, STEM)
     assert len(skills) == MAX_APPLIED
     text, cut = skills_text([s["skill"] for s in skills], STEM)
-    assert len(text) <= PROMPT_BUDGET_CHARS + 2000  # skill bodies fit the budget and the rest are listed by description
+    assert len(text) <= PROMPT_BUDGET_CHARS + 2000  # bodies fit the budget; the rest are listed by description
     assert all(f"=== skill: {name} (call load_skill" in text for name in cut)
 
 
@@ -106,10 +106,10 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
     prompt = out.system_message.content
     assert prompt.startswith("BASE") and "=== instructions (not a tool) ===\n# Mapping" in prompt and "INSTRUMENT: twin" in prompt
     assert "How to do this on this instrument:" in prompt and "Skills for this task" not in prompt  # background, not "skills"
-    assert [t.name for t in out.tools] == ["run_job"]  # every chosen skill fitted, so there is nothing to load
+    assert [t.name for t in out.tools] == ["run_job"]  # every chosen skill fitted: nothing to load
     reading = [HumanMessage("Show me the latest spectrum")]
     out = middleware._prompted(FakeRequest(reading, tools, middleware.before_model({"messages": reading}, None)["skills_applied"]))
-    assert [t.name for t in out.tools] == ["run_job"]  # a read only request with every skill fitted needs no load_skill
+    assert [t.name for t in out.tools] == ["run_job"]  # read-only with every skill fitted: no load_skill
 
 
 def test_tools_that_write_notes_are_offered_only_when_the_request_asks_to_write_one():
@@ -201,7 +201,7 @@ ACTING_PHRASINGS = [
     "Can you check whether there is copper by taking a spectrum?",
     "Tell me what is at x=1um by imaging it",
     "Is the beam blanked? If not, blank it.",
-    "What does the sample look like?",  # it names no stored data so it may need a new image
+    "What does the sample look like?",  # names no stored data, so may need a new image
 ]
 
 

@@ -26,7 +26,7 @@ def test_a_declaration_beats_the_name_rules_and_an_override_beats_both():
     park = described(stage, "park")
     assert park.risk == "low" and park.risk_source == "declared" and park.stop and park.action_role == "safe_stop"
     assert described(stage, "get_tip").risk == "high"  # a get command that acts is declared high
-    assert described(stage, "move").risk_source == "rule" and described(stage, "move").risk == "high"  # an undeclared command counts as high
+    assert described(stage, "move").risk_source == "rule" and described(stage, "move").risk == "high"  # undeclared counts as high
     held = described(stage, "park", overrides={"Stage.park": "high"})
     assert held.risk == "high" and held.risk_source == "override"
 
@@ -36,7 +36,7 @@ def test_declared_operator_only_and_routine():
     assert described(robot, "calibrate").operator_only
     pick = described(robot, "pick")
     assert pick.routine and pick.risk == "high"
-    assert not described(robot, "pick", overrides={"Robot.pick": "high"}).routine  # a deployment that marks it high holds it
+    assert not described(robot, "pick", overrides={"Robot.pick": "high"}).routine  # a deployment marking it high holds it
 
 
 def test_a_bad_declared_risk_falls_back_to_the_rules_with_a_warning():

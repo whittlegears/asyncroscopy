@@ -117,7 +117,7 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
     }}
     sources = [job_dir / "trace", mcp_trace]
 
-    sub = Subscriber(sources, run=run)  # attached before the map starts so it follows from the first line
+    sub = Subscriber(sources, run=run)  # attached before the map starts, so it follows from the first line
     try:
         reply = server.jobs.run_job("Mapper", MAP_PLAN, wait=False)
         assert reply.get("estimate", {}).get("tiles") == 4, reply
@@ -168,9 +168,9 @@ def test_processes_appending_one_file_get_one_rising_seq(tmp_path):
     for proc in procs:
         assert proc.wait(timeout=120) == 0
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    assert [e["seq"] for e in lines] == list(range(1, 181))  # file order is seq order, no gaps, no repeats
+    assert [e["seq"] for e in lines] == list(range(1, 181))  # file order is seq order, no gaps or repeats
     assert all(b["written"] >= a["written"] for a, b in zip(lines, lines[1:]))
-    for writer in ("w0", "w1", "w2"):  # each writer's own events stay in its order
+    for writer in ("w0", "w1", "w2"):  # each writer's events stay in order
         assert [e["step"] for e in lines if e["writer"] == writer] == list(range(60))
     assert len(read_trace(path, run="multi")) == 180
 
@@ -198,7 +198,7 @@ def test_growth_and_a_line_cut_short_are_read_once(tmp_path):
     writer.record("a", True, time.time())
     assert [e["action"] for e in stream.poll()] == ["a"]
     line = json.dumps({"ts": time.time(), "source": "script", "action": "b", "ok": True})
-    with path.open("a", encoding="utf-8") as handle:  # half a line from a writer caught in the middle of an append
+    with path.open("a", encoding="utf-8") as handle:  # half a line from a writer mid-append
         handle.write(line[:10])
     assert stream.poll() == []
     with path.open("a", encoding="utf-8") as handle:
@@ -223,7 +223,7 @@ def test_rotation_while_following_loses_and_repeats_nothing(tmp_path):
 
     burst(5, "first")
     wait_until(lambda: len(sub.events) >= 4, 5, "the first events")
-    burst(3, "unread")  # written, then the file is rotated before the follower reads them
+    burst(3, "unread")  # written, then rotated before the follower reads them
     rotate(jobs, tmp_path / "jobs.jsonl.1")
     burst(4, "second")
     rotate(tmp_path / "jobs.jsonl.1", tmp_path / "jobs.jsonl.2")  # rotated a second time
@@ -257,7 +257,7 @@ def test_cursor_carries_on_across_rotation_with_none_twice(tmp_path):
 def test_follow_trace_filters_by_caller_device_and_since(tmp_path):
     writer = TraceWriter(tmp_path / "jobs.jsonl", "job", writer="asyncroscopy/mapper/default")
     writer.record("Mapper.step", True, time.time() - 100, caller="alice")
-    time.sleep(0.05)  # Windows' clock ticks in about 15 ms steps, so wait to keep alice's write before the cut
+    time.sleep(0.05)  # Windows' clock ticks in ~15 ms steps: keep alice's write before the cut
     cut = time.time()
     time.sleep(0.05)
     writer.record("Mapper.step", True, time.time(), caller="bob")
@@ -405,7 +405,7 @@ def test_a_cursor_keeps_its_place_across_rotations(tmp_path):
     got, cursor = [e["i"] for e in first["events"]], first["cursor"]
     for i in range(1, 30):
         out.append({"i": i, "pad": "x" * 40})
-        if i % 11 == 0:  # a client that keeps only the cursor, as after a server restart
+        if i % 11 == 0:  # keeps only the cursor, as after a server restart
             module._streams.clear()
             reply = trace_since(tmp_path, cursor=cursor, grace_s=0.0)
             got += [e["i"] for e in reply["events"]]
@@ -453,4 +453,4 @@ def test_trace_since_uses_one_stream_per_cursor_and_does_not_glob_each_poll(tmp_
         out.append({"i": i})
         reply = trace_since(tmp_path, cursor=reply["cursor"], grace_s=0.0)
         assert [e["i"] for e in reply["events"]] == [i]
-    assert len(built) == 1 and len(expanded) == globs  # within RESCAN_S no new glob, and one stream
+    assert len(built) == 1 and len(expanded) == globs  # within RESCAN_S no new glob, one stream

@@ -95,7 +95,7 @@ def test_set_screen_current_clears_the_measurement(autoscript):
     EM.get_screen_current(device)
     assert json.loads(EM.get_parameters(device))["beam_current_source"] == "measured"
     with pytest.raises(ValueError):
-        EM.set_screen_current(device, 1e6)  # refused, but the old reading is dropped all the same
+        EM.set_screen_current(device, 1e6)  # refused, but the old reading is dropped
     assert json.loads(EM.get_parameters(device))["beam_current_source"] == "default"
 
 
@@ -183,7 +183,7 @@ class FakeCorrector:
 def tuner_stub(microscope, simulated=True, corrector=None, **extra):
     """Tuner's own methods on a plain object (a Tango device cannot be built without a server)."""
     methods = {name: value for name, value in vars(Tuner).items() if callable(value) or isinstance(value, staticmethod)}
-    methods["_stack_simulated"] = JobDevice._stack_simulated  # the stack's simulated flag, read as every job device reads it
+    methods["_stack_simulated"] = JobDevice._stack_simulated  # read as every job device reads it
     cls = type("TunerStub", (), methods)
     stub = cls()
     scan = SimpleNamespace(imsize=64, dwell_time=1e-6, scan_region=[0.0, 0.0, 1.0, 1.0])
@@ -262,7 +262,7 @@ def test_a_resume_is_refused_when_the_outstanding_offsets_cannot_be_undone():
     job = earlier_attempt(tuner, {"C1": [5e-8]})
     with pytest.raises(TuneFailed, match="resume_refused"):
         Tuner.on_start(tuner, job)
-    assert ("set_fov", 1e-7) not in microscope.calls  # no new snapshot is taken and only the old fov is put back
+    assert ("set_fov", 1e-7) not in microscope.calls  # no new snapshot; only the old fov is restored
     assert job["tune"]["corrector_sent"] == {"C1": [5e-8]}  # still known, for the operator and the next try
 
 
@@ -271,7 +271,7 @@ def test_a_restart_mid_tune_is_restored_on_resume():
     tuner = tuner_stub(microscope)
     job = {"resolved_plan": Tuner.resolve_plan(tuner, {"strategy": "image_metric", "dose_budget_e_per_a2": 1e4})}
     Tuner.on_start(tuner, job)
-    assert tuner.saved and tuner.saved[-1]["outcome"] == "running"  # the snapshot is on disk before the first change
+    assert tuner.saved and tuner.saved[-1]["outcome"] == "running"  # on disk before the first change
     microscope.defocus = 2.5e-7  # the device died mid-search
     Tuner.on_start(tuner, job)
     assert job["tune"]["snapshot"]["defocus_m"] == 0.0

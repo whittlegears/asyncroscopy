@@ -19,7 +19,7 @@ def setup_llm_stubs():
     import importlib.util
 
     if all(importlib.util.find_spec(name) for name in ("langchain", "langchain_core", "langgraph", "langchain_ollama")):
-        return  # The real agent stack is installed and the graph tests need it without stubs.
+        return  # the real agent stack is installed; graph tests need it unstubbed
 
     base_msg_cls = type("BaseMessage", (), {})
     human_msg_cls = type("HumanMessage", (base_msg_cls,), {
@@ -546,7 +546,7 @@ class TestAgentMCPServerTools:
         graphs.assert_awaited_once_with("general", "map it", model="gemma4:31b")
         assert server.swarm.model == "gemma4:31b" and server.swarm.ready and server.swarm.startup_error is None
         assert asyncio.run(server.query_agent("hello", model="gemma4:31b")) == "swarm"
-        assert made == ["gemma4:31b"]  # made once, kept while the client names the same model
+        assert made == ["gemma4:31b"]  # made once, kept while the model name is the same
 
     def test_query_agent_without_a_model_keeps_the_servers(self) -> None:
         server = self._server()

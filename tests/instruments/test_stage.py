@@ -111,6 +111,6 @@ def test_autoscript_stage_reads_its_axis_limits_and_they_narrow_the_configured_t
     assert apart and apart[0].startswith("x")
 
     object.__setattr__(client.specimen.stage, "holder_type", "SingleTilt")
-    assert "beta" not in device._read_hardware_limits()  # a single-tilt holder has no beta to ask about
+    assert "beta" not in device._read_hardware_limits()  # a single-tilt holder has no beta
     device._microscope = None
-    assert device._read_hardware_limits() == {}  # not connected: the configured limits apply
+    assert device._read_hardware_limits() == {}  # not connected: configured limits apply

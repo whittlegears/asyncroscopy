@@ -86,7 +86,7 @@ def test_a_new_device_in_yaml_starts_without_code_changes(tmp_path, robot_module
         "robot": {"module_name": robot_module, "properties": {"speed": 3, "tips": ["a", "b"]}},
     }))
     robot = next(device for device in config.support_devices if device.key == "robot")
-    assert robot.class_name == "PipettingRobot"  # the class passed to run_server and not the first class
+    assert robot.class_name == "PipettingRobot"  # the class passed to run_server, not the first class
     assert robot.properties == {"speed": ["3"], "tips": ["a", "b"], "simulated": ["true"]}  # the stack flag reaches every device
     assert robot.command[-2:] == [robot_module, "robot_instance"]
     assert run_servers.instrument_properties(config)["robot_device_address"] == ["asyncroscopy/robot/default"]

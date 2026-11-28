@@ -92,9 +92,9 @@ def test_a_map_has_no_acting_block_left_once_it_is_back_home():
     grid = get_workflow("map_grid").blueprint()  # plan -> tile (loop) -> home -> run -> stitch
     assert acting_ahead(grid, blocks, None) and acting_ahead(grid, blocks, "tile") and acting_ahead(grid, blocks, "home")
     assert not acting_ahead(grid, blocks, "run") and not acting_ahead(grid, blocks, "stitch")
-    small = get_workflow("map_4x4").blueprint()  # ... -> stitch -> home: it goes home after the stitch
+    small = get_workflow("map_4x4").blueprint()  # ... -> stitch -> home
     assert acting_ahead(small, blocks, "stitch")
-    sample = get_workflow("map_sample").blueprint()  # its stitch is inside the loop that takes more tiles
+    sample = get_workflow("map_sample").blueprint()  # its stitch is inside the tile loop
     assert acting_ahead(sample, blocks, "stitch")
     assert acting_ahead({"nodes": {"x": {"block": "no_such_block"}}, "edges": []}, blocks, "x")  # unknown: taken to act
 
@@ -131,7 +131,7 @@ class Endpoint:
         return [SimpleNamespace(name=name) for name in self.tools]
 
     async def call(self, name, arguments=None):
-        await asyncio.sleep(self.delay_s)  # every call lets the other run in, as a real endpoint does
+        await asyncio.sleep(self.delay_s)  # lets the other run in, as a real endpoint does
         reply = self.tools[name](dict(arguments or {}))
         self.shared["log"].append((self.run, name))
         text = reply if isinstance(reply, str) else json.dumps({k: v for k, v in reply.items() if k != "new"})
@@ -183,7 +183,7 @@ def test_two_maps_started_together_take_the_instrument_one_after_the_other(tmp_p
     shared = instrument_state()
 
     async def both():
-        slow = Endpoint(shared, "a", delay_s=0.02)  # its tiles take about a second
+        slow = Endpoint(shared, "a", delay_s=0.02)  # tiles take about a second
         first = asyncio.create_task(run_workflow("map_grid", INPUTS, instrument=slow, analysis=Analysis(shared, "a"), state_dir=tmp_path, run_id="a"))
         while ("a", "Twin_acquire_scanned_image") not in shared["log"]:
             await asyncio.sleep(0.01)
@@ -197,7 +197,7 @@ def test_two_maps_started_together_take_the_instrument_one_after_the_other(tmp_p
     assert waiting["state"] == "queued" and waiting["queue"]["position"] == 1 and waiting["queue"]["ahead"][0]["run"] == "a"
     assert "map_grid" in waiting["queue"]["ahead"][0]["what"]
     assert first["state"] == "done" and second["state"] == "done" and second.get("queue") is None
-    assert acting(shared) == ["a", "b"]  # never interleaved: without the turn each would blank the other's beam
+    assert acting(shared) == ["a", "b"]  # without the turn each would blank the other's beam
     assert shared["taken"] == 8 and shared["queue"].status() == {"holder": None, "queue": []}
 
 
@@ -215,7 +215,7 @@ def test_a_map_gives_the_instrument_back_before_its_stitch_so_the_next_map_start
 
     first, second, first_done_when_second_ended = asyncio.run(both())
     assert first["state"] == "done" and second["state"] == "done"
-    assert not first_done_when_second_ended  # the second map was taken and stitched while the first was still stitching
+    assert not first_done_when_second_ended  # the second map finished while the first was still stitching
     assert acting(shared) == ["a", "b"]
     log = shared["log"]
     gave = log.index(("a", "give_turn"))
@@ -268,7 +268,7 @@ def test_the_holder_renews_its_turn_and_notes_when_it_was_lost():
             await asyncio.sleep(0.02)
             renewals = sum(1 for entry in shared["log"] if entry == ("a", "take_turn"))
         shared["queue"].give("a")
-        shared["queue"].take("thief")  # as if the lease had run out and another run had taken the turn
+        shared["queue"].take("thief")  # as if another run took the turn after the lease ran out
         deadline = asyncio.get_running_loop().time() + 5.0
         while "lost" not in (turn.lost or "") and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.02)

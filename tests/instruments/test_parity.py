@@ -305,7 +305,7 @@ def test_auto_focus_runs_the_vendor_routine_or_its_stand_in(backend):
     backend.call("auto_focus")
     if backend.client is not None:
         assert [c["path"] for c in backend.client.writes("auto_functions")] == ["auto_functions.run_opti_stem"]
-    else:  # the twin's OptiSTEM stand-in sets C1 near its hidden truth, which is zero here
+    else:  # the twin's OptiSTEM stand-in sets C1 near its hidden truth, zero here
         assert abs(float(backend.call("get_defocus"))) < 1e-8
 
 
@@ -465,7 +465,7 @@ def test_the_twin_lists_the_detectors_it_renders(twin):
     detectors = json.loads(twin.call("get_detectors"))
     parameters = json.loads(twin.call("get_parameters"))
     assert detectors["scanning"] == parameters["scan_detectors"] and detectors["camera"] == parameters["camera_detectors"]
-    assert "BM-Ceta" in detectors["camera"]  # the CAMERA device's names, which all give the twin's one bright-field camera
+    assert "BM-Ceta" in detectors["camera"]  # CAMERA names that all give the twin's one bright-field camera
 
 
 NEW_OPERATOR_ONLY = ("run_stem_auto_focus", "run_beam_tilt_auto_focus", "acquire_camera_series", "acquire_eels_spectra",

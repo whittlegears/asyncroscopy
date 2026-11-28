@@ -43,7 +43,7 @@ def test_a_pipeline_runs_on_a_registered_backend_with_no_mcp():
         saved = []
         pipeline = Pipeline("nowhere", 0.0, lambda job: False, __import__("threading").RLock(), saved.append, print, backend="test_in_memory")
         job = {"resolved_plan": {"revisit": {"map": "m", "fov_m": 1e-7, "top_k": 3}}}
-        assert pipeline.select(job) == {"phase": "select", "regions": 1}  # the two are closer than half a field so they share one image
+        assert pipeline.select(job) == {"phase": "select", "regions": 1}  # closer than half a field: they share one image
         service = pipeline.service()
         assert service.url == "nowhere" and saved
         pipeline.close()

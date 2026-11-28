@@ -93,7 +93,7 @@ def test_a_relative_move_goes_to_the_checked_target_as_an_absolute_move():
     client = FakeAutoScriptClient()
     device = _autoscript_stage(client)
     STAGE.move_relative(device, [2e-6, 0.0, 0.0, 5.0, 0.0])
-    (call,) = client.writes("specimen.stage.absolute_move_safe")  # the tilt changes, so the safe absolute move
+    (call,) = client.writes("specimen.stage.absolute_move_safe")  # the tilt changes: the safe absolute move
     assert call["value"][:3] == pytest.approx([2e-6, 0.0, 0.0]) and call["value"][3] == pytest.approx(math.radians(5.0))
     STAGE.move_relative(device, [1e-6, 0.0, 0.0, 0.0, 0.0])
     safe, plain = client.writes("specimen.stage.absolute_move")

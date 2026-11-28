@@ -24,14 +24,14 @@ def test_a_running_map_keeps_its_progress_in_a_file_and_removes_it_when_done(tmp
     seen = []
 
     def at_tile(n):
-        if n == 2:  # two tiles taken: the file, as another process would read it now (this one reads its memory)
+        if n == 2:  # two tiles taken: the file as another process reads it
             seen.append(json.loads(path.read_text(encoding="utf-8")))
         return None
 
     instrument, analysis, _ = twin(on_acquire=at_tile)
     plain_call = instrument.call
 
-    async def slow_call(name, arguments=None):  # a real endpoint takes time, so the progress task gets its turns
+    async def slow_call(name, arguments=None):  # a real endpoint takes time, so the progress task gets turns
         await asyncio.sleep(0.02)
         return await plain_call(name, arguments)
 
@@ -83,4 +83,4 @@ def test_a_run_another_process_drives_is_still_going_with_its_progress(tmp_path)
     finally:
         holder.communicate("\n", timeout=30)
     reply = asyncio.run(WorkflowServer(state_dir=tmp_path)._wait("r2", 0))
-    assert reply["state"] == "stopped"  # nobody drives it now: it was cut off
+    assert reply["state"] == "stopped"  # nobody drives it now: cut off

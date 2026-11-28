@@ -18,9 +18,9 @@ import tango
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from asyncroscopy.instruments.yaml_sim.device import device_class  # noqa: E402
-from asyncroscopy.instruments.yaml_sim.job import job_class  # noqa: E402
-from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path  # noqa: E402
+from asyncroscopy.instruments.yaml_sim.device import device_class
+from asyncroscopy.instruments.yaml_sim.job import job_class
+from asyncroscopy.testing import instrument_context, mcp_server_for, prop_path
 
 work = Path(tempfile.mkdtemp(dir=sys.argv[1]))
 example = Path(__file__).resolve().parents[1] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples" / "afm.yaml"

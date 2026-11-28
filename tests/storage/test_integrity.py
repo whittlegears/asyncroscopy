@@ -128,7 +128,7 @@ def test_the_key_file_is_made_once(tmp_path, monkeypatch):
 def test_a_sealed_file_is_not_sealed_again_as_something_else(tmp_path, manifest):
     path = _data(tmp_path, "a.h5", b"first")
     first = integrity.seal(path, key="a")
-    assert integrity.seal(path, key="a") == first  # an unchanged file gives the same entry and appends nothing
+    assert integrity.seal(path, key="a") == first  # unchanged: same entry, nothing appended
     path.write_bytes(b"second")
     with pytest.raises(integrity.IntegrityError, match="not sealed again"):
         integrity.seal(path, key="a")
@@ -219,7 +219,7 @@ def test_stripping_every_seal_or_editing_a_legacy_line_shows(tmp_path, manifest,
     ledger = tmp_path / "ledger.jsonl"
     monkeypatch.setenv(dose_ledger.LEDGER_ENV, str(ledger))
     old = {"at": 1.0, "sample_load_id": "L", "instrument_id": "i", "key": "old", "box_m": [-1e-6, 1e-6, -1e-6, 1e-6], "dose_e_per_a2": 5.0, "kind": "frame"}
-    ledger.write_text(json.dumps(old) + "\n" + '{"cut', encoding="utf-8")  # a legacy line then one cut short by a crash
+    ledger.write_text(json.dumps(old) + "\n" + '{"cut', encoding="utf-8")  # a legacy line, then one cut short by a crash
     for index in range(2):
         dose_ledger.record_frame(_ledger_frame(index * 1e-5), "L", f"k{index}", "i")
     report = integrity.verify(logs=(ledger,))
@@ -235,7 +235,7 @@ def test_stripping_every_seal_or_editing_a_legacy_line_shows(tmp_path, manifest,
     stripped = [json.dumps({k: v for k, v in json.loads(line).items() if k not in ("mac", "seq", "prev", "legacy_lines", "legacy_sha256")}) if index >= 2 else line for index, line in enumerate(lines)]
     _write(ledger, stripped)
     report = integrity.verify(logs=(ledger,))
-    assert report["log_heads"][str(ledger)] == ""  # with every seal gone the head no longer matches a copy kept elsewhere
+    assert report["log_heads"][str(ledger)] == ""  # no seals: the head no longer matches a copy kept elsewhere
 
 
 def test_an_unreadable_key_keeps_the_dose_unsealed_and_verify_says_so(tmp_path, manifest, monkeypatch):
@@ -320,7 +320,7 @@ def test_the_index_reads_only_what_was_appended(tmp_path, manifest, monkeypatch)
         path.write_bytes(bytes([i]))
         integrity.seal(path)
         assert integrity.check_file(path) is not None
-    assert len(calls) == 1  # The first look read the whole manifest. Each later seal only added its own line.
+    assert len(calls) == 1  # the first look read the whole manifest; later seals added one line each
     log = integrity.manifest_path()
     lines = log.read_text(encoding="utf-8").splitlines()
     log.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")  # a shortened manifest is read again

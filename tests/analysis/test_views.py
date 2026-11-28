@@ -128,7 +128,7 @@ def test_a_spectrum_preview_is_unlabelled_until_peaks_are_asked_for():
     plain_summary, plain = views.view(node, "eds.h5", "png")
     _summary, marked = views.view(node, "eds.h5", "png", opts=ViewOptions(mark_peaks=True))
 
-    assert "Cu" in plain_summary["text"]  # the identification is in the description either way
+    assert "Cu" in plain_summary["text"]  # the identification is in the text either way
     assert plain[:8] == PNG_MAGIC and marked[:8] == PNG_MAGIC and plain != marked
 
 
@@ -306,7 +306,7 @@ def test_a_weak_peak_is_found_from_its_summed_counts():
     width = eds.eds_fwhm_ev(energy) / 10.0
     sigma_ch = float(eds.eds_fwhm_ev(8040.0)) / 2.355 / 10.0
     line = np.exp(-0.5 * ((np.arange(2048) - 804) / sigma_ch) ** 2) / (sigma_ch * np.sqrt(2 * np.pi))
-    for net_counts, needed in ((80.0, 20), (60.0, 14)):  # on 2 counts per channel no single channel stands 5 sigma out
+    for net_counts, needed in ((80.0, 20), (60.0, 14)):  # at 2 counts per channel no single channel stands 5 sigma out
         found = 0
         for seed in range(20):
             counts = np.random.default_rng(seed).poisson(2.0 + net_counts * line).astype(np.float64)

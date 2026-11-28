@@ -33,7 +33,7 @@ os.environ.update({
     "ASYNCROSCOPY_F200_HOST": "192.0.2.13",
     "ASYNCROSCOPY_SEGMENTATION_HOST": "192.0.2.14",
 })
-os.environ["ASYNCROSCOPY_SKILLS"] = "1"  # skills are off by default but the tests still cover them
+os.environ["ASYNCROSCOPY_SKILLS"] = "1"  # off by default, but the tests cover them
 os.environ["ASYNCROSCOPY_LAB_SKILLS"] = tempfile.mkdtemp(prefix="asyncroscopy-lab-skills-")
 os.environ["ASYNCROSCOPY_DOSE_LEDGER"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-dose-"), "ledger.jsonl")
 os.environ["ASYNCROSCOPY_PERMISSIONS_FILE"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-permissions-"), "permissions.json")
@@ -126,8 +126,8 @@ DRIFT_TWIN_PROPERTIES = {
     "stage_reported_noise_std": 2e-10,
     "stage_backlash_x": 0.0,
     "stage_backlash_y": 0.0,
-    "stage_move_overhead": 2.0,  # Long moves and short frames leave little drift within a frame.
-    "drift_rate_per_min": 6e-8,  # 1 nm/s and steady, with no random walk and no settling
+    "stage_move_overhead": 2.0,  # long moves and short frames: little drift within a frame
+    "drift_rate_per_min": 6e-8,  # 1 nm/s, steady, no random walk or settling
     "scan_line_jitter_px": 0.0,
     "scan_shear": 0.0,
     "dose_tracking": False,
@@ -171,7 +171,7 @@ SPECIMEN_GOLDEN_PROPERTIES = {
     "sample_cluster_fraction": 0.5,
     "height_gradient_x": 0.01,
     "height_gradient_y": -0.005,
-    "damage_critical_dose": 0.5,  # In e/A^2. The second survey frame below passes it.
+    "damage_critical_dose": 0.5,  # e/A^2; the second survey frame below passes it
 }
 
 

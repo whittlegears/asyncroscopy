@@ -50,7 +50,7 @@ def endpoint(monkeypatch):
         server = MCPServer("t", "localhost", 1, blocked_classes=[], needs_approval={}, data_device_address="d",
                            verbose=False, urls={"analysis": analysis_url})
         server.tools = {prefix: dict.fromkeys(commands) for prefix, commands in devices.items()}
-        for prefix, commands in devices.items():  # this mirrors what discovery finds for each device
+        for prefix, commands in devices.items():  # mirrors what discovery finds
             server.add_device(prefix, None, prefix, stem=is_stem_device(commands), probe=is_probe_device(commands), envelope=is_envelope_device(commands))
             for command in commands:
                 server._describe(prefix, prefix, command, None)
@@ -124,7 +124,7 @@ def test_the_stem_twins_curated_set_is_unchanged(endpoint):
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
     assert devices_of_kind(server.discovery.endpoint_info(), "stem") == ["DigitalTwin"]
-    tools = load_profile("small").tools  # the curated lists are the default agent profile's data
+    tools = load_profile("small").tools  # the curated lists are the default profile's data
     assert server.discovery.endpoint_info()["agent_tools"] == [*tools.stem, *tools.generic, "load_skill"]
     assert "*_move_stage" in tools.stem and "run_job" in tools.generic
 

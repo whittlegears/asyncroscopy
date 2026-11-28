@@ -139,7 +139,7 @@ def test_two_overlapping_images_match_where_they_are_and_not_where_they_are_not(
     store = SimpleNamespace(client={key: SimpleNamespace(structure_family="array", read=lambda value=value: value) for key, value in images.items()})
     tools = SimpleNamespace(store=store)
     pixel = 1.0e-9
-    found = MapTools.match_tiles(tools, "b", "a", [118 * pixel, 3 * pixel], 256 * pixel)  # the guess is two pixels off on each axis
+    found = MapTools.match_tiles(tools, "b", "a", [118 * pixel, 3 * pixel], 256 * pixel)  # two pixels off on each axis
     assert found["matched"] and found["score"] > 0.9
     assert found["offset_xy_m"] == pytest.approx([120 * pixel, 5 * pixel], abs=0.3 * pixel)
     assert not MapTools.match_tiles(tools, "far", "a", [118 * pixel, 3 * pixel], 256 * pixel)["matched"]

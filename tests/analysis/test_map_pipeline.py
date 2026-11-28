@@ -112,7 +112,7 @@ def test_a_map_job_stitches_scores_and_revisits_with_every_spectrum_on_the_map(m
     servers = []
 
     def server(mapper, tool, arguments):
-        if not servers:  # the analysis server may only read run files under its roots
+        if not servers:  # the analysis server reads run files only under its roots
             servers.append(InProcessAnalysis([Path(arguments["run"]).parent]))
         return servers[0](mapper, tool, arguments)
 
@@ -138,7 +138,7 @@ def test_a_map_job_stitches_scores_and_revisits_with_every_spectrum_on_the_map(m
         high_mag = [p for p in store.list_pois(map_key, kind="high_mag") if visit["image"] in p["links"]]
         assert len(high_mag) == 1 and f"poi:{visit['region']}" in high_mag[0]["links"]
     box, half = PLAN["box_m"], 1.5e-8
-    margin = half * (1 - REVISIT_EDGE_SHIFT)  # a region this close to the edge is imaged off centre to keep the image in the box
+    margin = half * (1 - REVISIT_EDGE_SHIFT)  # this close to the edge, imaged off centre to stay in the box
     for visit in summary["revisits"]["first"]:
         region = next(r for r in summary["regions"]["first"] if r["id"] == visit["region"])
         inside = box[0] + margin <= region["x_m"] <= box[1] - margin and box[2] + margin <= region["y_m"] <= box[3] - margin
@@ -207,7 +207,7 @@ def test_a_zoom_job_aims_images_and_places_them_tier_by_tier_until_one_is_not_pl
     assert results["result_keys"]["zoom_placed"] == [zoom[0]["image"]] and len(results["result_keys"]["zoom_images"]) == 2
     places = [a for t, a in calls if t == "place_image"]
     assert places[0]["window_m"] == pytest.approx(6e-7 / 16) and places[0]["centre_xy_m"] == pytest.approx([stage[0] + 4e-8, stage[1] - 3e-8])
-    assert list(mapping_twin_proxy.get_image_shift())[:2] == pytest.approx([1e-9, -2e-9])  # put back as it was
+    assert list(mapping_twin_proxy.get_image_shift())[:2] == pytest.approx([1e-9, -2e-9])  # restored
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
     assert [float(v) for v in list(mapping_twin_proxy.get_stage())[:2]] == pytest.approx(stage)
     mapping_twin_proxy.set_image_shift([0.0, 0.0])

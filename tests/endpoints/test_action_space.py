@@ -106,7 +106,7 @@ def test_roles_ranges_and_effects_of_the_stem(serve):
     assert roles["DigitalTwin_set_fov"] == "optics.fov" and roles["DigitalTwin_set_defocus"] == "optics.focus"
     assert roles["view_data"] == roles["list_data"] == "data.read" and roles["action_space"] == "other"
     fov = actions["DigitalTwin_set_fov"]["args"][0]
-    assert (fov["units"], fov["min"], fov["max"]) == ("m", 1e-9, 1e-4)  # these limits come from limits.py with the twin's default properties
+    assert (fov["units"], fov["min"], fov["max"]) == ("m", 1e-9, 1e-4)  # from limits.py with the twin's default properties
     assert actions["DigitalTwin_set_fov"]["risk"] == "low"
     assert actions["DigitalTwin_set_fov"]["effect"] == "act" and actions["DigitalTwin_get_fov"]["effect"] == "observe"
     assert actions["action_space"]["risk"] == "low" and actions["action_space"]["effect"] == "observe"
@@ -172,7 +172,7 @@ def test_one_role_controller_moves_acquires_and_reads_back_on_both_twins(serve, 
             before = await keeper.position()
             try:
                 return await role_controller.run(client, offset_m=(1e-7, -1e-7))
-            finally:  # the session's twin goes back where it was for the other tests
+            finally:  # restore the session's twin for the other tests
                 await keeper.each("probe.retract")
                 await keeper.move(before, before)
 

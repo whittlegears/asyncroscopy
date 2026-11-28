@@ -202,7 +202,7 @@ def test_each_server_takes_its_class_name_from_the_launchers_database_entry(monk
 
     class Database:
         def get_server_list(self, pattern):
-            assert pattern == "*"  # PyTango's database matches no pattern that starts with a wildcard
+            assert pattern == "*"  # PyTango's database matches no leading-wildcard pattern
             return Servers()
 
     monkeypatch.setattr(tango, "Database", Database)
@@ -336,7 +336,7 @@ def test_noise_in_the_datas_own_units_keeps_small_and_negative_signals():
     _kind, _detector, height, attrs = afm.acquire("acquire_topography")
     assert attrs["units"] == "m" and height.max() > 1e-8 and np.percentile(np.abs(height), 5) < 1e-9  # 20 nm features over 0.2 nm noise
     _kind, _detector, curve, _attrs = afm.acquire("acquire_force_curve")
-    assert curve.min() < -0.5  # the adhesion dip survives because Gaussian noise does not clip at zero
+    assert curve.min() < -0.5  # Gaussian noise does not clip at zero
 
 
 def test_the_afm_example_lifts_the_tip_around_every_move_as_a_tango_job_device(tmp_path):

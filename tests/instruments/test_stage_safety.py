@@ -140,7 +140,7 @@ def test_changing_holder_is_checked_against_where_the_stage_is(holder_stage):
         holder_stage.set_holder("cryo")
     holder_stage.position = [0.0, 0.0, 0.0, 10.0, 0.0]
     assert json.loads(holder_stage.set_holder("single_tilt"))["limits"]["alpha"] == [-35.0, 35.0]
-    holder_stage.position = [0.0, 0.0, 0.0, 30.0, 0.0]  # on a single tilt holder alpha keeps the stage's own range
+    holder_stage.position = [0.0, 0.0, 0.0, 30.0, 0.0]  # single tilt: alpha keeps the stage's range
     assert json.loads(holder_stage.set_holder(""))["holder"] is None
 
 

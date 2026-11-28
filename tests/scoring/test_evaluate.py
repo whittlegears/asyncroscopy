@@ -154,7 +154,7 @@ def test_dose_accumulates_where_frames_overlap_and_counts_job_dose():
     frame = 50e-12 * 2e-6 / 1.602176634e-19 / (PIXEL / 1e-10) ** 2
     dose = get_evaluator("dose", threshold_e_per_a2=1.5 * frame).score_run(data)
     assert dose["max_dose_e_per_a2"].value == pytest.approx(2 * frame)
-    assert dose["over_threshold_fraction"].value == pytest.approx(1 / 3)  # half of each frame overlaps, which is 2 of 6 quarter columns
+    assert dose["over_threshold_fraction"].value == pytest.approx(1 / 3)  # half of each frame overlaps: 2 of 6 quarter columns
     assert dose["job_dose_e_per_a2"].value == pytest.approx(120.0)
     assert dose["exposed_area_m2"].value == pytest.approx(1.5 * FOV * FOV)
     assert score_event(tuner, data, ["dose"])["dose"]["job_dose_e_per_a2"]["value"] == 120.0
@@ -163,7 +163,7 @@ def test_dose_accumulates_where_frames_overlap_and_counts_job_dose():
 def test_time_splits_wall_time_into_busy_and_idle():
     events = [
         {"ts": 0.0, "duration_s": 2.0, "clock_s": 5.0, "clock": "instrument"},
-        {"ts": 1.0, "duration_s": 2.0},  # overlaps the first so busy runs from 0 to 3
+        {"ts": 1.0, "duration_s": 2.0},  # overlaps the first: busy from 0 to 3
         {"ts": 10.0, "duration_s": 1.0, "clock_s": 20.0, "clock": "instrument"},
     ]
     scores = get_evaluator("time").score_run(RunData("r", events))

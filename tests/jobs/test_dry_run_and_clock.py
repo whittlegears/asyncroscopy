@@ -80,7 +80,7 @@ class TestRecordingProxy:
     def test_reads_pass_writes_are_recorded_and_blanking_runs(self):
         fake, recorded = self.Fake(), []
         proxy = RecordingProxy(fake, "asyncroscopy/instrument/default", lambda *call: recorded.append(call), safe_commands=frozenset({"blank_beam"}))
-        assert proxy.get_stage() == "get_stage"  # a read is passed through and not recorded
+        assert proxy.get_stage() == "get_stage"  # a read passes through unrecorded
         assert proxy.read_attribute("clock_s").value == 1.0
         assert proxy.stage_moving is False
         assert proxy.move_stage([1e-7, 0, 0, 0, 0]) == DRY_RUN_PLACEHOLDER
@@ -152,7 +152,7 @@ def test_the_endpoint_binds_every_interface_only_on_a_simulator_or_when_the_conf
     assert bind_host("0.0.0.0", allow_remote_bind=True, simulated=False) == ("0.0.0.0", None)
     assert bind_host("0.0.0.0", allow_remote_bind=False, simulated=True) == ("0.0.0.0", None)
     assert bind_host("127.0.0.1", allow_remote_bind=False, simulated=False) == ("127.0.0.1", None)
-    assert stack_simulated("localhost", 1, None) is False  # with no Tango Database to ask it is unknown and so not simulated
+    assert stack_simulated("localhost", 1, None) is False  # no Tango Database to ask: unknown, so not simulated
 
 
 def _launcher(name):
@@ -173,7 +173,7 @@ def test_every_stack_config_says_whether_it_is_simulated_and_every_device_gets_i
     stacks = [p for p in sorted((ROOT / "configs").glob("*.yaml")) if "instrument" in (yaml.safe_load(p.read_text(encoding="utf-8")) or {})]
     assert {p.name for p in stacks} >= hardware
     for path in stacks:
-        raw = run_servers.read_config(path)  # with any extends chain merged in
+        raw = run_servers.read_config(path)  # with any extends chain merged
         assert isinstance(raw.get("simulated"), bool), f"{path.name} must say simulated: true or false"
         config = run_servers.load_config(path)
         assert config.simulated is (path.name not in hardware), path.name
@@ -266,6 +266,6 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
     visits = [v for v in results["summary"]["revisits"]["first"] if "image" in v]
     assert visits and len(revisit_images) == len(visits)
     for visit, image in zip(visits, revisit_images):
-        intended = np.array(visit["stage_xy_m"]) + np.array(visit["drift_xy_m"])  # the region, or a point moved inward from the box edge
+        intended = np.array(visit["stage_xy_m"]) + np.array(visit["drift_xy_m"])  # the region, or a point moved in from the box edge
         landed = np.array(image["center_true_m"]) - offset
         assert np.linalg.norm(landed - intended) < 0.1 * revisit_fov, (visit, landed, intended)

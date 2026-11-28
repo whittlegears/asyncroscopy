@@ -20,7 +20,7 @@ from benchmarks.evaluate.scoring.labelled_maps import (
     defocus, evaluate, make_labelled_map, render_cell,
 )
 
-SEEDS = HELDOUT_SEEDS[:4]  # The bench reports seeds 3 to 29. A few keep the tests quick.
+SEEDS = HELDOUT_SEEDS[:4]  # the bench reports seeds 3 to 29; a few keep the tests quick
 SUPPORT = 3.0 * _signal_per_nm("C")
 
 
@@ -189,7 +189,7 @@ def test_probe_five_overlapping_sharp_disks_of_radius_25():
     signal = _overlapping_disks()
     for seed in range(3):
         image = _noisy(signal, seed)
-        assert BaselineScorerV2().score(image, {})[0] < 0.05  # 2.0.0 reads the doubled height of an overlap as blur
+        assert BaselineScorerV2().score(image, {})[0] < 0.05  # 2.0.0 reads an overlap's doubled height as blur
         value, reason = BaselineScorer().score(image, {})
         assert value > 0.7, reason
         assert BaselineScorer().score(_noisy(defocus(signal, 4.0), seed), {})[0] < 0.1

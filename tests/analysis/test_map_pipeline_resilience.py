@@ -204,11 +204,11 @@ def test_resuming_mid_stitch_waits_for_the_same_stitch_and_mid_revisit_links_wit
     results = call(mapper_proxy, "results", {"job_id": job_id})
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
     summary = results["summary"]
-    assert analysis.calls.count("assemble_map") == 1  # the resumed job waited for the stitch it had started
+    assert analysis.calls.count("assemble_map") == 1  # the resumed job waited for its own stitch
     assert analysis.calls.count("score_map") == 1
     visited = [v for v in summary["revisits"]["first"] if "image" in v]
     tiles = summary["steps_total"] - 4
-    assert image_count(mapping_twin_proxy) - before == tiles + len(visited)  # no region was imaged twice
+    assert image_count(mapping_twin_proxy) - before == tiles + len(visited)  # no region imaged twice
     store = analysis.server.tools.store
     high_mag = store.list_pois(results["result_keys"]["map"], kind="high_mag")
     assert len(high_mag) == len(visited) and len({p["id"] for p in high_mag}) == len(visited)

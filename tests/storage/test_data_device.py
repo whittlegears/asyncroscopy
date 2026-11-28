@@ -539,7 +539,7 @@ class TestDataDevice:
 
         data_proxy.save_path = str(first_path)
         data_proxy.start_tiled_server()
-        data_proxy.save_path = str(second_path)  # This returns at once and the restart runs in the background.
+        data_proxy.save_path = str(second_path)  # returns at once; the restart runs in the background
         deadline = time.monotonic() + 10
         config = json.loads(data_proxy.get_config())
         while len(popen_calls) < 2 or config["tiled_server_status"] == "restarting for the new settings":
@@ -819,7 +819,7 @@ def test_the_log_tail_reads_only_the_end_of_a_long_log(tmp_path) -> None:
     device = SimpleNamespace(_tiled_log=log)
     tail = DATA._log_tail(device)
     assert tail.endswith("last line")
-    assert len(tail) < data_module.LOG_TAIL_BYTES + 200 + len(str(log))  # the tail names the log, whose path varies by clone
+    assert len(tail) < data_module.LOG_TAIL_BYTES + 200 + len(str(log))  # the tail names the log, whose path varies
 
 
 def test_a_tiled_bound_to_every_interface_is_reached_locally_and_advertised_by_its_public_uri(monkeypatch) -> None:
@@ -856,7 +856,7 @@ def test_only_a_tiled_whose_starter_is_gone_counts_as_orphaned() -> None:
     gone = SimpleNamespace(parent=lambda: None)
     assert _live_owner(gone) is None
     launcher = SimpleNamespace(pid=5, name=lambda: "python.exe", cmdline=lambda: ["python.exe", "-m", "tiled", "serve", "catalog"], parent=lambda: None)
-    assert _live_owner(SimpleNamespace(parent=lambda: launcher)) is None  # a venv launcher of the same command is stepped over
+    assert _live_owner(SimpleNamespace(parent=lambda: launcher)) is None  # a venv launcher of the same command is skipped
     shell = SimpleNamespace(pid=6, name=lambda: "pwsh.exe", cmdline=lambda: ["pwsh.exe"], parent=lambda: None)
     assert _live_owner(SimpleNamespace(parent=lambda: shell)) == "pwsh.exe pid 6"
 

@@ -225,7 +225,7 @@ def test_a_blanked_beam_is_blanked_again_before_the_save(autoscript, monkeypatch
     client.optics.blanker.blank()
     seen = blanker_at_save(monkeypatch)
     getattr(EM, command)(device, *args)
-    assert seen == [True]  # the blanker was closed before the file was written
+    assert seen == [True]  # the blanker closed before the file was written
     assert client.optics.blanker._blanked
 
 
@@ -268,8 +268,8 @@ def test_4dstem_takes_the_camera_exposure_and_blanks_between_points(autoscript, 
     seen = blanker_at_save(monkeypatch)
     EM.acquire_scanned_data_advanced(device)
     frames = [c["value"] for c in client.writes("acquisition.acquire_camera_image_advanced")]
-    assert len(frames) == 4 and all(f["exposure_time"] == 0.01 for f in frames)  # the camera exposure and not the 1 us dwell
-    assert blanked_at_move == [True] * 5  # four points and the restore, all moved while blanked
+    assert len(frames) == 4 and all(f["exposure_time"] == 0.01 for f in frames)  # the camera exposure, not the 1 us dwell
+    assert blanked_at_move == [True] * 5  # four points and the restore, all blanked
     assert seen == [True]
 
 

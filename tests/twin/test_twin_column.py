@@ -45,7 +45,7 @@ def test_closed_valves_give_a_black_image(mapping_twin_proxy, mapping_scan_proxy
     mapping_twin_proxy.set_column_valves("close")
     assert json.loads(mapping_twin_proxy.get_parameters())["column_valves"] == "Closed"
     dark = haadf(mapping_twin_proxy, mapping_scan_proxy)
-    assert dark.var() < 0.5 * lit.var() and dark.max() < lit.max()  # only the detector's offset and read noise
+    assert dark.var() < 0.5 * lit.var() and dark.max() < lit.max()  # only detector offset and read noise
 
 
 def test_an_inserted_screen_takes_the_beam_from_the_detector_and_measures_it(mapping_twin_proxy, mapping_scan_proxy):

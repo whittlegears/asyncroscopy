@@ -65,7 +65,7 @@ def test_a_job_is_a_langgraph_graph_that_runs_every_step_on_the_callers_thread()
     assert {"start", "gate", "step", "finish", "stop"} <= set(graph.get_graph().nodes)
     assert final["outcome"] == "done" and device.seen == ["start", 0, 1, 2, "finish"]
     assert job["result_keys"] == {"run": "map_1"} and sorted(job["step_results"]) == ["0", "1", "2"]
-    assert device.threads == {threading.get_ident()}  # Tango calls are only allowed on the worker thread
+    assert device.threads == {threading.get_ident()}  # Tango calls only on the worker thread
 
 
 def test_an_aborted_job_stops_without_finishing():

@@ -435,7 +435,7 @@ class TestMCPSerialization:
         assert text.structured_content["kind"] == "image"
         assert text.structured_content["dataset"] == "image/HAADF"
         assert "3 x 3 pixels" in text.content[0].text
-        assert not text.content[0].text.startswith("[")  # plain text, not a JSON-encoded list
+        assert not text.content[0].text.startswith("[")  # plain text, not a JSON list
         assert not [b for b in text.content if getattr(b, "type", "") == "image"]
 
         png = server.data.view_data("frame.h5")
@@ -566,7 +566,7 @@ class TestMCPRegistration:
         calls = []
 
         def record_tool(method):
-            calls.append(getattr(method, "name", None) or method.__name__)  # load_skill is added as a Tool whose description names the skills.
+            calls.append(getattr(method, "name", None) or method.__name__)  # load_skill is a Tool whose description names the skills
 
         monkeypatch.setattr(server.mcp, "add_tool", record_tool)
         monkeypatch.setattr(server, "_find_tools", lambda: {})
@@ -633,10 +633,10 @@ class TestMCPRegistration:
         held: list[set[str]] = []
         monkeypatch.setattr("asyncroscopy.skills.registry.select_skills", lambda request, agent_tools, endpoint_tools: held.append(set(agent_tools)) or [])
 
-        server.skills.skills_for("map it")  # No device is declared a STEM, so this holds every tool but State and the agent program ones.
+        server.skills.skills_for("map it")  # no STEM declared: every tool but State and the agent program ones
         assert held[-1] == {"run_job", "load_skill", "Mapper_reserve", "Scope_acquire_scanned_image"}
 
-        server.add_device("Scope", stem=True)  # decided by what discovery found, not by what the tools are called
+        server.add_device("Scope", stem=True)  # decided by discovery, not tool names
         server.skills.skills_for("map it")
         assert held[-1] == {"run_job", "load_skill", "Scope_acquire_scanned_image"}
 

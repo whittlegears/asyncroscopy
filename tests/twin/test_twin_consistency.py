@@ -38,7 +38,7 @@ def test_the_texture_does_not_move_any_particle():
 def test_the_texture_is_visible_at_every_pixel_size(pixel_m):
     texture = _sample(support_texture=0.3).support_texture(-5e-7, -5e-7, 256, pixel_m)
     assert texture.shape == (256, 256)
-    assert 0.05 < float(texture.std()) < 0.6  # structure shows inside one frame and not only between frames
+    assert 0.05 < float(texture.std()) < 0.6  # structure inside one frame, not only between frames
     assert float(texture.min()) >= -1.0  # the film never gets a negative thickness
 
 
@@ -147,7 +147,7 @@ def test_dose_map_memory_grows_with_frames_not_with_the_sample():
 def test_a_parked_beam_counts_over_the_spot_spread():
     dose = DoseMap(DoseParams(enabled=True, cell_m=1e-7, spot_spread_m=1e-8), (-1e-6, 1e-6, -1e-6, 1e-6))
     dose.add_point(0.0, 0.0, 1e6, 1e-20)
-    cell = 1e-7 / 2**3  # 12.5 nm is the finest cell at least 10 nm wide
+    cell = 1e-7 / 2**3  # 12.5 nm: the finest cell at least 10 nm wide
     assert float(dose.dose_at(1e-9, 1e-9)) == pytest.approx(1e6 / (cell * cell * ANGSTROM2_PER_M2), rel=1e-9)
 
 
@@ -155,7 +155,7 @@ def test_overlapping_survey_frames_see_the_same_film_wherever_their_grids_start(
     sample = _sample(support_texture=0.3)
     pixel, n = 2e-8, 128
     first = sample.support_texture(0.0, 0.0, n, pixel)
-    second = sample.support_texture(0.37 * pixel, 0.61 * pixel, n, pixel)  # a grid starting a fraction of a pixel later
+    second = sample.support_texture(0.37 * pixel, 0.61 * pixel, n, pixel)  # a grid a fraction of a pixel later
     rows, cols = np.mgrid[0 : n - 1, 0 : n - 1].astype(float)
     on_second = ndimage.map_coordinates(first, [rows + 0.61, cols + 0.37], order=1)
     assert np.corrcoef(on_second.ravel(), second[:-1, :-1].ravel())[0, 1] > 0.95

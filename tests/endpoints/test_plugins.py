@@ -60,7 +60,7 @@ def test_a_profile_in_a_team_file_is_found_through_the_env_var_in_a_fresh_proces
     found = _fresh_python(CHECK, f"some_missing_module_xyz{os.pathsep}{team}")
     assert found.returncode == 0, found.stderr
     assert found.stdout.split() == ["TeamProfile", "TeamTracker"]
-    assert "some_missing_module_xyz" in found.stderr  # the broken entry is reported and the good one still loads
+    assert "some_missing_module_xyz" in found.stderr  # the broken entry is reported; the good one loads
 
 
 def test_a_profile_in_a_team_module_is_found_by_module_name(tmp_path):
