@@ -5,6 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+import asyncroscopy.mcp.segment as segment_module
+from asyncroscopy.data.data import REGISTER_WAIT_SECONDS
+
 from asyncroscopy.mcp.segment import (
     SEGMENTATION,
     _label_areas,
@@ -143,3 +146,27 @@ def test_segment_writes_labels_to_tiled_and_returns_key(monkeypatch) -> None:
             dtype=np.uint32,
         ),
     )
+
+
+def test_segmentation_data_timeout_defaults_to_120_s() -> None:
+    assert SEGMENTATION.data_timeout_seconds.default_value == 120.0
+    assert SEGMENTATION.data_timeout_seconds.default_value > REGISTER_WAIT_SECONDS
+
+
+def test_segmentation_data_proxy_gets_the_configured_timeout(monkeypatch) -> None:
+    timeouts = {}
+
+    class Proxy:
+        def __init__(self, address):
+            self.address = address
+
+        def set_timeout_millis(self, ms):
+            timeouts[self.address] = ms
+
+    monkeypatch.setattr(segment_module.tango, "DeviceProxy", Proxy)
+    device = SEGMENTATION.__new__(SEGMENTATION)
+    device._tango_properties = {}
+    device._data_proxy = None
+    device.data_device_address, device.data_timeout_seconds = "d/t/1", 45.0
+    device._get_data_proxy()
+    assert timeouts == {"d/t/1": 45_000}

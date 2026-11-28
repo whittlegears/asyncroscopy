@@ -398,7 +398,7 @@ Optional, under `instrument:` in configs/Spectra300.yaml; the defaults are conse
 * `stage_timeout_seconds` (default 180): how long the microscope waits for a stage move or tilt.
 * `detector_timeout_seconds` (default 12) and `data_timeout_seconds` (default 3600): how long, in seconds, a call to
   a detector or other sub-device, and a call to the DATA device, may take. `data_timeout_seconds` must exceed the DATA
-  device's 8 s register wait. The EELS device has its own `data_timeout_seconds` (default 120).
+  device's 8 s register wait. The EELS and SEGMENTATION devices each have their own `data_timeout_seconds` (default 120).
 * `max_4dstem_imsize` (default 64) and `min_4dstem_exposure_s` (default 0.001): 4D-STEM scans larger than this
   are refused, and the camera exposure comes from the CAMERA device, never below the minimum.
 * `timeout_seconds` has no effect: the AutoScript 1.18 client has no call timeout.

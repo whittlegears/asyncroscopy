@@ -116,6 +116,12 @@ class SEGMENTATION(Device):
         default_value="asyncroscopy/data/default",
         doc="Tango DATA device used to read input keys and save segmentation labels",
     )
+    data_timeout_seconds = device_property(
+        dtype=float,
+        default_value=120.0,
+        doc="How long a call to the DATA device may take (s). Must exceed the DATA device's register wait "
+        "(REGISTER_WAIT_SECONDS in asyncroscopy.data.data, 8 s).",
+    )
     compute_device = device_property(
         dtype=str,
         default_value="auto",
@@ -222,7 +228,7 @@ class SEGMENTATION(Device):
             if not self.data_device_address:
                 raise RuntimeError("No DATA device is configured for segmentation")
             self._data_proxy = tango.DeviceProxy(self.data_device_address)
-            self._data_proxy.set_timeout_millis(120_000)
+            self._data_proxy.set_timeout_millis(int(1000 * float(self.data_timeout_seconds)))
         return self._data_proxy
 
     def _load_image_from_key(self, key: str, data_proxy: Any) -> np.ndarray:
