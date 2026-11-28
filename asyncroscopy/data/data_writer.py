@@ -107,12 +107,10 @@ def save_acquisition(
 
     has_labeled_datasets = len(detector_list) > 1 or len(data_list) > 1
     detector_label = "_".join([str(detector) for detector in detector_list])
-    # Naming statergy which is acts as a "key" for Tiled 
     path = acquisition_filename(device, acquisition_type, detector_label, data_server)
 
 
     datasets = []
-    # Detector wise, Naming statergy which is acts as a "key" for Tiled 
     for index, source in enumerate(data_list):
         detector = str(detector_list[index]) if index < len(detector_list) else f"item_{index}"
         if dataset_name == "image" and isinstance(detectors, (list, tuple)):
@@ -237,7 +235,7 @@ def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: di
             h5.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
 
         for item in datasets:
-            # data is list of AdornedImage(Note: vendor is Thermofisher TEM's), which is typically imported as from autoscript_tem_microscope_client.structures import AdornedImage
+            # AutoScript AdornedImage objects.
             source = item.get("source", item.get("data"))
             data = source.data if hasattr(source, "data") and not isinstance(source, np.ndarray) else source
             name = item["name"]

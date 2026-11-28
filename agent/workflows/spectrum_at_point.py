@@ -33,7 +33,6 @@ def build(use: Steps) -> StateGraph:
     ))
     graph.add_node("peaks", use.block("read_spectrum", key="{spectrum.key}"))
 
-    # Edges
     graph.add_edge(START, "move")
     graph.add_edge("move", "spectrum")
     graph.add_edge("spectrum", "peaks")

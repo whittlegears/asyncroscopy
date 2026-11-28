@@ -128,7 +128,6 @@ class GoalGraph:
     async def _facts(self, trace: list) -> Facts:
         return await (await self.checker()).facts([Call.from_dict(c) for c in trace])
 
-    # nodes
     async def work(self, state: GoalState) -> GoalState:
         started = state.get("started") or time.monotonic()
         remaining = self.goal.budget.max_seconds - (time.monotonic() - started)

@@ -21,8 +21,6 @@ from typing import Any, Callable
 import numpy as np
 from numpy.typing import ArrayLike
 
-# sharpness metrics, where higher is sharper
-
 
 def _as_image(image) -> np.ndarray:
     array = np.asarray(image, dtype=np.float64)
@@ -86,9 +84,6 @@ def sharpness(image: ArrayLike, metric: str = "normalized_variance") -> float:
         raise ValueError(f"unknown sharpness metric {metric!r}; known: {sorted(METRICS)}") from None
 
 
-# fitting the top of a peak
-
-
 def parabola_vertex(xs: ArrayLike, ys: ArrayLike) -> float | None:
     """x of the top of the least-squares parabola through (xs, ys); None if it opens upwards or is flat."""
     x = np.asarray(xs, dtype=np.float64)
@@ -117,9 +112,6 @@ def peak_estimate(xs: ArrayLike, ys: ArrayLike) -> float:
     if vertex is None:
         return float(x[best])
     return float(min(max(vertex, x[lo]), x[hi - 1]))
-
-
-# searches
 
 
 def sweep(evaluate: Callable[[float], float], low: float, high: float, points: int) -> tuple[list[float], list[float]]:

@@ -56,7 +56,6 @@ def drift_at(drift: dict | None, t_s: float) -> tuple[float, float]:
     return float(end[0]), float(end[1])
 
 
-# live trackers
 class DriftTracker:
     """Predicts a tile's placement error from the errors measured so far. Subclass, set ``name``, register it.
 
@@ -134,7 +133,6 @@ trackers = TRACKERS.all
 register_tracker(LinearTracker)
 
 
-# measuring where a tile sits relative to an overlapping neighbour
 def _ncc(a: np.ndarray, b: np.ndarray) -> float:
     a = a - a.mean()
     b = b - b.mean()
@@ -188,7 +186,6 @@ def bounded_correction(target_xy: ArrayLike, current_xy: ArrayLike, base_xy: Arr
     return [float(v) for v in shifted], bool(np.any(np.abs(shifted - target) > 1e-15))
 
 
-# bench that scores a tracker with no stack
 def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds: Iterable[int] = (0, 1, 2), rate_m_per_s: float = 5e-11, grid: int = 5,
                 fov_m: float = 5e-8, imsize: int = 64, overlap: float = 0.25, tile_s: float = 12.0, stage_sigma_m: float = 1e-9,
                 max_step_m: float = 2e-8, settings: dict | None = None) -> dict:

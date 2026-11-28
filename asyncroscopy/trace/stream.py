@@ -171,7 +171,6 @@ class TraceStream:
                 f.committed = self._commit(f, st.st_size, None, float("-inf"))
                 self._files[str(path)] = f
 
-    # public
     def poll(self, final: bool = False, limit: int | None = None) -> list[dict[str, Any]]:
         """New matching events, in order. ``final``: hand out everything read (a finished trace), not
         only events older than ``grace_s``. ``limit``: at most this many; the rest come next time."""
@@ -205,7 +204,6 @@ class TraceStream:
         raw = json.dumps(state, separators=(",", ":")).encode("utf-8")
         return CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode("ascii")
 
-    # files
     @staticmethod
     def _head(path: Path) -> bytes:
         try:
@@ -352,7 +350,6 @@ class TraceStream:
         f.read_off = offset
         return True
 
-    # order and filters
     def _merge(self, final: bool, limit: int | None) -> list[dict[str, Any]]:
         cutoff = float("inf") if final else time.time() - self.grace_s
         out: list[dict[str, Any]] = []

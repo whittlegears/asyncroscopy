@@ -272,12 +272,11 @@ class ProcessManager:
         popen_kwargs: dict = {"env": env, "cwd": cwd, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE}
         popen_kwargs.update(kwargs)
 
-        # Start child process in its own group for clean tree termination
-        if os.name == "nt": # Windows
+        if os.name == "nt":
             popen_kwargs.setdefault(
                 "creationflags", subprocess.CREATE_NEW_PROCESS_GROUP
             )
-        else: # Linux
+        else:
             if "start_new_session" not in popen_kwargs and "preexec_fn" not in popen_kwargs:
                 popen_kwargs["start_new_session"] = True
 
@@ -359,20 +358,16 @@ class ProcessManager:
         try:
             active = [mp for mp in self.active_processes if mp.running]
 
-            # Broadcast the kill signal to every process
             for mp in reversed(active):
                 self._send_kill_request(mp.process)
 
-            # Wait for all of them concurrently with shared timeout
             start_time = time.time()
             for mp in reversed(active):
                 proc = mp.process
                 if proc.poll() is not None:
                     continue
 
-                # Determine how much of the global timeout remains.
-                # If we have spent more time than allowed, provide a small wait
-                # to allow for immediate process exit before doing a forced kill.
+                # Past the shared timeout, still give a process that is exiting a moment before the kill.
                 elapsed = time.time() - start_time
                 rem = max(0.1, self.timeout - elapsed)
 
@@ -388,7 +383,6 @@ class ProcessManager:
             self.active_processes.clear()
             self._remove_state_file()
         finally:
-            # Restore normal Ctrl+C behavior
             if old_handler is not None:
                 try:
                     signal.signal(signal.SIGINT, old_handler)
@@ -490,7 +484,6 @@ class ProcessManager:
             except (ProcessLookupError, PermissionError):
                 return
 
-            # Brief poll to see if SIGTERM was honored
             start = time.time()
             while time.time() - start < 1.0:
                 try:

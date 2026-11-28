@@ -101,7 +101,6 @@ def _on_model_end(state: _StreamState, event: dict) -> None:
     output = event["data"]["output"]
     tool_calls = getattr(output, "tool_calls", None) or []
     if not tool_calls:
-        # This round produced no tool calls, so it's the final answer
         state.final_content = (output.content or "").strip()
     print()
 
@@ -134,7 +133,6 @@ def _handle_stream_event(state: _StreamState, event: dict) -> None:
     """Update the stream state for one event from the agent."""
     kind = event["event"]
     if kind == "on_chat_model_start":
-        # A new model round is starting, so reset the first token timer.
         state.start_time = time.time()
         state.first_token_received = False
         return
@@ -204,7 +202,6 @@ class AgentSwarm:
         self._model = None
         self.startup_error: str | None = None
 
-    # startup
 
     @property
     def ready(self) -> bool:
@@ -270,7 +267,6 @@ class AgentSwarm:
         """Report a failure regardless of verbosity, since callers cannot see our state."""
         print(message, file=sys.stderr)
 
-    # MCP connectivity
 
     def add_tools(self, tools: list[BaseTool]) -> None:
         """Give the agents extra tools that run in this process."""
@@ -330,7 +326,6 @@ class AgentSwarm:
 
         await asyncio.to_thread(_sync_check)
 
-    # introspection
 
     @property
     def agents(self) -> list[str]:
@@ -349,7 +344,6 @@ class AgentSwarm:
         self.max_steps = int(max_steps)
         return self.max_steps
 
-    # public commands
 
     async def query(self, prompt: str, include_transcript: bool = True) -> str:
         """
@@ -402,7 +396,6 @@ class AgentSwarm:
             self._error(f"Failed to spawn agent: {e}")
             return ""
 
-    # message conversion
 
     @staticmethod
     def _openai_messages_to_langchain(messages: list[dict]) -> list[BaseMessage]:
@@ -450,7 +443,6 @@ class AgentSwarm:
             ]
         return result
 
-    # swarm internals
 
     def _get_agent_tools(self, allowed_patterns: list[str]) -> list:
         """Returnes a list of filtered tools based on the allowed glob patterns."""

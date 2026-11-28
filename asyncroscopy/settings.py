@@ -49,7 +49,6 @@ def _number(env: Mapping[str, str], name: str, default, kind):
 
 @dataclass(frozen=True)
 class Settings:
-    # Where servers write
     outputs_root: Path
     log_dir: Path
     trace_dir: Path
@@ -65,7 +64,6 @@ class Settings:
     dose_ledger: Path
     permissions_file: Path
 
-    # Addresses and credentials
     mcp_url: str | None
     operator_url: str | None
     analysis_url: str | None
@@ -75,7 +73,6 @@ class Settings:
     tiled_api_key: str | None = field(repr=False)
     plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY, the name Tiled's own tools use
 
-    # Agents
     model: str | None
     model_provider: str | None
     num_ctx: int | None
@@ -92,7 +89,6 @@ class Settings:
     auto_promote_after: int
     learn_skills: bool  # a goal run that met its goal drafts a learned skill
 
-    # Extensions
     plugins: str
     agent_dir: Path
     skills_path: tuple[Path, ...]
@@ -100,7 +96,6 @@ class Settings:
     skills: bool  # agent skills on or off
     skills_off: tuple[str, ...]  # skill names or globs to hide
 
-    # GUIs and test switches
     qt_api: str
     write_golden: bool
     write_benchmarks: bool

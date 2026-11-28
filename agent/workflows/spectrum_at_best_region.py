@@ -41,7 +41,6 @@ def build(use: Steps) -> StateGraph:
     graph.add_node("peaks", use.block("read_spectrum", key="{spectrum.key}"))
     graph.add_node("fov_back", use.block("zoom_back", fov_m="{zoom.was}"))
 
-    # Edges
     graph.add_edge(START, "regions")
     graph.add_edge("regions", "move")
     graph.add_edge("move", "zoom")

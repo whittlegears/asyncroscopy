@@ -225,7 +225,6 @@ class Goal:
         return {"statement": self.statement, "criteria": self.criteria, "budget": asdict(self.budget), "leave_running": self.leave_running}
 
 
-# calls
 @dataclass
 class Call:
     """One tool call and the server's reply. The one record of a call for goals, graphs and benchmarks."""
@@ -453,7 +452,6 @@ class Facts:
         return "; ".join(parts)
 
 
-# checking
 @dataclass
 class Verdict:
     met: bool

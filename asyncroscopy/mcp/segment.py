@@ -103,7 +103,6 @@ def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
 class SEGMENTATION(Device):
     """Segment DATA/Tiled image keys with SAM2 and save integer label images."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
     model_size = device_property(

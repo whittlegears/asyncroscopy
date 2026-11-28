@@ -156,7 +156,6 @@ def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | d
     )
 
 
-# FastMCP wiring
 def _verifier(settings: AuthSettings):
     from fastmcp.server.auth.providers.jwt import JWTVerifier
 

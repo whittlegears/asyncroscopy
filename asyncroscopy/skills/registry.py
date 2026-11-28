@@ -277,7 +277,6 @@ def load_skill(name: str, tool_names: set[str] | None = None) -> str:
     raise KeyError(f"no skill named {name!r}; available: {[s.name for s in list_skills()]}")
 
 
-# matching a request
 STOP = frozenset(
     "a an and are as at be by do for from how i in into is it its me my of on or our please so that the their them then this to "
     "up us use using we what when where which with you your can could would should will".split()

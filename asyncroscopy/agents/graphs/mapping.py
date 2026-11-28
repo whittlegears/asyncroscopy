@@ -84,7 +84,6 @@ def _parse_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-
 def _to_metres(value: float, metres_below: float) -> float:
     """Repair a length a model wrote in the wrong unit.
 
@@ -178,7 +177,6 @@ class MappingGraph:
             raise RuntimeError("no device with both move_stage and acquire_scanned_image on the MCP endpoint")
         raise RuntimeError(f"several microscopes {candidates}; set ASYNCROSCOPY_MICROSCOPE to the one to map with")
 
-    # nodes
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
         await self._mapper()  # a missing Mapper, or more than one, ends the run here before the model is asked
@@ -420,7 +418,6 @@ class MappingGraph:
             lines.append(f"{eds} EDS spectra are marked on the map.")
         return {"report": "\n".join(lines)}
 
-    # helpers
     async def _analysis_job(self, job_id: str) -> dict:
         deadline = time.time() + settings.get().analysis_wait_s
         while True:
@@ -471,7 +468,6 @@ class MappingGraph:
         run.__name__ = node.__name__
         return run
 
-    # graph
     def build(self) -> CompiledStateGraph:
         graph = StateGraph(MapState)
         for name in ("gather_context", "make_plan", "reserve", "start", "wait", "stitch", "score", "report"):

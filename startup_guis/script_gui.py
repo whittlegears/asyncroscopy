@@ -174,7 +174,6 @@ class ScriptGui(QMainWindow):
                 self.enqueue_output(f"{setting.title} set to the {name} preset ({value}); the config says {self.get_shown(path)}.\n")
                 self.set_shown(path, value)
 
-    # layout
 
     def build(self) -> None:
         apply_theme(self)
@@ -317,7 +316,6 @@ class ScriptGui(QMainWindow):
         configure_terminal(self.output)
         layout.addWidget(self.output)
 
-    # field values
 
     def get_shown(self, path: str) -> str | bool:
         setting, widget = self.fields[path]
@@ -355,7 +353,6 @@ class ScriptGui(QMainWindow):
             toggle.set_value(str(self.get_shown(path)).strip())
         self.validate_timer.start()
 
-    # devices
 
     def rebuild_devices(self) -> None:
         if self.devices is None:
@@ -377,7 +374,6 @@ class ScriptGui(QMainWindow):
             self.device_checks[key] = checkbox
             self.device_shown[key] = enabled
 
-    # config
 
     def config_files(self) -> list[str]:
         names = []
@@ -475,7 +471,6 @@ class ScriptGui(QMainWindow):
         if path:
             self.load_config_from_path(path)
 
-    # process
 
     def launch_command(self, config_path: Path, *extra: str) -> list[str]:
         return python_command(self.script.LAUNCHER, "--yaml", str(config_path), *extra)

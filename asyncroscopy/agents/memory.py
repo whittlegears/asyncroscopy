@@ -107,7 +107,6 @@ class Memory:
         path = settings.get().instrument_notes
         return Path(path) if path and Path(path).is_file() else None
 
-    # reading
     def _sections(self) -> list[tuple[str, str]]:
         """(source, text) chunks: INSTRUMENT.md by heading, each lesson, each experiment page's summary."""
         chunks: list[tuple[str, str]] = []
@@ -155,7 +154,6 @@ class Memory:
         """The memory most relevant to ``request``, best first, within ``budget`` characters ("" if none)."""
         return "\n".join(f"[{source}] {text}" for source, text in self.notes(request, budget))
 
-    # writing
     def seed_instrument(self, catalog: ToolCatalog, stem: bool = False) -> bool:
         """Write INSTRUMENT.md from what the endpoint's tools are (``catalog``, from endpoint_info) if it does not exist
         yet; ``stem``: the endpoint has an electron microscope. True if written; never from an unknown catalog."""

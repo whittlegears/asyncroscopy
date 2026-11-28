@@ -246,7 +246,6 @@ def actions_with(space: dict, role: str, device: str | None = None) -> list[dict
     return [a for a in space.get("actions", []) if a["role"] == role and (device is None or a["device"] == device)]
 
 
-# command line
 def _arg_text(arg: dict) -> str:
     text = arg["name"]
     if arg.get("elements"):

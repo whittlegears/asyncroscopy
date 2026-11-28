@@ -11,7 +11,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
-# The action category for each canonical role.
 _CATEGORIES = {
     "acquire.image": "acquire", "acquire.spectrum": "acquire", "acquire.other": "acquire",
     "stage.move": "move",

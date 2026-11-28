@@ -78,8 +78,7 @@ class AgentConfig:
     model_provider: str = "ollama"
     max_steps: int = 10
     use_init_chat_model: bool = False
-    # Kept as plain dicts so this module never imports the agent extras, which
-    # keeps --help and config errors working without them installed.
+    # Plain dicts, so --help and config errors work without the agent extras installed.
     startup_agents: list[dict] = field(default_factory=list)
     workflows: bool = True
     workflows_hardware: bool = False

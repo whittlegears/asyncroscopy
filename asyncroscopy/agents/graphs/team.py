@@ -174,7 +174,6 @@ class TeamGraph:
                                       catalog=self.catalog, profile=self.config.agent_profile())
         return create_agent(self.config.chat_model(), tools, system_prompt=prompt, middleware=middleware)
 
-    # nodes
     async def plan(self, state: TeamState) -> TeamState:
         roles = set(await self.tools_by_role())
         if not roles:
@@ -232,7 +231,6 @@ class TeamGraph:
             answer = ""
         return {"answer": answer.strip() or f"Steps run:\n{notes}\nFacts: {facts.summary()}"}
 
-    # graph
     def build(self) -> CompiledStateGraph:
         graph = StateGraph(TeamState)
         graph.add_node("plan", self.plan)
