@@ -117,6 +117,28 @@ def test_roles_ranges_and_effects_of_the_stem(serve):
     assert actions["DigitalTwin_get_fov"]["returns"] == {"type": "number", "units": "m"}
 
 
+def test_every_client_sees_the_declared_limits_in_the_tool_schemas(serve):
+    """The ranges a device declares reach the tools' JSON input schemas as minimum and maximum, and units in the
+    description, so a client that reads only the MCP tool list (SciLink's MCPInstrument, a chat model) sees them."""
+    stem = serve("asyncroscopy/digitaltwin/default").registered
+    afm = serve("asyncroscopy/afm/default").registered
+
+    def prop(tool, name=None):
+        props = tool.parameters["properties"]
+        schema = props[name or next(iter(props))]
+        return schema, next((b for b in schema.get("anyOf", []) if b.get("type") != "null"), schema)
+
+    fov, fov_value = prop(stem["DigitalTwin_set_fov"])
+    assert (fov_value["minimum"], fov_value["maximum"]) == (1e-9, 1e-4) and "Units: m." in fov["description"]
+    _, place = prop(stem["DigitalTwin_place_beam"])
+    assert (place["items"]["minimum"], place["items"]["maximum"]) == (0.0, 1.0)
+    stage, _ = prop(stem["DigitalTwin_move_stage"])
+    assert "Elements x: m, y: m, z: m, alpha: deg, beta: deg." in stage["description"]
+    for axis in ("x_m", "y_m"):  # two arguments, each matched by its name
+        _, value = prop(afm["AFMTwin_move_xy"], axis)
+        assert (value["minimum"], value["maximum"]) == (-0.002, 0.002)
+
+
 def test_state_lists_reads_and_attributes_with_units(serve):
     space = action_space.build(serve("asyncroscopy/afm/default"))
     state = {(s["source"], s["name"]): s for s in space["state"]}

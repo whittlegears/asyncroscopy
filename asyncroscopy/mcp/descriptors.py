@@ -215,3 +215,64 @@ def describe_native(name: str) -> ToolDescriptor:
 
 def _is_void(in_type: Any) -> bool:
     return in_type == tango.CmdArgType.DevVoid
+
+
+def with_declared_limits(parameters: dict, hint: dict) -> dict:
+    """A tool's JSON input schema with the ranges, choices and units its command declares in ``action_hints``
+    (``args``: name, min, max, enum, units). Ranges and choices go in the standard ``minimum``, ``maximum`` and
+    ``enum`` (on an array's items when they hold for every item); units, and ranges that differ element by
+    element, go in the property's description. Only keywords every model provider accepts are used. An
+    argument matches the schema property of its name, or the only property there is. The device still enforces
+    every limit; this only lets a client see them before it calls."""
+    properties = (parameters or {}).get("properties") or {}
+    args = [a for a in (hint or {}).get("args") or [] if isinstance(a, dict)]
+    if not properties or not args:
+        return parameters
+    out = {**parameters, "properties": dict(properties)}
+    for arg in args:
+        name = arg.get("name") if arg.get("name") in properties else (next(iter(properties)) if len(properties) == 1 and len(args) == 1 else None)
+        if name is None:
+            continue
+        prop = dict(out["properties"][name])
+        target = _value_schema(prop)
+        if target is None:
+            continue
+        if target.get("type") == "array":
+            target["items"] = dict(target.get("items") or {})
+            target = target["items"]
+        for key, keyword in (("min", "minimum"), ("max", "maximum")):
+            if isinstance(arg.get(key), (int, float)) and not isinstance(arg.get(key), bool):
+                target[keyword] = arg[key]
+        if isinstance(arg.get("enum"), list):
+            target["enum"] = arg["enum"]
+        said = _limits_in_words(arg)
+        if said and said not in (prop.get("description") or ""):
+            prop["description"] = f"{prop['description'].rstrip('. ')}. {said}" if prop.get("description") else said
+        out["properties"][name] = prop
+    return out
+
+
+def _limits_in_words(arg: dict) -> str:
+    """Units, and element-by-element ranges, as a sentence: "Units: m. Elements x, y, z: -0.001..0.001 m, ..."."""
+    units, low, high, elements = arg.get("units"), arg.get("min"), arg.get("max"), arg.get("elements")
+    if not any(isinstance(v, list) for v in (units, low, high)):
+        return f"Units: {units}." if isinstance(units, str) and units else ""
+    n = max(len(v) for v in (units, low, high, elements) if isinstance(v, list))
+    at = lambda v, i: (v[i] if i < len(v) else None) if isinstance(v, list) else v  # noqa: E731
+    parts = []
+    for i in range(n):
+        label = at(elements, i) if isinstance(elements, list) else f"element {i}"
+        span = f"{at(low, i)}..{at(high, i)}" if at(low, i) is not None or at(high, i) is not None else ""
+        parts.append(" ".join(str(p) for p in (f"{label}:" if span or at(units, i) else label, span, at(units, i)) if p))
+    return "Elements " + ", ".join(parts) + "."
+
+
+def _value_schema(prop: dict) -> dict | None:
+    """The part of a property's schema that holds its value: itself, or its one non-null branch of an anyOf."""
+    if "anyOf" in prop:
+        branches = [b for b in prop["anyOf"] if b.get("type") != "null"]
+        if len(branches) != 1:
+            return None
+        prop["anyOf"] = [dict(b) if b is branches[0] else b for b in prop["anyOf"]]
+        return next(b for b in prop["anyOf"] if b.get("type") != "null")
+    return prop
