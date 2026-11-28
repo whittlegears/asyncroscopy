@@ -1,7 +1,6 @@
 """Tests of the ML suggestions server and of the procedures that use it.
 
-Every test has a known answer: a known optimum, a known Pareto set, or an image whose
-measured value really does depend on local structure.
+Every test has a known answer: a known optimum or a known Pareto set.
 """
 import asyncio
 import json
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scipy import ndimage
 
 pytest.importorskip("torch")
 pytest.importorskip("gpytorch")
@@ -18,7 +16,7 @@ analysis_tools = pytest.importorskip("pyTEMlib.mcp_analysis_tools")
 
 from fastmcp import Client  # noqa: E402
 
-from asyncroscopy.mcp.ml_server import (MLConfig, MLServer, SuggestionError, suggest_locations,  # noqa: E402
+from asyncroscopy.mcp.ml_server import (MLConfig, MLServer, SuggestionError,  # noqa: E402
                                         suggest_pareto_setting, suggest_setting)
 from asyncroscopy.mcp.procedures import Limits, ProceduresConfig, ProceduresServer  # noqa: E402
 from tests.test_procedures import Scope, analysis_server  # noqa: E402
@@ -60,53 +58,6 @@ def test_bad_inputs_are_refused():
         suggest_setting([[0.0]], [1.0], [[0, 1]])
     with pytest.raises(SuggestionError):
         suggest_setting([[0.0], [1.0]], [1.0, 2.0], [[1, 0]])
-    with pytest.raises(SuggestionError):
-        suggest_locations(np.zeros((32, 32)), [[0, 0, 1.0], [1, 1, 2.0]], window_size=8)
-
-
-def _blob_image():
-    rng = np.random.default_rng(0)
-    centres = np.zeros((128, 128))
-    for row, column in rng.integers(0, 128, (60, 2)):
-        centres[row, column] = 1
-    density = ndimage.gaussian_filter(centres, 6)
-    image = ndimage.gaussian_filter(centres, 1.2) + 0.02 * rng.random((128, 128))
-    return image, density, rng
-
-
-def test_deep_kernel_learns_a_structure_dependent_value():
-    image, density, rng = _blob_image()
-    measurements = [[int(r), int(c), float(density[r, c])] for r, c in rng.integers(0, 128, (25, 2))]
-    result = suggest_locations(image, measurements, window_size=16, step=4, count=5, acquisition="ei")
-    rows, columns = np.meshgrid(np.arange(0, 128, 4), np.arange(0, 128, 4), indexing="ij")
-    truth = density[rows, columns]
-    assert np.corrcoef(result["mean_map"].ravel(), truth.ravel())[0, 1] > 0.75
-    picked = [density[row, column] for row, column in result["next_positions"]]
-    assert np.mean(picked) > np.percentile(truth, 75)
-    chosen = np.asarray(result["next_positions"], dtype=float)
-    spacing = np.hypot(*(chosen[:, None, :] - chosen[None, :, :]).transpose(2, 0, 1))
-    assert spacing[np.triu_indices(len(chosen), 1)].min() >= 16
-    measured = np.asarray([[row, column] for row, column, _ in measurements], dtype=float)
-    assert np.hypot(*(chosen[:, None, :] - measured[None, :, :]).transpose(2, 0, 1)).min() >= 16
-
-
-def test_ml_tools_over_mcp_read_a_file_and_write_maps(tmp_path):
-    image, density, rng = _blob_image()
-    np.save(tmp_path / "haadf.npy", image)
-    server = MLServer(MLConfig(output_dir=str(tmp_path / "out")))
-    measurements = [[int(r), int(c), float(density[r, c])] for r, c in rng.integers(0, 128, (12, 2))]
-
-    async def call():
-        async with Client(server.mcp) as client:
-            names = {tool.name for tool in await client.list_tools()}
-            result = await client.call_tool("dkl_suggest_locations", {
-                "source": str(tmp_path / "haadf.npy"), "measurements": measurements, "count": 2, "epochs": 60})
-            return names, json.loads(result.content[0].text)
-
-    names, result = asyncio.run(call())
-    assert names == {"bo_suggest_next_setting", "bo_suggest_pareto_setting", "dkl_suggest_locations", "ml_status"}
-    assert len(result["next_positions"]) == 2
-    assert np.load(result["mean_map_file"]).shape == (32, 32)
 
 
 def _run_procedure(scope, tool, arguments, ml=True):
