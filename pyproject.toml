@@ -23,8 +23,8 @@ dependencies = [
     "lxml>=6.0.2",
     "matplotlib>=3.10.7",
     "multiprocess>=0.70.19",
-    # Upper bounds on the fast-moving pre-1.0 and major-version dependencies: uv.lock is not
-    # committed, so these keep a fresh clone from picking up a breaking release.
+    # Upper bounds on the fast-moving pre-1.0 and major-version dependencies: uv.lock pins a fresh
+    # `uv sync`, and these keep `uv lock --upgrade` from picking up a breaking release.
     "numpy>=2.3.5,<3",
     "pytango==10.1.2",
     "scifireaders>=0.12.4,<0.13",
