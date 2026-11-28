@@ -27,9 +27,9 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
-RUN_JOB_WAIT_S = 15.0  # run_job waits this long after starting, so a short job needs no wait_for_job
-RUN_JOB_BUDGET_S = 25.0  # the whole of run_job stays under the 30 s client timeout
+JOB_WAIT_MAX_S = 25.0  # stays under MCP client timeouts
+RUN_JOB_WAIT_S = 15.0  # so a short job needs no wait_for_job
+RUN_JOB_BUDGET_S = 25.0  # under the 30 s client timeout
 DOSE_FIELDS = ("max_dose_e_per_a2", "beam_current_pa", "beam_current_source")
 
 
@@ -59,7 +59,7 @@ class Jobs:
         self.job_limits = dict(cfg.job_limits)
         self._device_locks: dict[str, threading.RLock] = {}
         self._device_locks_lock = threading.Lock()
-        self._via = threading.local()  # set while run_job calls a job device, so the trace says so
+        self._via = threading.local()  # set while run_job calls a job device, for the trace
 
     def natives(self) -> list:
         if not self.devices():
@@ -142,7 +142,7 @@ class Jobs:
             reason = describe_error(exc) if proxy is not None else f"no job device {device!r}"
             return json.dumps({"error": {"code": "plan_rejected", "message": f"could not read the reservation to check it against this endpoint's job limits ({reason}); not started"}})
         if not isinstance(reserved, dict) or "error" in reserved:
-            return None  # the start itself reports an unknown reservation
+            return None  # the start reports an unknown reservation
         violations = self.over_limits(reserved)
         if not violations:
             return None
@@ -201,7 +201,7 @@ class Jobs:
             proxy = self.job_device(device)
             status = json.loads(proxy.job_status(json.dumps({"job_id": started["job_id"]})))
             reply.update(self._wait_on_device(proxy, started["job_id"], status, time.monotonic() + wait_s))
-            if not wait and reply.get("state") in ("queued", "running"):  # the job runs in the background and can be stopped or waited for later
+            if not wait and reply.get("state") in ("queued", "running"):  # runs in the background; stop or wait later
                 reply["next_actions"] = [wait_action(started["job_id"]), {"tool": f"{device}_abort", "args": {"job_id": started["job_id"]}}]
         return reply
 
@@ -252,7 +252,7 @@ class Jobs:
             except tango.DevFailed as exc:
                 if device:  # the one device asked for is down
                     raise ToolError(f"{candidate} did not answer ({describe_error(exc)}); try wait_for_job again shortly") from exc
-                unreachable.append(candidate)  # one dead job device must not stop waiting on the others' jobs
+                unreachable.append(candidate)  # one dead job device must not stop the others' waits
                 continue
             if status.get("error", {}).get("code") != "unknown_job":
                 return self._wait_on_device(proxy, job_id, status, time.monotonic() + budget)
@@ -271,11 +271,11 @@ class Jobs:
                 return status
             state = status.get("state")
             if state not in RUNNING_JOB_STATES:
-                if state == "done":  # every phase of the plan ran, so nothing needs running again
+                if state == "done":  # every phase ran
                     results = json.loads(proxy.results(json.dumps({"job_id": job_id})))
                     status.update({k: results[k] for k in ("result_keys", "summary") if k in results}, next_actions=[], warnings=[{"code": "finished"}])
                 return status
-            if time.monotonic() >= deadline:  # still active, so waiting again is the next step
+            if time.monotonic() >= deadline:  # still active: wait again
                 return {**status, "next_actions": [wait_action(job_id)]}
             time.sleep(1.0)
             # Poll job_status and do not block in the device, so abort stays immediate.
@@ -291,7 +291,7 @@ class Jobs:
         async def call() -> dict[str, Any]:
             async with Client(self.analysis, timeout=budget + 15) as client:
                 reply = await client.call_tool("analysis_job_status", {"job_id": job_id, "wait_s": budget}, raise_on_error=False)
-                if reply.is_error and "wait_s" in text(reply):  # this analysis server cannot wait on its side, so poll it
+                if reply.is_error and "wait_s" in text(reply):  # this analysis server cannot wait: poll it
                     deadline = time.monotonic() + budget
                     while True:
                         reply = await client.call_tool("analysis_job_status", {"job_id": job_id}, raise_on_error=False)
@@ -341,14 +341,14 @@ def with_caller(request: Any, caller: str | None, run: str | None = None, risk_o
     if body is None:
         return request
     if not caller and not run and not risk_overrides and "run" not in body:
-        return request  # a reserve with nothing to add goes through as it came
+        return request  # nothing to add: pass it through
     if caller:
         body["caller"] = caller
     # Only the request header may name the run, so one in the request body is dropped.
     body.pop("run", None)
     if run:
         body["run"] = run
-    if risk_overrides:  # the deployment's patterns are added to the caller's and can only mark more commands high
+    if risk_overrides:  # deployment patterns only add high-risk commands
         body["risk_overrides"] = {**(body.get("risk_overrides") if isinstance(body.get("risk_overrides"), dict) else {}), **risk_overrides}
     return json.dumps(body, sort_keys=True, separators=(",", ":"))
 

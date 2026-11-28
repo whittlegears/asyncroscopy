@@ -14,7 +14,7 @@ from .blocks import Block, BlockContext, BlockFailed, register_block
 
 MAX_TILES = 2000
 MOVES = ("image_shift", "stage")  # the two ways to reach a tile
-DEFAULT_MAX_SHIFT_M = 1.0e-6  # per axis, same as scanning_beam.DEFAULT_MAX_IMAGE_SHIFT
+DEFAULT_MAX_SHIFT_M = 1.0e-6  # per axis, as scanning_beam.DEFAULT_MAX_IMAGE_SHIFT
 
 
 def _move_by(args: dict) -> str:
@@ -54,7 +54,7 @@ async def _plan_grid(ctx: BlockContext, args: dict, previous: dict | None) -> di
         for col in cols:
             tiles.append([centre[0] + start + col * step, centre[1] + start + row * step])
     start_shift = [0.0, 0.0]
-    start_fov = await ctx.call("*_get_fov")  # the run puts this back when it ends
+    start_fov = await ctx.call("*_get_fov")  # restored when the run ends
     if isinstance(start_fov, bool) or not isinstance(start_fov, (int, float)) or not start_fov > 0:
         raise BlockFailed(f"the field of view was not a number above 0: {str(start_fov)[:200]}")
     if _move_by(args) == "image_shift":
@@ -164,7 +164,7 @@ async def _acquire_tile(ctx: BlockContext, args: dict, previous: dict | None) ->
             await ctx.call("*_move_stage", {"position": [x, y, *rest]})
             reported = _numbers(await ctx.call("*_get_stage"), 2, f"the stage position at tile {index}")[:2]
             key = await _expose(ctx, args, index)
-    except BaseException:  # on any failure or stop, put back the field of view and the stage
+    except BaseException:  # on any failure or stop, restore the field of view and stage
         if not by_shift and args.get("origin_xy_m"):
             home_xy = _numbers(args["origin_xy_m"], 2, "origin_xy_m (plan_grid's start_xy_m)")[:2]
             await _put_back(ctx, "*_move_stage", {"position": [*home_xy, *rest]})
@@ -245,7 +245,7 @@ register_block(Block(
 
 async def _collect_run(ctx: BlockContext, args: dict, previous: dict | None) -> dict:
     request = {"image_keys": list(args["keys"]), "plan": dict(args.get("plan") or {})}
-    if args.get("stage_xy_m") and args.get("fov_m"):  # used to place images that record no position
+    if args.get("stage_xy_m") and args.get("fov_m"):  # places images that record no position
         request.update(stage_xy_m=[list(xy) for xy in args["stage_xy_m"]], fov_m=float(args["fov_m"]))
     spectra = _spectra_by_tile(request["image_keys"], args.get("spectrum_keys") or [], args.get("spectrum_tiles") or [])
     if any(spectra):

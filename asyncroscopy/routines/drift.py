@@ -37,8 +37,8 @@ from numpy.typing import ArrayLike
 
 from asyncroscopy.registry import Registry
 
-DEFAULT_WINDOW = 12  # how many of the most recent observations the linear tracker fits
-MIN_CONFIDENCE = 0.3  # a registration whose overlap correlation is below this is not a measurement
+DEFAULT_WINDOW = 12  # recent observations the linear tracker fits
+MIN_CONFIDENCE = 0.3  # overlap correlation below this is not a measurement
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class LinearTracker(DriftTracker):
     def _recent(self) -> np.ndarray:
         window = int(self.settings.get("window", DEFAULT_WINDOW))
         kept = self.observations[-max(window, 2):]
-        self.observations = kept  # the state stays bounded however long the map
+        self.observations = kept  # bounded however long the map
         return np.asarray(kept, dtype=np.float64).reshape(-1, 3)
 
     def _fit(self) -> tuple[np.ndarray, np.ndarray, float] | None:
@@ -159,7 +159,7 @@ def tile_offset_m(previous: np.ndarray, image: np.ndarray, pixel_m: float, expec
     rows, cols = a.shape
     height, width = rows - abs(predicted[0]), cols - abs(predicted[1])
     if height < 8 or width < 8:
-        return None  # the tiles do not overlap enough to compare
+        return None  # tiles do not overlap enough
     bound = min(float(bound_m) / pixel_m, 0.6 * min(height, width))
     shift = bounded_shift(a, b, predicted, max(bound, 2.0), 0.5 * height * width / a.size)
     if shift is None:
@@ -208,7 +208,7 @@ def drift_bench(tracker: type[DriftTracker] | str = "linear", seeds: Iterable[in
         direction = np.array([np.cos(angle), np.sin(angle)])
         size = int(imsize + step_px * (grid - 1) + 4 * imsize)
         field = ndimage.gaussian_filter(rng.normal(size=(size, size)), 1.5)
-        origin = 2 * imsize  # canvas pixel of the first tile's corner, with room for drift
+        origin = 2 * imsize  # canvas pixel of the first tile's corner, room for drift
 
         def cut(x_m: float, y_m: float) -> np.ndarray:
             r, c = origin + y_m / pixel, origin + x_m / pixel

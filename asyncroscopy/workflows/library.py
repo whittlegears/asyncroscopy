@@ -334,7 +334,7 @@ class Library:
             raise ValueError("days must be above 0 (leave it out for an approval that holds until revoked)")
         path = self._file(DRAFT, str(name))
         if not path.exists() and self._file(APPROVED, str(name)).exists():
-            path = self._file(APPROVED, str(name))  # it changed after approval and is being approved again
+            path = self._file(APPROVED, str(name))  # changed after approval, approved again
         try:
             source = path.read_text(encoding="utf-8")
         except OSError as exc:

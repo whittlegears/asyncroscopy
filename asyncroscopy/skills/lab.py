@@ -94,7 +94,7 @@ def delete(name: str) -> None:
     if not (folder / "SKILL.md").is_file():
         raise KeyError(f"the lab has no skill named {name!r}; a shipped skill cannot be deleted, only switched off")
     shutil.rmtree(folder)
-    switch(name, on=True)  # nothing stays switched off under a name that no longer exists
+    switch(name, on=True)  # nothing stays off under a vanished name
 
 
 def switched_off() -> set[str]:

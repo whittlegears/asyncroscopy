@@ -30,11 +30,11 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-PREVIEW_TEXT_CHARS = 1500  # longest summary sent with a preview, enough for a spectrum's peak table
-DATA_TOOL_DEADLINE_S = 20.0  # data tools answer within this, so a slow or stuck Tiled cannot hang the agent
+PREVIEW_TEXT_CHARS = 1500  # enough for a spectrum's peak table
+DATA_TOOL_DEADLINE_S = 20.0  # so a stuck Tiled cannot hang the agent
 PREVIEW_DEADLINE_S = 10.0
-LIST_DATA_WINDOW = 300  # newest keys list_data looks through. Tiled refuses pages larger than 300.
-LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
+LIST_DATA_WINDOW = 300  # Tiled refuses pages larger than 300
+LIST_DATA_BUDGET_S = 12.0  # then says how far it got
 # A preview never suggests trying again, because that could run the acquisition again.
 NEXT_STEP = {
     "view": "Try again shortly, or ask for less (a region, or format text).",
@@ -136,7 +136,7 @@ class DataTools:
             if kind and entry.get("kind") != kind:
                 position += 1
                 continue
-            if len(found) == limit:  # this match is past the page, so the next page starts here
+            if len(found) == limit:  # past the page: the next page starts here
                 break
             found.append(entry)
             position += 1
@@ -182,7 +182,7 @@ class DataTools:
             summary, png = self.with_deadline(
                 lambda: views.view(self.tiled_node(result, hints=False), result, "png"), lane="preview", deadline_s=PREVIEW_DEADLINE_S
             )
-        except Exception as exc:  # the hardware already acquired, so report this and do not raise
+        except Exception as exc:  # already acquired: report, do not raise
             if self.verbose:
                 print(f"[preview] could not build a preview for {result!r}: {exc}")
             note = f"image preview unavailable ({exc}). The data were saved; look at them later with view_data(key={result!r}) instead of acquiring again."

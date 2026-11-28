@@ -24,10 +24,10 @@ from asyncroscopy.agents.mcp_tools import McpServer, result_text
 from .blocks import Block, Stopped
 from .checks import edges_of
 
-LEASE_S = 60.0  # the turn is lost this long after the last renewal: a run whose process died frees the instrument
+LEASE_S = 60.0  # lost this long after the last renewal: a dead run frees the instrument
 RENEW_S = 15.0
-POLL_S = 2.0  # how often a queued run asks again
-TICK_S = 0.5  # how often a run holding the turn looks whether it has finished acting
+POLL_S = 2.0
+TICK_S = 0.5  # how often the holder checks whether it has finished acting
 TAKE, GIVE = "take_turn", "give_turn"
 
 
@@ -77,8 +77,8 @@ class Turn:
         self.poll_s = POLL_S if poll_s is None else poll_s
         self.renew_s = RENEW_S if renew_s is None else renew_s
         self.held = False
-        self.lost: str | None = None  # why the turn could not be renewed, when that happened
-        self._giving = False  # the turn is being handed back now: that must run to its end
+        self.lost: str | None = None  # why the turn could not be renewed
+        self._giving = False  # handing back now: must run to its end
         self._keeper: asyncio.Task | None = None
 
     @staticmethod
@@ -104,7 +104,7 @@ class Turn:
                     raise Stopped("the run was stopped while it waited for the instrument")
                 await asyncio.sleep(self.poll_s)
         except BaseException:
-            if not self.held:  # stopped or cancelled while queued: do not keep a place nobody will use
+            if not self.held:  # stopped or cancelled while queued: give up the place
                 with contextlib.suppress(Exception):
                     await _reply(self.instrument, GIVE)
             raise
@@ -125,7 +125,7 @@ class Turn:
                     waited = 0.0
                     try:
                         reply = await _reply(self.instrument, TAKE, {"what": self.what, "lease_s": self.lease_s})
-                    except Exception as exc:  # the endpoint did not answer: the lease may still hold, so try again
+                    except Exception as exc:  # no answer: the lease may still hold, retry
                         self.lost = f"{type(exc).__name__}: {exc}"[:200]
                         continue
                     self.lost = None if reply.get("state") == "held" else "the turn was lost: it went to another run after the lease ran out"
@@ -141,7 +141,7 @@ class Turn:
                 await before_giving()
         finally:
             try:
-                with contextlib.suppress(Exception):  # a turn that could not be given back ends with its lease
+                with contextlib.suppress(Exception):  # an ungiven turn ends with its lease
                     await _reply(self.instrument, GIVE)
             finally:
                 self.held = self._giving = False
@@ -150,7 +150,7 @@ class Turn:
         """Stop renewing and give the turn back (nothing to do when it was given back already)."""
         keeper, self._keeper = self._keeper, None
         if keeper is not None and keeper is not asyncio.current_task():
-            if not self._giving:  # cancelled half way through handing back, the turn would stay held until its lease ended
+            if not self._giving:  # cancelled mid hand-back, the turn would stay held until its lease ended
                 keeper.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await keeper

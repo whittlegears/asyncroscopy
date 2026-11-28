@@ -101,7 +101,7 @@ def _returns(tool, hint: dict | None, purpose: str) -> dict | None:
     out = tool.output_schema or {}
     props = out.get("properties") or {}
     found = _json_type(props["result"]) if out.get("x-fastmcp-wrap-result") and "result" in props else ({"type": out["type"]} if out.get("type") else {})
-    if found.get("type") == "null":  # a command that returns nothing
+    if found.get("type") == "null":  # returns nothing
         found = {}
     found.update(hint or {})
     if found and "units" not in found and _units(purpose):
@@ -135,7 +135,7 @@ def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
             try:
                 entry[key[:3]] = float(value)
             except ValueError:
-                pass  # no limit is set
+                pass
         found.append(entry)
     return found
 
@@ -176,7 +176,7 @@ def build(server: MCPServer) -> dict[str, Any]:
                 action["returns"] = returns
             if hint.get("primary") is True:
                 action["primary"] = True
-            if hint.get("unsupported") is True:  # offered only on the operator endpoint; the device always refuses it
+            if hint.get("unsupported") is True:  # operator endpoint only; the device always refuses it
                 action["unsupported"] = True
             actions.append(action)
             if not tool.acts and not tool.action_role.startswith("job."):
@@ -215,7 +215,7 @@ def _job(server, prefix: str, device) -> dict:
         try:
             text = str(device.proxy.read_attribute(name).value)
             return json.loads(text) if text else None
-        except Exception:  # the device has no such attribute or it is not JSON
+        except Exception:  # no such attribute, or not JSON
             return None
 
     example = device.plan_example

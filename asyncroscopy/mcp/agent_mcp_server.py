@@ -198,7 +198,7 @@ class AgentMCPServer:
             print(f"MCP workflow operator endpoint ready: {len(native)} tool(s) registered", flush=True)
             return
         native = [self.endpoint_info, self.query_agent, self.spawn_agent, self.list_agents, self.list_agent_tools, self.complete, self.set_max_steps]
-        if self.workflows is not None:  # lets a client run a workflow without a model
+        if self.workflows is not None:  # run a workflow without a model
             native += self.workflows.tools()
         for tool_func in native:
             self.mcp.add_tool(tool_func)

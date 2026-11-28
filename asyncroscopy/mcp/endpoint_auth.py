@@ -154,7 +154,7 @@ def required_role(tool) -> str:
 
 
 def is_loopback(host: str) -> bool:
-    return is_loopback_host(host)  # one rule for every bind check
+    return is_loopback_host(host)
 
 def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | dict | None) -> str | None:
     """Why a server must not start: real hardware (simulated: false, or not known) reachable from other
@@ -228,7 +228,7 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
             if token is None:
                 raise ToolError(f"{name} refused: this endpoint needs a valid bearer token (mcp.auth)")
             names = [name]
-            if name == "call_tool":  # call_tool runs another tool, so the token needs that tool's role too
+            if name == "call_tool":  # call_tool runs another tool: the token needs that tool's role
                 names.append(str((context.message.arguments or {}).get("name", "")))
             for checked in names:
                 need = self._needs(checked)

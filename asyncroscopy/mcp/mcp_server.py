@@ -70,7 +70,7 @@ class ServerConfig:
     endpoint_role: str
     data_device_address: str
     risk_overrides: dict[str, str] = field(default_factory=dict)
-    auto_routine: dict[str, list[str]] | None = None  # from mcp.safety.auto_routine. None means the routine declarations of the devices apply.
+    auto_routine: dict[str, list[str]] | None = None  # from mcp.safety.auto_routine; None: the devices' declarations apply
     urls: dict[str, str | None] = field(default_factory=endpoint_urls)
     needs_approval: dict[str, list[str]] = field(default_factory=dict)
     permissions_file: str = ""
@@ -79,7 +79,7 @@ class ServerConfig:
     trace_follow: list[str] = field(default_factory=list)
     verbose: bool = True
     auth: Any = None
-    agent_profile: str | None = None  # agent profile file whose tool selection endpoint_info reports
+    agent_profile: str | None = None  # whose tool selection endpoint_info reports
 
     def high_overrides(self) -> dict[str, str]:
         """The mcp.safety.risk patterns that mark commands high: what a job's dry run must record, not pass through."""
@@ -176,15 +176,15 @@ class MCPServer:
         self.trace = TraceWriter(
             trace_path, source="mcp", writer=f"mcp:{name}:{endpoint_role}", clock=InstrumentClock(clock_device or ""),
         ) if trace_path else None
-        self.devices: dict[str, DeviceInfo] = {}  # tool prefix -> its device
-        self.descriptors: dict[str, ToolDescriptor] = {}  # maps a tool name to what it is, for device tools and native tools
-        self.tools: dict[str, dict[str, Callable]] = {}  # tool prefix -> command -> its wrapper
-        self.registered: dict[str, Tool] = {}  # maps a tool name to the MCP tool with its description and input schema
+        self.devices: dict[str, DeviceInfo] = {}  # tool prefix -> device
+        self.descriptors: dict[str, ToolDescriptor] = {}  # tool name -> descriptor, device and native tools
+        self.tools: dict[str, dict[str, Callable]] = {}  # tool prefix -> command -> wrapper
+        self.registered: dict[str, Tool] = {}  # tool name -> MCP tool
         self.native_names: set[str] = set()
         self.interceptors: list[Interceptor] = []
-        self._lowered: set[str] = set()  # tools an override made low that the declarations or rules would hold
-        self.risk_warnings: list[str] = []  # the safety lines that setup printed
-        self.risk_fallbacks: dict[str, list[str]] = {}  # tool prefix -> commands whose risk only the name rules decided
+        self._lowered: set[str] = set()  # made low by an override, though declarations or rules would hold them
+        self.risk_warnings: list[str] = []  # safety lines setup printed
+        self.risk_fallbacks: dict[str, list[str]] = {}  # tool prefix -> commands whose risk only name rules decided
         self.discovery_warnings: list[str] = []
         self.may_call: Callable[[str], bool] = lambda name: True
         cfg = self.config
@@ -382,7 +382,7 @@ class MCPServer:
     def _attribute(dev: DeviceProxy, name: str) -> str | None:
         try:
             return str(getattr(dev, name))
-        except Exception:  # an older job device without it
+        except Exception:  # an older job device
             return None
 
     def _warn_if_fault(self, device_name: str, dev: DeviceProxy) -> None:
@@ -428,7 +428,7 @@ class MCPServer:
     @staticmethod
     def _normalize_command_result(out_type: CmdArgType, result: Any) -> Any:
         """Convert Tango command output into JSON-safe data for MCP transport."""
-        result = numpy_to_python(result)  # numpy types, nested too, as plain Python
+        result = numpy_to_python(result)
         if out_type != CmdArgType.DevEncoded or not isinstance(result, tuple) or len(result) != 2:
             return result
         metadata_raw, payload_raw = result
@@ -526,7 +526,7 @@ class MCPServer:
                     try:
                         arg = json.loads(arg)
                     except json.JSONDecodeError:
-                        pass  # the device reports text that is not JSON
+                        pass  # not JSON
                 if isinstance(arg, (dict, list)):
                     arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
                 return _run({param_name: numpy_to_python(arg)}, arg)
@@ -681,7 +681,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
     parser.add_argument("--endpoint-role", default="agent", choices=ENDPOINT_ROLES)
-    parser.add_argument("--approvals-device-address", default="", help=argparse.SUPPRESS)  # ignored and kept so old launch lines still parse
+    parser.add_argument("--approvals-device-address", default="", help=argparse.SUPPRESS)  # kept so old launch lines still parse
     parser.add_argument("--risk-json", default="{}", help='{"Class.command" glob: "low"|"high"} overrides.')
     parser.add_argument("--auto-routine-json", default="", help='{"stem": [command globs], "tools": [tool globs]}: what auto mode runs; empty: the packaged profile.')
     parser.add_argument("--agent-profile", default="", help="Agent profile YAML whose tool selection endpoint_info reports; empty: the default.")
@@ -750,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
         args.http_host, note = bind_host(args.http_host, args.allow_remote_bind, simulated)
         if note:
             print(note, flush=True)
-        if not auth and is_remote_host(args.http_host):  # run_mcp checks this too, but a direct start must not skip it
+        if not auth and is_remote_host(args.http_host):  # run_mcp checks too, but a direct start must not skip it
             refused = endpoint_auth.remote_without_auth(args.http_host, stack_simulated(args.tango_host, args.tango_port), auth)
             if refused:
                 print(f"MCP ERROR: {refused}", flush=True)
@@ -763,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     for module in json.loads(args.data_views_json):
         try:
-            importlib.import_module(module)  # registers its data kinds for view_data and previews
+            importlib.import_module(module)  # registers its data kinds
         except Exception as exc:
             print(f"MCP ERROR: mcp.data_views lists {module!r}, which could not be imported: {type(exc).__name__}: {exc}", flush=True)
             return 1

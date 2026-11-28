@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 STOP_ALL_WAIT_S = 20.0
-ABORT_ALL = "abort_all"  # the job envelope's stop for every job of a device
+ABORT_ALL = "abort_all"  # the envelope's stop for every job of a device
 FINISHED = ("aborted", "done", "failed")
 
 
@@ -31,9 +31,9 @@ class StopTarget:
 
     prefix: str
     proxy: Any
-    energy: list[str] = field(default_factory=list)  # stop energy reaching the sample, called in both phases
-    other: list[str] = field(default_factory=list)  # abort jobs and lift probes, called in the first phase
-    retracts: set[str] = field(default_factory=set)  # probe lifts, where a reply of True means the probe is still engaged
+    energy: list[str] = field(default_factory=list)  # stop energy reaching the sample; both phases
+    other: list[str] = field(default_factory=list)  # abort jobs and lift probes; first phase
+    retracts: set[str] = field(default_factory=set)  # True means the probe is still engaged
 
 
 def stop_all(targets: list[StopTarget], *, who: str,
@@ -58,7 +58,7 @@ def stop_all(targets: list[StopTarget], *, who: str,
             try:
                 reply = target.proxy.command_inout(command)
                 step: dict[str, Any] = {"tool": f"{target.prefix}_{command}", "ok": True}
-                if reply is True and command in target.retracts:  # an SPM retract answers True when it is still approached
+                if reply is True and command in target.retracts:  # an SPM retract answers True while still approached
                     step.update(ok=False, error="the device says the probe is still engaged")
                 if command == ABORT_ALL:
                     states = [job.get("state") for job in json.loads(str(reply)).get("aborted", [])]

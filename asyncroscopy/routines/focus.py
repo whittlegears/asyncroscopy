@@ -105,7 +105,7 @@ def peak_estimate(xs: ArrayLike, ys: ArrayLike) -> float:
     y = np.asarray(ys, dtype=np.float64)[order]
     best = int(np.argmax(y))
     lo, hi = max(0, best - 1), min(len(x), best + 2)
-    if hi - lo < 3:  # the best sample is at an end, so widen inwards
+    if hi - lo < 3:  # best sample at an end: widen inwards
         lo, hi = max(0, min(lo, len(x) - 3)), min(len(x), max(hi, 3))
     vertex = parabola_vertex(x[lo:hi], y[lo:hi]) if hi - lo >= 3 else None
     if vertex is None:

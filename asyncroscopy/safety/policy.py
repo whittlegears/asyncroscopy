@@ -52,7 +52,7 @@ from typing import Iterable
 from asyncroscopy.core.names import ENVELOPE_VERBS
 
 STOP_VERBS = frozenset({"abort", "stop", "halt", "pause", "estop"})  # may also stop a motion or a job
-RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample, and take hardware objects only
+RETREAT_VERBS = frozenset({"retract", "withdraw", "disengage"})  # move away from the sample; hardware objects only
 STOP_OBJECTS = frozenset({
     "beam", "emission", "lamp", "light", "laser", "shutter", "gun", "filament", "hv",
     "tip", "probe", "stage", "all", "x", "y", "z", "xy", "xyz", "motor", "motors", "now",
@@ -117,7 +117,7 @@ def is_safe_stop(command: str, probe: bool = False) -> bool:
     verb_at = ordered.index(verbs[0])
     before, after = set(ordered[:verb_at]), set(ordered[verb_at + 1:])
     # A motion is stopped only after the verb: abort_approach stops, approach_stop approaches.
-    if verbs[0] == "off":  # a bare Off cuts power, and on a stage that drops holding torque
+    if verbs[0] == "off":  # a bare Off cuts power; a stage loses holding torque
         return bool(before) and before <= OFF_OBJECTS
     if verbs[0] == "disengage":
         return bool(before | after) and (before | after) <= DISENGAGE_OBJECTS
@@ -148,7 +148,7 @@ def risk_of(dev_class: str, command: str, overrides: dict[str, str] | None = Non
     with a probe, so a bare retract lifts it away (see ``is_probe_device``)."""
     key = _key(dev_class, command)
     matched = [level for pattern, level in check_overrides(overrides).items() if fnmatchcase(key, pattern.lower())]
-    if matched:  # overrides that disagree never lower a command
+    if matched:  # disagreeing overrides never lower a command
         return "high" if "high" in matched else matched[0]
     name = command.lower()
     if is_safe_stop(command, probe=probe):

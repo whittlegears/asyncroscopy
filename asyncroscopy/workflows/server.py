@@ -51,12 +51,12 @@ from .blocks import describe_blocks
 from .graph import Workflow
 from .library import APPROVED, SHIPPED, Library, fingerprint_of, matched_calls, needs_approval, rehearsal_passed
 
-MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
-MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
+MIN_REQUEST_CHARS = 12  # shorter is a placeholder
+MAX_WAIT_S = 100.0  # below our MCP client's 120 s per call
 RECORD_KEYS = ("run_id", "workflow", "state", "queue", "problems", "error", "questions", "approvals", "inputs", "outputs", "at_node", "cleanup", "unrestored",
                "calls", "tools_called", "started", "ended", "instrument_url", "preapproval", "results")
 OUTPUT_CHARS = 1500
-GOING = ("running", "queued")  # a run in one of these has a process driving it, or waiting to
+GOING = ("running", "queued")  # a process drives or is about to drive it
 
 
 def requester() -> str | None:
@@ -65,7 +65,7 @@ def requester() -> str | None:
         from fastmcp.server.dependencies import get_http_headers
 
         value = get_http_headers(include_all=True).get(CALLER_HEADER.lower(), "")
-    except Exception:  # no HTTP request: stdio, or a direct call in a test
+    except Exception:  # no HTTP request: stdio or a direct call
         return None
     return value.strip() or None
 
@@ -195,7 +195,7 @@ class WorkflowServer:
             results = await signoff.rehearsal_results(self.state_dir, record, operator)
             try:
                 self.library.record_rehearsal(workflow, record, info, results)
-            except OSError:  # the runner already saved the run so losing the rehearsal is harmless
+            except OSError:  # already saved: losing the rehearsal is harmless
                 pass
         elif granted and record.get("state") != "waiting":
             await signoff.end(operator, run_id)
@@ -579,7 +579,7 @@ class WorkflowServer:
                 offered = sorted(t.name for t in await instrument.list_tools())
                 offered_analysis = sorted(t.name for t in await analysis.list_tools()) if analysis is not None else None
             except Exception:
-                pass  # the live tools are checked again when it runs
+                pass  # the live tools are checked again at run time
             result = server.library.propose(str(source), offered, offered_analysis, request=asked, context=context)
             if result["ok"]:
                 result["next"] = (f"kept as a request named {result['name']}, waiting for a person. Tell the user it is there for them to "

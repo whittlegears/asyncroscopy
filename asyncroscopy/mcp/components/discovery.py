@@ -21,7 +21,7 @@ class Discovery:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
         self.urls = cfg.urls
-        self.agent_profile = cfg.agent_profile  # the profile whose tool selection endpoint_info reports. None means the default profile.
+        self.agent_profile = cfg.agent_profile  # whose tool selection endpoint_info reports; None for the default
 
     def natives(self) -> list:
         return [self.endpoint_info, self.action_space, self.find_tools, self.call_tool]

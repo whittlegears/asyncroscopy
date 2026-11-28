@@ -40,15 +40,15 @@ class Call:
     """One call of a device tool, as the interceptors see it."""
 
     tool: ToolDescriptor
-    arguments: dict[str, Any]  # as the caller gave them, which is what gets logged and fingerprinted
+    arguments: dict[str, Any]  # as given; logged and fingerprinted
     call_args: tuple  # what the device command gets
     caller: str | None = None
     run: str | None = None
     started: float = field(default_factory=time.time)
     t0: float = field(default_factory=time.perf_counter)
     trace: dict[str, Any] = field(default_factory=dict)  # fields every trace event of this call carries
-    context: dict[str, Any] = field(default_factory=dict)  # what one interceptor leaves for a later one
-    reply: Any = None  # the device's reply as logged
+    context: dict[str, Any] = field(default_factory=dict)  # left by one interceptor for a later one
+    reply: Any = None  # as logged
 
     def duration_s(self) -> float:
         return time.perf_counter() - self.t0

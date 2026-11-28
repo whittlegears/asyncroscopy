@@ -72,12 +72,12 @@ class Settings:
     tiled_uri: str | None
     tiled_public_uri: str
     tiled_api_key: str | None = field(repr=False)
-    plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY, the name Tiled's own tools use
+    plain_tiled_api_key: str | None = field(repr=False)  # TILED_API_KEY, Tiled's own name
 
     model: str | None
     model_provider: str | None
     num_ctx: int | None
-    ollama_host: str | None  # OLLAMA_HOST, the name the Ollama client itself reads
+    ollama_host: str | None  # OLLAMA_HOST, the Ollama client's own name
     agent_profile: str
     agent_tools: tuple[str, ...]
     agent_prompt: str | None
@@ -87,14 +87,14 @@ class Settings:
     poll_s: float
     claim_check: bool
     auto_promote_after: int
-    learn_skills: bool  # a goal run that met its goal drafts a learned skill
+    learn_skills: bool  # a goal run that met its goal drafts a skill
 
     plugins: str
     agent_dir: Path
     skills_path: tuple[Path, ...]
-    lab_skills: Path  # the lab's own skills, written from a client (asyncroscopy.skills.lab)
-    skills: bool  # agent skills on or off
-    skills_off: tuple[str, ...]  # skill names or globs to hide
+    lab_skills: Path  # written from a client (asyncroscopy.skills.lab)
+    skills: bool
+    skills_off: tuple[str, ...]  # names or globs to hide
 
     qt_api: str
     write_golden: bool
@@ -127,7 +127,7 @@ class Settings:
             operator_token=env.get("ASYNCROSCOPY_OPERATOR_TOKEN") or None,
             tiled_uri=env.get("ASYNCROSCOPY_TILED_URI") or None,
             tiled_public_uri=env.get("ASYNCROSCOPY_TILED_PUBLIC_URI", "").strip().rstrip("/"),
-            tiled_api_key=env.get("ASYNCROSCOPY_TILED_API_KEY"),  # "" is a key an operator set on purpose
+            tiled_api_key=env.get("ASYNCROSCOPY_TILED_API_KEY"),  # "" is a key set on purpose
             plain_tiled_api_key=env.get("TILED_API_KEY") or None,
             model=env.get("ASYNCROSCOPY_MODEL") or None,
             model_provider=env.get("ASYNCROSCOPY_MODEL_PROVIDER") or None,

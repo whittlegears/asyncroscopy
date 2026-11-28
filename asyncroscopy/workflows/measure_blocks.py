@@ -13,7 +13,7 @@ from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 from .blocks import Block, BlockContext, BlockFailed, register_block
 from .shipped_blocks import _numbers
 
-PEAKS_CUT = "data (sums"  # a spectrum's text goes on to its channel table, which crowds the peaks out of a small model's view
+PEAKS_CUT = "data (sums"  # cuts the channel table that crowds out the peaks
 PEAKS_CHARS = 3000
 ELEMENTS_LINE = "elements most consistent with these peaks"
 

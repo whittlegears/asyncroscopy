@@ -56,7 +56,7 @@ class BeamCurrent:
     source: str  # "measured" or "default"
     age_s: float | None
     simulated: bool
-    refused: str | None  # why it may not be used for a dose budget, or None when it may
+    refused: str | None  # why it may not set a dose budget, or None
 
     def estimate(self) -> dict:
         """The fields a job's estimate reports about the current it used."""

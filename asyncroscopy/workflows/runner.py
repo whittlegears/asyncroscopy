@@ -71,8 +71,8 @@ def twin_only_problem(endpoint_info: dict, hardware: bool = False) -> str | None
     return None if hardware or endpoint_info.get("simulated") is True else TWIN_ONLY
 
 
-PROGRESS_EVERY_S = 1.0  # how often a run's progress file is rewritten
-MAX_TILES_SHOWN = 600  # the most placed tiles a progress reply lists
+PROGRESS_EVERY_S = 1.0
+MAX_TILES_SHOWN = 600
 
 
 def progress(run_id: str, state_dir: str | Path | None = None) -> dict | None:
@@ -114,7 +114,7 @@ def _write_progress(ctx: BlockContext, path: Path) -> None:
     staged.write_text(json.dumps(_live_progress(ctx), default=str), encoding="utf-8")
     try:
         staged.replace(path)
-    except OSError:  # a reader holds the file open (Windows): this update is skipped, the next one replaces it
+    except OSError:  # a reader holds it open (Windows): the next update replaces it
         staged.unlink(missing_ok=True)
 
 
@@ -137,7 +137,7 @@ def _live_progress(ctx: BlockContext) -> dict:
     image = latest_image(ctx.calls)
     if image:
         out["latest_image"] = image
-    if ctx.tiles:  # the newest MAX_TILES_SHOWN, so a status reply stays small on a large map
+    if ctx.tiles:  # newest only, so a status reply stays small
         out["tiles"] = list(ctx.tiles.values())[-MAX_TILES_SHOWN:]
         out["tiles_total"] = len(ctx.tiles)
     return out
@@ -214,7 +214,7 @@ async def _checkpointer(state_dir: Path, durable: bool):
         return
     try:
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-    except ImportError:  # without langgraph-checkpoint-sqlite the run works but cannot be resumed
+    except ImportError:  # without langgraph-checkpoint-sqlite the run cannot resume
         yield InMemorySaver(), False
         return
     state_dir.mkdir(parents=True, exist_ok=True)
@@ -364,7 +364,7 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
         path.write_text(json.dumps(kept, indent=1, default=str), encoding="utf-8")
 
     with _run_lock(state_dir, run_id):
-        if not start:  # another process may have moved the run on between reading its record and taking the lock
+        if not start:  # another process may have moved the run on
             latest = read_run(run_id, state_dir)
             if latest.get("state") == "done":
                 return latest
@@ -411,7 +411,7 @@ async def _clean_up(ctx: BlockContext, used: list) -> list[dict]:
         try:
             await ctx.call_always(pattern)
             cleanup.append({"tool": pattern, "ok": True})
-        except Exception as exc:  # the operator must see a cleanup that failed
+        except Exception as exc:  # the operator must see a failed cleanup
             cleanup.append({"tool": pattern, "ok": False, "error": str(exc)[:300]})
     return cleanup
 
@@ -525,7 +525,7 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             state, error = "stopped", str(exc)
         except (BlockFailed, GraphRecursionError) as exc:
             state, error = "failed", str(exc)
-        except Exception as exc:  # a bug in a block must not skip the cleanup or the record
+        except Exception as exc:  # a block bug must not skip the cleanup or the record
             state, error = "failed", f"{type(exc).__name__}: {exc}"
         snapshot = await graph.aget_state(config)
         questions = _pending(snapshot)
@@ -536,7 +536,7 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             ctx.journal.clear()
         # Cleaned up already when it gave the instrument back; a blank now could land in the next run's tile.
         cleanup = list(ctx.cleaned) if ctx.cleaned is not None else await _clean_up(ctx, used)
-        if state != "done":  # the run ended part way: put back what it changed and has not put back itself
+        if state != "done":  # ended part way: undo what it has not undone itself
             for name, entry in ctx.restores.items():
                 restore = entry["restore"]
                 try:

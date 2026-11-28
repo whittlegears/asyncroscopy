@@ -73,17 +73,17 @@ class Skill:
     tools: list[str] = field(default_factory=list)
     requires: list[str] = field(default_factory=list)
     unless: list[str] = field(default_factory=list)  # unavailable when the endpoint offers any of these
-    keywords: list[str] = field(default_factory=list)  # phrases that select it for a request
+    keywords: list[str] = field(default_factory=list)  # phrases that select it
     min_asyncroscopy: str | None = None
     envelope_schema: str | None = None
-    problem: str | None = None  # why it cannot be used here, if it cannot
-    learned: bool = False  # drafted by an agent from a past run and promoted by an operator
-    status: str | None = None  # a learned skill's review state, draft or promoted
+    problem: str | None = None  # why it cannot be used here
+    learned: bool = False  # drafted by an agent, promoted by an operator
+    status: str | None = None  # draft or promoted
     acts: bool = False  # following it moves or exposes the instrument
-    matched: bool = True  # chosen for a request by its words. False means only another skill sends the agent to it
-    new_map: bool = False  # the procedure a request for a new map gets first
-    source: str = "shipped"  # shipped, path ($ASYNCROSCOPY_SKILLS_PATH), lab (written from a client) or learned
-    off: bool = False  # switched off on this endpoint (asyncroscopy.skills.lab.switch)
+    matched: bool = True  # False: only another skill sends the agent to it
+    new_map: bool = False  # what a new-map request gets first
+    source: str = "shipped"  # shipped, path ($ASYNCROSCOPY_SKILLS_PATH), lab or learned
+    off: bool = False  # asyncroscopy.skills.lab.switch
     enabled: bool = True
 
     @property
@@ -132,7 +132,7 @@ def read_front_matter(path: Path) -> tuple[dict, str]:
     meta = yaml.safe_load(front) or {}
     if not isinstance(meta, dict):
         raise ValueError(f"{path} front matter is not a mapping")
-    body = re.sub(r"<!--.*?-->", "", body, flags=re.S).strip()  # notes to the skill's author never reach a prompt
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.S).strip()  # author notes never reach a prompt
     if stamp is not None:
         _front_matter[path] = (stamp, copy.deepcopy(meta), body)
     return meta, body
@@ -220,7 +220,7 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
     ``enabled: false`` is listed as unavailable. With ``tool_names``, skills whose ``requires`` are not all offered,
     or that offers one of their ``unless``, are marked unavailable too. ``$ASYNCROSCOPY_SKILLS`` off lists none."""
     skills: dict[str, Skill] = {}
-    if not settings.get().skills:  # skills are switched off by $ASYNCROSCOPY_SKILLS
+    if not settings.get().skills:  # $ASYNCROSCOPY_SKILLS
         return []
     for base in skill_dirs():
         if not base.is_dir():
@@ -231,7 +231,7 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
             except (ValueError, yaml.YAMLError) as exc:
                 skill = Skill(name=path.parent.name, description="(unreadable skill file)", path=path, problem=str(exc))
             skill.source = _source(base)
-            skills[skill.name] = skill  # later folders, such as a lab's own, replace packaged skills of the same name
+            skills[skill.name] = skill  # later folders, such as a lab's, replace same-named packaged skills
     learned = learned_dir()
     if learned.is_dir():
         for path in _skill_files(learned):
@@ -239,7 +239,7 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
                 skill = _cached_skill(path)
             except (ValueError, yaml.YAMLError):
                 continue
-            if skill.status == "promoted" and skill.name not in skills:  # drafts are never offered, and shipped skills win
+            if skill.status == "promoted" and skill.name not in skills:  # drafts never offered; shipped skills win
                 skill.learned = True
                 skill.source = "learned"
                 skills[skill.name] = skill
@@ -250,7 +250,7 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
             skill.problem = "disabled: enabled is false in its SKILL.md"
     from asyncroscopy.skills.lab import switched_off
 
-    for name in switched_off() & skills.keys():  # still listed, so a client can switch it on again
+    for name in switched_off() & skills.keys():  # still listed, so a client can switch it on
         skills[name].off = True
         skills[name].problem = skills[name].problem or "switched off on this endpoint"
     if tool_names is not None:
@@ -278,9 +278,9 @@ STOP = frozenset(
     "a an and are as at be by do for from how i in into is it its me my of on or our please so that the their them then this to "
     "up us use using we what when where which with you your can could would should will".split()
 )
-MAX_MATCHED = 2  # skills chosen from the request. A small model follows one or two well
-PROMPT_BUDGET_CHARS = 7000  # about 1800 tokens of skill text, which fits an 8k context with the tools
-MATCH_THRESHOLD = 2.0  # one keyword phrase or two words of the skill name
+MAX_MATCHED = 2  # a small model follows one or two well
+PROMPT_BUDGET_CHARS = 7000  # about 1800 tokens, fits an 8k context with the tools
+MATCH_THRESHOLD = 2.0  # one keyword phrase or two name words
 
 
 def _stem(word: str) -> str:

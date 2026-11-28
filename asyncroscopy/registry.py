@@ -93,7 +93,7 @@ class Registry(Generic[T]):
         for point in entry_points(group=self.group):
             try:
                 self.register(point.load())
-            except Exception as exc:  # a broken plug-in must not take the device down, so it is reported instead
+            except Exception as exc:  # a broken plug-in is reported, never takes the device down
                 self._fail(f"entry point {point.name!r}", exc)
 
     def errors(self) -> dict[str, str]:

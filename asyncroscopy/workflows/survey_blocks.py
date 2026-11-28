@@ -22,14 +22,14 @@ from .shipped_blocks import DEFAULT_MAX_SHIFT_M, _expose, _numbers, _put_back
 
 MAX_SURVEY_TILES = 20000
 MAX_SPECTRA_POINTS = 500  # each point adds several checkpoints of the whole run
-NEIGHBOUR_REACH = 0.9  # tiles closer than this share of a field of view on both axes overlap enough to compare
+NEIGHBOUR_REACH = 0.9  # share of a field on both axes below which tiles overlap enough to compare
 COUNTS = ("taken", "matched", "unmatched", "unchecked", "extra")
 
 
 def _level(size: float, fov: float, overlap: float, max_shift: float, per_side: int = 0) -> dict:
     step = fov * (1.0 - overlap)
     tiles = per_side or (max(1, math.ceil((size - fov) / step - 1e-9) + 1) if size > fov else 1)
-    reach = max(1, math.floor(2.0 * max_shift / step + 1e-9) + 1)  # tiles per side that image shift can reach
+    reach = max(1, math.floor(2.0 * max_shift / step + 1e-9) + 1)  # tiles per side image shift can reach
     fields = math.ceil(tiles / reach)
     in_field = math.ceil(tiles / fields)
     return {"fov_m": fov, "step_m": step, "fields_per_side": fields, "tiles_per_field_side": in_field, "count": (fields * in_field) ** 2}
@@ -168,7 +168,7 @@ class _Visit:
         """Take one more image centred on ``at``. Use image shift if it reaches, or move the stage there."""
         offset = [at[0] - self.origin[0], at[1] - self.origin[1]]
         if max(abs(offset[0]), abs(offset[1])) > self.max_shift * (1 + 1e-9):
-            await self.go_to(-1, at)  # -1 is no real field, so the next tile moves the stage to its own
+            await self.go_to(-1, at)  # -1 is no real field: the next tile moves the stage
             offset = [0.0, 0.0]
         return await self.take(offset, what)
 
@@ -226,7 +226,7 @@ async def _survey_tiles(ctx: BlockContext, args: dict, previous: dict | None) ->
     moves = any(int(level["fields_per_side"]) > 1 for level in levels)
 
     last = previous or {}
-    fresh = not previous or int(last["remaining"]) == 0  # true on the first visit and when a level has just finished
+    fresh = not previous or int(last["remaining"]) == 0  # first visit, or a level just finished
     level = (int(last["level"]) + 1 if previous else 0) if fresh else int(last["level"])
     if level >= len(levels):
         return {**last, "measure": 0}
@@ -239,7 +239,7 @@ async def _survey_tiles(ctx: BlockContext, args: dict, previous: dict | None) ->
 
     measure, done = 0, 0
     try:
-        await ctx.call("*_set_fov", {"fov": fov})  # set on every visit because a failed run put the old one back
+        await ctx.call("*_set_fov", {"fov": fov})  # every visit: a failed run restored the old one
         try:
             while True:
                 await visit.take_tile(plan, centre, index, check)
@@ -251,7 +251,7 @@ async def _survey_tiles(ctx: BlockContext, args: dict, previous: dict | None) ->
                 index += 1
         finally:
             await _put_back(ctx, "*_set_image_shift", {"shift": home_shift})
-    except BaseException:  # on any failure or stop, put back the field of view
+    except BaseException:  # on any failure or stop, restore the field of view
         if home_fov:
             await _put_back(ctx, "*_set_fov", {"fov": float(home_fov)})
         raise

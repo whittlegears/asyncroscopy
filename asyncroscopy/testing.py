@@ -94,7 +94,7 @@ class _DeviceList:
 class TestMCPServer(MCPServer):
     """An MCPServer over devices in a test context, with the tool descriptions an agent would read."""
 
-    __test__ = False  # not a pytest test class
+    __test__ = False
 
     def list_tool_risks(self) -> dict[str, str]:
         """Tool name -> "low" or "high", without calling anything."""

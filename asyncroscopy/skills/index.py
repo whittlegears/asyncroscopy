@@ -26,11 +26,11 @@ from dataclasses import dataclass
 
 from asyncroscopy.skills.registry import NEGATED_WORD, STOP, Skill, _stamp, _stem, match_score, read_front_matter
 
-MAX_PASSAGE_CHARS = 600  # a section longer than this is split by its list items or paragraphs
-PER_SKILL = 2  # passages one skill gives a step, so the best of several skills come rather than one manual
-MIN_SCORE = 3.0  # below this a passage shares too little with the query to help
-SKILL_WEIGHT = 0.5  # how much the skill's own match (keywords, name, description) adds to each of its passages
-HEADING_WEIGHT = 2  # a heading word counts as this many words of text
+MAX_PASSAGE_CHARS = 600  # longer sections split by list items or paragraphs
+PER_SKILL = 2  # passages per skill, so several skills contribute
+MIN_SCORE = 3.0  # below this a passage shares too little with the query
+SKILL_WEIGHT = 0.5  # what a skill's own match adds to each passage
+HEADING_WEIGHT = 2  # a heading word counts as this many words
 K1, B = 1.2, 0.75  # BM25's usual constants
 
 _passages: dict[str, tuple[tuple[int, int] | None, tuple[Passage, ...]]] = {}
@@ -38,11 +38,11 @@ _passages: dict[str, tuple[tuple[int, int] | None, tuple[Passage, ...]]] = {}
 
 @dataclass(frozen=True)
 class Passage:
-    skill: str  # the skill's name
+    skill: str
     title: str  # the manual's first heading
-    heading: str  # the section's heading, "" for text before the first section
+    heading: str  # "" for text before the first section
     text: str
-    order: int  # its place in the manual
+    order: int  # place in the manual
 
     @property
     def label(self) -> str:
@@ -150,7 +150,7 @@ def search(parts: Sequence[tuple[str, float]], skills: Sequence[Skill], *, k: in
     for i, passage in enumerate(pool):
         text_score = sum(w * index.score(i, q) for q, w in queries)
         if text_score <= 0:
-            continue  # a passage sharing no word with the query is never chosen for its skill's name alone
+            continue  # never chosen for its skill's name alone
         score = text_score + SKILL_WEIGHT * skill_match.get(passage.skill, 0.0) + boost.get(passage.skill, 0.0)
         if score >= min_score and (by_name[passage.skill].matched or passage.skill in boost):
             scored.append((score, -passage.order, passage))
@@ -178,7 +178,7 @@ def passages_text(passages: Sequence[Passage], budget: int) -> tuple[str, list[P
         used += size
     first: dict[str, int] = {}
     for i, passage in enumerate(fitted):
-        first.setdefault(passage.skill, i)  # skills in the order of their best passage
+        first.setdefault(passage.skill, i)  # skills in order of their best passage
     fitted.sort(key=lambda p: (first[p.skill], p.order))
     # The label leaves out the skill's name, because a model may call the name as a tool.
     return "\n\n".join(f"--- {p.label} ---\n{p.text}" for p in fitted), fitted

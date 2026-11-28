@@ -78,7 +78,7 @@ class ToolDescriptor:
     routine: bool = False
     stop: bool = False
     job_start: bool = False
-    void: bool = False  # takes no argument
+    void: bool = False
 
 
 @dataclass
@@ -93,10 +93,10 @@ class DeviceInfo:
     envelope: bool = False  # runs jobs
     job_kind: str | None = None
     plan_example: str | None = None
-    in_types: dict[str, Any] = field(default_factory=dict)  # Tango input type of each command
+    in_types: dict[str, Any] = field(default_factory=dict)
     commands: set[str] = field(default_factory=set)
-    hints: dict[str, dict] = field(default_factory=dict)  # action_hints entry of each command
-    hints_unreadable: bool = False  # it has action_hints that could not be read: agents get only State and Status
+    hints: dict[str, dict] = field(default_factory=dict)
+    hints_unreadable: bool = False  # unreadable action_hints: agents get only State and Status
 
     def kinds(self) -> set[str]:
         return {k for k in ("stem", "probe", "envelope") if getattr(self, k)}
@@ -163,7 +163,7 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
     if declared and declared not in ("low", "high"):
         warnings.append(f"{device.prefix}.{command}: declared risk {hint.get('risk')!r} is not low or high; the rules decide")
         declared = ""
-    if matched:  # when overrides disagree the high one wins
+    if matched:  # disagreeing overrides: high wins
         risk, source = ("high" if "high" in matched else matched[0]), "override"
     elif declared:
         risk, source = declared, ("tango" if hint is builtin else "declared")
@@ -180,7 +180,7 @@ def describe_command(device: DeviceInfo, command: str, *, overrides: dict[str, s
     if role == "other" and role_source == "rule":
         role_source = "default"
     marked_high = "high" in matched
-    if role_source == "annotation":  # a declared role says whether the command only observes
+    if role_source == "annotation":  # a declared role says whether it only observes
         reads = role in READ_ROLES and not marked_high
     else:
         reads = policy.is_read_only(device.dev_class, command, overrides) or (device.envelope and command.lower() in JOB_READS)

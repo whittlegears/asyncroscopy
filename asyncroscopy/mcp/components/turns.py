@@ -37,9 +37,9 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-LEASE_S = 60.0  # how long a turn lasts without being renewed
+LEASE_S = 60.0  # a turn lasts this long without renewal
 MIN_LEASE_S, MAX_LEASE_S = 5.0, 600.0
-QUEUE_PATIENCE_S = 30.0  # a queued run that has not asked again for this long loses its place
+QUEUE_PATIENCE_S = 30.0  # an idle queued run loses its place after this
 
 
 class TurnQueue:
@@ -117,7 +117,7 @@ class TurnQueue:
 class TurnGuard(Interceptor):
     """Refuses a tool that acts on the instrument to every run but the one holding the turn. Stops always pass."""
 
-    order = 15  # before the trace and the job checks: a refused call never reaches the device
+    order = 15  # before trace and job checks: a refused call never reaches the device
 
     def __init__(self, queue: TurnQueue) -> None:
         self.queue = queue
@@ -158,7 +158,7 @@ class Turns:
             return
         try:
             self.server.trace.record(action, True, started, caller=self.server.caller(), run=self.server.run_id() or None, **fields)
-        except Exception as exc:  # the turn itself must not fail because a trace line could not be written
+        except Exception as exc:  # a trace failure must not fail the turn
             warnings.warn(f"{action}: trace event not written: {type(exc).__name__}: {exc}", RuntimeWarning, stacklevel=2)
 
     @tool()
@@ -170,7 +170,7 @@ class Turns:
         before ``lease_s`` seconds pass to keep the turn. ``what`` says what the run is, for whoever waits behind it."""
         started = time.time()
         reply = self.queue.take(self._run_id(), self.server.caller(), str(what)[:200], lease_s)
-        if reply.pop("new", False):  # renewals and queue polls are not traced: there is one every few seconds
+        if reply.pop("new", False):  # renewals and queue polls come every few seconds: not traced
             self._trace("take_turn", started, arguments={"what": str(what)[:200]}, result="held")
         return reply
 
