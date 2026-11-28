@@ -31,7 +31,6 @@ from asyncroscopy.core.net import is_loopback_host
 TIMEOUT_S = {"connect": 3.0, "read": 15.0, "write": 15.0, "pool": 3.0}
 RETRY_DELAYS_S = (0.5,)  # on top of the Tiled client's own two attempts
 URI_CACHE_S = 30.0
-DEFAULT_URI = "http://127.0.0.1:9091"
 
 # By default the Tiled client retries a connection error for up to 45 s.
 # A dead Tiled would then hang each call longer than the instrument devices

@@ -48,7 +48,6 @@ import numpy as np
 import yaml
 
 DEVICES = ("instrument", "stage")  # where a twin property lives in a stack config
-PLACEHOLDER = "placeholder"  # the source of a value nobody has measured or looked up
 HEADER = "# An instrument profile: see asyncroscopy/calibration/profile.py for the format and how to use it.\n"
 
 

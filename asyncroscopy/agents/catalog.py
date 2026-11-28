@@ -84,6 +84,3 @@ class ToolCatalog:
         if tool is None or (tool.device is None and tool.role != "job.run"):
             return "other"
         return _CATEGORIES.get(tool.role, "other")
-
-    def device_names(self) -> set[str]:
-        return {t.name for t in self.tools.values() if t.device is not None}

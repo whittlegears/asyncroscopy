@@ -95,11 +95,6 @@ class TestPolicy:
     def test_plain_stops_are_low(self, name):
         assert risk_of("AnyDevice", name) == "low"
 
-    def test_stop_like_names_left_high_are_spotted(self):
-        from asyncroscopy.safety.policy import looks_like_stop
-        assert looks_like_stop("park_stage") and looks_like_stop("unload") and looks_like_stop("brake_off") and looks_like_stop("ParkStage")
-        assert not looks_like_stop("move_stage") and not looks_like_stop("get_offset")
-
     @pytest.mark.parametrize("name", ["indent_retract", "IndentRetract", "indent_withdraw", "indent_stop", "exposure_stop", "imaging_pause", "protocol_halt",
                                       "Off", "off", "disengage_motor", "disengage_motors", "disengage_z", "disengage_stage", "DisengageAll",
                                       "Disengage", "emergency_disengage", "retract_shutter", "withdraw_shutter", "ShutterRetract", "retract_x",

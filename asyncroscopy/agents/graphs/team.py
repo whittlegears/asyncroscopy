@@ -17,9 +17,6 @@ which skills each step applied is kept in ``skills_applied``. Steps pass
 on what they produced as facts taken from the servers' replies, not from the
 model's prose. A step that fails is retried once with the error as feedback.
 The reporter writes the answer from those facts only.
-
-``run_team(request)`` returns ``(answer, trace, skills_applied)``; the trace is
-the list of tool calls with their replies, which ``asyncroscopy.agents.goals`` checks.
 """
 
 from __future__ import annotations
@@ -247,12 +244,6 @@ class TeamGraph:
         graph.add_conditional_edges("work", more, ["work", "report"])
         graph.add_edge("report", END)
         return graph.compile()
-
-
-async def run_team(request: str, config: AgentConfig | None = None) -> tuple[str, list[Call], list[dict]]:
-    """(answer, tool calls with replies, skills applied) for one request."""
-    state = await TeamGraph(config).build().ainvoke({"request": request}, {"recursion_limit": 4 * MAX_STEPS + 6})
-    return state["answer"], [Call.from_dict(c) for c in state.get("trace", [])], state.get("skills_applied", [])
 
 
 def make_graph(config: dict | None = None) -> CompiledStateGraph:
