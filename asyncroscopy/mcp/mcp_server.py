@@ -15,7 +15,6 @@ import importlib
 import inspect
 import json
 import re
-import socket
 import traceback
 import warnings
 from dataclasses import dataclass, field
@@ -33,7 +32,7 @@ from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_typ
 
 from asyncroscopy import settings
 from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, endpoint_urls, tool_name
-from asyncroscopy.core.net import bind_host, is_remote_host
+from asyncroscopy.core.net import bind_host, is_remote_host, report_busy_port
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
 from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, permissions, skills_tools, trace_tools, turns
@@ -745,17 +744,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def check_port_free(host: str, port: int) -> str | None:
-    """An error string if (host, port) cannot be bound, else None: a previous MCP server may still hold the port."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError as exc:
-        return str(exc)
-    finally:
-        probe.close()
-    return None
-
 
 def _annotations(acts: bool) -> ToolAnnotations:
     return ToolAnnotations(read_only_hint=not acts, destructive_hint=acts)
@@ -803,11 +791,7 @@ def main(argv: list[str] | None = None) -> int:
             if refused:
                 print(f"MCP ERROR: {refused}", flush=True)
                 return 1
-        bind_error = check_port_free(args.http_host, args.http_port)
-        if bind_error:
-            # "MCP ERROR:" is parsed by startup GUIs; keep the prefix stable.
-            print(f"MCP ERROR: http://{args.http_host}:{args.http_port} is already in use - another MCP server is likely still running "
-                  f"with a different config. Stop it or choose a different port. ({bind_error})", flush=True)
+        if report_busy_port(args.http_host, args.http_port, "MCP server"):
             return 1
     for module in json.loads(args.data_views_json):
         try:

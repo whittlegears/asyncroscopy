@@ -20,14 +20,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import socket
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Literal
 
 from fastmcp import FastMCP
 
 from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL, endpoint_urls
-from asyncroscopy.core.net import is_loopback_host
+from asyncroscopy.core.net import is_loopback_host, report_busy_port
 from asyncroscopy.mcp import host_guard
 
 if TYPE_CHECKING:
@@ -59,18 +58,6 @@ OPERATOR_ACTIONS = (("review_workflow", "setting.read", "low", "observe"), ("app
 workflow_services = {"list": "list_workflows", "get": "get_workflow", "run": "run_workflow", "status": "workflow_status",
                      "stop": "stop_workflow", "resume": "resume_workflow", "answer": "answer_workflow", "list_runs": "list_runs",
                      "list_blocks": "list_blocks", "propose": "propose_workflow"}
-
-
-def check_port_free(host: str, port: int) -> str | None:
-    """Return an error string if (host, port) cannot be bound, else None."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError as exc:
-        return str(exc)
-    finally:
-        probe.close()
-    return None
 
 
 class AgentMCPServer:
@@ -353,16 +340,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"MCP ERROR: --workflows-hardware needs --http-host 127.0.0.1 (got {args.http_host}): this server has no login, "
               "and with it anyone who can reach the port would run workflows on the real instrument.", flush=True)
         return 1
-    if args.transport == "streamable-http":
-        bind_error = check_port_free(args.http_host, args.http_port)
-        if bind_error:
-            print(
-                f"MCP ERROR: http://{args.http_host}:{args.http_port} is already in use - "
-                f"another agent MCP server is likely still running with a different config. "
-                f"Stop it or choose a different port. ({bind_error})",
-                flush=True,
-            )
-            return 1
+    if args.transport == "streamable-http" and report_busy_port(args.http_host, args.http_port, "agent MCP server"):
+        return 1
 
     server = AgentMCPServer(
         name=args.name,

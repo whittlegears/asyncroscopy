@@ -181,3 +181,16 @@ def test_an_unmeasured_current_is_said_to_be_an_estimate(tmp_path, monkeypatch):
     dose_ledger.record_frame({**frame, "beam_current_source": "measured"}, "L", "k2", "i")
     reply = dose_ledger.dose_at("L", 0.0, 0.0)
     assert reply["exposures_here"] == 2 and reply["from_unmeasured_current"].startswith("1 of these")
+
+
+@pytest.mark.parametrize("address", ["", " ", "  \t"])
+def test_a_blank_sample_address_records_no_sample_without_opening_a_proxy(address, monkeypatch):
+    from asyncroscopy.jobs.mapping.mapper import Mapper
+
+    mapper = Mapper.__new__(Mapper)
+    mapper._tango_properties = {}
+    mapper.sample_device_address = address
+    monkeypatch.setattr(Mapper, "proxy", lambda self, *a, **k: pytest.fail(f"opened a proxy to {a[0]!r}"))
+    assert Mapper._sample_now(mapper) == {
+        "sample_id": None, "sample_load_id": None, "sample_error": "no SAMPLE device is configured for this instrument",
+    }
