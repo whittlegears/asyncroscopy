@@ -49,6 +49,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.types import Command, interrupt
 
 from asyncroscopy.core.fileio import file_lock
+from asyncroscopy.safety.permissions import canonical_json
 
 from asyncroscopy.agents.mcp_tools import McpServer
 from .blocks import BlockContext, BlockFailed, CallJournal, Stopped, all_blocks
@@ -174,6 +175,14 @@ def read_run(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def update_run(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR, **fields: Any) -> dict:
+    """Set ``fields`` in a run's record before it is resumed (the workflow server's new ``preapproval``)."""
+    record = read_run(run_id, state_dir)
+    record.update(fields)
+    _record_path(Path(state_dir), run_id).write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
+    return record
+
+
 def list_runs(state_dir: str | Path = DEFAULT_STATE_DIR) -> list[dict]:
     runs = [json.loads(p.read_text(encoding="utf-8")) for p in (Path(state_dir) / "runs").glob("*.json")]
     shown = ("run_id", "workflow", "state", "started", "ended", "at_node")
@@ -222,19 +231,20 @@ async def _tool_names(server: McpServer | None) -> list[str] | None:
 
 async def run_workflow(
     source: str | Workflow, inputs: dict | None = None, *, instrument: McpServer, analysis: McpServer | None = None,
-    run_id: str | None = None, state_dir: str | Path = DEFAULT_STATE_DIR, durable: bool = True,
+    run_id: str | None = None, state_dir: str | Path = DEFAULT_STATE_DIR, durable: bool = True, fields: dict | None = None,
 ) -> dict:
     """Run a workflow from its start. ``source`` is its name or the ``Workflow``. Returns the run's record.
 
     The record's ``state`` is done, waiting, stopped or failed. It is refused when a check before the first
-    call found a problem.
+    call found a problem. ``fields`` are kept in the record as they are: the workflow server's ``instrument_url`` and
+    ``preapproval``.
     """
     workflow = get_workflow(source)
     state_dir = Path(state_dir)
     run_id = run_id or uuid.uuid4().hex[:12]
     unchecked = workflow.lint()
     record = {"run_id": run_id, "workflow": workflow.name, "hash": unchecked["hash"], "inputs": dict(inputs or {}),
-              "state": "refused", "started": time.time(), "ended": None, "outputs": {}, "calls": 0, "problems": []}
+              "state": "refused", "started": time.time(), "ended": None, "outputs": {}, "calls": 0, "problems": [], **dict(fields or {})}
     if unchecked["hash"] is None:  # the graph could not be built
         record["problems"] = list(unchecked["problems"])
         return record
@@ -326,6 +336,8 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
     record["calls_before"] = int(record.get("calls", 0)) if not start else 0
     record["seconds_before"] = float(record.get("seconds", 0.0)) if not start else 0.0
     record["tools_called_before"] = dict(record.get("tools_called") or {}) if not start else {}
+    record["calls_made_before"] = list(record.get("calls_made") or []) if not start else []
+    record["data_keys_before"] = list(record.get("data_keys") or []) if not start else []
     began = time.monotonic()
     max_calls = budget.get("max_tool_calls")
     ctx = BlockContext(
@@ -345,10 +357,13 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
     def save(**changes: Any) -> None:
         record.update(changes, calls=record["calls_before"] + len(ctx.calls),
                       seconds=round(record["seconds_before"] + time.monotonic() - began, 3),
-                      tools_called=tools_called(record["tools_called_before"], ctx.calls))
+                      tools_called=tools_called(record["tools_called_before"], ctx.calls),
+                      calls_made=calls_made(record["calls_made_before"], ctx.calls),
+                      data_keys=list(dict.fromkeys([*record["data_keys_before"], *ctx.data_keys])))
+        record["results"] = results_of(record)
         path = _record_path(state_dir, run_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        kept = {k: v for k, v in record.items() if k not in ("calls_before", "seconds_before", "tools_called_before")}
+        kept = {k: v for k, v in record.items() if not k.endswith("_before")}
         path.write_text(json.dumps(kept, indent=1, default=str), encoding="utf-8")
 
     with _run_lock(state_dir, run_id):
@@ -445,6 +460,33 @@ def tools_called(before: dict, calls: list[dict]) -> dict:
     return out
 
 
+def calls_made(before: list[dict], calls: list[dict]) -> list[dict]:
+    """Every distinct call of a run that succeeded, first made first: {"server" (instrument or analysis), "tool",
+    "arguments" (as canonical JSON: sorted keys), "count"}. A rehearsal's are what a sign-off covers on the instrument."""
+    out = {(c["server"], c["tool"], canonical_json(c["arguments"])): dict(c) for c in before}
+    for call in calls:
+        if call.get("error"):
+            continue
+        key = (call.get("server", "instrument"), call["tool"], canonical_json(call.get("args")))
+        entry = out.setdefault(key, {"server": key[0], "tool": key[1], "arguments": json.loads(key[2]), "count": 0})
+        entry["count"] += 1
+    return list(out.values())
+
+
+def results_of(record: dict) -> dict:
+    """What a run produced, in the same shape for a rehearsal on a twin and a run on an instrument, so the two can be
+    set side by side: every data key it acquired or derived, the stitched map's key, its instrument calls and its time.
+    ``wall_s`` is the time the run was driven (time spent waiting for a person is not counted)."""
+    nodes = (record.get("blueprint") or {}).get("nodes") or {}
+    outputs = record.get("outputs") or {}
+    maps = [str(outputs[name]["map"]) for name, node in nodes.items()
+            if node.get("block") == "stitch_map" and isinstance(outputs.get(name), dict) and outputs[name].get("map")]
+    made = record.get("calls_made") or []
+    return {"data_keys": list(dict.fromkeys([*(record.get("data_keys") or []), *maps])), "map": maps[-1] if maps else None,
+            "instrument_calls": sum(c["count"] for c in made if c["server"] == "instrument"),
+            "distinct_instrument_calls": sum(1 for c in made if c["server"] == "instrument"), "wall_s": record.get("seconds")}
+
+
 def _held(snapshot: Any) -> list[dict]:
     """The calls a stopped graph is waiting on a person's approval of, each with its interrupt id."""
     held = []
@@ -523,6 +565,6 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
         save(state=state, error=error, questions=questions or None, approvals=held or None, ended=time.time(), outputs=values.get("outputs", {}),
              visits=values.get("visits", {}), at_node=list(snapshot.next), cleanup=cleanup, unrestored=list(ctx.unrestored) or None,
              restores=(dict(ctx.restores) or None) if state != "done" else None)
-    record.pop("calls_before", None)
-    record.pop("seconds_before", None)
+    for key in [k for k in record if k.endswith("_before")]:
+        record.pop(key)
     return record

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from asyncroscopy.core.fileio import write_atomic
-from asyncroscopy.core.names import DATA_KEY_IN_TEXT
+from asyncroscopy.core.names import DATA_KEY_IN_TEXT, reply_keys
 from asyncroscopy.safety.permissions import arguments_sha256
 
 from asyncroscopy.agents.mcp_tools import McpServer, held_for_approval, result_text
@@ -268,6 +268,8 @@ class BlockContext:
         self.on_hold = on_hold
         self.journal = journal if journal is not None else CallJournal(None)
         self.calls: list[dict] = []
+        # Every data key the run's replies named, in order: acquisitions and what analysis jobs derived from them.
+        self.data_keys: list[str] = []
         # Settings a block could not put back. The run record lists them for the operator.
         self.unrestored: list[dict] = []
         # Settings a run changed and must put back if it ends early: {name: {"set": call, "restore": call}}, each call
@@ -362,11 +364,12 @@ class BlockContext:
             except Exception as exc:
                 text, error = f"{type(exc).__name__}: {exc}", True
                 if undelivered(exc):
-                    self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": True})
+                    self.calls.append({"tool": name, "server": label, "args": dict(arguments or {}), "result": text[:200], "error": True})
                     raise Unreachable(f"{name} did not reach the endpoint: {text[:600]}") from exc
-            self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
+            self.calls.append({"tool": name, "server": label, "args": dict(arguments or {}), "result": text[:200], "error": error})
             if not (error or text.startswith("Error")):
                 self.journal.completed(label, name, arguments or {}, text)
+                self.data_keys += [k for k in reply_keys(text, derived=True) if k not in self.data_keys]
                 return parse_reply(text)
             if held is not None:
                 if not checked or self.on_hold is None:

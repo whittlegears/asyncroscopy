@@ -2,14 +2,17 @@
 
 On the agent endpoint a middleware checks every tool call (and the tool ``call_tool`` runs) against the tool's
 effective permission (``asyncroscopy.safety.permissions``) before it runs. On the operator endpoint the person's
-tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_permission, set_group_permission.
-``docs/MCP/permissions.md`` is the contract.
+tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_permission, set_group_permission, and
+preapprove_run and end_run_preapproval, which a workflow server sends for a signed-off workflow's hardware run.
+``docs/MCP/permissions.md`` and ``docs/MCP/twin_to_instrument.md`` are the contract.
 """
 
 from __future__ import annotations
 
 import inspect
 import json
+import time
+from contextvars import ContextVar
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
@@ -20,8 +23,14 @@ from fastmcp.tools import ToolResult, tool
 from mcp.types import TextContent
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
-from asyncroscopy.core.names import STOP_ROLES
-from asyncroscopy.safety.permissions import PermissionStore, effective_permission
+from asyncroscopy.core.names import RUN_KEY_HEADER, STOP_ROLES
+from asyncroscopy.mcp.interceptors import Call, Interceptor
+from asyncroscopy.safety.permissions import (
+    PermissionStore,
+    arguments_sha256,
+    effective_permission,
+    run_key_sha256,
+)
 from asyncroscopy.safety.policy import hard_blocked
 
 if TYPE_CHECKING:
@@ -66,6 +75,9 @@ def arguments_model(name: str, fn: Any) -> type[BaseModel]:
     return create_model(f"{name}_arguments", __config__=ConfigDict(extra="forbid"), **fields)
 
 
+signed_off: ContextVar[dict[str, Any] | None] = ContextVar("signed_off", default=None)
+
+
 def refusal(text: str, structured: dict[str, Any]) -> ToolResult:
     return ToolResult(content=[TextContent(type="text", text=text)], structured_content=structured, is_error=True)
 
@@ -84,10 +96,26 @@ class Gate(Middleware):
             name, arguments = str(arguments.get("name", "")), dict(arguments.get("arguments") or {})
         if not self.owner.server.may_call(name):
             return await call_next(context)
-        held = self.owner.check(name, arguments)
+        held, signoff = self.owner.decide(name, arguments)
         if held is not None:
             return held
-        return await call_next(context)
+        token = signed_off.set(signoff)
+        try:
+            return await call_next(context)
+        finally:
+            signed_off.reset(token)
+
+
+class SignoffStamp(Interceptor):
+    """Puts the sign-off that pre-approved a call on its trace event: approved_by, approver and the run."""
+
+    order = 15
+
+    def before_call(self, call: Call) -> Any:
+        found = signed_off.get()
+        if found:
+            call.trace.update(approved_by=found["approved_by"], approver=found["approver"])
+        return None
 
 
 class Permissions:
@@ -96,6 +124,7 @@ class Permissions:
         self.needs_approval = cfg.needs_approval
         self.store = PermissionStore(cfg.permissions_file, server.stack_id, cfg.approval_ttl_s)
         self.models: dict[str, type[BaseModel]] = {}
+        self.signoff_digests: dict[tuple[str, str], dict[str, set[str]]] = {}
 
     def attach(self) -> None:
         """Put the gate on the agent and monitor endpoints (the operator endpoint is the person's own), inside the token
@@ -107,7 +136,7 @@ class Permissions:
         if self.server.endpoint_role != "operator":
             return []
         return [self.list_pending_approvals, self.approve_call, self.deny_call, self.get_permissions, self.set_permission,
-                self.set_group_permission]
+                self.set_group_permission, self.preapprove_run, self.end_run_preapproval]
 
     def entry(self, name: str) -> dict[str, Any]:
         t = self.server.descriptors[name]
@@ -179,31 +208,64 @@ class Permissions:
             self.models[name] = arguments_model(name, self.server.registered[name].fn)
         return self.models[name].model_validate(arguments).model_dump(mode="json")
 
+    def rehearsed(self, grant: dict[str, Any]) -> dict[str, set[str]]:
+        """{tool: digests} of a run pre-approval's calls, their arguments validated as a call's are; a rehearsed call
+        whose arguments do not validate here covers nothing. Kept per grant, so a map's thousands of calls are validated once."""
+        key = (grant["run_id"], grant["granted_at"])
+        if key not in self.signoff_digests:
+            covered: dict[str, set[str]] = {}
+            for call in grant["calls"]:
+                tool = call["tool"]
+                if tool not in self.server.registered:
+                    continue
+                try:
+                    covered.setdefault(tool, set()).add(arguments_sha256(self.validated(tool, call["arguments"])))
+                except ValidationError:
+                    continue
+            self.signoff_digests = {k: v for k, v in self.signoff_digests.items() if k[0] != grant["run_id"]}
+            self.signoff_digests[key] = covered
+        return self.signoff_digests[key]
+
     def check(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
         """None when the call may run now, else the refusal or the held call to return in its place."""
+        return self.decide(name, arguments)[0]
+
+    def decide(self, name: str, arguments: dict[str, Any]) -> tuple[ToolResult | None, dict[str, Any] | None]:
+        """(``check``'s answer, the sign-off that let the call run or None). A call of an ``approve`` tool made by a
+        hardware run that a workflow sign-off pre-approved (``preapprove_run``) runs when the rehearsal made it."""
         if name not in self.server.descriptors or name not in self.server.registered:
-            return None
+            return None, None
         entry = self.entry(name)
         entry["needs_approval"] = entry["needs_approval"] or self.plan_needs_approval(name, arguments)
         permission = effective_permission(name, entry, self.store.settings())
         if permission == "allow":
-            return None
+            return None, None
         if permission == "never":
-            return refusal(f"{name} is never run from this endpoint.", {"status": "never", "tool": name})
+            return refusal(f"{name} is never run from this endpoint.", {"status": "never", "tool": name}), None
         try:
             arguments = self.validated(name, arguments)
         except ValidationError as exc:
-            return refusal(f"{name} was not run or held: its arguments do not validate: {exc}", {"status": "invalid_arguments", "tool": name})
-        record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller())
+            return refusal(f"{name} was not run or held: its arguments do not validate: {exc}", {"status": "invalid_arguments", "tool": name}), None
+        grant = self.store.run_grant(self.server.run_id())
+        signoff = None
+        if grant is not None and run_key_sha256(self.server._header(RUN_KEY_HEADER)) == grant["run_key_sha256"]:
+            covered = self.rehearsed(grant)
+            if arguments_sha256(arguments) in covered.get(name, set()):
+                return None, {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"]}
+            signoff = {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"],
+                       "why_held": "the rehearsal called this tool with other arguments" if name in covered else "the rehearsal never called this tool"}
+        record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller(), signoff=signoff)
         if record["status"] == "approved":
-            return None
+            return None, None
         if record["status"] == "denied":
             reason = record.get("reason") or ""
             return refusal(f"{name} was denied by a person: {reason}" if reason else f"{name} was denied by a person.",
-                           {"status": "denied", "request_id": record["request_id"], "reason": reason})
+                           {"status": "denied", "request_id": record["request_id"], "reason": reason}), None
         held = {k: record[k] for k in ("request_id", "tool", "arguments", "arguments_sha256", "acts", "risk", "expires_at", "requested_by")}
+        if record.get("signoff"):
+            held["signoff"] = record["signoff"]
         return refusal(f"{name} is waiting for a person to approve it (request {record['request_id']}). "
-                       "Send the same call again once it is approved.", {"status": "approval_required", **held})
+                       "Send the same call again once it is approved.", {"status": "approval_required", **held}), None
 
     @tool()
     def list_pending_approvals(self) -> list[dict[str, Any]]:
@@ -225,6 +287,34 @@ class Permissions:
             return self.store.deny(request_id, reason)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
+
+    @tool()
+    def preapprove_run(self, run_id: str, run_key_sha256: str, calls: list[dict[str, Any]], approved_by: str, approver: str,
+                       workflow: str, hash: str, rehearsal_run_id: str | None = None) -> dict[str, Any]:
+        """For a workflow server, not a model: pre-approve, for one hardware run of a signed-off workflow, every call its
+        passing rehearsal made ({"tool", "arguments"} each). Only calls of that run (run id and run key) of the same tool
+        with the same validated arguments pass the gate; any other call is held, never tools stay refused. Expires after
+        approval_ttl_s or with end_run_preapproval."""
+        try:
+            grant = self.store.grant_run(run_id, run_key_sha256, list(calls or []), approved_by, approver, workflow, hash, rehearsal_run_id)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise ToolError(str(exc)) from None
+        self.audit("preapprove_run", grant)
+        return grant
+
+    @tool()
+    def end_run_preapproval(self, run_id: str) -> dict[str, Any]:
+        """For a workflow server, not a model: remove a hardware run's pre-approval when the run ends or is stopped."""
+        removed = self.store.end_run(run_id)
+        if removed is not None:
+            self.audit("end_run_preapproval", removed)
+        return {"run_id": str(run_id), "removed": removed}
+
+    def audit(self, action: str, grant: dict[str, Any]) -> None:
+        if self.server.trace is not None:
+            self.server.trace.record(action, True, time.time(), run=grant["run_id"], caller=self.server.caller(),
+                                     approved_by=grant["approved_by"], approver=grant["approver"], workflow=grant["workflow"],
+                                     workflow_hash=grant["hash"], calls=grant["calls"], expires_at=grant["expires_at"])
 
     @tool()
     def get_permissions(self) -> dict[str, Any]:
@@ -251,4 +341,6 @@ class Permissions:
 
 
 def register(server: MCPServer, cfg: ServerConfig) -> Permissions:
-    return Permissions(server, cfg)
+    permissions = Permissions(server, cfg)
+    server.add_interceptor(SignoffStamp())
+    return permissions

@@ -58,6 +58,8 @@ SETTINGS = [
                  'On a simulated stack only, unless the next setting is on.'),
     Setting('agent.workflows_hardware', 'bool', False, section='Workflows', label='Also on the real instrument',
             help='Run workflows on a stack that is not simulated. Needs HTTP host 127.0.0.1.'),
+    Setting('agent.workflow_instruments', 'list', [], section='Workflows', label='Other instruments',
+            help='Instrument endpoint URLs workflows may also run on (instrument_url), such as the instrument a twin is paired with.'),
     Setting('agent.endpoint_role', default='agent', section='Agent MCP server', label='Endpoint role', choices=('agent', 'operator'),
             help='operator: only the workflow review, approve and reject tools, for a person (no swarm, no model). Needs HTTP host 127.0.0.1.'),
 ]
@@ -85,6 +87,7 @@ class AgentConfig:
     endpoint_role: str = "agent"
     allowed_hosts: list[str] = field(default_factory=list)
     urls: dict[str, str | None] = field(default_factory=endpoint_urls)
+    workflow_instruments: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -144,6 +147,7 @@ def load_config(path: Path) -> Config:
             endpoint_role=str(values['agent.endpoint_role']),
             allowed_hosts=[str(host) for host in values['agent.allowed_hosts'] or []],
             urls=urls,
+            workflow_instruments=[str(url) for url in values['agent.workflow_instruments'] or []],
         ),
     )
 
@@ -184,6 +188,8 @@ def build_command(config: Config) -> list[str]:
         command += ['--allowed-hosts-json', json.dumps(agent.allowed_hosts)]
     if any(agent.urls.values()):
         command += ['--urls-json', json.dumps(agent.urls)]
+    if agent.workflow_instruments:
+        command += ['--workflow-instruments-json', json.dumps(agent.workflow_instruments)]
     if agent.workflows_hardware:
         command.append('--workflows-hardware')
     elif not agent.workflows:

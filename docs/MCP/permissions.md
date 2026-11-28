@@ -165,6 +165,13 @@ before the gate, so it never makes a request.
 - After a denial, the same call gives `{"status": "denied", "request_id", "reason"}` with `isError: true`
   until the denial expires.
 - A `never` tool gives `{"status": "never", "tool"}` with `isError: true`.
+- A call of a hardware run that a workflow sign-off pre-approved (`preapprove_run`) runs without a request when the
+  run's rehearsal made the same call: the same tool and the same validated arguments, sent with the run's id
+  (`X-Asyncroscopy-Run`) and its secret key (`X-Asyncroscopy-Run-Key`). Its trace event carries `approved_by`
+  (`workflow_signoff:<workflow>@<hash>`) and `approver`. Any other call of that run is held as above, and the held
+  reply and its `list_pending_approvals` entry add `signoff: {"approved_by", "approver", "run_id", "why_held"}`.
+  A pre-approval lives in `<name>.state.json` beside the held calls, so the gate honours it although the operator
+  endpoint wrote it, and it expires after `approval_ttl_s`. [Twin to instrument](twin_to_instrument.md) is its contract.
 
 `query_agent` treats a held call as a pause: the agent is told not to call it again, and the reply starts
 with "Waiting for a person to approve:" and each held tool, its arguments and its request id. A workflow stops
@@ -191,6 +198,8 @@ These tools are in the operator endpoint's `action_space` (device null), beside 
 | `get_permissions()` | `{"groups": {...}, "tools": {name: {"permission", "source", "acts", "risk", "description", "settable"}}}` |
 | `set_permission(tool, permission)` | `allow`, `approve`, or `default` to clear the setting; `never` is refused, and so is a fixed tool |
 | `set_group_permission(group, permission)` | `reads` or `acts`, to `allow` or `approve` |
+| `preapprove_run(run_id, run_key_sha256, calls, approved_by, approver, workflow, hash, rehearsal_run_id)` | for a workflow server, not a model: pre-approves, for one hardware run, the calls a signed-off workflow's rehearsal made ([Twin to instrument](twin_to_instrument.md)) |
+| `end_run_preapproval(run_id)` | for a workflow server: removes that run's pre-approval when it ends or is stopped |
 
 `source` is `fixed`, `tool`, `config` or `group` (the table above), so a client can show "Default" when it is
 `config` or `group`.
@@ -200,7 +209,7 @@ where held calls are released. Who may reach it decides who may approve:
 
 - **Without `mcp.auth`** any process on the computer can reach the loopback-bound operator endpoint and approve,
   just as any local Tango client can drive the devices directly. Run agents only where that is acceptable.
-- **With `mcp.auth`** all six tools above need the token role `approve` (`descriptors.person_only_natives`, read by
+- **With `mcp.auth`** all eight tools above need the token role `approve` (`descriptors.person_only_natives`, read by
   `endpoint_auth.required_role`), also through `call_tool`. Reading the pending list needs `approve` too: it is part
   of the console, and an agent learns what it waits for from its own held reply. Agent tokens must never hold the
   `approve` scope; an agent's scopes are `read` and `operate`.

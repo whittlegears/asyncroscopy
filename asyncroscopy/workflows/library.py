@@ -6,7 +6,8 @@ A workflow has one of three statuses.
 * **approved** was proposed and then approved by a person. The approval names the workflow by its hash, which
   covers its code and the code of every block it uses. If either changes it is a draft again.
 * **draft** was proposed and is not approved, or changed after it was approved. It is kept with the words of the
-  person who asked for it in ``requests.json``.
+  person who asked for it in ``requests.json``, and with what the conversation established when the proposing app
+  sent it (``context``).
 
 A shipped or approved workflow may run on a real instrument when the operator allows hardware. A draft runs on a
 digital twin only. Only a person can approve or reject, on the command line with
@@ -17,7 +18,8 @@ such as the GUI calls for a person and which no agent is given. No tool a model 
 An approval can carry these.
 
 * **Rehearsals.** Every run of a draft on a digital twin is saved in ``rehearsals.json`` with the ``stack_id`` and
-  ``stack_fingerprint`` of the stack it ran on. The person approving sees the runs of this exact code. The command
+  ``stack_fingerprint`` of the stack it ran on, every distinct call it made (``calls_made``), and its ``results``:
+  the data it acquired and derived, its time and dose, and its twin score (``asyncroscopy.sim.truth_score``). The person approving sees the runs of this exact code. The command
   line requires none; the operator endpoint requires one that passed on the stack it is connected to
   (``require_rehearsal``): it ended in ``done`` and every cleanup call succeeded, on the same fingerprint.
 * **An instrument.** ``instrument`` limits the approval to one stack, named by the endpoint's ``stack_id``. Left
@@ -30,8 +32,11 @@ A person can also **reject** a draft with a reason. The rejection is kept in ``r
 was given for, the draft stays a draft (it still runs on a twin), and an approval later replaces it. Rejecting an
 approved workflow revokes its approval first.
 
+The source of every approval is also kept in ``last_approved.json``, which revoking and rejecting leave in place,
+so a person reviewing a changed workflow sees what changed since it was last approved.
+
 The files under ``root`` are ``drafts/NAME.py``, ``approved/NAME.py``, ``approvals.json``, ``rehearsals.json``,
-``requests.json``, ``rejections.json`` and optionally ``approvers.json``.
+``requests.json``, ``rejections.json``, ``last_approved.json`` and optionally ``approvers.json``.
 """
 
 from __future__ import annotations
@@ -93,9 +98,11 @@ class Library:
             return None
         return found if isinstance(found, kind) else None
 
-    def record_rehearsal(self, workflow: Workflow, record: dict, info: dict) -> None:
+    def record_rehearsal(self, workflow: Workflow, record: dict, info: dict, results: dict | None = None) -> None:
         """Save a finished run of ``workflow`` on a digital twin. ``record`` is the runner's record and ``info`` the
         instrument endpoint's ``endpoint_info``, whose ``stack_id`` and ``stack_fingerprint`` say which stack it ran on.
+        ``results``: the run's results with what only the twin knows (its dose, time and twin score); the record's own
+        ``results`` when None.
 
         Shipped workflows are skipped because they need no approval. Runs that did not reach an end are skipped too.
         """
@@ -105,7 +112,8 @@ class Library:
                  "calls": record.get("calls"), "inputs": record.get("inputs") or {}, "error": record.get("error"),
                  "problems": list(record.get("problems") or []),
                  "cleanup_failed": sorted(str(c.get("tool")) for c in record.get("cleanup") or [] if isinstance(c, dict) and not c.get("ok")),
-                 "stack_id": info.get("stack_id"), "stack_fingerprint": info.get("stack_fingerprint")}
+                 "stack_id": info.get("stack_id"), "stack_fingerprint": info.get("stack_fingerprint"),
+                 "calls_made": list(record.get("calls_made") or []), "results": dict(results if results is not None else record.get("results") or {})}
         every = self._read("rehearsals.json", dict) or {}
         every[workflow.name] = [*(every.get(workflow.name) or []), entry][-KEPT_REHEARSALS:]
         self.root.mkdir(parents=True, exist_ok=True)
@@ -158,8 +166,13 @@ class Library:
         (self.root / "rejections.json").write_text(json.dumps(rejections, indent=1, sort_keys=True), encoding="utf-8")
 
     def request(self, name: str) -> dict | None:
-        """What the person asked for when the draft ``name`` was proposed, as {"request", "at"}, or None."""
+        """What the person asked for when the draft ``name`` was proposed, as {"request", "at", "hash"} and "context"
+        when one was sent, or None."""
         return (self._read("requests.json", dict) or {}).get(str(name))
+
+    def last_approved(self, name: str) -> dict | None:
+        """The code of ``name`` as a person last approved it, {"hash", "by", "at", "source"}, or None if never."""
+        return (self._read("last_approved.json", dict) or {}).get(str(name))
 
     def hardware_problem(self, name: str, status: str, stack_id: str | None = None, now: float | None = None) -> str | None:
         """Why the workflow ``name`` may not run on the instrument ``stack_id``, or None. ``status`` comes from ``find``."""
@@ -242,11 +255,12 @@ class Library:
         return out
 
     def propose(self, source: str, tool_names: list[str] | None = None, analysis_tool_names: list[str] | None = None,
-                request: str | None = None) -> dict:
+                request: str | None = None, context: str | None = None) -> dict:
         """Check a workflow's text and keep it as a draft when it has no problems.
 
         ``request`` is the words of the person who asked for this workflow. It is kept with the draft and shown to
-        whoever approves it.
+        whoever approves it. ``context`` is what the conversation established, as the proposing app summed it up;
+        it is kept and shown the same way, and never checked or run.
 
         Returns the lint result with "draft", which is its path or None, and "status". ``problems`` are sentences
         for the author to fix. A workflow with problems is not kept and none of it is run.
@@ -269,7 +283,8 @@ class Library:
         path.write_text(source, encoding="utf-8")
         requests = self._read("requests.json", dict) or {}
         if str(request or "").strip():
-            requests[workflow.name] = {"request": str(request).strip(), "at": time.time(), "hash": result["hash"]}
+            requests[workflow.name] = {"request": str(request).strip(), "at": time.time(), "hash": result["hash"],
+                                       **({"context": str(context).strip()} if str(context or "").strip() else {})}
         else:
             requests.pop(workflow.name, None)
         (self.root / "requests.json").write_text(json.dumps(requests, indent=1, sort_keys=True), encoding="utf-8")
@@ -336,6 +351,9 @@ class Library:
                                 "stack_fingerprint": fingerprint_of(rehearsed[-1])} if rehearsed else None,
                   "request": (self.request(workflow.name) or {}).get("request"), "via": str(via)}
         self._write_approvals({**self._approvals(), workflow.name: record})
+        signed = self._read("last_approved.json", dict) or {}
+        signed[workflow.name] = {"hash": result["hash"], "by": record["by"], "at": now, "source": source}
+        (self.root / "last_approved.json").write_text(json.dumps(signed, indent=1, sort_keys=True), encoding="utf-8")
         rejections = self._read("rejections.json", dict) or {}
         if rejections.pop(workflow.name, None) is not None:
             self._write_rejections(rejections)

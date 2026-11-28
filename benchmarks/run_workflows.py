@@ -59,6 +59,7 @@ from asyncroscopy.agents.goals import MAP_KEY, trace_from_messages
 from asyncroscopy.agents.profile import load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 from asyncroscopy.mcp.fingerprint import digest
+from asyncroscopy.sim.truth_score import median_error
 from asyncroscopy.skills.registry import list_skills
 from benchmarks.evaluate import RunData
 from benchmarks.evaluate import evaluators as known_evaluators
@@ -609,15 +610,8 @@ def stitch_truth(map_meta: dict, tile_shape: tuple[int, int], steps: list[dict],
         estimated.append(positions[index] + np.asarray(tile_shape, dtype=np.float64) / 2.0)
     if len(true_centres) < 2:
         return {"error": f"matched only {len(true_centres)} of {len(steps)} tiles to the twin's ground truth"}
-    true_centres = np.asarray(true_centres)
-
-    def median_error(centres: list) -> float:
-        diff = np.asarray(centres) - true_centres
-        diff -= np.median(diff, axis=0)
-        return float(np.median(np.hypot(diff[:, 0], diff[:, 1])))
-
-    stage = median_error(reported)
-    return {"median_px": median_error(estimated), "stage_median_px": stage, "stage_error_fov": stage / float(tile_shape[1]), "tiles": len(true_centres)}
+    stage = median_error(reported, true_centres)
+    return {"median_px": median_error(estimated, true_centres), "stage_median_px": stage, "stage_error_fov": stage / float(tile_shape[1]), "tiles": len(true_centres)}
 
 
 def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:

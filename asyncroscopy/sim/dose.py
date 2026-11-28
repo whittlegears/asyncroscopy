@@ -148,4 +148,5 @@ class DoseMap:
             "finest_cell_m": self._cell_m(self.finest),
             "max_dose_e_per_a2": peak,
             "exposed_cells": sum(len(cells) for cells in self.levels.values()),
+            "total_electrons": self.total_electrons(),
         }

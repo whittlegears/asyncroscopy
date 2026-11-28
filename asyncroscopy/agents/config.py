@@ -14,7 +14,7 @@ from langchain_core.tools import StructuredTool
 
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy import settings
-from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER
+from asyncroscopy.core.names import CALLER_HEADER, DEFAULT_ANALYSIS_URL, DEFAULT_MCP_URL, RUN_HEADER, RUN_KEY_HEADER
 
 from asyncroscopy.mcp.agent_tools import ToolLists
 
@@ -48,6 +48,9 @@ class AgentConfig:
     # One id per agent run, sent with every call. Agents open a new MCP session per call,
     # so the server uses the caller and run id to spot a retried run_job.
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # A hardware run of a signed-off workflow sends this secret with every call, so only that run's calls use the
+    # run's pre-approvals (``docs/MCP/twin_to_instrument.md``); the run id alone is in replies an agent reads.
+    run_key: str | None = field(default=None, repr=False)
     # Every instrument call of this run, added as its reply arrives.
     # A run stopped part way still knows which jobs it started.
     ledger: list = field(default_factory=list, repr=False, compare=False)
@@ -103,7 +106,8 @@ class AgentConfig:
         return dataclasses.replace(self, run_id=uuid.uuid4().hex[:12], ledger=[], **changes)
 
     def _headers(self) -> dict[str, str]:
-        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **bearer_header(self.token)}
+        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **({RUN_KEY_HEADER: self.run_key} if self.run_key else {}),
+                **bearer_header(self.token)}
 
     def instrument(self) -> McpServer:
         profile = self.agent_profile()
