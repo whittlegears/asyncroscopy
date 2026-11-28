@@ -15,7 +15,10 @@ Nothing here describes how a config is shown; that belongs to startup_guis/.
 from __future__ import annotations
 
 import copy
+import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 MISSING = object()
@@ -30,6 +33,58 @@ class ConfigError(ValueError):
     def __init__(self, problems: list[str]):
         self.problems = list(problems)
         super().__init__("; ".join(self.problems))
+
+
+# Addresses of lab machines stay out of git. A tracked config writes ${NAME};
+# the value comes from the environment, or else from configs/site.env, which git
+# ignores and the team shares privately (configs/site.env.example lists the names).
+SITE_FILE = Path(__file__).resolve().parents[1] / "configs" / "site.env"
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def site_values(path: Path = SITE_FILE) -> dict[str, str]:
+    """NAME=value lines from the site file, with the environment taking priority."""
+    values: dict[str, str] = {}
+    if path.exists():
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            name, separator, value = line.partition("=")
+            if not separator:
+                raise ConfigError([f"{path.name} line {number}: expected NAME=value"])
+            values[name.strip()] = value.strip().strip("\"'")
+    values.update(os.environ)
+    return values
+
+
+def fill_placeholders(raw: Any, values: dict[str, str] | None = None) -> Any:
+    """Replace every ${NAME} in the config's text values; raise if a name has no value."""
+    values = site_values() if values is None else values
+    missing: set[str] = set()
+
+    def value_of(match: re.Match) -> str:
+        name = match.group(1)
+        if name not in values:
+            missing.add(name)
+            return match.group(0)
+        return values[name]
+
+    def fill(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {key: fill(item) for key, item in node.items()}
+        if isinstance(node, list):
+            return [fill(item) for item in node]
+        if isinstance(node, str):
+            return _PLACEHOLDER.sub(value_of, node)
+        return node
+
+    filled = fill(raw)
+    if missing:
+        raise ConfigError(
+            [f"set {', '.join(sorted(missing))} in configs/site.env or the environment (see configs/site.env.example)"]
+        )
+    return filled
 
 
 @dataclass(frozen=True)

@@ -34,7 +34,7 @@ from tango.server import Device, attribute, command
 from tiled.client import from_uri
 from tiled.client.register import identity, register
 
-DEFAULT_TILED_URI = "http://10.46.217.241:9091"
+DEFAULT_TILED_URI = "http://localhost:9091"
 DEFAULT_ACQUISITION_DIR = "outputs/tiled_acquisitions"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 REGISTER_TIMEOUT_SECONDS = 120
@@ -344,7 +344,7 @@ class DATA(Device):
     def _parse_uri(uri: str) -> tuple[str, int]:
         without_scheme = uri.split("://", 1)[-1].strip("/")
         host, _, port = without_scheme.partition(":")
-        return host or "10.46.217.241", int(port or 9091)
+        return host or "localhost", int(port or 9091)
 
     @staticmethod
     def _tiled_command() -> list[str]:

@@ -203,3 +203,47 @@ def test_a_tableau_error_does_not_reset_the_running_total(limited_corrector_prox
 
     used = json.loads(limited_corrector_proxy.get_correction_limits())["applied_since_tableau"]
     assert used["C1"] == pytest.approx(10e-9)
+
+
+def test_ceos_driver_connects_fast_and_waits_long_for_replies(monkeypatch):
+    from types import SimpleNamespace
+
+    from asyncroscopy.instruments.electron_microscope.hardware import corrector_ceos
+
+    reply = CEOSCorrector._encode_netstring({"jsonrpc": "2.0", "id": 1, "result": None})
+    seen = {}
+
+    class FakeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def settimeout(self, seconds):
+            seen["reply_timeout"] = seconds
+
+        def sendall(self, data):
+            pass
+
+        def recv(self, size):
+            chunk, self.remaining = self.remaining[:size], self.remaining[size:]
+            return chunk
+
+    def fake_connect(address, timeout):
+        seen["connect_timeout"] = timeout
+        sock = FakeSocket()
+        sock.remaining = reply
+        return sock
+
+    monkeypatch.setattr(corrector_ceos.socket, "create_connection", fake_connect)
+    device = SimpleNamespace(
+        ceos_host="ceos.example", ceos_port=9092, connect_timeout_s=5.0, command_timeout_s=300.0,
+        _message_id=1, _encode_netstring=CEOSCorrector._encode_netstring,
+        _recv_netstring=CEOSCorrector._recv_netstring, _decode_netstring=CEOSCorrector._decode_netstring,
+        set_state=lambda state: None,
+    )
+
+    CEOSCorrector._call(device, "getInfo")
+
+    assert seen == {"connect_timeout": 5.0, "reply_timeout": 300.0}

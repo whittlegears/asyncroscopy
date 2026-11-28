@@ -52,18 +52,18 @@ def test_load_spectra300_config_starts_servers_only():
     aperture = next(device for device in config.support_devices if device.key == "aperture")
     stage = next(device for device in config.support_devices if device.key == "stage")
 
-    assert config.tango_host == "10.46.217.241"
-    assert config.tiled.host == "10.46.217.241"
+    assert config.tango_host == "192.0.2.10"
+    assert config.tiled.host == "192.0.2.10"
     assert config.tiled.register_on_startup is False
     assert config.instrument.class_name == "AutoScriptMicroscope"
     assert config.instrument.module_name == "asyncroscopy.instruments.electron_microscope.auto_script"
     assert aperture.class_name == "AutoScriptAPERTURE"
     assert aperture.module_name == "asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript"
-    assert aperture.properties["hardware_host"] == ["10.46.217.241"]
+    assert aperture.properties["hardware_host"] == ["192.0.2.10"]
     assert aperture.properties["hardware_port"] == ["9095"]
     assert stage.class_name == "AutoScriptSTAGE"
     assert stage.module_name == "asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript"
-    assert stage.properties["hardware_host"] == ["10.46.217.241"]
+    assert stage.properties["hardware_host"] == ["192.0.2.10"]
     assert stage.properties["hardware_port"] == ["9095"]
     assert config.reset_database_file is False
     assert not hasattr(config, "mcp")
@@ -121,7 +121,7 @@ def test_load_mcp_config():
     config = run_mcp.load_config(run_mcp.PROJECT_DIR / "configs" / "mcp.yaml")
 
     assert config.mcp.name == "Spectra300_MCP"
-    assert config.tango_host == "10.46.217.241"
+    assert config.tango_host == "192.0.2.10"
     assert config.tango_port == 9094
     assert config.mcp.http_host == "0.0.0.0"
     assert config.mcp.http_port == 8000

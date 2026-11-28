@@ -23,7 +23,7 @@ class EELS(EELSBase):
 
     hardware_host = device_property(
         dtype=str,
-        default_value="10.46.217.242",
+        default_value="localhost",  # set hardware_host in the config
         doc="Hostname or IP of the Gatan server",
     )
 

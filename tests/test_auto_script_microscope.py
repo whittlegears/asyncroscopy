@@ -440,12 +440,12 @@ class TestAutoScriptConnectionErrors:
         import asyncroscopy.instruments.electron_microscope.auto_script as auto_script_module
 
         monkeypatch.setattr(auto_script_module, "_AUTOSCRIPT_AVAILABLE", available)
-        device = self._device("connecting to 10.0.0.1:9095 failed: refused")
+        device = self._device("connecting to 192.0.2.1:9095 failed: refused")
         with pytest.raises(tango.DevFailed) as excinfo:
             AutoScriptMicroscope._acquire_scanned_image(device, 512, 1e-6, ["haadf"], [0, 0, 1, 1])
         error = excinfo.value.args[0]
         assert error.reason == "NotConnected"
-        assert "10.0.0.1:9095 failed: refused" in error.desc
+        assert "192.0.2.1:9095 failed: refused" in error.desc
         assert advice in error.desc
 
     def test_get_parameters_is_guarded(self) -> None:
@@ -476,14 +476,14 @@ class TestAutoScriptConnectionErrors:
         device = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
         device._tango_properties = {}
         device.testing_mode_bool = False
-        device.hardware_host, device.hardware_port = "10.0.0.1", 9095
+        device.hardware_host, device.hardware_port = "192.0.2.1", 9095
         device._connect_error = None
         device.info_stream = device.error_stream = device.warn_stream = lambda *a: None
 
         AutoScriptMicroscope._connect_hardware(device)
 
         assert device._microscope is None
-        assert "10.0.0.1:9095 failed" in device._connect_error
+        assert "192.0.2.1:9095 failed" in device._connect_error
 
     def test_missing_package_records_the_reason(self, monkeypatch) -> None:
         import asyncroscopy.instruments.electron_microscope.auto_script as module

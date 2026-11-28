@@ -76,7 +76,7 @@ instrument:
   file: asyncroscopy/instruments/my_kind/my_instrument.py
   class_name: MyInstrument          # blank: the class the file passes to run_server()
   description: "My instrument"
-  hardware_host: 192.168.0.10       # omit for a simulation
+  hardware_host: "${ASYNCROSCOPY_MY_INSTRUMENT_HOST}"   # omit for a simulation
   hardware_port: 9095
   timeout_seconds: 120              # becomes hardware_timeout_seconds
   properties:
@@ -89,7 +89,7 @@ devices:
     class_name: MySTAGE             # blank: the key upper-cased (STAGE)
     module_name: asyncroscopy.instruments.my_kind.hardware.stage_mine
     properties:
-      hardware_host: 192.168.0.10
+      hardware_host: "${ASYNCROSCOPY_MY_INSTRUMENT_HOST}"
   camera:
     module_name: asyncroscopy.instruments.my_kind.detectors.camera
     enabled: false                  # skipped, and removed from the database
@@ -108,6 +108,8 @@ tiled:
 
 device_timeout_seconds: 120         # wait for each device to answer ping()
 ```
+
+Write a machine's address as `"${NAME}"`, never as the address itself. At startup the name is filled in from an environment variable of that name, or else from `configs/site.env`. Git ignores that file; your team shares it privately. Add the name to `configs/site.env.example` so others know to set it. A test fails if a tracked file contains a lab address.
 
 Rules the runner checks:
 

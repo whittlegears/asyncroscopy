@@ -6,6 +6,8 @@
 # Author: Gerd Duscher, UTK
 # July 30th 2026 
 """
+import os
+
 import DigitalMicrograph as DM
 import Pyro5.api
 import numpy as np
@@ -103,8 +105,8 @@ class EELSServer:
 
 
 def main():
-    # Manually set the host IP and port here
-    HOST_IP = "10.46.217.242"  # Or your network IP like "192.168.1.50"
+    # The Gatan PC's own address, from the environment (see configs/site.env.example)
+    HOST_IP = os.environ.get("ASYNCROSCOPY_GATAN_HOST", "localhost")
     PORT = 9091
 
     daemon = Pyro5.server.Daemon(host=HOST_IP, port=PORT)

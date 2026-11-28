@@ -33,7 +33,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, is_enabled, read_settings  # noqa: E402
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, is_enabled, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 # Default config used in interactive mode (no --yaml). Passing --yaml <file>
@@ -288,6 +288,7 @@ def load_config(path: Path) -> Config:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ConfigError([f"{path.name} is not valid YAML: {exc}"]) from exc
+    raw = fill_placeholders(raw)
     values = read_settings(raw, SETTINGS)
     problems: list[str] = []
     instrument = None

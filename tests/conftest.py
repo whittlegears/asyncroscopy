@@ -11,6 +11,8 @@ This avoids:
 - Flaky multi-context issues from spinning up multiple separate servers
 """
 
+import os
+
 import pytest
 
 import numpy as np
@@ -34,6 +36,19 @@ from asyncroscopy.analysis.analysis_device import ANALYSIS
 from tests.test_agent import setup_llm_stubs
 # Stub out heavy LangChain/Ollama dependencies so the agent swarm imports without them
 setup_llm_stubs()
+
+# Lab machine addresses for the shipped configs' ${NAME} placeholders. These are
+# documentation addresses (RFC 5737) that reach nothing; they override any real
+# configs/site.env on the machine running the tests.
+SITE_TEST_VALUES = {
+    "ASYNCROSCOPY_MICROSCOPE_HOST": "192.0.2.10",
+    "ASYNCROSCOPY_GATAN_HOST": "192.0.2.11",
+    "ASYNCROSCOPY_TALOS_HOST": "192.0.2.12",
+    "ASYNCROSCOPY_F200_HOST": "192.0.2.13",
+    "ASYNCROSCOPY_SEGMENTATION_HOST": "192.0.2.14",
+}
+os.environ.update(SITE_TEST_VALUES)
+
 
 class FakeAdornedImage:
     def __init__(self, data: np.ndarray):

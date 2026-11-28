@@ -60,7 +60,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
     # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
+        default_value="localhost",  # set hardware_host in the config
         doc="Hostname or IP of the AutoScript microscope server",
     )
     hardware_port = device_property(

@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from gevent import os
+import os
 import numpy as np
 import tango
 # from autoscript_tem_microscope_client import TemMicroscopeClient
@@ -17,7 +17,7 @@ class AdvancedMicroscopeGUI:
 
         self.saved_stage_positions = {}  # Dictionary to store saved stage positions 
 
-        DB_HOST = "10.46.217.241"
+        DB_HOST = os.environ.get("ASYNCROSCOPY_MICROSCOPE_HOST", "localhost")  # see configs/site.env.example
         DB_PORT = 9094
         os.environ["TANGO_HOST"] = f"{DB_HOST}:{DB_PORT}"
         self.stage = tango.DeviceProxy("asyncroscopy/stage/default")

@@ -2,7 +2,7 @@ instrument:
   class_name: AutoScriptMicroscope
   file: asyncroscopy/instruments/electron_microscope/auto_script.py
   description: "Thermo Fisher Spectra 300 TEM"
-  hardware_host: 10.46.217.241
+  hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
   hardware_port: 9095
   timeout_seconds: 120
 
@@ -13,16 +13,18 @@ devices:
     class_name: AutoScriptAPERTURE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript
     properties:
-      hardware_host: 10.46.217.241
+      hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
       hardware_port: 9095
   camera:    { module_name: asyncroscopy.instruments.electron_microscope.detectors.camera }
   corrector:
     class_name: CEOSCorrector
     module_name: asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos
+    properties:
+      ceos_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
     # Correction limits protect the corrector from an agent or a script bug.
     # Choose the values with the corrector operators (unit: m; rad for WD).
     # Aberrations not listed are not limited. Example shape only, not safe values:
-    # properties:
+    # Add them under properties:
     #   max_step: '{"C1": 50e-9, "A1": 20e-9}'
     #   max_total_since_tableau: '{"C1": 200e-9}'
   analysis:
@@ -41,16 +43,16 @@ devices:
     class_name: AutoScriptSTAGE
     module_name: asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript
     properties:
-      hardware_host: 10.46.217.241
+      hardware_host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
       hardware_port: 9095
 
 tango:
-  host: 10.46.217.241
+  host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
   port: 9094
   reset_database_file: false
 
 tiled:
-  host: 10.46.217.241
+  host: "${ASYNCROSCOPY_MICROSCOPE_HOST}"
   port: 9091
   acquisition_dir: outputs/tiled_acquisitions
   autostart: true

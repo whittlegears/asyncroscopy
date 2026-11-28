@@ -18,18 +18,23 @@ class CEOSCorrector(CORRECTOR):
 
     ceos_host = device_property(
         dtype=str,
-        default_value="10.46.217.241",
-        doc="Hostname or IP address of the CEOS hardware server",
+        default_value="localhost",
+        doc="Hostname or IP address of the CEOS hardware server; set it in the config",
     )
     ceos_port = device_property(
         dtype=int,
         default_value=9092,
         doc="TCP port of the CEOS hardware server",
     )
-    socket_timeout = device_property(
+    connect_timeout_s = device_property(
         dtype=float,
-        default_value=120000.0,
-        doc="Socket timeout in seconds for CEOS communication",
+        default_value=5.0,
+        doc="Seconds to wait for the CEOS server to accept a connection; a wrong address fails this fast",
+    )
+    command_timeout_s = device_property(
+        dtype=float,
+        default_value=300.0,
+        doc="Seconds to wait for one command's reply; long enough for an Enhanced tableau",
     )
 
     def init_device(self) -> None:
@@ -40,7 +45,7 @@ class CEOSCorrector(CORRECTOR):
         try:
             with socket.create_connection(
                 (self.ceos_host, int(self.ceos_port)),
-                timeout=float(self.socket_timeout),
+                timeout=float(self.connect_timeout_s),
             ):
                 pass
             self._last_status = "Connected"
@@ -77,8 +82,9 @@ class CEOSCorrector(CORRECTOR):
         try:
             with socket.create_connection(
                 (self.ceos_host, int(self.ceos_port)),
-                timeout=float(self.socket_timeout),
+                timeout=float(self.connect_timeout_s),
             ) as sock:
+                sock.settimeout(float(self.command_timeout_s))
                 sock.sendall(netstring)
                 raw_response = self._recv_netstring(sock)
             result = self._decode_netstring(raw_response)
