@@ -372,9 +372,7 @@ def _at_values(sentence: str, phrase: str):
 
 
 def _acquired_at_claims(answer: str, settings: _Settings, request: str = "") -> list[Claim]:
-    """"I took images at defocus -20 nm, 0 nm and +20 nm": each value needs an acquisition while the setting had it.
-    Unchecked when an acquisition ran with the setting unknown (it may have had the value). A value the request
-    asked for is to be acquired, not dropped from the answer."""
+    """"I took images at defocus -20, 0 and +20 nm": each value needs an acquisition made while the setting had it."""
     claims: list[Claim] = []
     for sentence in _sentences(answer):
         acquired = ACQUIRED.search(sentence)
@@ -425,8 +423,7 @@ def _failed_acquisition_claims(answer: str, calls, catalog: ToolCatalog) -> list
 
 
 def _action_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
-    """Claims of acquiring, moving or zooming that no successful call backs. Not checked without the endpoint's
-    catalog: which calls acquire or move is what the endpoint says, not what their names suggest."""
+    """Claims of acquiring, moving or zooming that no successful call backs, judged from the endpoint's catalog."""
     if not catalog.known:
         return []
     ok = [c for c in calls if c.ok]
@@ -449,8 +446,7 @@ def _action_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
 
 
 def _placements(calls) -> dict[str, str]:
-    """The latest placement status for each image key: from place_image, or from a job that placed images (a Mapper
-    zoom reports each tier's {"image", "placement": {"status"}})."""
+    """The latest placement status per image key, from place_image or a job that placed images."""
     out: dict[str, str] = {}
     for call in calls:
         if call.error:
@@ -490,8 +486,7 @@ def _field_name_claims(answer: str) -> list[Claim]:
 
 
 def _stitch_claims(answer: str, calls) -> list[Claim]:
-    """A stitched map claimed when the job's stitch failed and no later call made one (a 2704-tile map whose stitch
-    timed out was reported as "the stitched map is available")."""
+    """A stitched map claimed when the job's stitch failed and no later call made one."""
     error = None
     for call in calls:
         if call.error:
@@ -536,9 +531,7 @@ def _unit_claims(answer: str, calls) -> list[Claim]:
 
 
 def _map_quality_claims(answer: str, request: str, calls) -> list[Claim]:
-    """A map called good or seamless when most of its tiles matched no neighbour (qwen3:8b called a map whose 100 tiles
-    all sat where the stage reported them "of good quality", from its pixel statistics); and, when the request asks
-    how good the map is, an answer that leaves that out (corrected, it listed the key and tile size instead)."""
+    """A map called good or seamless when most tiles matched no neighbour, or a quality question left unanswered."""
     placed = None
     for call in calls:
         if not call.error:
@@ -559,8 +552,7 @@ def _map_quality_claims(answer: str, request: str, calls) -> list[Claim]:
 
 
 def _drift_claims(answer: str, calls) -> list[Claim]:
-    """No drift claimed when the stitch could not measure it (qwen3:8b said "no drift detected" of a map whose tiles
-    matched no neighbour, so the fit had nothing to measure)."""
+    """No drift claimed when the stitch could not measure it."""
     if not any(not call.error and any("drift_unmeasured" in node for node in _walk(_json(call.result))) for call in calls):
         return []
     why = "the stitch had too few image matches to measure drift: say drift is unknown, not that there was none"
@@ -580,8 +572,7 @@ def _unfinished_claims(answer: str) -> list[Claim]:
 
 
 def _zoom_claims(request: str, calls, catalog: ToolCatalog) -> list[Claim]:
-    """The request asks to zoom in on a spot, and nothing was imaged or read there (qwen3:8b mapped, scored and listed
-    the points of interest, then answered with the best one's position and score, never imaging it)."""
+    """A zoom on a spot requested and nothing imaged or read there."""
     if not ZOOM_REQUEST.search(request):
         return []
     if any(c.ok and (c.name in READERS or catalog.category(c.name) == "acquire") for c in calls):
@@ -595,8 +586,7 @@ def _zoom_claims(request: str, calls, catalog: ToolCatalog) -> list[Claim]:
 
 
 def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
-    """The request asks where things are, a reply gave their x_m, y_m, and the answer states none of those positions
-    (qwen3:8b answered "Here are their stage coordinates:" with no coordinates after a list_pois of 19 points)."""
+    """The request asks where things are, a reply gave positions, and the answer states none."""
     if not POSITION_QUESTION.search(request):
         return []
     found: dict[str, set] = {}  # distinct positions per tool, since a point's links may repeat it

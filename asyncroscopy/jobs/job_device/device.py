@@ -203,8 +203,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
         self.set_state(DevState.ON)
 
     def _no_active_job(self) -> bool:
-        """The trace file waits to be rotated while this device holds a job: the job's events are found by their offset
-        in the file (``trace_offset``). Runs under the file's lock while other threads may hold self._lock, so it takes none."""
+        """Whether the trace may rotate: not while a job's events are found by offset. Takes no lock (runs under the file's)."""
         return not any(job["state"] in ACTIVE_JOB_STATES for job in list(self._jobs.values()))
 
     def delete_device(self) -> None:
@@ -257,9 +256,7 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
 
     @classmethod
     def _plan_caused(cls, exc: Exception, request: str) -> bool:
-        """A KeyError for a plan field the plan lacks, or a TypeError with a null or a wrongly typed value
-        in the plan, is the caller's; anything else from resolve_plan (a typo'd limits key, arithmetic on
-        None) is the device's bug. Plan fields and their types are PLAN_EXAMPLE's when there is one."""
+        """Whether resolve_plan's error is the caller's (a missing or mistyped plan field), not the device's bug."""
         try:
             plan = json.loads(request).get("plan")
         except (ValueError, AttributeError):

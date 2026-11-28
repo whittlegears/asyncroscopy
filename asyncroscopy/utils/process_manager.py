@@ -302,8 +302,7 @@ class ProcessManager:
 
     @staticmethod
     def _drain(stream, buf: deque, echo_prefix: str | None = None) -> None:
-        """Continuously reads lines and saves them into a queue, preventing the pipe from getting blocked.
-        With echo_prefix, each line is also printed to stdout behind that prefix."""
+        """Read lines into a queue so the pipe never blocks, echoing them behind ``echo_prefix``."""
         if stream is None:
             return
         def _read() -> None:
@@ -437,12 +436,7 @@ class ProcessManager:
 
     @staticmethod
     def _is_recorded_process(pid: int, recorded_at: float) -> bool:
-        """Whether ``pid`` can still be the process the state file recorded at ``recorded_at``.
-
-        The operating system reuses process ids, so a state file left by a crash can name a process that has
-        nothing to do with this launcher: another stack, or any other program. A process started after the file
-        was last written cannot be one it recorded. Without psutil nothing can be told apart, so nothing is stopped.
-        """
+        """Whether ``pid`` can still be the recorded process: ids are reused, and one started after the record is not."""
         if psutil is None:
             return False
         try:
@@ -451,15 +445,7 @@ class ProcessManager:
             return False
 
     def _kill_stale_pid(self, pid: int):
-        """Best-effort termination of orphan process IDs from a previous crash.
-
-        Recorded PIDs are process-group leaders (start_process uses
-        start_new_session=True), so signaling the whole group is required:
-        a bare os.kill only reaches a wrapper like `uv run`, and once that
-        wrapper is SIGKILLed it has no chance to relay the signal to the
-        actual device-server child it spawned, leaving that child running
-        and still holding its Tango server-instance name.
-        """
+        """Kill orphan process groups from a crash: only the group reaches the device server behind a ``uv run`` wrapper."""
         if os.name == "nt":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],

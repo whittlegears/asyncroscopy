@@ -54,8 +54,7 @@ def default_sources() -> list[str]:
 
 
 def _expand(sources: Iterable[str | os.PathLike]) -> list[Path]:
-    """Files to follow: a directory gives its ``*.jsonl`` and their rotated copies (``*.jsonl.1``), a file
-    itself (even before it exists) and its rotated copies, a glob what it matches now."""
+    """Files to follow: a directory's or a file's ``*.jsonl`` and their rotated copies, or what a glob matches now."""
     paths: list[Path] = []
     for source in sources:
         text = str(source)

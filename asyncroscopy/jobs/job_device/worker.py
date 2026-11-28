@@ -37,8 +37,7 @@ class JobWorker:
         return self._reply({"job_id": job.get("job_id"), "reservation_id": job["reservation_id"], "state": "running", "continued": True})
 
     def _hold_while_paused(self, job: dict, job_id: str, abort: threading.Event) -> str:
-        """Wait while a person has paused the job, with the instrument made safe: "running" (it was not paused),
-        "continued" (it was, and they continued it) or "aborted"."""
+        """Wait while paused with the instrument made safe: "running", "continued" or "aborted"."""
         with self._lock:
             if not job.get("pause_requested"):
                 return "running"

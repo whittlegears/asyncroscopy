@@ -41,6 +41,16 @@ What the graphs do so a small model's context does not overflow (`asyncroscopy/a
 - Before every model call the messages are fitted to what the system prompt and the tool schemas leave: the system prompt, the first and the latest request and the latest tool reply (cut at 6000 characters) are kept; older tool replies become one-line digests, and the oldest finished rounds go first. The skills and memory notes share at most a quarter of the context.
 - A call repeated with the same arguments and the same result: the second time the model is told so in the prompt; the third time the run stops with an honest answer saying what was repeated, instead of looping to the recursion limit.
 
+The claim check (`asyncroscopy/agents/claims.py`) sends a correction when an answer claims what no call backs. Each rule came from a real answer:
+
+- a stitched map after the stitch failed (a 2704-tile map whose stitch timed out was "available");
+- a map called good or seamless when most tiles matched no neighbour (qwen3:8b called a map whose 100 tiles all sat where the stage reported them "of good quality");
+- no drift when the stitch could not measure it ("no drift detected" of a map whose tiles matched no neighbour);
+- a zoom on a spot answered without imaging it (the best point's position and score, never imaged);
+- a question of where things are answered without the positions a reply gave ("Here are their stage coordinates:" with none after a `list_pois` of 19 points).
+
+Which calls acquire or move is what the endpoint's catalog says, never what names suggest, so without the catalog these claims are not checked.
+
 `endpoint_info` (for agent programs, not given to models) reports each tool's risk as the risk policy sees it, the job devices and the analysis server. Agents read the analysis server's address from it, so `mcp.urls.analysis` in the MCP config (reported as `endpoint_info.urls.analysis`) is the one place it is set (`ASYNCROSCOPY_ANALYSIS_URL` overrides it); the goal checker and the benchmarks read risks from it, so a deployment's `mcp.safety.risk` overrides count everywhere.
 
 An endpoint with `mcp.auth` needs a bearer token: agents send `ASYNCROSCOPY_MCP_TOKEN` as `Authorization: Bearer` to the instrument and analysis endpoints, and the endpoint takes the caller from the token's subject instead of `ASYNCROSCOPY_CALLER`. See [Remote access](remote_access.md).

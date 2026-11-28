@@ -132,8 +132,7 @@ YAML_JOB_MODULE = "asyncroscopy.instruments.yaml_sim.job"
 
 
 def _plugins(raw: dict) -> tuple[str, ...]:
-    """The stack YAML's `plugins:` list: files resolved against the project folder and checked to exist,
-    module names checked to import, so a typo fails at load rather than as "unknown instrument profile"."""
+    """The stack YAML's ``plugins:``, checked to exist or import so a typo fails at load."""
     from asyncroscopy.plugins import is_file_spec
 
     entries = raw.get("plugins") or []
@@ -392,8 +391,7 @@ def device_config(key, spec) -> tuple[DeviceConfig | None, bool]:
 
 
 def _merge(base: dict, override: dict, replace_values: bool = False) -> dict:
-    """``override`` laid over ``base``: mappings merge key by key, anything else replaces, and null removes.
-    Under a ``properties:`` mapping each property is replaced whole (a specimen mapping is one value)."""
+    """``override`` over ``base``: mappings merge, null removes, and each property under ``properties:`` is replaced whole."""
     merged = dict(base)
     for key, value in override.items():
         if value is None:

@@ -59,8 +59,7 @@ class SkillLimits:
 
 
 def _cue(text: str) -> re.Pattern:
-    """A request cue as a pattern. ``re:`` starts a regular expression. Otherwise it is words, matched whole and
-    ignoring case; a word ending in ``*`` matches any word that starts with it ("annotat*": annotate, annotation)."""
+    """A request cue as a pattern: ``re:`` a regular expression, else whole words ignoring case, ``*`` a prefix."""
     if text.startswith("re:"):
         return re.compile(text[3:], re.I)
     words = [re.escape(w[:-1]) + r"\w*" if w.endswith("*") else re.escape(w) for w in text.split()]

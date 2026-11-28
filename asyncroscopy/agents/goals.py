@@ -330,8 +330,7 @@ def _job_id(call: Call) -> str | None:
 
 
 def _device(call: Call, catalog: ToolCatalog) -> str:
-    """The job device a call is about: run_job's device argument, the device of an envelope command (a
-    multi-Mapper endpoint's "Mapper_key_start" is device "Mapper_key"), "analysis", or "unknown"."""
+    """The job device a call is about, "analysis", or "unknown"."""
     if call.args.get("device"):
         return str(call.args["device"])
     if call.name in ("assemble_map", "score_map") or call.name.startswith("analysis_"):
@@ -340,8 +339,7 @@ def _device(call: Call, catalog: ToolCatalog) -> str:
 
 
 def _starts(call: Call, facts: Facts, catalog: ToolCatalog) -> str | None:
-    """The kind of job a call starts in this run: "instrument" (run_job, a job device's start), "assemble"
-    (stitching a run this run acquired), "score" (scoring makes points of interest, not a map), or None."""
+    """The kind of job a call starts: "instrument", "assemble", "score", or None."""
     if call.name == "run_job" or (catalog.is_device_tool(call.name) and catalog.role(call.name) == "job.start"):
         return "instrument"
     if call.name == "assemble_map":
@@ -586,9 +584,7 @@ class GoalChecker:
         return False, f"{len(found)} {kind or 'data'} recorded in this run, {wanted} wanted (data found by listing or reading does not count)"
 
     async def _check_no_unrequested(self, c: dict, facts: Facts, answer: str):
-        """No high-risk call outside what the request asked for: ``allow`` globs (a goal file), else
-        ``categories`` (job, acquire, move, settings, beam, probe; from each tool's role). Not checked when the
-        endpoint's catalog is unavailable: a guess from names would misjudge (set_fov on a STEM is low)."""
+        """No high-risk call outside the request's ``allow`` globs or ``categories``; unchecked without the endpoint's catalog."""
         if not facts.risks_known:
             return True, "not checked: the endpoint's tool catalog (endpoint_info) was not available"
         if "allow" in c:

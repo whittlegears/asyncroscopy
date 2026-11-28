@@ -111,8 +111,7 @@ class DataTools:
         return self.with_deadline(lambda: self._list_data(kind, search, max(1, min(int(limit), 100)), max(0, int(offset)), started), lane="list")
 
     def _list_data(self, kind: str | None, search: str | None, limit: int, offset: int, started: float) -> dict[str, Any]:
-        """One page of matches. ``offset`` counts keys from the newest, so a page cut short by the time budget
-        continues where it stopped (next_offset) instead of rescanning."""
+        """One page of matches; ``offset`` counts from the newest so a page cut short continues."""
         uri = tiled_client.uri_from_data_device(self.data_device_address)
         client = tiled_client.connect(uri)
         items = client.items()

@@ -594,8 +594,7 @@ MARK_REACH = 8  # channels either side of a peak searched for its top, where its
 
 
 def _mark_peaks(plot: Any, marks: list[tuple[float, float, str]], span: float) -> None:
-    """Short labels above peaks: a label that would overlap one on its left goes up a row, with a thin line down to its
-    peak, and the y range grows to keep every row inside the axes."""
+    """Short labels above peaks, stacked in rows where they would overlap."""
     placed: list[tuple[float, int]] = []
     for x, y, text in sorted(marks):
         row = 0

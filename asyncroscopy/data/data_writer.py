@@ -43,13 +43,7 @@ def acquisition_filename(
 
 
 def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
-    """Write one image to ``path`` as TIFF.
-
-    AutoScript adorned images save themselves natively (embedding their own
-    metadata); anything else is a raw array (JEOL/twin) written via tifffile,
-    with ``attrs`` (e.g. JEOL's get_detectorsetting() dict) json-encoded into the
-    TIFF ImageDescription tag so the provenance survives the format.
-    """
+    """Write one image as TIFF: AutoScript images save themselves; others go through tifffile with ``attrs`` in ImageDescription."""
     if hasattr(source, "save"): # adorned images from AutoScript have a save method
         source.save(str(path))
     else:
@@ -207,8 +201,7 @@ def _report(device, message: str) -> None:
 
 
 def _seal(device, path: Path, instrument_id: str) -> None:
-    """Seal the file just written (its SHA-256 in the integrity manifest), so a later change to it is detected. The
-    data is already saved, so a seal that cannot be written is reported on the device's error stream, not raised."""
+    """Seal the file in the integrity manifest; a failure is reported, not raised, as the data is already saved."""
     try:
         seal(path, key=Path(path).name, writer=instrument_id)
     except Exception as exc:
@@ -216,9 +209,7 @@ def _seal(device, path: Path, instrument_id: str) -> None:
 
 
 def _ledger(device, attrs: dict, sample: dict, key: str, instrument_id: str) -> None:
-    """Add the frame to the dose ledger (the detectors saw one frame). The data is already saved, so a ledger that
-    cannot be written is reported on the device's error stream, not raised: a caller that lost the key would take
-    the frame again and double the real dose."""
+    """Add the frame to the dose ledger; a failure is reported, not raised, so a retry never doubles the real dose."""
     try:
         record_frame(attrs, sample.get("sample_load_id"), key, instrument_id)
     except Exception as exc:

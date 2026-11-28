@@ -148,13 +148,15 @@ AutoScript-specific MCP class.
 
 ## Command Names
 
-Tango commands are exposed as MCP tools using the device class and command name.
-For example:
+Tango commands are exposed as MCP tools named `<prefix>_<command>` (`asyncroscopy.core.names.tool_name`).
+The prefix is the device class. When several devices share a class, each gets `<Class>_<suffix>` so neither
+hides the other: the suffix is the member (`lab/mapper/2` gives `Mapper_2`), else the family when members
+repeat (`asyncroscopy/grid2/default` gives `Mapper_grid2`), else the whole device name. For example:
 
 ```text
-SCAN.State
-SCAN.Status
-AutoScriptMicroscope.acquire_scanned_image
+SCAN_State
+SCAN_Status
+AutoScriptMicroscope_acquire_scanned_image
 ```
 
 The exact tool set depends on which devices are exported in the Tango database

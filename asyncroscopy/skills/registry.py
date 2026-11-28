@@ -145,8 +145,7 @@ def _skill_files(base: Path) -> list[Path]:
 
 
 def _cached_skill(path: Path) -> Skill:
-    """A copy of the parsed skill at ``path`` (callers set ``problem`` and ``learned`` on theirs), parsed once per file version.
-    A file that cannot be parsed raises as it did when first read."""
+    """A copy of the parsed skill at ``path``, parsed once per file version."""
     stamp = _stamp(path)
     cached = _parsed.get(path)
     if cached is None or cached[0] != stamp or stamp is None:

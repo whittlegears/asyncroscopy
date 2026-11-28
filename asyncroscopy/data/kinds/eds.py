@@ -115,8 +115,7 @@ def _width_channels(x: np.ndarray, axis: Axis, step: int) -> Any:
 
 
 def _name_peaks(rows: list[PeakRow], x: np.ndarray, y: np.ndarray, axis: Axis, step: int, fwhm: Any) -> list[PeakRow]:
-    """Notes for the peaks of an X-ray spectrum, given strongest (by significance) first: artefacts, the detector window's
-    rise, then candidate lines. Every peak is known before any is named, so a line can be checked against its element's other lines."""
+    """Notes for an X-ray spectrum's peaks, strongest first: artefacts, the window's rise, then candidate lines."""
     noted: list[PeakRow] = []
     for position, net, sigma, index, _note in rows:
         if abs(position) <= ZERO_PEAK_EV:

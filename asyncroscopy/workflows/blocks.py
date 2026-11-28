@@ -44,8 +44,7 @@ class Unreachable(BlockFailed):
 
 
 def _undelivered_errors() -> tuple[type[BaseException], ...]:
-    """The transport errors that mean a request was never sent: httpx's, and those of httpx2, the copy the MCP client
-    of fastmcp 4 uses, when it is installed."""
+    """Transport errors meaning a request was never sent, from httpx and fastmcp 4's httpx2."""
     found: list[type[BaseException]] = []
     for name in ("httpx", "httpx2"):
         try:

@@ -145,8 +145,7 @@ def rotate(path: str | Path, keep: int = 0) -> Path | None:
 
 
 def _last_seq_in(path: Path) -> tuple[int, float]:
-    """(highest seq, latest written) already in ``path``, or in its newest rotated file when ``path`` is new:
-    how a log without a .seq sidecar is continued."""
+    """(highest seq, latest written) in ``path`` or its newest rotated file, for a log without a .seq sidecar."""
     seq, written = 0, 0.0
     if not path.exists() or path.stat().st_size == 0:
         rotated = rotated_paths(path)

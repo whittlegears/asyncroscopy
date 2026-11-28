@@ -94,8 +94,7 @@ class Pipeline:
             raise AnalysisUnreachable(f"the analysis server at {self.url}: {type(exc).__name__}: {exc}") from exc
 
     def _wait_options(self, job: dict, slot: str) -> dict:
-        """How a shared stitch or score runs for this job: it resumes the analysis job saved in ``slot``, saves the id of a
-        new one there before waiting, and stops when this job aborts."""
+        """How a shared stitch or score runs for this job: resumed from ``slot``, stopped when the job aborts."""
         def keep(job_id: str) -> None:
             with self._lock:
                 self.state(job)[slot] = job_id

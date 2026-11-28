@@ -616,8 +616,7 @@ class Tuner(JobDevice):
         strategy.check(p, capabilities)
 
     def _drives(self, strategy: Strategy) -> dict[str, list[str]]:
-        """{device address: commands} a tuning job with ``strategy`` may send, restoring included, so auto mode
-        can tell whether it runs them all (a corrector write is held there until an operator switches it on)."""
+        """{device address: commands} a tuning job with ``strategy`` may send, restoring included."""
         microscope = ["blank_beam", "unblank_beam", "set_fov", "set_defocus", "set_stigmator", "acquire_scanned_image"]
         if "autofocus" in strategy.needs:
             microscope.append("auto_focus")

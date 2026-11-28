@@ -164,10 +164,7 @@ class Mapper(JobDevice):
         return resolved
 
     def _check_needs(self, profile: InstrumentProfile, plan: dict) -> None:
-        """Refuse a plan whose instrument lacks a command the profile needs, at reserve, before anything moves.
-
-        The commands are kept in the plan as ``drives`` ({device address: commands}), so auto mode can tell
-        whether it runs every one of them before it starts the job."""
+        """Refuse at reserve a plan whose instrument lacks a command the profile needs; record them as ``drives``."""
         needs = profile.needed_commands(plan)
         shift_commands = live_drift.needed_commands(plan, profile)
         if plan.get("zoom_only"):

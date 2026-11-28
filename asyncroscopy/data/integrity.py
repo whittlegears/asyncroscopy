@@ -331,8 +331,7 @@ def _read_new(log: Path, seen: _Indexed, stat: os.stat_result) -> bool:
 
 
 def _index() -> dict[str, dict]:
-    """The latest manifest entry per resolved path. Only lines appended since the last call are read; the whole
-    manifest (all its rotated parts) is read again only when the file was rotated, shortened or rewritten."""
+    """The latest manifest entry per resolved path, reading only the lines appended since the last call."""
     log = manifest_path()
     with _index_lock:
         seen = _index_cache.get(str(log))

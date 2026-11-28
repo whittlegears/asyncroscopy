@@ -58,8 +58,7 @@ class DoseMap:
         return self.params.cell_m / 2**level
 
     def _level_for(self, size_m: float) -> int:
-        """The level whose cells are the largest no bigger than ``size_m`` / CELLS_PER_FIELD (at most ``finest``;
-        levels below 0 are cells larger than ``cell_m``, for frames whose pixels are larger than it)."""
+        """The finest level whose cells are no bigger than ``size_m`` / CELLS_PER_FIELD, at most ``finest``."""
         if not (np.isfinite(size_m) and size_m > 0):
             return 0
         wanted = size_m / CELLS_PER_FIELD
