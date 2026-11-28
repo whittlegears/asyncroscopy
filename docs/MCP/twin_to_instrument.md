@@ -11,6 +11,48 @@ call of the same tool with the same canonical, validated arguments runs without 
 person as usual. A `never` tool stays refused. Physical range checks (stage limits, job limits, dose checks, the turn
 guard) are not permissions and still apply to every call.
 
+## Changes after review (2026-11-28)
+
+These shapes changed after an adversarial review. An app built against the earlier text must change:
+
+1. **`approve_workflow` takes `rehearsal_run_id: str` (required on the workflow operator endpoint).** Send
+   `review_workflow`'s `rehearsal.run_id`, from a review with the same `instrument_url`. It is refused (`ok: false`,
+   `error` says why) unless that run is still the rehearsal the review would show: the latest passing rehearsal of
+   this exact code that counts for `instrument_url`. A newer passing rehearsal, or a changed instrument, means
+   review again. The approval stores that rehearsal in `approval.rehearsed`: `run_id`, `at`, `inputs`, `stack_id`,
+   `stack_fingerprint`, `calls_made` (with the mapping below) and `actions`. Later rehearsals and the library keeping
+   only the last 10 rehearsals no longer change what was signed off.
+2. **Inputs must match.** A hardware `run_workflow` of an approved workflow whose approval carries a rehearsal is
+   refused (`state: "refused"`, before anything is opened) unless its inputs, with the workflow's defaults filled in,
+   equal `approval.rehearsed.inputs` (canonical JSON). Send `review.rehearsal.inputs`; it is the same object as
+   `approval.rehearsed.inputs`. Other inputs need a new rehearsal and a new sign-off.
+3. **The call mapping in `review_workflow`.** The twin's and the instrument's tools have different names
+   (`DigitalTwin_move_stage`, `AutoScriptMicroscope_move_stage`). A rehearsed call is matched to an instrument tool by
+   what the two endpoints report in `endpoint_info`: the same `role` and `command` on a device with the same
+   `device_kinds` (for a native tool, the same name). Each `rehearsal.calls_made[]` entry with `server: "instrument"`
+   gains two keys, for the endpoint at `instrument_url`:
+   - `instrument_tool`: the instrument tool it matches, or `null`;
+   - `held_because`: `null` when it matches, else a sentence starting `"no match: will be held"` (no tool matches,
+     two or more match, or the instrument cannot be reached).
+   The sign-off covers exactly the calls with an `instrument_tool`, under that name, with the rehearsed arguments.
+   At run time the mapping is worked out again; a call whose tool is not the one the approval recorded is held.
+4. **Counts are used up.** A rehearsed call made `count` times is pre-approved `count` times: each call that passes
+   uses one. `preapprove_run`'s `calls[]` items carry `count` (default 1). A call beyond its count is held, with
+   `why_held: "the rehearsal made this call fewer times"`.
+5. **The token role `preapprove`.** `preapprove_run`, `end_run_preapproval` and a twin's `export_ground_truth` need
+   the new role `preapprove` (scope `instrument:preapprove`), and no other role grants them. Give
+   `ASYNCROSCOPY_OPERATOR_TOKEN` only that scope, never `instrument:approve`. With `ASYNCROSCOPY_MCP_TOKEN` set and
+   `ASYNCROSCOPY_OPERATOR_TOKEN` unset, the workflow server never falls back to the agents' token: the hardware run
+   starts with `preapproval: {"granted": false, "why": "ASYNCROSCOPY_OPERATOR_TOKEN is not set ..."}` and every
+   `approve` call is held.
+6. **A held call of a signed-off run is bound to that run.** A person's `approve_call` on it is used only by a call
+   carrying the same run id and that run's key (`resume_workflow` re-binds it to the resumed run's new key).
+7. **A pre-approval is kept alive while the run drives.** Each call of the run with its key moves `expires_at` to
+   `approval_ttl_s` from now, never beyond 12 hours after the grant (`max_run_preapproval_s`).
+8. **`review_workflow`'s `rehearsal`, and `approve_workflow`'s choice,** pick the passing entry when a stopped and
+   resumed rehearsal left two entries with one `run_id`.
+9. **The run key** is sent only to the instrument endpoint, never to the analysis server.
+
 ## Who does what
 
 | Process | Role here |
