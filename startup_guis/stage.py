@@ -8,6 +8,7 @@ import tango
 
 class AdvancedMicroscopeGUI:
     def __init__(self, root):
+        """TANGO_HOST has no default, so this window never drives an instrument nobody named."""
         self.root = root
         self.root.title("Advanced Microscope Stage & Beam Controller")
         self.root.geometry("900x530")
@@ -15,7 +16,6 @@ class AdvancedMicroscopeGUI:
 
         self.saved_stage_positions = {}
 
-        # No default, so this window never drives an instrument nobody named.
         if not os.environ.get("TANGO_HOST", "").strip():
             raise SystemExit("Set TANGO_HOST to the stack's Tango database, host:port (the tango: section of its YAML, "
                              "e.g. configs/Spectra300.yaml), before starting this GUI.")

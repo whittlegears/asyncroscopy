@@ -15,6 +15,8 @@ A startup script that the GUI can drive exposes:
     load_config(path)     the script's own loader; raises on any invalid config
 
 The GUI edits the raw YAML in place, so keys it shows no widget for are kept as they are.
+
+SITE_FILE keeps lab addresses out of git: ${NAME} comes from the environment or the git-ignored configs/site.env.
 """
 
 from __future__ import annotations
@@ -39,7 +41,6 @@ class ConfigError(ValueError):
 
 
 
-# Lab addresses stay out of git: ${NAME} comes from the environment or the git-ignored configs/site.env.
 SITE_FILE = Path(__file__).resolve().parents[1] / "configs" / "site.env"
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 

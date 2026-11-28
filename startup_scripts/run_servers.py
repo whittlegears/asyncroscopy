@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-"""Start the Tango database and asyncroscopy device servers."""
+"""Start the Tango database and asyncroscopy device servers.
+
+DEFAULT_CONFIG_PATH is the digital twin, so a fresh GUI window never targets the real microscope.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +40,6 @@ from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, l
 from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, fill_placeholders, read_settings
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers
 
-# The GUI opens on the digital twin, so a fresh window never targets the real microscope.
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'DigitalTwin.yaml'
 YAML_REQUIRED = ("--yaml is required: name the stack's config, e.g. configs/DigitalTwin.yaml for the digital twin "
                  "or configs/Spectra300.yaml for the Spectra 300.")
@@ -423,6 +425,7 @@ def read_config(path: Path, _seen: tuple[Path, ...] = ()) -> dict:
 
 
 def load_config(path: Path) -> Config:
+    """A device may repeat the stack's simulated flag but never contradict it, which would lift its hardware rules."""
     raw = fill_placeholders(read_config(path))  # here, not in read_config: generated configs keep ${NAME}
     values = read_settings(raw, SETTINGS)
     problems: list[str] = []
@@ -458,7 +461,6 @@ def load_config(path: Path) -> Config:
         problems.append(str(exc))
     if problems:
         raise ConfigError(problems)
-    # A device may repeat the stack's simulated flag but never contradict it, which would lift its hardware rules.
     for where, properties in [("instrument", instrument.properties), *((f"devices.{d.key}", d.properties) for d in support_devices)]:
         _check_device_simulated(properties.get("simulated"), simulated, where, path)
         properties["simulated"] = [str(simulated).lower()]
@@ -1057,7 +1059,10 @@ def manager_options(args: argparse.Namespace, port: int) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Line-buffered even into a pipe, so "ready" and the summary appear when they happen.
+    """stdout is line-buffered even into a pipe, so "ready" and the summary appear when they happen. A server that dies
+    after startup stops the stack with an error, so a supervisor sees the failure. Ctrl+C is caught inside the with
+    block, while the processes are still alive to stop Tiled through.
+    """
     sys.stdout.reconfigure(line_buffering=True)
     args = parse_args(argv)
     install_shutdown_handlers(args.parent_pid)
@@ -1297,12 +1302,10 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 while True:
                     time.sleep(0.1)
-                    # A server that dies after startup stops the stack with an error, so a supervisor sees the failure.
                     stopped = next((p for p in manager.active_processes if not p.running), None)
                     if stopped is not None:
                         raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
             except KeyboardInterrupt:
-                # Caught inside the with block, while the processes are still alive to stop Tiled through.
                 print()
                 print(color("Shutdown requested. Stopping Tiled server...", Style.yellow))
                 stop_tiled_server() 

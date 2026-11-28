@@ -152,6 +152,7 @@ def load_config(path: Path) -> Config:
 
 
 def build_command(config: Config) -> list[str]:
+    """sync is off when the extras are installed, so this child cannot race other launchers re-syncing the venv."""
     agent = config.agent
     command = python_command(
         '-m',
@@ -175,7 +176,6 @@ def build_command(config: Config) -> list[str]:
         '--startup-agents-json',
         json.dumps(agent.startup_agents),
         extras=AGENT_EXTRAS,
-        # Skip uv's sync when the extras are installed, so this child cannot race other launchers re-syncing the venv.
         sync=not agent_extras_installed(),
     )
     if agent.endpoint_role != 'agent':

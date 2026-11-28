@@ -1,3 +1,5 @@
+"""COLORS is mutated in place by apply_theme(), so helpers that read COLORS at call time get the right set."""
+
 from __future__ import annotations
 
 import os
@@ -83,7 +85,6 @@ LIGHT_COLORS = {
     'terminal_bg': '#0b0f14',
     'terminal_text': '#c9d1d9',
 }
-# Mutated in place by apply_theme(), so helpers that read COLORS at call time get the right set.
 COLORS = dict(DARK_COLORS)
 
 
@@ -112,7 +113,7 @@ def _ui_font(size: int, weight=None) -> QFont:
 
 
 def _font(name: str) -> QFont:
-    # Built on demand, because QFont needs a QApplication to exist.
+    """The fonts are built on demand, because QFont needs a QApplication to exist."""
     if name == 'BODY_FONT':
         return _ui_font(14)
     if name == 'TITLE_FONT':
@@ -558,12 +559,15 @@ class ManagedCommand(QObject):
         return self._stopping is not None and self._stopping.is_alive()
 
     def start(self, command: list[str], cleanup: list[str] | None = None) -> None:
-        """Start command; cleanup is run if the script has to be force-killed, to stop what it left behind."""
+        """Start command; cleanup is run if the script has to be force-killed, to stop what it left behind.
+
+        It refuses while the previous run is still stopping, because a cleanup still to come would read the same state
+        file and stop the new run.
+        """
         if self.running:
             self.output_ready.emit('A process is already running.\n')
             return
         if self.stopping:
-            # A cleanup still to come would read the same state file and stop the new run.
             self.output_ready.emit('Still stopping the previous run; try again in a moment.\n')
             return
         env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
@@ -591,10 +595,12 @@ class ManagedCommand(QObject):
             self._stopping.join(self.STOP_TIMEOUT_S + 30)
 
     def _interrupt(self) -> None:
+        """On Windows CTRL_BREAK_EVENT reaches only the script, which runs in its own process group; it arrives as
+        SIGBREAK.
+        """
         assert self.process is not None
         try:
             if os.name == 'nt':
-                # The script runs in its own process group, so this reaches only it. It arrives as SIGBREAK.
                 os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
             else:
                 os.killpg(self.process.pid, signal.SIGTERM)

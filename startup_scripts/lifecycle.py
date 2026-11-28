@@ -47,7 +47,9 @@ def install_shutdown_handlers(parent_pid: int | None = None) -> None:
         parent_gone = threading.Lock()
 
         def stop_for_parent() -> None:
-            # With the parent gone every print raises BrokenPipeError and aborts the shutdown, so output goes nowhere first.
+            """With the parent gone every print raises BrokenPipeError and aborts the shutdown, so detach_output sends
+            output nowhere first.
+            """
             if requested.is_set() or not parent_gone.acquire(blocking=False):
                 return
             detach_output()
@@ -94,8 +96,9 @@ def wait_for_exit(managed) -> int:
     """Block until a server the launcher started stops on its own, and give its exit code.
 
     The caller fails even on code 0, so a supervisor such as systemd or Kubernetes sees a server that stopped.
+
+    It loops with a timeout so Python catches SIGINT (Ctrl+C) on Windows.
     """
-    # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows.
     while managed.running:
         try:
             managed.process.wait(timeout=0.1)

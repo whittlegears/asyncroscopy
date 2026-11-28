@@ -19,6 +19,9 @@ writes the plan), ``team`` (planner, specialists and reporter) and ``goal`` (the
 working toward a goal inferred from the request, checked and retried), each used when the
 checkout has it, and any chat graph given with --graph module:function. Results: a JSON file and a Markdown
 table next to it (benchmarks/results/workflows_<stack>.json by default).
+
+IN_PLACE_SETUPS are taken where the run starts, so the stage is homed first: a move after the survey adds a landing
+error no real zoom has.
 """
 
 from __future__ import annotations
@@ -80,7 +83,6 @@ REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skil
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
 SURVEY_FOV_M = 6.0e-7  # room for two zoom steps down to atomic columns
-# Taken where the run starts, so the stage is homed first: a move after the survey adds a landing error no real zoom has.
 IN_PLACE_SETUPS = {"survey_image"}
 STACKS_FILE = HERE / "stacks.yaml"
 STAGE_SETTLE_S = 600.0  # longest move home; the mapping twin moves 5 um/s in real time
@@ -305,10 +307,13 @@ class Live:
 
     async def restore(self, state: dict) -> None:
         """Put the stage, field of view and defocus back as they were when the suite started; InfraError if the
-        instrument does not answer (a run after it would test a wedged device, not the agent)."""
+        instrument does not answer (a run after it would test a wedged device, not the agent).
+
+        wait_for_stage comes first: a run may leave a long move under way (an agent drove the stage to its edge), and
+        the move home is refused until it ends.
+        """
         steps = [("_move_stage", {"position": state.get("stage")}, state.get("stage")),
                  ("_set_fov", {"fov": state.get("fov")}, state.get("fov")), ("_set_defocus", {"defocus": state.get("defocus")}, state.get("defocus"))]
-        # A run may leave a long move under way (an agent drove the stage to its edge): the move home is refused until it ends.
         await self.wait_for_stage()
         for suffix, args, value in steps:
             if value is None or not self.tool(suffix):
@@ -973,6 +978,9 @@ def apply_skills(choice: str | None, off: str | None, environ: dict | None = Non
 
 
 async def main(args: argparse.Namespace) -> int:
+    """It refuses a stack that is not simulated unless --allow-hardware is given, because a benchmark sends an agent's
+    requests to the instrument.
+    """
     from asyncroscopy.agents.config import AgentConfig
 
     stacks = load_stacks(args.workflows)
@@ -1012,7 +1020,6 @@ async def main(args: argparse.Namespace) -> int:
     config = AgentConfig.from_env(model=args.model, caller="workflows")
     if not env.mcp_url:
         config.mcp_url = STACK["mcp"]
-    # A benchmark sends an agent's requests to the instrument: it runs on a simulator unless told otherwise.
     if not (await config.info()).get("simulated") and not args.allow_hardware:
         print(f"refusing to run: the endpoint {config.mcp_url} does not say its stack is simulated (endpoint_info). "
               "Start a twin stack, or pass --allow-hardware to benchmark on a real instrument.")

@@ -160,9 +160,9 @@ def build_command(config: Config) -> list[str]:
 
 
 def server_env(config: Config) -> dict[str, str]:
+    """The API key is passed by environment, which keeps it out of the printed command and the process list."""
     env = {**os.environ, 'PYTHONUNBUFFERED': '1'}
     if config.pytemlib.api_key:
-        # Passing the key by environment keeps it out of the printed command and the process list.
         env[API_KEY_VARIABLE] = config.pytemlib.api_key
     return env
 

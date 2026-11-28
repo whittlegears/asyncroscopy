@@ -1,8 +1,9 @@
+"""QT_API_ENV: set ASYNCROSCOPY_QT_API=pyqt5 on older Windows 10 builds where Qt6 cannot load."""
+
 from __future__ import annotations
 
 from asyncroscopy import settings
 
-# Set ASYNCROSCOPY_QT_API=pyqt5 on older Windows 10 builds where Qt6 cannot load.
 QT_API_ENV = settings.get().qt_api
 
 try:

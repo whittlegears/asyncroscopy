@@ -109,8 +109,8 @@ class FocusDriftTwin(DigitalTwin):
     """The particle twin plus two things the bench needs: a focus that drifts, and a fixed overhead per frame."""
 
     def init_device(self) -> None:
+        """The drift is _bench_drift_m_per_s, not _focus_drift: the twin's own focus drift (a FocusDrift) has that name."""
         super().init_device()
-        # Not _focus_drift: the twin's own focus drift (a FocusDrift) has that name.
         self._bench_drift_m_per_s = 0.0
         self._drift_t0 = 0.0
         self._frame_overhead_s = 0.0

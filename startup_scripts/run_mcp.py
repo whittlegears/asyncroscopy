@@ -77,6 +77,7 @@ def is_config(raw) -> bool:
 
 @dataclass(frozen=True)
 class MCPConfig:
+    """On a hardware stack, http_host 0.0.0.0 binds 127.0.0.1 unless allow_remote_bind is true."""
     name: str
     transport: str
     http_host: str
@@ -99,7 +100,6 @@ class MCPConfig:
     permissions_file: str = ''
     approval_ttl_s: float = default_approval_ttl_s
     job_limits: dict[str, float] = field(default_factory=dict)
-    # On a hardware stack, http_host 0.0.0.0 binds 127.0.0.1 unless this is true.
     allow_remote_bind: bool = False
     auth: AuthSettings | None = None
     operator_port: int | None = None

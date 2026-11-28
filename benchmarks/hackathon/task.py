@@ -168,8 +168,10 @@ def twin() -> Iterator:
 
 
 def start(device, seed: int, budget_s: float = BUDGET_S) -> Microscope:
-    """A fresh sample and a fresh instrument for ``seed``, and the microscope a controller drives."""
-    # An in-process Tango context cuts a property at its first comma, so the element list is given here.
+    """A fresh sample and a fresh instrument for ``seed``, and the microscope a controller drives.
+
+    particle_elements is set here, because an in-process Tango context cuts a property at its first comma.
+    """
     device.particle_elements = ",".join(ELEMENTS)
     device._generate_sample(int(seed))
     device._blanked = False

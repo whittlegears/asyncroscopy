@@ -45,6 +45,9 @@ on a carbon support, HAADF intensity ~ Z^1.7 x thickness, Poisson counts) but
 does not run it, so the evaluation needs no Tango device. Twin images can be
 evaluated too: build a ``LabelledMap`` from the image and the twin's
 ``export_ground_truth`` records with ``LabelledMap.from_twin``.
+
+DEFAULT_THRESHOLD is proposed, not yet agreed: 4 of the top 5 regions clean, which random ranking passes on about 2.7 %
+of maps. In _ELEMENTS, HAADF counts scale with Z^1.7 times atoms per cubic angstrom times thickness in nm.
 """
 
 from __future__ import annotations
@@ -66,10 +69,8 @@ TUNING_SEEDS = (0, 1, 2)
 HELDOUT_SEEDS = tuple(range(3, 30))
 DEFAULT_SEEDS = HELDOUT_SEEDS
 DEFAULT_K = 5
-# Proposed, not yet agreed: 4 of the top 5 regions clean, which random ranking passes on about 2.7 % of maps.
 DEFAULT_THRESHOLD = 0.8
 
-# HAADF counts scale with Z^1.7 times atoms per cubic angstrom times thickness in nm.
 _ELEMENTS = {"C": (6, 0.100), "Fe": (26, 0.085), "Pt": (78, 0.066), "Au": (79, 0.059)}
 _COUNTS = 2.6
 _PIXEL_NM = 0.25
