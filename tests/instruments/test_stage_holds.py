@@ -127,6 +127,7 @@ def test_a_connect_failure_is_not_hidden_by_the_holder_alarm(tmp_path):
     record.write_text("not json", encoding="utf-8")
     done = subprocess.run([sys.executable, "-c", CONNECT_FAILURE, str(record)], capture_output=True, text=True, timeout=120, cwd=ROOT)
     assert done.returncode == 0, done.stderr
-    reply = json.loads(done.stdout.strip().splitlines()[-1])
+    (line,) = [line for line in done.stdout.splitlines() if line.startswith("{")]
+    reply = json.loads(line)
     assert reply["state"] == "FAULT"
     assert "Not connected to AutoScript" in reply["status"] and "could not be read" in reply["status"]
