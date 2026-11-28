@@ -1,11 +1,12 @@
 """Helpers shared by the benchmark runners: model warm-up, infrastructure errors, the
-Instrument Trace, live tool lookup and the "sleepwalking" count."""
+Instrument Trace, live tool lookup, the "sleepwalking" count and the git commit."""
 
 from __future__ import annotations
 
 import asyncio
 import fnmatch
 import json
+import subprocess
 import sys
 import time
 from collections.abc import Iterable
@@ -26,6 +27,13 @@ TRACE_DIR = Path("outputs/trace")
 # These errors come from the stack and not the agent. Rows with them are left out of the pass rate.
 INFRA_ERRORS = ("llama-server process has terminated", "model runner has unexpectedly stopped", "CUDA error",
                 "API_DeviceTimedOut", "Not able to acquire serialization")
+
+
+def git_head() -> str:
+    try:
+        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=PROJECT_DIR, check=False).stdout.strip() or "?"
+    except OSError:
+        return "?"
 
 
 def is_infra_error(error: str | None) -> bool:

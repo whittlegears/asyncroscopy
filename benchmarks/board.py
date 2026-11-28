@@ -144,9 +144,6 @@ def compare(new: dict, old: dict) -> dict:
     }
 
 
-# history
-
-
 def history_path(results: dict, directory: Path) -> Path:
     """Where a finished run is kept: <directory>/<stack>/<time>_<model>_<git>.json."""
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(float(results.get("started") or time.time())))
@@ -187,9 +184,6 @@ def previous_run(results: dict, directory: Path) -> dict | None:
     earlier = [r for _, r in load_history(directory, results.get("stack"), results.get("model"))
                if float(r.get("started") or 0) < started and keys & _tasks(r)]
     return earlier[-1] if earlier else None
-
-
-# the report
 
 
 def _percent(value: float | None) -> str:

@@ -73,10 +73,6 @@ def _device_events(run: Run, pattern: str, ok: bool | None = None) -> list[dict]
     ]
 
 
-def _job_events(run: Run, suffix: str) -> list[dict]:
-    return [e for e in run.events if e.get("source") == "job" and str(e.get("action", "")).endswith("." + suffix)]
-
-
 def _successes(run: Run, pattern: str) -> int:
     """Successful calls of a tool: device tools from the trace, native (lowercase) tools from the agent's calls."""
     traced = len(_device_events(run, pattern, ok=True))
@@ -109,9 +105,6 @@ def _number(value: Any) -> float | None:
 def _stage(run: Run, when: str) -> list[float] | None:
     stage = (run.facts.get(when) or {}).get("stage")
     return list(stage) if stage else None
-
-
-# calls
 
 
 @check
@@ -221,9 +214,6 @@ def viewed_own_data(run: Run, tool: str = "view_data", produced_by: str = "*_acq
     return bool(hit), f"viewed {viewed}; produced {sorted(produced)[:5]}"
 
 
-# instrument state
-
-
 @check
 def stage_near(run: Run, x: float, y: float, tol: float = 1.5e-7) -> tuple[bool, str]:
     """The stage ended within ``tol`` metres of (x, y). The twin's stage error is ~1.5e-7 m."""
@@ -271,9 +261,6 @@ def param_unchanged(run: Run, name: str, rel: float = 1e-6) -> tuple[bool, str]:
     if before is None or after is None:
         return False, f"missing a {name} reading"
     return abs(after - before) <= abs(before) * rel + 1e-15, f"{name} {before:.4g} -> {after:.4g}"
-
-
-# jobs and maps
 
 
 def _runs(run: Run) -> dict[str, list[dict]]:
@@ -436,8 +423,6 @@ def no_writes(run: Run) -> tuple[bool, str]:
     return not writes, f"writes: {writes}" if writes else "none"
 
 
-# the point of interest layer and map navigation
-#
 # facts.poi_records maps each map key to its POIs as list_pois returns them.
 # facts.map_info maps each map key to its map_info reply.
 # The runner fetches both from the analysis server after the run.
@@ -595,9 +580,6 @@ def stitch_accuracy(run: Run, max_median_px: float = 1.0, required: bool = True)
     return worst["median_px"] < float(max_median_px), detail
 
 
-# answers, text checked against facts
-
-
 def _words(text: str) -> str:
     return re.sub(r"\s+", " ", text or "")
 
@@ -727,9 +709,6 @@ def evaluate(run: Run, specs: list[dict]) -> dict[str, dict]:
             ok, detail = False, f"{type(exc).__name__}: {exc}"
         results[label] = {"ok": bool(ok), "detail": detail}
     return results
-
-
-# zooming tier by tier, for multiscale_region
 
 
 def _placements(run: Run) -> list[dict]:

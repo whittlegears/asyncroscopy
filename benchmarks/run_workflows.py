@@ -31,7 +31,6 @@ import inspect
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -44,6 +43,7 @@ import yaml
 from _common import (
     endpoint_risks,
     find_tool,
+    git_head,
     is_infra_error,
     read_trace,
     unique_caller,
@@ -77,7 +77,7 @@ HERE = Path(__file__).resolve().parent
 WORKFLOW_DIR = HERE / "workflows"
 WORKFLOW_KEYS = {"name", "description", "request", "turns", "runners", "timeout_s", "stack", "setup", "checks",
                  "kind", "held_out", "bar", "reference"}
-# A reference is a made-up run that must pass the checks (benchmarks/validity.py reads it; it never touches a stack).
+# A reference is a made-up run that must pass the checks (benchmark.py validate checks it; it never touches a stack).
 REFERENCE_KEYS = {"calls", "events", "before", "after", "answer", "facts", "skills", "risks"}
 TURN_KEYS = {"say", "wait_for"}
 SETUPS = {"image", "survey_image", "map", "map_plain", "large_map"}
@@ -108,9 +108,6 @@ CHAT_TOOL_ROUNDS = 40  # tool calls one turn of a chat graph may make
 # The default reads no data. Others read the run's images from Tiled and are set by --evaluators.
 EVALUATORS = ["time"]
 SCORE_COLUMNS = ["time.clock_s", "time.idle_s"]
-
-
-# workflow files
 
 
 class WorkflowError(ValueError):
@@ -264,9 +261,6 @@ def render(value: Any, facts: dict) -> Any:
     return value
 
 
-# the live stack
-
-
 class Live:
     """The stack's endpoints, with tool names found from what they offer (never hard-coded)."""
 
@@ -349,8 +343,6 @@ class Live:
                 return
             await asyncio.sleep(1.0)
         raise InfraError(f"the stage was still moving {timeout_s:.0f} s after re-homing")
-
-    # jobs, used by setups
 
     async def run_map(self, plan: dict, timeout_s: float = 1800) -> dict:
         """Run a Mapper job to the end with whichever job tools the endpoint offers; returns its results."""
@@ -446,8 +438,6 @@ class Live:
         except Exception as exc:
             return f"{tool} did not answer: {str(exc)[:200]}"
 
-    # setups, run by the benchmark and not the agent
-
     async def setup(self, name: str) -> dict:
         if name in self.setup_cache and name not in IN_PLACE_SETUPS:
             return self.setup_cache[name]
@@ -512,9 +502,6 @@ def _floats(text: str | None) -> list[float] | None:
     except json.JSONDecodeError:
         return None
     return [float(v) for v in value] if isinstance(value, list) else None
-
-
-# truth from the data
 
 
 def data_truth(keys: list[str]) -> dict:
@@ -620,9 +607,6 @@ def map_metadata_and_tile_shape(map_key: str) -> tuple[dict, tuple[int, int]]:
     tiles = tiled_client.node_for_key(meta["run"], uri)["tiles"]
     first = next(iter(tiles))
     return meta, tuple(tiles[first].structure().shape[:2])
-
-
-# runners
 
 
 def runners_available() -> dict[str, Any]:
@@ -945,9 +929,6 @@ def message_summary(message: BaseMessage) -> dict:
     }
 
 
-# reports
-
-
 def score_median(rows: list[dict], column: str) -> str:
     """Median of one evaluator objective ("time.idle_s") over a workflow's rows, for the Markdown table."""
     evaluator, _, objective = column.partition(".")
@@ -1001,13 +982,6 @@ def apply_skills(choice: str | None, off: str | None, environ: dict | None = Non
         environ["ASYNCROSCOPY_SKILLS_OFF"] = ",".join(hidden)
     now = settings.get()
     return {"on": now.skills, "off": list(now.skills_off), "enabled": [skill.name for skill in list_skills() if not skill.off]}
-
-
-def git_head() -> str:
-    try:
-        return subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=HERE.parent, check=False).stdout.strip() or "?"
-    except OSError:
-        return "?"
 
 
 async def main(args: argparse.Namespace) -> int:

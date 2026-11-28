@@ -102,7 +102,7 @@ def table(rows: list[dict]) -> str:
     lines = ["| Controller | Score | Marker | Rule | Map | Images | Autofocus runs |", "| :-- | --: | --: | --: | --: | --: | --: |"]
     for name in dict.fromkeys(row["controller"] for row in rows):
         mine = [row for row in rows if row["controller"] == name]
-        mean = lambda key: np.mean([row[key] for row in mine])  # noqa: E731
+        mean = lambda key: np.mean([row[key] for row in mine])
         lines.append(f"| {name} | {mean('score'):.1f} | {mean('marker_points'):.1f} | {mean('rule_points'):.1f} | {mean('map_points'):.1f} | {mean('images'):.0f} | {mean('autofocus_runs'):.0f} |")
     return "\n".join(lines)
 
