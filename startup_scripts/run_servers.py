@@ -56,6 +56,7 @@ class DeviceConfig:
     module_name: str
     properties: dict[str, list[str]] = field(default_factory=dict)
     start_after_dependencies: bool = False
+    extras: tuple[str, ...] = ()
 
     @property
     def server_name(self) -> str:
@@ -67,7 +68,8 @@ class DeviceConfig:
 
     @property
     def command(self) -> list[str]:
-        return ["uv", "run", "python", "-u", "-m", self.module_name, self.instance_name]
+        extra_args = [arg for extra in self.extras for arg in ("--extra", extra)]
+        return ["uv", "run", *extra_args, "python", "-u", "-m", self.module_name, self.instance_name]
 
     @property
     def instance_name(self) -> str:
@@ -108,6 +110,7 @@ class Config:
     reset_database_file: bool
     tiled: TiledConfig
     device_timeout_seconds: int
+    extras: tuple[str, ...] = ()
 
 
 def _require(mapping, key: str, where: str):
@@ -259,6 +262,7 @@ def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    extras = tuple(str(extra) for extra in (raw.get("extras") or []))
 
     support_devices = [
         DeviceConfig(
@@ -269,6 +273,7 @@ def load_config(path: Path) -> Config:
                 property_name: [str(property_value)]
                 for property_name, property_value in ((spec or {}).get("properties") or {}).items()
             },
+            extras=extras,
         )
         for key, spec in _require(raw, "devices", "(top level)").items()
     ]
@@ -290,6 +295,7 @@ def load_config(path: Path) -> Config:
             register_on_startup=bool(tiled.get("register_on_startup", False)),
         ),
         device_timeout_seconds=int(raw.get("device_timeout_seconds", 120)),
+        extras=extras,
     )
 
 
@@ -301,6 +307,7 @@ def build_devices(config: Config) -> list[DeviceConfig]:
             class_name=config.instrument.class_name,
             module_name=config.instrument.module_name,
             start_after_dependencies=True,
+            extras=config.extras,
         ),
     ]
 

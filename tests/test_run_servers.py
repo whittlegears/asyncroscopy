@@ -209,3 +209,17 @@ def test_run_llm_command_passes_init_chat_model_flag():
     )
 
     assert "--use-init-chat-model" in run_llm.build_command(config)
+
+
+def test_a_config_that_needs_extras_starts_its_servers_with_them():
+    config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / "diffraction.yaml")
+    assert config.extras == ("diffraction",)
+    for device in run_servers.build_devices(config):
+        assert device.command[:4] == ["uv", "run", "--extra", "diffraction"], device.key
+        assert device.command[4:7] == ["python", "-u", "-m"]
+
+
+def test_a_config_without_extras_starts_plain_uv_run():
+    config = run_servers.load_config(run_servers.PROJECT_DIR / "configs" / "DigitalTwin.yaml")
+    assert config.extras == ()
+    assert all(device.command[:3] == ["uv", "run", "python"] for device in run_servers.build_devices(config))

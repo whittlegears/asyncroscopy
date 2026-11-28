@@ -1,3 +1,7 @@
+# The diffraction twins need abTEM. run_servers.py starts every server with
+# uv run --extra diffraction, so uv installs it if it is missing.
+extras: [diffraction]
+
 instrument:
   class_name: DigitalTwinTilt
   file: asyncroscopy/instruments/electron_microscope/digital_twin_tilt.py
