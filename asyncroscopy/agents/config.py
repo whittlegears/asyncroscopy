@@ -106,12 +106,13 @@ class AgentConfig:
         return dataclasses.replace(self, run_id=uuid.uuid4().hex[:12], ledger=[], **changes)
 
     def _headers(self) -> dict[str, str]:
-        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **({RUN_KEY_HEADER: self.run_key} if self.run_key else {}),
-                **bearer_header(self.token)}
+        return {CALLER_HEADER: self.caller, RUN_HEADER: self.run_id, **bearer_header(self.token)}
 
     def instrument(self) -> McpServer:
+        """The instrument endpoint. Only its calls carry the run key: the pre-approvals it unlocks are the instrument's."""
         profile = self.agent_profile()
-        return McpServer(self.mcp_url, self._headers(), ledger=self.ledger, replies=profile.replies, images=profile.images)
+        headers = {**self._headers(), **({RUN_KEY_HEADER: self.run_key} if self.run_key else {})}
+        return McpServer(self.mcp_url, headers, ledger=self.ledger, replies=profile.replies, images=profile.images)
 
     def analysis(self) -> McpServer | None:
         """The analysis server: the configured or endpoint-reported one, else the default; None when there is none ("")."""

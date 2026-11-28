@@ -10,6 +10,7 @@ import time
 import pytest
 from fastmcp import Client
 
+from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER, RUN_KEY_HEADER
 from asyncroscopy.safety.permissions import PermissionStore, iso_utc, run_key_sha256
@@ -220,3 +221,10 @@ def test_the_store_keeps_one_pre_approval_per_run_until_it_expires(tmp_path):
     assert store.run_grant("hw1")["calls"] == [] and store.run_grant("hw1")["run_key_sha256"] == run_key_sha256("k2")
     now[0] += 601
     assert store.run_grant("hw1") is None and store.end_run("hw1") is None
+
+
+def test_the_run_key_goes_to_the_instrument_only_never_to_the_analysis_server():
+    config = AgentConfig(mcp_url="http://127.0.0.1:1/mcp", analysis_url="http://127.0.0.1:2/mcp", run_key="secret")
+    assert config.instrument().headers[RUN_KEY_HEADER] == "secret"
+    analysis = config.analysis().headers
+    assert RUN_KEY_HEADER not in analysis and analysis[RUN_HEADER] == config.run_id
