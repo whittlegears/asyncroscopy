@@ -150,18 +150,21 @@ def test_a_job_abort_stops_the_running_step_within_a_fifth_of_a_second(instrumen
     ended = []
 
     def watch():
-        while status_of["state"] == "running":
+        while status_of["state"] == "running" and status_of["command"] == "acquire_counts":
             status_of.update(status(watcher))
         ended.append(time.monotonic())
 
     watcher = tango.DeviceProxy(instrument.dev_name())
-    status_of = {"state": "running"}
+    status_of = {"state": "running", "command": "acquire_counts"}
     thread = threading.Thread(target=watch)
     thread.start()
     began = time.monotonic()
     reply = call(job_device, "abort", job_id=job_id)
     thread.join(timeout=5)
-    assert status_of["state"] == "stopped" and ended[0] - began < 0.2
+    # The job runs its make-safe steps right after the stop, and the instrument reports only its latest
+    # step, so a busy watcher may see one of those instead; a 3600 s acquisition cannot have ended itself.
+    stopped = status_of["command"] == "acquire_counts" and status_of["state"] == "stopped"
+    assert (stopped or status_of["command"] != "acquire_counts") and ended[0] - began < 0.2, status_of
     assert reply["state"] == "aborted" or wait_until(lambda: job_state(job_device, job_id) == "aborted")
     instrument.set_exposure_s(1.0)  # the hold is given back
     call(job_device, "release", reservation_id=reservation)
