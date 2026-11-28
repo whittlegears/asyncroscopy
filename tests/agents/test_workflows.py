@@ -1443,15 +1443,29 @@ def test_a_workflow_server_acts_only_on_the_instrument_endpoints_it_was_configur
     assert endpoints.url("http://127.0.0.1:9000/mcp") == "http://127.0.0.1:9000/mcp"
     with pytest.raises(LookupError, match="not an instrument endpoint this workflow server acts on"):
         endpoints.url("http://evil.example/mcp")
-    assert endpoints.operator({"urls": {}}) is None
+    assert "reports no operator endpoint" in endpoints.operator({"urls": {}})
     assert endpoints.operator({"urls": {"operator": "http://127.0.0.1:8001/mcp"}}).url == "http://127.0.0.1:8001/mcp"
+
+
+def test_the_operator_endpoint_is_never_called_with_the_agents_token(monkeypatch):
+    endpoints = Endpoints("http://127.0.0.1:8000/mcp")
+    info = {"urls": {"operator": "http://127.0.0.1:8001/mcp"}}
+    monkeypatch.setenv("ASYNCROSCOPY_MCP_TOKEN", "agents-token")
+    monkeypatch.delenv("ASYNCROSCOPY_OPERATOR_TOKEN", raising=False)
+    refused = endpoints.operator(info)
+    assert isinstance(refused, str) and "ASYNCROSCOPY_OPERATOR_TOKEN is not set" in refused
+    monkeypatch.setenv("ASYNCROSCOPY_OPERATOR_TOKEN", "operator-token")
+    assert endpoints.operator(info).headers["Authorization"] == "Bearer operator-token"
+    monkeypatch.delenv("ASYNCROSCOPY_MCP_TOKEN")
+    monkeypatch.delenv("ASYNCROSCOPY_OPERATOR_TOKEN")
+    assert "Authorization" not in endpoints.operator(info).headers
 
 
 def test_a_twin_marker_is_not_a_run_and_goes_when_the_rehearsal_raises(tmp_path):
     from asyncroscopy.workflows import runner, signoff
 
     server, _, _ = served(tmp_path)
-    run(signoff.mark_rehearsal(server.state_dir, "r1", None))
+    run(signoff.mark_rehearsal(server.state_dir, "r1", "the stack reports no operator endpoint"))
     marker = server.state_dir / "runs" / "r1.twin_marker.json"
     assert marker.exists()
     assert all(r["run_id"] for r in runner.list_runs(server.state_dir))
@@ -1460,5 +1474,5 @@ def test_a_twin_marker_is_not_a_run_and_goes_when_the_rehearsal_raises(tmp_path)
         raise RuntimeError("the twin went away")
 
     with pytest.raises(RuntimeError):
-        run(server._rehearsed("r1", {"simulated": True}, get_workflow("map_grid"), raises(), None, False))
+        run(server._rehearsed("r1", {"simulated": True}, get_workflow("map_grid"), raises(), "the stack reports no operator endpoint", False))
     assert not marker.exists()

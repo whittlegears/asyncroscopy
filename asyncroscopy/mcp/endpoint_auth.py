@@ -20,6 +20,8 @@ With ``mcp.auth`` set:
   read      low-risk tools (get_*, list_*, job_status, view_data, ...)
   operate   high-risk tools (move_stage, acquire_*, <job>_start, run_job, ...)
   approve   operator-only commands, which only the operator endpoint offers
+  preapprove a workflow server's: preapprove_run, end_run_preapproval and a twin's
+            export_ground_truth, and nothing else; no other role grants them
   ========= ==================================================================
 
   A token sees only the tools its roles allow (tools/list is filtered too).
@@ -41,13 +43,14 @@ if TYPE_CHECKING:
 
     from asyncroscopy.mcp.mcp_server import MCPServer
 
-ROLES = ("read", "operate", "approve")
+ROLES = ("read", "operate", "approve", "preapprove")
 # Scopes a token carries and the roles each grants. A deployment can map its own scope names.
 # A role is granted when the token has any scope listed for it.
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "read": ["instrument:read", "instrument:operate", "instrument:approve"],
     "operate": ["instrument:operate"],
     "approve": ["instrument:approve"],
+    "preapprove": ["instrument:preapprove"],
 }
 
 
@@ -131,11 +134,23 @@ class AuthSettings:
         return {role for role, scopes in self.roles.items() if values & set(scopes)}
 
 
+workflow_server_natives = frozenset({"preapprove_run", "end_run_preapproval"})
+workflow_server_commands = frozenset({"export_ground_truth"})
+
+
+def for_workflow_server(tool) -> bool:
+    """Whether a tool is one a workflow server calls on an operator endpoint (``docs/MCP/twin_to_instrument.md``)."""
+    return tool.name in workflow_server_natives if tool.native else tool.operator_only and tool.command in workflow_server_commands
+
+
 def required_role(tool) -> str:
-    """The token role a tool needs: "approve" for operator-only commands, "operate" for high-risk ones,
+    """The token role a tool needs: "preapprove" for what a workflow server calls on the operator endpoint
+    (``for_workflow_server``), "approve" for other operator-only commands, "operate" for high-risk ones,
     "read" for the rest. A tool the endpoint does not know (None) needs "operate": unknown is high."""
     if tool is None:
         return "operate"
+    if for_workflow_server(tool):
+        return "preapprove"
     if tool.operator_only:
         return "approve"
     return "operate" if tool.risk != "low" else "read"

@@ -88,7 +88,9 @@ first of `mcp_urls` followed by `workflow_instruments`, without repeats. Both se
 Each stack must report its operator endpoint in its own `endpoint_info.urls.operator` (`mcp.urls.operator` in its
 MCP config). The workflow server calls it with the bearer token in `ASYNCROSCOPY_OPERATOR_TOKEN`, never the agents'
 `ASYNCROSCOPY_MCP_TOKEN`. With `mcp.auth` all three operator tools it uses (`export_ground_truth`, `preapprove_run`,
-`end_run_preapproval`) need the token role `approve`, so that token must hold it and no agent may be given it.
+`end_run_preapproval`) need the token role `preapprove` (scope `instrument:preapprove`), and that token should carry
+that scope alone: `preapprove` grants nothing else, so it cannot approve a held call. With `ASYNCROSCOPY_MCP_TOKEN`
+set and `ASYNCROSCOPY_OPERATOR_TOKEN` unset, the operator endpoint is not called (no fallback to the agents' token).
 Without `mcp.auth` the operator endpoint binds to loopback and needs no token.
 
 ## New arguments

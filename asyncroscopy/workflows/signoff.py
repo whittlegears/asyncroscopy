@@ -47,10 +47,11 @@ def _marker_path(state_dir: Path, run_id: str) -> Path:
     return Path(state_dir) / "runs" / f"{run_id}.twin_marker.json"
 
 
-async def twin_truth(operator: McpServer | None) -> tuple[dict | None, str | None]:
-    """(the twin's ``export_ground_truth`` document, None) or (None, why it could not be read)."""
-    if operator is None:
-        return None, "the stack reports no operator endpoint (endpoint_info.urls.operator), where export_ground_truth is"
+async def twin_truth(operator: McpServer | str) -> tuple[dict | None, str | None]:
+    """(the twin's ``export_ground_truth`` document, None) or (None, why it could not be read). ``operator``: the
+    stack's operator endpoint, or why it cannot be used (``Endpoints.operator``)."""
+    if isinstance(operator, str):
+        return None, operator
     try:
         names = sorted(t.name for t in await operator.list_tools())
     except Exception as exc:
@@ -77,7 +78,7 @@ async def twin_truth(operator: McpServer | None) -> tuple[dict | None, str | Non
     return None, "; ".join(problems)
 
 
-async def mark_rehearsal(state_dir: Path, run_id: str, operator: McpServer | None) -> None:
+async def mark_rehearsal(state_dir: Path, run_id: str, operator: McpServer | str) -> None:
     """Keep the twin's truth marker from before a rehearsal (``truth_marker``), beside the run's record. A resumed
     rehearsal keeps the one from its start."""
     path = _marker_path(state_dir, run_id)
@@ -92,7 +93,7 @@ def forget_rehearsal(state_dir: Path, run_id: str) -> None:
     _marker_path(state_dir, run_id).unlink(missing_ok=True)
 
 
-async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer | None) -> dict:
+async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer | str) -> dict:
     """A finished rehearsal's results: the runner's (data keys, map, calls, wall time) with the twin's time, dose and
     twin score added. What the twin could not give is null, with the reason in ``twin_score.why``."""
     results = dict(record.get("results") or {})
@@ -129,15 +130,15 @@ def signed_off_rehearsal(library: Library, name: str) -> tuple[dict | None, dict
     return approval, found, None
 
 
-async def grant(operator: McpServer | None, library: Library, name: str, run_id: str, run_key: str) -> dict:
+async def grant(operator: McpServer | str, library: Library, name: str, run_id: str, run_key: str) -> dict:
     """Pre-approve, for the hardware run ``run_id``, the calls of the rehearsal ``name`` was signed off on. Returns
     the run record's ``preapproval``: {"granted": true, "approved_by", "approver", "rehearsal_run_id", "calls",
     "expires_at"} or {"granted": false, "why"}. Without it every call is permissioned as usual."""
     approval, rehearsal, why = signed_off_rehearsal(library, name)
     if rehearsal is None:
         return {"granted": False, "why": why}
-    if operator is None:
-        return {"granted": False, "why": "the instrument reports no operator endpoint (endpoint_info.urls.operator) to pre-approve its calls on"}
+    if isinstance(operator, str):
+        return {"granted": False, "why": operator}
     calls = [{"tool": c["tool"], "arguments": c["arguments"]} for c in rehearsal.get("calls_made") or [] if c.get("server") == "instrument"]
     arguments = {"run_id": run_id, "run_key_sha256": run_key_sha256(run_key), "calls": calls,
                  "approved_by": signoff_name(name, str(approval["hash"])), "approver": str(approval.get("by") or ""),
@@ -153,9 +154,9 @@ async def grant(operator: McpServer | None, library: Library, name: str, run_id:
             "rehearsal_inputs": rehearsal.get("inputs") or {}}
 
 
-async def end(operator: McpServer | None, run_id: str) -> dict[str, Any] | None:
+async def end(operator: McpServer | str, run_id: str) -> dict[str, Any] | None:
     """Remove a hardware run's pre-approval; None when it could not be reached (the pre-approval then expires)."""
-    if operator is None:
+    if isinstance(operator, str):
         return None
     try:
         result = await operator.call("end_run_preapproval", {"run_id": run_id})

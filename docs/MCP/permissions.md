@@ -209,8 +209,11 @@ where held calls are released. Who may reach it decides who may approve:
 
 - **Without `mcp.auth`** any process on the computer can reach the loopback-bound operator endpoint and approve,
   just as any local Tango client can drive the devices directly. Run agents only where that is acceptable.
-- **With `mcp.auth`** all eight tools above need the token role `approve` (`descriptors.person_only_natives`, read by
-  `endpoint_auth.required_role`), also through `call_tool`. Reading the pending list needs `approve` too: it is part
+- **With `mcp.auth`** the six person's tools above need the token role `approve` (`descriptors.person_only_natives`,
+  read by `endpoint_auth.required_role`), also through `call_tool`. `preapprove_run`, `end_run_preapproval` and a
+  twin's `export_ground_truth` need the role `preapprove` instead (scope `instrument:preapprove`), which grants
+  nothing else, not even `read`: it is the workflow server's `ASYNCROSCOPY_OPERATOR_TOKEN`, so the process that hosts
+  `query_agent` holds no token that approves a held call. Reading the pending list needs `approve` too: it is part
   of the console, and an agent learns what it waits for from its own held reply. Agent tokens must never hold the
   `approve` scope; an agent's scopes are `read` and `operate`.
 

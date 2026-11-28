@@ -21,7 +21,7 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_OPERATOR_URL` | Operator MCP endpoint (benchmarks) | the stack's `operator:` |
 | `ASYNCROSCOPY_ANALYSIS_URL` | Analysis MCP server | what the endpoint reports |
 | `ASYNCROSCOPY_MCP_TOKEN` | Bearer token for endpoints with `mcp.auth` | none |
-| `ASYNCROSCOPY_OPERATOR_TOKEN` | Bearer token a workflow server sends to a stack's operator endpoint (a twin's `export_ground_truth`, a hardware run's `preapprove_run`); with `mcp.auth` it needs the `approve` role, so keep it apart from `ASYNCROSCOPY_MCP_TOKEN` (docs/MCP/twin_to_instrument.md) | none |
+| `ASYNCROSCOPY_OPERATOR_TOKEN` | Bearer token a workflow server sends to a stack's operator endpoint (a twin's `export_ground_truth`, a hardware run's `preapprove_run`); with `mcp.auth` it needs the `preapprove` role (scope `instrument:preapprove`) and should carry no other; unset while `ASYNCROSCOPY_MCP_TOKEN` is set, the operator endpoint is not called at all, never with the agents' token (docs/MCP/twin_to_instrument.md) | none |
 | `ASYNCROSCOPY_TILED_URI` | Tiled address (DATA device default, fallback when DATA does not answer) | `http://127.0.0.1:9091` |
 | `ASYNCROSCOPY_TILED_PUBLIC_URI` | The Tiled address DATA gives clients, when it differs from the one it binds | the Tiled address |
 | `ASYNCROSCOPY_TILED_API_KEY` | Tiled API key | `secret` |

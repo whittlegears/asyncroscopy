@@ -17,7 +17,9 @@ RS256 tokens with the scopes you choose, so the token path can be exercised agai
 
 Scopes (mcp.auth.roles maps them to roles): instrument:read (low-risk tools),
 instrument:operate (high-risk tools), instrument:approve
-(operator-only commands on the operator endpoint).
+(operator-only commands on the operator endpoint), instrument:preapprove (only what a workflow
+server calls there: preapprove_run, end_run_preapproval, a twin's export_ground_truth; give
+ASYNCROSCOPY_OPERATOR_TOKEN this scope alone).
 """
 
 from __future__ import annotations

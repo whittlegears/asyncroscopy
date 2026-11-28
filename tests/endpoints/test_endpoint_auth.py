@@ -256,19 +256,23 @@ def test_an_operate_token_moves_the_stage_and_the_trace_names_its_subject(stack,
     assert ran and ran[-1]["caller"] == "alice@example.org"
 
 
-def test_an_operator_only_command_needs_the_approve_role(stack, keys):
-    assert "DigitalTwin_export_ground_truth" not in tools(stack["agent"], token(keys, "operator-bob", "instrument:approve"))
-    for scopes in (["instrument:read"], ["instrument:operate"]):
+def test_the_twins_truth_and_the_run_pre_approvals_need_the_preapprove_role_and_nothing_else(stack, keys):
+    assert "DigitalTwin_export_ground_truth" not in tools(stack["agent"], token(keys, "workflow-server", "instrument:preapprove"))
+    for scopes in (["instrument:read"], ["instrument:operate"], ["instrument:approve"]):
         eve = token(keys, "eve", *scopes)
-        assert "DigitalTwin_export_ground_truth" not in tools(stack["operator"], eve)
+        assert not {"DigitalTwin_export_ground_truth", "preapprove_run", "end_run_preapproval"} & set(tools(stack["operator"], eve))
         error, text = call(stack["operator"], eve, "DigitalTwin_export_ground_truth")
-        assert error and "approve role" in text, text
-    bob = token(keys, "operator-bob", "instrument:approve")
-    assert "DigitalTwin_export_ground_truth" in tools(stack["operator"], bob)
-    error, text = call(stack["operator"], bob, "DigitalTwin_export_ground_truth")
+        assert error and "preapprove role" in text, text
+        error, text = call(stack["operator"], eve, "end_run_preapproval", {"run_id": "r1"})
+        assert error and "preapprove role" in text, text
+    server = token(keys, "workflow-server", "instrument:preapprove")
+    assert sorted(tools(stack["operator"], server)) == ["DigitalTwin_export_ground_truth", "end_run_preapproval", "preapprove_run"]
+    error, text = call(stack["operator"], server, "DigitalTwin_export_ground_truth")
     assert not error and "position" in text, text
+    error, text = call(stack["operator"], server, "approve_call", {"request_id": "x"})
+    assert error and "approve role" in text, text
     ran = [e for e in trace(stack, "operator") if e.get("action") == "DigitalTwin_export_ground_truth" and e.get("ok")]
-    assert ran and ran[-1]["caller"] == "operator-bob"
+    assert ran and ran[-1]["caller"] == "workflow-server"
 
 
 @pytest.mark.parametrize("name", ["list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
@@ -339,7 +343,8 @@ def test_roles_follow_the_tool_descriptors():
     assert required_role(described(twin, "get_stage")) == "read"
     assert required_role(described(mapper, "job_status")) == "read"
     assert required_role(described(twin, "move_stage")) == "operate"
-    assert required_role(described(twin, "export_ground_truth")) == "approve"
+    assert required_role(described(twin, "export_ground_truth")) == "preapprove"
+    assert required_role(describe_native("preapprove_run")) == required_role(describe_native("end_run_preapproval")) == "preapprove"
     assert required_role(describe_native("run_job")) == "operate"
     assert required_role(describe_native("view_data")) == "read"
     assert {required_role(describe_native(n)) for n in ("list_pending_approvals", "approve_call", "deny_call", "get_permissions",
@@ -353,6 +358,7 @@ def test_auth_config_is_checked(keys, tmp_path):
     settings = AuthSettings.from_config(good)
     assert settings.roles_of({"scope": "instrument:operate"}) == {"read", "operate"}
     assert settings.roles_of({"scp": ["instrument:approve"]}) == {"read", "approve"}
+    assert settings.roles_of({"scope": "instrument:preapprove"}) == {"preapprove"}
     assert settings.roles_of({"scope": "openid"}) == set()
     custom = AuthSettings.from_config({**good, "roles": {"operate": ["stem:drive"]}, "role_claims": "groups"})
     assert custom.roles_of({"groups": ["stem:drive"]}) == {"operate"}

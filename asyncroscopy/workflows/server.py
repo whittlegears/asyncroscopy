@@ -107,13 +107,17 @@ class Endpoints:
         info = await config.info()
         return config.instrument(), config.analysis(), info
 
-    def operator(self, info: dict) -> McpServer | None:
-        """The operator endpoint of the stack ``info`` (its endpoint_info) describes, or None when it reports none. It is
-        called with ``ASYNCROSCOPY_OPERATOR_TOKEN``, never the agents' token."""
+    def operator(self, info: dict) -> McpServer | str:
+        """The operator endpoint of the stack ``info`` (its endpoint_info) describes, or why it cannot be used. It is
+        called with ``ASYNCROSCOPY_OPERATOR_TOKEN`` (the ``preapprove`` role), never the agents' token."""
         url = (info.get("urls") or {}).get("operator")
         if not url:
-            return None
-        return McpServer(str(url), {CALLER_HEADER: self.caller, **bearer_header(settings.get().operator_token)})
+            return "the stack reports no operator endpoint (endpoint_info.urls.operator)"
+        env = settings.get()
+        if not env.operator_token and env.mcp_token:
+            return ("ASYNCROSCOPY_OPERATOR_TOKEN is not set, and the operator endpoint is never called with the agents' token "
+                    "(ASYNCROSCOPY_MCP_TOKEN); give the workflow server a token with only the preapprove role")
+        return McpServer(str(url), {CALLER_HEADER: self.caller, **bearer_header(env.operator_token)})
 
 
 def _brief(value: Any) -> Any:
@@ -185,8 +189,7 @@ class WorkflowServer:
             return None
         return runner.twin_only_problem(info, hardware=self.hardware) or self.library.hardware_problem(name, status, info.get("stack_id"))
 
-    async def _rehearsed(self, run_id: str, info: dict, workflow: Workflow, running, operator: McpServer | str | None = None,
-                         granted: bool = False) -> dict:
+    async def _rehearsed(self, run_id: str, info: dict, workflow: Workflow, running, operator: McpServer | str, granted: bool) -> dict:
         """Wait for the run ``run_id`` to end. A run on a digital twin is saved as a rehearsal for whoever approves later,
         with its results and twin score. The pre-approval of a hardware run (``granted``) is removed once it ends or
         stops; a run that waits for a person keeps it until it expires or the run is resumed."""
