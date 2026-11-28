@@ -70,14 +70,14 @@ def test_the_tilt_twin_reports_the_beam_tilt_as_set(tilt_twin_proxy):
         twin._set_beam_tilt([0.0, 0.0])
 
 
-def test_no_ground_truth_file_lands_in_the_tree_tiled_serves(tango_ctx, twin_proxy, scan_proxy, sem_twin_proxy, data_proxy, ground_truth_dir):
+def test_no_ground_truth_file_lands_in_the_tree_tiled_serves(tango_ctx, twin_proxy, scan_proxy, sem_twin_proxy, data_save_dir, ground_truth_dir):
     scan_proxy.imsize, scan_proxy.dwell_time, scan_proxy.scan_region = 16, 1e-6, [0.0, 0.0, 1.0, 1.0]
     sem_scan = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/scan/sem"))
     sem_scan.imsize, sem_scan.dwell_time = 16, 1e-6
     stem_key = twin_proxy.acquire_scanned_image(["haadf"])
     sem_key = sem_twin_proxy.acquire_scanned_image(["se"])
 
-    served = Path(data_proxy.save_path).resolve()
+    served = Path(data_save_dir).resolve()
     served_files = [path for path in served.rglob("*") if path.is_file()]
     assert {Path(stem_key).name, Path(sem_key).name} <= {path.name for path in served_files}
     leaked = [path for path in served_files if path.suffix == ".jsonl" or "ground_truth" in path.relative_to(served).parts]
