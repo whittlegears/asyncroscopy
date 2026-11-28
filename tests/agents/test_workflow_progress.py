@@ -42,7 +42,6 @@ def test_a_running_map_keeps_its_progress_in_a_file_and_removes_it_when_done(tmp
     assert seen
     assert seen[0]["step"] == "tile" and seen[0]["latest_image"] == "stem_image_HAADF_0002.h5"
     assert seen[0]["loop"]["node"] == "tile" and seen[0]["loop"]["done"] == 2 and seen[0]["loop"]["total"] == 4
-    # Each tile taken so far, where it was taken and how wide, so an app can draw the map as it grows.
     tiles = seen[0]["tiles"]
     assert [t["key"] for t in tiles] == ["stem_image_HAADF_0001.h5", "stem_image_HAADF_0002.h5"] and seen[0]["tiles_total"] == 2
     assert all(t["fov_m"] == INPUTS["fov_m"] for t in tiles)
@@ -79,7 +78,6 @@ def test_a_run_another_process_drives_is_still_going_with_its_progress(tmp_path)
         server = WorkflowServer(state_dir=tmp_path)
         reply = asyncio.run(server._wait("r2", 0))
         assert reply["state"] == "running" and reply["progress"]["loop"]["done"] == 3
-        # A model's reply leaves the tiles out; the app asks for them.
         assert "tiles" not in reply["progress"] and reply["progress"]["tiles_total"] == 1
         assert asyncio.run(server._wait("r2", 0, with_tiles=True))["progress"]["tiles"] == [tile]
     finally:

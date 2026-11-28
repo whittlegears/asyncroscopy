@@ -19,8 +19,6 @@ PLAN = {"origin_m": [-2e-5, 0.0], "nx": 4, "ny": 2, "pitch_m": 1e-5, "load_n": 0
 
 @pytest.fixture
 def grid(indent_grid_proxy, job_dir):
-    # The devices live in the shared Tango context from tests/conftest.py.
-    # PyTango allows only one in-process context per interpreter.
     return indent_grid_proxy, job_dir / "indent"
 
 
@@ -115,8 +113,6 @@ def test_policy_sees_a_job_device_and_a_raw_instrument():
     assert risk_of("IndentGrid", "job_status", envelope=True) == "low"
     assert risk_of("SimIndenter", "indent") == "high"
     assert risk_of("SimIndenter", "move_xy") == "high"
-    # A bare retract is low only on a device that brings a probe to the sample.
-    # The MCP server works that out from the device's own commands.
     assert is_probe_device(dir(SimIndenter))
     assert risk_of("SimIndenter", "retract", probe=True) == "low"
     assert risk_of("SimIndenter", "retract") == "high"

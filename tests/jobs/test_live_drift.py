@@ -24,7 +24,6 @@ from asyncroscopy.routines.drift import LinearTracker, bounded_correction, drift
 from asyncroscopy.routines.grid import index_at, inside_box, tile_at
 
 FOV = 5e-8
-# 6 x 6 tiles of 50 nm at 25 % overlap make a 237.5 nm box. It takes about 430 s of simulated time and 21 nm of drift.
 HALF = (FOV + 5 * FOV * 0.75) / 2
 PLAN = {"box_m": [-HALF, HALF, -HALF, HALF], "fov_m": FOV, "overlap": 0.25, "imsize": 96, "dwell_s": 2e-4, "stitch": False}
 TRACK = {"track": True, "max_shift_m": 5e-9}
@@ -117,7 +116,6 @@ def test_tracking_keeps_every_tile_within_a_fifth_of_a_field_of_view(tracked, un
     assert errors.max() < 0.5 * baseline.max()
     tiles = reserved["estimate"]["tiles"]
     assert summary["corrections"] == tiles and summary["measurements"] >= tiles - 3
-    # The tracker's rate must match the twin's as measured on the twin's clock.
     assert np.hypot(*summary["rate_m_per_s"]) == pytest.approx(5e-11, rel=0.25)
     assert summary["max_step_m"] <= TRACK["max_shift_m"] + 1e-15
     assert summary["restored"] is True
@@ -131,7 +129,6 @@ def test_every_correction_is_traced_and_is_the_shift_the_twin_applied(tracked, t
     for event, image in zip(corrections, images):
         arguments = event["arguments"]
         assert max(abs(v) for v in arguments["step_m"]) <= TRACK["max_shift_m"] + 1e-15
-        # The shift the twin applied to this frame is where it was centred minus the true stage and its drift.
         drift = (np.array(image["drift_start_m"]) + np.array(image["drift_end_m"])) / 2
         applied = np.array(image["center_true_m"]) - np.array(image["true_m"][:2]) - drift
         assert applied == pytest.approx(np.array(arguments["image_shift_m"]), abs=2e-11)
@@ -145,7 +142,6 @@ def test_the_stage_never_leaves_the_plan_box(tracked):
     assert len(moves) == reserved["estimate"]["tiles"]
     for move in moves:
         assert inside_box(box, move["commanded"][0], move["commanded"][1], FOV / 2)
-    # Tracking moves the beam and never the stage, so moves go only to planned tile centres.
     plan = reserved
     steps = [e for e in events if e["action"] == "Mapper.step"]
     assert len(steps) == len(moves)
@@ -177,7 +173,6 @@ def test_a_dry_run_with_tracking_records_every_shift_and_refuses_none(twin, mapp
     events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines() if line.strip()]
     events = [e for e in events if e.get("run_id") == reserved["reservation_id"]]
     shifts = [e for e in events if e["action"] == "set_image_shift"]
-    # One per tile plus the restore at the end. Each is recorded and checked but not performed.
     assert len(shifts) == reserved["estimate"]["tiles"] + 1
     assert all(e["performed"] is False and e["ok"] is True and e["check"]["ok"] is True for e in shifts)
     assert len([e for e in events if e["action"] == "Mapper.drift_correction"]) == reserved["estimate"]["tiles"]
@@ -198,7 +193,6 @@ def test_tracking_is_refused_by_name_where_it_cannot_run(tango_ctx, mapper):
         assert refused["error"]["code"] in {"bad_request", "plan_rejected"} and words in refused["error"]["message"], refused
     refused = call(mapper, "reserve", {"plan": {**PLAN, "overlap": 0.0, "drift": TRACK}})
     assert "overlap" in refused["error"]["message"]
-    # Off is accepted and changes nothing.
     reserved = call(mapper, "reserve", {"plan": {**PLAN, "drift": {"track": False}}})
     assert "error" not in reserved
     call(mapper, "release", {"reservation_id": reserved["reservation_id"]})

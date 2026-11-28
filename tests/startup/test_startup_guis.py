@@ -252,7 +252,6 @@ def test_status_badge_follows_script_patterns(gui):
     window = gui(run_mcp, CONFIGS / "mcp_dt.yaml")
     window.enqueue_output("MCP ready: 12 tool(s) registered\n")
     assert window.badge.text() == "12 tools"
-    # The operator endpoint started beside it must not replace the agent endpoint's count.
     window.enqueue_output("MCP operator endpoint ready: 30 tool(s) registered\n")
     assert window.badge.text() == "12 tools"
     window.enqueue_output("MCP ERROR: port 8000 already in use\n")

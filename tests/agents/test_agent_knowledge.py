@@ -17,7 +17,6 @@ from asyncroscopy.skills import list_skills, load_skill, select_skills
 from tests.analysis.test_views import Recorded
 from tests.agents.test_workflows import INPUTS, twin
 
-# The attributes AutoScript writes into an EDS file, as text.
 SUPER_X = {"Dispersion": "5", "OffsetEnergy": "-250", "detector": "eds", "acquisition_type": "spectrum"}
 
 
@@ -40,7 +39,6 @@ def test_an_eds_spectrum_saved_by_the_microscope_is_read_in_ev_with_its_elements
     for line, element in ((1487.0, "Al K"), (4840.0, "Ce L"), (7478.0, "Ni K"), (8048.0, "Cu K")):
         nearest = min(found, key=lambda e: abs(e - line))
         assert abs(nearest - line) <= 15.0 and element in found[nearest], (line, found)
-    # The zero energy peak is detector noise and must not be counted as an element.
     zero = found[min(found, key=abs)]
     assert "zero-energy noise peak" in zero and "not an element" in zero
     likely = text.split("explains): ")[1].splitlines()[0]
@@ -86,5 +84,4 @@ def test_requests_for_maps_and_spectra_select_the_matching_skills():
     mapping, spectra = load_skill("map_with_workflow"), load_skill("spectra_in_image")
     assert '"tiles_per_side": 4' in mapping and "Never loop over" in mapping
     assert "fractions of the current image" in spectra and "-250 + 5 * n" in spectra and "zero-energy noise peak" in spectra
-    # The mapping skill needs the workflow tools, so it is not offered without them.
     assert "map_with_workflow" not in {s.name for s in list_skills(CHAT - {"run_workflow"}) if s.available}

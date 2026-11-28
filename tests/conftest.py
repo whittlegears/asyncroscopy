@@ -23,11 +23,9 @@ import pytest
 import numpy as np
 import tango
 
-# The DATA device must never reach a developer's running Tiled, which by default is at
-# 127.0.0.1:9091. Point it at a closed local port for the whole session.
+# The DATA device must never reach a developer's running Tiled.
 os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
-# Lab machine addresses for the shipped configs' ${NAME} placeholders: documentation addresses (RFC 5737)
-# that reach nothing. They override any real configs/site.env on the machine running the tests.
+# Documentation addresses (RFC 5737) for the configs' ${NAME} placeholders; they override any real configs/site.env.
 os.environ.update({
     "ASYNCROSCOPY_MICROSCOPE_HOST": "192.0.2.10",
     "ASYNCROSCOPY_GATAN_HOST": "192.0.2.11",
@@ -36,12 +34,9 @@ os.environ.update({
     "ASYNCROSCOPY_SEGMENTATION_HOST": "192.0.2.14",
 })
 os.environ["ASYNCROSCOPY_SKILLS"] = "1"  # skills are off by default but the tests still cover them
-# A developer's lab skills (and the skills switched off there) never reach the tests.
 os.environ["ASYNCROSCOPY_LAB_SKILLS"] = tempfile.mkdtemp(prefix="asyncroscopy-lab-skills-")
-# The dose ledger gets the same care. The session's frames go to a fresh file and not to a developer's outputs/dose.
 os.environ["ASYNCROSCOPY_DOSE_LEDGER"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-dose-"), "ledger.jsonl")
 os.environ["ASYNCROSCOPY_PERMISSIONS_FILE"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-permissions-"), "permissions.json")
-# Seals of test data go to a throwaway manifest and key, never outputs/integrity.
 _integrity_dir = tempfile.mkdtemp(prefix="asyncroscopy-integrity-")
 os.environ["ASYNCROSCOPY_INTEGRITY_LOG"] = os.path.join(_integrity_dir, "manifest.jsonl")
 os.environ["ASYNCROSCOPY_INTEGRITY_KEY_FILE"] = os.path.join(_integrity_dir, "key")
@@ -92,7 +87,6 @@ STEP_YAML = Path(__file__).resolve().parent / "data" / "step_twin.yaml"
 
 
 from tests.agents.test_agent import setup_llm_stubs
-# Stub out heavy LangChain/Ollama dependencies so the agent swarm imports without them
 setup_llm_stubs()
 
 class FakeAdornedImage:
@@ -140,8 +134,6 @@ DRIFT_TWIN_PROPERTIES = {
     "time_scale": 0.0,
 }
 
-# For live drift tracking in tests/jobs/test_live_drift.py. It has the brief's 5e-11 m/s steady drift and a dense sample,
-# so every overlap between 50 nm tiles has particles to register on. It has a 1 nm stage and a 10 s move and settle per tile.
 LIVE_DRIFT_TWIN_PROPERTIES = {
     **DRIFT_TWIN_PROPERTIES,
     "sample_seed": 11,
@@ -154,7 +146,6 @@ LIVE_DRIFT_TWIN_PROPERTIES = {
 }
 
 
-# The stage's errors and drift are DigitalTwinSTAGE properties. The dicts above read as one twin and are split where they are set.
 STAGE_MODEL_PROPERTIES = {
     "stage_move_noise_std", "stage_bias_x", "stage_bias_y", "stage_reported_noise_std", "stage_backlash_x", "stage_backlash_y",
     "stage_speed", "stage_move_overhead", "stage_settle_drift", "stage_settle_tau", "drift_rate_per_min", "drift_random_walk",
@@ -171,8 +162,6 @@ def on_the_microscope(properties: dict) -> dict:
     return {key: value for key, value in properties.items() if key not in STAGE_MODEL_PROPERTIES}
 
 
-# For the golden regression. This turns on every sample feature of the procedural specimen, which are clusters,
-# height gradient and support. It also turns on dose damage and contamination, the instrument effects that read the sample.
 SPECIMEN_GOLDEN_PROPERTIES = {
     **MAPPING_TWIN_PROPERTIES,
     "sample_seed": 4242,
@@ -186,8 +175,7 @@ SPECIMEN_GOLDEN_PROPERTIES = {
 }
 
 
-# Three specimens on one instrument, MAPPING_TWIN_PROPERTIES. tests/twin/test_specimens.py runs the same Mapper
-# plan on each. The properties are flat because this test database cuts property values at a colon.
+# Flat, because this test database cuts property values at a colon.
 SPECIMENS_DIR = Path(__file__).resolve().parents[1] / "configs" / "specimens"
 SPECIMEN_TWINS = {
     "procedural": {"specimen_source": "procedural"},
@@ -268,7 +256,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
             ],
         },
         {
-            # A twin's STAGE device runs its stage model, so each twin below has its own.
             "class": DigitalTwinSTAGE,
             "devices": [
                 {"name": "asyncroscopy/stage/default", "properties": {}},
@@ -281,7 +268,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                 {"name": "asyncroscopy/stage/specimen_golden", "properties": on_the_stage(SPECIMEN_GOLDEN_PROPERTIES)},
                 {"name": "asyncroscopy/stage/tuner", "properties": {}},
                 {"name": "asyncroscopy/stage/sem", "properties": {"stage_move_noise_std": 2e-9, "stage_reported_noise_std": 5e-10}},
-                # One twin of each kind for tests/twin/test_atomistic_specimens.py. Only those tests move them.
                 *({"name": f"asyncroscopy/stage/atomistic_{kind}", "properties": {}} for kind in ("tilt", "particles", "diffraction", "polycrystal")),
                 *({"name": f"asyncroscopy/stage/specimen_{source}", "properties": on_the_stage(MAPPING_TWIN_PROPERTIES)} for source in SPECIMEN_TWINS),
             ],
@@ -300,8 +286,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     "name": "asyncroscopy/corrector/default",
                     "properties": {"measurement_noise_fraction": 0.0, "measurement_noise_m": 0.0},
                 },
-                # For tests/jobs/test_tuner.py. The tuner twin's corrector has noisy measurements, as by default.
-                # The other one has the wrong sign, so its corrections add instead of subtract.
                 {"name": "asyncroscopy/corrector/tuner", "properties": {}},
                 {"name": "asyncroscopy/corrector/wrongsign", "properties": {"correction_sign": -1.0}},
             ],
@@ -331,7 +315,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # A twin with every realistic effect on, for mapping and Mapper tests.
                     "name": "asyncroscopy/digitaltwin/mapping",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/mapping",
@@ -344,8 +327,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # Strong steady drift and a precise stage, run with time_scale 0. The drift fit and
-                    # revisits must use the twin's clock_s and not this computer's clock.
                     "name": "asyncroscopy/digitaltwin/drift",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/drift",
@@ -356,7 +337,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # The brief's 5e-11 m/s drift, for live drift tracking in tests/jobs/test_live_drift.py.
                     "name": "asyncroscopy/digitaltwin/livedrift",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/livedrift",
@@ -367,7 +347,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # Stage moves take real time on a stage with 10 um of travel. A move of 1 um takes 1 s.
                     "name": "asyncroscopy/digitaltwin/slowstage",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
@@ -378,7 +357,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # An ideal twin with every effect off. tests/instruments/test_parity.py compares it with AutoScript on the fake client.
                     "name": "asyncroscopy/digitaltwin/parity",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
@@ -390,8 +368,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # Ideal stage and scan with dose tracking, for tests/jobs/test_dose_aware.py. Its DoseMap cell
-                    # is 2 um / 200 = 10 nm, which matches EDS_DOSE_SPREAD_M.
                     "name": "asyncroscopy/digitaltwin/dose",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/default",
@@ -406,12 +382,10 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # For tests/twin/test_specimens.py. The procedural specimen's output must match the golden file
-                    # bit for bit. Only that test touches this twin, so its event indices are reproducible.
+                    # Only tests/twin/test_specimens.py touches this twin, so its event indices are reproducible.
                     "name": "asyncroscopy/digitaltwin/specimen_golden",
                     "properties": {"stage_device_address": "asyncroscopy/stage/specimen_golden", "acquisition_save_directory": prop_path(data_save_dir), "ground_truth_directory": prop_path(ground_truth_dir), **on_the_microscope(SPECIMEN_GOLDEN_PROPERTIES)},
                 },
-                # For tests/twin/test_specimens.py, which runs the same Mapper plan on one instrument with three specimens.
                 *(
                     {
                         "name": f"asyncroscopy/digitaltwin/specimen_{source}",
@@ -428,9 +402,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     for source, specimen in SPECIMEN_TWINS.items()
                 ),
                 {
-                    # For tests/jobs/test_tuner.py. A dense particle sample on a thin film with dose tracking and a
-                    # height gradient, so focus changes across the stage. Each test injects its own hidden
-                    # focus error with set_focus_error.
                     "name": "asyncroscopy/digitaltwin/tuner",
                     "properties": {
                         "scan_device_address": "asyncroscopy/scan/tuner",
@@ -450,7 +421,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                 },
             ],
         },
-        # A simulated SPM, its sub-devices talking over Tango, for tests/jobs/test_spm_mapping.py.
         {
             "class": SimulatedSPMApproach,
             "devices": [{"name": "asyncroscopy/approach/spm", "properties": {}}],
@@ -604,7 +574,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     for source in SPECIMEN_TWINS
                 ),
                 {
-                    # Maps of the drifting twin below, for the tests in test_dry_run_and_clock.py that need one source of time.
                     "name": "asyncroscopy/mapper/drift",
                     "properties": {
                         "microscope_device_address": "asyncroscopy/digitaltwin/drift",
@@ -619,7 +588,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # Maps of the 5e-11 m/s twin above, with and without live drift tracking, for test_live_drift.py.
                     "name": "asyncroscopy/mapper/livedrift",
                     "properties": {
                         "microscope_device_address": "asyncroscopy/digitaltwin/livedrift",
@@ -635,7 +603,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # The simulated SEM, for test_map_profiles.py. It has the scanning beam commands only and no EDS.
                     "name": "asyncroscopy/mapper/sem",
                     "properties": {
                         "instrument_profile": "sem",
@@ -651,7 +618,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # The simulated SPM, for test_spm_mapping.py. It retracts, moves, approaches and scans.
                     "name": "asyncroscopy/mapper/spm",
                     "properties": {
                         "instrument_profile": "spm",
@@ -669,7 +635,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # The YAML AFM twin below, mapped through the map section of its YAML file, for test_map_profiles.py.
                     "name": "asyncroscopy/mapper/afm",
                     "properties": {
                         "instrument_profile": "yaml",
@@ -687,7 +652,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
             ],
         },
         {
-            # The AFM example as a YAML instrument with no simulated waits. Its job device is left out here.
             "class": yaml_device_class("AFMTwin"),
             "devices": [
                 {
@@ -701,8 +665,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
             ],
         },
         {
-            # The step protocol between a YAML instrument and its job device, for tests/instruments/test_yaml_step_protocol.py.
-            # One simulated second is 20 ms, so a 40 s step takes 0.8 s. The second instrument's hold lapses fast.
             "class": yaml_device_class("StepTwin"),
             "devices": [
                 {
@@ -730,7 +692,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                 },
             ],
         },
-        # The worked example from docs/Adding_New_Hardware/new_instrument.md.
         {"class": SimIndenter, "devices": [{"name": "asyncroscopy/indenter/default", "properties": {"seed": 3}}]},
         {
             "class": IndentGrid,
@@ -822,8 +783,7 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
         },
     ]
 
-    # Keep one in-process context for the whole session. Starting multiple
-    # in-process Tango contexts in one interpreter can segfault in PyTango.
+    # One in-process context per session: starting several in one interpreter can segfault in PyTango.
     ctx = MultiDeviceTestContext(devices_info, process=False, timeout=60)
     with ctx:
         data = tango.DeviceProxy(ctx.get_device_access("asyncroscopy/data/default"))
@@ -913,7 +873,6 @@ def patched_single_image(monkeypatch: pytest.MonkeyPatch) -> None:
     without AutoScript/hardware.
     """
     def fake_acquire(self, imsize: int, dwell_time: float, detector_list: list = ["haadf"], scan_region: list[float] = [0.0, 0.0, 1.0, 1.0], output_format: str = ".h5") -> FakeAdornedImage:
-        # Deterministic image makes tests stable
         arr = np.arange(imsize * imsize, dtype=np.uint16)
         return FakeAdornedImage(arr.reshape(imsize, imsize))
 

@@ -36,7 +36,6 @@ def test_python_command_with_uv_skips_sync(monkeypatch):
     assert python_command("-m", "pkg.mod", "arg") == [
         "C:/tools/uv.exe", "run", "--no-sync", "python", "-u", "-m", "pkg.mod", "arg",
     ]
-    # Extras are irrelevant without a sync, so they are left out.
     assert "--extra" not in python_command("-m", "pkg.mod", extras=("agent",))
 
 

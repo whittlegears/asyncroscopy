@@ -132,7 +132,6 @@ def test_metrics_prefer_the_sharper_image_and_ignore_brightness():
     blurred = np.real(np.fft.ifft2(np.fft.fft2(sharp) * np.fft.fft2(kernel / kernel.sum(), s=sharp.shape)))
     for metric in focus.METRICS:
         assert focus.sharpness(sharp, metric) > focus.sharpness(blurred, metric)
-    # Normalised variance does not depend on the beam current. The gradient metrics do because they subtract shot noise.
     assert focus.sharpness(3 * sharp) == pytest.approx(focus.sharpness(sharp))
     assert focus.error_grew(1e-8, 2e-8) and not focus.error_grew(1e-8, 0.5e-8)
 
@@ -185,7 +184,6 @@ def test_image_metric_focuses_ten_of_ten_seeds_from_200_nm(fresh, tuner_proxy):
         residual = device._focus_truth()["c1_m"]
         residuals.append(residual)
         doses.append(tune["dose_e_per_a2"])
-        # The job's count, its worst case at reserve and the twin's own dose map must all stay within the declared dose.
         assert tune["dose_e_per_a2"] <= FOCUS_PLAN["dose_budget_e_per_a2"]
         assert tune["dose_e_per_a2"] <= reserved["estimate"]["max_dose_e_per_a2"] + 1e-9
         assert float(device._dose.dose_at(x, y)) - dose_before == pytest.approx(tune["dose_e_per_a2"], rel=0.05)
@@ -256,7 +254,6 @@ def test_over_budget_plan_is_refused_before_the_beam_is_unblanked(fresh, tuner_p
     assert "above the budget" in reply["error"]["message"] and "33 frames" in reply["error"]["message"]
     after = (device._acquisition_count, device._dose.total_electrons(), json.loads(twin.get_parameters())["beam_blanked"], twin.get_defocus())
     assert after == before  # nothing imaged, no dose, the beam still blanked, nothing moved
-    # Bad plans are refused by name, too.
     assert "unknown plan field" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "focus_rnage_m": 1e-7}})["error"]["message"]
     assert "dose_budget_e_per_a2 is required" in call(tuner_proxy, "reserve", {"plan": {"strategy": "vendor_autofocus"}})["error"]["message"]
     assert "unknown strategy" in call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "strategy": "magic"}})["error"]["message"]
@@ -377,7 +374,6 @@ def test_run_job_runs_a_tune_through_the_mcp_server(fresh, tuner_proxy, monkeypa
 
 
 def test_a_dry_run_tune_is_refused_at_reserve_by_name(tuner_proxy):
-    # Every measurement reads an image or a corrector reply, which a dry run does not produce.
     refused = call(tuner_proxy, "reserve", {"plan": {**FOCUS_PLAN, "dry_run": True}})
     assert refused["error"]["code"] == "dry_run_unsupported" and "Tuner does not support dry runs" in refused["error"]["message"]
     reserved = call(tuner_proxy, "reserve", {"plan": FOCUS_PLAN})  # the refused dry run reserved nothing, so a real tune reserves at once

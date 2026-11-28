@@ -26,13 +26,10 @@ def test_tiny_tune_vs_acquire(tmp_path):
     rows = {row["budget"]: row for row in results["rows"]}
     assert set(rows) == {"none", "focus_only"}
     none, tuned = rows["none"], rows["focus_only"]
-    # Tuning took time so fewer tiles fit. It lowered the focus error behind the map.
     assert none["tune_s"] == 0 and tuned["tune_s"] > 0 and tuned["tune_state"] == "done"
     assert tuned["tiles"] < none["tiles"]
     assert tuned["median_focus_error_m"] < none["median_focus_error_m"]
-    # From a 250 nm defocus it more than paid for itself.
     assert tuned["information"] > none["information"] > 0
     assert results["summary"]["large_error"]["optimum"]["information"]["budget"] == "focus_only"
-    # The evaluators read the run from its trace.
     assert tuned["events"] > none["events"]
     assert set(tuned["scores"]) == {"information", "resolution", "dose", "time"}

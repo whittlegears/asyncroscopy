@@ -48,9 +48,6 @@ def robot_module(tmp_path, monkeypatch):
     return "lab_devices.robot"
 
 
-# schema
-
-
 def test_coerce_converts_and_explains():
     assert coerce(Setting("p", "int"), "9094") == 9094
     assert coerce(Setting("p", "bool"), "no") is False
@@ -70,9 +67,6 @@ def test_read_settings_reports_every_problem_at_once():
         read_settings({"c": "maybe"}, settings)
     assert len(excinfo.value.problems) == 2
     assert read_settings({"a": {"b": "3"}}, settings) == {"a.b": 3, "c": None, "d": "x"}
-
-
-# run_servers devices
 
 
 def test_every_shipped_server_config_is_checked(tmp_path):
@@ -213,9 +207,6 @@ def test_register_devices_removes_disabled_devices_from_a_kept_database(monkeypa
     assert ("put", "asyncroscopy/data/default", "module_name") in calls and ("put", "asyncroscopy/instrument/default", "module_name") in calls
 
 
-# run_mcp and run_llm
-
-
 def test_mcp_tool_log_and_validation(tmp_path):
     raw = yaml.safe_load((CONFIGS / "mcp_dt.yaml").read_text())
     raw["mcp"]["tool_log"] = "outputs/calls.jsonl"
@@ -283,9 +274,6 @@ def test_config_kinds_do_not_overlap():
         raw = yaml.safe_load(path.read_text())
         kinds = [m.__name__ for m in (run_servers, run_mcp, run_llm, run_pytemlib) if m.is_config(raw)]
         assert len(kinds) <= 1, (path.name, kinds)
-
-
-# shutdown
 
 
 def test_process_alive():

@@ -27,7 +27,6 @@ def test_values_draws_and_ranges():
     profile = instrument_profile.load(SPECTRA)
     entry = profile["parameters"]["stage_move_noise_std"]
     assert instrument_profile.twin_properties(profile)["stage"]["stage_move_noise_std"] == entry["value"]
-    # No sigma yet, so a draw from the uncertainty is the value, and a draw across instruments is inside the range.
     assert instrument_profile.twin_properties(profile, np.random.default_rng(1))["stage"]["stage_move_noise_std"] == entry["value"]
     across = [instrument_profile.twin_properties(profile, np.random.default_rng(seed), across=True)["stage"]["stage_move_noise_std"] for seed in range(20)]
     assert all(entry["range"][0] <= v <= entry["range"][1] for v in across) and len(set(across)) == 20

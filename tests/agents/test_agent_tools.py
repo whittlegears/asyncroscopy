@@ -98,7 +98,6 @@ def test_another_instrument_gets_its_own_tools_but_not_state_or_analysis(endpoin
     assert "Raman_set_laser_power" in picked and "Raman_State" not in picked and "assemble_map" not in picked
 
 
-# An AFM twin mapped through the yaml profile. The Mapper must not make it look like a STEM.
 AFM_MAPPED = {
     "AFMTwin": ["approach_tip", "retract_tip", "move_xy", "get_status", "acquire_topography", "acquire_force_curve",
                 "get_setpoint_v", "set_setpoint_v", "get_map_profile", "State", "Status"],

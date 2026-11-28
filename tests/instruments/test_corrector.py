@@ -10,7 +10,6 @@ def test_digital_twin_corrector_reports_ceos_compatible_info(corrector_proxy):
     payload = json.loads(corrector_proxy.get_info())
 
     assert payload["jsonrpc"] == "2.0"
-    # It speaks the CEOS API but does not claim to be a CEOS corrector.
     assert payload["result"]["manufacturer"] == "asyncroscopy digital twin" and payload["result"]["emulates"] == "CEOS corrector API"
     assert payload["result"]["simulation"] is True
     assert corrector_proxy.state() == tango.DevState.ON

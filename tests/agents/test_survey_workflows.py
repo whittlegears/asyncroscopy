@@ -50,10 +50,8 @@ def test_the_4_by_4_map_needs_no_settings_and_checks_each_tile_as_it_is_taken(tm
     assert record["state"] == "done", record
     tile = record["outputs"]["tile"]
     assert record["outputs"]["plan"]["count"] == 16 and len(tile["keys"]) == 16 and record["visits"]["tile"] == 1
-    # Sixteen tiles are within image shift reach so the stage never moves.
     assert "Twin_move_stage" not in instrument.names() and state["stage"][:2] == [1e-6, 2e-6]
     assert state["shift"] == [0.0, 0.0] and state["fov"] == 3.0e-7 and state["blanked"]
-    # Every tile after the first is checked against the one before it.
     assert len(checks) == 15 and tile["matched"] == 15 and tile["unchecked"] == 1 and tile["extra"] == 0
     assert checks[0]["image"] == tile["keys"][1] and checks[0]["neighbour"] == tile["keys"][0]
     assert checks[0]["offset_xy_m"] == pytest.approx([2.1e-7, 0.0]) and checks[0]["fov_m"] == 3.0e-7
@@ -68,13 +66,11 @@ def test_a_tile_that_does_not_fit_gets_a_bridging_image_closer_to_the_last(tmp_p
     assert record["state"] == "done", record
     tile = record["outputs"]["tile"]
     assert len(tile["keys"]) == 17 and tile["extra"] == 1 and tile["matched"] == 15 and tile["unmatched"] == 0
-    # The bridge sits halfway between the second and third tiles.
     second, bridge, third = tile["stage_xy_m"][1:4]
     assert bridge == pytest.approx([(second[0] + third[0]) / 2, second[1]])
     assert [c["neighbour"] for c in checks[1:4]] == [tile["keys"][1], tile["keys"][1], tile["keys"][2]]
     assert checks[3]["image"] == tile["keys"][3] and checks[3]["offset_xy_m"][0] == pytest.approx(1.05e-7)
 
-    # On a blank area nothing fits but the run still ends.
     instrument, analysis, state, checks = survey_twin(fits=lambda n, request: False)
     state["fov"] = 3.0e-7
     record = run(run_workflow("map_4x4", {}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "blank"))
@@ -89,7 +85,6 @@ def test_the_sample_map_asks_first_then_maps_every_level_with_spectra_on_the_way
     workflow = get_workflow("map_sample")
     instrument, analysis, state, checks = survey_twin()
     record = run(run_workflow("map_sample", SAMPLE, instrument=instrument, analysis=analysis, state_dir=tmp_path))
-    # 81 images at 1 um plus 225 at 500 nm is over ask_over so a person is asked first.
     assert record["state"] == "waiting", record
     question = record["questions"][0]
     assert "306 images" in question["question"] and question["options"] == ["yes", "no"]
@@ -104,24 +99,20 @@ def test_the_sample_map_asks_first_then_maps_every_level_with_spectra_on_the_way
     gathered = [args for name, args in analysis.log if name == "collect_map_run"]
     assert [(len(g["image_keys"]), g["fov_m"]) for g in gathered] == [(81, 1.0e-6), (225, 5.0e-7)]
     assert record["outputs"]["maps"]["count"] == 2
-    # The stage stays inside the square and every image shift stays within reach.
     moves = [args["position"] for name, args in instrument.log if name == "Twin_move_stage"]
     assert len({(round(p[0], 12), round(p[1], 12)) for p in moves[:-1]}) == 9 + 9 - 1  # the middle group is where the stage began
     assert max(abs(p[0] - 1e-6) for p in moves) < 2.5e-6 and all(p[2:] == [0.0, 0.0, 0.0] for p in moves)
     assert max(abs(v) for name, args in instrument.log if name == "Twin_set_image_shift" for v in args["shift"]) <= 1.0e-6
-    # EDS spectra are taken at every hundredth tile with the beam on. EELS is off.
     assert len(state["eds"]) == 3 and "eels" not in state and all(s["beam_on"] for s in state["eds"])
     assert all(s["args"] == {"detector_name": "eds"} for s in state["eds"])
     assert record["outputs"]["eds"]["keys"] == ["spectrum_eds_0001.h5", "spectrum_eds_0002.h5", "spectrum_eds_0003.h5"]
     assert all(place.startswith("stem_image_HAADF_") for place in record["outputs"]["eds"]["at"])
-    # Each level's run names the spectra taken on its tiles, one entry per image, so its map marks them.
     eds = record["outputs"]["eds"]
     assert "spectrum_keys" not in gathered[0]
     by_tile = dict(zip(eds["at"], eds["keys"]))
     assert gathered[1]["spectrum_keys"] == [by_tile.get(key, "") for key in gathered[1]["image_keys"]]
     assert sum(1 for key in gathered[1]["spectrum_keys"] if key) == 3 and gathered[1]["spectra_at"] == [0.5, 0.5]
     assert ("Twin_place_beam", {"position": [0.5, 0.5]}) in instrument.log
-    # The instrument is left as it was found.
     assert state["stage"] == [1e-6, 2e-6, 0.0, 0.0, 0.0] and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9 and state["blanked"]
 
 
@@ -144,7 +135,6 @@ def test_two_overlapping_images_match_where_they_are_and_not_where_they_are_not(
     rng = np.random.default_rng(3)
     scene = rng.normal(size=(400, 400))
     scene = (scene + np.roll(scene, 1, 0) + np.roll(scene, 1, 1) + np.roll(scene, (1, 1), (0, 1))) / 4.0
-    # b is 120 columns to the right of a and 5 rows down
     images = {"a": scene[40:296, 20:276], "b": scene[45:301, 140:396], "far": rng.normal(size=(256, 256))}
     store = SimpleNamespace(client={key: SimpleNamespace(structure_family="array", read=lambda value=value: value) for key, value in images.items()})
     tools = SimpleNamespace(store=store)
@@ -157,7 +147,6 @@ def test_two_overlapping_images_match_where_they_are_and_not_where_they_are_not(
 
 
 def test_a_spectrum_due_at_a_tile_that_needed_a_bridge_is_taken_on_that_tile_not_the_bridge(tmp_path):
-    # Spectra at every third tile, and the third tile does not fit the second, so a bridge is taken right before the stop.
     instrument, analysis, state, checks = survey_twin(fits=lambda n, request: n != 1)
     inputs = {"size_m": 5.0e-6, "fov_m": 1.0e-6, "spectra_every": 3, "eds": True}
     record = run(run_workflow("map_sample", inputs, instrument=instrument, analysis=analysis, state_dir=tmp_path))

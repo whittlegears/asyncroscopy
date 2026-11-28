@@ -232,7 +232,6 @@ def test_peak_shapes_share_their_full_width_at_half_maximum():
         profile = peak_profile(x, 0.0, 4.0, eta)
         above = x[profile >= 0.5]
         assert profile.max() == pytest.approx(1.0) and above[-1] - above[0] == pytest.approx(4.0, abs=0.01)
-    # A Lorentzian keeps more in its tails than a Gaussian of the same width.
     assert peak_profile(np.array([6.0]), 0.0, 4.0, 1.0)[0] > 10 * peak_profile(np.array([6.0]), 0.0, 4.0, 0.0)[0]
 
 

@@ -51,12 +51,10 @@ def test_the_middleware_is_built_in_the_profiles_order():
         build_middleware(["nope"], prompt="p", tool_names=set(), offered=set(), tools=[])
 
 
-# What depends on the model is data in the profile. A capable model's profile turns off the aids for a small model.
 def test_the_capable_profile_extends_the_default_and_turns_the_small_model_aids_off():
     default, capable = load_profile("small"), load_profile("capable")
     assert default.tool_gates and default.replies == "notes" and default.skills.from_request == 2
     assert capable.tool_gates == () and capable.replies == "facts_and_notes" and capable.skills.prompt_chars > default.skills.prompt_chars
-    # What it does not change it takes from the default. That is the tool selection, the team split and the middleware.
     assert capable.tools == default.tools and capable.team == default.team and capable.middleware == default.middleware
     assert capable.num_ctx > default.num_ctx
 
@@ -88,12 +86,10 @@ def test_a_profile_with_a_bad_setting_is_refused(tmp_path, text, refused):
 
 
 @pytest.mark.parametrize("request_text, held", [
-    # The note writers wait for a request to write. A cue matches whole words and word starts in any case.
     ("Describe the stitched map abc_map.", {"annotate", "add_poi"}),
     ("Label the grain boundary on abc_map.", set()),
     ("ANNOTATION please", set()),
     ("Image the landmark again", {"annotate", "add_poi", "Scope_place_beam", "Scope_place_beam_at"}),  # "mark*" starts a word, so not inside "landmark"
-    # The beam parkers wait for a spectrum. A phrase cue needs its words in order.
     ("Place the beam on the particle", {"annotate", "add_poi"}),
     ("Take an X-ray spectrum", {"annotate", "add_poi"}),
     ("Take a closer image of the particle.", {"annotate", "add_poi", "Scope_place_beam", "Scope_place_beam_at"}),

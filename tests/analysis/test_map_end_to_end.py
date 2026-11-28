@@ -41,7 +41,6 @@ def test_stitched_map_matches_ground_truth(mapper_proxy, mapping_twin_proxy):
     n_tiles = results["summary"]["steps_total"]
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
 
-    # The run is in a pytest temp dir so that dir must be an allowed root.
     tools = MapTools(MapStore(local_roots=[Path(run_file).parent]))
     job = tools.jobs.start(tools.jobs.reserve({"task": "assemble_map", "run": run_file, "stage_sigma_m": 8e-9})["reservation_id"])
     assert tools.jobs.wait(job["job_id"], timeout=120)["state"] == "done"

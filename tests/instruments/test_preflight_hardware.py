@@ -131,9 +131,7 @@ def test_a_healthy_stack_passes_and_only_reads(stack):
     assert rows["autoscript server version"][0] == "PASS"
     assert "7521" in rows["autoscript server port 192.0.2.10:9095"][1]
     assert rows["tiled accepts the API key"][0] == "PASS"
-    # The MCP endpoints were not running so they are skipped and not failed.
     assert [r for r, name, _ in report.rows if name.startswith("mcp ")] == ["SKIP", "SKIP"]
-    # Every configured device was asked for its State.
     assert sum(1 for _cls, name in stack.log if name == "State") == 12
 
     sent = [(cls, name) for cls, name in stack.log if name != "set_timeout_millis" and not name.startswith("read:")]

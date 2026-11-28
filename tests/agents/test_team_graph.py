@@ -18,7 +18,6 @@ from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwi
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from tests.catalogs import catalog
 
-# What endpoint_info says the tools are, and the default profile's split of them between the specialists.
 CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper, "XRDTwin": "xrd.yaml"})
 TEAM = load_profile("small").team
 
@@ -44,7 +43,6 @@ def test_tools_are_split_by_role_and_redundant_or_operator_only_tools_are_hidden
     assert roles["run_job"] == roles["DigitalTwin_move_stage"] == roles["DigitalTwin_acquire_scanned_image"] == "operator"
     assert roles["wait_for_job"] == roles["load_skill"] == "shared"
     assert roles["view_data"] == roles["add_poi"] == roles["assemble_map"] == "analyst"
-    # run_job and wait_for_job cover these so no specialist gets them.
     for hidden in ("Mapper_reserve", "Mapper_start", "Mapper_results", "Mapper_release", "analysis_job_status", "analysis_job_results",
                    "list_skills", "skills_for", "notes_for", "DigitalTwin_State"):
         assert roles[hidden] is None, hidden

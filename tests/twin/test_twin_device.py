@@ -75,7 +75,6 @@ class TestRealisticTwin:
         after = len(json.loads(mapping_twin_proxy.export_ground_truth())["acquisitions"])
         assert set(images) == {"HAADF", "BF"}
         assert after == before + 1
-        # Bright-field contrast is inverted relative to HAADF.
         haadf, bf = images["HAADF"][0].astype(float), images["BF"][0].astype(float)
         assert np.corrcoef(haadf.ravel(), bf.ravel())[0, 1] < 0
 
@@ -89,7 +88,6 @@ class TestRealisticTwin:
         mapping_scan_proxy.scan_region = [0.0, 0.0, 1.0, 1.0]
 
     def test_scan_region_is_left_top_width_height_like_the_scan_device(self, mapping_twin_proxy, mapping_scan_proxy):
-        # SCAN validates this convention and AutoScript uses it. An offset region tells it apart from corners.
         try:
             centre, _ = acquire(mapping_twin_proxy, mapping_scan_proxy, region=(0.25, 0.25, 0.5, 0.5))["HAADF"]
             assert centre.shape == (32, 32)

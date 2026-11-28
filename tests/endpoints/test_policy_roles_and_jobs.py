@@ -77,7 +77,6 @@ class TestPolicy:
         "off_axis_tilt", "goto_stop", "jog_to_halt", "stop_at_position", "retract_to", "withdraw_volume", "vacuum_off", "pump_off",
         "cooling_off", "LN2_off", "stop_cooling", "stop_pumping", "pause_ventilation", "go_to_safe_state",
         "chiller_off", "z_piezo_off", "stop_return_home", "off_axis_illumination", "approach_stop",
-        # More names that hold hardware, stop a subsystem or re-arm it.
         "brake_off", "BrakeOff", "servo_off", "motor_off", "gripper_off", "clamp_off", "magnet_off", "turbopump_off",
         "ionpump_off", "cryocooler_off", "helium_off", "stop_flow", "stop_pid", "zfeedback_off", "z_loop_off",
         "seek_hard_stop", "descend_until_stop", "find_stop", "retract_approach", "withdraw_engage", "retract_tip_down",
@@ -106,7 +105,6 @@ class TestPolicy:
 
     @pytest.mark.parametrize("name", ["withdraw", "retract", "Withdraw", "Retract", "withdraw_now", "retract_now"])
     def test_a_bare_retreat_verb_is_high_unless_the_device_brings_a_probe_to_the_sample(self, name):
-        # A syringe pump withdraw draws liquid in. On an SPM or indenter a bare retract lifts the probe.
         assert risk_of("SyringePump", name) == "high"
         assert risk_of("SimIndenter", name, probe=True) == "low"
 
@@ -140,7 +138,6 @@ class TestPolicy:
         assert risk_of("DigitalTwin", "get_stage", {"*": "low"}) == "low"
 
     def test_operator_only(self):
-        # Devices declare what only an operator may call. The name rules cover only Tango's admin commands.
         assert declared_hints(DigitalTwin)["export_ground_truth"]["operator_only"]
         assert not declared_hints(DigitalTwin)["move_stage"].get("operator_only")
         assert operator_only("AnyDevice", "Init") and not operator_only("DigitalTwin", "export_ground_truth")
@@ -352,7 +349,6 @@ class TestWaitForJob:
         server.add_device("Mapper", Job(), envelope=True)
         done = server.jobs.wait_for_job("j1", device="Mapper", max_wait_s=10)
         assert done["state"] == "done" and Job.polls == 2
-        # A finished job's reply carries its results so no separate results call is needed.
         assert done["result_keys"] == {"run": "map_r1.h5"} and done["summary"]["grid"]["rows"] == 3
         with pytest.raises(ToolError, match="Mapper"):
             server.jobs.wait_for_job("j1", device="Camera")
@@ -620,7 +616,6 @@ class TestRunJob:
         info = server.discovery.endpoint_info()
         assert info["risks"]["Mapper_start"] == "high" and info["risks"]["Mapper_reserve"] == "low"
         assert info["risks"]["run_job"] == "high" and info["risks"]["view_data"] == "low" and info["job_devices"] == ["Mapper"]
-        # Every endpoint of a stack names its Tango database so a client can group them.
         assert info["stack_id"] == server.stack_id and info["stack_id"].startswith("tango://")
 
 
@@ -704,7 +699,6 @@ class TestEndpointGuards:
     def test_a_start_of_a_reservation_over_the_limits_never_starts(self, server_factory, tango_ctx):
         long = {**MEASURED, "duration_s": 36000.0}
         server, calls = self.server_with(server_factory, tango_ctx, long, hardware=False, limits={"max_duration_s": 3600.0})
-        # Someone reserved it over Tango or on another endpoint. This endpoint starts it directly or as a resume.
         direct = json.loads(server.tools["Mapper"]["start"]({"reservation_id": "r9"}))
         assert direct["error"]["code"] == "plan_rejected" and direct["error"]["violations"][0]["what"] == "duration_s"
         resumed = server.jobs.run_job("Mapper", resume="r9")
@@ -804,7 +798,6 @@ def test_stop_all_stops_every_device_and_reports_what_it_could_not(server_factor
     assert {"Tuner_abort_all", "AFMTwin_retract_tip"} <= set(done)
     failed = {s["tool"] for s in reply["steps"] if not s["ok"]}
     assert failed == {"Mapper_abort_all", "OldJob_abort_all", "BlindStem_blank_beam", "SlowCam"} and not reply["stopped"]
-    # AutoScript 1.18 has no stage stop so a move under way is named and not passed over.
     assert len(reply["not_stopped"]) == 1 and reply["not_stopped"][0].startswith("DigitalTwin: a stage move")
 
 

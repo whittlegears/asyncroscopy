@@ -11,8 +11,7 @@ from startup_scripts.config_schema import ConfigError, fill_placeholders, site_v
 
 ROOT = Path(__file__).parents[2]
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
-# Where lab addresses leak. Code and tests may use private addresses as generic
-# examples (the host guard's LAN tests), so they are not scanned.
+# Code and tests may use private addresses as generic examples, so only these are scanned.
 SCANNED = ("configs/", "notebooks/", "docs/")
 DOCUMENTATION = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")]
 

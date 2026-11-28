@@ -44,7 +44,6 @@ FOV = PIXEL * SIZE
 def particles(seed=0, n=12):
     rng = np.random.default_rng(seed)
     centres = rng.uniform(-0.4 * FOV, 0.4 * FOV, size=(n, 2))
-    # keep them apart, so "found" is about blur, not crowding
     keep = [0]
     for i in range(1, n):
         if all(np.hypot(*(centres[i] - centres[j])) > 6e-9 for j in keep):
@@ -119,13 +118,11 @@ def test_information_counts_unique_ground_truth_features_and_blur_loses_them(run
     assert blurred < sharp
     assert per_event[0]["recall"]["value"] == pytest.approx(sharp / len(centres))
     run = score_run(data, ["information"])["information"]
-    # The same particles imaged twice count once.
     assert run["features_found"]["value"] <= len(centres)
     assert run["features_found"]["value"] >= sharp
     assert "ground-truth" in run["features_found"]["reason"]
     assert run["features_per_s"]["value"] == pytest.approx(run["features_found"]["value"] / 2.0)  # the clock runs from 10 to 12 s
     assert run["images"]["value"] == 3
-    # Only the two sharp frames were in focus at 2 and 3 nm. The blurred one was at 150 nm.
     in_focus_only = RunData("r1", data.events[:2], truth=data.truth, loader=data.loader)
     assert run["features_in_focus"]["value"] == score_run(in_focus_only, ["information"])["information"]["features_found"]["value"]
 
@@ -226,14 +223,11 @@ def test_features_are_one_flat_row_per_run(run_with_truth, tmp_path):
 
 
 def test_stopping_rule():
-    # Tuning for 10 s triples the rate for the 90 s left, so it is worth it.
     assert keep_tuning(1.0, 3.0, 10.0, 100.0).keep_tuning
-    # The same gain but drift makes it stale after 3 s, so 10 s of tuning is not worth it.
     stale = stale_after_s(depth_of_field_m=20e-9, focus_drift_m_per_s=5e-9, residual_m=5e-9)
     assert stale == pytest.approx(3.0)
     decision = keep_tuning(1.0, 3.0, 10.0, 100.0, stale)
     assert not decision.keep_tuning and "stale" in decision.reason
-    # Too little time left to use the better focus.
     assert not keep_tuning(1.0, 3.0, 10.0, 12.0).keep_tuning
     assert stale_after_s(20e-9, 0.0) == math.inf
     assert best_budget([{"budget": "a", "tune_s": 0, "information": 5}, {"budget": "b", "tune_s": 4, "information": 9}, {"budget": "c", "tune_s": 9, "information": 9}])["budget"] == "b"
@@ -268,6 +262,5 @@ def test_workflow_benchmark_shows_evaluator_columns_without_changing_verdicts():
     table = run_workflows.markdown(results)
     assert "| time.clock_s | time.idle_s |" in table
     assert "| w | general | 0/1 | 3 | moved | 9 | 4 |" in table
-    # Results without score columns must still render.
     del results["score_columns"]
     assert "| w | general | 0/1 | 3 | moved |\n" in run_workflows.markdown(results)

@@ -62,7 +62,6 @@ def test_a_map_with_a_regions_request_brings_explore_regions_and_data_alone_brin
     stitched = run + tool_reply("wait_for_job", json.dumps({"state": "done", "result_keys": {"map": "map_r1_map"}}), "c2")
     skills = dict(applied(stitched))
     assert "stitched map" in skills["explore_regions"]
-    # A data key coming back is not a reason to add instructions. The base prompt already says how to read keys.
     assert "inspect_data" not in skills
     plain = [HumanMessage("map a 600 nm square here")] + tool_reply("wait_for_job", json.dumps({"result_keys": {"map": "map_r1_map"}}), "c1")
     assert "explore_regions" not in dict(applied(plain))
@@ -114,7 +113,6 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
 
 
 def test_tools_that_write_notes_are_offered_only_when_the_request_asks_to_write_one():
-    # The default profile is for a small model and holds them back. A capable model's profile does not.
     middleware = SkillMiddleware("BASE", STEM, STEM, gates=load_profile("small").tool_gates)
     capable = SkillMiddleware("BASE", STEM, STEM, gates=load_profile("capable").tool_gates)
     tools = [SimpleNamespace(name=n) for n in ("list_pois", "annotate", "add_poi", "edit_annotation", "view_data")]
@@ -140,8 +138,6 @@ def test_every_packaged_skill_loads_and_points_at_run_job_and_wait_for_job():
         assert "run_job" in body and "wait_for_job" in body and "Mapper_reserve" not in body
 
 
-# Requests that only ask about data never get a skill that acts.
-# A returned map key must not lead a small model to start a new map.
 READ_ONLY = [
     "What features are visible on the map abc123_map?",
     "Which regions of map abc_map look different? Do not acquire anything.",
@@ -195,7 +191,6 @@ def test_every_shipped_skill_passes_the_skill_linter():
             assert lint_skill(skill.path) == [], skill.name
 
 
-# Treating these as read only would keep away the skills they need.
 ACTING_PHRASINGS = [
     "Show me a map of a new area",
     "show me a new image",
@@ -270,7 +265,6 @@ def test_a_skill_acts_unless_it_says_it_only_reads(tmp_path):
 
 
 def test_one_mapping_procedure_per_endpoint_and_a_new_map_request_gets_it_first():
-    # With a Mapper the mapping skill maps. map_with_workflow is for an instrument without one. A prompt never carries both.
     with_workflows = STEM | {"run_workflow", "workflow_status"}
     request = [HumanMessage("Map a 600 nm square around here.")]
     assert [a["skill"] for a in skills_for(request, with_workflows, with_workflows)] == ["mapping"]
@@ -288,7 +282,6 @@ def test_the_prompts_map_rule_follows_the_endpoint():
     assert map_rule(False, {"view_data"}) == ""
 
 
-# The twin's tools, for the tool gates and the context guard.
 TWIN = {
     "DigitalTwin_set_fov", "DigitalTwin_unblank_beam", "DigitalTwin_blank_beam", "DigitalTwin_acquire_scanned_image",
     "DigitalTwin_place_beam_at", "DigitalTwin_acquire_spectrum", "DigitalTwin_get_fov", "DigitalTwin_move_stage",

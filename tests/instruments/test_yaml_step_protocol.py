@@ -168,12 +168,10 @@ def test_a_job_abort_stops_the_running_step_within_a_fifth_of_a_second(instrumen
 
 
 def test_a_step_may_run_far_longer_than_one_tango_call_is_allowed(instrument, job_device):
-    # A direct call of 120 simulated seconds is refused. That is 2.4 s here.
     instrument.set_exposure_s(120.0)
     with pytest.raises(tango.DevFailed, match="would take 120 s; one call is limited to 25 s"):
         instrument.acquire_counts()
     instrument.set_exposure_s(1.0)
-    # As a job step every Tango call returns at once and the step runs for its whole length.
     reservation, job_id = run_job(job_device, {"axes": {"stage_x_m": {"start": 0.0, "stop": 0.1, "points": 1}}, "settings": {"exposure_s": 120.0}})
     assert wait_until(lambda: status(instrument)["state"] == "running" and status(instrument)["command"] == "acquire_counts")
     started = time.monotonic()

@@ -5,8 +5,6 @@ from asyncroscopy.instruments.electron_microscope.jeol import JeolMicroscope
 
 class TestDecodeRawdata:
     def test_decodes_bytes_into_2d_int16_image(self) -> None:
-        # PyJEM's snapshot_rawdata returns a raw little endian int16 byte buffer
-        # and not an array. The decoder must turn it into a 2D image.
         original = np.arange(6, dtype=np.dtype('<i2')).reshape((2, 3))
 
         decoded = JeolMicroscope._decode_rawdata(original.tobytes(), width=2, height=3)

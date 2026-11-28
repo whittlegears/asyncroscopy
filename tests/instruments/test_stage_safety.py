@@ -64,7 +64,6 @@ def test_the_stage_device_holds_the_limits_the_twin_moves_within(slow_twin):
 
 
 def test_a_long_move_returns_at_once_and_blank_beam_still_works(slow_twin):
-    # 5 um at 1 um/s takes five real seconds which is longer than any command may hold the device.
     t0 = time.monotonic()
     assert timed(slow_twin.move_stage, [5e-6, 0.0, 0.0, 0.0, 0.0]) < 1.0
     assert slow_twin.read_attribute("stage_moving").value
@@ -79,7 +78,6 @@ def test_a_long_move_returns_at_once_and_blank_beam_still_works(slow_twin):
 
 
 def test_a_short_move_holds_the_device_no_longer_than_the_limit(slow_twin, tango_ctx):
-    # 1.5 um takes 1.5 s which is short enough to wait for. Other clients queue behind it for that long at most.
     mover = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/slowstage"))
     thread = threading.Thread(target=mover.move_stage, args=([1.5e-6, 0.0, 0.0, 0.0, 0.0],))
     thread.start()

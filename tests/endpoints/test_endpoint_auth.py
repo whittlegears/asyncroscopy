@@ -37,7 +37,6 @@ def _script(name):
 dev_tokens = _script("dev_tokens")
 
 
-# a fake twin with one operator-only command
 def _cmd(name, in_type, out_type, in_desc=""):
     return type("Cmd", (), {"cmd_name": name, "in_type": in_type, "out_type": out_type, "in_type_desc": in_desc, "out_type_desc": ""})()
 
@@ -248,7 +247,6 @@ def test_a_read_token_can_get_stage_but_not_move_stage(stack, keys):
 def test_an_operate_token_moves_the_stage_and_the_trace_names_its_subject(stack, keys):
     alice = token(keys, "alice@example.org", "instrument:operate")
     move = {"position": [2.0, 1.0, 0.0, 0.0, 0.0]}
-    # The trace names the token's subject and not the self reported header.
     error, text = call(stack["agent"], alice, "DigitalTwin_move_stage", move, caller="mallory")
     assert not error and "moved" in text, text
     assert stack["twin"].position == [2.0, 1.0, 0.0, 0.0, 0.0]
@@ -419,10 +417,8 @@ def test_run_mcp_refuses_a_non_local_hardware_endpoint_without_auth(tmp_path, mo
     assert run_mcp.remote_auth_problem(opened, simulated=twin) is None
     one_ip = run_mcp.load_config(_mcp_config(tmp_path, "http_host: 192.0.2.5\n  allow_remote_bind: true"))
     assert run_mcp.remote_auth_problem(one_ip, simulated=hardware)
-    # Without allow_remote_bind a LAN address binds 127.0.0.1 on hardware so it may start.
     one_ip_local = run_mcp.load_config(_mcp_config(tmp_path, "http_host: 192.0.2.5"))
     assert run_mcp.remote_auth_problem(one_ip_local, simulated=hardware) is None
-    # The same goes for 0.0.0.0.
     wildcard = run_mcp.load_config(_mcp_config(tmp_path, "http_host: 0.0.0.0"))
     assert run_mcp.remote_auth_problem(wildcard, simulated=hardware) is None
     assert run_mcp.remote_auth_problem(run_mcp.load_config(ROOT / "configs" / "mcp.yaml"), simulated=hardware) is None
@@ -435,7 +431,6 @@ def test_run_mcp_refuses_a_non_local_hardware_endpoint_without_auth(tmp_path, mo
     assert json.loads(command[command.index("--auth-json") + 1])["audience"] == "scope-1"
     assert "--auth-json" not in run_mcp.build_command(opened)
 
-    # main stops before starting anything.
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.stack_simulated", hardware)
     monkeypatch.setattr(run_mcp, "ProcessManager", lambda **kw: pytest.fail("the server must not be started"))
     assert run_mcp.main(["--yaml", str(_mcp_config(tmp_path, "http_host: 0.0.0.0\n  allow_remote_bind: true"))]) == 1

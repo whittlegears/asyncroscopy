@@ -62,7 +62,6 @@ def test_autoscript_single_tilt_write_accepts_four_value_position():
 
     stage_device._write_position([1.0, 2.0, 3.0, 4.0])
 
-    # z and alpha are the same as now, so this is an x/y move and uses the plain absolute_move.
     assert hardware_stage.last_absolute_move == (1.0, 2.0, 3.0, math.radians(4.0))
 
 
@@ -82,7 +81,6 @@ def test_autoscript_double_tilt_write_passes_beta_move_through_the_safe_move():
 
     stage_device._write_position([1.0, 2.0, 3.0, 4.0, 5.0])
 
-    # beta changes from None to 5 deg, so this uses AutoScript's absolute_move_safe, which zeroes the tilt before moving.
     assert hardware_stage.last_absolute_move is None
     assert hardware_stage.last_safe_move == (
         1.0,

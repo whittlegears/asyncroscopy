@@ -221,7 +221,6 @@ def test_a_map_gives_the_instrument_back_before_its_stitch_so_the_next_map_start
     gave = log.index(("a", "give_turn"))
     assert gave < log.index(("a", "analysis_job_results"))  # given back before its own stitch ended
     on_instrument = [name for run, name in log if run == "a" and (name.startswith("Twin_") or name.endswith("_turn"))]
-    # It blanked the beam first, while the instrument was still its own, and never touched it again.
     assert on_instrument[-2:] == ["Twin_blank_beam", "give_turn"]
     assert first["cleanup"] == [{"tool": "*_blank_beam", "ok": True}]
 

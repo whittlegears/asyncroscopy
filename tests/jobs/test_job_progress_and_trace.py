@@ -68,8 +68,7 @@ for k in range(100000):
     deadline = time.time() + 60
     while written < 20 and time.time() < deadline:
         written = int(process.stdout.readline())
-    # On Windows the venv's python.exe is a launcher with a child interpreter.
-    # Kill the whole tree as a device server crash would.
+    # On Windows the venv's python.exe is a launcher, so kill the whole tree as a crash would.
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
     else:

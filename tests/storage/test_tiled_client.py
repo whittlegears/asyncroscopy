@@ -149,7 +149,6 @@ class Root(dict):
 
 
 def test_node_for_key_names_keys_that_start_with_a_stem(monkeypatch):
-    # TIFF acquisitions return a stem. The registered keys add the detector name and .tiff to it.
     root = Root({"stem_image_1_HAADF.tiff": "haadf", "stem_image_1_BF.tiff": "bf", "other.h5": "x"})
     monkeypatch.setattr(tiled_client, "connect", lambda uri: root)
 

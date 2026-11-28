@@ -236,7 +236,6 @@ class TestAutoScriptMicroscope:
         microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition, optics=optics))
         microscope._tango_properties = {}
         microscope.max_4dstem_imsize, microscope.min_4dstem_exposure_s = 64, 1e-3
-        # The exposure is the CAMERA device's, not the 1 us STEM dwell.
         microscope._detector_proxies = {"data": data_server, "camera": types.SimpleNamespace(exposure_time=10e-3)}
 
         result = AutoScriptMicroscope._acquire_scanned_data_advanced(microscope, imsize=2, dwell_time=1e-6, detector="bm-ceta", scan_region=[0.25, 0.25, 0.5, 0.5])

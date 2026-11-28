@@ -38,8 +38,6 @@ def wait(mapper, job_id, timeout=120):
     raise TimeoutError(status)
 
 
-# 2 x 2 tiles of 160 nm that touch so each point is imaged once. Pixels are 50 A.
-# The frame gives about 12.5 e/A^2. A 1 ms spectrum at each tile centre adds about 31 e/A^2 over a 10 nm square.
 EDS_PLAN = {
     "box_m": [-1.6e-7, 1.6e-7, -1.6e-7, 1.6e-7], "fov_m": 1.6e-7, "overlap": 0.0, "imsize": 32, "dwell_s": 1e-4,
     "per_tile": ["eds_point"], "eds_exposure_s": 1e-3, "stitch": False,
@@ -54,7 +52,6 @@ def twin_state(twin) -> dict:
 def test_over_budget_plan_is_refused_before_any_unblank(dose_mapper_proxy, dose_twin_proxy):
     frame_only = frame_dose(50.0, EDS_PLAN["dwell_s"], EDS_PLAN["fov_m"], EDS_PLAN["imsize"])
     before = twin_state(dose_twin_proxy)
-    # The budget is above the frames' dose but below frames plus spectra so only counting EDS refuses it.
     reply = call(dose_mapper_proxy, "reserve", {"plan": {**EDS_PLAN, "dose_budget_e_per_a2": 2 * frame_only}})
     assert reply["error"]["code"] == "plan_rejected"
     assert "from EDS spectra" in reply["error"]["message"]
@@ -106,8 +103,6 @@ def test_fake_refuses_an_out_of_range_screen_current_root(autoscript):
     EM.calibrate_screen_current(device)
     focus_writes = len(client.writes("optics.monochromator.focus"))
 
-    # 250 pA needs about 180 V but the calibration only spans 10 to 150 V.
-    # The fake gun would take 180 V so the device must refuse before writing.
     with pytest.raises(ValueError, match="outside the calibrated range"):
         EM.set_screen_current(device, 250.0)
     with pytest.raises(ValueError, match="outside the calibrated range"):
@@ -119,7 +114,6 @@ def test_fake_refuses_an_out_of_range_screen_current_root(autoscript):
     assert 10.0 <= written <= 150.0
     assert EM.get_screen_current(device) == pytest.approx(100.0, rel=0.02)
 
-    # The instrument itself refuses a focus outside its range like AutoScript's server does.
     with pytest.raises(ApplicationServerException):
         client.optics.monochromator.focus = 1e3
 
@@ -164,8 +158,6 @@ def test_budgeted_plan_with_an_assumed_current_is_refused_on_a_stack_that_is_not
     plan = resolve(microscope, PLAN)  # without a budget the estimate says what it assumed
     assert plan["estimate"]["beam_current_source"] == "default" and plan["estimate"]["beam_current_reason"]
 
-    # A simulated stack may budget with an assumed current.
-    # Only the stack's simulated flag counts, not an environment variable or the microscope's own report.
     resolve(microscope, simulated=True, plan={**PLAN, "dose_budget_e_per_a2": 1e3})
     monkeypatch.setenv("ASYNCROSCOPY_SIMULATED", "1")
     with pytest.raises(ValueError, match="beam current is assumed"):

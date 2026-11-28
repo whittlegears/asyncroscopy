@@ -48,7 +48,6 @@ def test_usable_beam_current_rules():
     with pytest.raises(BeamCurrentRefused, match="is assumed"):
         usable_beam_current({}, simulated=False)
     assert usable_beam_current({**MEASURED, "beam_current_age_s": 100.0}, simulated=False, max_age_s=50.0 * 3).pa == 40.0
-    # A simulated stack may use the twin's current or an assumed one but never zero or less.
     assert usable_beam_current({}, simulated=True, default_pa=50.0).source == "default"
     for bad in (0.0, -5.0, float("nan"), "x"):
         with pytest.raises(BeamCurrentRefused):
@@ -234,7 +233,6 @@ def test_vendor_and_corrector_strategies_are_refused_on_hardware_until_their_dos
     assert "plan's" in Tuner.resolve_plan(tuner, {"strategy": "image_metric", "dose_budget_e_per_a2": 1e4})["estimate"]["dose_assumption"]
 
 
-# a resume undoes what an earlier attempt left
 def earlier_attempt(tuner, outstanding):
     plan = Tuner.resolve_plan(tuner, {"strategy": "corrector", "corrections": ["focus"], "dose_budget_e_per_a2": 1e4})
     snapshot = {"defocus_m": 0.0, "stigmator_m": [0.0, 0.0], "fov_m": 2e-7, "imsize": 64, "dwell_s": 1e-6, "scan_region": [0.0, 0.0, 1.0, 1.0]}
@@ -251,7 +249,6 @@ def test_a_resume_undoes_outstanding_corrector_offsets_before_a_new_snapshot():
     job = earlier_attempt(tuner, {"C1": [1.5e-7]})
     microscope.defocus = 2e-8  # where the failed attempt left it
     Tuner.on_start(tuner, job)
-    # The undo goes first in negated max_step_m pieces. Then the defocus returns to the old snapshot.
     assert [name for name, _ in corrector.sent] == ["C1", "C1"] and [v for _, v in corrector.sent] == [pytest.approx([-1e-7]), pytest.approx([-5e-8])]
     assert microscope.calls.index(("set_fov", 1e-7)) > max(i for i, c in enumerate(microscope.calls) if c[0] == "set_defocus")
     assert job["tune"]["corrector_sent"] == {} and job["tune"]["outcome"] == "running"
@@ -280,7 +277,6 @@ def test_a_restart_mid_tune_is_restored_on_resume():
     assert job["tune"]["snapshot"]["defocus_m"] == 0.0
 
 
-# dry run records or refuses every DeviceProxy write
 class FakeProxy:
     def __init__(self):
         self.calls = []
@@ -323,7 +319,6 @@ def test_dry_run_refuses_unknown_proxy_methods_and_reads_by_policy():
         proxy.subscribe_event  # noqa: B018 - neither a known read nor a known write
     assert proxy.get_stage() == "get_stage" and proxy.imsize is not None
     assert proxy.move_stage([0, 0]) == DRY_RUN_PLACEHOLDER
-    # A get command the deployment marks high is recorded and not run.
     overrides = {"opentrons.get_tip": "high"}
     assert not is_read_only("Opentrons", "get_tip", overrides) and is_read_only("Opentrons", "get_stage", overrides)
     assert not is_read_only("X", "blank_beam") and not is_read_only("X", "set_defocus")  # low risk is not read-only
@@ -333,7 +328,6 @@ def test_dry_run_refuses_unknown_proxy_methods_and_reads_by_policy():
     assert [c[1] for c in recorded] == ["move_stage", "get_tip"]
 
 
-# a device may not contradict the stack's simulated flag
 def write_config(tmp_path, stack: bool, device_flag) -> object:
     raw = yaml.safe_load((run_servers.PROJECT_DIR / "configs" / "Test.yaml").read_text(encoding="utf-8"))
     raw["simulated"] = stack
@@ -356,7 +350,6 @@ def test_a_device_simulated_flag_that_differs_from_the_stack_is_refused(tmp_path
     assert scan.properties["simulated"] == ["false"] and config.instrument.properties["simulated"] == ["false"]
 
 
-# anything but loopback is a remote bind
 def test_a_lan_ip_is_a_remote_bind():
     for host in ("192.168.1.20", "10.0.0.5", "0.0.0.0", "::", "", "my-pc", "fe80::1%eth0", "172.16.0.1"):
         assert is_remote_host(host), host

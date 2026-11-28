@@ -123,8 +123,7 @@ def tango_database() -> Generator[tuple[str, int, dict[str, str]], None, None]:
             try:
                 yield host, port, env
             finally:
-                # Stop the DB process before the temp dir is removed. Otherwise tango_database.db
-                # is still open and Windows cannot delete it. It fails with WinError 32.
+                # Stop the database first, or Windows cannot delete the still-open tango_database.db (WinError 32).
                 for proc in reversed(managed):
                     proc.stop()
     finally:

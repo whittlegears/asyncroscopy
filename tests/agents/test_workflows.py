@@ -101,7 +101,6 @@ def run(coro):
 def test_the_map_is_a_langgraph_graph_built_from_blocks_and_lints_clean():
     workflow = get_workflow("map_grid")
     assert "map_grid" in all_workflows()
-    # The module source is what people see and what gets hashed.
     assert "graph = StateGraph(WorkflowState)" in workflow.source() and "graph.add_conditional_edges(" in workflow.source()
     compiled = workflow.compile(None)
     assert {"plan", "tile", "home", "run", "stitch"} <= set(compiled.get_graph().nodes)
@@ -137,7 +136,6 @@ def test_a_new_workflow_is_more_langgraph_code_over_the_same_blocks(tmp_path):
     assert record["state"] == "done" and state["taken"] == 4 and state["blanked"], record
     assert record["blueprint"]["nodes"]["plan"]["block"] == "plan_grid"
     assert analysis.log == []  # this workflow has no stitch step
-    # Changing a condition changes the hash.
     assert two_tiles("two_tiles").hash() == workflow.hash() != two_tiles("two_tiles", when="tile.remaining > 1").hash()
 
 
@@ -171,7 +169,6 @@ def test_lint_refuses_an_unbounded_loop_python_in_a_condition_and_a_node_that_is
 
 
 def test_a_node_knows_its_name_from_the_graph_and_langgraph_knows_where_a_condition_leads():
-    # One block is made once and added under two names. Each node reads its own name when it runs.
     def build(use):
         graph = StateGraph(WorkflowState)
         read = use.block("run_tool", tool="*_get_stage")
@@ -274,17 +271,14 @@ def test_map_workflow_runs_tile_by_tile_and_stitches(tmp_path):
     assert len(record["outputs"]["tile"]["keys"]) == 4 and record["visits"]["tile"] == 4
     assert record["outputs"]["stitch"]["map"] == "map_abc_map_v1"
     assert state["beam_on_at_acquire"] == [True] * 4 and state["blanked"]
-    # The run puts back the field of view it found.
     fovs = [args["fov"] for name, args in instrument.log if name == "Twin_set_fov"]
     assert fovs == [3e-7] * 4 + [5.8e-9] and state["fov"] == 5.8e-9
-    # With image shift the stage never moves.
     assert "Twin_move_stage" not in instrument.names() and state["stage"][:2] == [1e-6, 2e-6] and state["shift"] == [0.0, 0.0]
     every = [args["shift"] for name, args in instrument.log if name == "Twin_set_image_shift"]
     assert every[1:8:2] == [[0.0, 0.0]] * 4 and every[8] == [0.0, 0.0]  # the shift is reset after every tile
     shifts = every[0:8:2]
     assert shifts[0][0] < shifts[1][0] and shifts[2][0] > shifts[3][0]  # serpentine
     assert max(abs(v) for xy in shifts for v in xy) == pytest.approx(1.05e-7)
-    # Each tile keeps its centre so images with no recorded position can still be mapped.
     read_at = record["outputs"]["tile"]["stage_xy_m"]
     assert read_at == [[1e-6 + dx, 2e-6 + dy] for dx, dy in shifts]
     assert analysis.log[0] == ("collect_map_run", {"image_keys": record["outputs"]["tile"]["keys"], "stage_xy_m": read_at, "fov_m": 3e-7,
@@ -337,7 +331,6 @@ def test_a_failed_tile_blanks_the_beam_and_resumes_at_that_tile(tmp_path):
     assert record["state"] == "failed" and "detector timeout" in record["error"]
     assert state["blanked"] and record["cleanup"] == [{"tool": "*_blank_beam", "ok": True}]
     assert len(record["outputs"]["tile"]["keys"]) == 2 and record["at_node"] == ["tile"]
-    # A failed run leaves the instrument as it found it.
     assert state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
 
     failing["on"] = False
@@ -355,7 +348,6 @@ def test_a_scan_running_at_the_console_is_named_and_the_run_puts_everything_back
     reply = "Error calling tool 'Twin_acquire_scanned_image': ApplicationServerException: Another scantask is already active"
     instrument, analysis, state = twin(lambda n: reply if busy["on"] else None)
     record = run(run_workflow("map_grid", INPUTS, instrument=instrument, analysis=analysis, state_dir=tmp_path))
-    # The run waits for a person to stop the live scan, with everything it changed put back meanwhile.
     assert record["state"] == "waiting" and "live scan" in record["questions"][0]["question"], record
     assert state["taken"] == 0 and state["blanked"] and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9
     busy["on"] = False
@@ -550,7 +542,6 @@ def test_a_failed_run_is_resumed_over_mcp_and_a_changed_workflow_is_not(tmp_path
     run(go())
     assert state["taken"] == 4
 
-    # A run only resumes with the code it started with.
     first = register_workflow(two_tiles("changing"))
     instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
     record = run(run_workflow("changing", {}, instrument=instrument, analysis=analysis, state_dir=tmp_path / "c"))
@@ -601,14 +592,12 @@ def test_the_agent_server_runs_workflows_itself_so_no_workflow_server_is_needed(
     done = run(tools["run_workflow"].ainvoke({"name": "map_grid", "inputs": INPUTS}))
     assert done["state"] == "done" and state["taken"] == 4 and state["blanked"]
 
-    # Real hardware needs the hardware flag and a loopback host.
     server.workflows.endpoints = FakeEndpoints(*twin()[:2], simulated=None)
     assert run(tools["run_workflow"].ainvoke({"name": "map_grid", "inputs": INPUTS}))["state"] == "refused"
     assert AgentMCPServer("agent", [], verbose=False, workflows_hardware=True).workflows.hardware
     assert main(["--name", "a", "--transport", "streamable-http", "--http-host", "0.0.0.0", "--http-port", "8002", "--workflows-hardware"]) == 1
 
 
-# Workflows written by an agent and their approval
 ASKED = "Please create a workflow that takes the tiles of a square and stops, without stitching."
 
 
@@ -661,7 +650,6 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
         async with Client(on_twin.mcp) as client:
             shown = await call(client, "list_blocks")
             assert "plan_grid" in {b["name"] for b in shown["blocks"]} and "StateGraph(WorkflowState)" in shown["example"] and shown["rules"]
-            # A proposal without the user's request is refused.
             for missing in ("", "   ", "a map"):
                 unasked = await call(client, "propose_workflow", user_request=missing, source=TEMPLATE)
                 assert not unasked["ok"] and "written for a task the user gave" in unasked["problems"][0] and unasked["draft"] is None
@@ -703,7 +691,6 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
     listed = {w["name"]: w for w in run(on_the_instrument("list_workflows"))["workflows"]}
     assert listed["tiles_only"]["status"] == "approved" and listed["tiles_only"]["approved_by"] == "sam"
 
-    # Changed code or a revoked approval makes it a draft again.
     approved_file = tmp_path / "library" / "approved" / "tiles_only.py"
     approved_file.write_text(TEMPLATE.replace("max_visits=400", "max_visits=399"), encoding="utf-8")
     assert library.find("tiles_only")[1] == "draft"
@@ -714,7 +701,6 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
     assert run(on_the_instrument(name="tiles_only", inputs=inputs))["state"] == "refused"
     assert (tmp_path / "library" / "drafts" / "tiles_only.py").exists()  # revoking keeps the text
 
-    # An approval can be tied to one instrument and can expire.
     library.approve("tiles_only", "sam", instrument="tango://scope-b:9094")
     elsewhere = run(on_the_instrument(name="tiles_only", inputs=inputs))
     assert elsewhere["state"] == "refused" and "approved for the instrument tango://scope-b:9094, not this one (tango://scope-a:9094)" in elsewhere["problems"][0]
@@ -801,7 +787,6 @@ def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_h
     library = Library(tmp_path / "library")
     assert library.propose(TEMPLATE, request=ASKED)["ok"] and library.request("tiles_only")["request"] == ASKED
 
-    # Every rehearsal is recorded for the approver, including failed ones.
     instrument, analysis, state = twin(lambda n: "Error: detector timeout" if n == 1 else None)
     failing = WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "a", library=library)
 
@@ -814,14 +799,12 @@ def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_h
     instrument, analysis, state = twin()
     assert run(rehearse(WorkflowServer(FakeEndpoints(instrument, analysis, True), state_dir=tmp_path / "b", library=library)))["state"] == "done"
     assert [r["state"] for r in library.rehearsals("tiles_only", library.workflow("tiles_only").hash())] == ["failed", "done"]
-    # An edited draft has no rehearsals but can still be approved.
     assert library.propose(TEMPLATE.replace("max_visits=400", "max_visits=300"))["ok"]
     assert library.rehearsals("tiles_only", library.workflow("tiles_only").hash()) == [] and library.request("tiles_only") is None
     assert library.approve("tiles_only", "sam")["rehearsed"] is None
     library.revoke("tiles_only")
     assert library.propose(TEMPLATE, request=ASKED)["ok"]
 
-    # With an approvers list only those logins can approve.
     (tmp_path / "library" / "approvers.json").write_text('["sam.r"]', encoding="utf-8")
     with pytest.raises(PermissionError, match="approvers.json"):
         library.approve("tiles_only", "Somebody Else", login="guest")
@@ -838,7 +821,6 @@ def test_a_person_sees_every_workflow_drawn_on_one_page(tmp_path, capsys):
     from asyncroscopy.workflows.view import graph_svg, render_html
 
     library = Library(tmp_path / "library")
-    # Text written by a model is escaped on the page.
     nasty = TEMPLATE.replace("Take every tile of a square grid around the current position", "<script>alert(1)</script> Take every tile")
     assert library.propose(nasty, request="<img src=x onerror=alert(2)> please create a tiles-only workflow")["ok"]
     page = render_html(library)
@@ -934,7 +916,6 @@ def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_perso
 
     instrument = spectra_endpoint()
     record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path))
-    # It took the image and now waits for an answer.
     assert record["state"] == "waiting" and instrument.names() == ["Twin_acquire_scanned_image"], record
     question = record["questions"][0]
     assert question["node"] == "ok" and question["options"] == ["yes", "no"] and question["show"] == "stem_image_HAADF_0001.h5"
@@ -955,7 +936,6 @@ def test_parallel_branches_run_at_the_same_time_and_a_question_waits_for_a_perso
     assert instrument.most_at_once == 2  # the two spectra ran together
     assert record["outputs"]["eds"]["key"] == "spectrum_eds_0001.h5" and record["outputs"]["eels"]["key"] == "spectrum_eels_0001.h5"
 
-    # Answering no ends the run with no more calls.
     instrument = spectra_endpoint()
     record = run(run_workflow(workflow, {}, instrument=instrument, state_dir=tmp_path / "no"))
     record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path / "no", find=find,
@@ -1001,12 +981,10 @@ def test_lint_knows_the_tools_a_workflow_names_and_refuses_what_it_cannot_check(
     assert fine["ok"] and fine["tools"] == ["*_get_fov", "*_get_stage"], fine
     missing = any_tool("reads").lint(["Twin_get_stage"])
     assert any("offers no tool matching *_get_fov" in p for p in missing["problems"])
-    # The tool name must be written in the workflow because a person approves it.
     hidden = any_tool("reads", tool="{inputs.which}").lint()
     assert any("must be written out as text" in p for p in hidden["problems"])
     on_analysis = any_tool("reads", tool="map_info", server="analysis").lint(["Twin_get_fov"], ["map_info"])
     assert on_analysis["ok"] and on_analysis["needs_analysis"], on_analysis
-    # A node with a condition may have no other edges out.
     both = any_tool("reads", both_ways=True).lint()
     assert any("a node with a condition has only that one way out" in p for p in both["problems"])
 
@@ -1146,13 +1124,11 @@ def test_the_microscopes_live_scan_pauses_the_run_for_a_person(tmp_path):
     question = record["questions"][0]
     assert "live scan" in question["question"] and question["options"] == ["continue"]
 
-    # Stopping the waiting run ends it at once; resuming it asks again while the live scan still runs.
     assert stop_workflow(record["run_id"], tmp_path)["state"] == "stopped"
     assert read_run(record["run_id"], tmp_path)["state"] == "stopped"
     record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow))
     assert record["state"] == "waiting", record
 
-    # The person stops the live scan and continues: the image is taken.
     busy["on"] = False
     record = run(resume_workflow(record["run_id"], instrument=instrument, state_dir=tmp_path, find=lambda name: workflow,
                                  answers={record["questions"][0]["id"]: "continue"}))
@@ -1178,7 +1154,6 @@ def test_a_second_run_that_drives_the_instrument_is_refused_while_one_is_running
         LIVE.pop("mapping-now", None)
 
 
-# A call that never reached the endpoint is tried again; nothing else is
 def test_a_call_that_never_reached_the_endpoint_is_retried_and_an_instrument_error_is_not(tmp_path, monkeypatch):
     import httpx
     from langgraph.types import RetryPolicy
@@ -1284,7 +1259,6 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert rehearsal["outputs"] and rehearsal["problems"] == [] and review["can_approve"] and review["why_not"] is None
     reviewed = review["hash"]
 
-    # The agent replaces the draft after the person opened it: what they read is not what would be approved.
     swapped = TEMPLATE.replace("max_visits=400", "max_visits=300")
     assert run(as_the_agent("propose_workflow", user_request=ASKED, source=swapped))["ok"]
     changed = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", expected_hash=reviewed, rehearsal_run_id=rehearsal["run_id"]))
@@ -1319,11 +1293,9 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     review = run(as_the_person("review_workflow", name="tiles_only"))
     assert review["rejection"]["this_code"] and review["rejection"]["via"] == "Workflow_Operator_MCP" and review["rejection"]["hash"] == reviewed
     assert not run(as_the_person("reject_workflow", name="map_grid", reason="not wanted", expected_hash="x"))["ok"]
-    # An approval after a rejection replaces it.
     assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,
                              rehearsal_run_id=rehearsal["run_id"]))["ok"] and library.rejection("tiles_only") is None
 
-    # An approvers list holds here too: the login is the account the operator endpoint runs under.
     library.revoke("tiles_only")
     (tmp_path / "library" / "approvers.json").write_text('["somebody-else"]', encoding="utf-8")
     assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,

@@ -219,7 +219,6 @@ def test_the_z_tilt_check_reads_its_limits_from_the_device():
         STAGE._check_z_and_tilt(device, [0.0, 0.0, 4.5e-4, 31.0, 0.0])
 
 
-# the beam is blanked after each acquisition and before the save
 @pytest.mark.parametrize("command, args", [("acquire_scanned_image", (["haadf"],)), ("acquire_spectrum", ("eds",)), ("acquire_camera_image", ())])
 def test_a_blanked_beam_is_blanked_again_before_the_save(autoscript, monkeypatch, command, args):
     device, client = autoscript
@@ -245,7 +244,6 @@ def test_a_failed_acquisition_still_blanks_the_beam(autoscript, monkeypatch):
 
 
 def test_an_unblanked_beam_is_left_to_its_caller(autoscript, monkeypatch):
-    # The Mapper and the Tuner blank and unblank around this call themselves.
     device, client = autoscript
     EM.unblank_beam(device)
     EM.acquire_scanned_image(device, ["haadf"])
@@ -254,7 +252,6 @@ def test_an_unblanked_beam_is_left_to_its_caller(autoscript, monkeypatch):
     assert client.optics.blanker._blanked
 
 
-# 4D-STEM bounds
 def test_4dstem_takes_the_camera_exposure_and_blanks_between_points(autoscript, monkeypatch):
     device, client = autoscript
     device._detector_proxies["scan"].imsize = 2
@@ -310,7 +307,6 @@ def test_a_blank_during_4dstem_stops_it(autoscript):
 
 def test_blank_beam_does_not_wait_for_a_running_acquisition(autoscript):
     device, client = autoscript
-    # The AutoScript client runs one call at a time so the blank needs its own connection.
     device._blank_client = SimpleNamespace(optics=SimpleNamespace(blanker=client.optics.blanker))
     started, release = threading.Event(), threading.Event()
     acquire = client.acquisition.acquire_stem_images_advanced

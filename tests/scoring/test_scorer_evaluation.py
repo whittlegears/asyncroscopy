@@ -55,8 +55,6 @@ def random_result():
 
 
 def test_threshold_is_far_above_chance():
-    # 30 of 100 regions are clean features. A random ranking puts 4 or more in the top 5 with p about 2.7 %.
-    # It puts 4 or more of one kind's 5 regions among its 75 candidates with p about 2e-5.
     overall = sum(comb(30, h) * comb(70, 5 - h) for h in (4, 5)) / comb(100, 5)
     per_kind = sum(comb(5, h) * comb(70, 5 - h) for h in (4, 5)) / comb(75, 5)
     assert DEFAULT_THRESHOLD == 0.8 and overall < 0.03 and per_kind < 1e-4
@@ -97,8 +95,6 @@ def test_sharp_crowded_and_small_regions_outrank_defocused_and_contaminated():
 
 
 def test_overall_precision_alone_would_have_missed_the_2_0_0_bias(baseline_v2):
-    # 2.0.0 fills its top 5 with well separated particles so overall precision looks fine.
-    # It ranks crowded, small and large particles below defocused ones. The per kind numbers catch that.
     assert baseline_v2["scorer_version"] == "2.0.0"
     assert baseline_v2["mean_precision"] >= DEFAULT_THRESHOLD
     assert not baseline_v2["passed"]
@@ -212,7 +208,6 @@ def test_probe_single_small_particle_under_one_percent_of_the_region():
 
 
 def test_from_twin_ground_truth_records():
-    # export_ground_truth gives stage centres in metres. Rows follow y and columns follow x.
     gt = [{"id": 0, "center_m": [10e-9, 2e-9], "semi_axes_m": [1e-9, 1e-9, 0.4e-9], "theta_rad": 0.0, "element": "Au"}]
     m = LabelledMap.from_twin(np.zeros((64, 128)), gt, origin_m=(0.0, 0.0), pixel_size_m=0.25e-9, window=64,
                               bad_regions=[{"kind": "contaminated", "box_px": (0, 64, 64, 128)}])

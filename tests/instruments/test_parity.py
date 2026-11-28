@@ -163,7 +163,6 @@ def test_in_range_values_are_accepted_and_read_back(backend):
     assert stage == pytest.approx([2e-7, -3e-7, 1e-8, 5.0, 0.0], abs=1e-12)  # x before y, tilts in degrees
 
 
-# values both backends refuse before the instrument sees them
 NAN = float("nan")
 OUT_OF_RANGE = [
     ("set_fov", 0.0, "optics.scan_field_of_view"),
@@ -261,20 +260,12 @@ def test_acquisitions_return_the_same_shapes(backend):
         assert h5["spectrum"].ndim == 1
 
 
-# what only one backend can do
-# The twin does not implement these commands. Each is checked on AutoScript below.
-# If the twin gains one, test_twin_gaps_are_as_documented fails. Move it into the shared checks above.
 TWIN_LACKS = {
     "set_beam_tilt": ([0.1, -0.1],),
     "get_beam_tilt": (),
     "set_diffraction_shift": ([1e-3, 0.0],),
     "get_diffraction_shift": (),
 }
-# The operator-only AutoScript actions (NEW_OPERATOR_ONLY below), get_detectors' camera details and the stage's
-# hardware_limits are AutoScript only too; the twin refuses the actions with UnsupportedCommand.
-# The twin has the screen and its current since it models the column (tests/twin/test_twin_column.py).
-# Only the twin has export_ground_truth, stage_moving, simulated_time_s, set_stigmator and get_stigmator.
-# The objective stigmator is not wired to AutoScript yet.
 
 
 def test_image_shift_round_trips_and_refuses_out_of_range(backend):
@@ -334,7 +325,6 @@ def test_autoscript_autofocus_runs_the_vendor_routine_for_the_mode(autoscript):
 
 
 def test_autoscript_shift_and_tilt_round_trip(autoscript):
-    # STEM uses the image shift deflectors unless the property says beam_shift.
     autoscript.call("set_image_shift", [1e-9, 2e-9])
     assert list(autoscript.call("get_image_shift")) == pytest.approx([1e-9, 2e-9])
     assert [c["path"] for c in autoscript.client.writes("optics.deflectors")] == ["optics.deflectors.image_shift"]
@@ -348,7 +338,6 @@ def test_autoscript_shift_and_tilt_round_trip(autoscript):
     autoscript.device.stem_shift_deflector = "image_shift"
     autoscript.call("set_beam_tilt", [0.1, -0.1])
     assert list(autoscript.call("get_beam_tilt")) == pytest.approx([0.1, -0.1])
-    # The diffraction shift is deflectors.image_tilt, in radians ("equivalent to diffraction shift", the stub says).
     autoscript.client.optics.projector_mode = "Diffraction"
     autoscript.call("set_diffraction_shift", [1e-3, 0.0])
     assert list(autoscript.call("get_diffraction_shift")) == pytest.approx([1e-3, 0.0])
@@ -479,7 +468,6 @@ def test_the_twin_lists_the_detectors_it_renders(twin):
     assert "BM-Ceta" in detectors["camera"]  # the CAMERA device's names, which all give the twin's one bright-field camera
 
 
-# AutoScript actions added for review: operator only until a person says otherwise
 NEW_OPERATOR_ONLY = ("run_stem_auto_focus", "run_beam_tilt_auto_focus", "acquire_camera_series", "acquire_eels_spectra",
                      "acquire_eels_spectrum_image", "set_projector_mode", "set_camera_length", "set_beam_stopper", "set_scanning_detector")
 

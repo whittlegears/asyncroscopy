@@ -27,7 +27,6 @@ from asyncroscopy.instruments.yaml_sim.spec import SimInstrument, load_spec, map
 from asyncroscopy.jobs.mapping.profile import Cost, InstrumentProfile, MapContext, MapSettings, Setting, get_profile, register_profile
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "asyncroscopy" / "instruments" / "yaml_sim" / "examples"
-# 2 x 2 tiles of 1 um over a 1.6 um square so neighbours overlap by 40 %.
 AFM_PLAN = {"size_m": [1.6e-6, 1.6e-6], "centre_m": [0.0, 0.0], "fov_m": 1e-6, "overlap": 0.25}
 
 
@@ -100,14 +99,12 @@ def test_an_afm_maps_stitches_and_revisits_with_the_tip_lifted_for_every_move(af
     assert estimate["tiles"] == 4 and estimate["phases"] == ["tiles", "stitch", "score", "revisit"]
     assert estimate["budgets"]["tip_force_nn"] == {"value": 8.0, "budget": 10, "units": "nN"}
 
-    # The tip was lifted for every stage move and at the end. Every tile was approached once.
     moves = [entry for entry in afm_log if entry[0] == "set" and entry[1] in ("stage_x_m", "stage_y_m")]
     assert len(moves) >= 2 * 4 and not any(engaged for *_rest, engaged in moves)
     assert sum(1 for entry in afm_log if entry[:2] == ("run", "approach_tip")) >= 4
     assert ("set", "setpoint_v", 0.4, False) in afm_log
     assert afm_twin_proxy.tip_engaged is False
 
-    # The run file's tiles carry their pixel size and stage position so they stitch.
     summary = results["summary"]
     assert "stitch_error" not in summary and results["result_keys"]["map"]
     assert summary["stitching"]["tiles"] == 4 and summary["stitching"]["median_residual_px"] < 1.0
@@ -256,7 +253,6 @@ def test_a_yaml_instrument_is_described_for_the_mapper_from_its_file():
     assert described["image"] == "acquire_topography" and described["tile_m"] == [2e-6, 2e-6]
     assert described["before_move"] == ["retract_tip"] and described["after_move"] == ["approach_tip"] and described["safe"] == ["retract_tip"]
     assert described["budgets"]["tip_force_nn"]["per_tile"] == 20.0 and described["stage"]["x"]["max"] == 0.002
-    # The Raman example has no map section so its profile is inferred with a fixed field of view.
     raman = load_spec(EXAMPLES / "raman.yaml")
     inferred = map_description(raman, SimInstrument(raman))
     assert inferred["image"] == "acquire_brightfield_image" and inferred["field_of_view"] is None

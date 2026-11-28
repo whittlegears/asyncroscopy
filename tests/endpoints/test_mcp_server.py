@@ -318,7 +318,6 @@ class TestMCPServerDBMode:
         has_digital_twin = False
         devices: list[str] = []
 
-        # Tango DB can transiently reject very early connection attempts.
         while time.monotonic() < deadline and not has_digital_twin:
             devices = server.list_devices()
             assert isinstance(devices, list), "list_devices should return a list"
@@ -508,7 +507,6 @@ class TestMCPServerTypeMapping:
 
 class TestMCPToolInvocation:
     def test_wrapper_supports_positional_and_keyword(self, monkeypatch) -> None:
-        # Mock Database and DeviceProxy to avoid connection errors
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
         def mock_func(val):
@@ -528,10 +526,8 @@ class TestMCPToolInvocation:
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs())
         wrapper = server._create_wrapper(mock_func, cmd_info, "MyCmd", "MyClass")
 
-        # 1. Positional call
         assert wrapper("hello") == "hello"
 
-        # 2. Keyword call with the generic Tango argument name
         import inspect
 
         sig = inspect.signature(wrapper)
@@ -781,7 +777,6 @@ class TestDataToolRobustness:
         error = json.loads(str(raised.value))
         assert error["error"]["code"] == "beam_blanked" and error["warnings"] == [{"code": "noise_only_file", "key": "scan_20261101.h5"}]
         assert error["next_actions"] == [{"tool": "DigitalTwin_unblank_beam", "args": {}}, {"tool": "DigitalTwin_acquire_scanned_image", "args": {"fov_m": 1e-6}}]
-        # This is what the agent graphs show the model through asyncroscopy.agents.guidance. The retake comes first and the key last.
         from asyncroscopy.agents.guidance import render_error
 
         prose = render_error(f"Error calling tool 'DigitalTwin_acquire_scanned_image': ToolError: {raised.value}")

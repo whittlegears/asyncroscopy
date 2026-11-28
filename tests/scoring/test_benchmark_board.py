@@ -192,7 +192,6 @@ def test_a_reference_is_replayed_on_the_stack_with_its_real_results(tmp_path):
                            {"tool": "DigitalTwin_teleport"}],
                  "answer": "It is {result_2}."}
     wf = run_workflows.load_workflows([write(tmp_path, {**IMAGE, "reference": reference})])[0]
-    # The stack's microscope has another class name; its acquisition replies with the key, then a summary.
     instrument = FakeServer({"Spectra_set_fov": "ok", "Spectra_acquire_scanned_image": "image_77\nHAADF 512 x 512", "view_data": "a picture"})
     analysis = FakeServer({"score_map": "3 regions"})
     config = SimpleNamespace(instrument=lambda: instrument, analysis=lambda: analysis)

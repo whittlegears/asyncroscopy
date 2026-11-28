@@ -50,7 +50,6 @@ def test_the_dose_of_one_load_is_added_up_at_a_point(ledger):
 def test_a_query_reads_only_the_lines_added_since_the_last_one(ledger):
     append(ledger, *(exposure("old") for _ in range(50)), exposure("this"))
     assert dose_at("this")["exposures"] == 1
-    # The old lines are overwritten to prove the index does not read them again.
     size = ledger.stat().st_size
     ledger.write_bytes(b"#" * (size - 1) + b"\n")
     append(ledger, exposure("this"), '{"cut short')

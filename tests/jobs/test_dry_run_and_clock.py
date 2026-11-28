@@ -24,7 +24,6 @@ from asyncroscopy.core.net import bind_host
 from asyncroscopy.mcp.mcp_server import stack_simulated
 
 ROOT = Path(__file__).resolve().parents[2]
-# 3 x 3 tiles from a 300 nm box of 120 nm tiles at 15 % overlap.
 DRY_PLAN = {"box_m": [-1.5e-7, 1.5e-7, -1.5e-7, 1.5e-7], "fov_m": 1.2e-7, "overlap": 0.15, "imsize": 32, "dwell_s": 1e-6, "per_tile": ["eds_point"], "eds_exposure_s": 0.05}
 
 
@@ -108,14 +107,12 @@ def test_a_dry_run_map_moves_nothing_and_traces_every_checked_move(mapper_proxy,
     results = call(mapper_proxy, "results", {"job_id": started["job_id"]})
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
 
-    # Nothing moved and nothing was acquired. Only the beam was blanked for real.
     after = json.loads(mapping_twin_proxy.export_ground_truth())
     assert len(after["moves"]) == len(before["moves"])
     assert len(after["acquisitions"]) == len(before["acquisitions"])
     assert after["simulated_time_s"] == before["simulated_time_s"]
     assert json.loads(mapping_twin_proxy.get_parameters())["beam_blanked"] is True
 
-    # The summary says what happened in place of each acquisition. No image, spectrum or run file exists.
     summary = results["summary"]
     assert summary["acquisitions"] == DRY_RUN_SKIPPED and "run_file" not in summary and "spectra" not in summary
     assert "run_file" not in results["result_keys"]
@@ -253,18 +250,15 @@ def test_drift_fit_and_revisits_use_the_twins_clock(monkeypatch, tango_ctx):
     images = [a for a in truth["acquisitions"][first_acquisition:] if a["kind"] == "image"]
     tile_images, revisit_images = images[:tiles], images[tiles:]
 
-    # The twin's drift is steady. Its rate is the change over the run divided by the simulated time.
     first, last = tile_images[0], tile_images[-1]
     true_rate = (np.array(last["drift_end_m"]) - np.array(first["drift_start_m"])) / (last["t_end_s"] - first["t_start_s"])
     stitched = next(r for r in finished if r.get("summary", {}).get("drift"))
     drift = stitched["summary"]["drift"]
     times, xy = np.array(drift["times_s"]), np.array(drift["xy_m"])
     fitted_rate = (xy[-1] - xy[0]) / (times[-1] - times[0])
-    # The fit is timed in simulated seconds. Its span is the tiles' span on the twin's clock.
     assert times[-1] == pytest.approx(last["t_start_s"] - first["t_start_s"], rel=0.05)
     assert np.linalg.norm(fitted_rate - true_rate) < 0.1 * np.linalg.norm(true_rate), (fitted_rate, true_rate)
 
-    # Map coordinates are the sample's shifted by one constant, the stitch's anchor.
     meta = servers[0].tools.store.map_metadata(results["result_keys"]["map"])
     pixel, (x0, y0) = meta["pixel_size_m"], meta["origin_xy_m"]
     centres = np.array([[x0 + (c + (plan["imsize"] - 1) / 2) * pixel, y0 + (r + (plan["imsize"] - 1) / 2) * pixel] for r, c in meta["tile_positions_px"]])

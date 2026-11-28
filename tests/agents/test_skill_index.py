@@ -94,7 +94,6 @@ def test_a_failed_call_brings_the_matching_advice_each_step_not_the_whole_manual
     request = SimpleNamespace(state={"messages": failed, **update}, messages=failed, tools=tools, override=lambda **c: SimpleNamespace(**c))
     out = middleware._prompted(request)
     prompt, last = out.system_message.content, out.messages[-1]
-    # The advice rides on the latest tool reply, so the system prompt (the start a server caches) does not change per step.
     assert "Advice that may help" not in prompt and last.type == "tool"
     original, advice = last.content.split("\n\nAdvice that may help with this step")
     assert original == failed[-1].content and "0..1 range" in advice

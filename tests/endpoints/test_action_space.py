@@ -71,7 +71,6 @@ def by_tool(space):
 
 
 def test_the_sample_device_shows_as_the_state_and_tool_the_gui_needs(serve):
-    # SciAgentGUI finds a sample control by a state entry named "sample" and a load_sample tool on the same device.
     space = action_space.build(serve("asyncroscopy/sample/mapping", role="operator"))
     sample = next(s for s in space["state"] if s.get("name") == "sample")
     assert sample["tool"] == "SAMPLE_get_sample" and sample["device"] == "SAMPLE"
@@ -88,12 +87,10 @@ def test_stem_and_afm_name_the_stage_move_differently_and_share_its_role(serve):
     move_stage, move_xy = by_tool(stem)["DigitalTwin_move_stage"], by_tool(afm)["AFMTwin_move_xy"]
     assert move_stage["role"] == move_xy["role"] == "stage.move"
     assert move_stage["risk"] == move_xy["risk"] == "high" and move_stage["effect"] == move_xy["effect"] == "act"
-    # The STEM takes one array and names each element. The AFM takes two arguments and names the axis of each.
     (position,) = move_stage["args"]
     assert position["elements"] == ["x", "y", "z", "alpha", "beta"] and position["units"] == ["m", "m", "m", "deg", "deg"]
     assert [(a["name"], a["axis"], a["units"], a["min"], a["max"], a["required"]) for a in move_xy["args"]] == [
         ("x_m", "x", "m", -0.002, 0.002, True), ("y_m", "y", "m", -0.002, 0.002, True)]
-    # Both roles are declared. The twin declares it on its base class and the AFM in its YAML file.
     assert move_stage["role_source"] == move_xy["role_source"] == by_tool(afm)["AFMTwin_set_stage_x_m"]["role_source"] == "annotation"
     assert stem["instruments"] == [{"device": "DigitalTwin", "class": "DigitalTwin", "address": "asyncroscopy/digitaltwin/default",
                                     "kind": {"stem": True, "probe": False, "envelope": False}}]
@@ -185,7 +182,6 @@ def test_one_role_controller_moves_acquires_and_reads_back_on_both_twins(serve, 
     assert report["reached"]["x"] == pytest.approx(report["target"]["x"], abs=2e-8)
     assert report["reached"]["y"] == pytest.approx(report["target"]["y"], abs=2e-8)
     assert report["readback"]["kind"] == "image"
-    # The controller only named roles. The action space chose the tools.
     assert {role for role, _tool in report["calls"]} <= set(ROLES)
 
 

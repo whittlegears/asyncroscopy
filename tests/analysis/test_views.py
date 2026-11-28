@@ -142,7 +142,6 @@ def test_plot_labels_are_short_and_skip_peaks_that_are_no_element():
 
 
 def test_a_low_peak_is_named_by_an_element_whose_main_lines_fit_not_by_minor_lines():
-    # A carbon K peak near 300 eV must not be named Ca L or Ag M when no Ca K or Ag L peak is there.
     attrs = {"energy_offset_ev": 0.0, "energy_dispersion_ev": 10.0, "detector": "eds"}
     carbon = views.view(Recorded((2048,), attrs, values=gaussian_spectrum([298.0])), "c.h5", "text")[0]["text"]
     assert "consistent with these peaks (the share of the peak signal each one explains): C 100%" in carbon
@@ -156,7 +155,6 @@ def test_a_low_peak_is_named_by_an_element_whose_main_lines_fit_not_by_minor_lin
 
 
 def test_the_detector_windows_continuum_rise_is_not_read_as_oxygen_but_real_lines_are():
-    # The window bends the continuum into a broad rise near 0.6 keV that can look like O or F.
     from asyncroscopy.instruments.electron_microscope.twin.eds_model import EdsParams, point_spectrum
 
     energies, counts, _live = point_spectrum({"C": 10.0}, 100.0, 3.0, EdsParams(), np.random.default_rng(6))
@@ -166,7 +164,6 @@ def test_the_detector_windows_continuum_rise_is_not_read_as_oxygen_but_real_line
     assert "C" in named and not named & {"O", "F"}
     assert any(row[4] == eds.WINDOW_RISE_NOTE for row in rows)
 
-    # A spectrum whose only peak is the rise says no element was found.
     attrs = {"energy_offset_ev": float(energies[0]), "energy_dispersion_ev": float(energies[1] - energies[0]), "detector": "eds"}
     rise_only = counts.copy()
     rise_only[energies < 400.0] = np.random.default_rng(2).poisson(2.0, int((energies < 400.0).sum()))
@@ -479,6 +476,5 @@ def test_a_strongest_peak_shared_with_an_element_left_out_is_said():
     assert "Ti" not in likely
     assert "also fits Ti" in eds.overlap_note(rows, likely) and "4.50 keV" in eds.overlap_note(rows, likely)
     assert eds.overlap_note([(9700, 50, 9.0, 0, "Au L3-M5")], "Au 100%") == ""
-    # Pt's L peaks settle a Pt M peak that also fits P: nothing to say.
     platinum = [(2050, 4972, 35.0, 0, "Pt M5-N7, P K-L2"), (9440, 3930, 34.0, 1, "Pt L3-M5"), (11070, 1845, 33.0, 2, "Pt L2-M4")]
     assert eds.overlap_note(platinum, eds.likely_elements(platinum)) == ""

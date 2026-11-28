@@ -28,7 +28,6 @@ def sample():
 
 
 def test_zero_or_impossible_particle_counts():
-    # More particles than fit. The generator keeps what fits.
     crowded = SampleModel(SampleParams(size_xy_m=3e-8, particle_count=10_000, radius_mean_m=8e-9), EventRng(1))
     assert 0 < len(crowded) < 10_000
     empty = SampleModel(SampleParams(size_xy_m=1e-7, particle_count=0), EventRng(1))

@@ -30,7 +30,6 @@ with instrument_context(devices):
             outcome[name] = "error" if isinstance(reply, str) and '"error"' in reply else "ran"
         except Exception as exc:
             outcome[name] = f"error: {exc}"
-    # An override that matches no tool is reported at startup.
     printed = io.StringIO()
     with contextlib.redirect_stdout(printed):
         overridden = mcp_server_for(devices, risk_overrides={"SimIndenter_move_xy": "low", "SimIndentr.indent": "high", "SimIndenter.retract": "high", "SimIndenter_ret*": "low"})

@@ -75,7 +75,6 @@ def test_an_spm_maps_with_the_tip_lifted_for_every_move_and_stitches(mapper, spm
     assert results["state"] == "done", results
     tiles = reserved["estimate"]["tiles"]
     assert tiles == 4
-    # move_stage refuses with the tip down and a frame refuses with it up, so a finished map proves the order.
     assert approach.approaches - before[0] == tiles and approach.retracts - before[1] >= 2 * tiles
     assert not approach._approached
     with h5py.File(results["summary"]["run_file"], "r") as h5:

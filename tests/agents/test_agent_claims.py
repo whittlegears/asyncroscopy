@@ -14,7 +14,6 @@ from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwi
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from tests.catalogs import catalog
 
-# Tool roles come from endpoint_info and not from tool names.
 CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper})
 
 
@@ -113,7 +112,6 @@ def test_a_requested_value_never_acquired_is_to_be_acquired_not_dropped():
     assert kinds(claims) == ["acquired_at"]
     assert "the request asks for an acquisition at defocus 0 nm" in claims[0].why and "Do not answer without it" in claims[0].why
     assert '"defocus": 0.0' in claims[0].why
-    # The value was not asked for so the answer may leave it out.
     claims = check_answer(skipped_zero("Take two HAADF images at different defocus, then set the defocus back to 0."), answer, TOOLS)
     assert kinds(claims) == ["acquired_at"] and "request" not in claims[0].why and "to make it true" in claims[0].why
 
@@ -141,7 +139,6 @@ def test_negated_hedged_and_uncheckable_statements_are_not_claims():
     answer = ("I could not take an image: the beam is blanked. No image was acquired. The stage was not moved. "
               "The previously acquired images are unchanged. The defocus was not set back to 0.")
     assert check_answer(run.messages, answer, TOOLS) == []
-    # A value with no unit cannot be compared so it is not flagged.
     assert check_answer(focus_series(), "The defocus is now 5.", TOOLS) == []
 
 
@@ -150,7 +147,6 @@ def test_actions_with_no_call_of_their_kind_are_flagged():
     claims = check_answer(run.messages, "I moved to the best region and took an image there.", TOOLS)
     assert kinds(claims) == ["action", "action"]
     assert check_answer(run.messages, "I set the defocus to 0 nm.", TOOLS)[0].why == "no successful set_defocus call in this run"
-    # A job moves and acquires so its answer is not flagged.
     run.call("run_job", {"device": "Mapper"}, {"job_id": "0123456789ab", "state": "done"})
     assert check_answer(run.messages, "I moved to the best region and took an image there.", TOOLS) == []
 
@@ -208,13 +204,11 @@ def test_after_one_retry_a_visible_note_names_what_could_not_be_verified():
 
 
 def test_the_retry_cap_holds_across_tool_rounds():
-    # The correction was already used in this request so the next bad answer gets a note.
     messages = [*focus_series(), AIMessage("x"), HumanMessage("check", name=CLAIM_CHECK)]
     assert corrections_used(messages) == 1
     model = Model(FOCUS_ANSWER)
     response = ClaimCheckMiddleware(TOOLS, enabled=True).wrap_model_call(Request(messages), model)
     assert len(model.seen) == 1 and len(response.result) == 1 and "[Claim check" in response.result[0].content
-    # A new request from the user resets the cap.
     assert corrections_used([*messages, AIMessage("ok"), HumanMessage("next")]) == 0
 
 
@@ -251,7 +245,6 @@ def test_keys_in_the_system_prompt_are_known():
 def test_the_correction_is_not_taken_for_the_users_request():
     messages = [*focus_series(), AIMessage(FOCUS_ANSWER), HumanMessage("Check before you answer ...", name=CLAIM_CHECK)]
     assert _request(messages).startswith("Take HAADF images")
-    # Loop detection still sees the rounds before the correction as this request's.
     looped = Calls("Read it.").call("view_data", {"key": "a.h5"}, "same").call("view_data", {"key": "a.h5"}, "same").messages
     assert repeats([*looped, HumanMessage("check", name=CLAIM_CHECK)]) == 1
 
@@ -273,7 +266,6 @@ def test_an_answer_that_announces_its_next_step_instead_of_taking_it_is_flagged(
     claims = check_answer(run.messages, answer, TOOLS)
     assert [c.kind for c in claims] == ["unfinished"]
 
-    # Questions, offers, plans and finished reports are not flagged.
     for fine in ("I took the spectrum and it shows Au. Would you like me to map the area next?",
                  "Let me know if you want another image.",
                  "I'll now take an image. " + "It shows three particles. The brightest is at the centre.",

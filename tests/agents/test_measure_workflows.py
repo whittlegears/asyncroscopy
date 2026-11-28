@@ -161,7 +161,6 @@ def test_a_skill_with_a_run_list_is_unavailable_and_says_to_write_a_workflow(tmp
 
 
 def test_a_runs_instrument_calls_carry_the_caller_that_asked_for_it(tmp_path, monkeypatch):
-    # The instrument's trace, the benchmarks and the evaluators credit the agent that started the run.
     from fastmcp import Client
 
     from asyncroscopy.workflows import server as workflow_server

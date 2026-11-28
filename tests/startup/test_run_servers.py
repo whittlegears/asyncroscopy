@@ -212,7 +212,6 @@ def test_run_llm_builds_server_command(fake_uv, monkeypatch):
 
     command = run_llm.build_command(config)
 
-    # The extras are missing and uv installs them, so this child syncs.
     assert command[:6] == [fake_uv, "run", "--extra", "agent", "--extra", "ollama"]
     assert "--no-sync" not in command
     assert command[command.index("-m") + 1] == "asyncroscopy.mcp.agent_mcp_server"
@@ -245,7 +244,6 @@ def test_run_llm_passes_the_workflow_switches_and_keeps_hardware_on_loopback(tmp
     from asyncroscopy.mcp.agent_mcp_server import parse_args
 
     base = ["--name", "A", "--transport", "streamable-http", "--http-host", "127.0.0.1", "--http-port", "8124"]
-    # Workflows are on by default; the agent server is the one place they run.
     assert not {"--no-workflows", "--workflows-hardware"} & set(command())
     assert parse_args(base).workflows and not parse_args(base).workflows_hardware
     assert "--no-workflows" in command(workflows=False) and not parse_args(base + ["--no-workflows"]).workflows
@@ -309,8 +307,6 @@ def test_instrument_kept_outside_the_repository_is_given_by_module_name(tmp_path
         run_servers.python_file_to_module(outside)
 
 
-# Another stack's ports and database file are not this launcher's to clear.
-
 TWIN = run_servers.PROJECT_DIR / "configs" / "digital_twin_mapping.yaml"
 RAMAN = run_servers.PROJECT_DIR / "configs" / "yaml_sim_raman.yaml"
 
@@ -366,7 +362,6 @@ def test_restarting_the_same_config_still_clears_its_own_leftovers():
     mine = run_servers.stack_identity(TWIN, None)
     my_pids = me(snapshot, "configs/digital_twin_mapping.yaml")
     assert run_servers.stack_conflicts(snapshot, mine, my_pids, {9094: {102}, 9091: {103}}, share_database_file=True) == []
-    # The orphans of a crashed run, whose launcher is gone, are cleared too.
     orphans = {7: run_servers.ProcessInfo(1, ("python", "-m", "tango.databaseds.database", "2")), 8: run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))}
     assert run_servers.stack_conflicts(orphans, mine, me(orphans, "configs/digital_twin_mapping.yaml"), {9094: {7}, 9091: {8}}, share_database_file=True) == []
 
@@ -382,7 +377,6 @@ def test_launcher_identity_reads_yaml_and_isolated_in_either_form(tmp_path):
     info = run_servers.ProcessInfo(1, ("uv", "run", "startup_scripts/run_servers.py", "--yaml=configs/a.yaml", "--isolated", "outputs/stacks/a"), str(tmp_path))
     assert run_servers.launcher_identity(info) == run_servers.stack_identity(tmp_path / "configs" / "a.yaml", tmp_path / "outputs" / "stacks" / "a")
     assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "-m", "tiled", "serve"))) is None
-    # Without --yaml a launcher refuses to start, so it holds no stack.
     assert run_servers.launcher_identity(run_servers.ProcessInfo(1, ("python", "startup_scripts/run_servers.py"))) is None
 
 
@@ -508,7 +502,6 @@ def test_run_pytemlib_command_is_read_back_by_the_server(fake_uv, monkeypatch):
     assert (args.transport, args.host, args.port, args.tiled) == ("sse", "0.0.0.0", 8103, "http://localhost:9191")
     assert (args.local_root, args.max_canvas_megapixels, args.max_jobs) == (["outputs", "data"], 250.5, 3)
     assert (args.trace, args.annotations, args.placements) == ("outputs/t.jsonl", "", "-odd name.jsonl")
-    # The key is passed by environment variable and not on the command line.
     assert "k3y" not in command and args.api_key is None
     monkeypatch.delenv("ASYNCROSCOPY_TILED_API_KEY", raising=False)
     assert run_pytemlib.server_env(config)["ASYNCROSCOPY_TILED_API_KEY"] == "k3y"
@@ -528,7 +521,6 @@ def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
 
 
 def test_run_pytemlib_starts_only_the_analysis_server_and_refuses_the_old_workflow_keys(tmp_path):
-    # Workflows run in the agent MCP server only (run_llm.py, agent.workflows).
     command = run_pytemlib.build_command(pytemlib_config(local_runs="outputs/maps"))
     assert "pytemlib_mcp.analysis_server" in command and not [a for a in command if "workflows" in a]
     path = tmp_path / "p.yaml"

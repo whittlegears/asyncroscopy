@@ -62,7 +62,6 @@ def test_survey_and_atomic_drawings_of_a_particle_agree_at_the_switch():
     x0, y0 = sample.centers[i, 0] - reach, sample.centers[i, 1] - reach
     survey = sample.projected_weight(x0, y0, n, pixel, "survey", 1.7, {})
     atomic = sample.projected_weight(x0, y0, n, pixel, "atomic", 1.7, {})
-    # Through a probe a few atoms wide the two drawings are one particle of one mass.
     blur = 1e-9 / pixel
     survey, atomic = ndimage.gaussian_filter(survey, blur), ndimage.gaussian_filter(atomic, blur)
     assert atomic.sum() == pytest.approx(survey.sum(), rel=0.1)
@@ -80,7 +79,6 @@ def test_an_atom_is_drawn_at_its_sub_pixel_position(subpixel):
     weight = sample.projected_weight(x0, y0, n, pixel, "atomic", 1.7, {})
     rows, cols = np.indices(weight.shape)
     drawn = np.array([(weight * cols).sum(), (weight * rows).sum()]) / weight.sum()
-    # The centre of a pixel is half a pixel past its corner at x0 and y0, so 0.5 is taken off.
     true = (sample.centers[i] + offset - np.array([x0, y0])) / pixel - 0.5
     error = float(np.abs(drawn - true).max())
     if subpixel:
@@ -143,7 +141,6 @@ def test_dose_map_memory_grows_with_frames_not_with_the_sample():
     for dose in (small, huge):
         xs, ys, pixel = _frame(0.0, 0.0, 50e-9)
         dose.add_frame(xs, ys, 10.0, pixel)
-    # One 50 nm frame fills about 81 to 289 cells of its own size whatever the sample size.
     assert huge.summary()["exposed_cells"] <= 300 and small.summary()["exposed_cells"] <= 300
 
 

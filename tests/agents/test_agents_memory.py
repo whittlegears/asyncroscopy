@@ -98,7 +98,6 @@ def test_drafts_are_never_offered_until_promoted(memory):
     learned = {s.name: s for s in list_skills(OFFERED)}["eds_square_map"]
     assert learned.learned and learned.available
     assert "eds_square_map" in [s.name for s in select_skills(request, OFFERED, limit=5)]
-    # A learned skill needs every tool it lists.
     assert "eds_square_map" not in [s.name for s in select_skills(request, OFFERED - {"assemble_map"}, OFFERED, limit=5)]
 
 

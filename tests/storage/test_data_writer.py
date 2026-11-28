@@ -47,9 +47,6 @@ def test_save_acquisition_hdf5_writes_data_and_xml_leaf_attrs(tmp_path):
 
 def test_dict_dataset_attrs_are_written_as_attrs(tmp_path):
     data_server = FakeDataServer(tmp_path)
-    # PyJEM returns raw pixels and, separately, a dict like the one from get_detectorsetting.
-    # The dict is handed to save_acquisition via dataset_attrs and should land as
-    # HDF5 attrs alongside the standard ones.
     metadata = {
         "ExposureTimeValue": 1000.0,
         "GainIndex": 5,
@@ -65,9 +62,7 @@ def test_dict_dataset_attrs_are_written_as_attrs(tmp_path):
         assert dset[()].tolist() == [[0, 1], [2, 3]]
         assert dset.attrs["ExposureTimeValue"] == 1000.0
         assert dset.attrs["GainIndex"] == 5
-        # nested dict values are json-encoded, like other non-scalar attrs
         assert json.loads(dset.attrs["ImagingArea"]) == metadata["ImagingArea"]
-        # the standard attrs are still written alongside the detector metadata
         assert dset.attrs["acquisition_type"] == "acquire.image"
         assert dset.attrs["detector"] == "HAADF"
         assert h5.attrs["acquisition_type"] == "acquire.image" and h5.attrs["primary_array"] == "image/HAADF"
@@ -95,8 +90,6 @@ def test_save_acquisition_tiff_writes_one_registered_file_per_detector(tmp_path)
     data_server = FakeDataServer(tmp_path)
     detectors = ["HAADF", "BF-S"]
     images = [np.full((2, 2), index, dtype=np.int16) for index in range(len(detectors))]
-    # JEOL passes one dict per detector, like the one from get_detectorsetting. It should be
-    # encoded as JSON into each TIFF's ImageDescription, with nested dicts included.
     attrs = [{"GainIndex": index, "ImagingArea": {"Width": 512}} for index in range(len(detectors))]
 
     keys = json.loads(save_acquisition(object(), data_server, "stem_image", detectors, images, dataset_attrs=attrs, output_format=".tiff"))

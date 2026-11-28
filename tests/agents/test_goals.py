@@ -15,7 +15,6 @@ from asyncroscopy.instruments.electron_microscope.digital_twin import DigitalTwi
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from tests.catalogs import catalog, info_of
 
-# The tools endpoint_info reports for a STEM twin with two Mappers and the Raman and XRD YAML twins.
 CATALOG = catalog({"DigitalTwin": DigitalTwin, "Mapper": Mapper, "Mapper_key2": Mapper, "RamanTwin": "raman.yaml", "XRDTwin": "xrd.yaml"})
 
 
@@ -188,7 +187,6 @@ def test_a_met_goal_is_remembered_and_drafts_a_skill_only_when_learning_skills_i
         return run_goal_graph(goal, [("Stitched map_r1_map", MAP_CALLS, skills)], FakeServer(maps={"map_r1_map"}),
                               learn=True, memory=memory, offered={c.name for c in MAP_CALLS}, namer=Namer())[0]
 
-    # Learning skills is off by default. The run is remembered as an experiment page, no new skill is made, and the report names no skills.
     monkeypatch.delenv("ASYNCROSCOPY_LEARN_SKILLS", raising=False)
     memory = Memory(tmp_path / "off")
     state = met(memory)
@@ -249,7 +247,6 @@ def test_an_old_spectrum_found_by_listing_does_not_meet_take_a_spectrum():
     assert facts.data_keys == set() and "spectrum_eds_20251201T000000.h5" in facts.seen_keys
     verdict = asyncio.run(GoalChecker().check(goal, facts, "The spectrum is spectrum_eds_20251201T000000.h5."))
     assert not verdict.met and "spectrum recorded in this run" in verdict.feedback()
-    # A wait on a job this run did not start produces nothing either.
     other = [Call("wait_for_job", {"job_id": "old1"}, json.dumps({"job_id": "old1", "state": "done", "result_keys": {"map": "map_old1_map"}}))]
     assert Facts.from_calls(other, CATALOG).map_keys == set() and Facts.from_calls(other, CATALOG).jobs == {}
 

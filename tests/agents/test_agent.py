@@ -241,7 +241,6 @@ class TestSpawnAgent:
 
     def test_spawn_missing_required_field_fails(self):
         swarm = _make_agent_swarm()
-        # "name" is required by Agent dataclass
         assert swarm.spawn_agent(json.dumps({"system_prompt": "missing name"})) == ""
         assert swarm._agents == []
 
@@ -289,7 +288,6 @@ class TestRunSwarm:
         agent = _make_agent(name="Solo")
         swarm = _make_agent_swarm(agents=[agent])
 
-        # Replace internal helpers so no LangChain objects are needed
         swarm._build_agent_executor = MagicMock(return_value=MagicMock())
         swarm._stream_agent = AsyncMock(return_value="42 is the answer.")
 
@@ -361,7 +359,6 @@ class TestOpenAIMessagesToLangchain:
             }],
         }])
         assert isinstance(msg, AIMessage)
-        # Real LangChain adds a "type" of "tool_call" to each call. The stubbed one does not.
         assert [{k: v for k, v in call.items() if k != "type"} for call in msg.tool_calls] == [
             {"name": "acquire_image", "args": {"detector": "haadf"}, "id": "call_1"}
         ]
@@ -475,7 +472,6 @@ class TestAgentMCPServerTools:
             verbose=False,
             **kwargs,
         )
-        # Replace the model so no Ollama/LangChain call can be made by a test.
         server.swarm._model = MagicMock()
         return server
 
@@ -487,7 +483,6 @@ class TestAgentMCPServerTools:
         server.setup()
         assert [tool.__name__ for tool in registered] == native
 
-        # Workflows are on by default: their tools follow the swarm's.
         server = self._server()
         registered = []
         server.mcp.add_tool = registered.append
@@ -496,7 +491,6 @@ class TestAgentMCPServerTools:
         assert names[:len(native)] == native
         assert names[len(native):] == [fn.__name__ for fn in server.workflows.tools()]
         assert {"list_workflows", "get_workflow", "run_workflow", "workflow_status"} <= set(names)
-        # A person's approval tools are never on the agent endpoint, nor given to the swarm's agents.
         operator_only = {"review_workflow", "approve_workflow", "reject_workflow"}
         assert not operator_only & set(names)
         assert not operator_only & {tool.name for tool in server.workflow_tools()}

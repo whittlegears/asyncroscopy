@@ -113,15 +113,11 @@ def test_procedural_specimen_is_bit_identical_to_the_golden_run(tango_ctx, monke
         pytest.skip(f"wrote {GOLDEN}")
     golden = np.load(GOLDEN)
     truth, recorded = json.loads(str(run["truth"])), json.loads(str(golden["truth"]))
-    # Ground truth may gain fields.
-    # Everything the golden run recorded must still be there unchanged.
     dose, recorded_dose = truth.pop("dose"), recorded.pop("dose")
     assert _contains(truth, recorded)
-    # The dose map's cell count may differ from the golden run and its peak by 1 part in 10^5.
     assert dose["max_dose_e_per_a2"] == pytest.approx(recorded_dose["max_dose_e_per_a2"], rel=1e-3)
     images = [a for a in truth["acquisitions"] if a["kind"] == "image"]
     assert images and all({"rotation_deg", "shear", "fov_scale_error"} <= set(a["scan"]) and set(a["detector"]) == {"gain", "offset"} for a in images)
-    # The second frame of the same area is dimmer where particles are because the survey damaged them.
     assert run["survey2_haadf"].sum() != run["survey_haadf"].sum()
     same_build = str(golden["platform"]) == sys.platform and str(golden["numpy"]) == np.__version__
     for name in ("survey_haadf", "survey_bf", "survey2_haadf", "atomic_haadf", "spectrum"):
@@ -264,12 +260,10 @@ def test_recorded_specimen_is_imaged_by_the_instrument_not_copied():
     assert specimen.bounds == pytest.approx((-2e-7, 2e-7, -2e-7, 2e-7))
     native = _render(specimen, 4e-7, 256)  # the instrument's view at the recorded pixel size
     assert np.corrcoef(native.ravel(), specimen.image.ravel())[0, 1] > 0.9
-    # A zoomed out view sees vacuum and support beyond the recorded field. BF is the complement of HAADF.
     wide = _render(specimen, 8e-7, 64)
     assert wide[:8, :8].max() < 0.02 and wide[24:40, 24:40].mean() > 0.0
     bf = _render(specimen, 4e-7, 64, detector="BF")
     assert np.corrcoef(bf.ravel(), _render(specimen, 4e-7, 64).ravel())[0, 1] < -0.9
-    # Without labels the twin does not know what it is looking at.
     assert specimen.ground_truth() == {"known": False, "particles": []}
     assert specimen.areal_density(0.0, 0.0) == {}
 
@@ -304,7 +298,6 @@ def test_crystal_shows_lattice_columns_at_atomic_resolution():
     spectrum = np.abs(np.fft.fftshift(np.fft.fft2(image - image.mean())))
     peak = np.unravel_index(np.argmax(spectrum), spectrum.shape)
     spacing = fov / np.hypot(peak[0] - n // 2, peak[1] - n // 2)
-    # fcc along 001 is a square lattice of columns a/2 apart. One FFT pixel is about 2.5 % at this field.
     assert spacing == pytest.approx(lattice["lattice_constant_m"] / 2, rel=0.05)
 
 
@@ -381,13 +374,10 @@ def test_the_same_mapper_plan_on_three_specimens(tango_ctx):
     reference = truths["procedural"]
     assert len(reference["moves"]) >= 9 and reference["dose"]["max_dose_e_per_a2"] > 0
     for source in ("crystal", "recorded"):
-        # The instrument behaved the same in stage error, backlash, drift, timing, dose and focus.
         for key in INSTRUMENT_TRUTH:
             assert truths[source][key] == reference[key], f"{source}: {key} differs from the procedural run"
         for key in ("stage_reported_m", "commanded_xy_m", "acquired_s"):
             assert np.array_equal(runs[source][key], runs["procedural"][key]), key
-    # What it saw differs. A spectrum differs only where one of the specimens has material under the beam.
-    # Where neither has, both see the same support film with the same detector noise.
     material = {source: _material_under_beam(truths[source]) for source in runs}
     assert len(material["crystal"]) == len(runs["crystal"]["spectra"]) and material["crystal"].all()
     for source, run in runs.items():  # shown with pytest -s
@@ -398,7 +388,6 @@ def test_the_same_mapper_plan_on_three_specimens(tango_ctx):
         assert not np.array_equal(runs[a]["tiles"], runs[b]["tiles"]), (a, b)
         for k, (spectrum_a, spectrum_b) in enumerate(zip(runs[a]["spectra"], runs[b]["spectra"])):
             assert np.array_equal(spectrum_a, spectrum_b) == (not material[a][k] and not material[b][k]), (a, b, k)
-    # Ground truth is what each source knows. That is particles, grains or labels.
     assert len(truths["procedural"]["particles"]) > 0 and truths["procedural"]["specimen"]["known"] is True
     assert truths["crystal"]["particles"] == [] and len(truths["crystal"]["specimen"]["grains"]) == 12
     assert truths["recorded"]["specimen"]["labelled"] is True and len(truths["recorded"]["particles"]) > 0

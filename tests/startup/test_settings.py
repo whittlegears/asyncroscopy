@@ -12,7 +12,6 @@ from asyncroscopy.settings import Settings
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV_READ = re.compile(r"""os\.environ\.get\(\s*['"]ASYNCROSCOPY_|os\.getenv\(\s*['"]ASYNCROSCOPY_|os\.environ\[['"]ASYNCROSCOPY_\w*['"]\](?!\s*=[^=])""")
-# Files allowed to read the environment directly for now.
 NOT_YET_MOVED: set[str] = set()
 
 

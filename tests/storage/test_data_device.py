@@ -28,7 +28,6 @@ from asyncroscopy.data.data import (
 )
 from asyncroscopy.data.tiled_client import TiledUnavailable
 
-# A local port nothing listens on, so no test reaches a running Tiled.
 CLOSED_PORT = 9
 
 
@@ -249,7 +248,6 @@ class TestDataDevice:
         assert not leftover.terminated
 
     def test_a_tiled_left_from_an_earlier_run_on_the_same_path_is_replaced_by_a_supervised_one(self, data_proxy, monkeypatch, tmp_path) -> None:
-        # The leftover's --read path is relative. It is resolved against its own working directory and not DATA's.
         (tmp_path / "acq").mkdir()
         data_proxy.port = CLOSED_PORT
         data_proxy.save_path = str(tmp_path / "acq")
@@ -294,10 +292,7 @@ class TestDataDevice:
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
         monkeypatch.setattr(DATA, "_tiled_alive", fake_alive)
         monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
-        # The Windows drive path below is fed only to exercise the branch that
-        # turns a drive path into a sqlite URI. The mkdir side effect is stubbed
-        # out so the test does not need the path to be creatable. A user who is
-        # not an admin cannot create directories under C:\, and the path cannot exist on Linux.
+        # Only exercises the drive-path branch; the mkdir is stubbed because C:\ may not be creatable.
         monkeypatch.setattr("asyncroscopy.data.data._ensure_directory", lambda path: None)
 
         data_proxy.host = "127.0.0.1"
@@ -325,7 +320,6 @@ class TestDataDevice:
         assert client.registered == [str(saved)]
 
     def test_registering_the_same_file_again_keeps_it(self, data_proxy, monkeypatch, tmp_path) -> None:
-        # Tiled deletes an existing entry when a second registration collides with it.
         saved = tmp_path / "frame.h5"
         saved.write_bytes(b"fake-h5")
         client = FakeClient([saved])
@@ -336,7 +330,6 @@ class TestDataDevice:
         assert "frame.h5" in client.nodes
 
     def test_a_different_file_with_a_registered_name_is_refused_not_deferred(self, data_proxy, monkeypatch, tmp_path) -> None:
-        # A collision must never pass for "Tiled is down". The key would then point at another file.
         (tmp_path / "old").mkdir()
         (tmp_path / "new").mkdir()
         client = FakeClient([tmp_path / "old" / "frame.h5"])
@@ -395,7 +388,6 @@ class TestDataDevice:
         assert json.loads(data_proxy.get_config())["tiled_server_status"].startswith("deferred: Tiled down; frame.h5")
 
     def test_with_no_supervised_tiled_an_outage_is_an_error(self, data_proxy, monkeypatch, tmp_path) -> None:
-        # This covers an external Tiled, a stopped one, and one the supervisor gave up on. Nothing would register the file later.
         saved = tmp_path / "frame.h5"
         saved.write_bytes(b"fake-h5")
 
@@ -477,8 +469,6 @@ class TestDataDevice:
             data_proxy.copy_and_register_remote_file(json.dumps({"source_path": str(source)}))
 
     def test_reconcile_registers_only_missing_files_one_at_a_time(self, data_proxy, monkeypatch, tmp_path) -> None:
-        # Registering the directory would make Tiled delete everything under the root first,
-        # and that would take the stitched maps written through the API with it. Reconcile must register files only.
         for name in ("present.h5", "missing.h5", "notes.txt", ".hidden.h5"):
             written_a_while_ago(tmp_path / name)
         (tmp_path / "maps").mkdir()

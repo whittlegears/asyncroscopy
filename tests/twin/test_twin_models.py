@@ -230,7 +230,6 @@ def test_clusters_concentrate_particles_and_leave_uniform_samples_unchanged():
     assert len(clustered) == 600
 
     def crowding(sample):
-        # Share of particles in the densest tenth of a 10 x 10 grid of cells.
         counts, _, _ = np.histogram2d(sample.centers[:, 0], sample.centers[:, 1], bins=10, range=[[-2e-6, 2e-6]] * 2)
         return np.sort(counts.ravel())[::-1][:10].sum() / len(sample)
 

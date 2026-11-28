@@ -77,7 +77,6 @@ def test_stop_process_graceful_and_force(tmp_path, monkeypatch):
         def wait(self, timeout=None):
             self.wait_calls += 1
             if self.wait_calls == 1:
-                # First wait times out to trigger force kill escalation
                 raise subprocess.TimeoutExpired(["cmd"], timeout)
             self._poll_val = 0
             return 0
@@ -97,7 +96,6 @@ def test_stop_process_graceful_and_force(tmp_path, monkeypatch):
         monkeypatch.setattr(process_manager.os, "killpg", mock_killpg)
         monkeypatch.setattr(process_manager.os, "getpgid", lambda pid: pid)
     else:
-        # Capture taskkill invocations without spawning a real process
         class FakePopenResult:
             pass
 
@@ -114,7 +112,6 @@ def test_stop_process_graceful_and_force(tmp_path, monkeypatch):
     manager.stop_process(proc)
 
     assert proc not in manager.active_processes
-    # The state file must have removed the PID
     pids = json.loads(manager.state_file.read_text(encoding="utf-8"))
     assert pids == []
 
@@ -146,11 +143,9 @@ def test_cleanup_stale_state_on_enter(tmp_path, monkeypatch):
 
     manager = ProcessManager(name="test_run", state_dir=tmp_path)
     with manager:
-        # State file should be cleaned up on entering context
         assert not state_file.exists()
 
     if os.name != "nt":
-        # Check both SIGTERM and SIGKILL were sent due to mock time not incrementing
         assert (12345, signal.SIGTERM) in killed_pids
         assert (12345, signal.SIGKILL) in killed_pids
         assert (67890, signal.SIGTERM) in killed_pids
@@ -281,7 +276,6 @@ def test_matches_device_server_needs_module_and_instance():
     assert process_manager.matches_device_server(tokens, "pkg.stage", "stage_instance")
     assert not process_manager.matches_device_server(tokens, "pkg.stage", "other_instance")
     assert not process_manager.matches_device_server(tokens, "pkg.scan", "stage_instance")
-    # A launcher whose arguments merely mention the module is not a device server.
     assert not process_manager.matches_device_server(["python", "run_servers.py", "pkg.stage"], "pkg.stage", "stage_instance")
 
 

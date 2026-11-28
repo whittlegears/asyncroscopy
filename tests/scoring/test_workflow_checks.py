@@ -12,7 +12,6 @@ from benchmarks import workflow_checks as check_module
 from benchmarks.workflow_checks import CHECKS, Call, Run, evaluate
 from tests.catalogs import twin_catalog
 
-# The checks judge risk from the endpoint's own table and never from a name.
 RISKS = {name: tool.risk for name, tool in twin_catalog().tools.items()}
 
 WORKFLOWS = Path(run_workflows.__file__).parent / "workflows"

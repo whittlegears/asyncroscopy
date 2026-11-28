@@ -101,7 +101,6 @@ def assert_live_matches_retrospective(sub: Subscriber, sources, **filters):
     return expected
 
 
-# a 4 tile twin map followed live
 def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tango_ctx, mapper_proxy, job_dir, tmp_path, monkeypatch):
     run = f"run-{os.getpid()}-{time.time_ns()}"
     headers = {"x-asyncroscopy-caller": "trace-test", "x-asyncroscopy-run": run}
@@ -147,11 +146,9 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
     assert all(e["writer"] == "asyncroscopy/mapper/default" for e in jobs)
     mcp = [e for e in events if e["source"] == "mcp"]
     assert all(e["caller"] == "trace-test" and e["clock"] == "instrument" for e in mcp)
-    # Each file's events arrive in seq order.
     for name in {e["file"] for e in events}:
         seqs = [e["seq"] for e in events if e["file"] == name]
         assert seqs == sorted(seqs)
-    # The command line shows the same run.
     assert tail.main([str(s) for s in sources] + ["--run", run, "--no-follow", "--json"]) == 0
 
 
@@ -189,7 +186,6 @@ def test_old_lines_without_seq_are_still_read_and_numbering_continues(tmp_path):
     assert len(read_tool_log(path)) == 4
     for event in events:
         jsonschema.validate({k: v for k, v in event.items() if k != "file"}, load("trace_event"))
-    # The analysis server's tool log is read too, with its tool as the action.
     (tmp_path / "analysis.jsonl").write_text(json.dumps({"ts": 1001.5, "source": "analysis", "tool": "score_map", "run": "r", "ok": True}) + "\n", encoding="utf-8")
     merged = read_trace(tmp_path)
     assert [e["action"] for e in merged][:3] == ["Old.step", "Old.step", "score_map"]

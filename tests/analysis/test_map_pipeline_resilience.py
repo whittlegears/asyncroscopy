@@ -183,7 +183,6 @@ def test_resuming_mid_stitch_waits_for_the_same_stitch_and_mid_revisit_links_wit
     assert wait(mapper_proxy, started["job_id"])["state"] == "aborted"
     del analysis.before["analysis_job_status"]
 
-    # Break the first link of a revisit image. The job aborts after the image is taken and saved.
     adds = []
 
     def abort_on_first_link(arguments):
@@ -234,7 +233,6 @@ def test_the_pipeline_over_the_real_mcp_wire_format(mapper_proxy, mapping_twin_p
 
     from pytemlib_mcp.analysis_server import create_server
 
-    # The run file is under the test's temporary folders, so let this server read that drive.
     mcp, _tools = create_server(include_basic=False, local_roots=[Path(Path.cwd().anchor)])
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(mcp.http_app(path="/mcp"), host="127.0.0.1", port=port, log_level="warning"))

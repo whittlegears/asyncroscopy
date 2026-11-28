@@ -15,9 +15,7 @@ def test_helpers_serve_an_instrument_through_the_mcp_server(tmp_path):
     result = json.loads(done.stdout.strip().splitlines()[-1])
     assert result["indent_doc"].startswith("Make one indent")
     assert result["envelope"]
-    # A small model reads the purpose once and no DevVoid type lines.
     assert result["retract_doc"].count("Lift the tip") == 1 and "DevVoid" not in result["retract_doc"] and "Output Description" not in result["retract_doc"]
-    # The indent, the safe stop and the plan check all run through the server's tools.
     assert result["outcome"] == {"SimIndenter_indent": "ran", "SimIndenter_retract": "ran", "IndentGrid_reserve": "ran"}
     assert result["async_descriptions_match"]
     assert ":param" not in result["move_doc"] and "Input Description:" in result["move_doc"]

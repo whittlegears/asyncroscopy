@@ -45,7 +45,6 @@ def test_a_bad_declared_risk_falls_back_to_the_rules_with_a_warning():
     assert tool.risk == "high" and tool.risk_source == "rule" and "not low or high" in warnings[0]
 
 
-# The twin stack as tests/conftest.py starts it, with one device of each class.
 TWIN_STACK = {
     "DigitalTwin": "asyncroscopy/digitaltwin/default",
     "CAMERA": "asyncroscopy/camera/default",
