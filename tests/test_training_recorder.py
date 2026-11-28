@@ -15,7 +15,7 @@ from asyncroscopy.training.recorder import TrainingRecorder, to_openai_message  
 
 
 def _lines(path):
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_messages_convert_to_the_openai_chat_format():

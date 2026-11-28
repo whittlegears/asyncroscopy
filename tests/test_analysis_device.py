@@ -73,7 +73,7 @@ def test_agent_tools_include_the_scores_but_not_the_twin_answers(tango_ctx, monk
     from asyncroscopy.mcp.mcp_server import MCPServer
 
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-    config = yaml.safe_load((Path(__file__).parents[1] / "configs" / "mcp_dt.yaml").read_text())["mcp"]
+    config = yaml.safe_load((Path(__file__).parents[1] / "configs" / "mcp_dt.yaml").read_text(encoding="utf-8"))["mcp"]
     server = MCPServer(
         "test",
         "localhost",
@@ -93,3 +93,16 @@ def test_agent_tools_include_the_scores_but_not_the_twin_answers(tango_ctx, monk
     assert "acquire_scanned_image" in tools["DigitalTwin"]
     assert "get_correction_limits" in tools["DigitalTwinCorrector"]
     assert not {"get_aberrations_coeff_sim", "set_aberrations_coeff_sim"} & set(tools["DigitalTwinCorrector"])
+
+
+def test_local_files_need_a_directory_or_drive(tmp_path, monkeypatch):
+    from asyncroscopy.analysis.analysis_device import _is_local_file
+
+    image = tmp_path / "stem_image.h5"
+    image.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+
+    assert _is_local_file(str(image))  # absolute path
+    assert _is_local_file("./stem_image.h5")  # relative path with a directory
+    assert not _is_local_file("stem_image.h5")  # a bare name is a Tiled key
+    assert not _is_local_file(str(tmp_path / "missing.h5"))

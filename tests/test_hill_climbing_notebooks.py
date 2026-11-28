@@ -16,7 +16,7 @@ NOTEBOOKS = Path(__file__).parents[1] / "notebooks"
 
 def _cell(notebook: str, marker: str) -> str:
     """Source of the one code cell that contains ``marker``."""
-    cells = json.loads((NOTEBOOKS / notebook).read_text())["cells"]
+    cells = json.loads((NOTEBOOKS / notebook).read_text(encoding="utf-8"))["cells"]
     [source] = ["".join(c["source"]) for c in cells if c["cell_type"] == "code" and marker in "".join(c["source"])]
     return source
 

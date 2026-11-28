@@ -1,7 +1,7 @@
 """ANALYSIS Tango device: measured scores an operator or LLM agent can act on.
 
-Every command takes data keys and returns JSON. A key is a Tiled key, or an
-absolute path to a local .h5 file (as the twins return when no Tiled server runs).
+Every command takes data keys and returns JSON. A key is a Tiled key, or a path
+to a local .h5 file (as the twins return when no Tiled server runs).
 The MCP server turns each command into an agent tool, so the agent passes keys,
 not images, and gets numbers with units, the target they are judged against,
 and pass or fail.
@@ -64,6 +64,17 @@ def _tiled_read(node):
     return (np.asarray(node.read()), dict(node.metadata or {})) if len(shape) == 2 else None
 
 
+def _is_local_file(key: str) -> bool:
+    """A key names a local file if it exists and carries a directory or a drive letter.
+
+    A bare name such as "stem_image.h5" is always a Tiled key, so a stray file
+    with that name in the working directory is never read by mistake.
+    """
+    directory, _ = os.path.split(key)
+    drive, _ = os.path.splitdrive(key)
+    return bool(directory or drive) and os.path.isfile(key)
+
+
 def _target(value: float) -> float | None:
     """Device properties use 0 for "no target"."""
     return float(value) or None
@@ -95,7 +106,7 @@ class ANALYSIS(Device):
 
     def _read(self, key: str) -> tuple[np.ndarray, dict]:
         """The first 2D image under a data key, with its stored metadata."""
-        if os.path.isabs(key) and os.path.isfile(key):
+        if _is_local_file(key):
             with h5py.File(key, "r") as h5:
                 found = _first_image(h5, _h5_read)
         else:

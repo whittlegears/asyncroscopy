@@ -16,7 +16,7 @@ def _record(directory, prompt, answer):
 
 
 def _read(path):
-    return [json.loads(line) for line in path.read_text().splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_export_keeps_passed_runs_and_leaves_out_held_out_prompts(tmp_path):

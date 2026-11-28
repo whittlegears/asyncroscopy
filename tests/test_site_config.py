@@ -70,7 +70,7 @@ def test_a_malformed_site_line_is_refused(tmp_path):
 def test_the_example_lists_every_name_the_configs_use():
     used = set()
     for config in (ROOT / "configs").glob("*.yaml"):
-        used |= set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", config.read_text()))
-    example = (ROOT / "configs" / "site.env.example").read_text()
+        used |= set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", config.read_text(encoding="utf-8")))
+    example = (ROOT / "configs" / "site.env.example").read_text(encoding="utf-8")
     listed = set(re.findall(r"^([A-Z_][A-Z0-9_]*)=", example, re.M))
     assert used <= listed
