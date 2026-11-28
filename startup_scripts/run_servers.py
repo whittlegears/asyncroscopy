@@ -10,11 +10,9 @@ import json
 import os
 import re
 import sys
-import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from io import BufferedReader
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -33,9 +31,11 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy import settings
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command  # noqa: E402
-from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, read_settings  # noqa: E402
-from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
+from asyncroscopy.core.net import is_loopback_host
+from asyncroscopy.data import tiled_client
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command
+from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers
 
 # The launcher needs --yaml: it never picks an instrument for you. The GUI opens on the digital twin, so a fresh
 # window never targets the real microscope.
@@ -864,31 +864,6 @@ def make_environment(
     }
 
 
-def drain_process_output(
-    stream: BufferedReader | None,
-    output: deque[str],
-    log_path: Path | None = None,
-    stream_name: str = '',
-) -> None:
-    if stream is None:
-        return
-
-    def drain() -> None:
-        log_file = log_path.open('a', encoding='utf-8') if log_path is not None else None
-        for line in iter(stream.readline, b""):
-            text = line.decode(errors='replace').rstrip()
-            output.append(text)
-            if log_file is not None:
-                prefix = f'[{stream_name}] ' if stream_name else ''
-                log_file.write(f'{prefix}{text}\n')
-                log_file.flush()
-        if log_file is not None:
-            log_file.close()
-        stream.close()
-
-    threading.Thread(target=drain, daemon=True).start()
-
-
 def buffered_output(lines: deque[str]) -> str:
     return "\n".join(line for line in lines if line)
     
@@ -1004,7 +979,7 @@ def reconcile_tiled() -> dict:
 
 def tiled_key_warning(tiled_host: str, api_key: str) -> str | None:
     """A warning when Tiled is reachable from other machines with the well-known default API key."""
-    if tiled_host.strip().lower() in {"127.0.0.1", "localhost", "::1"} or api_key != "secret":
+    if is_loopback_host(tiled_host) or api_key != "secret":
         return None
     return (
         f"Tiled listens on {tiled_host} with the default API key 'secret': anyone on the network can read and "
@@ -1286,8 +1261,7 @@ def main(argv: list[str] | None = None) -> int:
                 report_health(device.device_name, elapsed, faults)
 
             if should_start_tiled:
-                configured_key = settings.get().tiled_api_key
-                warning = tiled_key_warning(tiled_host, "secret" if configured_key is None else configured_key)
+                warning = tiled_key_warning(tiled_host, tiled_client.api_key())
                 if warning:
                     status_line("WARN", "Tiled API key", warning)
                 tiled_config = json.loads(get_data_proxy().start_tiled_server())
@@ -1345,7 +1319,7 @@ def main(argv: list[str] | None = None) -> int:
                     if stopped is not None:
                         raise RuntimeError(f"{stopped.label} ({stopped.key}, pid {stopped.pid}) exited with code {stopped.process.returncode} after startup")
             except KeyboardInterrupt:
-                # Catch the Ctrl-C INSIDE the with block so processes are still alive!
+                # Caught inside the with block, while the processes are still alive to stop Tiled through.
                 print()
                 print(color("Shutdown requested. Stopping Tiled server...", Style.yellow))
                 stop_tiled_server() 
@@ -1360,8 +1334,7 @@ def main(argv: list[str] | None = None) -> int:
         status_line("OK", "stopped during startup")
         return 130
 
-    except Exception as exc:   
-        # Catches actual startup crashes
+    except Exception as exc:
         print()
         print(color(f"Startup failed: {exc}", Style.bold + Style.red))
         if log_dir is not None:

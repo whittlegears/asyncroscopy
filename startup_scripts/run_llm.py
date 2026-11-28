@@ -8,7 +8,6 @@ import asyncio
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,17 +18,16 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
-from asyncroscopy.core.names import endpoint_urls  # noqa: E402
-from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, profile_data  # noqa: E402
-from asyncroscopy.core.net import is_loopback_host  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
-from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
+from asyncroscopy.core.names import endpoint_urls
+from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, profile_data
+from asyncroscopy.core.net import is_loopback_host
+from startup_scripts.config_schema import ConfigError, Setting, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
 default_profile = profile_data(PROFILES / f'{DEFAULT_PROFILE_NAME}.yaml')
 
-# The agent server needs the `agent` and `ollama` extras.
 AGENT_EXTRAS = ('agent', 'ollama')
 AGENT_EXTRA_MODULES = ('langgraph', 'langchain_mcp_adapters', 'langchain_ollama')
 
@@ -276,14 +274,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("Agent MCP server started. Press Ctrl+C to terminate.")
 
-            # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows
-            while managed.running:
-                try:
-                    managed.process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    pass
-            # The server stopped on its own. Fail so a supervisor sees it, as run_mcp.py does.
-            code = managed.process.returncode
+            code = wait_for_exit(managed)
             print(f"Agent MCP server exited with code {code}", file=sys.stderr)
             return code or 1
 

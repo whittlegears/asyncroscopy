@@ -47,6 +47,7 @@ if str(PROJECT_DIR) not in sys.path:
 
 from asyncroscopy import settings
 from asyncroscopy.core.net import WILDCARD_HOSTS, is_loopback_host
+from asyncroscopy.data import tiled_client
 from asyncroscopy.safety.policy import is_read_only
 
 DEFAULT_YAML = PROJECT_DIR / "configs" / "Spectra300.yaml"
@@ -344,8 +345,7 @@ def check_ceos(config: Any, probes: Probes, report: Report) -> None:
 
 def check_tiled(config: Any, probes: Probes, report: Report) -> None:
     uri = f"http://{_local(config.tiled.host)}:{config.tiled.port}"
-    key = settings.get().tiled_api_key
-    key = "secret" if key is None else key
+    key = tiled_client.api_key()
     try:
         status, body = probes.http_get(f"{uri}/api/v1/", {"Accept": "application/json"})
         about = json.loads(body) if status == 200 else {}

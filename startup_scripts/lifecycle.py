@@ -5,6 +5,7 @@ from __future__ import annotations
 import _thread
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -88,6 +89,20 @@ class _PipeGuard:
 
     def __getattr__(self, name):
         return getattr(self._stream, name)
+
+
+def wait_for_exit(managed) -> int:
+    """Block until a server the launcher started stops on its own, and give its exit code.
+
+    The caller fails even on code 0, so a supervisor such as systemd or Kubernetes sees a server that stopped.
+    """
+    # Loop with a timeout so Python catches SIGINT (Ctrl+C) on Windows.
+    while managed.running:
+        try:
+            managed.process.wait(timeout=0.1)
+        except subprocess.TimeoutExpired:
+            pass
+    return managed.process.returncode
 
 
 def detach_output() -> None:

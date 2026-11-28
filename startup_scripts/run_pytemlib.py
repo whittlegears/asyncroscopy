@@ -7,10 +7,10 @@ import argparse
 import math
 import os
 import re
-import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -18,20 +18,20 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from asyncroscopy.core.net import is_loopback_host  # noqa: E402
-from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
-from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
+from asyncroscopy.core.names import DEFAULT_ANALYSIS_URL
+from asyncroscopy.core.net import is_loopback_host
+from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
+from startup_scripts.config_schema import ConfigError, Setting, read_settings
+from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
 
 # stdio is left out because it only works when the client starts the server itself.
 TRANSPORTS = ('streamable-http', 'sse')
-# The host and port below must match the server's own defaults.
 SERVER_MODULE = 'pytemlib_mcp.analysis_server'
-DEFAULT_HOST = '127.0.0.1'
-DEFAULT_PORT = 8003
-API_KEY_VARIABLE = 'ASYNCROSCOPY_TILED_API_KEY'  # the server reads the key from this variable
+DEFAULT_HOST = urlsplit(DEFAULT_ANALYSIS_URL).hostname
+DEFAULT_PORT = urlsplit(DEFAULT_ANALYSIS_URL).port
+API_KEY_VARIABLE = 'ASYNCROSCOPY_TILED_API_KEY'
 
 SERVER_DEFAULT = 'Blank: the server default.'
 LOG_HELP = 'Blank: the default under outputs/. Write "" in the YAML to switch it off.'
@@ -54,7 +54,6 @@ SETTINGS = [
     Setting('pytemlib.annotations', section='Logs', label='Notes (JSONL)', help=LOG_HELP),
     Setting('pytemlib.placements', section='Logs', label='Placements (JSONL)', help=LOG_HELP),
 ]
-# The line the server prints once it is about to serve.
 STATUS_PATTERNS = [
     (re.compile(r'analysis server at (\S+)'), '{0}', False),
 ]
@@ -219,14 +218,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print('pyTEMlib MCP server started. Press Ctrl+C to terminate.')
 
-            # Wait with a timeout so Ctrl+C works on Windows.
-            while managed.running:
-                try:
-                    managed.process.wait(timeout=0.1)
-                except subprocess.TimeoutExpired:
-                    pass
-            # The server stopped on its own so return a failure code.
-            code = managed.process.returncode
+            code = wait_for_exit(managed)
             print(f'pyTEMlib MCP server exited with code {code}', file=sys.stderr)
             return code or 1
 
