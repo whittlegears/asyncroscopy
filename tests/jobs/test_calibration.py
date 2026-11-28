@@ -7,6 +7,7 @@ from tests.conftest import MAPPING_TWIN_PROPERTIES
 
 
 def test_stage_repeatability_recovers_backlash_and_noise(mapping_twin_proxy, mapping_scan_proxy):
+    mapping_twin_proxy.Init()
     mapping_scan_proxy.imsize = 256
     mapping_scan_proxy.dwell_time = 2e-6
     mapping_scan_proxy.scan_region = [0.0, 0.0, 1.0, 1.0]
