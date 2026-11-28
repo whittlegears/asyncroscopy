@@ -109,3 +109,23 @@ def test_agent_server_runs_the_sample_map_workflow_to_its_first_pause():
     assert started["waiting_for"]["plan"]["tiles"] == 4
     done = json.loads(asyncio.run(server.resume_workflow(started["thread_id"], json.dumps({"approved": False}))))
     assert done["finished"] and done["state"]["status"] == "declined"
+
+
+def test_an_unreadable_routing_reply_is_shown_in_the_transcript():
+    replies = [
+        AIMessage(content="I think the reader should go"),  # supervisor: not JSON
+        AIMessage(content="The stage is at the origin."),  # worker
+        AIMessage(content=json.dumps({"next": "FINISH", "task": ""})),  # supervisor
+    ]
+    agents = [Agent("reader", "You read the scope.", ["Scope_get_*"]), Agent("mover", "You move.", ["Scope_move_*"])]
+    swarm = _swarm(replies, [Scope_get_stage, Scope_move_stage], agents)
+    answer = asyncio.run(swarm.query("where is the stage?", include_transcript=True))
+    assert "was not JSON" in answer
+
+
+def test_a_failed_query_keeps_the_partial_transcript():
+    replies = [AIMessage(content="", tool_calls=[{"name": "Scope_get_stage", "args": {}, "id": f"c{i}"}]) for i in range(20)]
+    swarm = _swarm(replies, [Scope_get_stage], [Agent("reader", "You read.", ["Scope_*"])])
+    swarm.max_steps = 4  # the lone agent loops on tool calls until the step limit
+    answer = asyncio.run(swarm.query("loop", include_transcript=True))
+    assert "ERROR:" in answer and "Scope_get_stage" in answer

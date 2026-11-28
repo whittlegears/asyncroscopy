@@ -290,6 +290,10 @@ class AgentSwarm:
         except Exception as e:
             print(f"\n[CRITICAL ERROR]: {e}")
             error = str(e)
+            # Keep what was done before the failure (for example a step limit hit
+            # after several tool calls): the caller needs it to decide what next.
+            if transcript:
+                return "\n".join([*transcript, "", f"ERROR: {error}"])
             return error
         finally:
             # Also runs when the query is cancelled, so the run record is always written.
@@ -403,14 +407,19 @@ class AgentSwarm:
 
     def _parse_routing_decision(self, content: str, valid_options: list[str], fallback: str) -> tuple[str, str]:
         """Parse a supervisor response's {'next': ...} decision, falling back on any error or invalid value."""
+        # Why the fallback was used, if it was; the supervisor puts it in the transcript.
+        self._routing_note = ""
         try:
             decision = json.loads(self._extract_json(content))
             next_agent = decision.get("next", fallback)
             subtask = decision.get("task", "")
-
-            return next_agent if next_agent in valid_options else fallback, subtask
+            if next_agent not in valid_options:
+                self._routing_note = f"Supervisor chose {next_agent!r}, which is not one of {valid_options}; using {fallback!r}"
+                return fallback, subtask
+            return next_agent, subtask
         except Exception as e:
             print(f"[SUPERVISOR ERROR]: {e}")
+            self._routing_note = f"Supervisor reply was not JSON ({str(content)[:80]!r}); using {fallback!r}"
             return fallback, ""
 
     async def _stream_agent(
@@ -596,6 +605,8 @@ class AgentSwarm:
             if self._recorder is not None:
                 self._recorder.record_call([sys_prompt] + list(state["messages"]), response, agent="Supervisor")
             next_agent, subtask = self._parse_routing_decision(response.content, valid_options, fallback)
+            if getattr(self, "_routing_note", ""):
+                record(self._routing_note)
             print(f"[Supervisor] Decision: {next_agent}")
             record(f"Supervisor -> {next_agent}: {subtask}" if next_agent != "FINISH" else "Supervisor -> FINISH")
             if next_agent == "FINISH":

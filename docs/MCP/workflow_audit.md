@@ -48,10 +48,10 @@ wrong with the graph code that exists.
 | 3 | Worker replies went back to the supervisor as user messages. | **Fixed:** they are now the worker's own `AIMessage`. |
 | 4 | The test stubs replaced LangGraph in every test, so no real graph was ever compiled. | **Fixed:** the stubs load only when the real stack is missing (`ASYNCROSCOPY_STUB_LLM_STACK=1` forces them). All 56 agent tests pass both ways. |
 | 5 | No checkpointer and no approval step: `move_stage` or `correct_aberration` runs with no person in the loop, and a run cannot be resumed. | Open. The long-running branch moves approvals to the server (`needs_approval`, operator endpoint). Port that rather than adding a second, client-side approval layer. |
-| 6 | The supervisor routes by parsing free text and silently falls back on bad output. | Open: use `with_structured_output` with a `Literal` of the agent names. |
+| 6 | The supervisor routes by parsing free text and silently falls back on bad output. | **Partly fixed:** every fallback is now written to the transcript. `with_structured_output` is still to try; check it with the local Gemma model before switching. |
 | 7 | Each worker sees only its task, not earlier results (such as an image key from another worker). | Open. |
 | 8 | The graph and every executor are rebuilt on every query. | Open: cache them per agent roster. |
-| 9 | When the step limit is hit, `query` returns only the error text and drops the partial transcript. | Open. |
+| 9 | When the step limit is hit, `query` returns only the error text and drops the partial transcript. | **Fixed:** the transcript comes back with the error. |
 
 ## Pattern for turning a notebook into a graph
 
