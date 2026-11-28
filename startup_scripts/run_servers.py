@@ -139,6 +139,105 @@ def _class_name_from_file(path: Path) -> str:
     raise ValueError(f"Instrument file {path} does not define a class")
 
 
+def project_path_text(path: Path | str) -> str:
+    """A path as the configs write it: relative to the project when it is inside it."""
+    path = Path(path)
+    if path.is_absolute():
+        try:
+            return path.relative_to(PROJECT_DIR).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
+
+
+def class_name_from_file(path_text: str, fallback: str = "Instrument") -> str:
+    """The first class defined in an instrument file, or *fallback* when it cannot be read."""
+    try:
+        return _class_name_from_file(_instrument_file(path_text))
+    except (OSError, SyntaxError, ValueError):
+        return fallback
+
+
+def uses_hardware_connection(path_text: str) -> bool:
+    """Whether an instrument file drives real hardware (needs a host and port) rather than a twin."""
+    return "digital_twin" not in Path(path_text).stem
+
+
+def _configs(config_dir: Path, first: Path) -> list[dict]:
+    """Every YAML config in *config_dir*, *first* first. Unreadable files are skipped."""
+    paths = sorted(config_dir.glob("*.yaml"), key=lambda p: (p.resolve() != first.resolve(), p.name))
+    configs = []
+    for path in paths:
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        if isinstance(raw, dict):
+            configs.append(raw)
+    return configs
+
+
+def known_devices(first: Path = DEFAULT_CONFIG_PATH) -> dict[str, dict]:
+    """Every device key any config defines, with the spec of the first config that defines it.
+
+    The server GUI lists these, so adding a device to a YAML config makes it selectable
+    without changing the GUI. Configs are read from *first*'s folder, *first* first.
+    """
+    devices: dict[str, dict] = {}
+    for raw in _configs(first.parent, first):
+        for key, spec in (raw.get("devices") or {}).items():
+            if key not in devices and isinstance(spec, dict) and spec.get("module_name"):
+                devices[key] = dict(spec)
+    return devices
+
+
+def known_instrument_files(first: Path = DEFAULT_CONFIG_PATH) -> list[str]:
+    """Every instrument file any config in *first*'s folder names, *first*'s first."""
+    files: list[str] = []
+    for raw in _configs(first.parent, first):
+        file = (raw.get("instrument") or {}).get("file")
+        if isinstance(file, str) and file and file not in files:
+            files.append(file)
+    return files
+
+
+def server_config_from_values(values: dict) -> dict:
+    """Build a run_servers YAML config from the server GUI's form values."""
+    devices = {key: spec for key, spec in values["devices"].items() if values["enabled_devices"].get(key)}
+    instrument = dict(values["instrument"])
+    selected_file = project_path_text(values["instrument_file"])
+    previous_file = project_path_text(instrument.get("file", selected_file))
+    instrument["file"] = selected_file
+    if selected_file != previous_file or not instrument.get("class_name"):
+        instrument["class_name"] = class_name_from_file(selected_file)
+    instrument.pop("hardware_host", None)
+    instrument.pop("hardware_port", None)
+    uses_hardware = uses_hardware_connection(selected_file)
+    if uses_hardware and values["hardware_host"]:
+        instrument["hardware_host"] = values["hardware_host"]
+    if uses_hardware and values["hardware_port"]:
+        instrument["hardware_port"] = int(values["hardware_port"])
+    if values["hardware_timeout_seconds"]:
+        instrument["timeout_seconds"] = int(values["hardware_timeout_seconds"])
+    return {
+        "instrument": instrument,
+        "devices": devices,
+        "tango": {
+            "host": values["tango_host"],
+            "port": int(values["tango_port"]),
+            "reset_database_file": values["reset_database_file"],
+        },
+        "tiled": {
+            "host": values["tiled_host"],
+            "port": int(values["tiled_port"]),
+            "acquisition_dir": values["acquisition_dir"],
+            "autostart": values["tiled_autostart"],
+            "register_on_startup": values["tiled_register_on_startup"],
+        },
+        "device_timeout_seconds": int(values["device_timeout_seconds"]),
+    }
+
+
 def _instrument_config(raw: dict) -> InstrumentConfig:
     instrument_file = _instrument_file(_require(raw, "file", "instrument"))
     properties = {

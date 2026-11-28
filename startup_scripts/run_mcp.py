@@ -7,6 +7,7 @@ import argparse
 import subprocess
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +48,34 @@ def _require(mapping: dict, key: str, where: str):
     if not isinstance(mapping, dict) or key not in mapping:
         raise KeyError(f"Config section '{where}' is missing required key '{key}'")
     return mapping[key]
+
+
+def parse_int_safe(val: str, default: int) -> int:
+    """The digits of a form field as an int, or *default* when it has none."""
+    cleaned = re.sub(r"\D", "", str(val).strip().rstrip("\\"))
+    return int(cleaned) if cleaned else default
+
+
+def mcp_config_from_values(values: dict) -> dict:
+    """Build a run_mcp YAML config from the MCP GUI's form values."""
+    blocked_functions = yaml.safe_load(values["blocked_functions"]) if values["blocked_functions"].strip() else {}
+    include_only_raw = values.get("include_only_functions", "")
+    config = {
+        "tango": {"host": values["tango_host"], "port": parse_int_safe(values["tango_port"], 9094)},
+        "mcp": {
+            "name": values["name"],
+            "transport": values["transport"],
+            "http_host": values["http_host"],
+            "http_port": parse_int_safe(values["http_port"], 8000),
+            "data_device_address": values["data_device_address"],
+            "quiet": values["quiet"],
+            "blocked_classes": [item.strip() for item in values["blocked_classes"].split(",") if item.strip()],
+            "blocked_functions": blocked_functions or {},
+        },
+    }
+    if include_only_raw.strip():
+        config["mcp"]["include_only_functions"] = [item.strip() for item in include_only_raw.split(",") if item.strip()]
+    return config
 
 
 def load_config(path: Path) -> Config:

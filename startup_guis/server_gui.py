@@ -1,7 +1,6 @@
 #!/usr/bin/env python 
 from __future__ import annotations 
 
-import ast 
 import sys 
 from pathlib import Path 
 
@@ -32,91 +31,11 @@ from startup_guis.qt_compat import (  # noqa: E402
     app_exec,
 )
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, GENERATED_CONFIG_DIR, TITLE_FONT, CheckBox, CollapsibleSection, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, write_yaml  # noqa: E402
+from startup_scripts.run_servers import known_devices, known_instrument_files, project_path_text, server_config_from_values  # noqa: E402
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'DigitalTwin.yaml'
 GENERATED_CONFIG_PATH = GENERATED_CONFIG_DIR / 'server_gui.yaml' 
-DEVICE_MODULES = { 
-    'aperture': 'asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript',
-    'camera': 'asyncroscopy.instruments.electron_microscope.detectors.camera', 
-    'corrector': 'asyncroscopy.instruments.electron_microscope.hardware.corrector', 
-    'data': 'asyncroscopy.data.data', 
-    'eds': 'asyncroscopy.instruments.electron_microscope.detectors.eds', 
-    'scan': 'asyncroscopy.instruments.electron_microscope.hardware.scan', 
-    'stage': 'asyncroscopy.instruments.electron_microscope.hardware.stage', 
-} 
-INSTRUMENT_FILES = [ 
-    'asyncroscopy/instruments/electron_microscope/auto_script.py', 
-    'asyncroscopy/instruments/electron_microscope/jeol.py', 
-    'asyncroscopy/instruments/electron_microscope/digital_twin.py', 
-    'asyncroscopy/instruments/scanning_probe_microscope/jupyter_api.py', 
-] 
-
-
-def project_path_text(path: Path | str) -> str: 
-    path = Path(path) 
-    if path.is_absolute(): 
-        try: 
-            return path.relative_to(PROJECT_DIR).as_posix() 
-        except ValueError: 
-            return path.as_posix() 
-    return path.as_posix() 
-
-
-def class_name_from_file(path_text: str, fallback: str = 'Instrument') -> str: 
-    path = Path(path_text).expanduser() 
-    if not path.is_absolute(): 
-        path = PROJECT_DIR / path 
-    try: 
-        tree = ast.parse(path.read_text(encoding='utf-8')) 
-    except OSError: 
-        return fallback 
-    for node in tree.body: 
-        if isinstance(node, ast.ClassDef): 
-            return node.name 
-    return fallback 
-
-
-def uses_hardware_connection(path_text: str) -> bool: 
-    return 'digital_twin' not in Path(path_text).stem 
-
-
-def server_config_from_values(values: dict) -> dict: 
-    devices = {key: spec for key, spec in values['devices'].items() if values['enabled_devices'][key]} 
-    instrument = dict(values['instrument']) 
-    selected_file = project_path_text(values['instrument_file']) 
-    previous_file = project_path_text(instrument.get('file', selected_file)) 
-    instrument['file'] = selected_file 
-    if selected_file != previous_file or not instrument.get('class_name'): 
-        instrument['class_name'] = class_name_from_file(selected_file) 
-    instrument.pop('hardware_host', None) 
-    instrument.pop('hardware_port', None) 
-    uses_hardware = uses_hardware_connection(selected_file) 
-    if uses_hardware and values['hardware_host']: 
-        instrument['hardware_host'] = values['hardware_host'] 
-    if uses_hardware and values['hardware_port']: 
-        instrument['hardware_port'] = int(values['hardware_port']) 
-    if values['hardware_timeout_seconds']: 
-        instrument['timeout_seconds'] = int(values['hardware_timeout_seconds']) 
-    return { 
-        'instrument': instrument, 
-        'devices': devices, 
-        'tango': { 
-            'host': values['tango_host'], 
-            'port': int(values['tango_port']), 
-            'reset_database_file': values['reset_database_file'], 
-        }, 
-        'tiled': { 
-            'host': values['tiled_host'], 
-            'port': int(values['tiled_port']), 
-            'acquisition_dir': values['acquisition_dir'], 
-            'autostart': values['tiled_autostart'], 
-            'register_on_startup': values['tiled_register_on_startup'], 
-        }, 
-        'device_timeout_seconds': int(values['device_timeout_seconds']), 
-    } 
-
-
 class ServerGui(QMainWindow): 
     def __init__(self): 
         super().__init__() 
@@ -126,6 +45,8 @@ class ServerGui(QMainWindow):
         self.command = ManagedCommand(self.enqueue_output, self.process_done) 
         self.default_config = load_yaml(DEFAULT_CONFIG_PATH) 
         self.device_config = self.default_config.get('devices', {}) 
+        self.known_devices = {**known_devices(DEFAULT_CONFIG_PATH), **self.device_config}
+        self.instrument_files = known_instrument_files(DEFAULT_CONFIG_PATH)
         self.inputs: dict[str, QLineEdit | QComboBox | QCheckBox] = {} 
         self.device_checks: dict[str, QCheckBox] = {} 
         self.build() 
@@ -199,7 +120,7 @@ class ServerGui(QMainWindow):
         layout.addWidget(data_server)
 
         devices = self.section('Devices', layout_cls=QGridLayout, expanded=False)
-        for index, key in enumerate(DEVICE_MODULES):
+        for index, key in enumerate(self.known_devices):
             checkbox = CheckBox(key)
             checkbox.setChecked(key in self.device_config)
             checkbox.stateChanged.connect(self.refresh_yaml)
@@ -299,7 +220,7 @@ class ServerGui(QMainWindow):
 
     def current_config(self) -> dict:
         values = {
-            'instrument_file': project_path_text(self.default_config['instrument'].get('file', INSTRUMENT_FILES[0])),
+            'instrument_file': project_path_text(self.default_config['instrument'].get('file', self.instrument_files[0])),
             'hardware_host': self.input_text('hardware_host'),
             'hardware_port': self.input_text('hardware_port'), 
             'hardware_timeout_seconds': self.input_text('hardware_timeout_seconds'), 
@@ -312,8 +233,8 @@ class ServerGui(QMainWindow):
             'tiled_autostart': self.inputs['tiled_autostart'].isChecked(), 
             'tiled_register_on_startup': self.inputs['tiled_register_on_startup'].isChecked(), 
             'device_timeout_seconds': self.input_text('device_timeout_seconds'), 
-            'enabled_devices': {key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}, 
-            'devices': {key: self.device_config.get(key, {'module_name': DEVICE_MODULES[key]}) for key in DEVICE_MODULES}, 
+            'enabled_devices': {**{key: True for key in self.device_config}, **{key: checkbox.isChecked() for key, checkbox in self.device_checks.items()}}, 
+            'devices': {**self.known_devices, **self.device_config}, 
             'instrument': self.default_config['instrument'], 
         } 
         return server_config_from_values(values) 

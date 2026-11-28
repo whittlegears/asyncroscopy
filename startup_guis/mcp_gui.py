@@ -34,6 +34,7 @@ from startup_guis.qt_compat import (  # noqa: E402
     app_exec,
 )
 from startup_guis.shared import BODY_FONT, CONFIG_DIR, DIGITAL_TWIN_HOST, GENERATED_CONFIG_DIR, SPECTRA300_HOST, TEXT_FONT, TITLE_FONT, CheckBox, CollapsibleSection, HostToggle, ManagedCommand, action_button, append_terminal_text, apply_theme, configure_splitter, configure_terminal, load_yaml, scrollable, section_label, set_tool_count_badge, tool_count_badge, write_yaml, yaml_text  # noqa: E402
+from startup_scripts.run_mcp import mcp_config_from_values  # noqa: E402
 
 
 DEFAULT_CONFIG_PATH = CONFIG_DIR / 'mcp.yaml'
@@ -44,33 +45,6 @@ TOOL_COUNT_PATTERN = re.compile(r'MCP ready: (\d+) tool')
 # Matches the fatal "MCP ERROR: ..." line mcp_server.py prints when it cannot
 # start (e.g. the port is already held by another server instance).
 MCP_ERROR_PATTERN = re.compile(r'MCP ERROR: (.+)')
-
-
-def parse_int_safe(val: str, default: int) -> int:
-    val_str = str(val).strip().rstrip('\\')
-    cleaned = re.sub(r'\D', '', val_str)
-    return int(cleaned) if cleaned else default
-
-
-def mcp_config_from_values(values: dict) -> dict:
-    blocked_functions = yaml.safe_load(values['blocked_functions']) if values['blocked_functions'].strip() else {}
-    include_only_raw = values.get('include_only_functions', '')
-    config = {
-        'tango': {'host': values['tango_host'], 'port': parse_int_safe(values['tango_port'], 9094)},
-        'mcp': {
-            'name': values['name'],
-            'transport': values['transport'],
-            'http_host': values['http_host'],
-            'http_port': parse_int_safe(values['http_port'], 8000),
-            'data_device_address': values['data_device_address'],
-            'quiet': values['quiet'],
-            'blocked_classes': [item.strip() for item in values['blocked_classes'].split(',') if item.strip()],
-            'blocked_functions': blocked_functions or {},
-        },
-    }
-    if include_only_raw.strip():
-        config['mcp']['include_only_functions'] = [item.strip() for item in include_only_raw.split(',') if item.strip()]
-    return config
 
 
 class McpGui(QMainWindow):

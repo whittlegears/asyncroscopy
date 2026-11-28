@@ -1,8 +1,9 @@
 from startup_guis import mcp_gui, server_gui
+from startup_scripts import run_mcp, run_servers
 
 
 def test_server_gui_builds_server_yaml():
-    config = server_gui.server_config_from_values(
+    config = run_servers.server_config_from_values(
         {
             'instrument': {
                 'class_name': 'AutoScriptMicroscope',
@@ -41,7 +42,7 @@ def test_server_gui_builds_server_yaml():
 
 
 def test_server_gui_omits_hardware_host_port_for_digital_twin_file():
-    config = server_gui.server_config_from_values(
+    config = run_servers.server_config_from_values(
         {
             'instrument': {
                 'class_name': 'AutoScriptMicroscope',
@@ -109,7 +110,7 @@ def test_server_gui_reads_and_writes_line_and_combo_inputs():
 
 
 def test_mcp_gui_builds_mcp_yaml():
-    config = mcp_gui.mcp_config_from_values(
+    config = run_mcp.mcp_config_from_values(
         {
             'tango_host': '10.0.0.2',
             'tango_port': '9094',
@@ -128,3 +129,40 @@ def test_mcp_gui_builds_mcp_yaml():
     assert config['mcp']['http_host'] == '0.0.0.0'
     assert config['mcp']['blocked_classes'] == ['DataBase', 'DServer']
     assert config['mcp']['blocked_functions'] == {'*': ['Init', 'Kill']}
+
+
+def test_the_gui_offers_every_device_and_instrument_the_configs_define(tmp_path):
+    (tmp_path / "first.yaml").write_text(
+        "instrument: {file: asyncroscopy/instruments/electron_microscope/digital_twin.py}\n"
+        "devices:\n  stage: {module_name: first.stage}\n  data: {module_name: asyncroscopy.data.data}\n"
+    )
+    (tmp_path / "other.yaml").write_text(
+        "instrument: {file: asyncroscopy/instruments/scanning_probe_microscope/jupiter_api.py}\n"
+        "devices:\n  stage: {module_name: other.stage}\n  new_detector: {module_name: lab.new_detector}\n"
+    )
+    (tmp_path / "broken.yaml").write_text("devices: [not, a, mapping")
+    first = tmp_path / "first.yaml"
+
+    devices = run_servers.known_devices(first)
+    assert devices == {
+        "stage": {"module_name": "first.stage"},
+        "data": {"module_name": "asyncroscopy.data.data"},
+        "new_detector": {"module_name": "lab.new_detector"},
+    }
+    assert run_servers.known_instrument_files(first) == [
+        "asyncroscopy/instruments/electron_microscope/digital_twin.py",
+        "asyncroscopy/instruments/scanning_probe_microscope/jupiter_api.py",
+    ]
+
+
+def test_the_shipped_configs_name_instrument_files_that_exist():
+    for file in run_servers.known_instrument_files(run_servers.PROJECT_DIR / "configs" / "DigitalTwin.yaml"):
+        assert (run_servers.PROJECT_DIR / file).is_file(), file
+
+
+def test_the_guis_define_no_config_logic_of_their_own():
+    for name in ("server_config_from_values", "class_name_from_file", "project_path_text", "uses_hardware_connection"):
+        assert getattr(server_gui, name, None) in (None, getattr(run_servers, name))
+    for name in ("mcp_config_from_values", "parse_int_safe"):
+        assert getattr(mcp_gui, name, None) in (None, getattr(run_mcp, name))
+    assert not hasattr(server_gui, "DEVICE_MODULES") and not hasattr(server_gui, "INSTRUMENT_FILES")
