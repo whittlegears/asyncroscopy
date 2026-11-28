@@ -17,9 +17,6 @@ procedures:
   instrument_url: http://127.0.0.1:8000/mcp
   analysis_url: http://127.0.0.1:8003/mcp
   analysis_transport: sse
-  # ML suggestions server (configs/ml.yaml), used when a procedure runs with
-  # optimizer "bayesian". Leave empty if it is not running.
-  ml_url: http://127.0.0.1:8011/mcp
 
   # Pin a tool when more than one instrument tool matches a role, e.g.
   #   move_stage: DigitalTwinTilt_move_stage

@@ -217,3 +217,42 @@ def test_tune_aberration_refuses_contrast(tmp_path):
     failed, message = run(scope, "tune_aberration", {"name": "A1", "metric": "contrast"})
     assert failed and "contrast" in message
     assert scope.acquisitions == 0
+
+
+def _bayesian_available():
+    import importlib.util
+    return all(importlib.util.find_spec(name) for name in ("torch", "gpytorch", "botorch"))
+
+
+@pytest.mark.skipif(not _bayesian_available(), reason="pyTEMlib[ml] not installed")
+def test_bayesian_focus_uses_the_analysis_server(tmp_path):
+    scope = Scope(tmp_path, focus_z=30e-9)
+    failed, result = run(scope, "focus_stage_z", {"step_m": 40e-9, "max_offset_m": 400e-9,
+                                                  "optimizer": "bayesian", "max_iterations": 10})
+    assert not failed, result
+    assert result["best_z_m"] == pytest.approx(30e-9, abs=8e-9)
+    assert all(abs(item["point"][0] - 120e-9) <= 400e-9 + 1e-15 for item in result["history"])
+    assert any(item["trial"].startswith("bayesian") for item in result["history"])
+
+
+@pytest.mark.skipif(not _bayesian_available(), reason="pyTEMlib[ml] not installed")
+def test_bayesian_aberration_tuning_restores_on_failure(tmp_path):
+    scope = Scope(tmp_path, aberration=(6e-9, -4e-9), fail_after=7)
+    failed, message = run(scope, "tune_aberration", {"name": "A1", "step_m": 2e-9, "max_offset_m": 15e-9,
+                                                     "optimizer": "bayesian"})
+    assert failed and "detector timed out" in message
+    np.testing.assert_allclose(scope.aberration, [6e-9, -4e-9], atol=1e-18)
+
+
+def test_bayesian_without_the_ml_tools_is_refused_before_moving(tmp_path, monkeypatch):
+    monkeypatch.setattr(analysis_tools, "bayesian_optimization", None)
+    scope = Scope(tmp_path)
+    failed, message = run(scope, "focus_stage_z", {"optimizer": "bayesian"})
+    assert failed and "analysis_capabilities" in message
+    assert scope.moves == [] and scope.acquisitions == 0
+
+
+def test_unknown_optimizer_is_refused(tmp_path):
+    scope = Scope(tmp_path)
+    failed, message = run(scope, "focus_stage_z", {"optimizer": "genetic"})
+    assert failed and "optimizer" in message and scope.moves == []
