@@ -89,6 +89,34 @@ blocked_functions:
     - Disconnect
 ```
 
+## Commands that wait for an operator
+
+Blocking hides a command. To keep a command available but put a person in the
+loop, list it under `needs_approval` instead:
+
+```yaml
+mcp:
+  needs_approval:
+    "*": [move_stage, acquire_map_grid, correct_aberration, set_column_valves, unblank_beam]
+  approvals_db: outputs/approvals.sqlite
+```
+
+Patterns match by Tango class or `"*"`, and `Class.command` also works.
+
+- **Agent endpoint** (the default `role: agent`). A listed command does not
+  run. The call is stored in `approvals_db`, and the tool answers with an error
+  that starts `HELD <id>`. The agent can check it with `call_status`.
+- **Operator endpoint.** A second bridge with `role: operator` and the same
+  `approvals_db` runs every command directly. It also offers `list_pending`,
+  `approve_call` and `deny_call`. Approving runs the held command there and
+  stores the result for `call_status`. Give this endpoint only to a person or
+  their GUI, never to an agent.
+
+For the digital twin, `configs/mcp_dt.yaml` has this on, and
+`configs/mcp_dt_operator.yaml` is its operator endpoint, on port 8010. On the
+microscope config it is commented out until it has been tried there.
+Workflows (`asyncroscopy/agent_workflows`) wait on held calls by themselves.
+
 ## Running without the startup script
 
 `run_mcp.py` passes the config to the module as arguments. To run the module directly against a stack that is up:
