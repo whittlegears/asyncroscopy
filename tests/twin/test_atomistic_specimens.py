@@ -88,7 +88,6 @@ def test_a_view_is_a_function_of_the_stage_and_field():
     assert len(field.atoms) > 0 and set(field.atoms.numbers) == {79}
 
 
-# Output against the golden statistics
 def _fingerprint(array) -> dict:
     a = np.asarray(array, dtype=np.float64)
     blocks = np.array_split(a.reshape(a.shape[0], -1).mean(axis=1), 8) if a.ndim == 2 else [a]

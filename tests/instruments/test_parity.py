@@ -151,7 +151,6 @@ def backend(request):
     return request.getfixturevalue(request.param)
 
 
-# accepted arguments
 def test_in_range_values_are_accepted_and_read_back(backend):
     backend.call("set_fov", 3e-7)
     assert backend.call("get_fov") == pytest.approx(3e-7)
@@ -214,7 +213,6 @@ def test_bad_scan_settings_are_refused_before_the_instrument(backend, imsize, dw
     assert backend.instrument_writes("acquisition") == []
 
 
-# return shapes and keys
 def test_get_stage_reports_the_instrument_without_a_stage_device(backend):
     """get_stage answers from the instrument itself, so it works (and is right) with no STAGE settings device."""
     backend.call("move_stage", [4e-7, -1e-7, 0.0, 0.0, 0.0])

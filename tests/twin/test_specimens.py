@@ -131,7 +131,6 @@ def test_procedural_specimen_is_bit_identical_to_the_golden_run(tango_ctx, monke
             assert np.allclose(run[name], golden[name], rtol=1e-3, atol=3.0), name
 
 
-# Registry and selection
 def _context(**sample) -> SpecimenContext:
     return SpecimenContext(rng=EventRng(3), sample=SampleParams(**{"size_xy_m": 4e-7, "particle_count": 30, "radius_mean_m": 8e-9, **sample}), base_dir=ROOT)
 
@@ -243,7 +242,6 @@ def test_a_procedural_seed_option_changes_the_sample_and_nothing_else():
     assert a.particle_table() != b.particle_table()
 
 
-# recorded
 def test_recorded_images_load_from_every_format_with_their_pixel_size(tmp_path):
     image, pixel = load_image(EXAMPLE_IMAGE)
     assert image.shape == (256, 256) and pixel is None  # a PNG carries no pixel size so the option gives it
@@ -297,7 +295,6 @@ def test_recorded_labels_give_ground_truth_eds_and_damage():
     assert bright["Au"] == pytest.approx(3 * bright["Pd"]) and bright["Au"] > 0
 
 
-# crystal
 def test_crystal_shows_lattice_columns_at_atomic_resolution():
     crystal = build_specimen({"source": "crystal", "grain_count": 4}, _context())
     lattice = crystal.ground_truth()["lattice"]
@@ -326,7 +323,6 @@ def test_crystal_grains_show_in_an_overview_and_in_eds():
     assert other.ground_truth()["grains"] != truth["grains"]
 
 
-# Same controller, different samples
 CROSS_PLAN = {
     "box_m": [-1.2e-7, 1.2e-7, -1.2e-7, 1.2e-7],
     "fov_m": 1e-7,

@@ -103,7 +103,6 @@ def setup_error(twin, device, seed: int, c1_m: float, a1_m=(0.0, 0.0)):
     return x, y
 
 
-# Pure routines
 def test_search_1d_finds_a_noisy_symmetric_peak_without_leaving_its_range():
     rng = np.random.default_rng(0)
     seen = []
@@ -138,7 +137,6 @@ def test_metrics_prefer_the_sharper_image_and_ignore_brightness():
     assert focus.error_grew(1e-8, 2e-8) and not focus.error_grew(1e-8, 0.5e-8)
 
 
-# The twin's hidden focus truth
 def test_twin_hides_its_focus_error_and_blurs_with_it(fresh, tuner_twin):
     twin, device = fresh
     twin.set_fov(1e-7)
@@ -354,7 +352,6 @@ def test_a_forty_line_example_strategy_registered_from_a_test(fresh, tuner_proxy
         STRATEGIES.unregister("hill_climb_example")
 
 
-# Through the MCP server's run_job
 JSON_REQUEST = type("CommandInfo", (), {
     "in_type": tango.CmdArgType.DevString, "out_type": tango.CmdArgType.DevString,
     "in_type_desc": ':param request: JSON {"plan": {...}, "reservation_id": "..."}.', "out_type_desc": "",

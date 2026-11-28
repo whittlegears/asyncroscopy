@@ -40,7 +40,6 @@ from tango.test_context import MultiDeviceTestContext
 
 from asyncroscopy.testing import prop_path
 
-# Import device classes to test
 from asyncroscopy.instruments.electron_microscope.detectors.camera import CAMERA
 from asyncroscopy.instruments.electron_microscope.detectors.eds import EDS
 from asyncroscopy.instruments.electron_microscope.hardware.scan import SCAN
@@ -68,7 +67,6 @@ from asyncroscopy.instruments.yaml_sim.device import device_class as yaml_device
 from asyncroscopy.instruments.yaml_sim.job import job_class as yaml_job_class
 
 
-
 @register_specimen
 class SmallParticleWorld(ParticleWorld):
     """The particle twin's specimen with a small voxel world: a property value in this test database cannot carry a
@@ -92,8 +90,6 @@ class FakeAdornedImage:
     def __init__(self, data: np.ndarray) -> None:
         self.data = data
 
-
-# We use DigitalTwin as our simulated microscope for all tests.
 
 MAPPING_TWIN_PROPERTIES = {
     "sample_seed": 2024,
@@ -225,8 +221,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                 {
                     "name": "asyncroscopy/scan/default",
                     "properties": {
-                        # put SCAN defaults here if you want
-                        # e.g. "dwell_time": 2e-6  (only if it's a device_property)
                     },
                 },
                 {"name": "asyncroscopy/scan/mapping", "properties": {}},
@@ -826,7 +820,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
         data = tango.DeviceProxy(ctx.get_device_access("asyncroscopy/data/default"))
         data.save_path = str(data_save_dir)
         yield ctx
-
 
 
 @pytest.fixture(scope="session")

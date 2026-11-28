@@ -28,7 +28,6 @@ def _sample(**options) -> SampleModel:
     return SampleModel(params, EventRng(SEED))
 
 
-# Support texture
 def test_the_texture_does_not_move_any_particle():
     plain, textured = _sample(), _sample(support_texture=0.3)
     assert plain.particle_table() == textured.particle_table()
@@ -71,7 +70,6 @@ def test_survey_and_atomic_drawings_of_a_particle_agree_at_the_switch():
     assert np.corrcoef(survey.ravel(), atomic.ravel())[0, 1] > 0.9
 
 
-# Sub-pixel atoms
 @pytest.mark.parametrize("subpixel", [True, False])
 def test_an_atom_is_drawn_at_its_sub_pixel_position(subpixel):
     sample = _sample(subpixel_atoms=subpixel)
@@ -92,7 +90,6 @@ def test_an_atom_is_drawn_at_its_sub_pixel_position(subpixel):
         assert error > 0.1
 
 
-# Detector drift
 def test_detector_gain_and_offset_drift_within_bounds_and_repeat():
     base = DetectorParams(gain=2.0, offset=10.0)
     drift = DetectorDrift(0.1, 2.0, EventRng(SEED).for_event("detector_drift"))
@@ -112,7 +109,6 @@ def test_impossible_drift_is_refused():
         DetectorDrift(1.5, 0.0, EventRng(SEED).for_event("detector_drift"))
 
 
-# Dose stays where it landed
 def _frame(cx: float, cy: float, fov: float, n: int = 128) -> tuple[np.ndarray, np.ndarray, float]:
     pixel = fov / n
     coords = (np.arange(n) + 0.5) * pixel - fov / 2

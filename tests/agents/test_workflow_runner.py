@@ -22,8 +22,6 @@ def ok(run, *specs):
     return {name: result["ok"] for name, result in evaluate(run, list(specs)).items()}
 
 
-# placeholders and replies
-
 def test_a_placeholder_without_a_value_stops_the_run_as_infra():
     assert run_workflows.render("x = {poi_x_nm} nm", {"poi_x_nm": 200.0}) == "x = 200.0 nm"
     assert run_workflows.render("{poi_x}", {"poi_x": 2e-7}) == 2e-7  # a whole placeholder keeps its type
@@ -48,8 +46,6 @@ def test_points_of_interest_are_read_from_every_list_pois_shape(reply):
     live.analysis = Analysis()
     assert asyncio.run(live.pois("map_r1_map")) == [[1e-7, 2e-7], [3e-7, 4e-7]]
 
-
-# the row's metrics
 
 def test_the_sleepwalking_metric_uses_each_workflows_own_allow_list():
     assert workflow_allow({"checks": [{"check": "no_actuation"}]}) == []
@@ -150,8 +146,6 @@ def test_a_job_that_finishes_before_it_can_be_aborted_fails_fast(monkeypatch):
     with pytest.raises(run_workflows.WorkflowError, match="make the plan bigger"):
         asyncio.run(run_workflows.wait_for({"job_steps_at_least": 3, "timeout_s": 5}, 0.0, CALLER))
 
-
-# more checks
 
 def test_a_stitched_map_of_this_run_must_be_named_in_the_answer():
     done = job("Mapper.done", result=json.dumps({"result_keys": {"map": "map_r7_map"}}))

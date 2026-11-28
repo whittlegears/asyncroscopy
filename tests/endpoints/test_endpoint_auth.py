@@ -186,7 +186,6 @@ def trace(stack, role):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.exists() else []
 
 
-# refusals
 def test_no_token_is_refused(stack, keys):
     assert http_status(stack["agent"]) == 401 and http_status(stack["operator"]) == 401
     assert http_status(stack["agent"], token(keys, "alice", "instrument:read")) == 200
@@ -234,7 +233,6 @@ def test_a_token_without_an_expiry_is_refused(stack, keys):
     assert http_status(stack["agent"], forever) == 401
 
 
-# roles from the risk policy
 def test_a_read_token_can_get_stage_but_not_move_stage(stack, keys):
     tok = token(keys, "reader", "instrument:read")
     offered = tools(stack["agent"], tok)
@@ -349,7 +347,6 @@ def test_roles_follow_the_tool_descriptors():
     assert required_role(None) == "operate"  # a tool the endpoint does not know counts as high
 
 
-# the config
 def test_auth_config_is_checked(keys, tmp_path):
     good = keys["auth"]
     assert AuthSettings.from_config(None) is None and AuthSettings.from_config({}) is None
@@ -391,7 +388,6 @@ def test_without_auth_nothing_changes(monkeypatch):
     assert server.caller() == "general-agent"
 
 
-# run_mcp refuses open hardware without auth
 def test_remote_without_auth_rule():
     assert remote_without_auth("0.0.0.0", simulated=False, auth=None)
     assert remote_without_auth("192.0.2.5", simulated=False, auth=None)
@@ -451,7 +447,6 @@ def test_mcp_server_main_refuses_too(monkeypatch, capsys):
     assert "MCP ERROR" in capsys.readouterr().out
 
 
-# agents send the token
 def test_agents_send_the_token(monkeypatch):
     from asyncroscopy.agents.config import AgentConfig
     from asyncroscopy.agents.mcp_tools import McpServer

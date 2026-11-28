@@ -32,7 +32,6 @@ from tests.fake_autoscript import FakeAutoScriptClient
 from tests.instruments.test_parity import autoscript_device
 
 
-# stale beam current
 MEASURED = {"beam_current_pa": 40.0, "beam_current_source": "measured", "beam_current_age_s": 10.0}
 
 
@@ -117,7 +116,6 @@ def test_a_stale_measured_current_is_refused_by_the_tuner_on_hardware(autoscript
         Tuner.resolve_plan(tuner, plan)
 
 
-# a Tuner without a Tango server
 class FakeTunerMicroscope:
     def __init__(self, stigmator=True, parameters_from=None, autofocus_to=None):
         self.defocus, self.stig, self.fov = 0.0, [0.0, 0.0], 2e-7
@@ -205,7 +203,6 @@ def tuner_stub(microscope, simulated=True, corrector=None, **extra):
     return stub
 
 
-# OptiSTEM and the stigmator
 def test_vendor_autofocus_is_refused_where_the_stigmator_cannot_be_restored():
     tuner = tuner_stub(FakeTunerMicroscope(stigmator=False))
     with pytest.raises(ValueError, match="stigmator"):

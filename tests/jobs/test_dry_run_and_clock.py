@@ -46,7 +46,6 @@ def trace_events(path: Path, run_id: str) -> list[dict]:
     return [e for e in (json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()) if e.get("run_id") == run_id]
 
 
-# Dry run
 class TestRecordingProxy:
     class Fake:
         def __init__(self):
@@ -150,7 +149,6 @@ def test_dry_run_is_fixed_at_reserve(mapper_proxy):
         call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})
 
 
-# The simulated flag
 def test_the_endpoint_binds_every_interface_only_on_a_simulator_or_when_the_config_says_so():
     assert bind_host("0.0.0.0", allow_remote_bind=False, simulated=False)[0] == "127.0.0.1"
     assert "allow_remote_bind" in bind_host("0.0.0.0", allow_remote_bind=False, simulated=False)[1]
@@ -207,7 +205,6 @@ def test_run_mcp_passes_allow_remote_bind(tmp_path):
     assert "--allow-remote-bind" in run_mcp.build_command(run_mcp.load_config(opened))
 
 
-# One time source
 def test_twins_report_their_simulated_clock_and_hardware_its_own(tango_ctx):
     twin = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/drift"))
     start = twin.read_attribute("clock_s").value

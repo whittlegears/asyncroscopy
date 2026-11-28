@@ -164,9 +164,6 @@ def test_feature_kinds_cover_what_they_claim():
     assert 4 * np.sqrt(SUPPORT) * 0.99 <= low.max() <= 8 * np.sqrt(SUPPORT) * 1.01
 
 
-# three probe cases
-
-
 def _noisy(signal, seed):
     return np.random.default_rng(seed).poisson(SUPPORT + signal).astype(np.float64)
 
