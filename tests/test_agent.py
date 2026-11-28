@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 import types
 
@@ -16,6 +17,13 @@ def setup_llm_stubs():
 
     if "langgraph.graph" in sys.modules:
         return
+    # Use the real stack when it is installed (uv sync --extra agent), so the graphs
+    # are really compiled and run; stub it only where it is missing.
+    import importlib.util
+    if os.environ.get("ASYNCROSCOPY_STUB_LLM_STACK") != "1" and all(
+        importlib.util.find_spec(name) for name in ("langgraph", "langchain", "langchain_core", "langchain_mcp_adapters")
+    ):
+        return
 
     base_msg_cls = type("BaseMessage", (), {})
     human_msg_cls = type("HumanMessage", (base_msg_cls,), {
@@ -27,8 +35,9 @@ def setup_llm_stubs():
         "__init__": lambda self, content: setattr(self, "content", content),
     })
     ai_msg_cls = type("AIMessage", (base_msg_cls,), {
-        "__init__": lambda self, content, tool_calls=None: (
+        "__init__": lambda self, content, tool_calls=None, name=None: (
             setattr(self, "content", content) or setattr(self, "tool_calls", tool_calls or [])
+            or setattr(self, "name", name)
         ),
     })
     tool_msg_cls = type("ToolMessage", (base_msg_cls,), {
@@ -366,7 +375,9 @@ class TestOpenAIMessagesToLangchain:
             }],
         }])
         assert isinstance(msg, AIMessage)
-        assert msg.tool_calls == [{"name": "acquire_image", "args": {"detector": "haadf"}, "id": "call_1"}]
+        # The real AIMessage adds "type": "tool_call"; the stub does not.
+        calls = [{k: v for k, v in call.items() if k != "type"} for call in msg.tool_calls]
+        assert calls == [{"name": "acquire_image", "args": {"detector": "haadf"}, "id": "call_1"}]
 
     def test_tool_message_becomes_tool_message(self):
         [msg] = AgentSwarm._openai_messages_to_langchain([{

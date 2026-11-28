@@ -312,18 +312,37 @@ class ElectronMicroscope(Instrument):
         'eds (bool, acquire an EDS point spectrum at each tile centre, default false), '
         'settle_s (float, pause after each stage move, default 0), '
         'snake (bool, serpentine traversal, default true), '
-        'flip_x / flip_y (bool, invert stage step direction, default false), '
+        'calibrate (bool, default true: first measure which way each stage axis moves the image), '
+        'calibration_step_fraction (float, test move as a fraction of the field of view, default 0.2), '
+        'calibration_fov_m (float, field of view for the test moves; use a lower magnification when the '
+        'mapping field of view shows only a lattice. Default: the current field of view), '
+        'stage_to_image_px_per_m (2 x 2 list, a known calibration from an earlier manifest; skips measuring), '
+        'flip_x / flip_y (bool, only with calibrate false: invert the assumed stage direction), '
         'return_to_start (bool, default true). Example: {"rows": 3, "cols": 3}',
         dtype_out=str,
-        doc_out='JSON grid manifest: {"grid": [rows, cols], "overlap", "fov_m", '
-        '"pixel_size_nm", "stage_origin_m", "tiles": [{"row", "col", "key", '
-        '"stage_xy_m", "eds_key"}]}. Pass the tiles to the mapping MCP server '
-        '(a separate MCP connection - see start_map/add_tiles) to stitch a '
-        'zoomable sample map; this command only drives the stage and camera.',
+        doc_out='JSON grid manifest: {"grid": [rows, cols], "overlap", "fov_m", "imsize_px", '
+        '"pixel_size_nm", "stage_origin_m", "calibration", "tiles": [{"row", "col", "key", '
+        '"stage_xy_m" (read back after the move), "commanded_xy_m", "eds_key"}]}. Pass the tiles '
+        'to the mapping MCP server (a separate MCP connection - see start_map/add_tiles) to stitch '
+        'a zoomable sample map; this command only drives the stage and camera.',
     )
     def acquire_map_grid(self, spec: str) -> str:
-        """Acquire an N x M grid of overlapping images by stepping the stage, for building a zoomable sample map. Returns a JSON manifest of DATA keys; stitch it on the mapping MCP server (start_map/add_tiles/finalize_map)."""
-        from asyncroscopy.mapping.grid_math import plan_grid
+        """Acquire an N x M grid of overlapping images by stepping the stage, for building a zoomable sample map.
+
+        Before the grid it measures which way each stage axis moves the image (one
+        small move per axis), so tile (r, c + 1) is always to the right of tile (r, c)
+        in the image, whatever the scan rotation or axis convention. The scan stops
+        with an error if that measurement fails its checks. Returns a JSON manifest of
+        DATA keys; stitch it on the mapping MCP server (start_map/add_tiles/finalize_map).
+        """
+        import numpy as np
+
+        from asyncroscopy.mapping.calibration import (
+            DEFAULT_STEP_FRACTION,
+            StageCalibration,
+            measure_stage_to_image,
+            plan_calibrated_grid,
+        )
 
         cfg = json.loads(spec) if spec and spec.strip() else {}
         rows = int(cfg.get('rows', 3))
@@ -338,6 +357,8 @@ class ElectronMicroscope(Instrument):
             raise ValueError('overlap must be between 0 and 0.6')
 
         scan = self._detector_proxies.get('scan')
+        if scan is None:
+            raise ValueError('acquire_map_grid needs a SCAN device')
         eds_proxy = self._detector_proxies.get('eds') if want_eds else None
         if want_eds and eds_proxy is None:
             raise ValueError('EDS requested but no EDS device is configured')
@@ -346,39 +367,70 @@ class ElectronMicroscope(Instrument):
         if fov_raw is None or float(fov_raw) <= 0:
             raise ValueError('Field of view is not set; call set_fov before acquire_map_grid')
         fov = float(fov_raw)
-        step = fov * (1.0 - overlap)
-        order = plan_grid(
-            rows,
-            cols,
-            step,
-            step,
-            snake=bool(cfg.get('snake', True)),
-            flip_x=bool(cfg.get('flip_x', False)),
-            flip_y=bool(cfg.get('flip_y', False)),
-        )
+        imsize = int(scan.imsize)
+        pixel_size_m = fov / imsize
+
+        def acquire_key() -> str:
+            return self._acquire_scanned_image(imsize, scan.dwell_time, detectors, list(scan.scan_region), scan.output_format)
+
+        def settle_move(position) -> None:
+            self._move_stage([float(v) for v in position])
+            if settle_s > 0:
+                time.sleep(settle_s)
 
         start = [float(v) for v in self._get_stage()]
+        if cfg.get('stage_to_image_px_per_m') is not None:
+            calibration = StageCalibration.from_matrix(cfg['stage_to_image_px_per_m'], pixel_size_m)
+        elif bool(cfg.get('calibrate', True)):
+            step_fraction = float(cfg.get('calibration_step_fraction', DEFAULT_STEP_FRACTION))
+            # At atomic resolution a lattice can fool the correlation, so the test moves
+            # may run at a lower magnification. The matrix scales with 1 / pixel size;
+            # this assumes the scan rotation is the same at both magnifications.
+            cal_fov = float(cfg.get('calibration_fov_m') or fov)
+            if cal_fov != fov:
+                self._set_fov(cal_fov)
+            try:
+                coarse = measure_stage_to_image(
+                    acquire=lambda: self._read_scanned_image(acquire_key()),
+                    move=settle_move,
+                    start=start,
+                    pixel_size_m=cal_fov / imsize,
+                    step_m=step_fraction * cal_fov,
+                )
+            finally:
+                if cal_fov != fov:
+                    self._set_fov(fov)
+            calibration = coarse
+            if cal_fov != fov:
+                calibration = StageCalibration(
+                    (np.asarray(coarse.px_per_m) * (cal_fov / fov)).tolist(),
+                    pixel_size_m,
+                    coarse.step_m,
+                    coarse.confidence,
+                    coarse.length_error,
+                    coarse.axis_cosine,
+                    calibration_fov_m=cal_fov,
+                )
+        else:
+            calibration = StageCalibration.nominal(
+                pixel_size_m, flip_x=bool(cfg.get('flip_x', False)), flip_y=bool(cfg.get('flip_y', False))
+            )
+        order = plan_calibrated_grid(rows, cols, imsize * (1.0 - overlap), calibration, snake=bool(cfg.get('snake', True)))
+
         tiles = []
         try:
             for cell in order:
                 target = list(start)
                 target[0] = start[0] + cell['offset_m'][0]
                 target[1] = start[1] + cell['offset_m'][1]
-                self._move_stage(target)
-                if settle_s > 0:
-                    time.sleep(settle_s)
-                key = self._acquire_scanned_image(
-                    scan.imsize,
-                    scan.dwell_time,
-                    detectors,
-                    list(scan.scan_region),
-                    scan.output_format,
-                )
+                settle_move(target)
+                actual = [float(v) for v in self._get_stage()]
                 entry = {
                     'row': cell['row'],
                     'col': cell['col'],
-                    'key': key,
-                    'stage_xy_m': [target[0], target[1]],
+                    'key': acquire_key(),
+                    'stage_xy_m': actual[:2],
+                    'commanded_xy_m': target[:2],
                 }
                 if eds_proxy is not None:
                     self._place_beam([0.5, 0.5])
@@ -388,18 +440,42 @@ class ElectronMicroscope(Instrument):
             if bool(cfg.get('return_to_start', True)):
                 self._move_stage(start)
 
-        pixel_size_nm = fov / float(scan.imsize) * 1e9 if scan is not None else None
         return json.dumps(
             {
                 'grid': [rows, cols],
                 'overlap': overlap,
                 'fov_m': fov,
-                'pixel_size_nm': pixel_size_nm,
+                'imsize_px': imsize,
+                'pixel_size_nm': pixel_size_m * 1e9,
                 'stage_origin_m': start[:2],
+                'calibration': calibration.as_dict(),
                 'tiles': tiles,
             }
         )
 
+    def _read_scanned_image(self, key: str):
+        """The first 2D image saved under a DATA key: a local HDF5 path, or a Tiled key."""
+        import os
+
+        import h5py
+        import numpy as np
+
+        from asyncroscopy.analysis.analysis_device import _first_image, _h5_read, _is_local_file, _tiled_read
+
+        if _is_local_file(key):
+            with h5py.File(key, 'r') as h5:
+                found = _first_image(h5, _h5_read)
+        else:
+            from tiled.client import from_uri
+
+            data = self._detector_proxies.get('data')
+            if data is None:
+                raise ValueError(f'{key!r} is not a local file and no DATA device is configured to resolve it')
+            client = from_uri(json.loads(data.get_config())['uri'], api_key=os.environ.get('ASYNCROSCOPY_TILED_API_KEY', 'secret'))
+            found = _first_image(client[key], _tiled_read)
+        if found is None:
+            raise ValueError(f'No 2D image found under {key!r}')
+        return np.asarray(found[0], dtype=float)
 
     @abstractmethod
     def _acquire_scanned_image(

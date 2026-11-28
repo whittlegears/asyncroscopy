@@ -26,7 +26,34 @@ except ImportError:
     print("uv sync --extra agent --extra ollama")
     sys.exit(1)
 
+try:
+    from langchain.agents.middleware import wrap_tool_call
+except ImportError:  # the test stubs of the LangChain stack have no middleware
+    wrap_tool_call = None
+
 from asyncroscopy.training.recorder import TrainingRecorder, to_openai_message
+
+
+def _tool_error_middleware():
+    """Return a failed tool call to the model as an error message instead of ending the run.
+
+    Without it, create_agent re-raises a tool's exception (a Tango DevFailed arrives
+    as a ToolException) and the whole query stops, so the model never sees the
+    error or the bridge's "this failed N times, stop" hint. There is no retry: an
+    instrument command such as move_stage must not run twice because it timed out.
+    """
+    if wrap_tool_call is None:
+        return []
+
+    @wrap_tool_call
+    async def report_tool_errors(request, handler):
+        try:
+            return await handler(request)
+        except Exception as exc:
+            name = request.tool_call.get("name", "tool")
+            return ToolMessage(content=f"{name} failed: {exc}", tool_call_id=request.tool_call["id"], status="error")
+
+    return [report_tool_errors]
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_MODEL = "gemma4:31b"
@@ -363,7 +390,9 @@ class AgentSwarm:
         print(f"[SYSTEM]: Binding {len(agent_tools)} tools to {agent.name}")
         if self._recorder is not None:
             self._tool_schemas[agent.name] = [self._tool_schema(tool) for tool in agent_tools]
-        return create_agent(model=self._model, tools=agent_tools, system_prompt=agent.system_prompt)
+        return create_agent(
+            model=self._model, tools=agent_tools, system_prompt=agent.system_prompt, middleware=_tool_error_middleware()
+        )
 
     def _extract_json(self, text: str) -> str:
         """Strip markdown code fences (```json ... ``` or ``` ... ```) if present."""
@@ -509,13 +538,18 @@ class AgentSwarm:
                 print(f"\n[{agent.name}] assigned task: '{task}'")
                 record(f"{agent.name} assigned task: {task}")
 
+                # max_steps bounds each worker too; without it create_agent allows
+                # thousands of steps inside one supervisor hop.
                 content = await self._stream_agent(
-                    agent_executor, [HumanMessage(content=task)], agent_label=agent.name, transcript=transcript
+                    agent_executor, [HumanMessage(content=task)], agent_label=agent.name, transcript=transcript,
+                    recursion_limit=self.max_steps,
                 )
                 print(f"[{agent.name}] finished.\n")
                 return {
                     "messages": [
-                        HumanMessage(content=f"[{agent.name}]: {content}", name=agent.name)
+                        # The worker's reply, not a user turn: the supervisor must not read
+                        # it as a new instruction.
+                        AIMessage(content=f"[{agent.name}]: {content}", name=agent.name)
                     ]
                 }
 

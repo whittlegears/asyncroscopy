@@ -162,6 +162,19 @@ def tango_ctx(data_save_dir):
                         "camera_device_address": "asyncroscopy/camera/default",
                         "acquisition_save_directory": str(data_save_dir),
                     },
+                },
+                {
+                    # A wider sample with stage error, for grid scans: the default twin's
+                    # sample is 6 nm across, too small to tile.
+                    "name": "asyncroscopy/digitaltwin/mapping",
+                    "properties": {
+                        "scan_device_address": "asyncroscopy/scan/default",
+                        "stage_device_address": "asyncroscopy/stage/default",
+                        "acquisition_save_directory": str(data_save_dir),
+                        "sample_size_xy": 30e-9,
+                        "sample_particle_count": 80,
+                        "stage_move_noise_std": 30e-12,
+                    },
                 }
             ],
         },
@@ -234,6 +247,11 @@ def scan_proxy(tango_ctx):
 @pytest.fixture(scope="session")
 def twin_proxy(tango_ctx):
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/default"))
+
+
+@pytest.fixture(scope="session")
+def mapping_twin_proxy(tango_ctx):
+    return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwin/mapping"))
 
 
 @pytest.fixture(scope="session")

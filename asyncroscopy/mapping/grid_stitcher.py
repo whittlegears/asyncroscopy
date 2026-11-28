@@ -32,6 +32,7 @@ Usage
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 from dataclasses import dataclass, field
@@ -53,6 +54,14 @@ class EdgeMeasurement:
     origin, in pixels ``(dx, dy)``.  ``response`` is the phase-correlation
     peak response (higher is better); ``used`` is False when the measurement
     was rejected and the nominal grid offset was substituted.
+
+    ``reason`` says why: ``"ok"``, ``"weak"`` (low response or far from the
+    grid), ``"stage"`` (it disagreed with the stage prediction, see
+    ``max_stage_disagreement_px``), or ``"inconsistent"`` (it disagreed with the other edges by more
+    than ``max_residual_px`` after the global solve; on a crystal lattice this
+    is usually a match one lattice period off). ``offset`` keeps the measured
+    value for an inconsistent edge so it can be inspected; ``nominal`` is what
+    the solve used instead.
     """
 
     a: GridKey
@@ -61,6 +70,8 @@ class EdgeMeasurement:
     response: float
     used: bool
     residual: float = 0.0
+    nominal: Optional[Tuple[float, float]] = None
+    reason: str = "ok"
 
 
 @dataclass
@@ -71,12 +82,20 @@ class GridStitchResult:
     positions: Dict[GridKey, Tuple[float, float]]
     edges: List[EdgeMeasurement] = field(default_factory=list)
     tile_shapes: Dict[GridKey, Tuple[int, int]] = field(default_factory=dict)
+    # Canvas (dx, dy) pixels per metre of stage (x, y), fitted from the trusted
+    # seams; None when no stage positions were given or too few seams were trusted.
+    stage_to_canvas_px_per_m: Optional[List[List[float]]] = None
 
     @property
     def mean_residual(self) -> float:
         """Mean absolute residual (px) of used edges after the global solve."""
         used = [e.residual for e in self.edges if e.used]
         return float(np.mean(used)) if used else 0.0
+
+    @property
+    def flagged_edges(self) -> List[EdgeMeasurement]:
+        """Seams the solve did not trust: inspect these before trusting the map there."""
+        return [e for e in self.edges if not e.used]
 
 
 class GridStitcher:
@@ -103,6 +122,16 @@ class GridStitcher:
     subpixel:
         When True (default), tiles are placed with sub-pixel accuracy using
         bilinear warping; otherwise positions are rounded to whole pixels.
+    max_residual_px:
+        After the global solve, the edge that disagrees most with the solved
+        positions is dropped and the solve repeated, until every used edge
+        agrees within this many pixels. ``None`` turns the check off.
+    max_stage_disagreement_px:
+        With stage positions, also drop a seam whose measured offset differs
+        from the stage prediction by more than this (reason ``"stage"``). This
+        catches a wrong seam that is the only one holding its tile, which the
+        residual check cannot see. Set it from how well the stage repeats at
+        this magnification; ``None`` (default) trusts the images over the stage.
     """
 
     def __init__(
@@ -113,6 +142,8 @@ class GridStitcher:
         max_deviation: float = 0.35,
         intensity_match: bool = True,
         subpixel: bool = True,
+        max_residual_px: Optional[float] = 1.0,
+        max_stage_disagreement_px: Optional[float] = None,
     ) -> None:
         if not 0.0 < overlap < 0.6:
             raise ValueError("overlap must be between 0 and 0.6")
@@ -122,6 +153,9 @@ class GridStitcher:
         self.max_deviation = max_deviation
         self.intensity_match = intensity_match
         self.subpixel = subpixel
+        self.max_residual_px = max_residual_px
+        self.max_stage_disagreement_px = max_stage_disagreement_px
+        self._edge_cache: Dict[tuple, EdgeMeasurement] = {}
 
     # ------------------------------------------------------------------ API
 
@@ -129,6 +163,7 @@ class GridStitcher:
         self,
         tiles: Mapping[GridKey, np.ndarray] | Sequence[Sequence[np.ndarray]],
         progress_callback=None,
+        stage_positions: Optional[Mapping[GridKey, Sequence[float]]] = None,
     ) -> GridStitchResult:
         """Stitch *tiles* and return the mosaic.
 
@@ -141,6 +176,12 @@ class GridStitcher:
             mosaic).
         progress_callback:
             Optional ``f(step, total, message)`` for GUI progress bars.
+        stage_positions:
+            Optional ``{(row, col): (x_m, y_m)}``, the stage position read back
+            for each tile. When given, the stage-to-canvas matrix is fitted from
+            the trusted seams, and a flagged seam falls back to that matrix times
+            the stage move instead of the planned grid step. The fallback is only
+            as good as the stage read-back.
         """
         grid = self._normalise_input(tiles)
         if not grid:
@@ -160,13 +201,43 @@ class GridStitcher:
         edges = self._measure_edges(greys, _report)
 
         _report(n, "Solving global positions ...")
-        positions = self._solve_positions(greys, edges)
+        stage = {tuple(k): (float(v[0]), float(v[1])) for k, v in (stage_positions or {}).items()}
+        matrix = self._refit_fallbacks(edges, stage)
+        while self.max_stage_disagreement_px is not None and matrix is not None:
+            def disagreement(e: EdgeMeasurement) -> float:
+                return math.hypot(*np.subtract(e.offset, matrix @ np.subtract(stage[e.b], stage[e.a])))
 
-        for e in edges:
-            pa, pb = positions[e.a], positions[e.b]
-            e.residual = math.hypot(
-                (pb[0] - pa[0]) - e.offset[0], (pb[1] - pa[1]) - e.offset[1]
+            checked = [e for e in edges if e.used and e.a in stage and e.b in stage]
+            worst = max(checked, key=disagreement, default=None)
+            if worst is None or disagreement(worst) <= self.max_stage_disagreement_px:
+                break
+            logger.warning("Edge %s->%s disagrees with the stage by %.2f px; dropping it.", worst.a, worst.b, disagreement(worst))
+            worst.used = False
+            worst.reason = "stage"
+            matrix = self._refit_fallbacks(edges, stage)
+        positions = self._solve_positions(greys, edges)
+        self._set_residuals(edges, positions)
+        while self.max_residual_px is not None:
+            over = [e for e in edges if e.used and e.residual > self.max_residual_px]
+            if not over:
+                break
+            if matrix is not None and all(e.a in stage and e.b in stage for e in over):
+                # Two seams that disagree about one tile have similar residuals; the
+                # stage says which of them is the wrong one.
+                worst = max(over, key=lambda e: math.hypot(*np.subtract(e.offset, matrix @ np.subtract(stage[e.b], stage[e.a]))))
+            else:
+                worst = max(over, key=lambda e: e.residual)
+            logger.warning(
+                "Edge %s->%s disagrees with the other edges by %.2f px; dropping it.",
+                worst.a,
+                worst.b,
+                worst.residual,
             )
+            worst.used = False
+            worst.reason = "inconsistent"
+            matrix = self._refit_fallbacks(edges, stage)
+            positions = self._solve_positions(greys, edges)
+            self._set_residuals(edges, positions)
 
         gains: Dict[GridKey, Tuple[float, float]] = {k: (1.0, 0.0) for k in keys}
         if self.intensity_match:
@@ -181,7 +252,32 @@ class GridStitcher:
             positions=positions,
             edges=edges,
             tile_shapes={k: grid[k].shape[:2] for k in keys},
+            stage_to_canvas_px_per_m=None if matrix is None else matrix.tolist(),
         )
+
+    @staticmethod
+    def _refit_fallbacks(
+        edges: List[EdgeMeasurement], stage: Dict[GridKey, Tuple[float, float]]
+    ) -> Optional[np.ndarray]:
+        """Fit canvas offset = M @ stage move from the trusted seams; reset each flagged seam's fallback.
+
+        Needs at least two trusted seams in different directions. Returns M, or
+        None (fallbacks stay at the planned grid step) when it cannot be fitted.
+        """
+        trusted = [e for e in edges if e.used and e.a in stage and e.b in stage]
+        if len(trusted) < 2:
+            return None
+        moves = np.array([np.subtract(stage[e.b], stage[e.a]) for e in trusted])
+        offsets = np.array([e.offset for e in trusted])
+        if np.linalg.matrix_rank(moves, tol=1e-12 * max(1.0, float(np.abs(moves).max()))) < 2:
+            return None
+        solution, *_ = np.linalg.lstsq(moves, offsets, rcond=None)
+        matrix = solution.T  # offsets[i] = matrix @ moves[i]
+        for e in edges:
+            if not e.used and e.a in stage and e.b in stage:
+                predicted = matrix @ np.subtract(stage[e.b], stage[e.a])
+                e.nominal = (float(predicted[0]), float(predicted[1]))
+        return matrix
 
     # ------------------------------------------------------- input handling
 
@@ -209,17 +305,33 @@ class GridStitcher:
             img = (img - lo) / (hi - lo)
         return img
 
+    @staticmethod
+    def _set_residuals(edges: List[EdgeMeasurement], positions: Dict[GridKey, Tuple[float, float]]) -> None:
+        for e in edges:
+            pa, pb = positions[e.a], positions[e.b]
+            e.residual = math.hypot((pb[0] - pa[0]) - e.offset[0], (pb[1] - pa[1]) - e.offset[1])
+
     # --------------------------------------------------- pairwise measuring
 
     def _measure_edges(self, greys: Dict[GridKey, np.ndarray], _report) -> List[EdgeMeasurement]:
+        """Measure every neighbour pair, reusing pairs whose two tiles have not changed.
+
+        A live map re-stitches after every new tile; without the cache that
+        re-measures every seam each time. Measurements are copied out, because the
+        consistency check changes ``used`` and ``reason`` on the copies.
+        """
         edges: List[EdgeMeasurement] = []
         keys = set(greys.keys())
+        fingerprint = {k: (g.shape, float(g.sum()), float(g[::7, ::7].std())) for k, g in greys.items()}
         for i, (r, c) in enumerate(sorted(keys)):
             _report(i, f"Registering neighbours of tile ({r}, {c}) ...")
-            if (r, c + 1) in keys:
-                edges.append(self._measure_pair(greys, (r, c), (r, c + 1), horizontal=True))
-            if (r + 1, c) in keys:
-                edges.append(self._measure_pair(greys, (r, c), (r + 1, c), horizontal=False))
+            for kb, horizontal in (((r, c + 1), True), ((r + 1, c), False)):
+                if kb not in keys:
+                    continue
+                token = ((r, c), kb, fingerprint[(r, c)], fingerprint[kb], self.overlap)
+                if token not in self._edge_cache:
+                    self._edge_cache[token] = self._measure_pair(greys, (r, c), kb, horizontal=horizontal)
+                edges.append(copy.copy(self._edge_cache[token]))
         return edges
 
     def _measure_pair(
@@ -272,8 +384,41 @@ class GridStitcher:
                 offset,
                 response,
             )
-            return EdgeMeasurement(a=ka, b=kb, offset=nominal, response=0.0, used=False)
-        return EdgeMeasurement(a=ka, b=kb, offset=offset, response=response, used=True)
+            return EdgeMeasurement(a=ka, b=kb, offset=nominal, response=0.0, used=False, nominal=nominal, reason="weak")
+        return EdgeMeasurement(
+            a=ka, b=kb, offset=self._refine_offset(a, b, offset), response=response, used=True, nominal=nominal
+        )
+
+    @staticmethod
+    def _refine_offset(a: np.ndarray, b: np.ndarray, offset: Tuple[float, float]) -> Tuple[float, float]:
+        """Re-measure an offset on the exact shared region, where the remaining shift is near zero.
+
+        The first measurement correlates two strips that are still tens of pixels
+        apart; the window over each strip then pulls the peak toward zero shift,
+        a bias of a few tenths of a pixel. Cutting the overlap at the rounded
+        offset leaves under a pixel to find, where the window adds no bias.
+        Returns the first offset unchanged if the shared region is too small.
+        """
+        from asyncroscopy.analysis.drift import correlation_shift
+
+        ox, oy = int(round(offset[0])), int(round(offset[1]))
+        ha, wa = a.shape
+        hb, wb = b.shape
+        # The shared region in a's pixels, then the same region in b's pixels.
+        x0, x1 = max(0, ox), min(wa, ox + wb)
+        y0, y1 = max(0, oy), min(ha, oy + hb)
+        if x1 - x0 < 16 or y1 - y0 < 16:
+            return offset
+        region_a = a[y0:y1, x0:x1]
+        region_b = b[y0 - oy : y1 - oy, x0 - ox : x1 - ox]
+        try:
+            shift_row, shift_col, _confidence = correlation_shift(region_a, region_b)
+        except ValueError:
+            return offset
+        if abs(shift_row) > 2 or abs(shift_col) > 2:
+            return offset  # the region disagrees with the first measurement; keep that one
+        # Content of b at larger indices means b's origin sits further up/left.
+        return (float(ox - shift_col), float(oy - shift_row))
 
     @staticmethod
     def _phase_correlate(
@@ -328,12 +473,13 @@ class GridStitcher:
 
         for e in edges:
             w = max(e.response, 1e-3) if e.used else 0.05
+            target = e.offset if e.used or e.nominal is None else e.nominal
             row = np.zeros(n)
             row[index[e.b]] = w
             row[index[e.a]] = -w
             rows.append(row)
-            bx.append(w * e.offset[0])
-            by.append(w * e.offset[1])
+            bx.append(w * target[0])
+            by.append(w * target[1])
 
         prior_w = 1e-3
         ref_h, ref_w = next(iter(greys.values())).shape
