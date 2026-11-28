@@ -413,6 +413,25 @@ class TestAutoScriptMicroscope:
         assert optics.defocus == pytest.approx(8e-9)
         assert AutoScriptMicroscope._get_defocus(microscope) == pytest.approx(8e-9)
 
+    @pytest.mark.parametrize(
+        "optical_mode, expected_call",
+        [("Stem", "run_opti_stem"), ("Tem", "run_objective_auto_stigmator")],
+    )
+    def test_auto_focus_runs_the_autofunction_for_the_optical_mode(self, optical_mode, expected_call) -> None:
+        calls = []
+        auto_functions = types.SimpleNamespace(
+            run_opti_stem=lambda settings: calls.append(("run_opti_stem", settings)),
+            run_objective_auto_stigmator=lambda settings: calls.append(("run_objective_auto_stigmator", settings)),
+        )
+        microscope = AutoScriptMicroscope.__new__(AutoScriptMicroscope)
+        microscope._microscope = types.SimpleNamespace(
+            optics=types.SimpleNamespace(optical_mode=optical_mode), auto_functions=auto_functions
+        )
+
+        microscope._auto_focus()
+
+        assert [name for name, _ in calls] == [expected_call]
+
     def test_disconnect_sets_state_off(self, auto_script_proxy: tango.DeviceProxy) -> None:
         auto_script_proxy.Disconnect()
         assert auto_script_proxy.state() == tango.DevState.OFF
