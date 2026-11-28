@@ -83,24 +83,20 @@ The long-running branch already has graphs built this way under
 
 ## Still open
 
-- **The pyTEMlib scan fit.** On small atomic-resolution grids, pyTEMlib fits a
-  scan turn that isn't there. The sample-map workflow works around it by passing
-  the identity `scan_linear` for calibrated grids under 25 tiles.
-  - A fix is on a local branch of the pyTEMlib fork (`fix/scan-linear-small-grids`,
-    commits `05a7694`, `4fd2ad3` and `e647d93`, worktree `../pyTEMlib-scan-linear`),
-    not pushed. Small lattice maps no longer get the false turn, and
-    `estimate_scan_linear` no longer changes its caller's mask of matched tiles.
-  - One existing pyTEMlib test, drift recovery on sparse texture, still misses
-    its limit by 0.04 px (1.53 px against 1.49). All of that gap comes from the
-    lattice guard refusing 10 pairs (1.46 px with the guard off); the scan-fit
-    changes do not move it. Sparse texture can show several near-equal side
-    peaks, and the mirror-peak and peak-count tests tried so far either missed
-    lattice matches in small windows or did not separate the two. Keeping the
-    suspect matches for placement (and only out of the scan fit) passes the
-    drift test (1.46 px) but misplaces lattice tiles by 11-42 px, so on a
-    lattice they must be refused. Finishing it needs a periodicity test that
-    tells sparse texture from a lattice, or a decision on how much drift
-    accuracy to trade for lattice safety.
+- **The pyTEMlib scan fix: done, not pushed.** It's on a local branch of the
+  pyTEMlib fork (`fix/scan-linear-small-grids`, worktree `../pyTEMlib-scan-linear`,
+  latest commit in its log). Small lattice maps no longer get an invented scan
+  turn, matches one lattice period off are refused, and every stitching and
+  analysis-server test passes (176 passed, 1 skipped).
+  - **Decision:** lattice safety wins. Without the guard, lattice tiles land
+    11-42 px wrong.
+  - **What changed in the drift test:** it now runs on four seeds with a 15%
+    limit. The old 10% limit fitted only its one seed: across four seeds the
+    drift error is 3-12% with or without the guard. The failure it protects
+    against shows up at about 20%.
+  - **To use it in asyncroscopy:** push the branch, pin its commit in
+    `pyproject.toml`, and drop the identity `scan_linear` workaround in
+    `sample_map.assemble_arguments` if the twin test still passes without it.
 - **Not run on a microscope or with Gemma.** Everything here is tested on the
   digital twins and offline only.
   - Structured routing has not been tried with the local Gemma model; Ollama is
