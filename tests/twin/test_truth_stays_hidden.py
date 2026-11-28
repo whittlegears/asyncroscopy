@@ -2,6 +2,7 @@
 never an acquisition's saved attributes and never a reply an agent gets."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -67,3 +68,23 @@ def test_the_tilt_twin_reports_the_beam_tilt_as_set(tilt_twin_proxy):
     finally:
         twin.beam_tilt_noise_std_mrad, twin.randomness_scale = noise
         twin._set_beam_tilt([0.0, 0.0])
+
+
+def test_no_ground_truth_file_lands_in_the_tree_tiled_serves(tango_ctx, twin_proxy, scan_proxy, sem_twin_proxy, data_proxy, ground_truth_dir):
+    scan_proxy.imsize, scan_proxy.dwell_time, scan_proxy.scan_region = 16, 1e-6, [0.0, 0.0, 1.0, 1.0]
+    sem_scan = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/scan/sem"))
+    sem_scan.imsize, sem_scan.dwell_time = 16, 1e-6
+    stem_key = twin_proxy.acquire_scanned_image(["haadf"])
+    sem_key = sem_twin_proxy.acquire_scanned_image(["se"])
+
+    served = Path(data_proxy.save_path).resolve()
+    served_files = [path for path in served.rglob("*") if path.is_file()]
+    assert {Path(stem_key).name, Path(sem_key).name} <= {path.name for path in served_files}
+    leaked = [path for path in served_files if path.suffix == ".jsonl" or "ground_truth" in path.relative_to(served).parts]
+    assert not leaked, leaked
+    assert not Path(ground_truth_dir).resolve().is_relative_to(served)
+
+    truth_files = {path.name for path in Path(ground_truth_dir).iterdir()}
+    assert {"asyncroscopy_digitaltwin_default_acquisitions.jsonl", "asyncroscopy_sem_default_acquisitions.jsonl"} <= truth_files
+    acquisitions = json.loads(twin_proxy.export_ground_truth())["acquisitions"]
+    assert acquisitions and acquisitions[-1]["imsize"] == 16

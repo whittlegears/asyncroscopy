@@ -117,7 +117,7 @@ All new effects default to off, so `configs/DigitalTwin.yaml` behaves like an id
 
 Where the mapping config's values come from is noted in the file. `digital_twin_crystal.yaml`, `digital_twin_recorded.yaml` and `digital_twin_large_map.yaml` start from it with `extends: digital_twin_mapping.yaml` and set only what differs; `null` removes a property or device the base sets. Values marked unverified are placeholders: run the scripts in `asyncroscopy/calibration/` on your instrument and paste the YAML they print.
 
-Each acquisition's record is appended to `<acquisition_save_directory>/ground_truth/<device>_acquisitions.jsonl` as it is taken, so a long session holds none of them in memory; `export_ground_truth` reads the file back.
+Each acquisition's record is appended to `<ground_truth_directory>/<device>_acquisitions.jsonl` as it is taken, so a long session holds none of them in memory; `export_ground_truth` reads the file back. The `ground_truth_directory` property defaults to `outputs/twin_ground_truth`, outside the acquisition directory Tiled serves (the SEM twin has the same property), so nothing an agent can reach through Tiled or the data tools holds the truth. Point it anywhere outside the served tree.
 
 ## Key commands
 

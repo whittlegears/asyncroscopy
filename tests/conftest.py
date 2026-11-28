@@ -201,12 +201,17 @@ def data_save_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def ground_truth_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("twin-ground-truth")
+
+
+@pytest.fixture(scope="session")
 def job_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return tmp_path_factory.mktemp("jobs")
 
 
 @pytest.fixture(scope="session")
-def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestContext]:
+def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestContext]:
     """
     One Tango device server hosting SCAN + STEMMicroscope together.
 
@@ -318,6 +323,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "corrector_device_address": "asyncroscopy/corrector/default",
                         "camera_device_address": "asyncroscopy/camera/default",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                     },
                 },
                 {
@@ -329,6 +335,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "stage_device_address": "asyncroscopy/stage/mapping",
                         "sample_device_address": "asyncroscopy/sample/mapping",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         **on_the_microscope(MAPPING_TWIN_PROPERTIES),
                     },
                 },
@@ -340,6 +347,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/drift",
                         "stage_device_address": "asyncroscopy/stage/drift",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         **on_the_microscope(DRIFT_TWIN_PROPERTIES),
                     },
                 },
@@ -350,6 +358,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/livedrift",
                         "stage_device_address": "asyncroscopy/stage/livedrift",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         **on_the_microscope(LIVE_DRIFT_TWIN_PROPERTIES),
                     },
                 },
@@ -360,6 +369,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "scan_device_address": "asyncroscopy/scan/default",
                         "stage_device_address": "asyncroscopy/stage/slowstage",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         "time_scale": 0.1,
                     },
                 },
@@ -371,6 +381,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/parity",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         "sample_particle_count": 10,
                     },
                 },
@@ -383,6 +394,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "eds_device_address": "asyncroscopy/eds/default",
                         "stage_device_address": "asyncroscopy/stage/dose",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         "sample_size_xy": 2e-6,
                         "sample_particle_count": 20,
                         "dose_tracking": True,
@@ -393,7 +405,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     # For tests/twin/test_specimens.py. The procedural specimen's output must match the golden file
                     # bit for bit. Only that test touches this twin, so its event indices are reproducible.
                     "name": "asyncroscopy/digitaltwin/specimen_golden",
-                    "properties": {"stage_device_address": "asyncroscopy/stage/specimen_golden", "acquisition_save_directory": prop_path(data_save_dir), **on_the_microscope(SPECIMEN_GOLDEN_PROPERTIES)},
+                    "properties": {"stage_device_address": "asyncroscopy/stage/specimen_golden", "acquisition_save_directory": prop_path(data_save_dir), "ground_truth_directory": prop_path(ground_truth_dir), **on_the_microscope(SPECIMEN_GOLDEN_PROPERTIES)},
                 },
                 # For tests/twin/test_specimens.py, which runs the same Mapper plan on one instrument with three specimens.
                 *(
@@ -404,6 +416,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                             "stage_device_address": f"asyncroscopy/stage/specimen_{source}",
                             "eds_device_address": "asyncroscopy/eds/default",
                             "acquisition_save_directory": prop_path(data_save_dir),
+                            "ground_truth_directory": prop_path(ground_truth_dir),
                             **on_the_microscope(MAPPING_TWIN_PROPERTIES),
                             **specimen,
                         },
@@ -420,6 +433,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "corrector_device_address": "asyncroscopy/corrector/tuner",
                         "stage_device_address": "asyncroscopy/stage/tuner",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         "sample_seed": 77,
                         "sample_size_xy": 1e-6,
                         "sample_particle_count": 2000,
@@ -483,6 +497,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                         "stage_device_address": "asyncroscopy/stage/sem",
                         "sample_device_address": "asyncroscopy/sample/sem",
                         "acquisition_save_directory": prop_path(data_save_dir),
+                        "ground_truth_directory": prop_path(ground_truth_dir),
                         "sample_seed": 2024,
                         "sample_size_xy": 4e-7,
                         "sample_particle_count": 40,

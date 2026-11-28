@@ -17,6 +17,7 @@ from tango import DevState
 from tango.server import device_property
 
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
+from asyncroscopy.instruments.electron_microscope.digital_twin_base import DEFAULT_GROUND_TRUTH_DIR
 from asyncroscopy.instruments.electron_microscope.twin import SampleParams, ScanParams
 from asyncroscopy.instruments.electron_microscope.twin.detector import DetectorDrift, DetectorParams, count
 from asyncroscopy.instruments.electron_microscope.twin.render import Renderer, RenderParams
@@ -49,6 +50,7 @@ class DigitalTwinSEM(ScanningBeamTwin, ScanningElectronMicroscope):
     particle_elements = _prop(str, "Au,Pt", "Comma-separated particle elements.")
     support_thickness = _prop(float, 1e-8, "Support film thickness (m).")
     acquisition_save_directory = _prop(str, DEFAULT_ACQUISITION_DIR, "Directory where simulated acquisitions are saved before the Tiled server serves them.")
+    ground_truth_directory = _prop(str, DEFAULT_GROUND_TRUTH_DIR, "Where the twin writes each acquisition's truth for export_ground_truth; never the acquisition directory, which Tiled serves.")
     acceleration_voltage = _prop(float, 15e3, "Acceleration voltage (V).")
     probe_current_pa = _prop(float, DEFAULT_BEAM_CURRENT_PA, "Probe current (pA); reported as the measured beam_current_pa.")
     detector_gain = _prop(float, 1.0, "Counts per detected electron.")

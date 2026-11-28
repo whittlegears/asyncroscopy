@@ -4,7 +4,7 @@ A mixin for a twin device, ahead of its Tango base class in the bases, holding n
 simulated clock, the stage (whose model runs on the DigitalTwinSTAGE device, on this clock), the blanker, the image
 shift, the scan of one frame with its dose, and the ground-truth file. ``_start_beam_twin`` makes that state; the twin
 then sets ``_scan_params``, ``_detector_params``, ``_detector_drift``, ``_dose`` and ``_specimen``, and reads the
-``sample_seed``, ``time_scale`` and ``acquisition_save_directory`` properties it declares.
+``sample_seed``, ``time_scale`` and ``ground_truth_directory`` properties it declares.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class ScanningBeamTwin(TwinBlanker):
         self._acq_index = 0
         # Every acquisition's truth goes to a JSONL file as it is taken, so a
         # long session does not hold them all in memory. Only the count is kept here, and export_ground_truth reads the file back.
-        self._truth_path = Path(self.acquisition_save_directory) / "ground_truth" / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
+        self._truth_path = Path(self.ground_truth_directory).expanduser() / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
         self._truth_path.parent.mkdir(parents=True, exist_ok=True)
         self._truth_path.write_text("", encoding="utf-8")
         self._acquisition_count = 0
