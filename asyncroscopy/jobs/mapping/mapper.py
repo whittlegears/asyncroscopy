@@ -95,7 +95,7 @@ class Mapper(JobDevice):
         stored: dict = {}
         if declared:
             try:
-                stored = tango.Util.instance().get_database().get_device_property(self.get_name(), list(declared))
+                stored = tango.Util.instance(False).get_database().get_device_property(self.get_name(), list(declared))
             except tango.DevFailed as exc:  # with no database every setting keeps its default
                 self.warn_stream(f"profile settings not read from the database ({exc.args[0].desc.strip()[:200]}); using defaults")
         return {name: setting.parse(list(stored.get(name, []))) for name, setting in declared.items()}
