@@ -45,12 +45,7 @@ DEVICE_MODULES = {
     'scan': 'asyncroscopy.instruments.electron_microscope.hardware.scan',
     'stage': 'asyncroscopy.instruments.electron_microscope.hardware.stage',
 }
-INSTRUMENT_FILES = [
-    'asyncroscopy/instruments/electron_microscope/auto_script.py',
-    'asyncroscopy/instruments/electron_microscope/jeol.py',
-    'asyncroscopy/instruments/electron_microscope/digital_twin.py',
-    'asyncroscopy/instruments/scanning_probe_microscope/jupyter_api.py',
-]
+DEFAULT_INSTRUMENT_FILE = 'asyncroscopy/instruments/electron_microscope/auto_script.py'
 
 
 def project_path_text(path: Path | str) -> str:
@@ -299,7 +294,7 @@ class ServerGui(QMainWindow):
 
     def current_config(self) -> dict:
         values = {
-            'instrument_file': project_path_text(self.default_config['instrument'].get('file', INSTRUMENT_FILES[0])),
+            'instrument_file': project_path_text(self.default_config['instrument'].get('file', DEFAULT_INSTRUMENT_FILE)),
             'hardware_host': self.input_text('hardware_host'),
             'hardware_port': self.input_text('hardware_port'),
             'hardware_timeout_seconds': self.input_text('hardware_timeout_seconds'),
