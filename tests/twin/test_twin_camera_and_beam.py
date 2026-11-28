@@ -21,24 +21,19 @@ from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
 @pytest.fixture
 def camera(twin_proxy, camera_proxy):
-    """The shared CAMERA device and twin, put back as they were."""
-    saved = {name: getattr(camera_proxy, name) for name in ("imsize", "exposure_time", "readout_area", "output_format")}
+    """The shared CAMERA device and twin; conftest's shared_devices_put_back puts the camera's settings back."""
     fov = twin_proxy.get_fov()
     twin_proxy.set_fov(1e-7)
     camera_proxy.imsize, camera_proxy.exposure_time, camera_proxy.readout_area = 64, 0.01, "Full"
     yield camera_proxy
-    for name, value in saved.items():
-        setattr(camera_proxy, name, value)
     twin_proxy.set_fov(fov)
     twin_proxy.unblank_beam()
 
 
 @pytest.fixture
 def scan(scan_proxy):
-    """The shared SCAN device, put back as it was."""
-    saved = (scan_proxy.imsize, scan_proxy.dwell_time, list(scan_proxy.scan_region))
-    yield scan_proxy
-    scan_proxy.imsize, scan_proxy.dwell_time, scan_proxy.scan_region = saved
+    """The shared SCAN device; conftest's shared_devices_put_back puts its settings back."""
+    return scan_proxy
 
 
 def _image(key: str) -> tuple[np.ndarray, dict]:
@@ -47,9 +42,12 @@ def _image(key: str) -> tuple[np.ndarray, dict]:
 
 
 def test_the_twin_camera_image_has_the_camera_shape_and_pixel_size(twin_proxy, camera):
-    image, attrs = _image(twin_proxy.acquire_camera_image())
+    key = twin_proxy.acquire_camera_image()
+    image, attrs = _image(key)
     assert image.shape == (64, 64)
-    assert attrs["acquisition_type"] == "camera_image" and attrs["detector"] == camera.camera_detector
+    assert attrs["acquisition_type"] == "acquire.image" and attrs["detector"] == camera.camera_detector
+    with h5py.File(Path(key), "r") as h5:
+        assert h5.attrs["kind"] == "camera_image"
     assert attrs["fov_m"] == pytest.approx(1e-7) and attrs["pixel_size_m"] == pytest.approx(1e-7 / 64)
     camera.readout_area = "Half"
     image, attrs = _image(twin_proxy.acquire_camera_image())

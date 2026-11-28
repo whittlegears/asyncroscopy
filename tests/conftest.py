@@ -863,6 +863,23 @@ def camera_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/camera/default"))
 
 
+kept_settings = {"scan_proxy": ("imsize", "dwell_time", "scan_region"),
+                 "camera_proxy": ("imsize", "exposure_time", "readout_area", "output_format")}
+
+
+@pytest.fixture(autouse=True)
+def shared_devices_put_back(request: pytest.FixtureRequest) -> Iterator[None]:
+    """The session's SCAN and CAMERA devices are shared by every test: a test that uses one gets its settings put back,
+    so no test depends on the order the others ran in."""
+    used = [name for name in kept_settings if name in request.fixturenames]
+    saved = {name: (request.getfixturevalue(name), {a: getattr(request.getfixturevalue(name), a) for a in kept_settings[name]})
+             for name in used}
+    yield
+    for proxy, values in saved.values():
+        for attribute, value in values.items():
+            setattr(proxy, attribute, value)
+
+
 @pytest.fixture(scope="session")
 def stage_proxy(tango_ctx: MultiDeviceTestContext) -> tango.DeviceProxy:
     return tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/stage/default"))
