@@ -13,12 +13,13 @@ from fastmcp import Client
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER, RUN_KEY_HEADER
-from asyncroscopy.safety.permissions import PermissionStore, iso_utc, run_key_sha256
+from asyncroscopy.safety.permissions import PermissionStore, iso_utc, max_run_preapproval_s, run_key_sha256, seconds_of
 from asyncroscopy.workflows import Library
 from asyncroscopy.workflows.server import Endpoints, WorkflowServer
 
 DOSE = "SAMPLE_get_dose"
 SAMPLE_READ = "SAMPLE_get_sample"
+SAMPLE_READ_ALLOWED = "SAMPLE_State"
 NEVER = "DigitalTwin_Disconnect"
 SAMPLE = "asyncroscopy/sample/mapping"
 TWIN = "asyncroscopy/digitaltwin/default"
@@ -56,8 +57,8 @@ def grant(operator, run_id, key, calls):
 def test_a_rehearsed_call_runs_and_any_other_call_of_the_run_is_held_with_the_reason(stack, served, tmp_path):
     trace = tmp_path / "trace.jsonl"
     _, address, operator = hardware(stack, served, trace_path=str(trace))
-    granted = grant(operator, "hw1", "key1", [{"tool": DOSE, "arguments": HERE}, {"tool": NEVER, "arguments": {}}])
-    assert granted["calls"] == 2 and granted["approved_by"] == SIGNOFF and granted["approver"] == "Sam Reed" and granted["expires_at"]
+    granted = grant(operator, "hw1", "key1", [{"tool": DOSE, "arguments": HERE, "count": 2}, {"tool": NEVER, "arguments": {}}])
+    assert granted["calls"] == 3 and granted["approved_by"] == SIGNOFF and granted["approver"] == "Sam Reed" and granted["expires_at"]
     endpoint = as_run(address, "hw1", "key1")
 
     ran = run(endpoint.call(DOSE, HERE))
@@ -209,6 +210,57 @@ def test_propose_rehearse_review_approve_and_run_on_the_paired_instrument(stack,
     assert stopped["state"] == "stopped" and scope.permissions.store.run_grant(moved["run_id"]) is None
 
 
+def test_each_rehearsed_call_passes_as_many_times_as_the_rehearsal_made_it(stack, served):
+    _, address, operator = hardware(stack, served)
+    grant(operator, "hw1", "key1", [{"tool": DOSE, "arguments": HERE, "count": 2}, {"tool": DOSE, "arguments": dict(HERE, x_m=None)}])
+    endpoint = as_run(address, "hw1", "key1")
+    for _ in range(3):
+        assert not run(endpoint.call(DOSE, HERE)).is_error, "two rehearsed calls that validate the same add up"
+    fourth = run(endpoint.call(DOSE, HERE)).structured_content
+    assert fourth["status"] == "approval_required" and fourth["signoff"]["why_held"] == "the rehearsal made this call fewer times"
+    grant(operator, "hw1", "key2", [{"tool": DOSE, "arguments": HERE, "count": 3}])
+    assert run(as_run(address, "hw1", "key2").call(DOSE, HERE)).structured_content["status"] == "approval_required", \
+        "a resumed run's new grant does not give back what the run already used"
+
+
+def test_a_persons_approval_of_a_held_signed_off_call_is_used_by_that_run_only(stack, served):
+    _, address, operator = hardware(stack, served)
+    grant(operator, "hw1", "key1", [{"tool": DOSE, "arguments": HERE}])
+    held = run(as_run(address, "hw1", "key1").call(DOSE, THERE)).structured_content
+    assert held["status"] == "approval_required"
+    run(operator_call(operator, "approve_call", {"request_id": held["request_id"]}))
+    for why, endpoint in {"another run": as_run(address, "hw2", "key1"), "the run id with another key": as_run(address, "hw1", "other"),
+                          "no run": McpServer(address, {CALLER_HEADER: "agent-workflow"})}.items():
+        assert run(endpoint.call(DOSE, THERE)).structured_content["status"] == "approval_required", why
+    grant(operator, "hw1", "key2", [{"tool": DOSE, "arguments": HERE}])
+    assert not run(as_run(address, "hw1", "key2").call(DOSE, THERE)).is_error, "the resumed run, with its new key, uses it"
+    assert run(as_run(address, "hw1", "key2").call(DOSE, THERE)).structured_content["status"] == "approval_required", "once"
+
+
+def test_a_pre_approval_stays_alive_while_the_run_makes_calls(stack, served):
+    _, address, operator = hardware(stack, served, approval_ttl_s=4.0)
+    grant(operator, "hw1", "key1", [{"tool": DOSE, "arguments": HERE, "count": 5}])
+    endpoint = as_run(address, "hw1", "key1")
+    for _ in range(3):
+        assert not run(endpoint.call(SAMPLE_READ_ALLOWED, {})).is_error
+        time.sleep(2.2)
+    assert not run(endpoint.call(DOSE, HERE)).is_error, "6.6 s after a 4 s grant, kept alive by the run's calls"
+
+
+def test_a_kept_alive_pre_approval_ends_at_the_overall_maximum(tmp_path):
+    now = [1_800_000_000.0]
+    store = PermissionStore(tmp_path / "permissions.json", "tango://h:2", approval_ttl_s=600, clock=lambda: now[0])
+    store.grant_run("hw1", run_key_sha256("k"), [{"tool": DOSE, "arguments": {}}], SIGNOFF, "Sam", "two_doses", "abc")
+    assert store.live_grant("hw1", run_key_sha256("other")) is None
+    end = now[0] + max_run_preapproval_s
+    while now[0] < end - 400:
+        now[0] += 400
+        assert store.live_grant("hw1", run_key_sha256("k")) is not None
+        assert seconds_of(store.run_grant("hw1")["expires_at"]) <= end
+    now[0] = end + 1
+    assert store.live_grant("hw1", run_key_sha256("k")) is None
+
+
 def test_the_store_keeps_one_pre_approval_per_run_until_it_expires(tmp_path):
     now = [1_800_000_000.0]
     store = PermissionStore(tmp_path / "permissions.json", "tango://h:2", approval_ttl_s=600, clock=lambda: now[0])
@@ -216,7 +268,7 @@ def test_the_store_keeps_one_pre_approval_per_run_until_it_expires(tmp_path):
         store.grant_run("hw1", run_key_sha256("k"), [], "a person", "Sam", "two_doses", "abc")
     first = store.grant_run("hw1", run_key_sha256("k"), [{"tool": DOSE, "arguments": {"b": 1, "a": 2}}], SIGNOFF, "Sam", "two_doses", "abc")
     assert first["calls"] == 1 and first["expires_at"] == iso_utc(now[0] + 600)
-    assert store.run_grant("hw1")["calls"] == [{"tool": DOSE, "arguments": {"a": 2, "b": 1}}]
+    assert store.run_grant("hw1")["calls"] == [{"tool": DOSE, "arguments": {"a": 2, "b": 1}, "count": 1}]
     store.grant_run("hw1", run_key_sha256("k2"), [], SIGNOFF, "Sam", "two_doses", "abc")
     assert store.run_grant("hw1")["calls"] == [] and store.run_grant("hw1")["run_key_sha256"] == run_key_sha256("k2")
     now[0] += 601

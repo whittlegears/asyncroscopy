@@ -124,7 +124,7 @@ class Permissions:
         self.needs_approval = cfg.needs_approval
         self.store = PermissionStore(cfg.permissions_file, server.stack_id, cfg.approval_ttl_s)
         self.models: dict[str, type[BaseModel]] = {}
-        self.signoff_digests: dict[tuple[str, str], dict[str, set[str]]] = {}
+        self.signoff_digests: dict[tuple[str, str], dict[str, dict[str, int]]] = {}
 
     def attach(self) -> None:
         """Put the gate on the agent and monitor endpoints (the operator endpoint is the person's own), inside the token
@@ -208,20 +208,23 @@ class Permissions:
             self.models[name] = arguments_model(name, self.server.registered[name].fn)
         return self.models[name].model_validate(arguments).model_dump(mode="json")
 
-    def rehearsed(self, grant: dict[str, Any]) -> dict[str, set[str]]:
-        """{tool: digests} of a run pre-approval's calls, their arguments validated as a call's are; a rehearsed call
-        whose arguments do not validate here covers nothing. Kept per grant, so a map's thousands of calls are validated once."""
+    def rehearsed(self, grant: dict[str, Any]) -> dict[str, dict[str, int]]:
+        """{tool: {digest: count}} of a run pre-approval's calls, their arguments validated as a call's are; rehearsed
+        calls that validate the same add up, and one whose arguments do not validate here covers nothing. Kept per
+        grant, so a map's thousands of calls are validated once."""
         key = (grant["run_id"], grant["granted_at"])
         if key not in self.signoff_digests:
-            covered: dict[str, set[str]] = {}
+            covered: dict[str, dict[str, int]] = {}
             for call in grant["calls"]:
                 tool = call["tool"]
                 if tool not in self.server.registered:
                     continue
                 try:
-                    covered.setdefault(tool, set()).add(arguments_sha256(self.validated(tool, call["arguments"])))
+                    digest = arguments_sha256(self.validated(tool, call["arguments"]))
                 except ValidationError:
                     continue
+                counts = covered.setdefault(tool, {})
+                counts[digest] = counts.get(digest, 0) + int(call.get("count") or 1)
             self.signoff_digests = {k: v for k, v in self.signoff_digests.items() if k[0] != grant["run_id"]}
             self.signoff_digests[key] = covered
         return self.signoff_digests[key]
@@ -232,9 +235,12 @@ class Permissions:
 
     def decide(self, name: str, arguments: dict[str, Any]) -> tuple[ToolResult | None, dict[str, Any] | None]:
         """(``check``'s answer, the sign-off that let the call run or None). A call of an ``approve`` tool made by a
-        hardware run that a workflow sign-off pre-approved (``preapprove_run``) runs when the rehearsal made it."""
+        hardware run that a workflow sign-off pre-approved (``preapprove_run``) runs when the rehearsal made it, as many
+        times as the rehearsal made it. Every call of such a run, with its key, keeps its pre-approval alive."""
         if name not in self.server.descriptors or name not in self.server.registered:
             return None, None
+        run_id, run_key = self.server.run_id(), self.server._header(RUN_KEY_HEADER)
+        grant = self.store.live_grant(run_id, run_key_sha256(run_key)) if run_id and run_key else None
         entry = self.entry(name)
         entry["needs_approval"] = entry["needs_approval"] or self.plan_needs_approval(name, arguments)
         permission = effective_permission(name, entry, self.store.settings())
@@ -246,15 +252,18 @@ class Permissions:
             arguments = self.validated(name, arguments)
         except ValidationError as exc:
             return refusal(f"{name} was not run or held: its arguments do not validate: {exc}", {"status": "invalid_arguments", "tool": name}), None
-        grant = self.store.run_grant(self.server.run_id())
-        signoff = None
-        if grant is not None and run_key_sha256(self.server._header(RUN_KEY_HEADER)) == grant["run_key_sha256"]:
+        signoff = run = None
+        if grant is not None:
+            run = {"run_id": grant["run_id"], "run_key_sha256": grant["run_key_sha256"]}
             covered = self.rehearsed(grant)
-            if arguments_sha256(arguments) in covered.get(name, set()):
+            digest = arguments_sha256(arguments)
+            allowed = covered.get(name, {}).get(digest, 0)
+            if allowed and self.store.use_run_call(grant["run_id"], grant["run_key_sha256"], f"{name} {digest}", allowed):
                 return None, {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"]}
-            signoff = {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"],
-                       "why_held": "the rehearsal called this tool with other arguments" if name in covered else "the rehearsal never called this tool"}
-        record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller(), signoff=signoff)
+            why = ("the rehearsal made this call fewer times" if allowed else
+                   "the rehearsal called this tool with other arguments" if name in covered else "the rehearsal never called this tool")
+            signoff = {"approved_by": grant["approved_by"], "approver": grant["approver"], "run_id": grant["run_id"], "why_held": why}
+        record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller(), signoff=signoff, run=run)
         if record["status"] == "approved":
             return None, None
         if record["status"] == "denied":
@@ -292,9 +301,10 @@ class Permissions:
     def preapprove_run(self, run_id: str, run_key_sha256: str, calls: list[dict[str, Any]], approved_by: str, approver: str,
                        workflow: str, hash: str, rehearsal_run_id: str | None = None) -> dict[str, Any]:
         """For a workflow server, not a model: pre-approve, for one hardware run of a signed-off workflow, every call its
-        passing rehearsal made ({"tool", "arguments"} each). Only calls of that run (run id and run key) of the same tool
-        with the same validated arguments pass the gate; any other call is held, never tools stay refused. Expires after
-        approval_ttl_s or with end_run_preapproval."""
+        passing rehearsal made ({"tool", "arguments", "count"} each; count defaults to 1). Only calls of that run (run id
+        and run key) of the same tool with the same validated arguments pass the gate, each up to its count; any other
+        call is held, never tools stay refused. Kept alive by the run's calls for approval_ttl_s, for at most 12 hours,
+        or until end_run_preapproval."""
         try:
             grant = self.store.grant_run(run_id, run_key_sha256, list(calls or []), approved_by, approver, workflow, hash, rehearsal_run_id)
         except (ValueError, KeyError, TypeError) as exc:

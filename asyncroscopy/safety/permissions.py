@@ -28,6 +28,7 @@ from typing import Any, Callable, Iterator
 from asyncroscopy.core.fileio import file_lock, write_atomic
 
 default_approval_ttl_s = 600.0
+max_run_preapproval_s = 12 * 3600.0
 settable_permissions = ("allow", "approve")
 permission_groups = ("reads", "acts")
 lock_wait_s = 5.0
@@ -178,20 +179,23 @@ class PermissionStore:
         return requests
 
     def request(self, tool: str, arguments: dict[str, Any], acts: bool, risk: str, requested_by: str | None,
-                signoff: dict[str, Any] | None = None) -> dict[str, Any]:
+                signoff: dict[str, Any] | None = None, run: dict[str, str] | None = None) -> dict[str, Any]:
         """A call of an ``approve`` tool: the request it makes or matches, with ``status`` pending, approved or denied.
 
         A request matches the same tool, the same canonical arguments and the same caller (``requested_by``), so another
         caller's identical call cannot use an approval meant for someone else. An approved request is consumed here, so
         the call it approved runs once. ``signoff``: for a call of a hardware run that a workflow sign-off pre-approved
-        but that the sign-off does not cover, who signed off and why it is held; kept with a new request.
+        but that the sign-off does not cover, who signed off and why it is held; kept with a new request. ``run``: that
+        run's {"run_id", "run_key_sha256"}; such a request matches only a call of the same run with its key.
         """
         digest = arguments_sha256(arguments)
+        bound = {"run_id": (run or {}).get("run_id"), "run_key_sha256": (run or {}).get("run_key_sha256")}
         with self._locked():
             state = self._read(self.state_path)
             requests = self._live_requests(state)
             found = next((r for r in requests.values()
-                          if r["tool"] == tool and r["arguments_sha256"] == digest and r.get("requested_by") == requested_by), None)
+                          if r["tool"] == tool and r["arguments_sha256"] == digest and r.get("requested_by") == requested_by
+                          and all(r.get(k) == v for k, v in bound.items())), None)
             if found is not None and found["status"] == "approved":
                 del requests[found["request_id"]]
             elif found is None:
@@ -199,7 +203,8 @@ class PermissionStore:
                 found = {"request_id": str(uuid.uuid4()), "tool": tool, "arguments": json.loads(canonical_json(arguments)),
                          "arguments_sha256": digest, "acts": bool(acts), "risk": risk, "requested_at": iso_utc(now),
                          "expires_at": iso_utc(now + self._ttl(state[self.stack_id])), "requested_by": requested_by,
-                         "status": "pending", **({"signoff": dict(signoff)} if signoff else {})}
+                         "status": "pending", **({"signoff": dict(signoff)} if signoff else {}),
+                         **({k: v for k, v in bound.items()} if run else {})}
                 requests[found["request_id"]] = found
             self._write(self.state_path, state)
             return dict(found)
@@ -238,24 +243,76 @@ class PermissionStore:
         return self._decide(request_id, "denied", str(reason))
 
     def _live_runs(self, state: dict[str, Any]) -> dict[str, dict[str, Any]]:
-        runs = state.setdefault(self.stack_id, {}).setdefault("runs", {})
+        mine = state.setdefault(self.stack_id, {})
+        runs = mine.setdefault("runs", {})
         now = self.clock()
         for run_id in [r for r, grant in runs.items() if seconds_of(grant["expires_at"]) <= now]:
             del runs[run_id]
+        uses = mine.setdefault("run_uses", {})
+        for run_id in [r for r, kept in uses.items() if r not in runs and seconds_of(kept["at"]) + max_run_preapproval_s <= now]:
+            del uses[run_id]
         return runs
+
+    def _kept_alive(self, grant: dict[str, Any], mine: dict[str, Any]) -> bool:
+        """Move a grant's expiry to the TTL from now, never past ``max_run_preapproval_s`` after it was granted. Only
+        when less than half the TTL is left, so a run's thousands of calls write the file seldom."""
+        now = self.clock()
+        ttl = self._ttl(mine)
+        if seconds_of(grant["expires_at"]) - now >= ttl / 2:
+            return False
+        later = min(now + ttl, seconds_of(grant["granted_at"]) + max_run_preapproval_s)
+        if later <= seconds_of(grant["expires_at"]):
+            return False
+        grant["expires_at"] = iso_utc(later)
+        return True
+
+    def live_grant(self, run_id: str, run_key_digest: str) -> dict[str, Any] | None:
+        """The live pre-approval of ``run_id`` when ``run_key_digest`` is its key's, kept alive by this call of the run;
+        else None."""
+        with self._locked():
+            state = self._read(self.state_path)
+            grant = self._live_runs(state).get(str(run_id))
+            if grant is None or grant["run_key_sha256"] != str(run_key_digest):
+                return None
+            if self._kept_alive(grant, state[self.stack_id]):
+                self._write(self.state_path, state)
+        return dict(grant)
+
+    def use_run_call(self, run_id: str, run_key_digest: str, call: str, allowed: int) -> bool:
+        """Use one of the ``allowed`` passes of the pre-approved ``call`` (its tool and argument digest) for ``run_id``.
+        False when the run has used them all, or its pre-approval is gone. What a run used is kept for
+        ``max_run_preapproval_s`` after its last use, also after ``end_run``, so a resumed run's new grant keeps the count."""
+        with self._locked():
+            state = self._read(self.state_path)
+            grant = self._live_runs(state).get(str(run_id))
+            if grant is None or grant["run_key_sha256"] != str(run_key_digest):
+                return False
+            kept = state[self.stack_id]["run_uses"].setdefault(str(run_id), {"used": {}})
+            if int(kept["used"].get(call, 0)) >= int(allowed):
+                return False
+            kept["used"][call] = int(kept["used"].get(call, 0)) + 1
+            kept["at"] = iso_utc(self.clock())
+            self._kept_alive(grant, state[self.stack_id])
+            self._write(self.state_path, state)
+        return True
 
     def grant_run(self, run_id: str, run_key_digest: str, calls: list[dict[str, Any]], approved_by: str, approver: str,
                   workflow: str, hash_: str, rehearsal_run_id: str | None = None) -> dict[str, Any]:
         """Pre-approve, for the hardware run ``run_id`` only, every call a workflow's passing rehearsal made: each
         ``{"tool", "arguments"}`` as the rehearsal sent it. A call of that run (its ``X-Asyncroscopy-Run`` header, with
         the run key whose SHA-256 is ``run_key_digest``) of the same tool with the same arguments, once both are validated
-        by the gate, is not held. It expires after ``approval_ttl_s`` or when ``end_run`` removes it. A new grant for the
-        same run replaces the old one. Returns the grant without its calls."""
+        by the gate, passes ``count`` times (default 1). It expires ``approval_ttl_s`` after the run's last call, at most
+        ``max_run_preapproval_s`` after it was granted, or when ``end_run`` removes it. A new grant for the same run (it
+        was resumed) replaces the old one, keeps what the run used, and moves the run's held requests to the new key.
+        Returns the grant with the number of passes as ``calls``."""
         if not str(run_id).strip() or len(str(run_key_digest)) != 64:
             raise ValueError("a run pre-approval needs the run id and the SHA-256 of the run key")
         if not str(approver or "").strip() or not str(approved_by).startswith("workflow_signoff:"):
             raise ValueError("a run pre-approval names the sign-off (approved_by workflow_signoff:<workflow>@<hash>) and the approver")
-        kept = [{"tool": str(c["tool"]), "arguments": json.loads(canonical_json(c.get("arguments") or {}))} for c in calls]
+        kept = [{"tool": str(c["tool"]), "arguments": json.loads(canonical_json(c.get("arguments") or {})), "count": int(c.get("count") or 1)}
+                for c in calls]
+        if any(c["count"] < 1 for c in kept):
+            raise ValueError("a pre-approved call's count is 1 or more")
         with self._locked():
             state = self._read(self.state_path)
             runs = self._live_runs(state)
@@ -264,8 +321,11 @@ class PermissionStore:
                      "workflow": str(workflow), "hash": str(hash_), "rehearsal_run_id": rehearsal_run_id, "granted_at": iso_utc(now),
                      "expires_at": iso_utc(now + self._ttl(state[self.stack_id])), "calls": kept}
             runs[str(run_id)] = grant
+            for request in self._live_requests(state).values():
+                if request.get("run_id") == str(run_id):
+                    request["run_key_sha256"] = str(run_key_digest)
             self._write(self.state_path, state)
-        return {k: v for k, v in grant.items() if k != "calls"} | {"calls": len(kept)}
+        return {k: v for k, v in grant.items() if k != "calls"} | {"calls": sum(c["count"] for c in kept)}
 
     def run_grant(self, run_id: str) -> dict[str, Any] | None:
         """The live pre-approval of the hardware run ``run_id``, with its calls, or None."""
@@ -282,4 +342,4 @@ class PermissionStore:
             state = self._read(self.state_path)
             removed = self._live_runs(state).pop(str(run_id), None)
             self._write(self.state_path, state)
-        return None if removed is None else {k: v for k, v in removed.items() if k != "calls"} | {"calls": len(removed["calls"])}
+        return None if removed is None else {k: v for k, v in removed.items() if k != "calls"} | {"calls": sum(int(c.get("count") or 1) for c in removed["calls"])}
