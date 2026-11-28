@@ -62,6 +62,7 @@ from asyncroscopy.core.names import DEFAULT_MCP_URL, DEFAULT_TILED_URI, default_
 from asyncroscopy.mcp.fingerprint import digest
 from asyncroscopy.sim.truth_score import median_error
 from asyncroscopy.skills.registry import list_skills
+from asyncroscopy.workflows.signoff import twin_truth
 from benchmarks.evaluate import RunData
 from benchmarks.evaluate import evaluators as known_evaluators
 from benchmarks.evaluate import score_run as evaluator_scores
@@ -428,12 +429,8 @@ class Live:
 
     async def ground_truth(self) -> dict | None:
         """The twin's hidden truth (true stage pose of every acquisition), from the operator endpoint."""
-        tool = find_tool(self.operator_names, "_export_ground_truth")
-        text = await self.text(tool, server=self.operator) if tool else None
-        try:
-            return json.loads(text) if text else None
-        except json.JSONDecodeError:
-            return None
+        truth, _ = await twin_truth(self.operator)
+        return truth
 
     async def pois(self, map_key: str) -> list[list[float]]:
         return [[p["x_m"], p["y_m"]] for p in await self.poi_records(map_key) or []]
