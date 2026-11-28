@@ -87,12 +87,17 @@ The long-running branch already has graphs built this way under
   scan turn that isn't there. The sample-map workflow works around it by passing
   the identity `scan_linear` for calibrated grids under 25 tiles.
   - A fix is on a local branch of the pyTEMlib fork (`fix/scan-linear-small-grids`,
-    commits `05a7694` and `4fd2ad3`, worktree `../pyTEMlib-scan-linear`), not
-    pushed. Small lattice maps no longer get the false turn.
+    commits `05a7694`, `4fd2ad3` and `e647d93`, worktree `../pyTEMlib-scan-linear`),
+    not pushed. Small lattice maps no longer get the false turn, and
+    `estimate_scan_linear` no longer changes its caller's mask of matched tiles.
   - One existing pyTEMlib test, drift recovery on sparse texture, still misses
-    its limit by 0.04 px (1.53 px against 1.49). Sparse texture can show several
-    near-equal side peaks, so telling it apart from a lattice needs a proper
-    periodicity test.
+    its limit by 0.04 px (1.53 px against 1.49). All of that gap comes from the
+    lattice guard refusing 10 pairs (1.46 px with the guard off); the scan-fit
+    changes do not move it. Sparse texture can show several near-equal side
+    peaks, and the mirror-peak and peak-count tests tried so far either missed
+    lattice matches in small windows or did not separate the two. Finishing it
+    needs a better periodicity test, or a decision on how much drift accuracy
+    to trade for lattice safety.
 - **Not run on a microscope or with Gemma.** Everything here is tested on the
   digital twins and offline only.
   - Structured routing has not been tried with the local Gemma model; Ollama is
