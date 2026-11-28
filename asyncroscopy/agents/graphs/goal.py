@@ -76,7 +76,7 @@ class GoalGraph:
         self.goal = goal
         self.worker = worker
         self.config = config or AgentConfig.from_env(caller=f"goal-{worker}")
-        self._checker = checker  # built on first use, after the endpoint said which analysis server it has
+        self._checker = checker  # built after the endpoint names its analysis server
         self._run_worker = run_worker or self._default_worker
         self.memory = memory or Memory.from_env()
         self.learn = learn
@@ -91,7 +91,7 @@ class GoalGraph:
         if feedback:
             text += f"\n\nAn earlier attempt did not reach the goal:\n{feedback}"
             produced = facts.produced() if facts else []
-            if produced:  # only what this goal's own attempts made, never older data
+            if produced:  # only this goal's attempts, never older data
                 text += f"\nAlready made by this goal: {', '.join(produced[:10])}. Use these; do not repeat work that succeeded."
             running = facts.active_jobs() if facts else {}
             if running:
@@ -136,7 +136,7 @@ class GoalGraph:
         skills: list = []
         facts = await self._facts(trace) if trace else None
         ledger_start = len(self.config.ledger)
-        self.config.deadline = started + self.goal.budget.max_seconds  # waits inside a tool call stop there too
+        self.config.deadline = started + self.goal.budget.max_seconds  # waits inside a tool call stop here too
         try:
             answer, calls, *rest = await self._run_worker(self.request(state.get("feedback", ""), facts), max(1.0, remaining))
             skills = rest[0] if rest else []
@@ -175,9 +175,9 @@ class GoalGraph:
         head = "Goal reached." if verdict["met"] else ("Goal stopped: " + verdict["over_budget"] if verdict["over_budget"] else "Goal not reached.")
         lines = [head, f"Goal: {self.goal.statement}", f"Attempts: {state['attempt']}; {facts.summary()}."]
         running = facts.active_jobs()
-        if running and self.goal.leave_running:  # the request said to start it and not wait
+        if running and self.goal.leave_running:
             lines.append("Left running, as asked: " + ", ".join(f"job {j} on {v['device']}" for j, v in running.items()))
-        elif running:  # the goal is over, so nothing it started keeps running
+        elif running:  # nothing the goal started keeps running
             stopped = await (await self.checker()).stop_jobs(facts)
             lines.append("Stopped jobs this goal had left running: " + "; ".join(f"{c.name} {c.args.get('request', '')}{' (FAILED: ' + c.result[:120] + ')' if c.error else ''}" for c in stopped))
         lines += [f"{'met' if r['met'] else 'NOT met'}: {r['why']}" for r in verdict["results"]]
@@ -201,7 +201,7 @@ class GoalGraph:
             if not verdict["met"]:
                 outcome = self.memory.add_lesson(lesson(self.goal, verdict["results"], calls))
                 return {"added": "Lesson recorded in LESSONS.md.", "duplicate": "This lesson is already in LESSONS.md."}.get(outcome, f"Lesson not recorded ({outcome}).")
-            if not settings.get().learn_skills:  # drafting skills from runs is off unless ASYNCROSCOPY_LEARN_SKILLS turns it on
+            if not settings.get().learn_skills:  # off unless ASYNCROSCOPY_LEARN_SKILLS
                 return ""
             offered = self.offered
             if offered is None:
@@ -210,7 +210,7 @@ class GoalGraph:
             path, what = await distill(self.goal, calls, self.memory, offered, namer, self.config.model, run_id)
             note = " -- a draft until an operator promotes it." if what.startswith("created") else ""
             return f"Learned skill: {what}" + (f" ({path})" if path else "") + note
-        except Exception as exc:  # memory is a help, never a reason to fail the run
+        except Exception as exc:  # memory must never fail the run
             return f"Could not update the agent memory: {type(exc).__name__}: {exc}"
 
     def build(self) -> CompiledStateGraph:

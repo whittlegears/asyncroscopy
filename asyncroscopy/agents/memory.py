@@ -38,7 +38,7 @@ from asyncroscopy import settings
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.skills.registry import content_words, learned_dir
 
-NOTES_BUDGET_CHARS = 1500  # about 400 tokens of notes per model call
+NOTES_BUDGET_CHARS = 1500  # about 400 tokens
 MAX_EXPERIMENTS_SCANNED = 50
 MAX_LESSONS = 100
 MAX_LESSON_CHARS = 240
@@ -146,7 +146,7 @@ class Memory:
                     out.append((source, text[: max(0, budget - len(source) - 3)]))
                 break
             out.append((source, text))
-            used += size + 1  # and the newline between entries
+            used += size + 1  # the newline between entries
         return out
 
     def notes_for(self, request: str, budget: int = NOTES_BUDGET_CHARS) -> str:

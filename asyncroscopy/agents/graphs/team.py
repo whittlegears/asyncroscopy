@@ -43,7 +43,7 @@ from asyncroscopy.agents.middleware import build_middleware
 from asyncroscopy.agents.profile import TeamTools, load_profile
 from asyncroscopy.agents.skill_middleware import recursion_limit
 
-try:  # import the model client here because an import inside the async factory blocks the event loop
+try:  # importing in the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
 except ImportError:
     pass
@@ -51,7 +51,7 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 6
-STEP_TOOL_ROUNDS = 25  # tool calls one step may make, since a long map is many wait_for_job calls
+STEP_TOOL_ROUNDS = 25  # a long map is many wait_for_job calls
 STEP_RECURSION = recursion_limit(STEP_TOOL_ROUNDS)
 ROLE_PROMPTS = {
     "operator": """You run the instrument for one step of a larger task. Tools act on the instrument or its digital twin.
@@ -88,7 +88,7 @@ class TeamState(TypedDict, total=False):
     trace: list
     retried: bool
     answer: str
-    skills_applied: list  # one entry with step, agent, skill and reason for every skill a specialist was given
+    skills_applied: list  # step, agent, skill and reason per applied skill
 
 
 def _parse_json(text: str) -> dict:
@@ -139,7 +139,7 @@ class TeamGraph:
         self.config = config or AgentConfig.from_env(caller=settings.get().caller or "team")
         self.memory = memory or Memory.from_env()
         self.team = load_profile(self.config.profile).team
-        self.catalog = ToolCatalog.unknown()  # what the endpoint's tools are, read along with the tools
+        self.catalog = ToolCatalog.unknown()
         self._tools: dict[str, list] | None = None
         self._all_names: set[str] = set()
         self._has_mapper = True
@@ -195,7 +195,7 @@ class TeamGraph:
         if state.get("retried"):
             task += f"\n\nThe first try at this step failed: {notes[-1]}\nFix that and finish the step."
             running = Facts.from_calls([Call.from_dict(c) for c in state.get("trace", [])], self.catalog).active_jobs()
-            if running:  # never a second job while the first try's is still on the instrument
+            if running:  # never a second job while the first is on the instrument
                 task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
                         ". Wait for it with wait_for_job (its reply has the results); do not start another job."
         agent = self.specialist(step["agent"], tools, task, notes)

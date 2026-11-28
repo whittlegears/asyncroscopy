@@ -23,9 +23,9 @@ from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model
 
-try:  # import the model client here because an import inside the async factory blocks the event loop
+try:  # importing in the async factory blocks the event loop
     import langchain_ollama  # noqa: F401
-except ImportError:  # other providers load through init_chat_model
+except ImportError:
     pass
 
 SYSTEM = """You operate a laboratory instrument (or its digital twin) through tools.
@@ -70,7 +70,7 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     every = await agent_config.tools(allow=["*"])
     offered = {t.name for t in every}
     own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
-    info = await agent_config.info()  # what discovery found, such as the microscopes, the Mappers and each tool's role
+    info = await agent_config.info()
     stem = bool(devices_of_kind(info, "stem"))
     lists = agent_config.tool_lists()
     patterns = agent_tool_patterns(own, bool((info.get("urls") or {}).get("analysis")), chosen, lists, stem=stem, maps=bool(devices_of_kind(info, "map")))

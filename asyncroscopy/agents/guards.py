@@ -46,7 +46,7 @@ from asyncroscopy.core.names import ACTIVE_JOB_STATES, DATA_KEY_IN_TEXT
 from asyncroscopy.agents.goals import MAP_KEY, content_text
 
 CHARS_PER_TOKEN = 3.5
-OUTPUT_RESERVE_TOKENS = 1500  # left for the model's answer and tool call
+OUTPUT_RESERVE_TOKENS = 1500  # for the model's answer and tool call
 LATEST_REPLY_CHARS = 6000
 DIGEST_CHARS = 160
 OLD_TEXT_CHARS = 600
@@ -122,7 +122,7 @@ def fit_messages(messages: list, budget_chars: int) -> list:
         if drop is None:
             break
         out = [m for j, m in enumerate(out) if j not in set(drop)]
-    if first is not None and messages[first] not in out:  # never happens, but the request must survive
+    if first is not None and messages[first] not in out:  # must not happen, but keep the request
         out.insert(0, messages[first])
     if last_human is not None and messages[last_human] not in out:
         out.append(messages[last_human])
@@ -140,8 +140,8 @@ def tool_rounds(messages: list) -> list[tuple[str, str, str]]:
     return rounds
 
 
-CLAIM_CHECK = "claim_check"  # the name of the claim check's correction message
-EMPTY_REPLY = "empty_reply"  # the name of EmptyReplyMiddleware's request for a reply
+CLAIM_CHECK = "claim_check"
+EMPTY_REPLY = "empty_reply"
 
 
 def is_request(message: BaseMessage) -> bool:
@@ -196,7 +196,7 @@ def finished_job(messages: list, args: dict) -> dict | None:
     request, or None. A small model whose context was trimmed ran the same 600 nm map three times; on an
     instrument that is three times the dose for nothing."""
     if not args.get("plan"):
-        return None  # a resume names its job, and is the user's call
+        return None  # a resume names its job: the user's call
     key = _job_key(args)
     messages = _this_request(messages)
     replies = {getattr(m, "tool_call_id", None): _json(_text(m)) for m in messages if getattr(m, "type", "") == "tool"}
@@ -238,7 +238,7 @@ class JobWaitMiddleware(AgentMiddleware):
         self.deadline = deadline  # the time.monotonic value after which no wait goes on
         self.on_progress = on_progress
         self.stop = stop
-        self.estimates: dict[str, float] = {}  # estimated duration in seconds for each job id, from run_job replies
+        self.estimates: dict[str, float] = {}  # seconds per job id, from run_job replies
 
     def _wait_cap_s(self, job_id: str) -> float:
         estimate = self.estimates.get(job_id)
@@ -253,7 +253,7 @@ class JobWaitMiddleware(AgentMiddleware):
         if self.wait_tool is None or name not in ("run_job", "wait_for_job") or not isinstance(result, ToolMessage):
             return None
         if name == "run_job" and str((request.tool_call.get("args") or {}).get("wait", True)).strip().lower() in ("false", "0", "no"):
-            return None  # the user wants the job id now, to stop it or to come back later
+            return None  # the user wants the job id now
         if getattr(result, "status", "success") == "error":
             return None
         status = _json(_text(result))
@@ -314,7 +314,7 @@ class JobWaitMiddleware(AgentMiddleware):
             if self.on_progress:
                 self.on_progress(job_id, status, time.monotonic() - began)
             if status.get("state") in ACTIVE_JOB_STATES and not status.get("note"):
-                await asyncio.sleep(1.0)  # the server returned before its own wait ended, so do not spin
+                await asyncio.sleep(1.0)  # the server returned early: do not spin
         return self._final(request, first, status, time.monotonic() - began, checks)
 
     def wrap_tool_call(self, request: ToolCallRequest, handler: Callable[[ToolCallRequest], ToolMessage | Command]) -> ToolMessage | Command:

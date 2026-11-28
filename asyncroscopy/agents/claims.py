@@ -80,7 +80,7 @@ UNIT = r"(?:\s*(?P<unit>nanomet(?:er|re)s?|micromet(?:er|re)s?|millimet(?:er|re)
 SCALE = {"nm": 1e-9, "pm": 1e-12, "µm": 1e-6, "μm": 1e-6, "um": 1e-6, "mm": 1e-3, "m": 1.0,
          "nanomet": 1e-9, "micromet": 1e-6, "millimet": 1e-3, "picomet": 1e-12, "met": 1.0}
 _VALUE = NUMBER.replace("?P<num>", "?:") + UNIT.replace("?P<unit>", "?:")
-VALUES = rf"{_VALUE}(?:\s*(?:,\s*(?:and\s+)?|\s+and\s+){_VALUE})*"  # matches a list like -20 nm, 0 nm, and +20 nm
+VALUES = rf"{_VALUE}(?:\s*(?:,\s*(?:and\s+)?|\s+and\s+){_VALUE})*"  # e.g. -20 nm, 0 nm, and +20 nm
 FINAL_STATE =r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+back\s+to|(?:reset|restored|returned)\s+to|is\s+now(?:\s+at)?|now\s+at|left\s+at|ends?\s+at)"
 SETTING_ALIASES = {"fov": ("fov", "field of view"), "defocus": ("defocus", "focus")}
 
@@ -116,7 +116,7 @@ HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phra
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
 FIELD_UNIT = re.compile(r"_(nm|um|pm|mm|m)(?:_per_s)?$")
-STATED_LENGTH = re.compile(NUMBER + r"`?" + UNIT)  # "`0.00017` meters": a small model puts copied numbers in backticks
+STATED_LENGTH = re.compile(NUMBER + r"`?" + UNIT)  # a small model may backtick a number
 QUALITY_QUESTION = re.compile(r"\bhow\s+(?:good|well)\b|\bquality\b|\bseams?\b", re.I)
 STAGE_PLACED = re.compile(r"\bstage(?:'s)?\s+(?:reported|position|placed|put)|\brough\b|\bmatched\s+no\b|\bno\s+(?:image\s+)?match|\bunmatched\b"
                           r"|\bmisalign|\bunplaced\b|\bfallback\b|\bseams?\b", re.I)
@@ -159,8 +159,8 @@ NOTE = "\n\n[Claim check: these statements could not be verified from this run's
 @dataclass
 class Claim:
     kind: str  # key, failed_acquisition, setting, acquired_at, action, placement, unfinished, deferred_read, missing_positions, field_name, stitch, map_quality, unit
-    text: str  # what the answer says
-    why: str  # why no tool call supports it
+    text: str
+    why: str
 
     def line(self) -> str:
         return f'- "{self.text}": {self.why}'
@@ -235,7 +235,7 @@ class _Settings:
         self.last: dict[str, tuple[float, str]] = {}
         self.set: dict[str, list[float]] = {}
         self.setter: dict[str, str] = {}
-        self.acquired: list[dict[str, float]] = []  # the known settings in effect at each successful acquisition
+        self.acquired: list[dict[str, float]] = []  # settings in effect at each acquisition
         for call in calls:
             if call.error:
                 continue
@@ -256,7 +256,7 @@ class _Settings:
             if name and _number(call.result) is not None:
                 self.last[name] = (_number(call.result), call.name)
                 continue
-            for node in _walk(_json(call.result)):  # a reply such as get_parameters that reports settings
+            for node in _walk(_json(call.result)):
                 for key, value in node.items():
                     setting = key[:-2] if key.endswith("_m") else key
                     if setting in self.names and _number(value) is not None:
@@ -362,7 +362,7 @@ def _at_values(sentence: str, phrase: str):
     if not m:
         return None
     items = list(re.finditer(rf"{NUMBER}{UNIT}", m.group("list")))
-    unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # the last unit covers the whole list, as in -20, 0 and +20 nm
+    unit = next((i.group("unit") for i in reversed(items) if i.group("unit")), None)  # the last unit covers the whole list
     return m, [(float(i.group("num").replace("−", "-")), _scale(i.group("unit") or unit), i.group("unit") or unit) for i in items]
 
 
@@ -556,7 +556,7 @@ def _unfinished_claims(answer: str) -> list[Claim]:
     """The answer's last sentences announce a next step the model never took (a small model ending its turn early)."""
     tail = _sentences(answer)[-2:]
     if any("?" in sentence for sentence in tail):
-        return []  # a question to the user is a fair place to stop
+        return []  # a question to the user is a fair stop
     for sentence in tail:
         m = ANNOUNCES.search(sentence)
         if m:
@@ -582,7 +582,7 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     """The request asks where things are, a reply gave positions, and the answer states none."""
     if not POSITION_QUESTION.search(request):
         return []
-    found: dict[str, set] = {}  # distinct positions per tool, since a point's links may repeat it
+    found: dict[str, set] = {}  # distinct positions per tool
     for call in calls:
         if call.error:
             continue

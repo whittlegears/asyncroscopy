@@ -53,7 +53,7 @@ class Agent:
 
     name: str
     system_prompt: str
-    tools: list[str]  # tool names, which may be glob patterns like math_*
+    tools: list[str]  # may be glob patterns like math_*
     model: str | None = None
     description: str = ""
 

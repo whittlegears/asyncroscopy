@@ -134,7 +134,7 @@ class McpServer:
         self.images = images
         self.replies = replies
         self.headers = dict(headers or {})
-        if not any(k.lower() == "authorization" for k in self.headers):  # a caller such as the swarm builds its own headers
+        if not any(k.lower() == "authorization" for k in self.headers):  # a caller such as the swarm builds its own
             self.headers.update(bearer_header(settings.get().mcp_token))
         self.timeout_s = timeout_s
         self.ledger = ledger
@@ -203,6 +203,6 @@ class McpServer:
             description=(spec.description or name)[:1024],
             args_schema=schema,
             coroutine=run,
-            response_format="content_and_artifact",  # the artifact carries a reply's images for the chat
-            handle_tool_error=True,  # a failed call goes back to the model as text, not a crash
+            response_format="content_and_artifact",  # carries a reply's images for the chat
+            handle_tool_error=True,  # a failed call goes back to the model as text
         )

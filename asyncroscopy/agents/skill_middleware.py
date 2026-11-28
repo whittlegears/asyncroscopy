@@ -151,7 +151,7 @@ def skills_for(messages: Sequence[BaseMessage], agent_tools: set[str], endpoint_
         if name in usable and len(applied) < limits.at_most and all(a["skill"] != name for a in applied):
             applied.append({"skill": name, "reason": reason})
 
-    if NEW_MAP.search(request):  # a request for a new map gets this endpoint's mapping procedure first
+    if NEW_MAP.search(request):  # a new map gets this endpoint's mapping procedure first
         for skill in known:
             if skill.new_map:
                 add(skill.name, "the request asks for a new map")
@@ -191,7 +191,7 @@ class SkillMiddleware(AgentMiddleware):
         self.skill_tools = {s.name: list(s.tools) for s in known}
         self.memory = memory
         self.num_ctx = num_ctx
-        self._notes: dict[str, str] = {}  # memory notes per request, read once per run and not per model call
+        self._notes: dict[str, str] = {}  # read once per run, not per model call
 
     def _notes_for(self, request: str) -> str:
         if self.memory is None:
@@ -286,7 +286,7 @@ class SkillMiddleware(AgentMiddleware):
         return kept
 
     def wrap_model_call(self, request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]) -> ModelCallResult:
-        if looping(request.messages) == 2:  # stop rather than loop on a third identical round in a row or a fourth in a cycle
+        if looping(request.messages) == 2:  # stop before a third identical round or a fourth in a cycle
             return ModelResponse(result=[stop_message(request.messages)])
         return handler(self._prompted(request))
 

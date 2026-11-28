@@ -122,7 +122,7 @@ class Goal:
     statement: str
     criteria: list[dict] = field(default_factory=list)
     budget: Budget = field(default_factory=Budget)
-    leave_running: bool = False  # the request said to start a job and not wait, so never abort it
+    leave_running: bool = False  # start the job and never abort it
 
     @classmethod
     def from_text(cls, statement: str, **budget: Any) -> Goal:
@@ -140,7 +140,7 @@ class Goal:
             new_map = bool(NEW_MAP.search(statement))
             if new_map:
                 categories |= {"job"}
-                if not leave_running:  # a job left running produces no map before the goal ends
+                if not leave_running:
                     entry: dict[str, Any] = {"kind": "map"}
                     regions = REGIONS.search(statement)
                     if regions:
@@ -170,7 +170,7 @@ class Goal:
                 categories |= {"beam"}
         criteria += [{"kind": "no_unrequested", "categories": sorted(categories)}, {"kind": "grounded_answer"}]
         stated = DOSE.search(statement)
-        if stated and "max_dose_e_per_a2" not in budget:  # a dose the user states is a limit the run must keep
+        if stated and "max_dose_e_per_a2" not in budget:  # a stated dose is a limit to keep
             budget["max_dose_e_per_a2"] = float(stated.group(1))
         return cls(statement, criteria, Budget(**budget), leave_running)
 
@@ -354,12 +354,12 @@ def _is_acquisition(name: str, catalog: ToolCatalog) -> bool:
 class Facts:
     data_keys: set[str] = field(default_factory=set)  # data this run made
     map_keys: set[str] = field(default_factory=set)  # stitched maps this run made
-    seen_keys: set[str] = field(default_factory=set)  # every key a server returned in this run, which the answer may name
-    jobs: dict[str, dict] = field(default_factory=dict)  # jobs this run started, by job_id, each with device, state and kind
+    seen_keys: set[str] = field(default_factory=set)  # every key a server returned, which the answer may name
+    jobs: dict[str, dict] = field(default_factory=dict)  # by job_id, with device, state and kind
     dose_e_per_a2: float = 0.0
     high_risk: list[str] = field(default_factory=list)
-    risks_known: bool = False  # high_risk comes from the endpoint's catalog and is not checked without one
-    catalog: ToolCatalog = field(default_factory=ToolCatalog.unknown, repr=False, compare=False)  # what the tools are
+    risks_known: bool = False  # high_risk comes from the catalog
+    catalog: ToolCatalog = field(default_factory=ToolCatalog.unknown, repr=False, compare=False)
     errors: int = 0
     calls: int = 0
 
@@ -410,7 +410,7 @@ class Facts:
                     previous = facts.jobs.get(job_id, {})
                     state = node.get("state") if isinstance(node.get("state"), str) else previous.get("state", "queued")
                     facts.jobs[job_id] = {"device": previous.get("device") or _device(call, catalog), "state": state, "kind": previous.get("kind") or kind}
-                if kind == "score":  # its result_keys name the map it scored, which this run did not make
+                if kind == "score":  # its result_keys name a map this run did not make
                     continue
                 for key, value in node.items():
                     if not isinstance(value, str):
@@ -561,7 +561,7 @@ class GoalChecker:
         for key in sorted(facts.data_keys):
             opened = await self._ok(self.instrument, "view_data", {"key": key, "format": "text"})
             if opened is None:
-                found.append(key)  # no instrument to ask, so trust the server reply that named it
+                found.append(key)  # no instrument to ask, so trust the reply
                 continue
             if not opened or not opened[0]:
                 continue

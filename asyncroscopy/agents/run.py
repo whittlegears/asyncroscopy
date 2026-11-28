@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 GRAPHS = AGENT_GRAPHS
 GraphName = Literal["", *GRAPHS]
-GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make
+GENERAL_TOOL_ROUNDS = 25
 
 
 @contextlib.asynccontextmanager
@@ -174,7 +174,7 @@ def main() -> None:
 
     text, failed = asyncio.run(traced())
     print(text)
-    if failed:  # a nonzero exit tells scripts and CI that the map did not complete
+    if failed:  # nonzero exit: the map did not complete
         sys.exit(1)
 
 

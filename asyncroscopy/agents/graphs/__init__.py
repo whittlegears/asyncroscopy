@@ -20,7 +20,7 @@ async def run_keeping_partial(graph: Runnable, inputs: dict, config: dict | None
     the run stopped appears without one (a failed call) in the messages.
     """
     last: dict = {"messages": list(inputs.get("messages", []))}
-    if not hasattr(graph, "astream"):  # a plain runnable has no partial state to keep
+    if not hasattr(graph, "astream"):
         try:
             run = graph.ainvoke(inputs, config)
             return (await asyncio.wait_for(run, timeout) if timeout else await run), ""

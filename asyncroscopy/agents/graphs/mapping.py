@@ -32,10 +32,10 @@ from asyncroscopy.contracts import load, validate
 from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.core.map_analysis import AnalysisFailed, score_map, stitch_map
 
-ABORT_WAIT_S = 60.0  # how long an error path waits for an aborted map to stop before releasing
-MAX_POLL_MISSES = 5  # consecutive failed status polls before the graph gives up on a job
+ABORT_WAIT_S = 60.0  # wait for an aborted map to stop before releasing
+MAX_POLL_MISSES = 5  # consecutive failed polls before giving up
 DEFAULT_FOV_M = 200e-9
-load("map_plan")  # read the schema now because file I/O inside async nodes blocks the event loop
+load("map_plan")  # file I/O in async nodes blocks the event loop
 
 log = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class MapState(TypedDict, total=False):
     reservation_id: str
     estimate: dict
     job_id: str
-    released: bool  # the reservation is already released, so error paths must not release or abort it again
+    released: bool  # already released: error paths must not release or abort again
     run_key: str
     map_key: str
     eds_points: int
@@ -163,7 +163,7 @@ class MappingGraph:
 
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
-        await self._mapper()  # a missing Mapper, or more than one, ends the run here before the model is asked
+        await self._mapper()  # zero or several Mappers end the run before the model is asked
         params = await self.instrument.call_json(f"{microscope}_get_parameters")
         stage = params.get("stage_position")
         if stage is None:
@@ -206,19 +206,19 @@ class MappingGraph:
         """Fill gaps and repair slips (units, swapped corners) in a model's plan; a plan passed in keeps its size and per_tile."""
         allowed = {"box_m", "size_m", "centre_m", "fov_m", "overlap", "imsize", "dwell_s", "detectors", "per_tile", "eds_exposure_s", "eds_map_points", "dose_budget_e_per_a2", "order", "z_m", "label"}
         plan = {k: v for k, v in plan.items() if k in allowed}
-        fov_max, coord_max = _plausible_limits(context)  # what is plausible in metres on this instrument
+        fov_max_m, coord_max_m = _plausible_limits(context)
         fov = float(plan.get("fov_m") or context.get("fov_m") or DEFAULT_FOV_M)
-        fov = _to_metres(fov, metres_below=fov_max)
+        fov = _to_metres(fov, metres_below=fov_max_m)
         plan["fov_m"] = fov
         size_m, centre_m = plan.pop("size_m", None), plan.pop("centre_m", None)
         stage_xy = (context.get("stage_position_m") or [0.0, 0.0])[:2]
         box = plan.get("box_m")
         if isinstance(size_m, list) and len(size_m) == 2 and not isinstance(box, list):
-            width, height = (_to_metres(float(v), metres_below=coord_max) for v in size_m)
-            x, y = (_to_metres(float(v), metres_below=coord_max) for v in (centre_m or stage_xy)[:2])
+            width, height = (_to_metres(float(v), metres_below=coord_max_m) for v in size_m)
+            x, y = (_to_metres(float(v), metres_below=coord_max_m) for v in (centre_m or stage_xy)[:2])
             box = [x - width / 2, x + width / 2, y - height / 2, y + height / 2]
         if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
-            box = [_to_metres(float(v), metres_below=coord_max) for v in box]
+            box = [_to_metres(float(v), metres_below=coord_max_m) for v in box]
             x0, x1, y0, y1 = box
             box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         else:
@@ -260,7 +260,7 @@ class MappingGraph:
         if not per_tile and asks_for_eds and context.get("eds", True):
             per_tile = ["eds_point"]
         if not asks_for_eds or not context.get("eds", True):
-            per_tile = []  # EDS adds dose and time, so use it only when the request asks and the instrument has it
+            per_tile = []  # EDS adds dose and time: only when asked and available
         if "eds_map" in per_tile and not re.search(r"spectrum image|eds map|spectral map|eds_map", request, re.I):
             per_tile = ["eds_point"]  # a full spectrum image must be asked for by name
         return MappingGraph._set_per_tile(plan, per_tile)
@@ -316,7 +316,7 @@ class MappingGraph:
         while True:
             try:
                 status = await self.instrument.call_json(f"{await self._mapper()}_job_status", {"request": json.dumps({"job_id": state["job_id"]})})
-            except Exception as exc:  # one dropped call in an hours-long poll must not end the watch
+            except Exception as exc:  # one dropped poll must not end the watch
                 status = {"error": {"message": str(exc)}}
             if "error" in status:
                 misses += 1

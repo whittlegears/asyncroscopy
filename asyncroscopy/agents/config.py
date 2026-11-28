@@ -126,7 +126,7 @@ class AgentConfig:
                 result = await McpServer(self.mcp_url, self._headers()).call("endpoint_info", {})
                 payload = getattr(result, "structured_content", None) if result is not None and not result.is_error else None
                 self._info = dict(payload or {})
-            except Exception:  # not cached, so one passing failure does not hide the risks for the whole run
+            except Exception:  # not cached: one failure must not hide risks for the run
                 log.warning("endpoint_info from %s failed; going on without it", self.mcp_url, exc_info=True)
                 return {}
             if self.analysis_url is None and "urls" in self._info:
