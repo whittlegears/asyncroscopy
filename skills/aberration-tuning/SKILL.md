@@ -13,13 +13,13 @@ limit. If anything fails, it undoes the whole change.
 
 1. Focus first (see the stem-focus skill). Defocus dominates every other aberration.
 2. Call `procedure_limits`. Only aberrations listed in `aberration_max_offset_m` can
-   be tuned.
-3. Use `high_frequency_power` as the metric. On the gold digital twin, `contrast`
-   rose as A1 got worse, so it led the search the wrong way.
-4. The pixels must be fine enough to resolve the probe. On the gold twin, nothing
-   responded at 128 px over 20 nm (1.6 Å per pixel), and the signal was clear at
-   256 px over 10 nm (0.4 Å per pixel). If the current settings are coarser, ask the
-   operator before changing field of view or image size.
+   be tuned, and `aberration_max_pixel_size_m` is the coarsest pixel it will run at.
+3. Pixels must be fine enough to resolve the probe. Pixel size = field of view /
+   image size. If the procedure refuses with "pixels are ... coarser than", ask the
+   operator before increasing the image size or reducing the field of view.
+4. Use the default metric, `edge_sharpness`. `high_frequency_power` also works.
+   `contrast` is refused: it is not monotonic in aberration size and can lead the
+   search away from the optimum.
 
 ## Order
 
@@ -32,9 +32,9 @@ have one coefficient; the others have two (x, y), handled automatically.
 - `improved` and `peak_bracketed` both true: keep it, report the score gain.
 - `improved` true but not bracketed: run the same aberration once more.
 - `improved` false: nothing helped and nothing was changed. Move on.
-- The best setting need not be zero. With other aberrations present, a small A1 can
-  partly offset them, and the procedure optimises image sharpness, not the number.
-  Report `applied_correction_m` as found; do not "correct it to zero".
+- The best value can sit slightly off zero, typically tenths of a nanometre, when
+  higher-order aberrations of the same symmetry are present (S3 balances A1, for
+  example). Report `applied_correction_m` as found; do not force it to zero.
 
 ## Rules
 

@@ -18,8 +18,9 @@ the instrument back where it started.
 
 1. Call `procedure_limits` once and keep the limits in mind. A request beyond them
    is refused, never clipped.
-2. Choose the metric. Use `edge_sharpness` or `high_frequency_power` for focus.
-   `contrast` can rise with some aberrations, so it is a poor focus signal on its own.
+2. Keep the default metric, `edge_sharpness`. `high_frequency_power` also works.
+   `contrast` is accepted for focus but is not monotonic in blur on every sample, so
+   prefer the other two.
 3. Make sure the pixels are small enough to show focus changes. If the field of view
    is large compared with the features of interest, ask the operator before changing
    magnification.

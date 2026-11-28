@@ -11,5 +11,8 @@ and the pyTEMlib analysis MCP server.
 | `aberration-tuning` | `tune_aberration` | polycrystalline gold digital twin |
 | `drift-tracked-tilt-series` | instrument tools + `measure_image_shift` | tilt digital twin: direction calibration within 1 %, residual drift at most half a pixel over 30 degrees |
 
-The advice on metrics and pixel size comes from those twin runs and is stated as such
-in each skill; check it on real hardware before relying on it.
+The advice on metrics and pixel size comes from those twin runs. On the gold twin,
+after fixing its noise scaling, tuning A1 from (6.0, -4.0) nm with `edge_sharpness`
+ended at (-0.31, +0.08) nm; at 1.56 A pixels A1 barely changed the image, which is why
+`tune_aberration` refuses pixels coarser than the configured limit. Check these on real
+hardware before relying on them.

@@ -102,3 +102,12 @@ class TestDigitalTwin:
         with h5py.File(twin_proxy.acquire_spectrum("eds"), "r") as h5:
             spec_2 = h5["spectrum"][()]
         assert spec_1.tolist() == spec_2.tolist()
+
+
+def test_field_of_view_round_trips(twin_proxy):
+    original = twin_proxy.get_fov()
+    twin_proxy.set_fov(12e-9)
+    try:
+        assert twin_proxy.get_fov() == pytest.approx(12e-9)
+    finally:
+        twin_proxy.set_fov(original)

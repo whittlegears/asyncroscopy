@@ -34,4 +34,7 @@ procedures:
       A2: 1.0e-7
       B2: 1.0e-7
     aberration_max_step_m: 5.0e-9
+    # Coarsest pixel at which tune_aberration runs. On the gold digital twin, A1 changed
+    # edge sharpness by 7 % at 0.78 A pixels and by 0.2 % at 1.56 A pixels.
+    aberration_max_pixel_size_m: 8.0e-11
     max_acquisitions: 40

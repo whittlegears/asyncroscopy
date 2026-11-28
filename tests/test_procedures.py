@@ -33,6 +33,7 @@ class Scope:
         self.fail_after = fail_after
         self.acquisitions = 0
         self.moves = []
+        self.fov = 96 * 0.5e-10
         texture = np.random.default_rng(0).random((96, 96))
         self.sample = ndimage.gaussian_filter(texture, 0.8)
         self.server = FastMCP("scope")
@@ -54,6 +55,14 @@ class Scope:
         @tool(name=f"{prefix}_set_defocus")
         def set_defocus(defocus: float) -> None:
             self.defocus = float(defocus)
+
+        @tool(name=f"{prefix}_get_fov")
+        def get_fov() -> float:
+            return self.fov
+
+        @tool(name="SCAN_get_imsize")
+        def get_imsize() -> int:
+            return 96
 
         @tool(name=f"{prefix}Corrector_correct_aberration")
         def correct_aberration(args: str) -> str:
@@ -193,3 +202,18 @@ def test_bracketed_peak_is_reported(tmp_path):
     scope = Scope(tmp_path, focus_z=30e-9)
     failed, result = run(scope, "focus_stage_z", {"step_m": 40e-9, "max_offset_m": 400e-9, "metric": "edge_sharpness"})
     assert result["improved"] and result["peak_bracketed"]
+
+
+def test_tune_aberration_refuses_coarse_pixels(tmp_path):
+    scope = Scope(tmp_path, aberration=(6e-9, -4e-9))
+    scope.fov = 96 * 1.5e-10
+    failed, message = run(scope, "tune_aberration", {"name": "A1"})
+    assert failed and "coarser than" in message
+    assert scope.acquisitions == 0 and scope.aberration == [6e-9, -4e-9]
+
+
+def test_tune_aberration_refuses_contrast(tmp_path):
+    scope = Scope(tmp_path)
+    failed, message = run(scope, "tune_aberration", {"name": "A1", "metric": "contrast"})
+    assert failed and "contrast" in message
+    assert scope.acquisitions == 0

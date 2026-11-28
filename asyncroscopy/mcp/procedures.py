@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,6 +33,8 @@ INSTRUMENT_ROLES = {
     "get_defocus": "get_defocus",
     "set_defocus": "set_defocus",
     "correct_aberration": "correct_aberration",
+    "get_fov": "get_fov",
+    "get_imsize": "get_imsize",
 }
 
 ANALYSIS_TOOLS = ("compute_image_metrics", "propose_next_setting", "fit_parabola_vertex")
@@ -50,6 +51,7 @@ class Limits:
     defocus_max_range_m: float = 100e-9
     aberration_max_offset_m: dict[str, float] = field(default_factory=lambda: {"C1": 20e-9, "A1": 20e-9})
     aberration_max_step_m: float = 5e-9
+    aberration_max_pixel_size_m: float = 0.8e-10
     max_acquisitions: int = 40
 
 
@@ -183,25 +185,6 @@ class TrustRegion:
         return all(radius < minimum for radius, minimum in zip(self.radius, self.min_step))
 
 
-def local_points(history: list[dict], radius: list[float], reach: float = 3.0) -> list[dict]:
-    """Measurements near the current best, for a local quadratic model.
-
-    Focus-type responses are sharply peaked with flat tails, and a single quadratic fitted
-    to far-away points misplaces the peak. Keep points within ``reach`` trust radii of the
-    best one, but never fewer than a full quadratic in this many dimensions needs.
-    """
-    best = max(history, key=lambda item: item["score"])["point"]
-    dimensions = len(best)
-    needed = (dimensions + 1) * (dimensions + 2) // 2
-
-    def distance(item: dict) -> float:
-        return math.sqrt(sum(((a - b) / r) ** 2 for a, b, r in zip(item["point"], best, radius)))
-
-    ordered = sorted(history, key=distance)
-    near = [item for item in ordered if distance(item) <= reach]
-    return near if len(near) >= needed else ordered[:needed]
-
-
 async def optimize(
     session: Session,
     apply,
@@ -234,10 +217,9 @@ async def optimize(
         if region.exhausted:
             break
         previous_best = max(item["score"] for item in history)
-        local = local_points(history, region.radius)
         proposal = await session.analysis_call(
             "propose_next_setting",
-            {"points": [item["point"] for item in local], "scores": [item["score"] for item in local],
+            {"points": [item["point"] for item in history], "scores": [item["score"] for item in history],
              "trust_radius": region.radius, "bounds": [list(pair) for pair in bounds], "maximize": True},
         )
         if proposal["next_point"] is None:
@@ -297,7 +279,7 @@ class ProceduresServer:
         limits = self.config.limits
 
         @self.mcp.tool()
-        async def focus_stage_z(metric: str = "contrast", step_m: float = 50e-9, max_offset_m: float = 1e-6,
+        async def focus_stage_z(metric: str = "edge_sharpness", step_m: float = 50e-9, max_offset_m: float = 1e-6,
                                 max_iterations: int = 8, detector: str = "haadf") -> str:
             """Focus by moving the stage height (z) to maximise an image metric, then leave it at the best z.
 
@@ -338,7 +320,7 @@ class ProceduresServer:
                                    "acquisitions": session.acquisitions, "history": result["history"]})
 
         @self.mcp.tool()
-        async def sweep_defocus(half_range_m: float = 20e-9, steps: int = 9, metric: str = "contrast",
+        async def sweep_defocus(half_range_m: float = 20e-9, steps: int = 9, metric: str = "edge_sharpness",
                                 apply_best: bool = True, detector: str = "haadf") -> str:
             """Acquire images across a defocus range centred on the current defocus and find the best focus.
 
@@ -387,14 +369,22 @@ class ProceduresServer:
 
         @self.mcp.tool()
         async def tune_aberration(name: str, step_m: float = 1e-9, max_offset_m: float = 10e-9,
-                                  metric: str = "contrast", max_iterations: int = 8, detector: str = "haadf") -> str:
+                                  metric: str = "edge_sharpness", max_iterations: int = 8,
+                                  detector: str = "haadf") -> str:
             """Tune one corrector aberration (e.g. C1, A1, A2, B2) to maximise an image metric.
 
             Moves the aberration by increments relative to its current value, never more than
             max_offset_m in total (per component), and undoes the whole change if anything fails.
             Round aberrations (C1, C3) have one coefficient, the others an x and a y component.
+            metric: edge_sharpness (default) or high_frequency_power; contrast is refused because
+            it is not monotonic in aberration size. Refuses to run when the pixels (field of view /
+            image size) are coarser than the configured limit, where aberrations barely change
+            the image.
             """
             _check_metric(metric)
+            if metric == "contrast":
+                raise ProcedureError("contrast is not a reliable aberration metric: it can rise as an aberration "
+                                     "grows; use edge_sharpness or high_frequency_power")
             cap = limits.aberration_max_offset_m.get(name)
             if cap is None:
                 raise ProcedureError(f"no limit is configured for {name!r}; allowed: {sorted(limits.aberration_max_offset_m)}")
@@ -403,6 +393,13 @@ class ProceduresServer:
             dimensions = components_of(name)
             async with AsyncExitStack() as stack:
                 session = await self._open(stack)
+                pixel_size_m = float(await session.instrument_call("get_fov")) / float(
+                    await session.instrument_call("get_imsize"))
+                if pixel_size_m > limits.aberration_max_pixel_size_m:
+                    raise ProcedureError(
+                        f"pixels are {pixel_size_m * 1e10:.2f} A, coarser than the "
+                        f"{limits.aberration_max_pixel_size_m * 1e10:.2f} A limit at which aberrations "
+                        "still change the image; increase the image size or reduce the field of view")
                 applied = [0.0] * dimensions
 
                 async def apply(point: list[float]) -> None:
