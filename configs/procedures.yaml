@@ -1,0 +1,37 @@
+# Calibration procedures MCP server.
+#
+# It drives the instrument only through the STEM MCP server and analyses data only
+# through the pyTEMlib MCP server, so it needs no Tango access. Start those two first:
+#
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml
+#   python -m pyTEMlib.mcp_server --tiled-uri http://localhost:9091 --output-dir outputs/analysis
+#
+# then:
+#
+#   uv run startup_scripts/run_procedures.py --yaml configs/procedures.yaml
+
+procedures:
+  name: Calibration_Procedures
+  http_host: 127.0.0.1
+  http_port: 8010
+  instrument_url: http://127.0.0.1:8000/mcp
+  analysis_url: http://127.0.0.1:8003/mcp
+  analysis_transport: sse
+
+  # Pin a tool when more than one instrument tool matches a role, e.g.
+  #   move_stage: DigitalTwinTilt_move_stage
+  tool_names: {}
+
+  # Hard limits. A request beyond them is refused. These values come from the
+  # asyncroscopy notebooks; set them for your instrument before using real hardware.
+  limits:
+    stage_z_max_offset_m: 2.0e-6
+    stage_z_max_step_m: 2.0e-7
+    defocus_max_range_m: 1.0e-7
+    aberration_max_offset_m:
+      C1: 2.0e-8
+      A1: 2.0e-8
+      A2: 1.0e-7
+      B2: 1.0e-7
+    aberration_max_step_m: 5.0e-9
+    max_acquisitions: 40
