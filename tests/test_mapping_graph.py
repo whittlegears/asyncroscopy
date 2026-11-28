@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from asyncroscopy.agents.config import AgentConfig
-from asyncroscopy.agents.graphs import mapping
 from asyncroscopy.agents.graphs.mapping import MappingGraph
 
 
