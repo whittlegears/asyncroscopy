@@ -7,7 +7,9 @@ A workflow server does three things here, each through the operator endpoint of 
   rehearsal record keeps the twin's time, dose and twin score (``asyncroscopy.sim.truth_score``). The score is kept in
   the library's rehearsal record only, which only ``review_workflow`` on the workflow operator endpoint returns.
 - **When an approved workflow starts on a real instrument** it pre-approves, for that run only, every instrument call
-  the rehearsal the person signed off made (``preapprove_run``). The run's calls carry the run id and a secret run key
+  the rehearsal the person signed off made, as many times as it made it, under the instrument tool each matches
+  (``preapprove_run``, ``library.matched_calls``). The approval keeps its own copy of that rehearsal, and the run's
+  inputs must be the rehearsal's (``input_problem``). The run's calls carry the run id and a secret run key
   (``X-Asyncroscopy-Run``, ``X-Asyncroscopy-Run-Key``); the key is in no reply, so no other caller can use the
   pre-approvals even when it knows the run id.
 - **When that run ends or is stopped** it removes them (``end_run_preapproval``). They also expire after the stack's
@@ -23,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from asyncroscopy.agents.mcp_tools import McpServer, result_text
-from asyncroscopy.safety.permissions import run_key_sha256
+from asyncroscopy.safety.permissions import canonical_json, run_key_sha256
 from asyncroscopy.sim.truth_score import (
     score_label,
     score_version,
@@ -32,7 +34,7 @@ from asyncroscopy.sim.truth_score import (
     twin_time_and_dose,
 )
 
-from .library import Library
+from .library import Library, matched_calls
 
 
 def new_run_key() -> str:
@@ -117,29 +119,44 @@ async def rehearsal_results(state_dir: Path, record: dict, operator: McpServer |
 
 
 def signed_off_rehearsal(library: Library, name: str) -> tuple[dict | None, dict | None, str | None]:
-    """(the approval, the rehearsal it was given on, None) for an approved workflow, or why there is no such rehearsal."""
+    """(the approval, the copy of the rehearsal it was given on, None) for an approved workflow, or why there is none."""
     approval = library.approval(name)
     if not approval:
         return None, None, f"{name} has no approval"
-    wanted = (approval.get("rehearsed") or {}).get("run_id")
-    if not wanted:
+    rehearsed = approval.get("rehearsed")
+    if not rehearsed:
         return approval, None, f"{name} was approved without a rehearsal (on the command line), so no call is pre-approved"
-    found = next((r for r in library.rehearsals(name, approval.get("hash")) if r.get("run_id") == wanted), None)
-    if found is None:
-        return approval, None, f"the rehearsal {wanted} the approval was given on is no longer kept"
-    return approval, found, None
+    if "calls_made" not in rehearsed:
+        return approval, None, f"{name} was approved before an approval kept its rehearsal's calls; approve it again to pre-approve them"
+    return approval, rehearsed, None
 
 
-async def grant(operator: McpServer | str, library: Library, name: str, run_id: str, run_key: str) -> dict:
-    """Pre-approve, for the hardware run ``run_id``, the calls of the rehearsal ``name`` was signed off on. Returns
-    the run record's ``preapproval``: {"granted": true, "approved_by", "approver", "rehearsal_run_id", "calls",
-    "expires_at"} or {"granted": false, "why"}. Without it every call is permissioned as usual."""
+def input_problem(library: Library, name: str, inputs: dict) -> str | None:
+    """Why a hardware run of the approved workflow ``name`` with ``inputs`` (defaults filled in) is refused: a sign-off
+    covers its rehearsal as rehearsed, so with the inputs that rehearsal ran with. None when they are the same, or the
+    approval carries no rehearsal."""
+    rehearsed = (library.approval(name) or {}).get("rehearsed")
+    if not rehearsed or canonical_json(inputs) == canonical_json(rehearsed.get("inputs") or {}):
+        return None
+    return (f"{name} was signed off for the inputs its rehearsal ran with ({canonical_json(rehearsed.get('inputs') or {})}, rehearsal "
+            f"{rehearsed.get('run_id')}); these are {canonical_json(inputs)}. Other inputs need a new rehearsal on the twin and a new sign-off.")
+
+
+async def grant(operator: McpServer | str, library: Library, name: str, run_id: str, run_key: str, info: dict) -> dict:
+    """Pre-approve, for the hardware run ``run_id`` on the instrument whose endpoint_info is ``info``, the instrument
+    calls of the rehearsal ``name`` was signed off on, each as many times as the rehearsal made it, under the instrument
+    tool the approval recorded for it. A call whose tool, matched again now (``matched_calls``), is another one, or
+    none, is not pre-approved. Returns the run record's ``preapproval``: {"granted": true, "approved_by", "approver",
+    "rehearsal_run_id", "calls", "expires_at"} or {"granted": false, "why"}. Without it every call is permissioned as usual."""
     approval, rehearsal, why = signed_off_rehearsal(library, name)
     if rehearsal is None:
         return {"granted": False, "why": why}
     if isinstance(operator, str):
         return {"granted": False, "why": operator}
-    calls = [{"tool": c["tool"], "arguments": c["arguments"]} for c in rehearsal.get("calls_made") or [] if c.get("server") == "instrument"]
+    now = matched_calls(rehearsal, info)
+    calls = [{"tool": found["instrument_tool"], "arguments": found["arguments"], "count": found.get("count") or 1}
+             for found, signed in zip(now, rehearsal["calls_made"])
+             if found.get("server") == "instrument" and found.get("instrument_tool") and found["instrument_tool"] == signed.get("instrument_tool")]
     arguments = {"run_id": run_id, "run_key_sha256": run_key_sha256(run_key), "calls": calls,
                  "approved_by": signoff_name(name, str(approval["hash"])), "approver": str(approval.get("by") or ""),
                  "workflow": name, "hash": str(approval["hash"]), "rehearsal_run_id": rehearsal.get("run_id")}

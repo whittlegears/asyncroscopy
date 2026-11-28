@@ -49,7 +49,7 @@ from . import runner, signoff
 from .authoring import RULES, TEMPLATE, TEMPLATE_PARALLEL
 from .blocks import describe_blocks
 from .graph import Workflow
-from .library import APPROVED, SHIPPED, Library, fingerprint_of, needs_approval, rehearsal_passed
+from .library import APPROVED, SHIPPED, Library, fingerprint_of, matched_calls, needs_approval, rehearsal_passed
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
@@ -222,7 +222,7 @@ class WorkflowServer:
             await signoff.mark_rehearsal(self.state_dir, run_id, operator)
         elif status == APPROVED:
             run_key = signoff.new_run_key()
-            fields["preapproval"] = await signoff.grant(operator, self.library, workflow.name, run_id, run_key)
+            fields["preapproval"] = await signoff.grant(operator, self.library, workflow.name, run_id, run_key, info)
         instrument, analysis, _ = await self.endpoints.open(run_id=run_id, caller=requester(), instrument_url=instrument_url, run_key=run_key)
         return instrument, analysis, operator, fields
 
@@ -311,20 +311,25 @@ class WorkflowServer:
             operator, granted))
         return await self._wait(run_id, wait_s)
 
-    async def stack_fingerprint(self, instrument_url: str | None = None) -> dict | None:
-        """The ``stack_fingerprint`` of the instrument endpoint ``instrument_url`` (the first one when None), or None when
-        it cannot be reached or reports none. Raises LookupError for an endpoint this server does not act on."""
+    async def instrument_info(self, instrument_url: str | None = None) -> dict | None:
+        """The ``endpoint_info`` of the instrument endpoint ``instrument_url`` (the first one when None), or None when it
+        cannot be reached. Raises LookupError for an endpoint this server does not act on."""
         self.endpoints.url(instrument_url)
         try:
             _, _, info = await self.endpoints.open(instrument_url=instrument_url)
         except Exception:
             return None
-        return info.get("stack_fingerprint")
+        return info or None
 
-    def review(self, name: str, stack_fingerprint: dict | None = None) -> dict:
+    async def stack_fingerprint(self, instrument_url: str | None = None) -> dict | None:
+        """The ``stack_fingerprint`` of the instrument endpoint ``instrument_url``, or None (``instrument_info``)."""
+        return (await self.instrument_info(instrument_url) or {}).get("stack_fingerprint")
+
+    def review(self, name: str, info: dict | None = None) -> dict:
         """Everything a person needs to decide on the workflow ``name``, in one reply: the sign-off card. Read only.
-        Raises LookupError for no such workflow. ``stack_fingerprint``: the instrument endpoint's, which a rehearsal must
-        have run on to count."""
+        Raises LookupError for no such workflow. ``info``: the instrument endpoint's endpoint_info, whose
+        stack_fingerprint a rehearsal must have run on to count and whose tools the rehearsed calls are matched to."""
+        stack_fingerprint = (info or {}).get("stack_fingerprint")
         workflow, status = self._workflow(name)
         checked = workflow.lint()
         current = checked["hash"]
@@ -376,7 +381,7 @@ class WorkflowServer:
                                                                     "last approved", "now")) if signed else None,
             "stack_fingerprint": stack_fingerprint,
             "rehearsal": {**{k: latest.get(k) for k in ("run_id", "at", "inputs", "stack_id", "stack_fingerprint", "results")},
-                          "calls_made": list(latest.get("calls_made") or [])} if latest else None,
+                          "calls_made": matched_calls(latest, info)} if latest else None,
             "approval": approval,
             "approval_expired": expired,
             "changed_since_approval": approval is not None and approval.get("hash") != current,
@@ -400,21 +405,24 @@ class WorkflowServer:
             on; the first when left out), whose stack_fingerprint a rehearsal must match. Reads only."""
             try:
                 return {"ok": True, "instrument_url": server.endpoints.url(instrument_url),
-                        **server.review(name, await server.stack_fingerprint(instrument_url))}
+                        **server.review(name, await server.instrument_info(instrument_url))}
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
 
-        async def approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | None = None, days: float | None = None,
-                                   instrument_url: str | None = None) -> dict:
+        async def approve_workflow(name: str, approver: str, expected_hash: str, rehearsal_run_id: str, instrument: str | None = None,
+                                   days: float | None = None, instrument_url: str | None = None) -> dict:
             """A person approves a draft workflow to run on the real instrument. expected_hash: the hash review_workflow
-            returned for the code the person read; refused if the draft is not that code now. approver: the person's
-            name. instrument: the stack_id it is approved for (left out or "any": every instrument). days: how long the
-            approval holds (left out: until revoked). instrument_url: as for review_workflow. Refused unless this exact
-            code ran to the end, with every cleanup call succeeding, on a digital twin that matches that endpoint's
-            stack_fingerprint now (the same fingerprint for a twin, the same software for a real instrument)."""
+            returned for the code the person read; refused if the draft is not that code now. rehearsal_run_id: the
+            rehearsal.run_id review_workflow showed; refused unless it is still the rehearsal the review shows. The
+            approval keeps that rehearsal, its calls matched to the instrument's tools as the review showed them, and a
+            hardware run must use its inputs. approver: the person's name. instrument: the stack_id it is approved for
+            (left out or "any": every instrument). days: how long the approval holds (left out: until revoked).
+            instrument_url: as for review_workflow. Refused unless this exact code ran to the end, with every cleanup
+            call succeeding, on a digital twin that matches that endpoint's stack_fingerprint now (the same fingerprint
+            for a twin, the same software for a real instrument)."""
             try:
-                fingerprint = await server.stack_fingerprint(instrument_url)
-                review = server.review(name, fingerprint)
+                info = await server.instrument_info(instrument_url)
+                review = server.review(name, info)
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
             status = review["status"]
@@ -424,7 +432,7 @@ class WorkflowServer:
             try:
                 record = server.library.approve(review["name"], approver, login=getpass.getuser(), instrument=instrument, days=days,
                                                 require_rehearsal=True, via=via, expected_hash=str(expected_hash),
-                                                stack_fingerprint=fingerprint)
+                                                instrument_info=info, rehearsal_run_id=str(rehearsal_run_id))
             except (KeyError, ValueError, PermissionError) as exc:
                 return {"ok": False, "status": status, "error": str(exc.args[0])}
             return {"ok": True, "status": APPROVED, "approval": record}
@@ -500,8 +508,10 @@ class WorkflowServer:
             except Exception as exc:
                 return {"state": "refused", "problems": [f"the instrument endpoint could not be reached: {type(exc).__name__}: {exc}"]}
             problem = server._refusal(info, workflow.name, status)
+            if problem is None and status == APPROVED and info.get("simulated") is not True:
+                problem = signoff.input_problem(server.library, workflow.name, workflow.check_inputs(inputs))
             if problem:
-                return {"state": "refused", "problems": [problem]}
+                return {"state": "refused", "workflow": workflow.name, "problems": [problem]}
             run_id = uuid.uuid4().hex[:12]
             # Opened again so every call carries the run id, and the name of the caller that asked for the run.
             instrument, analysis, operator, fields = await server._prepared(run_id, info, status, workflow, instrument_url)

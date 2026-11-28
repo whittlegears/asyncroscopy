@@ -691,8 +691,7 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
         library.approve("tiles_only", "")
     record = library.approve("tiles_only", "sam")  # only a person approves and no tool can
     assert record["by"] == "sam" and record["hash"] == library.workflow("tiles_only").hash() and library.find("tiles_only")[1] == "approved"
-    # The approval records the rehearsal run on the twin.
-    assert record["rehearsed"]["run_id"] == rehearsed["run_id"] and record["instrument"] == "any" and record["expires"] is None
+    assert record["rehearsed"] is None and record["instrument"] == "any" and record["expires"] is None
     assert record["request"] == ASKED
     assert "approve" not in " ".join(t.__name__ for t in on_hardware.tools())
     for _ in range(2):  # one approval covers later runs
@@ -748,8 +747,9 @@ def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_onl
     async def approve_on(fingerprint):
         instrument, analysis, _ = twin()
         server = WorkflowServer(FakeEndpoints(instrument, analysis, True, fingerprint=fingerprint), state_dir=tmp_path / "operator", library=library)
-        _, approve, _ = server.operator_tools()
-        return await approve(name="tiles_only", approver="sam", expected_hash=code)
+        review, approve, _ = server.operator_tools()
+        shown = (await review(name="tiles_only"))["rehearsal"] or {"run_id": "none"}
+        return await approve(name="tiles_only", approver="sam", expected_hash=code, rehearsal_run_id=shown["run_id"])
 
     assert run(rehearse("twin-a"))["state"] == "done"
     (kept,) = library.rehearsals("tiles_only", code)
@@ -777,8 +777,9 @@ def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_onl
         instrument, analysis, _ = twin()
         endpoints = FakeEndpoints(instrument, analysis, False, stack_id="tango://column:1", fingerprint="column-1", software=software)
         server = WorkflowServer(endpoints, state_dir=tmp_path / "hardware", library=library)
-        _, approve, _ = server.operator_tools()
-        return await approve(name="tiles_only", approver="sam", expected_hash=code)
+        review, approve, _ = server.operator_tools()
+        shown = (await review(name="tiles_only"))["rehearsal"] or {"run_id": "none"}
+        return await approve(name="tiles_only", approver="sam", expected_hash=code, rehearsal_run_id=shown["run_id"])
 
     library.revoke("tiles_only")
     other = run(approve_on_hardware("v2"))
@@ -1269,9 +1270,9 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert review["rehearsals"] == [] and not review["rehearsed"] and not review["can_approve"] and "never run to the end" in review["why_not"]
     assert review["approval"] is None and review["changed_since_approval"] is False and review["inputs"] == dict(library.workflow("tiles_only").inputs)
 
-    refused = run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=review["hash"]))
+    refused = run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=review["hash"], rehearsal_run_id="none"))
     assert not refused["ok"] and "never run to the end on a digital twin" in refused["error"] and library.find("tiles_only")[1] == "draft"
-    assert not run(as_the_person("approve_workflow", name="map_grid", approver="sam", expected_hash="x"))["ok"]  # shipped: nothing to approve
+    assert not run(as_the_person("approve_workflow", name="map_grid", approver="sam", expected_hash="x", rehearsal_run_id="none"))["ok"]  # shipped: nothing to approve
     assert "no workflow named" in run(as_the_person("review_workflow", name="nothing_here"))["error"]
 
     assert run(as_the_agent("run_workflow", name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
@@ -1284,7 +1285,7 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     # The agent replaces the draft after the person opened it: what they read is not what would be approved.
     swapped = TEMPLATE.replace("max_visits=400", "max_visits=300")
     assert run(as_the_agent("propose_workflow", user_request=ASKED, source=swapped))["ok"]
-    changed = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", expected_hash=reviewed))
+    changed = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", expected_hash=reviewed, rehearsal_run_id=rehearsal["run_id"]))
     assert not changed["ok"] and "changed since it was reviewed" in changed["error"] and library.find("tiles_only")[1] == "draft"
     changed = run(as_the_person("reject_workflow", name="tiles_only", reason="too big", expected_hash=reviewed))
     assert not changed["ok"] and "changed since it was reviewed" in changed["error"] and library.rejection("tiles_only") is None
@@ -1292,7 +1293,7 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert run(as_the_person("review_workflow", name="tiles_only"))["hash"] == reviewed
 
     approved = run(as_the_person("approve_workflow", name="tiles_only", approver="Sam Reed", instrument="tango://scope-a:9094", days=30,
-                                 expected_hash=reviewed))
+                                 expected_hash=reviewed, rehearsal_run_id=rehearsal["run_id"]))
     assert approved["ok"] and approved["status"] == "approved"
     record = approved["approval"]
     assert record["by"] == "Sam Reed" and record["via"] == "Workflow_Operator_MCP" and record["instrument"] == "tango://scope-a:9094"
@@ -1317,12 +1318,14 @@ def test_a_person_reviews_approves_and_rejects_through_the_operator_endpoint_onl
     assert review["rejection"]["this_code"] and review["rejection"]["via"] == "Workflow_Operator_MCP" and review["rejection"]["hash"] == reviewed
     assert not run(as_the_person("reject_workflow", name="map_grid", reason="not wanted", expected_hash="x"))["ok"]
     # An approval after a rejection replaces it.
-    assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed))["ok"] and library.rejection("tiles_only") is None
+    assert run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,
+                             rehearsal_run_id=rehearsal["run_id"]))["ok"] and library.rejection("tiles_only") is None
 
     # An approvers list holds here too: the login is the account the operator endpoint runs under.
     library.revoke("tiles_only")
     (tmp_path / "library" / "approvers.json").write_text('["somebody-else"]', encoding="utf-8")
-    assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed))["error"]
+    assert "approvers.json" in run(as_the_person("approve_workflow", name="tiles_only", approver="sam", expected_hash=reviewed,
+                                                 rehearsal_run_id=rehearsal["run_id"]))["error"]
     assert "approvers.json" in run(as_the_person("reject_workflow", name="tiles_only", reason="no", expected_hash=reviewed))["error"]
 
 
@@ -1345,20 +1348,21 @@ def test_review_and_approve_agree_on_an_expired_approval(tmp_path, monkeypatch):
     tools = {fn.__name__: fn for fn in workflows.tools() + workflows.operator_tools()}
     assert run(tools["propose_workflow"](user_request=ASKED, source=TEMPLATE))["ok"]
     assert run(tools["run_workflow"](name="tiles_only", inputs={"size_m": 5e-7}))["state"] == "done"
-    reviewed = workflows.review("tiles_only")["hash"]
-    first = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, days=1))
+    card = workflows.review("tiles_only", run(workflows.instrument_info()))
+    reviewed, shown = card["hash"], card["rehearsal"]["run_id"]
+    first = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown, days=1))
     assert first["ok"] and first["approval"]["rehearsed"]["inputs"]["size_m"] == 5e-7
 
     review = workflows.review("tiles_only")
-    again = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    again = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown))
     assert not review["approval_expired"] and not review["can_approve"]
     assert not again["ok"] and again["error"] == review["why_not"] and library.approval("tiles_only")["expires"] == first["approval"]["expires"]
 
     later = time.time() + 2 * 86400.0
     monkeypatch.setattr(workflow_server.time, "time", lambda: later)
-    review = workflows.review("tiles_only", run(workflows.stack_fingerprint()))
+    review = workflows.review("tiles_only", run(workflows.instrument_info()))
     assert review["approval_expired"] and review["can_approve"] and review["why_not"] is None
-    renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
+    renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed, rehearsal_run_id=shown))
     assert renewed["ok"] and renewed["approval"]["expires"] is None
 
 

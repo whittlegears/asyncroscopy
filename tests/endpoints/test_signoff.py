@@ -110,53 +110,62 @@ def test_a_pre_approval_expires_after_the_approval_ttl(stack, served):
     assert agent.permissions.store.run_grant("hw1") is None
 
 
-TWO_DOSES = '''"""Read the dose here, then at a point the inputs give."""
+SET_FOV_AND_DOSE = '''"""Set the field of view the inputs give, read the dose, and set the field of view again."""
 
 from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.workflows import Steps, Workflow, WorkflowState
 
 INPUTS = {
-    "where": {"type": "string", "default": '{"x_m":0.0,"y_m":0.0}', "doc": "The point, as the dose tool's request."},
+    "fov_m": {"type": "number", "default": 1e-06, "min": 1e-08, "max": 1e-05, "doc": "The field of view, m."},
 }
 
 
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
-    graph.add_node("here", use.block("run_tool", tool="SAMPLE_get_dose", arguments={"request": "{}"}))
-    graph.add_node("there", use.block("run_tool", tool="SAMPLE_get_dose", arguments={"request": "{inputs.where}"}))
-    graph.add_edge(START, "here")
-    graph.add_edge("here", "there")
-    graph.add_edge("there", END)
+    graph.add_node("zoom", use.block("run_tool", tool="*_set_fov", arguments={"fov": "{inputs.fov_m}"}))
+    graph.add_node("dose", use.block("run_tool", tool="SAMPLE_get_dose", arguments={"request": "{}"}))
+    graph.add_node("again", use.block("run_tool", tool="*_set_fov", arguments={"fov": "{inputs.fov_m}"}))
+    graph.add_edge(START, "zoom")
+    graph.add_edge("zoom", "dose")
+    graph.add_edge("dose", "again")
+    graph.add_edge("again", END)
     return graph
 
 
 WORKFLOW = Workflow(
-    name="two_doses",
-    summary="Read the sample's dose at the current position, then at a point the inputs give.",
+    name="fov_and_dose",
+    summary="Set the field of view, read the sample's dose, set the field of view again.",
     inputs=INPUTS,
     budget={"max_tool_calls": 20},
     build=build,
 )
 '''
-ASKED = "read the dose here and then at the centre, the same way on the real microscope"
+ASKED = "set the field of view, read the dose, and do it again the same way on the real microscope"
+TWIN_SCOPE = "asyncroscopy/digitaltwin/mapping"
+OTHER_SCOPE = "asyncroscopy/digitaltwinparticles/default"
 
 
-def test_propose_rehearse_review_approve_and_run_on_the_paired_instrument(stack, served, tmp_path):
-    """The whole flow: the twin and the instrument are two stacks; the workflow server acts on both, by URL."""
-    twin_operator = stack("operator", SAMPLE, TWIN, port=1)
-    twin = stack("agent", SAMPLE, urls={"operator": served(twin_operator)}, port=1)
+def test_propose_rehearse_review_approve_and_run_on_a_paired_instrument_of_another_device_class(stack, served, tmp_path):
+    """The twin is a DigitalTwin, the instrument a DigitalTwinParticles: the same commands under other tool names."""
+    twin_operator = stack("operator", SAMPLE, TWIN_SCOPE, port=1)
+    twin = stack("agent", SAMPLE, TWIN_SCOPE, urls={"operator": served(twin_operator)}, port=1)
     twin._simulated = True
     twin_url = served(twin)
-    scope_operator = stack("operator", SAMPLE, port=2)
-    scope = stack("agent", SAMPLE, needs_approval={"SAMPLE": ["get_dose"]}, urls={"operator": served(scope_operator)}, port=2)
+    scope_operator = stack("operator", SAMPLE, OTHER_SCOPE, port=2)
+    scope = stack("agent", SAMPLE, OTHER_SCOPE, needs_approval={"SAMPLE": ["get_dose"], "DigitalTwinParticles": ["set_fov"]},
+                  urls={"operator": served(scope_operator)}, port=2)
     scope._simulated = False
     scope_url = served(scope)
+    twofold = stack("agent", "asyncroscopy/sample/mapping", "asyncroscopy/sample/sem", OTHER_SCOPE, port=3)
+    twofold._simulated = False
+    twofold_url = served(twofold)
+    assert "DigitalTwin_set_fov" in twin.registered and "DigitalTwinParticles_set_fov" in scope.registered
 
     library = Library(tmp_path / "library")
-    agents = WorkflowServer(Endpoints(twin_url, caller="agent-workflow", instruments=[scope_url]), state_dir=tmp_path / "state",
+    agents = WorkflowServer(Endpoints(twin_url, caller="agent-workflow", instruments=[scope_url, twofold_url]), state_dir=tmp_path / "state",
                             library=library, hardware=True)
-    person = WorkflowServer(Endpoints(twin_url, caller="workflow-operator", instruments=[scope_url]), state_dir=tmp_path / "state",
+    person = WorkflowServer(Endpoints(twin_url, caller="workflow-operator", instruments=[scope_url, twofold_url]), state_dir=tmp_path / "state",
                             library=library, name="Workflow_Operator_MCP")
     review, approve, _ = person.operator_tools()
 
@@ -165,49 +174,67 @@ def test_propose_rehearse_review_approve_and_run_on_the_paired_instrument(stack,
             result = await client.call_tool(tool, arguments)
             return result.structured_content
 
-    proposed = run(as_the_agent("propose_workflow", user_request=ASKED, source=TWO_DOSES, context="The user wants the twin's way repeated."))
-    assert proposed["ok"], proposed
-    elsewhere = run(as_the_agent("run_workflow", name="two_doses", instrument_url="http://127.0.0.1:1/mcp"))
-    assert elsewhere["state"] == "refused" and "not an instrument endpoint this workflow server acts on" in elsewhere["problems"][0]
-    drafted = run(as_the_agent("run_workflow", name="two_doses", instrument_url=scope_url))
-    assert drafted["state"] == "refused" and "nobody has approved it" in drafted["problems"][0]
+    assert run(as_the_agent("propose_workflow", user_request=ASKED, source=SET_FOV_AND_DOSE))["ok"]
+    first = run(as_the_agent("run_workflow", name="fov_and_dose", wait_s=60))
+    assert first["state"] == "done", first
 
-    rehearsed = run(as_the_agent("run_workflow", name="two_doses", wait_s=60))
-    assert rehearsed["state"] == "done", rehearsed
-    assert rehearsed["instrument_url"] == twin_url and rehearsed["results"]["instrument_calls"] == 2
-    assert "twin_score" not in json.dumps(rehearsed) and "dose" not in rehearsed["results"], "an agent never sees the twin's truth"
+    card = run(review(name="fov_and_dose", instrument_url=scope_url))
+    assert card["can_approve"] and card["rehearsal"]["run_id"] == first["run_id"], card.get("why_not")
+    assert [(c["tool"], c["count"], c["instrument_tool"], c["held_because"]) for c in card["rehearsal"]["calls_made"]] == [
+        ("DigitalTwin_set_fov", 2, "DigitalTwinParticles_set_fov", None), (DOSE, 1, DOSE, None)]
+    elsewhere = run(review(name="fov_and_dose", instrument_url=twofold_url))["rehearsal"]["calls_made"]
+    assert elsewhere[0]["instrument_tool"] == "DigitalTwinParticles_set_fov"
+    assert elsewhere[1]["instrument_tool"] is None and elsewhere[1]["held_because"].startswith("no match: will be held (2 instrument tools match")
 
-    card = run(review(name="two_doses", instrument_url=scope_url))
-    assert card["ok"] and card["can_approve"], card.get("why_not")
-    assert card["instrument_url"] == scope_url and card["stack_fingerprint"]["simulated"]["value"] is False
-    assert card["context_as_reported_by_agent"] == {"text": "The user wants the twin's way repeated.", "this_code": True}
-    assert card["last_approved"] is None and card["diff_from_last_approved"] is None and card["source"] == TWO_DOSES
-    shown = card["rehearsal"]
-    assert shown["run_id"] == rehearsed["run_id"] and shown["stack_fingerprint"]["simulated"]["value"] is True
-    assert [(c["tool"], c["arguments"]) for c in shown["calls_made"]] == [(DOSE, HERE), (DOSE, THERE)]
-    score = shown["results"]["twin_score"]
-    assert score["label"].startswith("twin score") and score["known"] and score["images"] == 0 and score["particles_total"] > 0
-    assert shown["results"]["instrument_s"] is not None and shown["results"]["dose"]["from"] == "the twin's dose map"
+    second = run(as_the_agent("run_workflow", name="fov_and_dose", wait_s=60))
+    assert second["state"] == "done", second
+    stale = run(approve(name="fov_and_dose", approver="Sam Reed", expected_hash=card["hash"], rehearsal_run_id=first["run_id"], instrument_url=scope_url))
+    assert not stale["ok"] and second["run_id"] in stale["error"], "a rehearsal the person did not see is not the one approved"
+    card = run(review(name="fov_and_dose", instrument_url=scope_url))
+    approved = run(approve(name="fov_and_dose", approver="Sam Reed", expected_hash=card["hash"], rehearsal_run_id=card["rehearsal"]["run_id"],
+                           instrument_url=scope_url))
+    assert approved["ok"], approved
+    rehearsed = approved["approval"]["rehearsed"]
+    assert rehearsed["run_id"] == second["run_id"] and rehearsed["calls_made"] == card["rehearsal"]["calls_made"]
+    assert rehearsed["inputs"] == card["rehearsal"]["inputs"] == {"fov_m": 1e-06}
 
-    approved = run(approve(name="two_doses", approver="Sam Reed", expected_hash=card["hash"], instrument_url=scope_url))
-    assert approved["ok"] and approved["approval"]["rehearsed"]["run_id"] == rehearsed["run_id"], approved
-
-    on_scope = run(as_the_agent("run_workflow", name="two_doses", instrument_url=scope_url, wait_s=60))
+    (tmp_path / "library" / "rehearsals.json").write_text("{}", encoding="utf-8")
+    on_scope = run(as_the_agent("run_workflow", name="fov_and_dose", instrument_url=scope_url, inputs=card["rehearsal"]["inputs"], wait_s=60))
     assert on_scope["state"] == "done", on_scope
-    signed = f"workflow_signoff:two_doses@{card['hash']}"
-    assert on_scope["preapproval"]["granted"] and on_scope["preapproval"]["approved_by"] == signed and on_scope["preapproval"]["approver"] == "Sam Reed"
-    assert on_scope["results"]["instrument_calls"] == 2 and not on_scope.get("approvals")
-    assert scope.permissions.store.run_grant(on_scope["run_id"]) is None, "the pre-approval ends with the run"
+    assert on_scope["preapproval"]["granted"] and on_scope["preapproval"]["calls"] == 3, "the approval keeps its own copy of the rehearsal"
+    assert on_scope["tools_called"]["DigitalTwinParticles_set_fov"]["ok"] == 2 and not on_scope.get("approvals")
 
-    moved = run(as_the_agent("run_workflow", name="two_doses", instrument_url=scope_url, inputs={"where": '{"x_m":1e-07,"y_m":0.0}'}, wait_s=60))
-    assert moved["state"] == "waiting", moved
-    (held,) = moved["approvals"]
-    assert held["arguments"]["request"] == '{"x_m":1e-07,"y_m":0.0}' and held["signoff"]["approved_by"] == signed
-    assert held["signoff"]["why_held"] == "the rehearsal called this tool with other arguments"
-    assert moved["tools_called"][DOSE]["ok"] == 1, "the rehearsed call ran before the changed one was held"
-    assert scope.permissions.store.run_grant(moved["run_id"]) is not None, "a waiting run keeps its pre-approval"
-    stopped = run(as_the_agent("stop_workflow", run_id=moved["run_id"]))
-    assert stopped["state"] == "stopped" and scope.permissions.store.run_grant(moved["run_id"]) is None
+    other = run(as_the_agent("run_workflow", name="fov_and_dose", instrument_url=scope_url, inputs={"fov_m": 2e-06}, wait_s=60))
+    assert other["state"] == "refused" and "signed off for the inputs its rehearsal ran with" in other["problems"][0], other
+
+    approvals = json.loads((tmp_path / "library" / "approvals.json").read_text(encoding="utf-8"))
+    approvals["fov_and_dose"]["rehearsed"]["calls_made"][1]["instrument_tool"] = "SAMPLE_get_sample"
+    (tmp_path / "library" / "approvals.json").write_text(json.dumps(approvals), encoding="utf-8")
+    changed = run(as_the_agent("run_workflow", name="fov_and_dose", instrument_url=scope_url, wait_s=60))
+    assert changed["state"] == "waiting", changed
+    (held,) = changed["approvals"]
+    assert held["tool"] == DOSE and held["signoff"]["why_held"] == "the rehearsal never called this tool"
+    assert changed["preapproval"]["calls"] == 2, "a call whose instrument tool is not the one the approval recorded is not pre-approved"
+    assert scope.permissions.store.run_grant(changed["run_id"]) is not None, "a waiting run keeps its pre-approval"
+    stopped = run(as_the_agent("stop_workflow", run_id=changed["run_id"]))
+    assert stopped["state"] == "stopped" and scope.permissions.store.run_grant(changed["run_id"]) is None
+
+
+def test_an_approval_binds_the_passing_entry_of_a_rehearsal_that_was_stopped_and_resumed(tmp_path):
+    library = Library(tmp_path / "library")
+    assert library.propose(SET_FOV_AND_DOSE, request=ASKED)["ok"]
+    workflow = library.workflow("fov_and_dose")
+    fingerprint = {"digest": "twin-1", "software": {"commit": "v1"}, "simulated": {"value": True}}
+    info = {"stack_id": "tango://twin:1", "stack_fingerprint": fingerprint,
+            "tools": {DOSE: {"device": "SAMPLE", "command": "get_dose", "role": "setting.read"}}, "device_kinds": {"SAMPLE": []}}
+    partial = {"run_id": "r1", "hash": workflow.hash(), "state": "stopped", "inputs": {"fov_m": 1e-06},
+               "calls_made": [{"server": "instrument", "tool": DOSE, "arguments": HERE, "count": 1}]}
+    library.record_rehearsal(workflow, partial, info)
+    library.record_rehearsal(workflow, {**partial, "state": "done", "calls_made": [{"server": "instrument", "tool": DOSE, "arguments": HERE, "count": 2}]}, info)
+    record = library.approve("fov_and_dose", "Sam Reed", require_rehearsal=True, instrument_info=info, rehearsal_run_id="r1")
+    assert record["rehearsed"]["calls_made"][0]["count"] == 2 and record["rehearsed"]["calls_made"][0]["instrument_tool"] == DOSE
+    with pytest.raises(ValueError, match="rehearsal_run_id"):
+        library.approve("fov_and_dose", "Sam Reed", require_rehearsal=True, instrument_info=info)
 
 
 def test_each_rehearsed_call_passes_as_many_times_as_the_rehearsal_made_it(stack, served):

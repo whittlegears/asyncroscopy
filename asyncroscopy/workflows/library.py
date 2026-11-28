@@ -18,7 +18,8 @@ such as the GUI calls for a person and which no agent is given. No tool a model 
 An approval can carry these.
 
 * **Rehearsals.** Every run of a draft on a digital twin is saved in ``rehearsals.json`` with the ``stack_id`` and
-  ``stack_fingerprint`` of the stack it ran on, every distinct call it made (``calls_made``), and its ``results``:
+  ``stack_fingerprint`` of the stack it ran on, every distinct call it made (``calls_made``) and what the twin
+  reported each instrument tool to be (``actions``), and its ``results``:
   the data it acquired and derived, its time and dose, and its twin score (``asyncroscopy.sim.truth_score``). The person approving sees the runs of this exact code. The command
   line requires none; the operator endpoint requires one that passed on the stack it is connected to
   (``require_rehearsal``): it ended in ``done`` and every cleanup call succeeded, on the same fingerprint.
@@ -64,6 +65,45 @@ def fingerprint_of(entry: dict) -> str | None:
 
 def simulated(fingerprint: dict | None) -> bool:
     return bool(((fingerprint or {}).get("simulated") or {}).get("value"))
+
+
+def action_of(tool: str, info: dict | None) -> dict | None:
+    """What an endpoint reports a tool to be, the same on a twin and on an instrument whatever the tool is called: its
+    role and command, and the kinds of its device (``endpoint_info``'s ``tools`` and ``device_kinds``). A native tool
+    is its name. None when the endpoint does not describe it."""
+    entry = ((info or {}).get("tools") or {}).get(tool)
+    if not entry:
+        return None
+    device = entry.get("device")
+    return {"role": entry.get("role"), "command": entry.get("command") or tool,
+            "kinds": sorted(((info or {}).get("device_kinds") or {}).get(device) or []) if device else None}
+
+
+def matched_calls(rehearsal: dict, info: dict | None) -> list[dict]:
+    """A rehearsal's ``calls_made``, each instrument call with the instrument tool it matches on the endpoint ``info``
+    describes (``instrument_tool``, or None) and why it does not (``held_because``, or None). It matches the one tool
+    of that endpoint that is what the twin's tool was (``action_of``); none, or two or more, is no match."""
+    actions = rehearsal.get("actions") or {}
+    out = []
+    for call in rehearsal.get("calls_made") or []:
+        if call.get("server") != "instrument":
+            out.append(dict(call))
+            continue
+        wanted = actions.get(call["tool"])
+        found = [name for name in sorted((info or {}).get("tools") or {}) if wanted is not None and action_of(name, info) == wanted]
+        if info is None:
+            why = "no match: will be held (the instrument endpoint could not be reached)"
+        elif wanted is None:
+            why = "no match: will be held (the rehearsal kept no description of this tool from the twin's endpoint_info)"
+        elif not found:
+            why = (f"no match: will be held (the instrument offers no tool with role {wanted['role']} and command {wanted['command']} "
+                   f"on a device of kinds {wanted['kinds']})")
+        elif len(found) > 1:
+            why = f"no match: will be held ({len(found)} instrument tools match: {', '.join(found)})"
+        else:
+            why = None
+        out.append({**call, "instrument_tool": found[0] if why is None else None, "held_because": why})
+    return out
 
 
 def needs_approval(name: str) -> str:
@@ -113,7 +153,8 @@ class Library:
                  "problems": list(record.get("problems") or []),
                  "cleanup_failed": sorted(str(c.get("tool")) for c in record.get("cleanup") or [] if isinstance(c, dict) and not c.get("ok")),
                  "stack_id": info.get("stack_id"), "stack_fingerprint": info.get("stack_fingerprint"),
-                 "calls_made": list(record.get("calls_made") or []), "results": dict(results if results is not None else record.get("results") or {})}
+                 "calls_made": list(record.get("calls_made") or []), "results": dict(results if results is not None else record.get("results") or {}),
+                 "actions": {c["tool"]: action_of(c["tool"], info) for c in record.get("calls_made") or [] if c.get("server") == "instrument"}}
         every = self._read("rehearsals.json", dict) or {}
         every[workflow.name] = [*(every.get(workflow.name) or []), entry][-KEPT_REHEARSALS:]
         self.root.mkdir(parents=True, exist_ok=True)
@@ -292,15 +333,19 @@ class Library:
 
     def approve(self, name: str, by: str, *, login: str | None = None, instrument: str | None = None, days: float | None = None,
                 require_rehearsal: bool = False, via: str = "cli", expected_hash: str | None = None,
-                stack_fingerprint: dict | None = None) -> dict:
+                instrument_info: dict | None = None, rehearsal_run_id: str | None = None) -> dict:
         """Record a person's approval of the draft ``name`` as it is now. Returns the approval record.
 
         ``by`` is the person's name.
         ``login`` is the account giving it, checked against ``approvers.json`` when that file exists.
         ``instrument`` is the ``stack_id`` it is approved for. None or "any" means every instrument.
         ``days`` is how long it holds. None means until revoked.
-        ``require_rehearsal`` refuses (ValueError) unless this exact code passed a rehearsal on the digital twin whose
-        ``stack_fingerprint`` (the instrument endpoint's, from ``endpoint_info``) is this one (``rehearsal_problem``).
+        ``require_rehearsal`` refuses (ValueError) unless this exact code passed a rehearsal that counts for the
+        instrument endpoint whose ``endpoint_info`` is ``instrument_info`` (``rehearsal_problem``), and
+        ``rehearsal_run_id`` names the one a person reviewed: the latest such rehearsal, which ``review_workflow``
+        shows. The approval keeps a copy of that rehearsal (``rehearsed``), its calls matched to the instrument's tools
+        (``matched_calls``), so later rehearsals change nothing. Without ``rehearsal_run_id`` (the command line) it keeps
+        none, and no call of a hardware run is pre-approved.
         ``via`` says where the approval was given ("cli", or the operator endpoint's name), and is kept in the record.
         ``expected_hash`` is the hash of the code the person reviewed; when given, a draft that differs is refused
         (ValueError), so a draft replaced after the review is never approved in its place.
@@ -333,11 +378,18 @@ class Library:
         if expected_hash is not None and str(expected_hash) != result["hash"]:
             raise ValueError(f"{workflow.name} has not been approved: it changed since it was reviewed (reviewed {expected_hash}, "
                              f"now {result['hash']}). Review it again.")
-        rehearsed, unrehearsed = self.rehearsal_problem(workflow.name, result["hash"], stack_fingerprint)
+        rehearsed, unrehearsed = self.rehearsal_problem(workflow.name, result["hash"], (instrument_info or {}).get("stack_fingerprint"))
         if require_rehearsal and unrehearsed:
             raise ValueError(f"{workflow.name} has not been approved: {unrehearsed}. Run it on the twin first (run_workflow on a simulated stack).")
-        if stack_fingerprint is None:
-            rehearsed = [r for r in self.rehearsals(workflow.name, result["hash"]) if rehearsal_passed(r)]
+        if require_rehearsal and not rehearsal_run_id:
+            raise ValueError(f"{workflow.name} has not been approved: name the rehearsal the person reviewed (rehearsal_run_id, "
+                             "review_workflow's rehearsal.run_id)")
+        chosen = None
+        if rehearsal_run_id:
+            chosen = rehearsed[-1] if rehearsed and not unrehearsed else None
+            if chosen is None or chosen.get("run_id") != str(rehearsal_run_id):
+                raise ValueError(f"{workflow.name} has not been approved: the rehearsal it would be approved on is "
+                                 f"{(chosen or {}).get('run_id') or 'none'}, not {rehearsal_run_id}. Review it again.")
         now = time.time()
         approved = self._file(APPROVED, workflow.name)
         approved.parent.mkdir(parents=True, exist_ok=True)
@@ -347,8 +399,8 @@ class Library:
         record = {"hash": result["hash"], "by": str(by).strip(), "login": login, "at": now, "acts": result["acts"], "tools": result["tools"],
                   "instrument": str(instrument).strip() if instrument and str(instrument).strip() else ANY_INSTRUMENT,
                   "expires": now + float(days) * 86400.0 if days is not None else None,
-                  "rehearsed": {**{k: rehearsed[-1].get(k) for k in ("run_id", "at", "calls", "inputs", "stack_id")},
-                                "stack_fingerprint": fingerprint_of(rehearsed[-1])} if rehearsed else None,
+                  "rehearsed": {**{k: chosen.get(k) for k in ("run_id", "at", "calls", "inputs", "stack_id", "actions")},
+                                "stack_fingerprint": fingerprint_of(chosen), "calls_made": matched_calls(chosen, instrument_info)} if chosen else None,
                   "request": (self.request(workflow.name) or {}).get("request"), "via": str(via)}
         self._write_approvals({**self._approvals(), workflow.name: record})
         signed = self._read("last_approved.json", dict) or {}
