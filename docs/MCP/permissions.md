@@ -105,8 +105,11 @@ waits for a person, and:
  "expires_at": "2026-11-28T12:10:00Z", "requested_by": "<caller or null>"}
 ```
 
-The arguments are compared as canonical JSON (sorted keys, no spaces), so the same call is the same request
-however it is sent, also through `call_tool`. A request also belongs to its caller (`requested_by`: the token's
+The arguments are first validated against the tool's signature, as FastMCP will validate them: defaults are
+filled in and each value takes its declared type, so `{"fov": 1}` and `{"fov": 1.0}` for a float are one call. A
+held call's `arguments` are these. They are then compared as canonical JSON (sorted keys, no spaces), so the same
+call is the same request however it is sent, also through `call_tool`. A call of an `approve` tool whose arguments
+do not validate is neither held nor run: it gives `{"status": "invalid_arguments", "tool"}` with `isError: true`. A request also belongs to its caller (`requested_by`: the token's
 subject with `mcp.auth`, else the `X-Asyncroscopy-Caller` header): another caller's identical call makes its own
 request and cannot use this one's approval. A caller whose token may not run the tool at all is refused for that
 before the gate, so it never makes a request.

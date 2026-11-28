@@ -72,7 +72,7 @@ def test_a_held_call_returns_approval_required_and_resending_it_gives_the_same_r
     first = run(call(agent, DOSE, {"request": "{}"}))
     assert first.is_error
     held = first.structured_content
-    assert held["status"] == "approval_required" and held["tool"] == DOSE and held["arguments"] == {"request": "{}"}
+    assert held["status"] == "approval_required" and held["tool"] == DOSE and held["arguments"] == {"request": "{}", "x_m": None, "y_m": None}
     assert held["acts"] is False and held["risk"] == "low" and len(held["arguments_sha256"]) == 64
     assert held["expires_at"].endswith("Z") and "waiting for a person" in first.content[0].text
     again = run(call(agent, DOSE, {"request": "{}"}))
@@ -135,6 +135,20 @@ def test_an_approval_is_used_only_by_the_caller_who_asked(tmp_path):
     assert bob["status"] == "pending" and bob["request_id"] != alice["request_id"]
     assert store.request("T", {"a": 1}, True, "high", "alice")["status"] == "approved"
     assert store.request("T", {"a": 1}, True, "high", "bob")["request_id"] == bob["request_id"]
+
+
+def test_a_held_call_is_matched_on_its_validated_arguments(stack):
+    agent = stack("agent", TWIN, needs_approval={"DigitalTwin": ["set_defocus"]})
+    agent.permissions.store.set_tool("list_data", "approve")
+    held = run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1})).structured_content
+    assert held["status"] == "approval_required" and held["arguments"] == {"defocus": 1.0}
+    assert run(call(agent, "DigitalTwin_set_defocus", {"defocus": 1.0})).structured_content["request_id"] == held["request_id"]
+    listed = agent.permissions.check("list_data", {}).structured_content
+    assert listed["arguments"] == {"kind": None, "search": None, "limit": 20, "offset": 0}
+    assert agent.permissions.check("list_data", {"limit": 20}).structured_content["request_id"] == listed["request_id"]
+    refused = run(call(agent, "DigitalTwin_set_defocus", {"defocus": "near"}))
+    assert refused.is_error and refused.structured_content == {"status": "invalid_arguments", "tool": "DigitalTwin_set_defocus"}
+    assert {p["request_id"] for p in agent.permissions.store.pending()} == {held["request_id"], listed["request_id"]}
 
 
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):
@@ -322,7 +336,7 @@ def test_a_resumed_node_sends_each_call_once_and_each_approval_is_used_once(stac
         run(operator_call(operator, "approve_call", {"request_id": waiting["request_id"]}))
         record = run(resume_workflow("three1", instrument=endpoint(), state_dir=tmp_path, find=lambda name: workflow))
     assert record["state"] == "done", record
-    assert [h["arguments"] for h in held] == [{"request": "{}"}, {"request": '{"x_m":0.0,"y_m":0.0}'}]
+    assert [h["arguments"]["request"] for h in held] == ["{}", '{"x_m":0.0,"y_m":0.0}']
     ran = [(row["tool"], json.dumps(row["arguments"], sort_keys=True)) for row in read_tool_log(log)]
     assert sorted(ran) == sorted([("SAMPLE_get_sample", "{}"), (DOSE, json.dumps({"request": "{}"})),
                                   (DOSE, json.dumps({"request": '{"x_m":0.0,"y_m":0.0}'}))]), ran

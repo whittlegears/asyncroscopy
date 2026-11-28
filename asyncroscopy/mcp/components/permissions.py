@@ -8,13 +8,16 @@ tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_per
 
 from __future__ import annotations
 
+import inspect
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
 from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import without_injected_parameters
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult, tool
 from mcp.types import TextContent
+from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from asyncroscopy.core.names import STOP_ROLES
 from asyncroscopy.safety.permissions import PermissionStore, effective_permission
@@ -31,6 +34,15 @@ def listed_in(rules: dict[str, list[str]], dev_class: str, command: str) -> bool
     qualified = f"{dev_class}.{command}"
     entries = [*rules.get("*", []), *rules.get(dev_class, [])]
     return any(fnmatchcase(command, e) or fnmatchcase(qualified, e) for e in entries)
+
+
+def arguments_model(name: str, fn: Any) -> type[BaseModel]:
+    """The model of a tool function's arguments, as FastMCP validates them: their types and defaults, nothing else."""
+    signature = inspect.signature(without_injected_parameters(fn), eval_str=True)
+    empty = inspect.Parameter.empty
+    fields = {p.name: (Any if p.annotation is empty else p.annotation, ... if p.default is empty else p.default)
+              for p in signature.parameters.values() if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)}
+    return create_model(f"{name}_arguments", __config__=ConfigDict(extra="forbid"), **fields)
 
 
 def refusal(text: str, structured: dict[str, Any]) -> ToolResult:
@@ -62,6 +74,7 @@ class Permissions:
         self.server = server
         self.needs_approval = cfg.needs_approval
         self.store = PermissionStore(cfg.permissions_file, server.stack_id, cfg.approval_ttl_s)
+        self.models: dict[str, type[BaseModel]] = {}
 
     def attach(self) -> None:
         """Put the gate on the agent endpoint, inside the token check so a refused caller holds nothing."""
@@ -96,6 +109,13 @@ class Permissions:
         settings = self.store.settings()
         return {name: effective_permission(name, entry, settings) for name, entry in self.catalog().items()}, settings["groups"]
 
+    def validated(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """The arguments as the tool will run with them: validated, defaults filled in, each value in its declared type
+        (``1`` for a float is ``1.0``), as JSON. Raises pydantic's ValidationError."""
+        if name not in self.models:
+            self.models[name] = arguments_model(name, self.server.registered[name].fn)
+        return self.models[name].model_validate(arguments).model_dump(mode="json")
+
     def check(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
         """None when the call may run now, else the refusal or the held call to return in its place."""
         if name not in self.server.descriptors or name not in self.server.registered:
@@ -106,6 +126,10 @@ class Permissions:
             return None
         if permission == "never":
             return refusal(f"{name} is never run from this endpoint.", {"status": "never", "tool": name})
+        try:
+            arguments = self.validated(name, arguments)
+        except ValidationError as exc:
+            return refusal(f"{name} was not run or held: its arguments do not validate: {exc}", {"status": "invalid_arguments", "tool": name})
         record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller())
         if record["status"] == "approved":
             return None
