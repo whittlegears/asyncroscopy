@@ -15,9 +15,6 @@ class SCAN(Device):
 
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     dwell_time = attribute(
         label="Dwell Time",
@@ -58,9 +55,6 @@ class SCAN(Device):
         doc="Output format for acquired images: '.h5' (default, one file with sub-groups per detector) or '.tiff' (one Velox-compatible TIFF per detector, metadata embedded by AutoScript)",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -71,9 +65,6 @@ class SCAN(Device):
         self._output_format: str = ".h5"
         self.info_stream("SCAN device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_dwell_time(self) -> float:
         return self._dwell_time
@@ -99,9 +90,6 @@ class SCAN(Device):
     def write_output_format(self, value: str) -> None:
         self._output_format = value
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _validate_scan_region(value) -> list[float]:
@@ -120,9 +108,6 @@ class SCAN(Device):
             raise ValueError("scan_region must fit within the relative [0, 1] scan area")
         return region
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
     @command(dtype_in=float, risk="high", role="setting.set", routine=True)
     def set_dwell_time(self, dwell_time: float) -> None:
         self.write_dwell_time(dwell_time)
@@ -131,8 +116,5 @@ class SCAN(Device):
     def get_dwell_time(self) -> float:
         return self.read_dwell_time()
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     SCAN.run_server()

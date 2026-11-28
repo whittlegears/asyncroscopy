@@ -443,7 +443,6 @@ class ScanningBeamInstrument(Instrument):
         """Move the stage to [x, y, z, alpha, beta], with x/y/z in meters and tilts in degrees."""
         self._move_stage(position)
 
-    # What a backend implements
     @abstractmethod
     def _acquire_scanned_image(self, imsize: int, dwell_time: float, detector_list: list[str], scan_region: list[float], output_format: str = '.h5') -> str:
         """Vendor-specific scanned image acquisition implementation."""

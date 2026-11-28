@@ -74,7 +74,6 @@ class ParticleWorld(Specimen):
             kwargs["elements"] = tuple(e.strip() for e in (options["elements"].split(",") if isinstance(options["elements"], str) else options["elements"]) if e.strip())
         return cls(context.rng_for(options).seed, float(context.fov_m or DEFAULT_FOV_M), **kwargs)
 
-    # The world
     def set_field(self, fov_m: float) -> None:
         """Rebuild the world for a new field of view, from the start of the specimen's random stream."""
         self.random.seed(self.seed)
@@ -185,7 +184,6 @@ class ParticleWorld(Specimen):
     def element_symbols(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(meta["btype"] for meta in self.particle_lookup.values()))
 
-    # One view of the world under the stage
     def view(self, request: ViewRequest) -> FieldView:
         """atoms: the world's atoms where the stage has put them (wrapped into the field, angstrom);
         maps: {"projected_label", "projected_thickness"}; records: the particles visible in an image of request.imsize pixels."""

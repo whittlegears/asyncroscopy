@@ -35,7 +35,6 @@ DEFAULT_GROUND_TRUTH_DIR = "outputs/twin_ground_truth"
 class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
     """A simulated electron microscope: beam (with its blanker), field of view, defocus and stage state over the support devices."""
 
-    # Device properties. Set them in the Tango database for each deployment.
 
     render_mode = "projected"  # a specimen must list this mode in its render_modes
 
@@ -272,21 +271,11 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self._stage_position = target
 
     def _get_parameters(self) -> str:
-        """Return all simulated status parameters as a JSON string.
+        """All simulated status parameters as JSON (get_parameters is typed DevString, so a dict would fail).
 
-        The base class exposes this through the get_parameters Tango command,
-        which is typed DevString — returning a dict (or the inherited abstract
-        stub's None) makes the command fail with a Tango translation error.
-
-        The detector keys are deliberately split by what they mean: device_proxies
-        are the twin's connected settings devices (scan, stage, data, ... — not
-        detectors), scan_detectors is what the twin's STEM renderer actually
-        produces (a simulated HAADF signal, whatever label is requested),
-        spectrum_detectors is what acquire_spectrum accepts, and camera_detectors
-        the camera names it gives an image for (none without a camera model);
-        all three come from _detectors, which get_detectors serves. An earlier
-        draft published the proxy keys under a "detectors" key, which told an
-        agent that "stage" and "data" were detectors it could scan with.
+        device_proxies are the connected settings devices (scan, stage, data), not detectors. scan_detectors,
+        spectrum_detectors and camera_detectors are what the twin really renders, from _detectors; naming the
+        proxies "detectors" once told an agent it could scan with "stage".
         """
         self._sync_stage_from_proxy()
         parameters = {

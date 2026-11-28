@@ -12,7 +12,7 @@ from tango.server import device_property
 
 from asyncroscopy.instruments.electron_microscope.hardware.aperture import APERTURE
 
-# AutoScript imports - only available on the microscope PC.
+# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
 
@@ -28,9 +28,6 @@ NO_HOST = ("the device property hardware_host is not set: give it in the stack Y
 class AutoScriptAPERTURE(APERTURE):
     """AutoScript-backed motorized aperture device."""
 
-    # ------------------------------------------------------------------
-    # Device properties - set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
 
     hardware_host = device_property(
         dtype=str,
@@ -52,9 +49,6 @@ class AutoScriptAPERTURE(APERTURE):
         "False (real hardware): an aperture device without AutoScript is in FAULT.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         super().init_device()
@@ -91,9 +85,6 @@ class AutoScriptAPERTURE(APERTURE):
             self.set_status(f"Not connected to AutoScript at {self.hardware_host}:{self.hardware_port}: {exc}")
             self.error_stream(f"AutoScript APERTURE connection failed: {exc}")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def _aperture_mechanism(self):
         return self._microscope.optics.aperture_mechanisms.get_mechanism(
@@ -152,9 +143,6 @@ class AutoScriptAPERTURE(APERTURE):
         x, y = value
         self._aperture_mechanism().position = (float(x), float(y))
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     def _insert(self) -> None:
         self._aperture_mechanism().insert()

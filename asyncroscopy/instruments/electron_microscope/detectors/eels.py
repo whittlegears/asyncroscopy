@@ -17,12 +17,8 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class EELSBase(Device):
     """Hardware-independent Tango API for an EELS detector."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
 
     data_device_address = device_property(
         dtype=str,
@@ -31,9 +27,6 @@ class EELSBase(Device):
         "e.g. 'asyncroscopy/data/default'.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     exposure_time = attribute(
         label="Exposure Time",
@@ -64,9 +57,6 @@ class EELSBase(Device):
         doc="Configured EELS spectrum energy offset in electronvolts",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -104,9 +94,6 @@ class EELSBase(Device):
             self._connect_data_proxy()
         return self._data_proxy
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_exposure_time(self) -> float:
         return self._exposure_time
@@ -128,9 +115,6 @@ class EELSBase(Device):
         self._write_offset(offset)
         self._offset = offset
 
-    # ------------------------------------------------------------------
-    # Public Tango commands
-    # ------------------------------------------------------------------
 
     @command(dtype_out=bool, risk="high", role="other")
     def initialize_eels(self) -> bool:
@@ -172,9 +156,6 @@ class EELSBase(Device):
         """Return the available EELS entrance apertures and their indices."""
         return self._get_available_apertures()
 
-    # ------------------------------------------------------------------
-    # Hardware adapter interface
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _initialize_eels(self) -> bool:

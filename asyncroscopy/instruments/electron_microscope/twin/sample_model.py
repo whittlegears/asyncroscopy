@@ -177,7 +177,6 @@ class SampleModel(ParticleTable, Specimen):
         overrides = {k: (tuple(v) if isinstance(v, list) else v) for k, v in options.items() if k in names}
         return cls(replace(context.sample or SampleParams(), **overrides), context.rng_for(options))
 
-    # Specimen interface
     @property
     def support_element(self) -> str:
         return self.params.support_element
@@ -273,7 +272,6 @@ class SampleModel(ParticleTable, Specimen):
                 density[element] = density.get(element, 0.0) + ELEMENTS[element][1] * t / ANGSTROM
         return density
 
-    # Rendering
     def _weight_survey(self, x_min, y_min, n, pixel_m, z_exponent, damage) -> np.ndarray:
         """Each particle's analytic projected thickness times Z^n."""
         coords = x_min + (np.arange(n) + 0.5) * pixel_m

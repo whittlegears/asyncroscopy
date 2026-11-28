@@ -25,9 +25,6 @@ class CAMERA(Device):
     _READOUT_AREAS = {"Full", "Half", "Quarter"}
     _OUTPUT_FORMATS = {".h5", ".tiff"}
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     exposure_time = attribute(
         label="Exposure Time",
@@ -77,15 +74,11 @@ class CAMERA(Device):
         doc="Saved image format: '.h5' or '.tiff'.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         Device.init_device(self)
         self.set_state(DevState.ON)
 
-        # Sensible defaults — operators override via Tango DB or client writes
         self._exposure_time: float = 1e-3   # 1 ms
         self._imsize: int = 1024
         self._readout_area: str = "Full"
@@ -95,9 +88,6 @@ class CAMERA(Device):
 
         self.info_stream("CAMERA device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_exposure_time(self) -> float:
         return self._exposure_time
@@ -151,10 +141,6 @@ class CAMERA(Device):
             )
         self._output_format = value
 
-
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
     CAMERA.run_server()

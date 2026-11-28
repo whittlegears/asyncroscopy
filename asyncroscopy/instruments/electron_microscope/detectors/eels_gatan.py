@@ -21,9 +21,6 @@ NO_HOST = ("the device property hardware_host is not set: give it in the stack Y
 class EELS(EELSBase):
     """Gatan DigitalMicrograph-backed EELS detector."""
 
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
 
     hardware_host = device_property(
         dtype=str,
@@ -38,9 +35,6 @@ class EELS(EELSBase):
         doc="Port of the Gatan Pyro server",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         super().init_device()
@@ -76,9 +70,6 @@ class EELS(EELSBase):
         finally:
             proxy._pyroRelease()
 
-    # ------------------------------------------------------------------
-    # Gatan hardware adapter
-    # ------------------------------------------------------------------
 
     def _initialize_eels(self) -> bool:
         result = self._call_eels("initialize_eels")

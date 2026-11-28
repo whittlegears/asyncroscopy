@@ -13,7 +13,6 @@ from tango.server import device_property
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, save_acquisition
 from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
 
-# PyJEM imports -> this block will be removed after testing this on remote pc
 try:
     from PyJEM import detector
 
@@ -69,27 +68,18 @@ class JeolMicroscope(ElectronMicroscope):
         self.set_state(DevState.ON)
 
     def _connect_hardware(self) -> None:
-        """Point the PyJEM ``detector`` REST client at the JEOL control server.
+        """Point the PyJEM ``detector`` module, which is itself the REST handle, at the JEOL server.
 
-        Unlike AutoScript (a client object you ``.connect()``), PyJEM's
-        ``detector`` module *is* the REST handle: configuring its target IP is
-        what makes acquisition talk to the scope. We store the module as
-        ``self._microscope`` to mirror the AutoScript device's connected handle.
-
-        ``set_port`` is intentionally NOT called -- the detector REST service
-        has its own default port, distinct from ``hardware_port`` (which is
-        AutoScript's port and unused here).
+        ``set_port`` is not called: the detector REST service has its own default port, and
+        ``hardware_port`` (AutoScript's) is unused here.
         """
         if not _PYJEM_AVAILABLE or self.testing_mode_bool:
             self.warn_stream('PyJEM not available; running JEOL device in testing mode.')
             return
         try:
             detector.set_ip(self.hardware_host)
-            # Health-check: get_attached_detector() is a REST round-trip to
-            # TEMCenter, so it raises if the server is unreachable. (The real
-            # PyJEM 1.3.0.3564 detector module has no check_connection() -- this
-            # is verified against the installed surface, not the docs.) An empty
-            # list is a reachable-but-unconfigured scope, not a failed connection.
+            # PyJEM 1.3.0.3564 has no check_connection(); this REST round trip raises when TEMCenter is
+            # unreachable. An empty list means reachable but unconfigured.
             attached = detector.get_attached_detector()
             self._microscope = detector
             self.info_stream(
@@ -101,26 +91,7 @@ class JeolMicroscope(ElectronMicroscope):
             self.set_state(DevState.FAULT)
             self._microscope = None
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-    # Commands pertaining to setting children attributes, e.g. stage position, scan parameters, EDS settings, etc. --> iuser accesses it in a jupyter notebook using the device proxy
-    # ------------------------------------------------------------------
-
-
-    # ------------------------------------------------------------------
-    # Internal acquisition helpers
-    # ------------------------------------------------------------------
     @staticmethod
     def _decode_rawdata(raw: bytes, width: int, height: int) -> np.ndarray:
         """

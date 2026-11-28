@@ -95,7 +95,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     cold_start = _prop(bool, False, "Start as an instrument is found: column valves closed and the beam current not yet measured.")
     autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
     autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
-    # Optics and detector
     acceleration_voltage = _prop(float, 300e3, "Acceleration voltage (V).")
     convergence_angle_mrad = _prop(float, 30.0, "Probe convergence semi-angle (mrad).")
     probe_current_pa = _prop(float, DEFAULT_BEAM_CURRENT_PA, "Probe current (pA); reported as the measured beam_current_pa.")
@@ -107,7 +106,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     detector_read_noise = _prop(float, 0.0, "Gaussian read noise (counts).")
     detector_gain_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' gain, as a fraction (0: steady).")
     detector_offset_drift = _prop(float, 0.0, "Largest slow swing of the scanning detectors' offset (counts; 0: steady).")
-    # Scan
     scan_flyback_time = _prop(float, 0.0, "Line flyback time (s).")
     scan_line_jitter_px = _prop(float, 0.0, "Per-line x jitter standard deviation (pixels).")
     scan_rotation_deg = _prop(float, 0.0, "Scan rotation relative to the stage (deg).")
@@ -116,21 +114,16 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
     # The errors, dynamics and drift of the stage belong to the STAGE device DigitalTwinSTAGE. The clock belongs to the microscope.
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
-    # EDS
     eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
     eds_solid_angle = _prop(float, 0.7, "EDS collection solid angle (sr).")
     eds_dead_time = _prop(float, 1e-6, "EDS paralyzable dead time (s).")
     eds_channels = _prop(int, 2048, "EDS channels.")
     eds_energy_max = _prop(float, 20000.0, "EDS energy range upper limit (eV).")
-    # Dose
     dose_tracking = _prop(bool, False, "Record dose and apply contamination/damage.")
     contamination_max = _prop(float, 0.0, "Carbon contamination thickness at saturation (m).")
     contamination_dose = _prop(float, 1e4, "Dose (e/A^2) for contamination to reach 63% of saturation.")
     damage_critical_dose = _prop(float, 0.0, "Dose (e/A^2) beyond which particles start to fade (0 = off).")
 
-    # ------------------------------------------------------------------
-    # Model construction
-    # ------------------------------------------------------------------
     def _check_properties(self) -> None:
         """Refuse impossible configuration at start-up, not with a cryptic error at the first image."""
         rules = [
@@ -255,27 +248,18 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             "z_max": float(self.sample_size_z) / ANGSTROM / 2,
         }
 
-    # ------------------------------------------------------------------
-    # Stage as commanded, true and reported
-    # ------------------------------------------------------------------
     def _set_fov(self, fov) -> None:
         self._fov = float(fov)
 
     def _set_defocus(self, defocus) -> None:
         self._defocus = float(defocus)
 
-    # ------------------------------------------------------------------
-    # Image shift, stigmator and the simulated vendor autofocus
-    # ------------------------------------------------------------------
     def _set_stigmator(self, stigmator: list[float]) -> None:
         self._stigmator = np.asarray(stigmator, dtype=np.float64)
 
     def _get_stigmator(self) -> list[float]:
         return self._stigmator.tolist()
 
-    # ------------------------------------------------------------------
-    # The column: valves, fluorescent screen and the beam current measured on it
-    # ------------------------------------------------------------------
     def _set_column_valves(self, state: str) -> None:
         if str(state).lower() not in ("open", "close"):
             raise ValueError(f"column valves take 'open' or 'close', got {state!r}")
@@ -359,9 +343,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         self._defocus = check_defocus(self._defocus - truth["c1_m"] + rng.normal(0.0, residual), self.max_defocus)
         self._stigmator = self._stigmator - np.asarray(truth["a1_m"]) + rng.normal(0.0, residual, size=2)
 
-    # ------------------------------------------------------------------
-    # Imaging
-    # ------------------------------------------------------------------
     def _aberrations(self) -> dict:
         coefficients = None
         corrector = self._detector_proxies.get("corrector")
@@ -516,9 +497,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return save_acquisition(self, self._detector_proxies.get("data"), "camera_image", str(detector), image,
                                 dataset_attrs=attrs, output_format=output_format)
 
-    # ------------------------------------------------------------------
-    # EDS
-    # ------------------------------------------------------------------
     def _beam_sample_xy(self, t: float) -> np.ndarray:
         """Sample point under the beam at time t, from the fractional beam position."""
         fov = float(self._fov) * (1.0 + self._scan_params.fov_scale_error)
@@ -640,9 +618,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
                                   "reported_m": self._stage.reported.tolist(), "true_m": self._stage.true.tolist()})
         return key
 
-    # ------------------------------------------------------------------
-    # Status and ground truth
-    # ------------------------------------------------------------------
     def _viewport_metadata(self) -> dict:
         # The base class reads _stage_position, which here is the true pose. Report what the stage reports instead.
         metadata = super()._viewport_metadata()

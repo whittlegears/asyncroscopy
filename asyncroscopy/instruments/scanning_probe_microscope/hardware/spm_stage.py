@@ -14,12 +14,8 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM coarse stage device: XY position and moves."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
     
     stage_x_m = tango.server.attribute(
         label="Stage X Position",
@@ -39,18 +35,12 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
         doc="Current stage Y position in meters. Read live from hardware.",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.set_state(tango.DevState.ON)
         self.info_stream("SPM STAGE device initialised")
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _do_move(self, dx: float, dy: float) -> None:
         """Run one relative move with MOVING-state bookkeeping."""
@@ -66,9 +56,6 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
         finally:
             self.set_state(tango.DevState.ON)
 
-    # ------------------------------------------------------------------
-    # Attribute read — live from hardware
-    # ------------------------------------------------------------------
 
     def read_stage_x_m(self) -> float:
         return self._hw_read_stage_position()[0]
@@ -76,9 +63,6 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
     def read_stage_y_m(self) -> float:
         return self._hw_read_stage_position()[1]
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(dtype_in=tango.DevVarDoubleArray, risk="high", role="stage.move")
     def move_stage(self, position) -> None:
@@ -102,10 +86,6 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
         self.set_state(tango.DevState.ON)
 
     
-    # ------------------------------------------------------------------
-    # Abstract methods — vendor-specific
-    # ------------------------------------------------------------------
-
     @abstractmethod
     def _hw_read_stage_position(self) -> list[float]:
         """Return the current stage position [x, y] in meters."""
@@ -121,9 +101,6 @@ class SPM_STAGE(tango.server.Device, metaclass=CombinedMeta):
         """Abort any running stage motion."""
         pass
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     SPM_STAGE.run_server()
 

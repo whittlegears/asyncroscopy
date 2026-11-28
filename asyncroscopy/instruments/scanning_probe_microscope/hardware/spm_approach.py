@@ -15,12 +15,8 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
     """Abstract SPM approach device: tip engage / retract."""
 
-    # The risk, role and stop of each command, as its @command declares them. The MCP server reads this.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
 
     approached = tango.server.attribute(
         label="Approached",
@@ -30,25 +26,15 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
     )
 
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
-
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.set_state(tango.DevState.ON)
         self.info_stream("SPM APPROACH device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read
-    # ------------------------------------------------------------------
 
     def read_approached(self) -> bool:
         return self._hw_is_approached()
     
-        # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @command(risk="high", role="probe.approach")
     def approach(self) -> None:
@@ -86,9 +72,6 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
         self._hw_stop()
         self.set_state(tango.DevState.ON)
 
-    # ------------------------------------------------------------------
-    # Abstract methods — vendor-specific
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _hw_approach(self) -> None:
@@ -110,9 +93,6 @@ class SPM_APPROACH(tango.server.Device, metaclass=CombinedMeta):
         """Return True if the tip is currently engaged."""
         pass
 
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
     SPM_APPROACH.run_server()
     

@@ -48,7 +48,6 @@ class CORRECTOR(Device):
     supply backend operations.
     """
 
-    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
     status_message = attribute(

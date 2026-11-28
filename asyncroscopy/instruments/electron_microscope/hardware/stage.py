@@ -57,12 +57,8 @@ class STAGE(Device):
     meters and alpha/beta in degrees.
     """
 
-    # Tells the MCP server the risk, role and stop of each command, as its @command declares them.
     action_hints = action_hints_attribute()
 
-    # ------------------------------------------------------------------
-    # Device properties — set per-deployment in the Tango DB
-    # ------------------------------------------------------------------
     # A move outside the travel limits is refused, and job devices check plans against them at reserve.
     # The defaults of 1 mm each way in x and y and 0.5 mm each way in z are conservative for a TEM goniometer.
     # Set them to the travel of your stage.
@@ -86,9 +82,6 @@ class STAGE(Device):
         "position_sigma_m, which a Mapper without its own stage_sigma_m uses to bound the stitching search. 0: unknown.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
     beta_tilt_enabled = attribute(
         label="Beta tilt enabled",
         dtype=bool,
@@ -156,9 +149,6 @@ class STAGE(Device):
         doc="1-sigma distance between where the stage lands and where it reports (m); 0 when unknown (position_error_m).",
     )
 
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def init_device(self) -> None:
         Device.init_device(self)
@@ -203,9 +193,6 @@ class STAGE(Device):
 
         self.info_stream("STAGE device initialised")
 
-    # ------------------------------------------------------------------
-    # Attribute read / write
-    # ------------------------------------------------------------------
 
     def read_position(self) -> list[float]:
         return self._read_position()
@@ -438,10 +425,6 @@ class STAGE(Device):
         position[4] = float(value)
         self.write_position(position)
 
-
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 if __name__ == "__main__":
     STAGE.run_server()

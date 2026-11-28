@@ -10,9 +10,6 @@ from asyncroscopy.instruments.instrument import Instrument
 
 class Opentrons(Instrument):
     """Opentrons pipetting robot device."""
-    # ------------------------------------------------------------------
-    # Instrument level Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
     data_device_address = tango.server.device_property(
         dtype=str,
         default_value="",
@@ -24,9 +21,6 @@ class Opentrons(Instrument):
         default_value=False,
         doc="When True - used for running tests, passed in conftest.py")
     
-    # ------------------------------------------------------------------
-    # Instrument Attributes
-    # ------------------------------------------------------------------
 
     instrument_type = tango.server.attribute(
         label="Instrument Type",
@@ -66,9 +60,6 @@ class Opentrons(Instrument):
         doc="Indicates if the robot has picked up a pipette tip or if the pipette holder is empty",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.set_state(tango.DevState.INIT)
@@ -76,9 +67,6 @@ class Opentrons(Instrument):
         self._init_device_attributes()
         self._connect()
 
-    # ------------------------------------------------------------------
-    # Instrument methods
-    # ------------------------------------------------------------------
     @abstractmethod
     def read_instrument_type(self) -> str:
         pass
@@ -102,26 +90,19 @@ class Opentrons(Instrument):
 
     @abstractmethod
     def _pick_up_tip(self):
-        #pick up tip if robot does not already have tip
         self.pick_up_tip(location, presses, increment, prep_after)
         pass
 
     @abstractmethod
     def _return_tip(self):
-        #try to drop tip if robot is holding a tip
         self.return_tip(home_after)
         pass
 
     @abstractmethod
     def _transfer(self):
-        #try to drop tip if robot is holding a tip
         self.transfer(volume, source, dest)
         pass
 
-
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @tango.server.command
     def Connect(self) -> None:
@@ -146,13 +127,8 @@ class Opentrons(Instrument):
         self.has_tip()
 
 
-
-
 class TemperatureModule(Instrument):
     """Temperature Module located within Opentrons pipetting robot device."""
-    # ------------------------------------------------------------------
-    # Instrument level Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
     data_device_address = tango.server.device_property(
         dtype=str,
         default_value="",
@@ -164,9 +140,6 @@ class TemperatureModule(Instrument):
         default_value=False,
         doc="When True - used for running tests, passed in conftest.py")
     
-    # ------------------------------------------------------------------
-    # Instrument Attributes
-    # ------------------------------------------------------------------
 
     instrument_type = tango.server.attribute(
         label="Instrument Type",
@@ -183,9 +156,6 @@ class TemperatureModule(Instrument):
         doc="Current tip grabber position in the X direction in xunits",
     )
 
-    # ------------------------------------------------------------------
-    # Initialization
-    # ------------------------------------------------------------------
     def init_device(self) -> None:
         tango.server.Device.init_device(self)
         self.set_state(tango.DevState.INIT)
@@ -193,9 +163,6 @@ class TemperatureModule(Instrument):
         self._init_device_attributes()
         self._connect()
 
-    # ------------------------------------------------------------------
-    # Instrument methods
-    # ------------------------------------------------------------------
     @abstractmethod
     def read_instrument_type(self) -> str:
         pass
@@ -217,9 +184,6 @@ class TemperatureModule(Instrument):
     def _disconnect(self):
         pass
 
-    # ------------------------------------------------------------------
-    # Commands
-    # ------------------------------------------------------------------
 
     @tango.server.command
     def Connect(self) -> None:

@@ -67,7 +67,6 @@ class DigitalTwinSEM(ScanningBeamTwin, ScanningElectronMicroscope):
     dose_tracking = _prop(bool, False, "Record where the beam has been.")
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
 
-    # The session
     def _connect(self) -> None:
         self._connect_detector_proxies()
         self._start_beam_twin(int(self.sample_seed))
@@ -137,7 +136,6 @@ class DigitalTwinSEM(ScanningBeamTwin, ScanningElectronMicroscope):
             **self.beam_current_fields(),
         })
 
-    # Imaging
     def _render(self, detector: str, frame: dict) -> np.ndarray:
         xs, ys = frame["xs"], frame["ys"]
         cx, cy = float(xs.mean()), float(ys.mean())

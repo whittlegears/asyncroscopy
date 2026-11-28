@@ -81,7 +81,6 @@ class ScanningBeamProfile(InstrumentProfile):
             example["dose_budget_e_per_a2"] = stated
         return example
 
-    # beam current
     def _parameters(self) -> tuple[dict, str | None]:
         """The microscope's get_parameters, and why it could not be read."""
         try:
@@ -132,7 +131,6 @@ class ScanningBeamProfile(InstrumentProfile):
         except BeamCurrentRefused as exc:
             raise RuntimeError(f"the map's dose budget no longer holds at start: {exc}") from exc
 
-    # plan
     def resolve(self, p: dict) -> None:
         """Refuse an instrument of another kind, and take the plan's detectors from the instrument when it names none."""
         if self.instrument_types:
@@ -238,7 +236,6 @@ class ScanningBeamProfile(InstrumentProfile):
     def image_shift_target(self, name: str, arguments: Any) -> list[float] | None:
         return [float(v) for v in list(arguments[0])[:2]] if name == "set_image_shift" else None
 
-    # run
     def _scan(self) -> tango.DeviceProxy:
         return self.ctx.proxy(self.setting("scan_device_address"))
 

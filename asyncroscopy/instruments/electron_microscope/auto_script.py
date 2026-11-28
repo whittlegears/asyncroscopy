@@ -46,9 +46,7 @@ def _settings(cls, fields: dict, allowed: tuple[str, ...]):
     return cls(**fields)
 
 
-# AutoScript imports — only available on the microscope PC.
-# Wrapped in try/except so the device can still be imported and tested
-# on a development machine without AutoScript installed.
+# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
@@ -81,9 +79,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
     dedicated detector devices and read via DeviceProxy at acquisition time.
     """
 
-    # ------------------------------------------------------------------
-    # Device properties — configure in Tango DB per deployment
-    # ------------------------------------------------------------------
     hardware_host = device_property(
         dtype=str,
         default_value="",
@@ -95,9 +90,8 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value=9095,
         doc="Port of the AutoScript microscope server",
     )
-    # This property is not applied. The AutoScript 1.18 client waits for every reply with no time limit, and neither
-    # perform_call of the autoscript_core ClientEndpoint nor connect offers one to set. A hung AutoScript server
-    # holds the call until it answers or the connection drops. The property stays so configs that set timeout_seconds load.
+    # The AutoScript 1.18 client waits for every reply with no time limit (neither perform_call nor connect takes one),
+    # so a hung server holds the call. The property stays so configs that set it still load.
     hardware_timeout_seconds = device_property(
         dtype=int,
         default_value=120,
@@ -147,16 +141,11 @@ class AutoScriptMicroscope(ElectronMicroscope):
         "about -1 to 1). 0, the default, until first light has measured it: get_stigmator and set_stigmator are refused.",
     )
 
-    # ------------------------------------------------------------------
-    # Attributes
-    # ------------------------------------------------------------------
     camera_length = attribute(
         label="Camera Length",
         dtype=float,
         access=AttrWriteType.READ,
         unit = "m",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
         doc="Current camera length in meters",
     )
 
@@ -165,15 +154,9 @@ class AutoScriptMicroscope(ElectronMicroscope):
         dtype=float,
         access=AttrWriteType.READ,
         unit = "V",
-        # min_value= TODO: set these
-        # max_value= TODO: set these
         doc="Current acceleration voltage in volts",
     )
 
-
-    # ------------------------------------------------------------------
-    # Initialisation
-    # ------------------------------------------------------------------
 
     def _init_device_attributes(self) -> None:
         # The serve function below runs the server without the device lock of Tango, so that blank_beam is never queued
@@ -189,7 +172,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         self._connect_detector_proxies()
         self.screen_current_calibration = None
         self._measured_beam_current = None  # a dict with pa and at from the last screen current reading, where at is a time.time value
-        # Without a client, report FAULT instead of looking connected.
         if self._connect_error:
             self.set_state(DevState.FAULT)
             self.set_status(f"Not connected to AutoScript: {self._connect_error}")
@@ -258,9 +240,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             advice = "Call Connect once; if it fails again, report it to the operator."
         tango.Except.throw_exception("NotConnected", f"Not connected to AutoScript: {reason}. {advice}", f"{command_name}()")
 
-    # ------------------------------------------------------------------
-    # Attribute read methods
-    # ------------------------------------------------------------------
 
     def read_acceleration_voltage(self) -> float:
         """Accelerating voltage in volts."""
@@ -274,9 +253,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             return float("nan")
         return self._microscope.optics.camera_length.value.calibrated
 
-    # ------------------------------------------------------------------
-    # Internal acquisition helpers
-    # ------------------------------------------------------------------
     def _acquire_scanned_image(
         self,
         imsize: int,
@@ -584,7 +560,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         original_gun_lens = self._microscope.optics.monochromator.focus
         gun_lens_series = np.linspace(*SCREEN_CALIBRATION_FOCUS_V)
 
-        # series of measurements
         current_series = []
         try:
             for val in gun_lens_series:
@@ -595,7 +570,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope.optics.monochromator.focus = original_gun_lens
         current_series = np.array(current_series) * 1e12
 
-        # fit a polynomial and save it with the span it is valid over
         coeffs = np.polyfit(gun_lens_series, current_series, 11)
         self.screen_current_calibration = np.poly1d(coeffs)
         self.screen_current_calibration_range = {
@@ -975,10 +949,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
             raise ValueError(f"beam tilt must be [x, y], each unitless between -1 and 1 (AutoScript's units), got {list(tilt)}; nothing was set")
         self._microscope.optics.deflectors.beam_tilt = (values[0], values[1])
 
-
-# ----------------------------------------------------------------------
-# Server entry point
-# ----------------------------------------------------------------------
 
 def _without_tango_serialization() -> None:
     """Turn off Tango's per-device command lock in this server, before any device starts: a long acquisition
