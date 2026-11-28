@@ -272,6 +272,21 @@ def test_an_operator_only_command_needs_the_approve_role(stack, keys):
     assert ran and ran[-1]["caller"] == "operator-bob"
 
 
+@pytest.mark.parametrize("name", ["list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
+                                  "set_group_permission"])
+def test_every_permission_tool_needs_the_approve_role(stack, keys, name):
+    arguments = {"approve_call": {"request_id": "x"}, "deny_call": {"request_id": "x", "reason": "r"},
+                 "set_permission": {"tool": "DigitalTwin_move_stage", "permission": "approve"},
+                 "set_group_permission": {"group": "acts", "permission": "approve"}}.get(name, {})
+    agent = token(keys, "agent-carol", "instrument:read", "instrument:operate")
+    assert name not in tools(stack["operator"], agent)
+    error, text = call(stack["operator"], agent, name, arguments)
+    assert error and "approve role" in text, text
+    error, text = call(stack["operator"], agent, "call_tool", {"name": name, "arguments": arguments})
+    assert error and "approve role" in text, text
+    assert name in tools(stack["operator"], token(keys, "operator-bob", "instrument:approve"))
+
+
 def test_call_tool_needs_the_role_of_the_tool_it_runs(stack, keys):
     reader = token(keys, "reader", "instrument:read")
     error, text = call(stack["agent"], reader, "call_tool", {"name": "DigitalTwin_move_stage", "arguments": {"position": [7, 0, 0, 0, 0]}})
@@ -304,6 +319,8 @@ def test_roles_follow_the_tool_descriptors():
     assert required_role(described(twin, "export_ground_truth")) == "approve"
     assert required_role(describe_native("run_job")) == "operate"
     assert required_role(describe_native("view_data")) == "read"
+    assert {required_role(describe_native(n)) for n in ("list_pending_approvals", "approve_call", "deny_call", "get_permissions",
+                                                         "set_permission", "set_group_permission")} == {"approve"}
     assert required_role(None) == "operate"  # a tool the endpoint does not know counts as high
 
 

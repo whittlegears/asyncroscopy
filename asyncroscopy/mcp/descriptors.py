@@ -48,6 +48,9 @@ NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "set_permission": ("setting.set", "high", True, False),
     "set_group_permission": ("setting.set", "high", True, False),
 }
+# The operator endpoint's permission tools: the person's console, so a token needs the approve role for each.
+person_only_natives = frozenset({"list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
+                                 "set_group_permission"})
 # Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})
 
@@ -209,7 +212,7 @@ def describe_native(name: str) -> ToolDescriptor:
     """The descriptor of a native tool (one the server itself offers): low and observing unless NATIVE says otherwise."""
     role, risk, acts, job_start = NATIVE.get(name, ("other", "low", False, False))
     return ToolDescriptor(name=name, device=None, command=None, native=True, action_role=role, risk=risk, acts=acts,
-                          operator_only=False, role_source="rule" if role != "other" else "default", risk_source="native",
+                          operator_only=name in person_only_natives, role_source="rule" if role != "other" else "default", risk_source="native",
                           job_start=job_start)
 
 

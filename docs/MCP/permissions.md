@@ -144,6 +144,16 @@ These tools are in the operator endpoint's `action_space` (device null), beside 
 `source` is `fixed`, `tool`, `config` or `group` (the table above), so a client can show "Default" when it is
 `config` or `group`.
 
+The operator endpoint is the person's console, and it is not gated by design: nothing on it is held, and it is
+where held calls are released. Who may reach it decides who may approve:
+
+- **Without `mcp.auth`** any process on the computer can reach the loopback-bound operator endpoint and approve,
+  just as any local Tango client can drive the devices directly. Run agents only where that is acceptable.
+- **With `mcp.auth`** all six tools above need the token role `approve` (`descriptors.person_only_natives`, read by
+  `endpoint_auth.required_role`), also through `call_tool`. Reading the pending list needs `approve` too: it is part
+  of the console, and an agent learns what it waits for from its own held reply. Agent tokens must never hold the
+  `approve` scope; an agent's scopes are `read` and `operate`.
+
 ## Acquisition files
 
 Every acquisition the DATA writer saves records, in the file's and each dataset's attributes,
