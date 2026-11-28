@@ -11,6 +11,7 @@ import pytest
 
 from langgraph.graph import END, START, StateGraph
 
+from asyncroscopy.workflows.blocks import Block, register_block
 from asyncroscopy.workflows import Workflow, WorkflowState, all_workflows, describe_blocks, get_workflow, register_workflow
 from asyncroscopy.workflows.runner import read_run, resume_workflow, run_workflow, stop_workflow
 from asyncroscopy.workflows.values import evaluate
@@ -1305,8 +1306,6 @@ def _ask_between(ctx, args, previous):
 
 
 def _journal_workflow(name: str, always: tuple) -> Workflow:
-    from asyncroscopy.workflows.blocks import Block, register_block
-
     block = register_block(Block(name=f"test_{name}", summary="A read, a question, a read.", run=_ask_between,
                                  outputs={"stage": "any", "answer": "any", "again": "any"}, tools=("Twin_get_stage",), always=always))
 

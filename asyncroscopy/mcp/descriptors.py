@@ -96,6 +96,7 @@ class DeviceInfo:
     job_kind: str | None = None
     plan_example: str | None = None
     in_types: dict[str, Any] = field(default_factory=dict)  # Tango input type of each command
+    commands: set[str] = field(default_factory=set)
     hints: dict[str, dict] = field(default_factory=dict)  # action_hints entry of each command
     hints_unreadable: bool = False  # it has action_hints that could not be read: agents get only State and Status
 

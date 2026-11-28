@@ -544,6 +544,11 @@ class Tuner(JobDevice):
     )
     allow_corrector_writes = device_property(dtype=bool, default_value=False, doc="Allow the corrector strategy on a stack that is not simulated (only once first light has settled the correction's sign and units).")
 
+    def approval_plans(self) -> dict[str, dict[str, Any]]:
+        """A plan whose strategy writes the corrector waits for a person: corrector writes need approval."""
+        writes = sorted(name for name, strategy in STRATEGIES.all().items() if "corrector" in strategy.needs)
+        return {"strategy": {"values": writes, "default": PLAN_DEFAULTS["strategy"]}}
+
     # Plan
     def _capabilities(self, microscope) -> set:
         commands = {c.cmd_name for c in microscope.command_list_query()}

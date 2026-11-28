@@ -326,6 +326,7 @@ class MCPServer:
             if device.envelope:
                 device.job_kind = self._attribute(dev, "job_kind")
                 device.plan_example = self._attribute(dev, "plan_example") or None
+            device.commands = {cmd.cmd_name for cmd in commands}
             for cmd in commands:
                 command_name = cmd.cmd_name
                 if not self._offers_command(prefix, dev_class, command_name, hints, getattr(cmd, "disp_level", None)):

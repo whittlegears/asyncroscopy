@@ -52,7 +52,7 @@ def _kind(value) -> str:
 class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, Device):
 
     # The MCP server reads each command's risk and role from here.
-    action_hints = action_hints_attribute()
+    action_hints = action_hints_attribute(lambda device: {"reserve": {"approval_if": rules}} if (rules := device.approval_plans()) else {})
 
     # One line saying what this device's job does. MCP tool descriptions start with it.
     JOB_KIND = "background job"
@@ -295,6 +295,12 @@ class JobDevice(SuspenderChecks, LimitChecks, JobFiles, JobWorker, DryRunCalls, 
             if example is not None:
                 message += f". Example plan: {json.dumps(example)}"
             return self._error("plan_rejected", message)
+
+    def approval_plans(self) -> dict[str, dict[str, Any]]:
+        """The plans the MCP agent endpoint holds for a person's approval when they are submitted (reserve, run_job), as if
+        ``mcp.needs_approval`` listed the submitting tool: {plan field: {"values": [...], "default": the value the field
+        takes when the plan leaves it out}}. None by default."""
+        return {}
 
     # Envelope verbs
     @command(dtype_in=str, dtype_out=str, doc_in=':param request: JSON {"plan": {...}, "caller": "name"}. The plan depends on the job; an example is in the tool description.', doc_out="Checks a plan for this device's background job and returns reservation_id with an estimate; nothing moves until start.", risk="low", role="job.reserve")

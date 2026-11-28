@@ -21,6 +21,7 @@ import tango
 
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, remote_without_auth
 from asyncroscopy.mcp.mcp_server import MCPServer
+from asyncroscopy.safety.permissions import PermissionStore
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -288,8 +289,6 @@ def test_every_permission_tool_needs_the_approve_role(stack, keys, name):
 
 
 def test_a_caller_who_may_not_run_a_tool_queues_no_request_for_it(keys, tango_ctx, tmp_path, monkeypatch):
-    from asyncroscopy.safety.permissions import PermissionStore
-
     twin = FakeTwin()
     database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": ["asyncroscopy/digitaltwin/default"]})()})()
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: twin)

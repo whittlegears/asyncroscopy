@@ -10,6 +10,10 @@ from pathlib import Path
 import pytest
 import yaml
 
+from asyncroscopy.instruments.electron_microscope.hardware.corrector_ceos import CEOSCorrector
+from asyncroscopy.instruments.electron_microscope.hardware.corrector_digital_twin import DigitalTwinCorrector
+from asyncroscopy.utils.commands import declared_hints
+
 ROOT = Path(__file__).resolve().parents[2]
 REFERENCE = ROOT / "configs" / "mcp_dt.yaml"
 
@@ -49,3 +53,11 @@ def test_agent_configuration_keeps_a_trace(path):
     mcp = _mcp(path)
     assert str(mcp.get("trace") or "").strip(), f"{path.name} writes no trace of agent tool calls"
     assert str(mcp.get("endpoint_role", "")) == "agent", f"{path.name} should state endpoint_role: agent"
+
+
+@pytest.mark.parametrize("dev_class", ["CEOSCorrector", "DigitalTwinCorrector"])
+def test_every_corrector_write_needs_approval_in_the_reference(dev_class):
+    device = {"CEOSCorrector": CEOSCorrector, "DigitalTwinCorrector": DigitalTwinCorrector}[dev_class]
+    writes = {"correct", "correct_aberration", "measure_aberrations", "measure_c1a1", "acquire_tableau"}
+    assert writes <= set(declared_hints(device))
+    assert writes <= set(_mcp(REFERENCE)["needs_approval"][dev_class])

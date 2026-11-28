@@ -19,6 +19,8 @@ from langgraph.graph import END, START, StateGraph
 
 from asyncroscopy.agents.mcp_tools import McpServer
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
+from asyncroscopy.mcp.components.permissions import always_runs
+from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.permissions import PermissionStore, iso_utc, seconds_of
 from asyncroscopy.trace.writer import read_tool_log
@@ -152,9 +154,6 @@ def test_a_held_call_is_matched_on_its_validated_arguments(stack):
 
 
 def test_only_a_declared_stop_is_never_held():
-    from asyncroscopy.mcp.components.permissions import always_runs
-    from asyncroscopy.mcp.descriptors import DeviceInfo, describe_command, describe_native
-
     device = DeviceInfo("Gun", "Gun", hints={"blank_beam": {"role": "beam.blank"}, "halt": {"stop": True}})
 
     def described(command):
@@ -164,6 +163,37 @@ def test_only_a_declared_stop_is_never_held():
     assert [always_runs(described(c)) for c in ("gun_off", "hv_off", "emission_off")] == [False, False, False]
     assert always_runs(described("blank_beam")) and always_runs(described("halt"))
     assert always_runs(describe_native("stop_all")) and not always_runs(describe_native("run_job"))
+
+
+TUNER = "asyncroscopy/tuner/default"
+
+
+def test_a_native_tool_can_need_approval_and_an_entry_naming_nothing_is_refused(stack):
+    agent = stack("agent", SAMPLE, TUNER, needs_approval={"*": ["run_job"], "SAMPLE": ["load_sample"]})
+    assert agent.discovery.endpoint_info()["tools"]["run_job"]["permission"] == "approve"
+    plan = {"corrections": ["focus"], "strategy": "image_metric"}
+    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}).structured_content["status"] == "approval_required"
+    for wrong in ({"SAMPLE": ["get_doze"]}, {"*": ["no_such_tool"]}):
+        with pytest.raises(ValueError, match="names no command of its class"):
+            stack("agent", SAMPLE, needs_approval=wrong)
+    stack("agent", SAMPLE, needs_approval={"CEOSCorrector": ["correct"]})
+
+
+def test_a_job_that_would_write_the_corrector_waits_for_a_person(stack):
+    agent = stack("agent", TUNER)
+    operator = stack("operator", TUNER)
+    plan = {"corrections": ["focus"], "strategy": "corrector", "dose_budget_e_per_a2": 3000.0}
+    held = run(call(agent, "run_job", {"device": "Tuner", "plan": plan}))
+    assert held.is_error and held.structured_content["status"] == "approval_required"
+    assert held.structured_content["arguments"]["plan"] == plan
+    reserve = run(call(agent, "Tuner_reserve", {"request": json.dumps({"plan": plan})}))
+    assert reserve.structured_content["status"] == "approval_required"
+    focus_only = {**plan, "strategy": "image_metric"}
+    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": focus_only}) is None
+    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": {"corrections": ["focus"]}}) is None
+    run(operator_call(operator, "approve_call", {"request_id": held.structured_content["request_id"]}))
+    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}) is None
+    assert agent.permissions.check("run_job", {"device": "Tuner", "plan": plan}).structured_content["status"] == "approval_required"
 
 
 def test_never_cannot_be_set_and_disconnect_is_never_run(stack):

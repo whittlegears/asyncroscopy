@@ -9,6 +9,7 @@ tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_per
 from __future__ import annotations
 
 import inspect
+import json
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any
 
@@ -36,11 +37,24 @@ def always_runs(t: ToolDescriptor) -> bool:
     return t.name in always_run or t.stop or (t.role_source == "annotation" and t.action_role in STOP_ROLES)
 
 
-def listed_in(rules: dict[str, list[str]], dev_class: str, command: str) -> bool:
-    """Whether a {class or "*": [command or "Class.command"]} mapping (``mcp.needs_approval``) names this command."""
+def listed_in(rules: dict[str, list[str]], dev_class: str | None, command: str) -> bool:
+    """Whether a {class or "*": [command or "Class.command"]} mapping (``mcp.needs_approval``) names this command.
+    A native tool (``run_job``) has no class (None): only the "*" entries name it, by its tool name."""
+    if dev_class is None:
+        return any(fnmatchcase(command, e) for e in rules.get("*", []))
     qualified = f"{dev_class}.{command}"
     entries = [*rules.get("*", []), *rules.get(dev_class, [])]
     return any(fnmatchcase(command, e) or fnmatchcase(qualified, e) for e in entries)
+
+
+def plan_of(arguments: dict[str, Any]) -> Any:
+    """The plan of a job submission: run_job's ``plan``, or the ``plan`` in a reserve's JSON ``request``."""
+    if "plan" in arguments:
+        return arguments["plan"]
+    try:
+        return json.loads(str(arguments.get("request") or "{}")).get("plan")
+    except (ValueError, AttributeError):
+        return None
 
 
 def arguments_model(name: str, fn: Any) -> type[BaseModel]:
@@ -99,17 +113,58 @@ class Permissions:
         registered = self.server.registered.get(name)
         description = ((registered.description if registered is not None else "") or "").strip()
         device_command = not t.native and t.dev_class is not None and t.command is not None
+        listed = listed_in(self.needs_approval, t.dev_class, t.command) if device_command else t.native and listed_in(self.needs_approval, None, name)
         return {"acts": t.acts, "risk": t.risk, "description": description.splitlines()[0][:300] if description else "",
-                "needs_approval": device_command and listed_in(self.needs_approval, t.dev_class, t.command),
+                "needs_approval": listed,
                 "never": device_command and hard_blocked(t.dev_class, t.command),
                 "fixed": always_runs(t)}
 
     def catalog(self) -> dict[str, dict[str, Any]]:
         return {name: self.entry(name) for name in sorted(self.server.descriptors) if name in self.server.registered}
 
+    def unmatched(self) -> list[str]:
+        """The ``needs_approval`` entries that name no command of their class and no native tool: of "*", or of a class
+        this stack runs (every command its devices have, offered here or not). A class the stack does not run cannot be
+        checked; a shared config names the twin's and the hardware's classes alike."""
+        commands: dict[str, set[str]] = {}
+        for device in self.server.devices.values():
+            commands.setdefault(device.dev_class, set()).update(device.commands)
+        natives = {name for name, t in self.server.descriptors.items() if t.native}
+        found = []
+        for dev_class, entries in self.needs_approval.items():
+            if dev_class != "*" and dev_class not in commands:
+                continue
+            classes = commands if dev_class == "*" else {dev_class: commands[dev_class]}
+            for e in entries:
+                hit = any(listed_in({dev_class: [e]}, c, command) for c, names in classes.items() for command in names)
+                if not hit and not (dev_class == "*" and any(listed_in({"*": [e]}, None, n) for n in natives)):
+                    found.append(f"{dev_class}: {e}")
+        return found
+
     def publish(self) -> None:
-        if self.server.endpoint_role == "agent":
-            self.store.publish(self.catalog())
+        if self.server.endpoint_role != "agent":
+            return
+        unmatched = self.unmatched()
+        if unmatched:
+            raise ValueError(f"mcp.needs_approval names no command of its class and no tool of this endpoint: {', '.join(unmatched)}")
+        self.store.publish(self.catalog())
+
+    def plan_needs_approval(self, name: str, arguments: dict[str, Any]) -> bool:
+        """Whether this call submits a job whose plan the job device says a person approves (its reserve's
+        ``approval_if``, ``JobDevice.approval_plans``): a Tuner plan whose strategy writes the corrector."""
+        t = self.server.descriptors[name]
+        if t.native and name == "run_job":
+            device = self.server.devices.get(str(arguments.get("device")))
+        elif not t.native and t.command == "reserve":
+            device = self.server.devices.get(str(t.device))
+        else:
+            return False
+        if device is None or not device.envelope:
+            return False
+        rules = (device.hints.get("reserve") or {}).get("approval_if") or {}
+        plan = plan_of(arguments)
+        plan = plan if isinstance(plan, dict) else {}
+        return any(plan.get(field, rule.get("default")) in rule.get("values", []) for field, rule in rules.items())
 
     def effective(self) -> tuple[dict[str, str], dict[str, str]]:
         """(each tool's effective permission, the group defaults), for endpoint_info."""
@@ -128,6 +183,7 @@ class Permissions:
         if name not in self.server.descriptors or name not in self.server.registered:
             return None
         entry = self.entry(name)
+        entry["needs_approval"] = entry["needs_approval"] or self.plan_needs_approval(name, arguments)
         permission = effective_permission(name, entry, self.store.settings())
         if permission == "allow":
             return None

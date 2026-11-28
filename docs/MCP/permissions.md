@@ -23,6 +23,7 @@ releases a held call on the operator endpoint. An app only shows the held call a
   called after the approval; nothing polls the operator endpoint.
 - **Init, Kill and RestartServer stay hidden** on every endpoint, as before; `Disconnect` is listed on the
   agent endpoint with permission `never` and refused. The operator endpoint lists none of the four.
+- **A job reservation's `get_reservation` stays `allow`** on `Mapper` and `Tuner`: it only reads a reservation.
 - **A TIFF acquisition has no `primary_array`**: the file is the one array.
 - **The agent MCP server reports `role: "agent_server"`** in its `endpoint_info` (it had no `endpoint_info`
   before).
@@ -60,8 +61,8 @@ In the MCP YAML (`configs/mcp_dt.yaml`, `configs/mcp.yaml`):
 mcp:
   needs_approval:            # {Tango class or "*": [command, "Class.command" or glob]}
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
+    CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
+    DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
   permissions_file: outputs/permissions/permissions.json
   approval_ttl_s: 600        # how long a held call waits, and how long an approval waits for its call
   urls:                      # the stack's other endpoints, reported in endpoint_info; leave out what does not run
@@ -71,6 +72,26 @@ mcp:
     tiled: http://localhost:9091
     analysis: http://127.0.0.1:8003/mcp
 ```
+
+A native tool of the agent endpoint (`run_job`, `list_data`, ...) is named by its tool name under `"*"`
+(`"*": [run_job]`). The agent endpoint refuses to start when an entry names nothing: no command of its class
+(offered to agents or not) and, under `"*"`, no native tool either. An entry for a class the stack does not run is
+not checked, because one config names the twin's and the hardware's classes alike; `tests/agents/test_agent_configs.py`
+checks the corrector entries against the classes themselves.
+
+### Corrector writes
+
+Every corrector command that writes or drives the corrector (`correct`, `correct_aberration`,
+`measure_aberrations`, `measure_c1a1`, `acquire_tableau`, all declared on `CORRECTOR` and inherited by
+`CEOSCorrector` and `DigitalTwinCorrector`) is in `needs_approval`. The Tuner's `corrector` strategy writes the
+corrector itself, through Tango, inside a job, so the endpoint holds the job instead: a job device reports, in
+its `reserve` command's `action_hints`, `approval_if: {plan field: {"values": [...], "default": ...}}`
+(`JobDevice.approval_plans`). The Tuner reports `{"strategy": {"values": [every registered strategy that needs
+the corrector], "default": "vendor_autofocus"}}`. A `run_job` or `<device>_reserve` call whose plan matches is held
+as if `needs_approval` listed the tool, so a person approves the job as submitted, with its plan, and a person's
+own setting for that tool still comes first. `endpoint_info` reports `run_job` as `allow` because most plans run
+at once; a client handles a held reply from any tool. Resuming an aborted job (`run_job(resume=...)`) is not held
+again: its plan was approved when it was submitted. `allow_corrector_writes` is unchanged.
 
 `needs_approval` replaced `blocked_functions`, and `urls.analysis` replaced `analysis_url`; `run_mcp.py`
 refuses a config that still has either. Keep `permissions_file` outside every directory Tiled serves, and give

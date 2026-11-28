@@ -33,8 +33,8 @@ mcp:
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
     # The same as configs/mcp.yaml on hardware, on the twin's classes too, so an agent rehearsing here meets what it will
     # meet there. Until first light's sign test settles the CEOS correction's sign and units, a person approves each write.
-    CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
+    CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
+    DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
   permissions_file: outputs/permissions/permissions.json
   approval_ttl_s: 600
   # Optional Tango command allowlist. Leave empty to include every command. Entries may be "command" or "Class.command".
