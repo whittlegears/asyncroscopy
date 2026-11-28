@@ -30,6 +30,14 @@ devices:
       socket_timeout: 30
   data:      { module_name: asyncroscopy.data.data }
   eds:       { module_name: asyncroscopy.instruments.electron_microscope.detectors.eds }
+  # The Gatan EELS server on the Gatan PC. The microscope's acquire_spectrum('eels') runs through this device.
+  # Without the Gatan server the device still starts, and EELS calls say it cannot be reached.
+  eels:
+    module_name: asyncroscopy.instruments.electron_microscope.detectors.eels_gatan
+    properties:
+      hardware_host: "${ASYNCROSCOPY_GATAN_HOST}"
+      hardware_port: 9092
+      data_device_address: asyncroscopy/data/default
   # Background map jobs (reserve/start/status/abort/results/release) on the Spectra 300, as on the twin
   # (configs/digital_twin_mapping.yaml). A dose budget needs a measured beam current here: insert the
   # screen and call get_screen_current first (docs/Operation/agentic_mapping.md, "Dose budget and beam current").
