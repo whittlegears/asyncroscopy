@@ -18,7 +18,6 @@ from asyncroscopy.utils.commands import action_hints_attribute, command
 from abc import abstractmethod
 
 TILT_LIMITS_DEG = {"alpha": (-35.0, 35.0), "beta": (-20.0, 20.0)}
-# What a holder profile may narrow, and the axis each key limits.
 HOLDER_KEYS = {"z_m": "z", "alpha_deg": "alpha", "beta_deg": "beta"}
 
 
@@ -59,20 +58,14 @@ class STAGE(Device):
 
     action_hints = action_hints_attribute()
 
-    # A move outside the travel limits is refused, and job devices check plans against them at reserve.
-    # The defaults of 1 mm each way in x and y and 0.5 mm each way in z are conservative for a TEM goniometer.
-    # Set them to the travel of your stage.
+    # Conservative defaults for a TEM goniometer; set them to the travel of your stage.
     x_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage x travel (m).")
     y_limits_m = device_property(dtype=(float,), default_value=[-1e-3, 1e-3], doc="[min, max] stage y travel (m).")
     z_limits_m = device_property(dtype=(float,), default_value=[-5e-4, 5e-4], doc="[min, max] stage z travel (m).")
-    # A holder narrows tilt and Z, its height toward the pole piece, further. Fill these in from the specifications
-    # of your holders, because no holder values are built in. When blank, the travel and TILT_LIMITS_DEG apply.
+    # No holder values are built in; fill these in from your holders' specifications.
     holders = device_property(dtype=str, default_value="{}", doc='JSON {"holder name": {"z_m": [min, max], "alpha_deg": [min, max], "beta_deg": [min, max]}}; every key optional.')
     holder = device_property(dtype=str, default_value="", doc="The holder installed when no holder_file says otherwise (a name in holders); blank: none.")
-    # Z and tilt limit each other. A tilted holder swings its edge toward the pole piece, and more so the further it sits
-    # from eucentric height. A move tilted beyond high_tilt_deg in alpha or beta is refused unless the size of z is at most
-    # high_tilt_max_abs_z_m. The defaults are conservative placeholders and not the specification of any holder.
-    # Set both from the pole piece clearance of the fitted holder before tilting far on the instrument.
+    # Conservative placeholders; set both from the fitted holder's pole piece clearance before tilting far.
     high_tilt_deg = device_property(dtype=float, default_value=15.0, doc="Tilt (deg, alpha or beta) above which |z| is held to high_tilt_max_abs_z_m. Set from the fitted holder.")
     high_tilt_max_abs_z_m = device_property(dtype=float, default_value=1e-4, doc="Largest |z| (m) allowed while tilted beyond high_tilt_deg. Set from the fitted holder.")
     holder_file = device_property(dtype=str, default_value="", doc="Where set_holder records the installed holder, so a restart keeps it; blank: outputs/stage/<device name>_holder.json.")
@@ -161,21 +154,17 @@ class STAGE(Device):
             **TILT_LIMITS_DEG,
         }
         self._connect()
-        # The instrument's own axis limits, where the backend can read them, narrow the configured travel.
         self._hardware_limits = self._read_hardware_limits()
         self._travel, apart = narrow_travel(self._configured_travel, self._hardware_limits)
         self._holders = holder_profiles(self.holders)
         self._holder = ""
         self._frozen = None
-        # The configured limits and the instrument's do not overlap on some axis. Only a fixed configuration and a
-        # restart clear it; set_holder never does.
         self._limits_conflict: str | None = None
         self._holder_path = Path(self.holder_file or f"outputs/stage/{self.get_name().replace('/', '_')}_holder.json")
         installed, problem = self._restore_holder()
         self._apply_holder(installed)
         if problem:
-            # Which holder is fitted is unknown. Hold the stage to what every configured holder allows,
-            # or refuse every move when no position suits them all.
+            # Unknown holder: hold the stage to what every configured holder allows.
             strictest = dict(self._limits)
             for name in self._holders:
                 for axis, (low, high) in self._limits_for(name).items():

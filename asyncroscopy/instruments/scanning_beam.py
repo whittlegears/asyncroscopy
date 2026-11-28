@@ -38,14 +38,12 @@ from asyncroscopy.instruments.instrument import Instrument
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
-# Support devices every scanning-beam instrument connects. Each name maps to the device property holding its address.
 BEAM_ADDRESSES = {
     "stage": "stage_device_address",
     "scan": "scan_device_address",
     "sample": "sample_device_address",
     "data": "data_device_address",
 }
-# The limits the base enforces when a deployment sets none.
 DEFAULT_MIN_FOV = 1e-9
 DEFAULT_MAX_FOV = 1e-4
 DEFAULT_MAX_IMAGE_SHIFT = 1e-6  # metres per axis, well inside a Spectra's beam-shift range
@@ -148,7 +146,6 @@ def unsupported(device: object, what: str) -> None:
 class ScanningBeamInstrument(Instrument):
     """A blankable beam rastered over a field of view on a stage: the public commands every backend shares."""
 
-    # The support devices _connect_detector_proxies connects. A modality adds its own.
     proxy_addresses = BEAM_ADDRESSES
 
     scan_device_address = device_property(
@@ -185,7 +182,6 @@ class ScanningBeamInstrument(Instrument):
         doc="The scanning detector used when a caller names none (the default_scan_detector property).",
     )
 
-    # Limits checked before any backend sees a value. action_hints tells clients the same ranges.
     min_fov = device_property(dtype=float, default_value=DEFAULT_MIN_FOV, doc="Smallest field of view accepted (m).")
     max_fov = device_property(dtype=float, default_value=DEFAULT_MAX_FOV, doc="Largest field of view accepted (m).")
     max_image_shift = device_property(dtype=float, default_value=DEFAULT_MAX_IMAGE_SHIFT, doc="Largest |image shift| per axis accepted (m).")
@@ -201,7 +197,6 @@ class ScanningBeamInstrument(Instrument):
     beam_current_age_s = attribute(dtype=float, unit="s", access=AttrWriteType.READ, doc="Age of the measured current (s); NaN when it is assumed.")
     stage_moving = attribute(dtype=bool, access=AttrWriteType.READ, doc="True while a stage move is under way.")
     image_shift_limit_m = attribute(dtype=float, unit="m", access=AttrWriteType.READ, doc="Largest |image shift| per axis this instrument accepts (m): how far a job may move the image without the stage.")
-    # Describes each command and gives its arguments' units and ranges at this device's limits.
     action_hints = action_hints_attribute(extra=lambda device: device.argument_hints())
 
     def _init_device_attributes(self) -> None:
@@ -331,8 +326,7 @@ class ScanningBeamInstrument(Instrument):
         Acquire an image with scanning detectors and return its DATA/Tiled key.
         The default detector list is ['haadf'] on a STEM and ['se'] on an SEM.
         """
-        # Tango cannot send an omitted argument, so remote callers such as the
-        # MCP bridge send an empty list when no detector is named.
+        # Tango cannot send an omitted argument, so the MCP bridge sends an empty list.
         if not detector_list:
             detector_list = [str(self.default_scan_detector)]
         scan = self._detector_proxies.get('scan')
@@ -441,10 +435,8 @@ class ScanningBeamInstrument(Instrument):
         fraction = [0.5 + (float(position[i]) - float(stage[i]) - float(shift[i])) / fov for i in (0, 1)]
         if not all(0.0 <= f <= 1.0 for f in fraction):
             if all(0.0 <= float(v) <= 1.0 for v in list(position)[:2]):
-                # The reverse of the place_beam mistake, with fractions sent where stage metres go.
                 raise ValueError(f"place_beam_at takes a stage position in metres; [{float(position[0]):g}, {float(position[1]):g}] look like "
                                  "fractions of the image: for those (the centre is [0.5, 0.5]) call place_beam with them")
-            # Give the exact move with the stage's own z and tilts so an agent can copy it.
             there = [float(f"{float(v):.6g}") for v in (*list(position)[:2], *list(stage)[2:5])]  # rounded to drop float32 noise
             raise ValueError(f"[{float(position[0]):.4g}, {float(position[1]):.4g}] m is outside the current {fov:.3g} m field of view. "
                              f"To measure there, call move_stage with {{\"position\": {json.dumps(there)}}} (the stage keeps its z and tilts), "
@@ -484,7 +476,7 @@ class ScanningBeamInstrument(Instrument):
         """True while a stage move is under way; a backend whose moves return only on arrival may return False."""
         unsupported(self, "stage_moving")
 
-    # A backend without a blanker or a parked beam refuses these. A blank that did nothing must never look like one that worked.
+    # A blank that did nothing must never look like one that worked.
     @refuses("place_beam", "place_beam_list")
     def _place_beam(self, position):
         unsupported(self, "place_beam")

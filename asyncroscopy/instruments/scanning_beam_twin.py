@@ -55,14 +55,10 @@ class ScanningBeamTwin(TwinBlanker):
         self._rng = EventRng(int(seed))
         self._clock = SimClock(float(self.time_scale))
         self._acq_index = 0
-        # Every acquisition's truth goes to a JSONL file as it is taken, so a
-        # long session does not hold them all in memory. Only the count is kept here, and export_ground_truth reads the file back.
         self._truth_path = Path(self.ground_truth_directory).expanduser() / f"{self.get_name().replace('/', '_')}_acquisitions.jsonl"
         self._truth_path.parent.mkdir(parents=True, exist_ok=True)
         self._truth_path.write_text("", encoding="utf-8")
         self._acquisition_count = 0
-        # The stage model runs on the STAGE device. The session id lets it start afresh when this device restarts.
-        # _stage holds what the device last said, at rest at the origin until it first answers.
         self._stage_session = uuid.uuid4().hex
         self._stage = StageTrajectory()
         self._blanked = False
@@ -118,8 +114,6 @@ class ScanningBeamTwin(TwinBlanker):
         stage = self._detector_proxies.get("stage")
         if stage is None:
             raise RuntimeError(f"{type(self).__name__} cannot move a stage: set stage_device_address to a DigitalTwinSTAGE")
-        # The stage checks the limits and refuses while a long move is under way. A move whose real wait would hold
-        # the microscope longer than it may hold a command returns at once, with stage_moving true until it would have arrived.
         reply = json.loads(stage.move_on_clock(self._stage_request(position=target.tolist(), time_scale=self._clock.time_scale)))
         self._clock.advance(reply["duration_s"], wait=reply["wait"])
         self._stage = StageTrajectory.from_dict(reply["trajectory"])
@@ -133,7 +127,6 @@ class ScanningBeamTwin(TwinBlanker):
         return self._image_shift.copy()
 
     def _beam_current(self) -> dict:
-        # Always current because nothing on the twin drifts it between readings.
         return {"pa": float(self._detector_params.beam_current_pa), "source": "measured", "age_s": 0.0}
 
     def _scan_frame(self, imsize: int, dwell_time: float, scan_region) -> dict:
@@ -142,7 +135,6 @@ class ScanningBeamTwin(TwinBlanker):
         index = self._acq_index
         # SCAN, AutoScript and the tilt twin all use [left, top, width, height] in fractions of the field.
         region = check_scan(imsize, dwell_time, scan_region)
-        # One call for the whole frame. Its drift holds for as long as the largest frame takes.
         self._fetch_stage(frame_time(int(imsize), int(imsize), float(dwell_time), self._scan_params))
         left, top, width, height = region
         t0 = self._clock.now()
@@ -178,8 +170,6 @@ class ScanningBeamTwin(TwinBlanker):
             "scan_region": list(region),
             "dwell_s": float(dwell_time),
             "center_true_m": [float(xs.mean()), float(ys.mean())],
-            # What bent and brightened this frame, for scoring stitching. That is the scan distortion, each line's jitter
-            # and the scanning detectors' gain and offset when the frame started.
             "scan": {**vars(self._scan_params), **scan_truth},
             "detector": {k: v for k, v in vars(self._detector_drift.at(self._detector_params, t0)).items() if k in ("gain", "offset")},
         }

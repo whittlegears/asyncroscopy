@@ -38,7 +38,6 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
 
     render_mode = "projected"  # a specimen must list this mode in its render_modes
 
-    # A subclass sets its own default source. See docs/Operation/specimens.md.
     specimen = device_property(dtype=str, default_value="", doc="Specimen as a mapping (JSON or YAML), e.g. {source: silicon_lamella, lamella_width_nm: 620}; overrides specimen_source.")
     specimen_source = device_property(dtype=str, default_value="procedural", doc="Specimen source (the twin's own by default).")
 
@@ -112,7 +111,6 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
         self._fov = 200e-10  # meters
         self._stage_position = np.zeros(5, dtype=np.float64)  # x, y, z, alpha, beta
         self._truth_log: list[dict] = []  # what each acquisition really saw, for export_ground_truth only
-        # The sample's extent in angstrom. _generate_sample sets it.
         self._world_bounds_ang = {
             "x_min": -1.0,
             "x_max": 1.0,
@@ -262,8 +260,7 @@ class ElectronMicroscopeTwin(TwinBlanker, ElectronMicroscope):
 
         stage = self._detector_proxies.get("stage")
         if stage is not None:
-            # Write all five axes at once so the STAGE device checks them together.
-            # Written one by one, a refused z would leave x and y already moved.
+            # All five axes at once, so a refused z cannot leave x and y already moved.
             stage.position = [float(v) for v in target]
 
         self._stage_position = target

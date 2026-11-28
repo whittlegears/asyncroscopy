@@ -43,11 +43,9 @@ MAP_COMMAND = "get_map_profile"  # the command a YAML device offers when its fil
 TOP_KEYS = {"description", "seed", "settings", "commands", "acquisitions", "jobs", "map"}
 KINDS = {"spectrum", "image", "value"}
 NOISES = {"poisson", "gaussian", "none"}
-# Names the instrument device already has from its step protocol and the Instrument base. Tango names ignore case.
 RESERVED_NAMES = {"hold", "release_hold", "start_step", "step_status", "stop_step", "connect", "disconnect", "instrument_type", "clock_s"}
 SETTLE_STEP = "_settle"  # the step a job runs for its settle_s. The leading underscore keeps it apart from every name a file may give
-# Verbs that make the doc of a get_ or list_ command read as an action. The safety policy classes every get_
-# and list_ command as a low-risk read, so one that indents, moves or dispenses would really run in a dry run.
+# get_ and list_ commands are low-risk reads, so one whose doc reads as an action would really run in a dry run.
 ACTION_VERBS = frozenset({
     "make", "move", "indent", "pick", "place", "aspirate", "dispense", "start", "run", "apply", "scan", "drive",
     "approach", "engage", "heat", "fire", "inject", "pump", "mill", "cut", "write", "expose", "trigger", "load", "push",
@@ -370,7 +368,6 @@ def _noise_numbers(where: str, raw: dict, kind: Any, number) -> None:
     if noise not in NOISES:
         raise SpecError(f"{where}.noise: {noise!r} is not one of {sorted(NOISES)}")
     if kind != "value" and units != "counts":
-        # Poisson noise, or Gaussian noise with a sigma of the square root of the signal, only makes sense for counts. On metres or newtons it buries the signal.
         if noise == "poisson":
             raise SpecError(f"{where}.noise: Poisson noise is for counts; for {units} give noise: gaussian with noise_sigma (in {units}), or noise: none")
         if noise == "gaussian" and "noise_sigma" not in raw:

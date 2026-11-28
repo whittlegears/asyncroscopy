@@ -32,8 +32,7 @@ from asyncroscopy.instruments.electron_microscope.electron_microscope import Ele
 from asyncroscopy.instruments.scanning_beam import unsupported
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR, acquisition_filename, record_vendor_file, save_acquisition
 
-# The settings fields each vendor focus routine takes, from the 1.18 stub's RunStemAutoFocusSettings and
-# RunBeamTiltAutoFocusSettings. reset_beam_blanker_afterwards is left at AutoScript's default: the beam is left blanked.
+# From the 1.18 stub's RunStemAutoFocusSettings and RunBeamTiltAutoFocusSettings; the beam is left blanked afterwards.
 STEM_AUTO_FOCUS_FIELDS = ("scanning_detector", "size", "dwell_time", "auto_stigmate", "accuracy_level")
 BEAM_TILT_AUTO_FOCUS_FIELDS = ("camera_detector", "size", "exposure_time", "focus_method", "auto_stigmate", "use_three_image_method",
                                "maximum_focus_change", "maximum_iterations", "maximum_astigmatism_change", "iterate_to_defocus")
@@ -47,7 +46,6 @@ def _settings(cls, fields: dict, allowed: tuple[str, ...]):
     return cls(**fields)
 
 
-# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import EdsDetectorType
@@ -63,8 +61,6 @@ except ImportError:
     _AUTOSCRIPT_AVAILABLE = False
 
 AUTOSCRIPT_STEM_OUTPUT_DIRECTORY = Path(r"Y:\AutoScript TEM")
-# The screen current calibration steps the monochromator focus through this series in V.
-# It waits this long at each step for the current to settle.
 SCREEN_CALIBRATION_FOCUS_V = (10.0, 150.0, 15)
 SCREEN_SETTLE_S = 1.0
 screen_calibration_degree = 11
@@ -92,8 +88,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value=autoscript_port,
         doc="Port of the AutoScript microscope server",
     )
-    # The AutoScript 1.18 client waits for every reply with no time limit (neither perform_call nor connect takes one),
-    # so a hung server holds the call. The property stays so configs that set it still load.
+    # AutoScript 1.18 waits for every reply with no time limit; the property stays so configs that set it still load.
     hardware_timeout_seconds = device_property(
         dtype=int,
         default_value=120,
@@ -120,9 +115,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         default_value="",
         doc="Optional Tango device address for the DATA device, e.g. 'asyncroscopy/data/default'.",
     )
-    # The software limits min_fov, max_fov, max_defocus and max_stigmator belong to the ElectronMicroscope base.
-    # Narrow them to the working range of the Spectra 300 at first light.
-    # 4D-STEM parks the probe and records one camera frame per scan point. This bounds the scan until first light has timed it.
+    # Bounds the 4D-STEM scan until first light has timed it.
     max_4dstem_imsize = device_property(
         dtype=int, default_value=64,
         doc="Largest 4D-STEM scan accepted, per side (64: 4096 camera frames). Larger scans are refused.",
@@ -161,8 +154,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
 
 
     def _init_device_attributes(self) -> None:
-        # The serve function below runs the server without the device lock of Tango, so that blank_beam is never queued
-        # behind a long command. Every other hardware call goes through hardware_call and takes the command lock of the base.
+        # Served without Tango's device lock, so blank_beam never queues behind a long command.
         super()._init_device_attributes()
         self._blank_client = None  # a second AutoScript connection, used only to blank the beam
         self._blank_count = 0  # counts blank_beam calls so that a running 4D-STEM scan stops when it changes
@@ -207,8 +199,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
             self._microscope = None
             self.is_autoscript = False
             return
-        # The AutoScript client runs one call at a time, so a blank sent on the main connection waits for
-        # a running acquisition or stage move to end. blank_beam uses a connection of its own.
+        # AutoScript runs one call at a time, so blank_beam uses a connection of its own.
         try:
             self._blank_client = TemMicroscopeClient()
             self._blank_client.connect(self.hardware_host, self.hardware_port)
@@ -266,7 +257,6 @@ class AutoScriptMicroscope(ElectronMicroscope):
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
         if not self._is_stem():
-            # A scan in TEM mode rasters a parallel beam: the frame is not a STEM image, and the mode reading is wrong if it looks like one.
             raise ValueError(f"acquire_scanned_image runs in STEM mode only; the microscope reports optical mode "
                              f"{self._microscope.optics.optical_mode}. Switch to STEM at the console; nothing was acquired")
         detector_list = [d.upper() for d in detector_list]
@@ -766,8 +756,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         for deflector in optics.deflectors.get_available_deflectors():
             defl = optics.deflectors.get_deflector_value(deflector)
             status[deflector] = [defl.x, defl.y]
-        # These are the keys every microscope backend reports, with the names and units of the twin.
-        # See tests/instruments/test_parity.py.
+        # The keys every microscope backend reports, as tests/instruments/test_parity.py checks.
         status.update({
             'stem_mode': stem,
             'defocus_m': self._get_defocus(),
@@ -891,8 +880,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         else:
             found.retract()
 
-    # The shift and tilt setters let the errors of AutoScript through. A write the instrument refuses must
-    # reach the caller and the job that sent it. It must not be logged while the command reports success.
+    # The shift and tilt setters let AutoScript's errors through, so a refused write reaches the caller.
     def _shift_deflector(self) -> str:
         """The deflector used for image shift. In STEM it is ``stem_shift_deflector`` and otherwise image_shift."""
         if not self._is_stem():
@@ -909,8 +897,7 @@ class AutoScriptMicroscope(ElectronMicroscope):
         y_shift = float(shift[1])
         setattr(self._microscope.optics.deflectors, self._shift_deflector(), (x_shift, y_shift))
 
-    # AutoScript's deflectors.image_tilt is "the tilt of the image as a 2D vector in radians (x, y), equivalent to
-    # diffraction shift" (the 1.15, 1.17 and 1.18 clients). image_shift is in metres and is the image shift.
+    # AutoScript's deflectors.image_tilt is the diffraction shift in radians (clients 1.15 to 1.18).
     def _set_diffraction_shift(self, shift):
         """Apply the diffraction shift in radians (deflectors.image_tilt); only in diffraction mode."""
         x_shift = float(shift[0])

@@ -62,14 +62,9 @@ def _prop(dtype, default, doc):
 class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     """Seeded particle-sample STEM twin with realistic, switchable instrument effects."""
 
-    # The specimen says where the sample comes from. See docs/Operation/specimens.md. The flat sample properties below
-    # are the settings of the procedural source and the defaults of the other sources for seed, size, support and height.
-    # specimen and specimen_source belong to the base class. specimen_source is procedural for seeded particles,
-    # recorded for an image file, crystal for a polycrystalline film, or the name of a plug-in.
     specimen_path = _prop(str, "", "recorded: the image file (.npy, .npz, .png, .tif, .h5).")
     specimen_pixel_size_m = _prop(float, 0.0, "recorded: pixel size of the image (m); 0 reads it from the file.")
     specimen_labels_path = _prop(str, "", "recorded: optional JSON of labelled particles (ground truth and EDS composition).")
-    # Sample. sample_seed, sample_particle_count and sample_size_xy come from the base class.
     particle_radius_mean = _prop(float, 1.6e-9, "Mean particle radius (m).")
     particle_radius_std = _prop(float, 0.2e-9, "Particle radius standard deviation (m).")
     particle_aspect_ratio = _prop(float, 0.4, "Particle thickness / radius.")
@@ -80,18 +75,11 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     sample_cluster_fraction = _prop(float, 0.0, "Fraction of particles placed in clusters (0-1).")
     height_gradient_x = _prop(float, 0.0, "Specimen height change per metre along x (focus varies across the map).")
     height_gradient_y = _prop(float, 0.0, "Specimen height change per metre along y.")
-    # A real column enforces limits. The twin refuses instead of rendering nonsense or running out of memory.
-    # min_fov, max_fov, max_image_shift, max_defocus and max_stigmator belong to the bases. Render cost grows with defocus squared.
-    # The operator does not see the focus truth below. get_defocus and get_stigmator never include it. A twin
-    # started with these set is defocused and astigmatic, and its images are blurred to match, so a
-    # focus routine has to find the correction from the images. export_ground_truth reports the residual.
     focus_offset_m = _prop(float, 0.0, "Hidden focus error (m) added to C1; not reported by get_defocus.")
     astigmatism_offset_a_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, first component (m); not reported by get_stigmator.")
     astigmatism_offset_b_m = _prop(float, 0.0, "Hidden two-fold astigmatism A1, second component (m).")
     focus_drift_m = _prop(float, 0.0, "Largest slow swing of the hidden focus error (m) over 20 minutes to 6 hours (0: steady).")
     astigmatism_drift_m = _prop(float, 0.0, "Largest slow swing of each hidden A1 component (m) over the same times (0: steady).")
-    # A real session starts with the column valves closed and no measured beam current. With cold_start the twin does
-    # too, so a workflow that forgets to open the valves, or to measure the current, fails here as it would there.
     cold_start = _prop(bool, False, "Start as an instrument is found: column valves closed and the beam current not yet measured.")
     autofocus_residual_m = _prop(float, 1e-9, "Standard deviation (m) of the C1 and of each A1 component the simulated OptiSTEM leaves behind.")
     autofocus_frames = _prop(int, 8, "Frames the simulated OptiSTEM scans (at the SCAN settings); they count in the dose map and the clock.")
@@ -112,7 +100,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     scan_shear = _prop(float, 0.0, "Scan shear (x shift per unit y).")
     scan_flyback_compression = _prop(float, 0.0, "Left-edge compression after flyback (fraction).")
     fov_scale_error = _prop(float, 0.0, "Field-of-view calibration error (fraction).")
-    # The errors, dynamics and drift of the stage belong to the STAGE device DigitalTwinSTAGE. The clock belongs to the microscope.
     time_scale = _prop(float, 0.0, "Real seconds slept per simulated second (0 = never wait).")
     eds_fwhm_mn_ka = _prop(float, 130.0, "EDS resolution at Mn K-alpha (eV).")
     eds_solid_angle = _prop(float, 0.7, "EDS collection solid angle (sr).")
@@ -154,7 +141,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
     def _generate_sample(self, seed: int) -> None:
         self._check_properties()
         self._start_beam_twin(int(seed))
-        # The specimen is a plug-in. Everything after it is the instrument, which only asks the specimen for weights, densities, heights and features.
         self._load_specimen(seed, SpecimenContext(rng=self._rng, sample=self._sample_params()))
         for warning in self._specimen.warnings():
             self.warn_stream(warning)
@@ -350,7 +336,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             except (tango.DevFailed, AttributeError, ValueError):
                 coefficients = None
         ab = aberrations_nm(coefficients, float(self.acceleration_voltage), float(self._defocus))
-        # The hidden focus error, its slow drift and the stigmator, none of which the corrector sees.
         error = getattr(self, "_focus_error", {"c1_m": 0.0, "a1_m": [0.0, 0.0]})
         stigmator = getattr(self, "_stigmator", np.zeros(2))
         drift = getattr(self, "_focus_drift", None)
@@ -504,14 +489,12 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         if self._scan_params.rotation_deg:
             a = np.deg2rad(self._scan_params.rotation_deg)
             x, y = np.cos(a) * x - np.sin(a) * y, np.sin(a) * x + np.cos(a) * y
-        # The beam is placed in the frame of the scan. The image shift moves that frame with it, as on the instrument.
         return self._stage.true_xy_at(t) + self._image_shift + np.array([x, y])
 
     def _areal_density(self, xy: np.ndarray) -> dict[str, float]:
         """Atoms per square angstrom of each element along the beam at a sample point."""
         x, y = float(xy[0]), float(xy[1])
         density = dict(self._specimen.areal_density(x, y))
-        # A spectrum sees the film this region really has: none in a hole, more where it is thick.
         support = self._support_angstrom(x, y) + float(self._specimen.support_thickness_m) / ANGSTROM * self._specimen.support_change_at(x, y)
         if support > 0:
             element = self._specimen.support_element
@@ -617,7 +600,7 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         return key
 
     def _viewport_metadata(self) -> dict:
-        # The base class reads _stage_position, which here is the true pose. Report what the stage reports instead.
+        # Report what the stage reports, not the true pose the base reads.
         metadata = super()._viewport_metadata()
         x, y, z = (float(v) / ANGSTROM for v in self._stage.reported[:3])
         half = self._fov / ANGSTROM / 2
@@ -630,7 +613,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
         parameters["stage_position"] = self._stage.reported.tolist()
         parameters["simulated_time_s"] = self._clock.now()
         parameters["time_scale"] = self._clock.time_scale
-        # The twin delivers exactly its configured current, so it counts as measured. On AutoScript the measured value is the screen current.
         parameters.update(self.beam_current_fields())
         parameters["column_valves"] = "Opened" if self._column_valves_open else "Closed"  # AutoScript's words
         parameters["screen"] = "Inserted" if self._screen_inserted else "Retracted"
@@ -650,8 +632,6 @@ class DigitalTwin(ScanningBeamTwin, ElectronMicroscopeTwin):
             {
                 "sample_seed": int(self.sample_seed),
                 "sample_bounds_m": list(self._specimen.bounds),
-                # Scorers compare against this particle list. It is empty when the source has none, as with a crystal
-                # film. It is also empty for a recorded image without labels, where specimen.known is false.
                 "particles": specimen_truth.get("particles", []),
                 "specimen": {**self._specimen.describe(), **{k: v for k, v in specimen_truth.items() if k != "particles"}},
                 "moves": json.loads(stage.stage_moves()) if stage is not None else [],

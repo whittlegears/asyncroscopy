@@ -12,7 +12,6 @@ from tango.server import device_property
 from asyncroscopy.core.names import autoscript_port
 from asyncroscopy.instruments.electron_microscope.hardware.stage import STAGE
 from asyncroscopy.utils.commands import command
-# AutoScript is installed only on the microscope PC; elsewhere the device still imports for tests.
 try:
     from autoscript_tem_microscope_client import TemMicroscopeClient
     from autoscript_tem_microscope_client.enumerations import StageAxis

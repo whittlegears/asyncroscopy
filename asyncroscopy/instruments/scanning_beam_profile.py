@@ -33,7 +33,6 @@ from asyncroscopy.routines.grid import max_exposures
 
 BEAM_COMMANDS = ("move_stage", "get_stage", "set_fov", "acquire_scanned_image", "blank_beam", "unblank_beam")
 DOSE_BUDGET = "dose_e_per_a2"
-# Spectrometers: never an imaging detector in a map plan's detectors.
 SPECTRUM_DETECTORS = frozenset({"eds", "edx", "eels", "cl", "wds"})
 BEAM_SETTINGS = {
     "scan_device_address": Setting(str, "asyncroscopy/scan/default", "SCAN settings device (imsize, dwell_time, scan_region)."),
@@ -53,10 +52,8 @@ class ScanningBeamProfile(InstrumentProfile):
     budget_fields = {"dose_budget_e_per_a2": DOSE_BUDGET}
     settings = BEAM_SETTINGS
     needs = {"microscope_device_address": BEAM_COMMANDS}
-    # The instrument_type values this profile drives. A plan for any other instrument is refused at reserve.
     instrument_types: tuple[str, ...] = ()
 
-    # Live drift tracking moves the image with set_image_shift, which uses the image shift deflector by default.
     image_shift_commands = ("set_image_shift", "get_image_shift")
 
     @property
@@ -74,8 +71,7 @@ class ScanningBeamProfile(InstrumentProfile):
         if '"zoom"' in request:
             return None  # the Mapper's zoom example
         example = dict(self.plan_example)
-        # A caller who gave a dose limit sees where it goes, with its own number. A fixed number here
-        # gets copied into plans whose user set no limit, and those plans are then refused.
+        # A fixed number here gets copied into plans whose user set no limit, which are then refused.
         stated = stated_dose(request)
         if stated is not None:
             example["dose_budget_e_per_a2"] = stated
@@ -140,8 +136,7 @@ class ScanningBeamProfile(InstrumentProfile):
                                  f"{self.ctx.settings.microscope_device_address} is a {found}: set this Mapper's instrument_profile to one for it")
         if "detectors" not in p:
             p["detectors"] = [str(self.instrument().read_attribute("default_detector").value).lower()]
-        # A spectrometer is not an imaging detector: a plan naming one there would map with no spectra at all
-        # (gemma4 wrote detectors: [haadf, eds] for "an EDS spectrum with each image").
+        # A spectrometer in detectors would map with no spectra at all.
         spectra = [d for d in p["detectors"] if str(d).lower() in SPECTRUM_DETECTORS]
         if spectra:
             hint = ' For an EDS spectrum at each tile give "per_tile": ["eds_point"].' if "per_tile" in self.plan_fields else ""
@@ -176,20 +171,15 @@ class ScanningBeamProfile(InstrumentProfile):
         self.refuse_assumed_current(beam, budgets.get(DOSE_BUDGET))
         exposures = max_exposures(grid, fov)
         tile_dose = frame_dose(current, dwell, fov, imsize) * exposures
-        # A revisit adds its frame on top of whatever the tiles gave that spot. Regions lie a scoring window apart,
-        # so one spot gets at most one revisit.
         revisit_dose = frame_dose(current, revisit["dwell_s"], revisit["fov_m"], revisit["imsize"]) if revisit else 0.0
-        # EDS spectra park the beam inside a tile, so their dose is added on top of the tile's frames.
         spectra_dose = self._spectra_dose(p, current, fov, exposures)
         max_dose = tile_dose + revisit_dose + spectra_dose
         parts = f"{tile_dose:.3g} from overlapping tiles" + (f" plus {spectra_dose:.3g} from EDS spectra" if spectra_dose else "") + (f" plus {revisit_dose:.3g} from a revisit image" if revisit else "")
-        # List only the remedies that apply to this plan. An agent told to widen a revisit the plan lacks may add one.
         remedies = ["lower dwell_s or overlap"] + (["lower eds_exposure_s"] if spectra_dose else []) + (["widen revisit fov_m"] if revisit else [])
         advice = ", ".join(remedies) + "; the budget is the user's: give dose_budget_e_per_a2 only when they set a limit"
         extra = {
             "max_dose_e_per_a2": round(max_dose, 3),
             "beam_current_pa": current,
-            # The dose estimate is only as good as the current, so say when the current was assumed or is too old.
             **self.current_fields(beam),
         }
         if revisit:
@@ -261,7 +251,6 @@ class ScanningBeamProfile(InstrumentProfile):
 
     def move(self, job: dict, x: float, y: float) -> bool:
         pose = job["pose"]
-        # A move already under way from just before the job started would make this one refused.
         if not self.ctx.wait_for_stage(job):
             return False
         self.instrument().move_stage([x, y, pose["z"], pose["alpha"], pose["beta"]])
@@ -273,10 +262,8 @@ class ScanningBeamProfile(InstrumentProfile):
     def acquire_tile(self, job: dict, tile: dict) -> dict | None:
         plan = job["resolved_plan"]
         microscope = self.instrument()
-        # Unblank only for this tile's acquisitions. A beam left on during the stage move, file
-        # writes and Tiled reads would park on one spot and put dose there that no estimate counts.
-        # The tile is timed on the instrument's clock, not this computer's, because on a twin the two can
-        # differ by any factor. The stitch fits drift against these times and revisits extrapolate it.
+        # Unblanked only for this tile, so a beam left on during moves and writes never parks on one spot.
+        # Timed on the instrument's clock, which on a twin can differ from this computer's by any factor.
         frame_start = self.ctx.clock_s()
         microscope.unblank_beam()
         try:

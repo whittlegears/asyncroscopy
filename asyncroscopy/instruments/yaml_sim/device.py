@@ -455,8 +455,7 @@ def device_class(name: str) -> type:
 def registered_class(instance: str, default: str) -> str:
     """The class the launcher registered for this server instance (``<class_name>/<instance>``), or ``default``."""
     try:
-        # List every server and match here. PyTango's own database, which run_servers starts,
-        # returns nothing for a pattern that starts with a wildcard.
+        # PyTango's own database returns nothing for a pattern that starts with a wildcard, so match here.
         servers = [s for s in tango.Database().get_server_list("*").value_string if s.split("/", 1)[-1].lower() == instance.lower()]
     except tango.DevFailed:
         return default

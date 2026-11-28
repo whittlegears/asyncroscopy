@@ -39,27 +39,14 @@ class SampleParams:
     support_element: str = "C"
     support_thickness_m: float = 0.0
     height_gradient: tuple[float, float] = (0.0, 0.0)
-    # Clusters give a large map structure at every zoom. They show as bright aggregates in the overview
-    # and as single particles at full resolution. cluster_fraction of the particles fall within
-    # about cluster_radius_m of one of cluster_count centres. A count of 0 keeps the sample uniform.
     cluster_count: int = 0
     cluster_radius_m: float = 0.0
     cluster_fraction: float = 0.0
-    # The support film's thickness varies by about this fraction, as a standard deviation. 0 gives a uniform film.
-    # It has structure at every length from support_texture_scale_m down to TEXTURE_FINEST_M, so overlapping tiles can be
-    # registered on the film itself at any pixel size. It has its own seeded stream, so the particles do not change.
     support_texture: float = 0.0
     support_texture_scale_m: float = 2e-6
-    # Atoms are drawn at their sub-pixel positions, each spread over the four nearest pixels, rather than at the
-    # pixel they fall in, so one column lands at the same place in two overlapping atomic frames.
     subpixel_atoms: bool = False
-    # Regions make the sample differ from place to place: each has its own particle density, film thickness, element
-    # mix and particle size, and region_hole_fraction of them are holes (no film, no particles). 0 keeps the sample
-    # uniform. See regions.py.
     region_count: int = 0
     region_hole_fraction: float = 0.15
-    # The specimen is not flat: its height varies by about this much (a standard deviation, m) over lengths near
-    # height_relief_scale_m, on top of height_gradient. Focus then changes across a map in a way one tilt cannot fit.
     height_relief_m: float = 0.0
     height_relief_scale_m: float = 2e-6
 
@@ -160,7 +147,6 @@ class SampleModel(ParticleTable, Specimen):
         self._atoms: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         if params.height_relief_m < 0 or params.height_relief_scale_m <= 0:
             raise ValueError("height_relief_m must be >= 0 and height_relief_scale_m > 0")
-        # Regions and relief have their own seeded streams, so a sample without them is unchanged.
         self.regions = (
             Regions.draw(rng.for_event("regions"), params.region_count, params.size_xy_m / 2.0, params.elements, params.region_hole_fraction)
             if params.region_count > 0 else None
@@ -245,8 +231,7 @@ class SampleModel(ParticleTable, Specimen):
     def _film_waves(self, x_min: float, y_min: float, n: int, pixel_m: float) -> np.ndarray:
         """The film's fine thickness variation: the sum of the texture waves this pixel size can show."""
         kx, ky, phases, amplitude = self._texture_waves
-        # Waves shorter than two pixels are left out. On a grid of this pixel they would alias into a pattern that
-        # depends on where the grid happens to start, so two overlapping frames would not see the same film.
+        # Waves shorter than two pixels would alias, so overlapping frames would not see the same film.
         seen = 2.0 * np.pi / np.hypot(kx, ky) >= 2.0 * pixel_m
         kx, ky, phases, amplitude = kx[seen], ky[seen], phases[seen], amplitude[seen]
         xs = x_min + (np.arange(n) + 0.5) * pixel_m
@@ -322,7 +307,6 @@ class SampleModel(ParticleTable, Specimen):
                 ok = (cols >= 0) & (cols < n) & (rows >= 0) & (rows < n)
                 np.add.at(weight, (rows[ok], cols[ok]), value[ok])
                 continue
-            # The pixel at row r and column c is centred at x = c + 0.5 and y = r + 0.5 in these units. Each atom is shared between the four nearest centres.
             fx, fy = fx - 0.5, fy - 0.5
             c0, r0 = np.floor(fx).astype(np.int64), np.floor(fy).astype(np.int64)
             wx, wy = fx - c0, fy - r0
@@ -339,12 +323,9 @@ class SampleModel(ParticleTable, Specimen):
         cell = max(4.0 * p.radius_mean_m, p.size_xy_m / 64.0)
         grid: dict[tuple[int, int], list[int]] = {}
         rows: list[tuple] = []
-        # Stop after a run of failed placements. Asking for more particles than fit must not
-        # stall device start-up.
         misses, max_misses = 0, 2000
         deadline = time.monotonic() + PLACEMENT_TIME_LIMIT_S  # a crowded sample keeps succeeding just often enough to never stop
         clustered = p.cluster_count > 0 and p.cluster_fraction > 0 and p.cluster_radius_m > 0
-        # Drawn only when clusters are on, so a uniform sample with the same seed is unchanged.
         centres = rng.uniform(-half, half, size=(p.cluster_count, 2)) if clustered else None
         for attempt in range(500 * target):
             if len(rows) >= target or misses >= max_misses:
@@ -352,7 +333,6 @@ class SampleModel(ParticleTable, Specimen):
             if attempt % 1000 == 0 and time.monotonic() > deadline:
                 break
             radius = float(max(0.3e-9, rng.normal(p.radius_mean_m, p.radius_std_m)))
-            # A region may enlarge the particle, so with regions the margin leaves room for the largest factor.
             margin = min(radius * (LARGEST_RADIUS if self.regions is not None else 1.0), half * 0.9)
             if clustered and rng.random() < p.cluster_fraction:
                 centre = centres[rng.integers(p.cluster_count)]
@@ -366,7 +346,6 @@ class SampleModel(ParticleTable, Specimen):
             region = -1  # no regions: the sample is uniform
             if self.regions is not None:
                 region = self.regions.index_at(cx, cy)
-                # Sparse regions turn most candidates away and holes turn away all of them.
                 if rng.random() >= self.regions.density[region] / self.regions.density.max():
                     continue
                 radius *= float(self.regions.radius[region])

@@ -35,9 +35,6 @@ ANGSTROM = 1e-10
 @dataclass
 class RenderParams:
     z_exponent: float = 1.7
-    # The fraction scattered to HAADF is one minus exp of minus k times the sum of Z^n * rho * t, with t in angstrom.
-    # Here k is haadf_scale and n is z_exponent.
-    # 2.25e-5 gives about 30% for a 16 nm Au particle and about 0.5% for 10 nm of carbon.
     haadf_scale: float = 2.25e-5
     atomic_pixel_m: float = 0.2e-9
     voltage_v: float = 300e3
@@ -56,7 +53,6 @@ def object_signal(weight: np.ndarray, detector: str, params: RenderParams) -> np
     if detector == "BF":
         return np.exp(-k * weight)
     if detector == "ADF":
-        # The medium-angle signal is what scatters but not strongly enough to reach HAADF.
         return np.exp(-params.haadf_scale * weight) - np.exp(-k * weight)
     return 1.0 - np.exp(-k * weight)
 

@@ -142,7 +142,6 @@ class ParticleWorld(Specimen):
         """Mark each voxel with the particle that fills it."""
         nx, ny, nz = shape
         aspect_ratio = self.ASPECT_RATIO
-        # Each voxel gets the label of the first particle that claims it.
         label_map = np.zeros((nx, ny, nz), dtype=np.uint8)
         xv = (np.arange(nx) + 0.5) * vox_size
         yv = (np.arange(ny) + 0.5) * vox_size
@@ -215,7 +214,6 @@ class ParticleWorld(Specimen):
         atoms = self._atoms.copy()
         atoms.set_positions(positions)
 
-        # Shift the label map by whole voxels with wrap, then tilt it by mapping each output voxel back.
         rolled = np.roll(self._label_map, -int(round(x_ang / vox)), axis=0)
         rolled = np.roll(rolled, -int(round(y_ang / vox)), axis=1)
         xv = np.arange(nx) - nx / 2.0
@@ -231,7 +229,6 @@ class ParticleWorld(Specimen):
         src_zi = np.clip(np.round(src_z).astype(int), 0, nz - 1)
         rotated_map = rolled[src_xi, src_yi, src_zi]
 
-        # The beam travels along z, so each column shows the first particle it meets.
         occupancy = rotated_map > 0
         projected_label = np.zeros((nx, ny), dtype=np.uint8)
         for iz in range(nz):
@@ -254,7 +251,6 @@ class ParticleWorld(Specimen):
             return []
         pixel_size = request.fov_angstrom / size
         world_nx, world_ny = projected_label.shape
-        # The image sits at the centre of the world map. Only the padded image region counts.
         img_origin_x = (world_nx - size) // 2
         img_origin_y = (world_ny - size) // 2
         x0 = max(img_origin_x - pad, 0)

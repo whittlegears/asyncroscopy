@@ -33,9 +33,7 @@ MAX_INDENTS = 400
 class IndentGrid(JobDevice):
     JOB_KIND = "a grid of nanoindents with hardness at each point"
     PLAN_EXAMPLE = {"origin_m": [0.0, 0.0], "nx": 5, "ny": 5, "pitch_m": 2e-5, "load_n": 0.01}
-    # In a dry run run_step records the move and the indent and parses no reply.
     SUPPORTS_DRY_RUN = True
-    # Lifting the tip only makes the indenter safer, so a dry run really does it.
     SAFE_COMMANDS = frozenset({"retract"})
 
     indenter_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Tango address of the indenter (the launcher names the instrument asyncroscopy/instrument/default).")
@@ -54,14 +52,12 @@ class IndentGrid(JobDevice):
         if pitch <= 0 or load <= 0:
             raise ValueError("pitch_m and load_n must be positive")
         steps = [{"x": x0 + i * pitch, "y": y0 + j * pitch} for j in range(ny) for i in range(nx)]
-        # Check against the instrument's own limits now, not halfway through the grid.
         limits = json.loads(self._indenter().get_limits())
         if load > limits["max_load_n"]:
             raise ValueError(f"load_n {load} is above the indenter's {limits['max_load_n']} N")
         far = max(max(abs(s["x"]), abs(s["y"])) for s in steps)
         if far > limits["travel_m"]:
             raise ValueError(f"the grid reaches {far:.3g} m from the origin; the stage travels {limits['travel_m']} m")
-        # Everything except steps is kept as the job's resolved_plan and returned by reserve.
         return {
             "steps": steps,
             "origin_m": [x0, y0], "nx": nx, "ny": ny, "pitch_m": pitch, "load_n": load,
@@ -86,7 +82,6 @@ class IndentGrid(JobDevice):
         return {}  # keys of anything saved to Tiled would go here
 
     def summary(self, job: dict) -> dict:
-        # Small enough to return whole. A real device would save to Tiled and return keys.
         indents = [job["step_results"][k] for k in sorted(job["step_results"], key=int)]
         return {"indents": [{k: r.get(k) for k in ("x_m", "y_m", "hardness_gpa")} for r in indents]}
 

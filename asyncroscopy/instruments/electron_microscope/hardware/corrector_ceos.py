@@ -107,7 +107,7 @@ class CEOSCorrector(CORRECTOR):
             self.set_state(DevState.FAULT)
             tango.Except.throw_exception("CeosCommError", str(exc), "CEOSCorrector._call()")
             raise RuntimeError("unreachable")
-        # The server answered. A refusal comes back as the JSON-RPC error member and must not read as success.
+        # A refusal comes back as the JSON-RPC error member and must not read as success.
         error = self._rpc_error(result)
         self.set_state(DevState.ON)
         if error is not None:

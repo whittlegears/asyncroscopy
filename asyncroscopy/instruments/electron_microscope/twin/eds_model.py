@@ -19,7 +19,6 @@ from .sample_model import ELEMENTS
 
 SI_ESCAPE_EV = 1740.0
 MN_KA_EV = 5895.0
-# Rough constants for fluorescence yield. For each shell family the yield is Z^4 divided by the sum of a and Z^4.
 FAMILY_YIELD_A = {"K": 1.0e6, "L": 1.0e8, "M": 1.0e9}
 FAMILY_FACTOR = {"K": 1.0, "L": 0.5, "M": 0.2}
 

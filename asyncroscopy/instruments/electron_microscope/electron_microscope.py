@@ -32,14 +32,12 @@ from asyncroscopy.instruments.image_cache import ImageCache
 from asyncroscopy.instruments.scanning_beam import BEAM_ADDRESSES, ScanningBeamInstrument, check_scan, hardware_call, refuses, unsupported
 from asyncroscopy.utils.commands import command
 
-# The base connects these detector and sub-device proxies. Each name maps to the device property that holds its address.
 DETECTOR_ADDRESSES = {
     **BEAM_ADDRESSES,
     "eds": "eds_device_address",
     "camera": "camera_device_address",
     "corrector": "corrector_device_address",
 }
-# The defaults of the limit properties are what the base enforces when a deployment sets none.
 SPECTRUM_DETECTORS = ("eds", "eels")
 DEFAULT_MAX_DEFOCUS = 1e-5
 DEFAULT_MAX_DIFFRACTION_SHIFT = 1e-2  # rad; a conservative software limit, not a vendor figure
@@ -117,13 +115,11 @@ class ElectronMicroscope(ScanningBeamInstrument):
         doc="Scanning detector used when a caller names none: acquire_scanned_image with an empty list, a Tuner plan without a detector.",
     )
 
-    # These limits are checked before any backend sees a value. action_hints tells clients the same ranges.
     max_defocus = device_property(dtype=float, default_value=DEFAULT_MAX_DEFOCUS, doc="Largest |defocus| accepted (m).")
     max_stigmator = device_property(dtype=float, default_value=DEFAULT_MAX_STIGMATOR, doc="Largest |stigmator| component accepted (m of A1).")
     max_diffraction_shift = device_property(dtype=float, default_value=DEFAULT_MAX_DIFFRACTION_SHIFT, doc="Largest |diffraction shift| component accepted (rad). Set from the instrument.")
     max_camera_series_frames = device_property(dtype=int, default_value=100, doc="Most frames acquire_camera_series accepts.")
     max_camera_series_bytes = device_property(dtype=int, default_value=1 << 30, doc="Largest series acquire_camera_series accepts: frames x size^2 x camera_bytes_per_pixel (bytes).")
-    # The vendor API does not report a camera's bytes per pixel, so it is configured. 0 (not set): acquire_camera_series is refused.
     camera_bytes_per_pixel = device_property(dtype=int, default_value=0, doc="Bytes per pixel of one camera frame as the camera returns it; 0: not set (acquire_camera_series is refused).")
     max_spectrum_image_points = device_property(dtype=int, default_value=DEFAULT_MAX_SPECTRUM_IMAGE_POINTS, doc="Largest points per side acquire_spectrum_image accepts.")
 
@@ -137,7 +133,6 @@ class ElectronMicroscope(ScanningBeamInstrument):
         doc="True when the microscope is in STEM mode",
     )
 
-    # Read only, for Tango polling, events and monitors (Taurus, Jive). Each reads through the reader its command uses.
     manufacturer = attribute(label="Manufacturer", dtype=str, access=AttrWriteType.READ, doc="Who makes this microscope, or the simulation backend of a twin.")
     fov = attribute(label="Field of View", dtype=float, access=AttrWriteType.READ, unit="m", doc="The field of view in metres, as get_fov reads it. set_fov changes it.")
     defocus = attribute(label="Defocus", dtype=float, access=AttrWriteType.READ, unit="m", doc="The defocus in metres, as get_defocus reads it. set_defocus changes it.")
@@ -247,7 +242,6 @@ class ElectronMicroscope(ScanningBeamInstrument):
                 'acquire_spectrum()',
             )
         if own is not None:
-            # The detector's own device acquires and saves the spectrum, at its own settings.
             return self._acquire_through(proxy, own)
         return self._acquire_spectrum(detector_name, proxy.exposure_time)
 

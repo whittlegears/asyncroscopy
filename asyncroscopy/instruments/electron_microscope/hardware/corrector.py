@@ -25,7 +25,6 @@ from tango.server import Device, attribute
 
 from asyncroscopy.utils.commands import action_hints_attribute, command
 
-# The number of components of each aberration a corrector reports, in CEOS naming. Round ones have one and the rest have two.
 ABERRATION_COMPONENTS = {"WD": 2, "C1": 1, "A1": 2, "B2": 2, "A2": 2, "C3": 1, "S3": 2, "A3": 2, "D4": 2, "B4": 2, "A4": 2}
 FIRST_ORDER = ("C1", "A1")
 

@@ -26,7 +26,6 @@ class SimInstrument:
         self.values = {name: q.default for name, q in spec.settings.items()}
         self.rng = np.random.default_rng(spec.seed)
         self._sleep = sleep
-        # Tango command threads and a job's worker share the settings.
         self.lock = threading.RLock()
 
     def get(self, name: str) -> Any:
@@ -39,7 +38,6 @@ class SimInstrument:
             raise Refused(f"{name} is read-only")
         with self.lock:
             coerced = quantity.coerce(value)
-            # A setting's requires guard every way of changing it, including a job's axes.
             self._check(f"set_{name}", self.spec.setting_requires.get(name, []), {**self.values, name: coerced})
             self.values[name] = coerced
 

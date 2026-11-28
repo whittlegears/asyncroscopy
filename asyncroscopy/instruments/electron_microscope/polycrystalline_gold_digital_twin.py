@@ -17,8 +17,7 @@ from asyncroscopy.instruments.electron_microscope.twin.optics import CORRECTOR_T
 from asyncroscopy.instruments.electron_microscope.twin.specimen import ViewRequest
 from asyncroscopy.routines.dose import ELECTRON_CHARGE
 
-# The share of the probe's electrons the annular detector counts. It sets the shot noise of an image,
-# since more electrons mean less noise. An HAADF detector collects a few per cent of the beam and this twin uses 1 %.
+# An HAADF detector collects a few per cent of the beam; this sets the image's shot noise.
 HAADF_COLLECTED_FRACTION = 0.01
 
 

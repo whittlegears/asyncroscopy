@@ -50,7 +50,6 @@ class _Stopped(Exception):
 class YamlJob(JobDevice):
     """The jobs of one instrument file; each step runs on the instrument through its step protocol."""
 
-    # No dry runs because the steps read step_status replies that a recorded call does not produce.
     SUPPORTS_DRY_RUN = False
 
     yaml_path = device_property(dtype=str, default_value="", doc="The instrument YAML file (absolute, or relative to the working directory or the repository).")
@@ -76,7 +75,7 @@ class YamlJob(JobDevice):
         self.spec = spec
         first = next(iter(spec.jobs.values()))
         kinds = "; ".join(f"{job.name}: {job.doc}" for job in spec.jobs.values())
-        # The MCP server shows these with the job tools. They are set on the class because the envelope reads them there.
+        # Set on the class, because the envelope reads them there.
         type(self).JOB_KIND = kinds
         type(self).PLAN_EXAMPLE = plan_example(spec, first)
 
@@ -135,7 +134,7 @@ class YamlJob(JobDevice):
 
     def _take_hold(self, job: dict) -> None:
         token = job["job_id"]
-        # This call uses step_timeout_s and not CALL_TIMEOUT_S because the first hold may wait behind a direct call still running on the instrument.
+        # step_timeout_s, because the first hold may wait behind a direct call still running on the instrument.
         lease_s = float(self.proxy(self.instrument_device_address).hold(token))
         self._holds[token] = threading.Event()
         threading.Thread(target=self._renew_hold, args=(token, lease_s, threading.current_thread()), name=f"hold-{token}", daemon=True).start()

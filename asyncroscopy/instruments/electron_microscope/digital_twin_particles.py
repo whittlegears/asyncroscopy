@@ -142,7 +142,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
             noisy = noisy - noisy.min()
             return noisy / noisy.max()
 
-        # This view of the specimen gives its atoms and the particles visible.
         field = self._specimen.view(ViewRequest(stage=self._stage_position, fov_angstrom=fov, imsize=size, edge_crop=edge_crop))
         xtal = field.atoms
         self._particle_records = field.records
@@ -150,7 +149,6 @@ class DigitalTwinParticles(ElectronMicroscopeTwin):
         edge     = 2 * edge_crop * pixel_size
         frame    = (0, fov + edge, 0, fov + edge)
 
-        # create_pseudo_potential masks the atoms by position, to the padded frame.
         potential = create_pseudo_potential(
             xtal, pixel_size, sigma=1, bounds=frame, atom_frame=11
         )

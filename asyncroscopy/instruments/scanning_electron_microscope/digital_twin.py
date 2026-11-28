@@ -27,7 +27,6 @@ from asyncroscopy.instruments.scanning_electron_microscope.scanning_electron_mic
 from asyncroscopy.routines.beam import DEFAULT_BEAM_CURRENT_PA
 from asyncroscopy.sim.dose import DoseMap, DoseParams
 
-# Maps each SEM detector to the renderer signal that stands in for it.
 SIGNALS = {"SE": "HAADF", "BSE": "ADF"}
 
 
@@ -86,7 +85,6 @@ class DigitalTwinSEM(ScanningBeamTwin, ScanningElectronMicroscope):
         )
         if "projected" not in self._specimen.render_modes:
             raise ValueError(f"specimen source {self._specimen.source!r} renders in {list(self._specimen.render_modes)}, not the 'projected' mode this twin uses")
-        # atomic_pixel_m is 0 because an SEM never resolves atoms, so every field is rendered at survey level.
         self._renderer = Renderer(self._specimen, RenderParams(voltage_v=float(self.acceleration_voltage), atomic_pixel_m=0.0))
         self._scan_params = ScanParams(
             flyback_s=float(self.scan_flyback_time),

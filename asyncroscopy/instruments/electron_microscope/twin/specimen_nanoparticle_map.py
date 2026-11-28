@@ -239,7 +239,6 @@ class NanoparticleMap(Specimen):
         center = float(particle["center_lattice_parameter"])
         local = float(self.lattice_parameter_map[iy, ix])
         rattle = float(self.rattle_map[iy, ix])
-        # A conventional cubic cell puts the beam along the <100> zone-axis family.
         atoms = bulk_cell(self.element, local, cubic=True).repeat((4, 4, 4))
         atoms.center(vacuum=2.0)
         atoms.rotate(float(particle["rotation_degrees"]), "z", center="COP")

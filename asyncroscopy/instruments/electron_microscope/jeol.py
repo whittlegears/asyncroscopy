@@ -78,8 +78,7 @@ class JeolMicroscope(ElectronMicroscope):
             return
         try:
             detector.set_ip(self.hardware_host)
-            # PyJEM 1.3.0.3564 has no check_connection(); this REST round trip raises when TEMCenter is
-            # unreachable. An empty list means reachable but unconfigured.
+            # PyJEM 1.3.0.3564 has no check_connection(), so this REST round trip stands in for one.
             attached = detector.get_attached_detector()
             self._microscope = detector
             self.info_stream(

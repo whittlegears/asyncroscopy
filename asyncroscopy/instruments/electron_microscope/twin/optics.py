@@ -16,7 +16,6 @@ import pyTEMlib.probe_tools as pt
 # pyTEMlib's one Spectra300 target-aberration table is for 200 kV; the twins use it at every voltage.
 TARGET_ABERRATIONS_V = 200000
 
-# Maps CEOS corrector names in metres to pyTEMlib names in nanometres.
 CORRECTOR_TO_PYTEMLIB = {
     "C1": ("C10",),
     "A1": ("C12a", "C12b"),
@@ -30,7 +29,6 @@ CORRECTOR_TO_PYTEMLIB = {
     "A4": ("C45a", "C45b"),
 }
 
-# Gaussian sigma of the best probe at 300 kV with aberrations corrected.
 # The Spectra 300 datasheet quotes 50 pm resolution.
 IDEAL_PROBE_SIGMA_M = 0.05e-9 / 2.355
 
