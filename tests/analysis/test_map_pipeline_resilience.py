@@ -51,7 +51,7 @@ def analysis(monkeypatch):
     holder = Analysis()
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
     monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(holder, self))
-    monkeypatch.setattr(map_analysis, "ANALYSIS_BACKOFF_S", (0.05, 0.05))
+    monkeypatch.setattr(map_analysis, "analysis_backoff_s", (0.05, 0.05))
     return holder
 
 
@@ -136,7 +136,7 @@ def test_an_analysis_server_that_forgets_the_job_ends_the_stitch_with_a_clear_er
 
 
 def test_a_stitch_whose_progress_stops_fails_after_the_stall_limit(mapper_proxy, analysis, monkeypatch):
-    monkeypatch.setattr(map_analysis, "STITCH_STALL_S", 2.0)
+    monkeypatch.setattr(map_analysis, "stitch_stall_s", 2.0)
     analysis.before["analysis_job_status"] = lambda arguments: (time.sleep(0.2), {"schema_version": "1.1.0", "job_id": arguments["job_id"], "state": "running", "progress": {"done": 1, "total": 1000}})[1]
     reserved, started = start(mapper_proxy, PLAN)
     assert wait(mapper_proxy, started["job_id"])["state"] == "done"
@@ -146,7 +146,7 @@ def test_a_stitch_whose_progress_stops_fails_after_the_stall_limit(mapper_proxy,
 
 
 def test_a_stitch_still_making_progress_is_waited_for_past_the_stall_limit(mapper_proxy, analysis, monkeypatch):
-    monkeypatch.setattr(map_analysis, "STITCH_STALL_S", 2.0)
+    monkeypatch.setattr(map_analysis, "stitch_stall_s", 2.0)
     polls = iter(range(1, 9))
 
     def advancing(arguments):
