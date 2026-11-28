@@ -41,7 +41,7 @@ from . import runner
 from .authoring import RULES, TEMPLATE, TEMPLATE_PARALLEL
 from .blocks import describe_blocks
 from .graph import Workflow
-from .library import APPROVED, SHIPPED, Library, needs_approval
+from .library import APPROVED, SHIPPED, Library, fingerprint_of, needs_approval, rehearsal_passed
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
@@ -156,7 +156,7 @@ class WorkflowServer:
         record = await running
         if info.get("simulated") is True:
             try:
-                self.library.record_rehearsal(workflow, record)
+                self.library.record_rehearsal(workflow, record, info)
             except OSError:  # the runner already saved the run so losing the rehearsal is harmless
                 pass
         return record
@@ -228,8 +228,17 @@ class WorkflowServer:
             run_id, instrument=instrument, analysis=analysis, state_dir=self.state_dir, find=self.library.workflow, answers=answers)))
         return await self._wait(run_id, wait_s)
 
-    def review(self, name: str) -> dict:
-        """Everything a person needs to decide on the workflow ``name``. Read only. Raises LookupError for no such workflow."""
+    async def stack_fingerprint(self) -> dict | None:
+        """The instrument endpoint's ``stack_fingerprint``, or None when it cannot be reached or reports none."""
+        try:
+            _, _, info = await self.endpoints.open()
+        except Exception:
+            return None
+        return info.get("stack_fingerprint")
+
+    def review(self, name: str, stack_fingerprint: dict | None = None) -> dict:
+        """Everything a person needs to decide on the workflow ``name``. Read only. Raises LookupError for no such workflow.
+        ``stack_fingerprint``: the instrument endpoint's, which a rehearsal must have run on to count."""
         workflow, status = self._workflow(name)
         checked = workflow.lint()
         current = checked["hash"]
@@ -238,9 +247,12 @@ class WorkflowServer:
         asked = self.library.request(workflow.name)
         rehearsals = []
         for entry in self.library.rehearsals(workflow.name):
-            shown = {k: entry.get(k) for k in ("run_id", "state", "at", "calls", "inputs", "error")}
+            shown = {k: entry.get(k) for k in ("run_id", "state", "at", "calls", "inputs", "error", "stack_id")}
             shown["problems"] = list(entry.get("problems") or [])
             shown["this_code"] = entry.get("hash") == current
+            shown["passed"] = rehearsal_passed(entry)
+            shown["stack_fingerprint"] = fingerprint_of(entry)
+            shown["this_stack"] = shown["stack_fingerprint"] is not None and shown["stack_fingerprint"] == (stack_fingerprint or {}).get("digest")
             try:
                 run = runner.read_run(str(entry.get("run_id")), self.state_dir)
             except (KeyError, OSError, ValueError):
@@ -249,7 +261,8 @@ class WorkflowServer:
             if run is not None and run.get("problems"):
                 shown["problems"] = list(dict.fromkeys([*shown["problems"], *run["problems"]]))
             rehearsals.append(shown)
-        rehearsed = any(r["this_code"] and r["state"] == "done" for r in rehearsals)
+        passing, unrehearsed = self.library.rehearsal_problem(workflow.name, current, stack_fingerprint)
+        rehearsed = bool(passing)
         expires = (approval or {}).get("expires")
         expired = expires is not None and time.time() > float(expires)
         if status == SHIPPED:
@@ -258,8 +271,8 @@ class WorkflowServer:
             refusal = f"{workflow.name} is already approved, as it is now"
         elif not checked["ok"]:
             refusal = f"{workflow.name} does not pass its checks: {checked['problems']}"
-        elif not rehearsed:
-            refusal = f"{workflow.name} has never run to the end on a digital twin as it is now; run it there first"
+        elif unrehearsed:
+            refusal = f"{workflow.name} as it is now: {unrehearsed}; run it there first"
         else:
             refusal = None
         return {
@@ -288,7 +301,7 @@ class WorkflowServer:
             twin (when, state, outputs, problems), any approval or rejection, and whether it changed since it was
             approved. Reads only."""
             try:
-                return {"ok": True, **server.review(name)}
+                return {"ok": True, **server.review(name, await server.stack_fingerprint())}
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
 
@@ -296,9 +309,11 @@ class WorkflowServer:
             """A person approves a draft workflow to run on the real instrument. expected_hash: the hash review_workflow
             returned for the code the person read; refused if the draft is not that code now. approver: the person's
             name. instrument: the stack_id it is approved for (left out or "any": every instrument). days: how long the
-            approval holds (left out: until revoked). Refused unless this exact code ran to the end on a digital twin."""
+            approval holds (left out: until revoked). Refused unless this exact code ran to the end, with every cleanup call
+            succeeding, on the digital twin this endpoint is connected to, as its stack_fingerprint is now."""
+            fingerprint = await server.stack_fingerprint()
             try:
-                review = server.review(name)
+                review = server.review(name, fingerprint)
             except LookupError as exc:
                 return {"ok": False, "error": str(exc)}
             status = review["status"]
@@ -307,7 +322,8 @@ class WorkflowServer:
                 return {"ok": False, "status": status, "error": review["why_not"]}
             try:
                 record = server.library.approve(review["name"], approver, login=getpass.getuser(), instrument=instrument, days=days,
-                                                require_rehearsal=True, via=via, expected_hash=str(expected_hash))
+                                                require_rehearsal=True, via=via, expected_hash=str(expected_hash),
+                                                stack_fingerprint=fingerprint)
             except (KeyError, ValueError, PermissionError) as exc:
                 return {"ok": False, "status": status, "error": str(exc.args[0])}
             return {"ok": True, "status": APPROVED, "approval": record}

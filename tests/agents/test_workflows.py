@@ -461,11 +461,13 @@ def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
 
 # The MCP server an agent uses
 class FakeEndpoints:
-    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1"):
+    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1"):
         self.instrument, self.analysis, self.simulated, self.stack_id = instrument, analysis, simulated, stack_id
+        self.fingerprint = fingerprint
 
     async def open(self, run_id=None):
-        return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id}
+        return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id,
+                                                "stack_fingerprint": {"digest": self.fingerprint}}
 
 
 def served(tmp_path, simulated=True, **kwargs):
@@ -719,6 +721,52 @@ def test_a_draft_runs_on_the_twin_and_on_an_instrument_only_after_a_person_appro
     assert "ended on" in library.hardware_problem("tiles_only", "approved", "tango://scope-a:9094", now=clock.time() + 31 * 86400)
     with pytest.raises(ValueError, match="days must be above 0"):
         library.approve("tiles_only", "sam", days=0)
+
+
+def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_only_when_it_passed(tmp_path):
+    from fastmcp import Client
+
+    from asyncroscopy.workflows import Library
+    from asyncroscopy.workflows.authoring import TEMPLATE
+    from asyncroscopy.workflows.server import WorkflowServer
+
+    library = Library(tmp_path / "library")
+    assert library.propose(TEMPLATE, request=ASKED)["ok"]
+    code = library.workflow("tiles_only").hash()
+
+    async def rehearse(fingerprint, on_acquire=None):
+        instrument, analysis, _ = twin(on_acquire)
+        server = WorkflowServer(FakeEndpoints(instrument, analysis, True, fingerprint=fingerprint), state_dir=tmp_path / fingerprint, library=library)
+        async with Client(server.mcp) as client:
+            return await call(client, "run_workflow", name="tiles_only", inputs={})
+
+    async def approve_on(fingerprint):
+        instrument, analysis, _ = twin()
+        server = WorkflowServer(FakeEndpoints(instrument, analysis, True, fingerprint=fingerprint), state_dir=tmp_path / "operator", library=library)
+        _, approve, _ = server.operator_tools()
+        return await approve(name="tiles_only", approver="sam", expected_hash=code)
+
+    assert run(rehearse("twin-a"))["state"] == "done"
+    (kept,) = library.rehearsals("tiles_only", code)
+    assert kept["stack_id"] == "tango://twin:1" and kept["stack_fingerprint"] == {"digest": "twin-a"} and kept["cleanup_failed"] == []
+
+    elsewhere = run(approve_on("twin-b"))
+    assert not elsewhere["ok"] and "passed only on another stack" in elsewhere["error"] and "twin-a" in elsewhere["error"] and "twin-b" in elsewhere["error"]
+    with pytest.raises(ValueError, match="no stack_fingerprint"):
+        library.approve("tiles_only", "sam", require_rehearsal=True)
+
+    assert run(rehearse("twin-b", lambda n: "Error: detector timeout" if n == 0 else None))["state"] == "failed"
+    assert "passed only on another stack" in run(approve_on("twin-b"))["error"]
+
+    library.record_rehearsal(library.workflow("tiles_only"), {"hash": code, "run_id": "r-cleanup", "state": "done",
+                                                              "cleanup": [{"tool": "*_blank_beam", "ok": False, "error": "timed out"}]},
+                             {"stack_id": "tango://twin:1", "stack_fingerprint": {"digest": "twin-b"}})
+    assert library.rehearsals("tiles_only", code)[-1]["cleanup_failed"] == ["*_blank_beam"]
+    assert "passed only on another stack" in run(approve_on("twin-b"))["error"]
+
+    assert run(rehearse("twin-b"))["state"] == "done"
+    approved = run(approve_on("twin-b"))
+    assert approved["ok"] and approved["approval"]["rehearsed"]["stack_fingerprint"] == "twin-b"
 
 
 def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_honoured(tmp_path):
@@ -1290,7 +1338,7 @@ def test_review_and_approve_agree_on_an_expired_approval(tmp_path, monkeypatch):
 
     later = time.time() + 2 * 86400.0
     monkeypatch.setattr(workflow_server.time, "time", lambda: later)
-    review = workflows.review("tiles_only")
+    review = workflows.review("tiles_only", run(workflows.stack_fingerprint()))
     assert review["approval_expired"] and review["can_approve"] and review["why_not"] is None
     renewed = run(tools["approve_workflow"](name="tiles_only", approver="sam", expected_hash=reviewed))
     assert renewed["ok"] and renewed["approval"]["expires"] is None

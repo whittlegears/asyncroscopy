@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from fastmcp.exceptions import ToolError
 from fastmcp.tools import ToolResult, tool
 
+from asyncroscopy.mcp.fingerprint import stack_fingerprint
+
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
@@ -62,6 +64,7 @@ class Discovery:
             "stack_id": server.stack_id,
             # Draft workflows only run where this is true.
             "simulated": simulated,
+            "stack_fingerprint": stack_fingerprint(server.devices, simulated),
             "urls": dict(self.urls),
             "command_timeout_s": server.command_timeout_s,
             "job_devices": server.jobs.devices(),

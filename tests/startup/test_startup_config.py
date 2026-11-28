@@ -210,6 +210,7 @@ def test_register_devices_removes_disabled_devices_from_a_kept_database(monkeypa
     assert ("delete", "asyncroscopy/eds/default") in calls
     assert ("delete_property", "asyncroscopy/instrument/default", "eds_device_address") in calls
     assert ("add", "asyncroscopy/eds/default") not in calls
+    assert ("put", "asyncroscopy/data/default", "module_name") in calls and ("put", "asyncroscopy/instrument/default", "module_name") in calls
 
 
 # run_mcp and run_llm

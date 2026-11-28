@@ -982,7 +982,7 @@ def register_devices(
         except Exception:
             pass
         status_line("OK", device.device_name)
-        for property_name, property_value in device.properties.items():
+        for property_name, property_value in {**device.properties, "module_name": [device.module_name]}.items():
             database.put_device_property(device.device_name, {property_name: property_value})
             status_line("OK", f"property: {device.device_name} {property_name} = {property_value[0]}")
 

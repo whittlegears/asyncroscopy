@@ -86,7 +86,24 @@ The agent MCP server (`run_llm.py`) takes the same `urls` under `agent:`.
 - `permission_groups`: `{"reads": ..., "acts": ...}`;
 - `urls`: `{"operator", "agent_server", "workflow_operator", "tiled", "analysis"}`, each a URL from the config or null;
 - `command_timeout_s`: the endpoint's own limit on one Tango command (30), which a client's call timeout follows;
-- `device_kinds`: `{device prefix: [kind, ...]}`, kinds from `stem`, `probe`, `envelope` (runs jobs), `map` (a Mapper), `stage` (moves a stage).
+- `device_kinds`: `{device prefix: [kind, ...]}`, kinds from `stem`, `probe`, `envelope` (runs jobs), `map` (a Mapper), `stage` (moves a stage);
+- `stack_fingerprint` (every endpoint role): which software, device code and device configuration serve this
+  endpoint, all read when `endpoint_info` is called (`asyncroscopy/mcp/fingerprint.py`):
+  - `software`: `{"package": "asyncroscopy", "version", "commit", "uncommitted_changes"}`. `version` is the installed
+    package's; `commit` is `git rev-parse HEAD` of the checkout the endpoint runs from, and `uncommitted_changes` whether
+    tracked files differ from it. Both are null outside a git checkout.
+  - `devices`: `{device prefix: {"class", "module", "module_sha256"}}`. `class` is the Tango class. `module` is the
+    device's `module_name` Tango property, which `run_servers.py` writes with the module it starts the device with
+    (`python -m <module>`); `module_sha256` is the SHA-256 of that module's file as this endpoint's Python finds it.
+    Both are null for a device started another way. Only the module that defines the class is hashed: code it imports is
+    covered by `software`.
+  - `config_digest`: the SHA-256 of every Tango property of every device (`{prefix: {name: [values]}}`, sorted), as the
+    endpoint reads them from the Tango database. A property left in a kept database counts, because the device reads it too.
+  - `unreadable_properties`: the devices whose properties could not be read (a test context has no database).
+  - `simulated`: `{"value", "established_by"}`. The value is `simulated` above; `established_by` says it is declared by
+    the devices' `simulated` property, not proved.
+  - `digest`: the SHA-256 of all of the above. Two runs are on the same stack when their digests are equal; workflow
+    rehearsals are matched to a stack by it.
 
 Every listed MCP tool carries `ToolAnnotations` with `readOnlyHint = not acts` and `destructiveHint = acts`.
 
