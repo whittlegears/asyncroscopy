@@ -18,7 +18,7 @@ import tango
 from tango import AttrWriteType, DevEncoded, DevFloat, DevString, DevState, DevVarFloatArray, DevVarStringArray
 from tango.server import attribute, command, device_property
 
-from asyncroscopy.instruments.instrument import Instrument
+from asyncroscopy.instruments.instrument import IMAGE_KEY_DOC, SPECTRUM_KEY_DOC, Instrument
 
 
 class ElectronMicroscope(Instrument):
@@ -117,6 +117,7 @@ class ElectronMicroscope(Instrument):
         dtype_in=str,
         dtype_out=str,
         doc_in=":param detector_name: Spectrum detector name, e.g. 'eds'.",
+        doc_out=SPECTRUM_KEY_DOC,
     )
     def acquire_spectrum(self, detector_name: str) -> str:
         """Acquire a single spectrum and return its DATA/Tiled unique id."""
@@ -136,6 +137,7 @@ class ElectronMicroscope(Instrument):
         dtype_out=str,
         doc_in=":param detector_list: Scanning detector names, e.g. ['haadf']. "
                "An empty list uses ['haadf'].",
+        doc_out=IMAGE_KEY_DOC,
     )
     def acquire_scanned_image(self, detector_list: list[str] = ['haadf']) -> str:
         """
@@ -156,7 +158,7 @@ class ElectronMicroscope(Instrument):
         scan = self._detector_proxies.get('scan')
         return self._acquire_scanned_data_advanced(scan.imsize, scan.dwell_time, 'BM-Ceta', list(scan.scan_region))
 
-    @command(dtype_out=str)
+    @command(dtype_out=str, doc_out=IMAGE_KEY_DOC)
     def acquire_camera_image(self) -> str:
         """Acquire a camera image using settings from the camera device."""
         camera = self._detector_proxies.get('camera')

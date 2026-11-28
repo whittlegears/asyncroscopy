@@ -7,6 +7,13 @@ from abc import abstractmethod, ABCMeta
 import tango
 import tango.server
 
+# Output descriptions (Tango ``doc_out``) for commands that return the DATA/Tiled key of
+# what they acquired. The MCP server reads them to attach a preview to the result, so a
+# new acquisition command declares its kind here instead of being added to a list there.
+IMAGE_KEY_DOC = "DATA/Tiled key of an image"
+SPECTRUM_KEY_DOC = "DATA/Tiled key of a spectrum"
+
+
 class CombinedMeta(tango.server.DeviceMeta, ABCMeta):
     """Combines Tango DeviceMeta and ABCMeta to allow abstract methods in Devices."""
     pass

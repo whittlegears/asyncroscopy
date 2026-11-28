@@ -37,15 +37,14 @@ from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.instruments.instrument import IMAGE_KEY_DOC, SPECTRUM_KEY_DOC
 
-# Tango commands that acquire and save data, returning its DATA/Tiled key as a
-# plain string. Their tool wrappers additionally fetch the array back from Tiled and
-# attach an inline PNG preview, so chat clients that already render MCP image content
-# blocks (e.g. SciAgentGUI) display the capture without any extra tool call.
-# Image commands are previewed as a grayscale rendering of the first 2D dataset;
-# spectrum commands as a plot of the first 1D dataset.
-IMAGE_PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image"}
-SPECTRUM_PREVIEW_COMMANDS = {"acquire_spectrum"}
+# Tango commands that acquire and save data declare it in their output description
+# (doc_out, see asyncroscopy.instruments.instrument). Their tool wrappers fetch the array
+# back from Tiled and attach an inline PNG preview, so chat clients that render MCP image
+# content blocks display the capture without another tool call. An image is previewed as
+# a grayscale rendering of its first 2D dataset, a spectrum as a plot of its first 1D one.
+PREVIEW_KINDS = {IMAGE_KEY_DOC: "image", SPECTRUM_KEY_DOC: "spectrum"}
 
 # Tango's client default of 3000 ms is shorter than a real acquisition: the digital
 # twin's first acquire_camera_image takes over 3 s cold, so the call died with
@@ -341,8 +340,11 @@ class MCPServer:
                 print(f"[spectrum preview] could not build preview for {key!r}: {exc}")
             return None, f"{type(exc).__name__}: {exc}"
 
-    def _augment_with_preview(self, command_name: str, result: Any) -> Any:
-        """Attach an inline image preview to known acquisition commands.
+    def _augment_with_preview(self, preview_kind: str | None, result: Any) -> Any:
+        """Attach an inline preview to the result of a command that declares one.
+
+        preview_kind is "image" or "spectrum" when the command's doc_out says it
+        returns the key of one (see PREVIEW_KINDS), otherwise None.
 
         Returns a ToolResult with both a text content block (the Tiled key,
         unchanged for existing callers) and an image content block, plus
@@ -354,9 +356,9 @@ class MCPServer:
         """
         if not isinstance(result, str) or not result:
             return result
-        if command_name in IMAGE_PREVIEW_COMMANDS:
+        if preview_kind == "image":
             preview, failure = self._fetch_image_preview(result)
-        elif command_name in SPECTRUM_PREVIEW_COMMANDS:
+        elif preview_kind == "spectrum":
             preview, failure = self._fetch_spectrum_preview(result)
         else:
             return result
@@ -486,6 +488,7 @@ class MCPServer:
         in_desc = cmd_info.in_type_desc
 
         out_type = cmd_info.out_type
+        preview_kind = PREVIEW_KINDS.get((cmd_info.out_type_desc or "").strip())
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [
             f"Tango Device Class: {dev_class}",
@@ -522,7 +525,7 @@ class MCPServer:
             def wrapper():
                 result = func()
                 normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return self._augment_with_preview(preview_kind, normalized)
 
             params = []
             
@@ -536,7 +539,7 @@ class MCPServer:
                 
                 result = func(arg_input)
                 normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return self._augment_with_preview(preview_kind, normalized)
 
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
@@ -548,7 +551,7 @@ class MCPServer:
                 arg = args[0] if args else kwargs.get(param_name)
                 result = func(arg)
                 normalized = self._normalize_command_result(out_type, result)
-                return self._augment_with_preview(command_name, normalized)
+                return self._augment_with_preview(preview_kind, normalized)
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 

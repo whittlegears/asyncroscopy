@@ -528,6 +528,45 @@ class TestMCPToolInvocation:
         assert wrapper() == "done"
 
 
+class TestPreviewDeclaration:
+    """Which commands get a preview comes from their doc_out, not from a list of names."""
+
+    @staticmethod
+    def _void_command(out_type_desc: str):
+        return type(
+            "CommandInfo",
+            (),
+            {
+                "in_type": tango.CmdArgType.DevVoid,
+                "out_type": tango.CmdArgType.DevString,
+                "in_type_desc": "",
+                "out_type_desc": out_type_desc,
+            },
+        )
+
+    def test_a_command_that_declares_an_image_key_gets_an_image_preview(self, monkeypatch) -> None:
+        from asyncroscopy.instruments.instrument import IMAGE_KEY_DOC, SPECTRUM_KEY_DOC
+
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        seen = []
+        monkeypatch.setattr(server, "_augment_with_preview", lambda kind, result: seen.append(kind) or result)
+
+        for desc in (IMAGE_KEY_DOC, SPECTRUM_KEY_DOC, "result", ""):
+            server._create_wrapper(lambda: "key_1", self._void_command(desc), "any_new_name", "AnyClass")()
+
+        assert seen == ["image", "spectrum", None, None]
+
+    def test_the_shipped_acquisitions_declare_their_keys(self) -> None:
+        from asyncroscopy.instruments.electron_microscope.electron_microscope import ElectronMicroscope
+        from asyncroscopy.instruments.instrument import IMAGE_KEY_DOC, SPECTRUM_KEY_DOC
+
+        docs = {c: ElectronMicroscope.TangoClassClass.cmd_list[c][1][1] for c in
+                ("acquire_scanned_image", "acquire_camera_image", "acquire_spectrum")}
+        assert docs == {"acquire_scanned_image": IMAGE_KEY_DOC, "acquire_camera_image": IMAGE_KEY_DOC,
+                        "acquire_spectrum": SPECTRUM_KEY_DOC}
+
+
 class TestMCPRegistration:
     def test_setup_registers_native_tools(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
@@ -622,7 +661,7 @@ class TestMCPSpectrumPreview:
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
-        result = server._augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
+        result = server._augment_with_preview("spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"result": "spectrum_eds.h5"}
@@ -651,7 +690,7 @@ class TestMCPSpectrumPreview:
         )
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
-        result = server._augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
+        result = server._augment_with_preview("spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"result": "spectrum_eds.h5"}
@@ -664,6 +703,6 @@ class TestMCPSpectrumPreview:
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
 
-        assert server._augment_with_preview("get_stage", "[0.0,0.0]") == "[0.0,0.0]"
-        assert server._augment_with_preview("acquire_spectrum", "") == ""
-        assert server._augment_with_preview("acquire_spectrum", 42) == 42
+        assert server._augment_with_preview(None, "[0.0,0.0]") == "[0.0,0.0]"
+        assert server._augment_with_preview("spectrum", "") == ""
+        assert server._augment_with_preview("spectrum", 42) == 42
