@@ -171,22 +171,25 @@ class MCPServer:
         return describe_tiled_node(key, uri, node, max_values=max_values)
 
     @staticmethod
-    def _find_first_2d_array(node: Any, prefer_key: str | None = None) -> np.ndarray | None:
-        """Recursively search a Tiled node for the first readable 2D dataset.
+    def _find_first_array(
+        node: Any, ndim: int, prefer_key: str | None = None
+    ) -> tuple[np.ndarray, dict[str, Any]] | None:
+        """Return (array, metadata) for the first non-empty ``ndim`` dataset under a Tiled node.
 
-        Acquisition writers (see asyncroscopy/data/data_writer.py) group image
-        datasets under an "image/<detector>" path, so ``prefer_key`` lets callers
-        check that group first before falling back to a full walk.
+        data_writer.save_acquisition groups images under "image" and spectra
+        under "spectrum", so ``prefer_key`` is searched before the full walk.
         """
 
-        def search(current: Any) -> np.ndarray | None:
+        def search(current: Any) -> tuple[np.ndarray, dict[str, Any]] | None:
             read = getattr(current, "read", None)
             if callable(read):
                 try:
                     array = np.asarray(read())
                 except Exception:
                     return None
-                return array if array.ndim == 2 else None
+                if array.ndim != ndim or array.size == 0:
+                    return None
+                return array, dict(getattr(current, "metadata", {}) or {})
 
             keys = getattr(current, "keys", None)
             if callable(keys):
@@ -245,57 +248,14 @@ class MCPServer:
         """
         try:
             node = self._resolve_tiled_node(key)
-            array = self._find_first_2d_array(node, prefer_key="image")
-            if array is None:
+            found = self._find_first_array(node, ndim=2, prefer_key="image")
+            if found is None:
                 return None, f"no 2D dataset was found under key {key!r} in Tiled"
-            return MCPImage(data=self._array_to_png_bytes(array), format="png"), None
+            return MCPImage(data=self._array_to_png_bytes(found[0]), format="png"), None
         except Exception as exc:
             if self.verbose:
                 print(f"[image preview] could not build preview for {key!r}: {exc}")
             return None, f"{type(exc).__name__}: {exc}"
-
-    @staticmethod
-    def _find_first_1d_array(
-        node: Any, prefer_key: str | None = None
-    ) -> tuple[np.ndarray, dict[str, Any]] | None:
-        """Recursively search a Tiled node for the first readable 1D dataset.
-
-        Returns (array, metadata) so the caller can label the plot from the
-        dataset's HDF5 attributes (see data_writer.save_acquisition, which
-        stores spectra under a "spectrum" dataset name).
-        """
-
-        def search(current: Any) -> tuple[np.ndarray, dict[str, Any]] | None:
-            read = getattr(current, "read", None)
-            if callable(read):
-                try:
-                    array = np.asarray(read())
-                except Exception:
-                    return None
-                if array.ndim != 1 or array.size == 0:
-                    return None
-                metadata = dict(getattr(current, "metadata", {}) or {})
-                return array, metadata
-
-            keys = getattr(current, "keys", None)
-            if callable(keys):
-                for child_name in keys():
-                    try:
-                        found = search(current[child_name])
-                    except Exception:
-                        continue
-                    if found is not None:
-                        return found
-            return None
-
-        if prefer_key is not None:
-            try:
-                found = search(node[prefer_key])
-                if found is not None:
-                    return found
-            except Exception:
-                pass
-        return search(node)
 
     @staticmethod
     def _element_labels(metadata: dict[str, Any]) -> list[str] | None:
@@ -353,7 +313,7 @@ class MCPServer:
         """
         try:
             node = self._resolve_tiled_node(key)
-            found = self._find_first_1d_array(node, prefer_key="spectrum")
+            found = self._find_first_array(node, ndim=1, prefer_key="spectrum")
             if found is None:
                 return None, f"no 1D dataset was found under key {key!r} in Tiled"
             array, metadata = found

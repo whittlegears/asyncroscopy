@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import base64
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator
@@ -20,6 +21,7 @@ import tango
 import asyncio
 
 import numpy as np
+from PIL import Image as PILImage
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -631,6 +633,48 @@ class TestMCPSpectrumPreview:
         ]
         assert len(image_blocks) == 1
         assert base64.b64decode(image_blocks[0].data)[: len(self.png_magic)] == self.png_magic
+
+    def test_acquire_image_preview_skips_the_spectrum_and_finds_the_image(self, monkeypatch) -> None:
+        monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
+
+        class FakeDataset:
+            metadata: dict = {}
+
+            def __init__(self, values):
+                self.values = values
+
+            def read(self):
+                return self.values
+
+        class FakeContainer(dict):
+            metadata: dict = {}
+
+        node = FakeContainer(
+            spectrum=FakeDataset(np.array([1.0, 2.0])),
+            haadf=FakeContainer(frame=FakeDataset(np.arange(12.0).reshape(3, 4))),
+        )
+
+        class FakeDataProxy:
+            def get_config(self):
+                return json.dumps({"uri": "http://microscope:9091"})
+
+        monkeypatch.setattr(
+            "asyncroscopy.mcp.mcp_server.DeviceProxy", lambda address: FakeDataProxy()
+        )
+        monkeypatch.setattr(
+            "asyncroscopy.mcp.mcp_server.from_uri", lambda uri: {"stem_haadf.h5": node}
+        )
+
+        server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
+        result = server._augment_with_preview("acquire_scanned_image", "stem_haadf.h5")
+
+        image_blocks = [
+            block for block in result.content if getattr(block, "type", "") == "image"
+        ]
+        assert len(image_blocks) == 1
+        png = base64.b64decode(image_blocks[0].data)
+        assert png[: len(self.png_magic)] == self.png_magic
+        assert PILImage.open(io.BytesIO(png)).size == (4, 3)
 
     def test_spectrum_preview_failure_names_the_reason(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
