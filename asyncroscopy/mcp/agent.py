@@ -405,6 +405,33 @@ class AgentSwarm:
             return match.group(1)
         return text.strip()
 
+    async def _structured_route(self, messages, valid_options: list[str]) -> tuple[str, str] | None:
+        """Ask for the routing decision as structured output, constrained to the valid choices.
+
+        Returns None when the model cannot do structured output or its answer is not
+        a valid choice; the supervisor then parses free text as before.
+        """
+        if not getattr(self, "structured_routing", True) or not hasattr(self._model, "with_structured_output"):
+            return None
+        schema = {
+            "title": "RouteDecision",
+            "description": "Which agent acts next, and the sub-task for it alone.",
+            "type": "object",
+            "properties": {
+                "next": {"type": "string", "enum": list(valid_options), "description": "The agent to act next, or FINISH."},
+                "task": {"type": "string", "description": "The isolated sub-task for that agent; empty for FINISH."},
+            },
+            "required": ["next", "task"],
+        }
+        try:
+            answer = await self._model.with_structured_output(schema).ainvoke(messages)
+        except Exception as exc:  # providers without structured output, or a reply that does not parse
+            print(f"[Supervisor] structured routing unavailable ({type(exc).__name__}); parsing text")
+            return None
+        if isinstance(answer, dict) and answer.get("next") in valid_options:
+            return str(answer["next"]), str(answer.get("task", ""))
+        return None
+
     def _parse_routing_decision(self, content: str, valid_options: list[str], fallback: str) -> tuple[str, str]:
         """Parse a supervisor response's {'next': ...} decision, falling back on any error or invalid value."""
         # Why the fallback was used, if it was; the supervisor puts it in the transcript.
@@ -601,10 +628,17 @@ class AgentSwarm:
                     '{"next": "image", "task": "Acquire a scanned HAADF image."}'
                 )
             )
-            response = await self._model.ainvoke([sys_prompt] + state["messages"])
+            decision = await self._structured_route([sys_prompt] + state["messages"], valid_options)
+            if decision is not None:
+                next_agent, subtask = decision
+                self._routing_note = ""
+                response = AIMessage(content=json.dumps({"next": next_agent, "task": subtask}))
+            else:
+                response = await self._model.ainvoke([sys_prompt] + state["messages"])
             if self._recorder is not None:
                 self._recorder.record_call([sys_prompt] + list(state["messages"]), response, agent="Supervisor")
-            next_agent, subtask = self._parse_routing_decision(response.content, valid_options, fallback)
+            if decision is None:
+                next_agent, subtask = self._parse_routing_decision(response.content, valid_options, fallback)
             if getattr(self, "_routing_note", ""):
                 record(self._routing_note)
             print(f"[Supervisor] Decision: {next_agent}")

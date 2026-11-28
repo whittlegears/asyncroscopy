@@ -30,3 +30,9 @@ mcp:
       - get_ground_truth
       - get_aberrations_coeff_sim
       - set_aberrations_coeff_sim
+  # Hold instrument-changing commands for an operator's approval (see
+  # configs/mcp_dt.yaml and docs/MCP/mcp_server.md). Off here until it has been
+  # tried on the microscope; uncomment both lines to turn it on, and run an
+  # operator endpoint (role: operator) with the same approvals_db.
+  # needs_approval: {"*": [move_stage, acquire_map_grid, correct_aberration, set_column_valves, unblank_beam]}
+  # approvals_db: outputs/approvals.sqlite

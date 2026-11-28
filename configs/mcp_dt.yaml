@@ -36,3 +36,14 @@ mcp:
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
+  # Commands an agent's call does not run until an operator approves it on the
+  # operator endpoint (configs/mcp_dt_operator.yaml, same approvals_db). Patterns
+  # by Tango class or "*"; "Class.command" also works. See asyncroscopy/mcp/approvals.py.
+  needs_approval:
+    "*":
+      - move_stage
+      - acquire_map_grid
+      - correct_aberration
+      - set_column_valves
+      - unblank_beam
+  approvals_db: outputs/approvals.sqlite

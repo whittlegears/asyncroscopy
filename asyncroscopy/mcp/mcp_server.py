@@ -40,6 +40,7 @@ from fastmcp.server.server import Transport
 from fastmcp.utilities.types import Image as MCPImage
 
 from asyncroscopy.data.data_reader import describe_tiled_node
+from asyncroscopy.mcp.approvals import ApprovalStore, held_message, needs_approval
 from asyncroscopy.mcp.tool_log import ToolCallLog
 
 # Tango commands that acquire and save data, returning its DATA/Tiled key as a
@@ -84,6 +85,9 @@ class MCPServer:
         include_only_functions: list[str] | None = None,
         verbose: bool = True,
         tool_log_path: str | None = None,
+        needs_approval: dict[str, list[str]] | None = None,
+        approvals_db: str | None = None,
+        role: str = "agent",
     ):
         """
         Args:
@@ -98,6 +102,12 @@ class MCPServer:
             verbose (bool, optional): If True, print device discovery and tool registration
                 progress to stdout. Defaults to True.
             tool_log_path (str, optional): JSONL file with one line per tool call. Off when empty.
+            needs_approval: Command patterns, keyed by Tango class or "*", that an agent's call
+                does not run: it is held until an operator approves it (see approvals.py).
+            approvals_db: SQLite file of held calls, shared by the agent and operator endpoints.
+                Required when needs_approval is set.
+            role: "agent" (held commands wait) or "operator" (a person's endpoint: commands run,
+                and list_pending / approve_call / deny_call are offered).
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -113,6 +123,15 @@ class MCPServer:
         self._failures: dict[str, tuple[str, int, float]] = {}
         self._failures_lock = threading.Lock()
         self.tools: dict[str, dict[str, Callable]] = {}
+        if role not in ("agent", "operator"):
+            raise ValueError("role must be 'agent' or 'operator'")
+        self.role = role
+        self.needs_approval = {key: list(value) for key, value in (needs_approval or {}).items()}
+        if any(self.needs_approval.values()) and not approvals_db:
+            raise ValueError("needs_approval needs approvals_db, the file where held calls wait")
+        self.approvals = ApprovalStore(approvals_db) if approvals_db else None
+        # tool name -> run(arguments) for the raw command, used when an operator approves a held call
+        self._runners: dict[str, Callable[[dict], Any]] = {}
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -510,6 +529,7 @@ class MCPServer:
 
         out_type = cmd_info.out_type
         unique_name = f"{dev_class}_{command_name}".replace("/", "_").replace("-", "_")
+        held = self.role == "agent" and self.approvals is not None and needs_approval(self.needs_approval, dev_class, command_name)
 
         def _run(arguments: dict, *call_args):
             started, t0 = time.time(), time.perf_counter()
@@ -532,6 +552,14 @@ class MCPServer:
             if self.tool_log is not None:
                 self.tool_log.record(unique_name, arguments, started, time.perf_counter() - t0, result=normalized)
             return result
+
+        def _invoke(arguments: dict, *call_args):
+            if held:
+                call_id = self.approvals.hold(unique_name, arguments)
+                if self.tool_log is not None:
+                    self.tool_log.record(unique_name, arguments, time.time(), 0.0, error=RuntimeError(f"held {call_id}"))
+                raise RuntimeError(held_message(call_id, unique_name))
+            return _run(arguments, *call_args)
         py_return_type = self._tango_type_to_python(out_type)
         doc_lines = [
             f"Tango Device Class: {dev_class}",
@@ -566,7 +594,9 @@ class MCPServer:
 
         if in_type == CmdArgType.DevVoid:
             def wrapper():
-                return _run({})
+                return _invoke({})
+
+            self._runners[unique_name] = lambda arguments: _run({})
 
             params = []
             
@@ -577,7 +607,9 @@ class MCPServer:
                     arg_input = kwargs["arg"]
                 else:
                     arg_input = kwargs
-                return _run({"arg": arg_input}, arg_input)
+                return _invoke({"arg": arg_input}, arg_input)
+
+            self._runners[unique_name] = lambda arguments: _run(arguments, arguments.get("arg", {}))
 
             # Use VAR_KEYWORD (**kwargs) to make Pydantic accept any incoming fields
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
@@ -587,7 +619,9 @@ class MCPServer:
             def wrapper(*args, **kwargs):
                 # Get first positional arg or parameter name out of kwargs
                 arg = args[0] if args else kwargs.get(param_name)
-                return _run({param_name: self._numpy_to_python(arg)}, arg)
+                return _invoke({param_name: self._numpy_to_python(arg)}, arg)
+
+            self._runners[unique_name] = lambda arguments: _run(arguments, arguments.get(param_name))
 
             params = [inspect.Parameter(param_name, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=arg_type)]
 
@@ -671,6 +705,32 @@ class MCPServer:
                 tools[dev_class][command_name] = (func, cmd)
         return tools
 
+    # ------------------------------------------------------------------ approvals
+
+    def call_status(self, call_id: str) -> dict:
+        """A held call's state: pending, approved, denied, done (with its result) or failed (with its error)."""
+        return self.approvals.get(call_id)
+
+    def list_pending(self) -> list[dict]:
+        """Held calls waiting for a decision, oldest first: id, tool, arguments, when requested."""
+        return self.approvals.pending()
+
+    def approve_call(self, call_id: str, note: str = "", actor: str = "operator") -> dict:
+        """Run a held call now, as an operator, and store its result for the agent that asked."""
+        record = self.approvals.decide(call_id, "approved", actor, note)
+        runner = self._runners.get(record["tool"])
+        if runner is None:
+            return self.approvals.finish(call_id, error=f"{record['tool']} is not offered by this endpoint")
+        try:
+            result = runner(record["arguments"])
+        except Exception as exc:
+            return self.approvals.finish(call_id, error=str(exc))
+        return self.approvals.finish(call_id, result=self._numpy_to_python(result))
+
+    def deny_call(self, call_id: str, note: str = "", actor: str = "operator") -> dict:
+        """Refuse a held call; it never runs. Say why in note: the agent sees it."""
+        return self.approvals.decide(call_id, "denied", actor, note)
+
     def setup(self, print_summary: bool = True):
         """Configure tools and add them to the MCP instance.
 
@@ -696,6 +756,10 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices]
+        if self.approvals is not None:
+            native_tools.append(self.call_status)
+            if self.role == "operator":
+                native_tools += [self.list_pending, self.approve_call, self.deny_call]
         for native_tool in native_tools:
             self.mcp.add_tool(native_tool)
             if self.verbose:
@@ -763,6 +827,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--tool-log", default="", help="JSONL file for per-call tool logging; off when empty.")
+    parser.add_argument("--needs-approval-json", default="{}", help="Command patterns (by class or *) an agent's call waits on.")
+    parser.add_argument("--approvals-db", default="", help="SQLite file of held calls, shared with the operator endpoint.")
+    parser.add_argument("--role", default="agent", choices=("agent", "operator"))
     return parser.parse_args(argv)
 
 
@@ -808,6 +875,9 @@ def main(argv: list[str] | None = None) -> int:
         data_device_address=args.data_device_address,
         verbose=not args.quiet,
         tool_log_path=args.tool_log or None,
+        needs_approval=json.loads(args.needs_approval_json),
+        approvals_db=args.approvals_db or None,
+        role=args.role,
     )
     if args.transport == "streamable-http":
         print(

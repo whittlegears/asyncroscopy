@@ -1,0 +1,52 @@
+# Operator endpoint for the digital twin: the person's MCP server.
+#
+# Run it beside configs/mcp_dt.yaml (the agents' endpoint):
+#
+#   uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt_operator.yaml
+#
+# Commands run here directly, and list_pending / approve_call / deny_call act on
+# the calls the agents' endpoint holds in the same approvals_db. Do not give this
+# endpoint to an agent.
+#
+# If MCP runs on a separate computer, set tango.host to the Tango database
+# machine/IP. Set mcp.http_host to 0.0.0.0 when other machines need to connect.
+
+tango:
+  host: localhost
+  port: 9094
+
+mcp:
+  name: Spectra300_Operator
+  transport: streamable-http
+  http_host: 127.0.0.1
+  http_port: 8010
+  data_device_address: asyncroscopy/data/default
+  quiet: true
+  blocked_classes:
+    - DataBase
+    - DServer
+  blocked_functions:
+    "*":
+      - Init
+      - Kill
+      - RestartServer
+      # Twin-only answers: hidden so the agent is graded on what it measures.
+      - get_ground_truth
+      - get_aberrations_coeff_sim
+      - set_aberrations_coeff_sim
+  # Optional Tango command allowlist. Leave empty to include all non-blocked
+  # commands. Entries may be "command" or "Class.command".
+  # list_devices and get_data_from_key are always included.
+  include_only_functions: []
+  # Optional JSONL log of tool calls. Empty disables it.
+  tool_log: ""
+  # Must match configs/mcp_dt.yaml: the same held calls, seen from the operator's side.
+  needs_approval:
+    "*":
+      - move_stage
+      - acquire_map_grid
+      - correct_aberration
+      - set_column_valves
+      - unblank_beam
+  approvals_db: outputs/approvals.sqlite
+  role: operator

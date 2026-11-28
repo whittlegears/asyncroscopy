@@ -129,3 +129,35 @@ def test_a_failed_query_keeps_the_partial_transcript():
     swarm.max_steps = 4  # the lone agent loops on tool calls until the step limit
     answer = asyncio.run(swarm.query("loop", include_transcript=True))
     assert "ERROR:" in answer and "Scope_get_stage" in answer
+
+
+class StructuredRouter(ScriptedModel):
+    """Answers routing with structured output; workers still get the scripted replies."""
+
+    routes: list = []
+
+    def with_structured_output(self, schema, **kwargs):
+        from langchain_core.runnables import RunnableLambda
+
+        allowed = schema["properties"]["next"]["enum"]
+        routes = type(self).routes
+
+        async def route(_messages):
+            decision = routes.pop(0)
+            assert decision["next"] in allowed
+            return decision
+
+        return RunnableLambda(lambda m: None, afunc=route)
+
+
+def test_structured_routing_is_used_when_the_model_supports_it():
+    StructuredRouter.routes = [{"next": "reader", "task": "read the stage"}, {"next": "FINISH", "task": ""}]
+    replies = [AIMessage(content="The stage is at the origin.")]  # the worker's only model call
+    agents = [Agent("reader", "You read.", ["Scope_get_*"]), Agent("mover", "You move.", ["Scope_move_*"])]
+    swarm = AgentSwarm(max_steps=12, startup_agents=agents, model="scripted", verbose=False)
+    swarm._model = StructuredRouter(messages=iter(replies))
+    swarm._tools = [Scope_get_stage, Scope_move_stage]
+    swarm._mcp_clients = []
+    answer = asyncio.run(swarm.query("where is the stage?", include_transcript=True))
+    assert "origin" in answer and "was not JSON" not in answer
+    assert StructuredRouter.routes == []

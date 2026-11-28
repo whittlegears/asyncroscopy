@@ -36,6 +36,9 @@ SETTINGS = [
     Setting('mcp.blocked_classes', 'list', []),
     Setting('mcp.include_only_functions', 'list', []),  # blank: every non-blocked command
     Setting('mcp.blocked_functions', 'yaml', {}),
+    Setting('mcp.needs_approval', 'yaml', {}),  # commands an agent's call waits on, by class or "*"
+    Setting('mcp.approvals_db'),  # SQLite file of held calls, shared with the operator endpoint
+    Setting('mcp.role', default='agent', choices=('agent', 'operator')),
 ]
 
 
@@ -56,6 +59,9 @@ class MCPConfig:
     blocked_functions: dict[str, list[str]]
     include_only_functions: list[str] = field(default_factory=list)
     tool_log: str = ''
+    needs_approval: dict[str, list[str]] = field(default_factory=dict)
+    approvals_db: str = ''
+    role: str = 'agent'
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,11 @@ def load_config(path: Path) -> Config:
     blocked_functions = values['mcp.blocked_functions'] or {}
     if not all(isinstance(names, list) for names in blocked_functions.values()):
         raise ConfigError(['mcp.blocked_functions must map a class (or "*") to a list of command names'])
+    needs_approval = values['mcp.needs_approval'] or {}
+    if not isinstance(needs_approval, dict) or not all(isinstance(names, list) for names in needs_approval.values()):
+        raise ConfigError(['mcp.needs_approval must map a class (or "*") to a list of command patterns'])
+    if any(needs_approval.values()) and not values['mcp.approvals_db']:
+        raise ConfigError(['mcp.needs_approval needs mcp.approvals_db, the file where held calls wait'])
     return Config(
         path=path,
         tango_host=values['tango.host'],
@@ -93,6 +104,9 @@ def load_config(path: Path) -> Config:
             blocked_functions={key: [str(name) for name in names] for key, names in blocked_functions.items()},
             include_only_functions=values['mcp.include_only_functions'],
             tool_log=values['mcp.tool_log'] or '',
+            needs_approval={key: [str(name) for name in names] for key, names in needs_approval.items()},
+            approvals_db=values['mcp.approvals_db'] or '',
+            role=values['mcp.role'] or 'agent',
         ),
     )
 
@@ -129,6 +143,12 @@ def build_command(config: Config) -> list[str]:
         command.append('--quiet')
     if config.mcp.tool_log:
         command.extend(['--tool-log', config.mcp.tool_log])
+    if config.mcp.needs_approval:
+        command.extend(['--needs-approval-json', json.dumps(config.mcp.needs_approval)])
+    if config.mcp.approvals_db:
+        command.extend(['--approvals-db', config.mcp.approvals_db])
+    if config.mcp.role != 'agent':
+        command.extend(['--role', config.mcp.role])
     return command
 
 

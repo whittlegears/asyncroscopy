@@ -10,9 +10,16 @@ plain functions, so graphs can be tested with in-process fakes.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
+import time
 from typing import Any, Iterable, Mapping
+
+from asyncroscopy.mcp.approvals import parse_held
+
+DEFAULT_APPROVAL_WAIT_S = 1800.0
+APPROVAL_POLL_S = 2.0
 
 
 class ToolNotFound(LookupError):
@@ -55,10 +62,20 @@ def normalise_result(result: Any) -> Any:
 
 
 class ToolBox:
-    def __init__(self, tools: Iterable[Any] | Mapping[str, Any], prefer: Iterable[str] = ()):
+    """Tools by command name. A call the instrument bridge holds for approval is waited on.
+
+    When the bridge answers ``HELD <id>`` (see asyncroscopy.mcp.approvals), ``call``
+    polls ``call_status`` until an operator approves or denies it, up to
+    ``approval_wait_s``, and returns the approved call's result.
+    """
+
+    def __init__(self, tools: Iterable[Any] | Mapping[str, Any], prefer: Iterable[str] = (),
+                 approval_wait_s: float = DEFAULT_APPROVAL_WAIT_S, poll_s: float = APPROVAL_POLL_S):
         items = tools.items() if isinstance(tools, Mapping) else ((_name(t), t) for t in tools)
         self.tools = {str(name): tool for name, tool in items}
         self.prefer = list(prefer)
+        self.approval_wait_s = float(approval_wait_s)
+        self.poll_s = float(poll_s)
 
     def names(self) -> list[str]:
         return sorted(self.tools)
@@ -95,5 +112,23 @@ class ToolBox:
         except ToolNotFound:
             raise
         except Exception as exc:  # MCP and Tango errors come in many types
+            call_id = parse_held(str(exc))
+            if call_id and self.has("call_status"):
+                return await self._wait_for_approval(command, call_id)
             raise ToolCallError(self.find(command) or command, str(exc)) from exc
         return normalise_result(result)
+
+    async def _wait_for_approval(self, command: str, call_id: str) -> Any:
+        name = self.find(command) or command
+        deadline = time.monotonic() + self.approval_wait_s
+        while True:
+            status = await self.call("call_status", call_id=call_id)
+            state = status.get("status") if isinstance(status, dict) else None
+            if state == "done":
+                return status.get("result")
+            if state in ("denied", "failed"):
+                reason = status.get("note") if state == "denied" else status.get("error")
+                raise ToolCallError(name, f"held call {call_id} was {state}: {reason or 'no reason given'}")
+            if time.monotonic() > deadline:
+                raise ToolCallError(name, f"held call {call_id} still {state} after {self.approval_wait_s:.0f} s")
+            await asyncio.sleep(self.poll_s)

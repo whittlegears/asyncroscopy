@@ -217,7 +217,11 @@ def test_mcp_tool_log_and_validation(tmp_path):
     path = tmp_path / "mcp.yaml"
     path.write_text(yaml.safe_dump(raw))
     config = run_mcp.load_config(path)
-    assert run_mcp.build_command(config)[-2:] == ["--tool-log", "outputs/calls.jsonl"]
+    command = run_mcp.build_command(config)
+    assert command[command.index("--tool-log") + 1] == "outputs/calls.jsonl"
+    # The twin's config holds instrument-changing commands for an operator.
+    assert command[command.index("--approvals-db") + 1] == "outputs/approvals.sqlite"
+    assert "move_stage" in command[command.index("--needs-approval-json") + 1]
     raw["mcp"]["http_port"] = "eighty"
     del raw["mcp"]["name"]
     path.write_text(yaml.safe_dump(raw))
