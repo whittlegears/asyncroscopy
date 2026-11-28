@@ -12,7 +12,7 @@ import tango
 from startup_scripts import run_servers
 from tests.startup.test_server_startup import start_device_server, tango_database, wait_for_device
 
-DEVICE = '''from tango.server import Device, command
+device_source = '''from tango.server import Device, command
 
 
 class Fingerprinted(Device):
@@ -37,7 +37,7 @@ def endpoint(host, port, tmp_path, env):
 def test_the_fingerprint_is_stable_for_one_stack_and_follows_its_device_code_and_properties(tango_database, tmp_path):
     host, port, env = tango_database
     module = tmp_path / "fingerprinted.py"
-    module.write_text(DEVICE.format(value="one"), encoding="utf-8")
+    module.write_text(device_source.format(value="one"), encoding="utf-8")
     env = {**env, "PYTHONPATH": os.pathsep.join([str(tmp_path), str(Path(__file__).resolve().parents[2]), env.get("PYTHONPATH", "")])}
     device = run_servers.DeviceConfig("instrument", "Fingerprinted", "fingerprinted", properties={"exposure_s": ["1.0"]})
     run_servers.register_devices([device], {})
@@ -51,7 +51,7 @@ def test_the_fingerprint_is_stable_for_one_stack_and_follows_its_device_code_and
         assert first["software"]["package"] == "asyncroscopy" and first["software"]["commit"]
         assert endpoint(host, port, tmp_path, env) == first
 
-        module.write_text(DEVICE.format(value="two"), encoding="utf-8")
+        module.write_text(device_source.format(value="two"), encoding="utf-8")
         edited = endpoint(host, port, tmp_path, env)
         assert edited["devices"]["Fingerprinted"]["module_sha256"] != first["devices"]["Fingerprinted"]["module_sha256"]
         assert edited["config_digest"] == first["config_digest"] and edited["digest"] != first["digest"]

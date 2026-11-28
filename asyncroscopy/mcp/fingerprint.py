@@ -15,9 +15,9 @@ from typing import Any
 import asyncroscopy
 from asyncroscopy.mcp.descriptors import DeviceInfo
 
-MODULE_PROPERTY = "module_name"
-SIMULATED_BY = "declared: the simulated Tango property of every device with a command that acts (run_servers' top-level simulated:)"
-CHECKOUT = Path(asyncroscopy.__file__).resolve().parents[1]
+module_property = "module_name"
+simulated_by = "declared: the simulated Tango property of every device with a command that acts (run_servers' top-level simulated:)"
+checkout = Path(asyncroscopy.__file__).resolve().parents[1]
 
 
 def digest(value: Any) -> str:
@@ -26,7 +26,7 @@ def digest(value: Any) -> str:
 
 def _git(*args: str) -> str | None:
     try:
-        done = subprocess.run(["git", *args], cwd=CHECKOUT, capture_output=True, text=True, timeout=10, check=False)
+        done = subprocess.run(["git", *args], cwd=checkout, capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return done.stdout.strip() if done.returncode == 0 else None
@@ -66,7 +66,7 @@ def device_properties(proxy: Any) -> dict[str, list[str]] | None:
 
 
 def device_code(dev_class: str, properties: Mapping[str, list[str]] | None) -> dict[str, Any]:
-    module = ((properties or {}).get(MODULE_PROPERTY) or [None])[0]
+    module = ((properties or {}).get(module_property) or [None])[0]
     return {"class": dev_class, "module": module, "module_sha256": module_sha256(module)}
 
 
@@ -77,6 +77,6 @@ def stack_fingerprint(devices: Mapping[str, DeviceInfo], simulated: bool) -> dic
         "devices": {prefix: device_code(device.dev_class, properties[prefix]) for prefix, device in sorted(devices.items())},
         "config_digest": digest(properties),
         "unreadable_properties": sorted(prefix for prefix, values in properties.items() if values is None),
-        "simulated": {"value": bool(simulated), "established_by": SIMULATED_BY},
+        "simulated": {"value": bool(simulated), "established_by": simulated_by},
     }
     return {**found, "digest": digest(found)}
