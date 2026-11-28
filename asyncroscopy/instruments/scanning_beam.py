@@ -226,7 +226,7 @@ class ScanningBeamInstrument(Instrument):
         {name: address}. Empty without a database (tests, no-DB mode)."""
         suffix = "_device_address"
         try:
-            db = tango.Util.instance().get_database()
+            db = tango.Util.instance(False).get_database()
             listed = db.get_device_property_list(self.get_name(), f"*{suffix}")
             names = [str(n) for n in getattr(listed, "value_string", listed)]
             values = db.get_device_property(self.get_name(), names) if names else {}
