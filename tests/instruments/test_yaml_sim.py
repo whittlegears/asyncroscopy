@@ -172,7 +172,7 @@ def test_the_check_command_validates_a_file(tmp_path):
 
 
 def test_the_example_runs_as_a_tango_device_behind_the_mcp_server(tmp_path):
-    # PyTango allows one test context per process and this suite has one, so use a fresh interpreter.
+    """Runs in a fresh interpreter, because PyTango allows one test context per process and this suite has one."""
     done = subprocess.run([sys.executable, str(HERE / "yaml_sim_check.py"), str(tmp_path)], capture_output=True, text=True, timeout=180, check=False)
     assert done.returncode == 0, done.stderr[-2000:]
     result = json.loads(done.stdout.strip().splitlines()[-1])
@@ -352,7 +352,7 @@ def test_the_afm_example_lifts_the_tip_around_every_move_as_a_tango_job_device(t
 
 
 def test_the_raman_example_runs_jobs_as_a_tango_job_device(tmp_path):
-    # PyTango allows one test context per process and this suite has one, so use a fresh interpreter.
+    """Runs in a fresh interpreter, because PyTango allows one test context per process and this suite has one."""
     done = subprocess.run([sys.executable, str(HERE / "yaml_sim_job_check.py"), str(tmp_path)], capture_output=True, text=True, timeout=240, check=False)
     assert done.returncode == 0, done.stderr[-2000:]
     outcome = json.loads(done.stdout.strip().splitlines()[-1])

@@ -281,6 +281,7 @@ class TestDataDevice:
         monkeypatch,
         tmp_path,
     ) -> None:
+        """Only exercises the drive-path branch; _ensure_directory is stubbed because C:\\ may not be creatable."""
         calls = []
         popen_calls = []
         run_commands = []
@@ -292,7 +293,6 @@ class TestDataDevice:
         fake_tiled_commands(monkeypatch, popen_calls, run_commands)
         monkeypatch.setattr(DATA, "_tiled_alive", fake_alive)
         monkeypatch.setenv("ASYNCROSCOPY_LOG_DIR", str(tmp_path))
-        # Only exercises the drive-path branch; the mkdir is stubbed because C:\ may not be creatable.
         monkeypatch.setattr("asyncroscopy.data.data._ensure_directory", lambda path: None)
 
         data_proxy.host = "127.0.0.1"

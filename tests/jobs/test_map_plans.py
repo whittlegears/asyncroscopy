@@ -88,7 +88,7 @@ def test_one_given_point_is_imaged_even_when_rounding_makes_its_box_a_hair_narro
 
 
 def test_one_given_point_is_not_refused_when_rounding_puts_it_a_hair_outside_its_own_box(mapper_proxy):
-    # In floats, taking 1e-7 from -4.43e-8 and adding it back gives -4.430000000000001e-08.
+    """In floats, taking 1e-7 from -4.43e-8 and adding it back gives -4.430000000000001e-08."""
     reserved = call(mapper_proxy, "reserve", {"plan": {"revisit": {"fov_m": 2e-7, "points": [[-4.43e-8, 1.835e-7]]}}})
     assert "reservation_id" in reserved, reserved
     call(mapper_proxy, "release", {"reservation_id": reserved["reservation_id"]})

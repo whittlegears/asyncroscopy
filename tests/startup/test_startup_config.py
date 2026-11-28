@@ -155,7 +155,7 @@ def test_external_package_runs_its_main(tmp_path, monkeypatch):
 
 
 def test_instrument_file_outside_the_project_is_refused(tmp_path):
-    # pytest.ini puts tmp_path inside the project, so use the system's temp folder.
+    """Uses the system's temp folder, because pytest.ini puts tmp_path inside the project."""
     with tempfile.TemporaryDirectory() as folder:
         outside = Path(folder) / "outside.py"
         outside.write_text("class Outside:\n    pass\n")

@@ -10,6 +10,8 @@
 * Same controller, different samples: one Mapper plan on three twins that share
   the instrument and differ only in the specimen. Moves, drift, timing and dose
   are identical; the images and spectra are not.
+
+WRITE_GOLDEN: ASYNCROSCOPY_WRITE_GOLDEN=1 rewrites the golden file and skips the check. Only do that on purpose.
 """
 
 from __future__ import annotations
@@ -47,7 +49,6 @@ EXAMPLE_IMAGE = ROOT / "configs" / "specimens" / "recorded_example_haadf.png"
 EXAMPLE_LABELS = ROOT / "configs" / "specimens" / "recorded_example_labels.json"
 EXAMPLE_PIXEL = 1.5625e-9
 GOLDEN = Path(__file__).resolve().parents[1] / "data" / "specimen_procedural_golden.npz"
-# ASYNCROSCOPY_WRITE_GOLDEN=1 rewrites the golden file and skips the check. Only do that on purpose.
 WRITE_GOLDEN = settings.get().write_golden
 TRUTH_KEYS = ("sample_seed", "sample_bounds_m", "particles", "moves", "acquisitions", "simulated_time_s", "dose", "focus")
 

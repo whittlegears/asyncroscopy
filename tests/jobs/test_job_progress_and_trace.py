@@ -48,6 +48,7 @@ def test_only_the_tail_of_a_long_step_file_is_read_and_a_torn_last_line_is_skipp
 
 
 def test_the_run_file_keeps_every_tile_written_before_a_crash(tmp_path):
+    """On Windows the venv's python.exe is a launcher, so the whole tree is killed, as a crash would."""
     final = tmp_path / "run.h5"
     path = tmp_path / "run.h5.partial"
     writer = f"""
@@ -68,7 +69,6 @@ for k in range(100000):
     deadline = time.time() + 60
     while written < 20 and time.time() < deadline:
         written = int(process.stdout.readline())
-    # On Windows the venv's python.exe is a launcher, so kill the whole tree as a crash would.
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
     else:

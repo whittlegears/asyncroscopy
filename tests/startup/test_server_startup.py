@@ -92,6 +92,7 @@ def add_device(db: tango.Database, server: str, classname: str, device: str) -> 
 
 @pytest.fixture
 def tango_database() -> Generator[tuple[str, int, dict[str, str]], None, None]:
+    """The database is stopped first, or Windows cannot delete the still-open tango_database.db (WinError 32)."""
     host = "127.0.0.1"
     port = find_free_port(host)
     tango_host = f"{host}:{port}"
@@ -123,7 +124,6 @@ def tango_database() -> Generator[tuple[str, int, dict[str, str]], None, None]:
             try:
                 yield host, port, env
             finally:
-                # Stop the database first, or Windows cannot delete the still-open tango_database.db (WinError 32).
                 for proc in reversed(managed):
                     proc.stop()
     finally:

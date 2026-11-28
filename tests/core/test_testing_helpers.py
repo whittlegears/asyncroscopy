@@ -9,7 +9,7 @@ HERE = Path(__file__).parents[1]
 
 
 def test_helpers_serve_an_instrument_through_the_mcp_server(tmp_path):
-    # This runs in a fresh interpreter because PyTango allows one test context per process.
+    """Runs in a fresh interpreter, because PyTango allows one test context per process."""
     done = subprocess.run([sys.executable, str(HERE / "out_of_tree_check.py"), str(tmp_path)], capture_output=True, text=True, timeout=120)
     assert done.returncode == 0, done.stderr[-2000:]
     result = json.loads(done.stdout.strip().splitlines()[-1])

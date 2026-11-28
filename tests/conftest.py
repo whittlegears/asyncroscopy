@@ -9,6 +9,10 @@ This avoids:
 - "No proxy found for detector 'scan'. Available: []"
 - Needing a real Tango DB
 - Flaky multi-context issues from spinning up multiple separate servers
+
+ASYNCROSCOPY_TILED_URI points nowhere, so the DATA device never reaches a developer's running Tiled. The configs'
+${NAME} placeholders get documentation addresses (RFC 5737), which override any real configs/site.env. SPECIMEN_TWINS
+keeps its properties flat, because this test database cuts property values at a colon.
 """
 
 import json
@@ -23,9 +27,7 @@ import pytest
 import numpy as np
 import tango
 
-# The DATA device must never reach a developer's running Tiled.
 os.environ["ASYNCROSCOPY_TILED_URI"] = "http://127.0.0.1:9"
-# Documentation addresses (RFC 5737) for the configs' ${NAME} placeholders; they override any real configs/site.env.
 os.environ.update({
     "ASYNCROSCOPY_MICROSCOPE_HOST": "192.0.2.10",
     "ASYNCROSCOPY_GATAN_HOST": "192.0.2.11",
@@ -175,7 +177,6 @@ SPECIMEN_GOLDEN_PROPERTIES = {
 }
 
 
-# Flat, because this test database cuts property values at a colon.
 SPECIMENS_DIR = Path(__file__).resolve().parents[1] / "configs" / "specimens"
 SPECIMEN_TWINS = {
     "procedural": {"specimen_source": "procedural"},
@@ -210,6 +211,9 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
     One Tango device server hosting SCAN + STEMMicroscope together.
 
     Device names here MUST match what you put into STEMMicroscope properties.
+
+    Only tests/twin/test_specimens.py touches specimen_golden, so its event indices are reproducible. One in-process
+    context serves the session, because starting several in one interpreter can segfault in PyTango.
     """
     devices_info = [
         {
@@ -382,7 +386,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
                     },
                 },
                 {
-                    # Only tests/twin/test_specimens.py touches this twin, so its event indices are reproducible.
                     "name": "asyncroscopy/digitaltwin/specimen_golden",
                     "properties": {"stage_device_address": "asyncroscopy/stage/specimen_golden", "acquisition_save_directory": prop_path(data_save_dir), "ground_truth_directory": prop_path(ground_truth_dir), **on_the_microscope(SPECIMEN_GOLDEN_PROPERTIES)},
                 },
@@ -783,7 +786,6 @@ def tango_ctx(data_save_dir: Path, ground_truth_dir: Path, job_dir: Path) -> Ite
         },
     ]
 
-    # One in-process context per session: starting several in one interpreter can segfault in PyTango.
     ctx = MultiDeviceTestContext(devices_info, process=False, timeout=60)
     with ctx:
         data = tango.DeviceProxy(ctx.get_device_access("asyncroscopy/data/default"))

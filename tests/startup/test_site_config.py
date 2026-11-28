@@ -1,4 +1,7 @@
-"""Lab machine addresses stay out of git: configs, notebooks and docs use ${NAME} placeholders."""
+"""Lab machine addresses stay out of git: configs, notebooks and docs use ${NAME} placeholders.
+
+Only SCANNED is scanned, because code and tests may use private addresses as generic examples.
+"""
 
 import ipaddress
 import re
@@ -11,7 +14,6 @@ from startup_scripts.config_schema import ConfigError, fill_placeholders, site_v
 
 ROOT = Path(__file__).parents[2]
 IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?![\d.])")
-# Code and tests may use private addresses as generic examples, so only these are scanned.
 SCANNED = ("configs/", "notebooks/", "docs/")
 DOCUMENTATION = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24")]
 

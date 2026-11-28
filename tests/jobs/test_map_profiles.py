@@ -160,7 +160,7 @@ def test_the_simulated_sem_maps_and_stitches_without_eds(sem_mapper_proxy, sem_t
 
 
 def test_the_sem_config_maps_end_to_end(tmp_path):
-    # This runs in a fresh interpreter because PyTango allows one test context per process.
+    """Runs in a fresh interpreter, because PyTango allows one test context per process."""
     check = Path(__file__).parents[1] / "sem_config_check.py"
     done = subprocess.run([sys.executable, str(check), str(tmp_path)], capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stderr[-2000:]

@@ -479,9 +479,9 @@ class TestAutoScriptConnectionErrors:
         assert excinfo.value.args[0].reason == "NotConnected"
 
     def test_testing_mode_refuses_the_actions_it_cannot_take(self) -> None:
+        """A plain stand-in is used, because assigning a device property on a bare Tango device crashes."""
         from types import SimpleNamespace
 
-        # A plain stand in is used because assigning a device property on a bare Tango device crashes.
         device = SimpleNamespace(_microscope=None, _connect_error=None, testing_mode_bool=True, _blank_count=0)
         device._client = lambda what: AutoScriptMicroscope._client(device, what)
         for call in (lambda: AutoScriptMicroscope._blank_beam(device), lambda: AutoScriptMicroscope._set_column_valves(device, "close"),
