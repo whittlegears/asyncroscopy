@@ -69,6 +69,49 @@ calls are counted with that workflow's own allow list (none for a `no_actuation`
 times out or hits the recursion limit keeps every call whose reply arrived (the agent run's ledger), so
 its checks still see them; a run with an empty final answer fails (`answered`).
 
+### Skills on or off
+
+Agent skills are off unless the environment switches them on (`ASYNCROSCOPY_SKILLS`). Two flags set that
+for one run, through the same settings and nothing else:
+
+```bash
+uv run python benchmarks/run_workflows.py --skills off                 # no skills (ASYNCROSCOPY_SKILLS=0)
+uv run python benchmarks/run_workflows.py --skills on                  # every skill (ASYNCROSCOPY_SKILLS=1)
+uv run python benchmarks/run_workflows.py --skills focus,mapping       # only these skills, by name
+uv run python benchmarks/run_workflows.py --skills on --skills-off focus   # every skill but these (ASYNCROSCOPY_SKILLS_OFF)
+```
+
+A list of names sets `ASYNCROSCOPY_SKILLS=1` and puts every other skill in `ASYNCROSCOPY_SKILLS_OFF`; a name
+that is no skill stops the run before it starts. Without `--skills` the environment is left as it is. The
+flags govern the agents the runner runs in its own process; a skill switched off on an endpoint
+(`switch_skill`) stays off whatever they say. The results record the switch and the skills it left
+enabled (`skills`, below), and every row records the skills that reached the agent (`skills`).
+
+### The result record
+
+Each results file, and each run kept in the history, is one JSON object. The fields that say what was run:
+
+| Field | What it is |
+|---|---|
+| `model`, `stack`, `git`, `started`, `n`, `runners` | the model, the `--stack` name, this checkout's short commit, the start time (Unix s), the trials asked for, the runners found |
+| `stack_fingerprint` | the instrument endpoint's `stack_fingerprint` from `endpoint_info`: software, each device's class and module hash, a digest of the device properties, `simulated` and how it was established, and a `digest` of all of it (`docs/MCP/permissions.md`) |
+| `evaluators` | `{name: version}` of each evaluator scored (`benchmarks/evaluate`); scores of different versions are not comparable |
+| `skills` | `{"on", "off", "enabled"}`: whether skills were on, the names or globs hidden, and the skills left enabled. `{"on": false, "off": [], "enabled": []}` is a run with skills off |
+| `workflows["<name>/<runner>"]` | one entry per benchmark and runner: `task_hash`, `passed`, `of`, `infra_errors`, `bar`, `kind`, `capability`, `held_out` and `rows` (one per trial: `ok`, `checks`, `error`, `infra_error`, `seconds`, `caller`, `tool_names`, `sleepwalking`, `skills`, `scores`, `final`) |
+
+`task_hash` is the benchmark's identity: the SHA-256 of its YAML entry as written (its `reference` included)
+and the source of the checks it uses, with every function, class and value of `workflow_checks.py` they
+reach by name (code from other modules is not followed). Editing a benchmark, its reference or one of its
+checks gives it a new hash. `board.py` pairs two runs only over benchmarks with the same name, runner and
+hash: one whose hash differs, or that a run records without a hash, is named in the report as not paired
+and left out of the paired difference, and the kept run to compare with is one that shares such a benchmark.
+
+History is append-only: every finished run is a new file in `outputs/benchmarks/history/<stack>/`, and no run
+rewrites an earlier one. Images and spectra are never in a record: they appear only by their keys, and the
+stack's device properties only as `config_digest`. The trace and the transcripts stay on this computer under
+`outputs/`. A row's check details and the end of its answer (`final`) are text, and can state stage
+positions or fields of view; read them before sharing a record.
+
 Duration on a 6 GB laptop GPU with qwen3:8b and the mapping twin in simulated real time: the basics,
 data and safety workflows take 1 to 5 minutes each, the maps 3 to 20 minutes; one pass of the twin
 suite with the `general` runner is about 2 to 3 hours, and each further runner adds as much again.
