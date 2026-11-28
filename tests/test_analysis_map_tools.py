@@ -216,7 +216,7 @@ def test_assemble_check_reads_no_images(client, run_file, monkeypatch):
 
 
 def test_create_server_is_repeatable_and_mounts_pytemlibs_tools():
-    from pyTEMlib import mcp_server as basic_tools
+    from pytemlib_mcp import server as basic_tools
 
     first, first_tools = create_server()
     second, _ = create_server()

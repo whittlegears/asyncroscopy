@@ -3,7 +3,7 @@ The analysis MCP server: stitching, scoring, points of interest, notes and place
 
 Two sets of tools:
 
-* pyTEMlib's own MCP tools (``pyTEMlib.mcp_server``: file loading, wavelength and probe
+* pyTEMlib's own MCP tools (``pytemlib_mcp.server``: file loading, wavelength and probe
   calculations, element data, diffraction), mounted unchanged.
 * the map tools: stitch microscope map runs into zoomable maps, view regions, score regions with
   pluggable scorers and keep points of interest, place finer images on coarser ones, turn pixels

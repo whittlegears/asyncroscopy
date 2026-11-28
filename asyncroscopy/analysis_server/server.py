@@ -11,6 +11,7 @@ from fastmcp.server.dependencies import get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.transforms import GetToolNext, Transform
 from mcp.types import ToolAnnotations
+from pytemlib_mcp.analysis import READ_ONLY_TOOLS as PYTEMLIB_READ_ONLY, STORING_TOOLS as PYTEMLIB_STORING
 
 from asyncroscopy.core.names import CALLER_HEADER, RUN_HEADER
 from asyncroscopy.trace.writer import ToolCallLog
@@ -59,20 +60,21 @@ class ToolLog(Middleware):
 
 # Tools that only read: they change no data, file or job. Clients that gate tool calls (SciAgentGUI's
 # approval mode) read MCP's readOnlyHint and run these without asking; every other tool is left
-# unmarked, which MCP reads as "may change things". The basic tools are upstream pyTEMlib's, which
-# marks none, so they are named here too. A test fails when a tool is in neither set.
+# unmarked, which MCP reads as "may change things". pytemlib_mcp's basic tools mark none, so they are
+# named here; its analysis tools come from its own READ_ONLY_TOOLS and STORING_TOOLS. A test fails when a
+# tool is in neither set.
 READ_ONLY = frozenset({
     "get_pytemlib_status", "calculate_electron_wavelength", "list_supported_file_formats", "open_tem_file",
-    "list_loaded_datasets", "get_dataset_info", "calculate_probe_size", "get_element_info",
+    "list_loaded_datasets", "get_dataset_info", "calculate_probe_size",
     "analyze_diffraction_pattern", "create_visualization_script", "get_available_tools",
     "analysis_job_status", "analysis_job_results", "map_info", "list_maps", "get_region", "list_pois",
     "list_scorers", "list_tiles", "to_stage", "find_features", "to_pixel", "list_placements",
     "list_annotations", "annotation_history",
-})
+}) | {function.__name__ for function in PYTEMLIB_READ_ONLY}
 WRITES = frozenset({
     "assemble_map", "score_map", "analysis_job_abort", "add_poi", "jobs_envelope", "place_image",
     "annotate", "edit_annotation", "delete_annotation", "restore_annotation",
-})
+}) | {function.__name__ for function in PYTEMLIB_STORING}
 
 
 class MarkReadOnly(Transform):
@@ -118,14 +120,14 @@ def create_server(
     Nothing is written anywhere this call is not given: the command line (``python -m
     asyncroscopy.analysis_server``) puts the files under the outputs folder of
     ``asyncroscopy.settings``. Every call returns a fresh FastMCP instance, so calling it twice never
-    registers a tool twice. The basic tools are upstream pyTEMlib's ``pyTEMlib.mcp_server``, mounted
+    registers a tool twice. The basic tools are pyTEMlib's MCP server, ``pytemlib_mcp.server``, mounted
     unchanged.
     """
     mcp = FastMCP(name)
     if trace_path:
         mcp.add_middleware(ToolLog(trace_path))
     if include_basic:
-        from pyTEMlib import mcp_server as basic_tools
+        from pytemlib_mcp import server as basic_tools
 
         mcp.mount(basic_tools.mcp)
     tools = MapTools(MapStore(tiled_uri, api_key, local_roots=local_roots), max_canvas_pixels=max_canvas_pixels, max_jobs=max_jobs)
