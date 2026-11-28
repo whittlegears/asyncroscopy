@@ -3,7 +3,7 @@
 #   uv run startup_scripts/run_pytemlib.py --yaml configs/pytemlib.yaml
 #   uv run startup_guis/pytemlib_mcp.py
 #
-# Each key is an option of `python -m pyTEMlib.analysis_server`.
+# Each key is an option of `python -m pytemlib_mcp.analysis_server`.
 # A key left out keeps the server's default.
 # Keep host at 127.0.0.1 because this server has no login.
 

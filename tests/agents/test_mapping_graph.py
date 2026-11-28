@@ -127,7 +127,7 @@ def test_a_node_that_raises_ends_in_a_report_and_releases():
     async def broken(state):
         raise RuntimeError("tiled is down")
 
-    g.stitch = broken  # build looks nodes up by name so the patched one is used
+    g.points = broken  # build looks nodes up by name so the patched one is used
     state = run(g, {"request": "map the sample", "plan": dict(PLAN)})
     assert "broken failed: RuntimeError" in state["report"]
     assert state["report"].startswith("Map not completed") and "tiled is down" in state["report"]

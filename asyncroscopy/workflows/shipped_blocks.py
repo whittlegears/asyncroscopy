@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 
+from asyncroscopy.core.map_analysis import AnalysisFailed, stitch_map
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 
 from .blocks import Block, BlockContext, BlockFailed, register_block
@@ -14,8 +15,6 @@ from .blocks import Block, BlockContext, BlockFailed, register_block
 MAX_TILES = 2000
 MOVES = ("image_shift", "stage")  # the two ways to reach a tile
 DEFAULT_MAX_SHIFT_M = 1.0e-6  # per axis, same as scanning_beam.DEFAULT_MAX_IMAGE_SHIFT
-STITCH_WAIT_S = 20.0
-STITCH_POLLS = 180  # an hour of 20 s waits
 
 
 def _move_by(args: dict) -> str:
@@ -274,25 +273,11 @@ register_block(Block(
 
 
 async def _stitch_map(ctx: BlockContext, args: dict, previous: dict | None) -> dict:
-    request = {"run": args["run"], "refine": bool(args["refine"])}
-    if args.get("stage_sigma_m"):  # left out, the analysis server uses its own default
-        request["stage_sigma_m"] = float(args["stage_sigma_m"])
-    started = await ctx.analyse("assemble_map", request)
-    job = started.get("job_id") if isinstance(started, dict) else None
-    if not job:
-        raise BlockFailed(f"assemble_map did not start: {str(started)[:300]}")
-    for _ in range(STITCH_POLLS):
-        status = await ctx.analyse("analysis_job_status", {"job_id": job, "wait_s": STITCH_WAIT_S})
-        state = status.get("state") if isinstance(status, dict) else None
-        if state == "done":
-            results = await ctx.analyse("analysis_job_results", {"job_id": job})
-            key = (results.get("result_keys") or {}).get("map")
-            if not key:
-                raise BlockFailed(f"the stitching job gave no map: {str(results)[:300]}")
-            return {"map": key, "summary": results.get("summary") or {}}
-        if state in ("failed", "aborted"):
-            raise BlockFailed(f"stitching {state}: {str(status)[:400]}")
-    raise BlockFailed(f"stitching job {job} was still running after {STITCH_POLLS * STITCH_WAIT_S:.0f} s")
+    try:
+        stitched = await stitch_map(ctx.analyse, str(args["run"]), refine=bool(args["refine"]), stage_sigma_m=float(args["stage_sigma_m"]) if args.get("stage_sigma_m") else None)
+    except AnalysisFailed as exc:
+        raise BlockFailed(f"stitching {args['run']} failed: {exc}") from exc
+    return {"map": stitched["map"], "summary": stitched["summary"]}
 
 
 register_block(Block(

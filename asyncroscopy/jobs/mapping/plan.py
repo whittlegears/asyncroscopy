@@ -260,7 +260,7 @@ def _resolve_revisit_only(plan: dict, profile: InstrumentProfile, env: PlanEnvir
     else:
         if env.analysis is None:
             raise ValueError("revisiting an existing map's regions needs a Mapper with an analysis_url")
-        info = env.analysis.map_info(map=revisit["map"])
+        info = env.analysis.call("map_info", {"map": revisit["map"]})
         box = p.get("box_m") or list(info["stage_box_m"])
         count = int(revisit.get("top_k", 3))
     x_min, x_max, y_min, y_max = (float(v) for v in box)
@@ -299,7 +299,7 @@ def _resolve_zoom_only(plan: dict, profile: InstrumentProfile, env: PlanEnvironm
     if not profile.image_shift_limit_m:
         raise ValueError(f"zooming aims each image by image shift, which the {profile.name!r} instrument profile cannot set")
     zoom = dict(plan["zoom"])
-    frame = env.analysis.find_features(image=zoom["parent"], n=0)
+    frame = env.analysis.call("find_features", {"image": zoom["parent"], "n": 0})
     if "error" in frame:
         raise ValueError(f"cannot zoom from {zoom['parent']!r}: {frame['error'].get('message', frame['error'])}")
     parent_fov = float(frame["pixel_size_m"]) * float(max(frame["shape"]))

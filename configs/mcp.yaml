@@ -40,7 +40,7 @@ mcp:
   include_only_functions: []
   tool_log: ""
   # The other endpoints of this stack, as endpoint_info reports them; leave one out when it does not run. With analysis
-  # (pyTEMlib.analysis_server: stitching, scoring) on the MCP host, wait_for_job also waits on assemble_map and
+  # (pytemlib_mcp.analysis_server: stitching, scoring) on the MCP host, wait_for_job also waits on assemble_map and
   # score_map jobs; agents read the address from endpoint_info.
   urls:
     tiled: http://127.0.0.1:9091

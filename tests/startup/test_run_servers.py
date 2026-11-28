@@ -488,21 +488,21 @@ def pytemlib_config(**values):
 def test_run_pytemlib_passes_only_what_the_config_sets(fake_uv):
     command = run_pytemlib.build_command(pytemlib_config())
 
-    assert command == [fake_uv, "run", "--no-sync", "python", "-u", "-m", "pyTEMlib.analysis_server",
+    assert command == [fake_uv, "run", "--no-sync", "python", "-u", "-m", "pytemlib_mcp.analysis_server",
                        "--transport", "streamable-http", "--host", "127.0.0.1", "--port", "8003"]
 
 
 def test_run_pytemlib_command_is_read_back_by_the_server(fake_uv, monkeypatch):
     """Every flag the launcher writes is accepted by the server parser with the config value."""
-    from pyTEMlib.analysis_server import environment
-    from pyTEMlib.analysis_server.__main__ import parser
+    from pytemlib_mcp.analysis_server import environment
+    from pytemlib_mcp.analysis_server.__main__ import parser
 
     config = pytemlib_config(
         transport="sse", host="0.0.0.0", port=8103, tiled="http://localhost:9191", api_key="k3y", local_roots=["outputs", "data"],
         max_canvas_megapixels=250.5, max_jobs=3, trace="outputs/t.jsonl", annotations="", placements="-odd name.jsonl",
     )
     command = run_pytemlib.build_command(config)
-    args = parser(environment.get()).parse_args(command[command.index("pyTEMlib.analysis_server") + 1:])
+    args = parser(environment.get()).parse_args(command[command.index("pytemlib_mcp.analysis_server") + 1:])
 
     assert (args.transport, args.host, args.port, args.tiled) == ("sse", "0.0.0.0", 8103, "http://localhost:9191")
     assert (args.local_root, args.max_canvas_megapixels, args.max_jobs) == (["outputs", "data"], 250.5, 3)
@@ -515,8 +515,8 @@ def test_run_pytemlib_command_is_read_back_by_the_server(fake_uv, monkeypatch):
 
 
 def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
-    from pyTEMlib.analysis_server import environment
-    from pyTEMlib.analysis_server.__main__ import parser
+    from pytemlib_mcp.analysis_server import environment
+    from pytemlib_mcp.analysis_server.__main__ import parser
 
     server = parser(environment.get())
     defaults = server.parse_args([])
@@ -529,7 +529,7 @@ def test_run_pytemlib_defaults_and_settings_match_the_server_parser():
 def test_run_pytemlib_starts_only_the_analysis_server_and_refuses_the_old_workflow_keys(tmp_path):
     # Workflows run in the agent MCP server only (run_llm.py, agent.workflows).
     command = run_pytemlib.build_command(pytemlib_config(local_runs="outputs/maps"))
-    assert "pyTEMlib.analysis_server" in command and not [a for a in command if "workflows" in a]
+    assert "pytemlib_mcp.analysis_server" in command and not [a for a in command if "workflows" in a]
     path = tmp_path / "p.yaml"
     path.write_text("pytemlib: {workflows: true}", encoding="utf-8")
     with pytest.raises(run_pytemlib.ConfigError, match="unknown key"):

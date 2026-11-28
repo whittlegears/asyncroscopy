@@ -85,7 +85,6 @@ class Settings:
     mapper: str | None
     microscope: str | None
     poll_s: float
-    analysis_wait_s: float
     claim_check: bool
     auto_promote_after: int
     learn_skills: bool  # a goal run that met its goal drafts a learned skill
@@ -141,7 +140,6 @@ class Settings:
             mapper=env.get("ASYNCROSCOPY_MAPPER") or None,
             microscope=env.get("ASYNCROSCOPY_MICROSCOPE") or None,
             poll_s=_number(env, "ASYNCROSCOPY_POLL_S", 1.0, float),
-            analysis_wait_s=_number(env, "ASYNCROSCOPY_ANALYSIS_WAIT_S", 3600.0, float),
             claim_check=_flag(env.get("ASYNCROSCOPY_CLAIM_CHECK"), True),
             auto_promote_after=_number(env, "ASYNCROSCOPY_AUTO_PROMOTE_AFTER", 0, int),
             learn_skills=_flag(env.get("ASYNCROSCOPY_LEARN_SKILLS"), False),

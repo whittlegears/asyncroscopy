@@ -22,8 +22,8 @@ def call(proxy, verb, payload):
 
 
 def test_stitched_map_matches_ground_truth(mapper_proxy, mapping_twin_proxy):
-    from pyTEMlib.analysis_server.map_store import MapStore
-    from pyTEMlib.analysis_server.map_tools import MapTools
+    from pytemlib_mcp.analysis_server.map_store import MapStore
+    from pytemlib_mcp.analysis_server.map_tools import MapTools
 
     mapping_twin_proxy.unblank_beam()
     mapping_twin_proxy.set_defocus(0.0)

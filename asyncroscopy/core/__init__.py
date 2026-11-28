@@ -1,5 +1,6 @@
 """Dependency-free plumbing every other package may use: file locks and sequenced appends
-(``fileio``), bind-address rules (``net``) and the shared names (``names``).
+(``fileio``), bind-address rules (``net``), the shared names (``names``) and the one way to stitch and score a
+map on the analysis server (``map_analysis``).
 
 The layering rule: ``core`` imports nothing from asyncroscopy; ``contracts``, ``trace``, ``data``,
 ``safety`` and ``sim`` import only ``core`` and each other; ``instruments`` and ``jobs`` sit above

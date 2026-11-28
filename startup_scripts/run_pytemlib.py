@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Start the pyTEMlib analysis MCP server (pyTEMlib.analysis_server: stitching, scoring, placements, notes) from an explicit YAML config."""
+"""Start the pyTEMlib analysis MCP server (pytemlib_mcp.analysis_server: stitching, scoring, placements, notes) from an explicit YAML config."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
 # stdio is left out because it only works when the client starts the server itself.
 TRANSPORTS = ('streamable-http', 'sse')
 # The host and port below must match the server's own defaults.
-SERVER_MODULE = 'pyTEMlib.analysis_server'
+SERVER_MODULE = 'pytemlib_mcp.analysis_server'
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8003
 API_KEY_VARIABLE = 'ASYNCROSCOPY_TILED_API_KEY'  # the server reads the key from this variable

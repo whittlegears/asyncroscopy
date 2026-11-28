@@ -78,7 +78,7 @@ if (-not $uv) {
     $agent = $analysis = $null
     if ($ready) {   # if the servers stopped, read the lines above and fix that first
         $agent = Start-Process $uv 'run','startup_scripts/run_mcp.py','--yaml','configs/mcp_dt.yaml' -RedirectStandardOutput mcp_dt.log -RedirectStandardError mcp_dt.err -WindowStyle Hidden -PassThru
-        $analysis = Start-Process $uv 'run','python','-m','pyTEMlib.analysis_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput analysis.log -RedirectStandardError analysis.err -WindowStyle Hidden -PassThru
+        $analysis = Start-Process $uv 'run','python','-m','pytemlib_mcp.analysis_server','--tiled','http://localhost:9091','--api-key','secret','--port','8003' -RedirectStandardOutput analysis.log -RedirectStandardError analysis.err -WindowStyle Hidden -PassThru
         Start-Sleep 20
         foreach ($s in @(@($agent, 'mcp_dt.err'), @($analysis, 'analysis.err'))) {
             if (-not $s[0] -or $s[0].HasExited) { "$($s[1]) says the server stopped (or did not start):"; Get-Content -Encoding utf8 $s[1] -Tail 10 -ErrorAction SilentlyContinue }
@@ -93,7 +93,7 @@ On Linux or macOS, the same in the background from bash (each server in its own 
 setsid uv run startup_scripts/run_servers.py --yaml configs/digital_twin_mapping.yaml > servers.log 2> servers.err & echo $! > servers.pid
 until grep -q 'Leave this terminal open' servers.log; do sleep 1; done          # about a minute
 setsid uv run startup_scripts/run_mcp.py --yaml configs/mcp_dt.yaml > mcp_dt.log 2> mcp_dt.err & echo $! > mcp_dt.pid
-setsid uv run python -m pyTEMlib.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003 > analysis.log 2> analysis.err & echo $! > analysis.pid
+setsid uv run python -m pytemlib_mcp.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003 > analysis.log 2> analysis.err & echo $! > analysis.pid
 ```
 
 Stop them with `for f in servers mcp_dt analysis; do kill -TERM -- -$(cat $f.pid); done`, and check with `ss -ltn | grep -E ':(8000|8001|8003|9091|9094) '` (no output means all stopped). A launcher that died without stopping its servers leaves them running; `pkill -f 'startup_scripts/run_(servers|mcp)\.py|pyTEMlib\.(mcp|analysis)_server|-m asyncroscopy\.'` stops every asyncroscopy stack on the machine.

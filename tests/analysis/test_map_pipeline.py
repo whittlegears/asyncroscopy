@@ -31,8 +31,8 @@ class ToolService:
     def __init__(self, handler, pipeline=None):
         self.handler, self.pipeline = handler, pipeline
 
-    def __getattr__(self, tool):
-        return lambda **arguments: self.handler(self.pipeline, tool, arguments)
+    def call(self, tool, arguments):
+        return self.handler(self.pipeline, tool, arguments)
 
     def close(self):
         pass
@@ -42,8 +42,8 @@ class InProcessAnalysis:
     """the analysis server's map tools behind the same calls the Mapper makes to the analysis server."""
 
     def __init__(self, roots):
-        from pyTEMlib.analysis_server.map_store import MapStore
-        from pyTEMlib.analysis_server.map_tools import MapTools
+        from pytemlib_mcp.analysis_server.map_store import MapStore
+        from pytemlib_mcp.analysis_server.map_tools import MapTools
 
         self.tools = MapTools(MapStore(local_roots=roots))
         self.calls = []

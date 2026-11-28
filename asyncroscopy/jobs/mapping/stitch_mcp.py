@@ -71,7 +71,7 @@ class AnalysisSession:
 
 @register_stitch_service
 class McpStitchService:
-    """Each operation is the tool of the same name on the analysis server at ``url``, over one session."""
+    """Calls the tools of the analysis server at ``url`` over one session."""
 
     name = "mcp"
 
@@ -79,36 +79,8 @@ class McpStitchService:
         self.url = url
         self._session = AnalysisSession(url)
 
-    def assemble_map(self, run: str, stage_sigma_m: float, max_drift_m_per_s: float, eds_pois: bool) -> dict:
-        return self._session.call("assemble_map", {"run": run, "stage_sigma_m": stage_sigma_m, "max_drift_m_per_s": max_drift_m_per_s, "eds_pois": eds_pois})
-
-    def score_map(self, map: str, top_k: int, tag: str) -> dict:
-        return self._session.call("score_map", {"map": map, "top_k": top_k, "tag": tag})
-
-    def analysis_job_status(self, job_id: str, wait_s: float) -> dict:
-        return self._session.call("analysis_job_status", {"job_id": job_id, "wait_s": wait_s})
-
-    def analysis_job_results(self, job_id: str) -> dict:
-        return self._session.call("analysis_job_results", {"job_id": job_id})
-
-    def analysis_job_abort(self, job_id: str) -> dict:
-        return self._session.call("analysis_job_abort", {"job_id": job_id})
-
-    def map_info(self, map: str) -> dict:
-        return self._session.call("map_info", {"map": map})
-
-    def list_pois(self, map: str, kind: str, limit: int) -> dict:
-        return self._session.call("list_pois", {"map": map, "kind": kind, "limit": limit})
-
-    def add_poi(self, map: str, x_m: float, y_m: float, kind: str, reason: str, links: list[str], id: str) -> dict:
-        return self._session.call("add_poi", {"map": map, "x_m": x_m, "y_m": y_m, "kind": kind, "reason": reason, "links": links, "id": id})
-
-    def find_features(self, image: str, n: int, min_size_m: float | None = None, max_size_m: float | None = None) -> dict:
-        extras = {k: v for k, v in (("min_size_m", min_size_m), ("max_size_m", max_size_m)) if v is not None}
-        return self._session.call("find_features", {"image": image, "n": n, **extras})
-
-    def place_image(self, image: str, parent: str, centre_xy_m: list[float], window_m: float) -> dict:
-        return self._session.call("place_image", {"image": image, "parent": parent, "centre_xy_m": centre_xy_m, "window_m": window_m})
+    def call(self, tool: str, arguments: dict) -> dict:
+        return self._session.call(tool, arguments)
 
     def close(self) -> None:
         self._session.close()

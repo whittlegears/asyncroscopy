@@ -19,7 +19,7 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 | Instrument profiles | `asyncroscopy/jobs/mapping/profile.py` | What differs between instruments: `stem` (default; optional EDS at each tile, dose budget), `sem`, `spm` (an SPMMicroscope, the tip lifted for every move), `yaml` (any YAML twin with an image, e.g. the AFM), or your own. See [Map any instrument](../Adding_New_Hardware/new_instrument.md#map-any-instrument). |
 | Routines | `asyncroscopy/routines/grid.py`, `dose.py`, `drift.py` | The pure arithmetic: tile grids, electron dose, the stitch's drift at a time, live drift trackers. |
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with the analysis server's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
-| Map tools | pyTEMlib's `pyTEMlib/analysis_server/` (algorithms: pyTEMlib `image_tools`) | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
+| Map tools | pyTEMlib's `pytemlib_mcp.analysis_server` (`pytemlib_mcp/src/pytemlib_mcp/analysis_server/`) (algorithms: pyTEMlib `image_tools`) | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
 | Graphs | `asyncroscopy/agents/graphs/` | `mapping`: the model only writes the plan. `general`: the model makes every call, using the `mapping` skill. |
 | Skill | `agent/skills/mapping/SKILL.md` | The procedure agents load before mapping. |
 
@@ -95,7 +95,7 @@ Then stitch with the analysis server (`assemble_map`), or in Python with `pyTEMl
 
 ## Exploring a map
 
-`score_map` ranks regions with a scorer and adds the best as points of interest with a reason and the scorer's version. The `baseline` scorer looks for contrast and sharp edges. Add your own (a trained model, rules, an LLM judge) by implementing `score(region, metadata) -> (value, reason)` and registering the class (with `name`, `version` and `description`) under the `asyncroscopy.scorers` entry point, or with `@SCORERS.register` (`from pyTEMlib.analysis_server.map_tools import SCORERS`) in a module `ASYNCROSCOPY_PLUGINS` names; see pyTEMlib's `pyTEMlib/analysis_server/map_tools.py`.
+`score_map` ranks regions with a scorer and adds the best as points of interest with a reason and the scorer's version. The `baseline` scorer looks for contrast and sharp edges. Add your own (a trained model, rules, an LLM judge) by implementing `score(region, metadata) -> (value, reason)` and registering the class (with `name`, `version` and `description`) under the `asyncroscopy.scorers` entry point, or with `@SCORERS.register` (`from pytemlib_mcp.analysis_server.map_tools import SCORERS`) in a module `ASYNCROSCOPY_PLUGINS` names; see pyTEMlib's `pytemlib_mcp/src/pytemlib_mcp/analysis_server/map_tools.py`.
 
 ## Testing a workflow on the twin before the instrument
 

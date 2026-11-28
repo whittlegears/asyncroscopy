@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from asyncroscopy.jobs.mapping import pipeline as pipeline_module
+from asyncroscopy.core import map_analysis
 from asyncroscopy.jobs.mapping.mapper import Mapper
 from asyncroscopy.jobs.mapping.pipeline import Pipeline
 from tests.analysis.test_map_pipeline import ToolService
@@ -51,7 +51,7 @@ def analysis(monkeypatch):
     holder = Analysis()
     monkeypatch.setattr(Mapper, "analysis_url", "in-process")
     monkeypatch.setattr(Pipeline, "service", lambda self: ToolService(holder, self))
-    monkeypatch.setattr(pipeline_module, "ANALYSIS_BACKOFF_S", (0.05, 0.05))
+    monkeypatch.setattr(map_analysis, "ANALYSIS_BACKOFF_S", (0.05, 0.05))
     return holder
 
 
@@ -136,7 +136,7 @@ def test_an_analysis_server_that_forgets_the_job_ends_the_stitch_with_a_clear_er
 
 
 def test_a_stitch_whose_progress_stops_fails_after_the_stall_limit(mapper_proxy, analysis, monkeypatch):
-    monkeypatch.setattr(pipeline_module, "STITCH_STALL_S", 2.0)
+    monkeypatch.setattr(map_analysis, "STITCH_STALL_S", 2.0)
     analysis.before["analysis_job_status"] = lambda arguments: (time.sleep(0.2), {"schema_version": "1.1.0", "job_id": arguments["job_id"], "state": "running", "progress": {"done": 1, "total": 1000}})[1]
     reserved, started = start(mapper_proxy, PLAN)
     assert wait(mapper_proxy, started["job_id"])["state"] == "done"
@@ -146,7 +146,7 @@ def test_a_stitch_whose_progress_stops_fails_after_the_stall_limit(mapper_proxy,
 
 
 def test_a_stitch_still_making_progress_is_waited_for_past_the_stall_limit(mapper_proxy, analysis, monkeypatch):
-    monkeypatch.setattr(pipeline_module, "STITCH_STALL_S", 2.0)
+    monkeypatch.setattr(map_analysis, "STITCH_STALL_S", 2.0)
     polls = iter(range(1, 9))
 
     def advancing(arguments):
@@ -232,7 +232,7 @@ def free_port() -> int:
 def test_the_pipeline_over_the_real_mcp_wire_format(mapper_proxy, mapping_twin_proxy, tmp_path_factory, monkeypatch):
     import uvicorn
 
-    from pyTEMlib.analysis_server import create_server
+    from pytemlib_mcp.analysis_server import create_server
 
     # The run file is under the test's temporary folders, so let this server read that drive.
     mcp, _tools = create_server(include_basic=False, local_roots=[Path(Path.cwd().anchor)])

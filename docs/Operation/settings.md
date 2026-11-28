@@ -37,7 +37,6 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_MAPPER` | Which Mapper the mapping graph uses, by tool prefix | the only one |
 | `ASYNCROSCOPY_MICROSCOPE` | Which microscope the mapping graph uses, by tool prefix | the only one |
 | `ASYNCROSCOPY_POLL_S` | Mapping graph's poll interval, seconds | `1.0` |
-| `ASYNCROSCOPY_ANALYSIS_WAIT_S` | Mapping graph's wait for stitching and scoring, seconds | `3600` |
 | `ASYNCROSCOPY_CLAIM_CHECK` | `0`, `false`, `no` or `off` turns off checking final answers against tool calls | on |
 | `ASYNCROSCOPY_LEARN_SKILLS` | `1`, `true`, `yes` or `on`: a goal run that met its goal drafts a learned skill from its calls (a draft until promoted). Off, goal runs still write their experiment page and lessons | off |
 | `ASYNCROSCOPY_AUTO_PROMOTE_AFTER` | Successful uses after which a learned skill promotes itself; `0` never | `0` |
