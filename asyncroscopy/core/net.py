@@ -10,6 +10,7 @@ than ``localhost`` counts as remote, the safe answer.
 from __future__ import annotations
 
 import ipaddress
+import socket
 
 LOOPBACK_FALLBACK = "127.0.0.1"
 WILDCARD_HOSTS = frozenset({"0.0.0.0", "::", ""})  # bind addresses that mean every interface, reached locally on loopback
@@ -46,3 +47,24 @@ def bind_host(requested: str, allow_remote_bind: bool, simulated: bool) -> tuple
         "(or its devices could not say). Binding 127.0.0.1 instead; to accept other machines on real hardware, "
         "set mcp.allow_remote_bind: true in the MCP config."
     )
+
+
+def check_port_free(host: str, port: int) -> str | None:
+    """An error string if (host, port) cannot be bound, else None: a previous MCP server may still hold the port."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.bind((host, port))
+    except OSError as exc:
+        return str(exc)
+    finally:
+        probe.close()
+    return None
+
+
+def report_busy_port(host: str, port: int, server_kind: str) -> bool:
+    """Print the "MCP ERROR:" line the startup GUIs parse and return True when (host, port) is taken."""
+    bind_error = check_port_free(host, port)
+    if bind_error:
+        print(f"MCP ERROR: http://{host}:{port} is already in use - another {server_kind} is likely still running "
+              f"with a different config. Stop it or choose a different port. ({bind_error})", flush=True)
+    return bool(bind_error)
