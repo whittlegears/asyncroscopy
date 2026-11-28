@@ -162,6 +162,14 @@ def _operator_port(mcp: dict, path) -> int | None:
     return port
 
 
+def _beside_config(path: Path, value) -> str:
+    """A path a config names, relative to the config's own directory, so endpoints started from anywhere agree."""
+    if not value:
+        return ''
+    named = Path(str(value)).expanduser()
+    return str(named if named.is_absolute() else (path.resolve().parent / named).resolve())
+
+
 def load_config(path: Path) -> Config:
     if not path.exists():
         raise FileNotFoundError(f'Config file not found: {path}')
@@ -203,7 +211,7 @@ def load_config(path: Path) -> Config:
             trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
             urls=endpoint_urls(mcp.get('urls'), f'{path}: mcp.urls'),
-            permissions_file=str(mcp.get('permissions_file') or ''),
+            permissions_file=_beside_config(path, mcp.get('permissions_file')),
             approval_ttl_s=float(mcp.get('approval_ttl_s') or default_approval_ttl_s),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,

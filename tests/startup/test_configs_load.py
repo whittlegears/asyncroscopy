@@ -98,3 +98,22 @@ def test_an_operator_port_is_refused_where_it_cannot_work(tmp_path):
     for path in (same, on_operator):
         with pytest.raises(ValueError, match="operator_port"):
             run_mcp.load_config(path)
+
+
+def test_one_stacks_endpoints_share_one_permissions_file_from_any_directory(tmp_path, monkeypatch):
+    run_mcp = _launcher("run_mcp")
+    shared = (ROOT / "outputs" / "permissions" / "permissions.json").resolve()
+    found = set()
+    for where in (ROOT, tmp_path):
+        monkeypatch.chdir(where)
+        for name in ("mcp_dt.yaml", "mcp_operator.yaml", "mcp.yaml", "mcp_raman.yaml", "mcp_raman_operator.yaml"):
+            config = run_mcp.load_config(ROOT / "configs" / name)
+            found.add(config.mcp.permissions_file)
+            operator = run_mcp.operator_config(config)
+            if operator is not None:
+                found.add(operator.permissions_file)
+    assert found == {str(shared)}
+    elsewhere = tmp_path / "stack" / "agent.yaml"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text(MINIMAL_MCP + "  permissions_file: state/permissions.json\n", encoding="utf-8")
+    assert run_mcp.load_config(elsewhere).mcp.permissions_file == str((tmp_path / "stack" / "state" / "permissions.json").resolve())

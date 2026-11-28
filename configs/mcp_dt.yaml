@@ -35,7 +35,7 @@ mcp:
     # meet there. Until first light's sign test settles the CEOS correction's sign and units, a person approves each write.
     CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
-  permissions_file: outputs/permissions/permissions.json
+  permissions_file: ../outputs/permissions/permissions.json
   approval_ttl_s: 600
   # Optional Tango command allowlist. Leave empty to include every command. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.

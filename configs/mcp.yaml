@@ -35,7 +35,7 @@ mcp:
     # hardware's allow_corrector_writes still decides whether the corrector takes one at all.
     CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
-  permissions_file: outputs/permissions/permissions.json
+  permissions_file: ../outputs/permissions/permissions.json
   approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""

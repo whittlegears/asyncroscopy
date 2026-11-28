@@ -21,7 +21,7 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  permissions_file: outputs/permissions/permissions.json
+  permissions_file: ../outputs/permissions/permissions.json
   approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""

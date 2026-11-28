@@ -20,7 +20,9 @@ releases a held call on the operator endpoint. An app only shows the held call a
   list. The agent and operator endpoints are separate processes, so the operator endpoint reads both from there.
 - **The default path** is `$ASYNCROSCOPY_PERMISSIONS_FILE`, else `outputs/permissions/permissions.json`, when
   `mcp.permissions_file` is not set (the same pattern as the dose ledger), so tests and a second stack can keep
-  their own.
+  their own. A relative `mcp.permissions_file` is read from the directory of the config that names it, not from
+  the directory a server was started in, so the shipped configs name `../outputs/permissions/permissions.json`
+  and every endpoint of a stack finds the same file wherever it was started.
 - **A workflow resumes when asked.** A run waiting on a held call stays `waiting` until `resume_workflow` is
   called after the approval; nothing polls the operator endpoint.
 - **Init, Kill and RestartServer stay hidden** on every endpoint, as before; `Disconnect` is listed on the
@@ -65,7 +67,7 @@ mcp:
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
     CEOSCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct, correct_aberration, measure_aberrations, measure_c1a1, acquire_tableau]
-  permissions_file: outputs/permissions/permissions.json
+  permissions_file: ../outputs/permissions/permissions.json   # relative to this config's directory
   approval_ttl_s: 600        # how long a held call waits, and how long an approval waits for its call
   urls:                      # the stack's other endpoints, reported in endpoint_info; leave out what does not run
     operator: http://127.0.0.1:8001/mcp
@@ -98,7 +100,9 @@ again: its plan was approved when it was submitted. `allow_corrector_writes` is 
 `needs_approval` replaced `blocked_functions`, and `urls.analysis` replaced `analysis_url`; `run_mcp.py`
 refuses a config that still has either. Keep `permissions_file` outside every directory Tiled serves, and give
 the agent and operator endpoints of one stack the same file (an operator endpoint started with
-`mcp.operator_port` gets the agent endpoint's). The file is keyed by `stack_id`, so stacks can share it.
+`mcp.operator_port` gets the agent endpoint's). The file is keyed by `stack_id`, so stacks can share it. The
+agent MCP server (`run_llm.py`) does not read the file: its `query_agent` and workflows reach the instrument only
+through the agent endpoint, whose gate holds their calls.
 
 The agent MCP server (`run_llm.py`) takes the same `urls` under `agent:`.
 
