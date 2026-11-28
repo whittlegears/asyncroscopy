@@ -20,6 +20,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
+from asyncroscopy.core.names import endpoint_urls  # noqa: E402
 from asyncroscopy.core.net import is_loopback_host  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
@@ -44,6 +45,7 @@ SETTINGS = [
     Setting('agent.http_host', required=True, section='Agent MCP server', label='HTTP host'),
     Setting('agent.http_port', 'int', required=True, section='Agent MCP server', label='HTTP port'),
     Setting('agent.mcp_urls', 'list', [], section='Agent MCP server', label='Tool MCP URLs'),
+    Setting('agent.urls', 'yaml', {}, section='Agent MCP server', label='Endpoint URLs'),
     Setting('agent.allowed_hosts', 'list', [], section='Agent MCP server', label='Allowed hosts',
             help='Names besides the HTTP host and localhost that requests may give as Host or Origin, such as a proxy\'s.'),
     Setting('agent.model', default='gemma4:31b', section='Model'),
@@ -83,6 +85,7 @@ class AgentConfig:
     workflows_hardware: bool = False
     endpoint_role: str = "agent"
     allowed_hosts: list[str] = field(default_factory=list)
+    urls: dict[str, str | None] = field(default_factory=endpoint_urls)
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,10 @@ def load_config(path: Path) -> Config:
     elif values['agent.endpoint_role'] == 'operator' and not is_loopback_host(str(values['agent.http_host'] or '')):
         problems.append('agent.endpoint_role operator needs agent.http_host 127.0.0.1: it approves workflows for the real instrument '
                         'and has no login')
+    try:
+        urls = endpoint_urls(values['agent.urls'], 'agent.urls')
+    except ValueError as exc:
+        problems.append(str(exc))
     startup_agents = values['agent.startup_agents'] or []
     if not isinstance(startup_agents, list) or not all(isinstance(e, dict) and e.get('name') for e in startup_agents):
         problems.append('agent.startup_agents must be a list of agents, each with a name')
@@ -137,6 +144,7 @@ def load_config(path: Path) -> Config:
             workflows_hardware=bool(values['agent.workflows_hardware']),
             endpoint_role=str(values['agent.endpoint_role']),
             allowed_hosts=[str(host) for host in values['agent.allowed_hosts'] or []],
+            urls=urls,
         ),
     )
 
@@ -175,6 +183,8 @@ def build_command(config: Config) -> list[str]:
         command.append('--use-init-chat-model')
     if agent.allowed_hosts:
         command += ['--allowed-hosts-json', json.dumps(agent.allowed_hosts)]
+    if any(agent.urls.values()):
+        command += ['--urls-json', json.dumps(agent.urls)]
     if agent.workflows_hardware:
         command.append('--workflows-hardware')
     elif not agent.workflows:

@@ -19,7 +19,7 @@ from typing import Any
 
 from asyncroscopy.core.names import DATA_KEY_IN_TEXT
 
-from asyncroscopy.agents.mcp_tools import McpServer, result_text
+from asyncroscopy.agents.mcp_tools import McpServer, held_for_approval, result_text
 
 TYPES = {"number": (int, float), "integer": (int,), "string": (str,), "boolean": (bool,), "list": (list,), "object": (dict,), "any": (object,)}
 
@@ -162,16 +162,18 @@ class BlockContext:
     """What a block is given to work with. It holds the two endpoints, the stop switch and the budget.
 
     ``on_ask`` is called with a question for a person and returns their answer. Without it a block that asks fails.
-    The runner raises a LangGraph interrupt in it, so the run waits there.
+    ``on_hold`` is called with a call the endpoint holds for a person's approval. Without it that call fails the block.
+    The runner raises a LangGraph interrupt in both, so the run waits there.
     """
 
     def __init__(
         self, instrument: McpServer, analysis: McpServer | None = None, *, stop_file: Path | None = None,
         max_tool_calls: int | None = None, deadline: float | None = None,
-        on_ask: Callable[[dict], Any] | None = None,
+        on_ask: Callable[[dict], Any] | None = None, on_hold: Callable[[dict], Any] | None = None,
     ) -> None:
         self.instrument, self.analysis = instrument, analysis
         self.stop_file, self.max_tool_calls, self.deadline, self.on_ask = stop_file, max_tool_calls, deadline, on_ask
+        self.on_hold = on_hold
         self.calls: list[dict] = []
         # Settings a block could not put back. The run record lists them for the operator.
         self.unrestored: list[dict] = []
@@ -245,9 +247,10 @@ class BlockContext:
             self.check()
         name = await self.resolve(pattern, server)
         while True:
+            held = None
             try:
                 result = await server.call(name, arguments or {})
-                text, error = result_text(result), bool(result.is_error)
+                text, error, held = result_text(result), bool(result.is_error), held_for_approval(result)
             except Exception as exc:
                 text, error = f"{type(exc).__name__}: {exc}", True
                 if undelivered(exc):
@@ -256,6 +259,11 @@ class BlockContext:
             self.calls.append({"tool": name, "args": dict(arguments or {}), "result": text[:200], "error": error})
             if not (error or text.startswith("Error")):
                 return parse_reply(text)
+            if held is not None:
+                if not checked or self.on_hold is None:
+                    raise BlockFailed(f"{name} is waiting for a person to approve it (request {held.get('request_id')}), and this run cannot wait")
+                self.on_hold(held)
+                continue
             # The microscope's own scan (its live view) blocks every acquisition. A person can stop it: the run
             # asks them, waits, and tries the call again; it fails only when they choose to stop.
             if checked and self.on_ask is not None and LIVE_SCAN.search(text):
@@ -279,5 +287,5 @@ class BlockContext:
     async def analyse(self, name: str, arguments: dict | None = None) -> Any:
         """Call a tool of the analysis server."""
         if self.analysis is None:
-            raise BlockFailed(f"{name} needs an analysis server, and this endpoint names none (mcp.analysis_url)")
+            raise BlockFailed(f"{name} needs an analysis server, and this endpoint names none (mcp.urls.analysis)")
         return await self._send(self.analysis, name, arguments, checked=True)

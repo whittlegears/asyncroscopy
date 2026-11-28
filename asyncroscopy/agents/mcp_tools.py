@@ -65,6 +65,35 @@ _COLLECTED: ContextVar[list | None] = ContextVar("collected_tool_images", defaul
 MAX_COLLECTED = 8  # an answer carries at most the latest this many
 
 
+_held_calls: ContextVar[list | None] = ContextVar("held_tool_calls", default=None)
+
+
+def held_for_approval(result: CallToolResult) -> dict | None:
+    """The held call when an endpoint answered ``approval_required`` (docs/MCP/permissions.md), else None."""
+    structured = getattr(result, "structured_content", None)
+    if bool(getattr(result, "is_error", False)) and isinstance(structured, dict) and structured.get("status") == "approval_required":
+        return dict(structured)
+    return None
+
+
+@contextmanager
+def collect_held() -> Iterator[list[dict]]:
+    """Collect, into the list it yields, every call an endpoint held for a person's approval inside this block, once each."""
+    bucket: list[dict] = []
+    token = _held_calls.set(bucket)
+    try:
+        yield bucket
+    finally:
+        _held_calls.reset(token)
+
+
+def held_summary(held: list[dict]) -> str:
+    """What query_agent tells its caller about the calls waiting for a person."""
+    lines = [f"- {h.get('tool')} {json.dumps(h.get('arguments') or {}, sort_keys=True)} (request {h.get('request_id')}, until {h.get('expires_at')})"
+             for h in held]
+    return "Waiting for a person to approve:\n" + "\n".join(lines)
+
+
 @contextmanager
 def collect_images() -> Iterator[list[dict]]:
     """Collect, into the list it yields, the images every McpServer call returns inside this block, each
@@ -130,6 +159,10 @@ class McpServer:
         bucket = _COLLECTED.get()
         if bucket is not None:
             bucket.extend({"tool": name, **image} for image in result_images(result))
+        held = held_for_approval(result)
+        waiting = _held_calls.get()
+        if held is not None and waiting is not None and all(h.get("request_id") != held.get("request_id") for h in waiting):
+            waiting.append(held)
         return result
 
     async def call_text(self, name: str, arguments: dict[str, Any] | None = None) -> str:
@@ -158,6 +191,10 @@ class McpServer:
         async def run(**kwargs) -> tuple[Any, dict | None]:
             # The server replies with facts. render adds sentences saying what to do, or puts them in place of the facts.
             result = await server.call(name, kwargs)
+            held = held_for_approval(result)
+            if held is not None:
+                raise ToolException(f"{name} is held until a person approves it (request {held.get('request_id')}). Do not call it "
+                                    "again and do not work around it: tell the user it is waiting for their approval, and stop.")
             if result.is_error:
                 raise ToolException(render(name, kwargs, result_text(result), error=True, replies=server.replies))
             text = render(name, kwargs, result_text(result), replies=server.replies)

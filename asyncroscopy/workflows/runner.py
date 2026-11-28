@@ -18,8 +18,11 @@ The runner adds these to a bare graph.
   block left to run. A run that only reads or analyses does not queue.
 - **Questions wait.** A block that asks a person stops the run as ``waiting``. Continue it with
   ``resume_workflow(run_id, answers={question id: answer})``.
+- **Held calls wait.** A call the endpoint holds for a person's approval (``approval_required``) stops the run as
+  ``waiting``, with the held call in ``approvals``. Once a person approves it, ``resume_workflow(run_id)`` sends it
+  again, and it runs.
 
-Questions are LangGraph interrupts, so nothing stays open while the run waits and the wait survives
+Questions and held calls are LangGraph interrupts, so nothing stays open while the run waits and the wait survives
 a restart.
 
 Not covered here are a hook into the endpoint's e-stop, a watchdog that blanks the beam if the runner dies, and a
@@ -180,6 +183,7 @@ def stop_workflow(run_id: str, state_dir: str | Path = DEFAULT_STATE_DIR) -> dic
     _stop_path(Path(state_dir), run_id).write_text(str(time.time()), encoding="utf-8")
     if record.get("state") == "waiting":
         record.pop("questions", None)
+        record.pop("approvals", None)
         record.update(state="stopped", error="stopped by the operator while it waited for an answer", ended=time.time())
         _record_path(Path(state_dir), run_id).write_text(json.dumps(record, indent=1, default=str), encoding="utf-8")
         return record
@@ -243,7 +247,7 @@ async def run_workflow(
     checked = workflow.lint(offered, offered_analysis, switched_off=off)
     record["problems"] = list(checked["problems"])
     if needs_analysis and analysis is None:
-        record["problems"].append("this workflow needs an analysis server, and none is configured (mcp.analysis_url)")
+        record["problems"].append("this workflow needs an analysis server, and none is configured (mcp.urls.analysis)")
     if input_problem:
         record["problems"].append(input_problem)
     if record["problems"]:
@@ -259,7 +263,7 @@ def check_answers(record: dict, answers: dict | None) -> dict:
     """
     answers = dict(answers or {})
     questions = {str(q.get("id")): q for q in record.get("questions") or []}
-    if record.get("state") == "waiting" and not answers:
+    if record.get("state") == "waiting" and not answers and not record.get("approvals"):
         asked = "; ".join(f"{q.get('question')} (id {i})" for i, q in questions.items())
         raise ValueError(f"run {record.get('run_id')} is waiting for a person's answer: {asked}")
     checked = {}
@@ -320,6 +324,7 @@ async def _drive(record: dict, workflow: Workflow, state_dir: Path, instrument: 
         max_tool_calls=int(max_calls) - record["calls_before"] if max_calls else None,
         deadline=began + float(budget["max_seconds"]) - record["seconds_before"] if budget.get("max_seconds") else None,
         on_ask=lambda question: interrupt({"ask": question}),
+        on_hold=lambda held: interrupt({"approval": held}),
     )
     config = {"configurable": {"thread_id": run_id}, "recursion_limit": recursion_limit(blueprint)}
     used = [all_blocks()[b["block"]] for b in blueprint["nodes"].values()]
@@ -428,6 +433,17 @@ def tools_called(before: dict, calls: list[dict]) -> dict:
     return out
 
 
+def _held(snapshot: Any) -> list[dict]:
+    """The calls a stopped graph is waiting on a person's approval of, each with its interrupt id."""
+    held = []
+    for task in snapshot.tasks:
+        for item in task.interrupts:
+            value = item.value if isinstance(item.value, dict) else {}
+            if isinstance(value.get("approval"), dict):
+                held.append({"id": item.id, "node": task.name, **value["approval"]})
+    return held
+
+
 def _pending(snapshot: Any) -> list[dict]:
     """The questions a stopped graph is waiting on a person for, each with its interrupt id."""
     questions = []
@@ -454,12 +470,13 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             # Each waiting node is resumed by its own id. A question with no answer yet keeps waiting.
             answered = [q for q in questions if q["id"] in answers]
             resume = {q["id"]: answers[q["id"]] for q in answered}
+            resume.update({h["id"]: h["request_id"] for h in _held(snapshot)})
             first = Command(resume=resume) if resume else None
             if answers:
                 record["answered"] = [*(record.get("answered") or []),
                                       *({"node": q["node"], "question": q.get("question"), "answer": answers[q["id"]], "at": time.time()}
                                         for q in answered)]
-        save(state="running", durable=is_durable, ended=None, error=None, questions=None, unrestored=None)
+        save(state="running", durable=is_durable, ended=None, error=None, questions=None, approvals=None, unrestored=None)
         state, error = "done", None
         try:
             # Settings the run had changed were put back when it ended early. Set them again before it continues.
@@ -475,7 +492,8 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
             state, error = "failed", f"{type(exc).__name__}: {exc}"
         snapshot = await graph.aget_state(config)
         questions = _pending(snapshot)
-        if state == "done" and questions:
+        held = _held(snapshot)
+        if state == "done" and (questions or held):
             state = "waiting"
         # A run that gave the instrument back early cleaned up then, while it was still its own: a blank now would
         # land in the middle of the next run's tile.
@@ -489,7 +507,7 @@ async def _drive_checked(record: dict, workflow: Workflow, state_dir: Path, ctx:
                 except Exception as exc:
                     ctx.unrestored.append({"tool": restore["tool"], "arguments": dict(restore["arguments"]), "error": str(exc)[:300]})
         values = snapshot.values or {}
-        save(state=state, error=error, questions=questions or None, ended=time.time(), outputs=values.get("outputs", {}),
+        save(state=state, error=error, questions=questions or None, approvals=held or None, ended=time.time(), outputs=values.get("outputs", {}),
              visits=values.get("visits", {}), at_node=list(snapshot.next), cleanup=cleanup, unrestored=list(ctx.unrestored) or None,
              restores=(dict(ctx.restores) or None) if state != "done" else None)
     record.pop("calls_before", None)
