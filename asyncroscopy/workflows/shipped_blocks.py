@@ -253,10 +253,32 @@ async def _collect_run(ctx: BlockContext, args: dict, previous: dict | None) -> 
     request = {"image_keys": list(args["keys"]), "plan": dict(args.get("plan") or {})}
     if args.get("stage_xy_m") and args.get("fov_m"):  # used to place images that record no position
         request.update(stage_xy_m=[list(xy) for xy in args["stage_xy_m"]], fov_m=float(args["fov_m"]))
+    spectra = _spectra_by_tile(request["image_keys"], args.get("spectrum_keys") or [], args.get("spectrum_tiles") or [])
+    if any(spectra):
+        if not args.get("spectra_at"):
+            raise BlockFailed("spectrum_keys needs spectra_at, where on each tile the spectra were taken")
+        request.update(spectrum_keys=spectra, spectra_at=_numbers(args["spectra_at"], 2, "spectra_at")[:2])
     reply = await ctx.analyse("collect_map_run", request)
     if not isinstance(reply, dict) or "run" not in reply:
         raise BlockFailed(f"collect_map_run gave no run: {str(reply)[:300]}")
-    return {"run": reply["run"], "tiles": int(reply.get("tiles", len(args["keys"]))), "note": str(reply.get("note") or "")}
+    return {"run": reply["run"], "tiles": int(reply.get("tiles", len(args["keys"]))), "spectra": int(reply.get("spectra") or 0),
+            "note": str(reply.get("note") or "")}
+
+
+def _spectra_by_tile(image_keys: list, spectrum_keys: list, spectrum_tiles: list) -> list[str]:
+    """One entry per image: the key of the spectrum taken on it, "" for none. Spectra on tiles of another run are left out."""
+    if len(spectrum_keys) != len(spectrum_tiles):
+        raise BlockFailed(f"spectrum_keys has {len(spectrum_keys)} keys for {len(spectrum_tiles)} tiles in spectrum_tiles; give the tile of each")
+    position = {str(key): k for k, key in enumerate(image_keys)}
+    out = [""] * len(image_keys)
+    for spectrum, tile in zip(spectrum_keys, spectrum_tiles):
+        k = position.get(str(tile))
+        if not spectrum or k is None:
+            continue
+        if out[k]:
+            raise BlockFailed(f"tile {tile} has two spectra, {out[k]} and {spectrum}; a run keeps one per tile")
+        out[k] = str(spectrum)
+    return out
 
 
 register_block(Block(
@@ -266,8 +288,11 @@ register_block(Block(
     inputs={"keys": {"type": "list", "doc": "The tiles' data keys (acquire_tile's keys)."},
             "plan": {"type": "object", "default": None, "doc": "Facts to keep with the run (size, field of view)."},
             "stage_xy_m": {"type": "list", "default": None, "doc": "Where the stage was for each tile (acquire_tile's stage_xy_m): places tiles that record no position."},
-            "fov_m": {"type": "number", "default": None, "doc": "Field of view of every tile, metres; needed with stage_xy_m."}},
-    outputs={"run": "string", "tiles": "integer", "note": "string"},
+            "fov_m": {"type": "number", "default": None, "doc": "Field of view of every tile, metres; needed with stage_xy_m."},
+            "spectrum_keys": {"type": "list", "default": None, "doc": "Keys of EDS point spectra taken on the tiles (spectrum_here's keys); the map marks each where it was taken."},
+            "spectrum_tiles": {"type": "list", "default": None, "doc": "The tile each of spectrum_keys was taken on (spectrum_here's at)."},
+            "spectra_at": {"type": "list", "default": None, "doc": "Where on each tile the spectra were taken: [x, y] fractions, x from the left, y from the top."}},
+    outputs={"run": "string", "tiles": "integer", "spectra": "integer", "note": "string"},
     analysis_tools=("collect_map_run",),
 ))
 

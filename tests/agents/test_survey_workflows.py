@@ -6,9 +6,14 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from fastmcp import Client
+from tiled.client import from_uri
+from tiled.server import SimpleTiledServer
 
 from asyncroscopy.workflows import get_workflow
 from asyncroscopy.workflows.runner import resume_workflow, run_workflow
+from pytemlib_mcp.analysis_server import create_server
+from pytemlib_mcp.analysis_server.map_store import pixel_to_stage
 from pytemlib_mcp.analysis_server.map_tools import MapTools
 
 from test_workflows import run, twin
@@ -109,6 +114,12 @@ def test_the_sample_map_asks_first_then_maps_every_level_with_spectra_on_the_way
     assert all(s["args"] == {"detector_name": "eds"} for s in state["eds"])
     assert record["outputs"]["eds"]["keys"] == ["spectrum_eds_0001.h5", "spectrum_eds_0002.h5", "spectrum_eds_0003.h5"]
     assert all(place.startswith("stem_image_HAADF_") for place in record["outputs"]["eds"]["at"])
+    # Each level's run names the spectra taken on its tiles, one entry per image, so its map marks them.
+    eds = record["outputs"]["eds"]
+    assert "spectrum_keys" not in gathered[0]
+    by_tile = dict(zip(eds["at"], eds["keys"]))
+    assert gathered[1]["spectrum_keys"] == [by_tile.get(key, "") for key in gathered[1]["image_keys"]]
+    assert sum(1 for key in gathered[1]["spectrum_keys"] if key) == 3 and gathered[1]["spectra_at"] == [0.5, 0.5]
     assert ("Twin_place_beam", {"position": [0.5, 0.5]}) in instrument.log
     # The instrument is left as it was found.
     assert state["stage"] == [1e-6, 2e-6, 0.0, 0.0, 0.0] and state["shift"] == [0.0, 0.0] and state["fov"] == 5.8e-9 and state["blanked"]
@@ -160,3 +171,68 @@ def test_a_spectrum_due_at_a_tile_that_needed_a_bridge_is_taken_on_that_tile_not
     third_tile, bridge = at_image[2], at_image[3]
     assert third_tile != bridge
     assert state["eds"][0]["shift"] == third_tile
+
+
+class AnalysisServer:
+    """The real analysis server (pyTEMlib's FastMCP app) reached in memory, the way a workflow reaches it over HTTP."""
+
+    def __init__(self, mcp):
+        self.mcp, self.log = mcp, []
+
+    async def list_tools(self):
+        async with Client(self.mcp) as client:
+            return await client.list_tools()
+
+    async def call(self, name, arguments=None):
+        self.log.append((name, dict(arguments or {})))
+        async with Client(self.mcp) as client:
+            return await client.call_tool(name, dict(arguments or {}), raise_on_error=False)
+
+
+@pytest.fixture
+def tiled(tmp_path):
+    try:
+        server = SimpleTiledServer(directory=tmp_path / "tiled")
+    except Exception as exc:
+        print(f"skipping: a local Tiled server could not start ({exc!r})")
+        pytest.skip(f"a local Tiled server could not start: {exc!r}")
+    yield server
+    server.close()
+
+
+def test_a_sample_map_with_eds_gives_its_stitched_map_an_eds_point_where_each_spectrum_was_taken(tmp_path, tiled):
+    client = from_uri(tiled.uri)
+    instrument, _fake, state, _checks = survey_twin()
+    acquire = instrument.tools["Twin_acquire_scanned_image"]
+    rng = np.random.default_rng(7)
+
+    def acquire_and_store(args):
+        reply = acquire(args)
+        client.create_container(reply.split("\n")[0]).create_container("image").write_array(
+            rng.integers(0, 1000, (64, 64)).astype(np.uint16), key="HAADF")
+        return reply
+
+    instrument.tools["Twin_acquire_scanned_image"] = acquire_and_store
+    mcp, tools = create_server(tiled_uri=tiled.uri, include_basic=False)
+    analysis = AnalysisServer(mcp)
+    inputs = {"size_m": 2.0e-6, "fov_m": 1.0e-6, "spectra_every": 2, "eds": True, "spectra_at": [0.25, 0.75], "check": False}
+    record = run(run_workflow("map_sample", inputs, instrument=instrument, analysis=analysis, state_dir=tmp_path / "runs"))
+    assert record["state"] == "done", record
+
+    eds = record["outputs"]["eds"]
+    taken = [key for key in eds["keys"] if key]
+    assert len(taken) >= 2
+    assert len(taken) == len(record["outputs"]["tile"]["keys"]) // 2 and record["outputs"]["run"]["spectra"] == len(taken)
+    key = record["outputs"]["stitch"]["map"]
+    assert record["outputs"]["stitch"]["summary"]["eds_pois"] == len(taken)
+    assert "eds_point" in [k["kind"] for k in tools.map_info(key)["poi_kinds"]]
+
+    meta = tools.store.map_metadata(key)
+    inverse = np.linalg.inv(np.asarray(meta["scan_linear_applied"]))
+    images = record["outputs"]["tile"]["keys"]
+    points = {p["links"][0]: p for p in tools.list_pois(key, kind="eds_point")["pois"]}
+    assert sorted(points) == sorted(taken)
+    for spectrum, tile in zip(eds["keys"], eds["at"]):
+        row, col = np.asarray(meta["tile_positions_px"][images.index(tile)]) + (64 - 1) / 2 + inverse @ [(0.75 - 0.5) * 64, (0.25 - 0.5) * 64]
+        assert (points[spectrum]["x_m"], points[spectrum]["y_m"]) == pytest.approx(pixel_to_stage(meta, row, col), abs=1e-11)
+    assert ("Twin_place_beam", {"position": [0.25, 0.75]}) in instrument.log
