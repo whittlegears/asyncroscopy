@@ -49,4 +49,10 @@ mcp:
       - set_column_valves
       - unblank_beam
   approvals_db: outputs/approvals.sqlite
+  # Settings that are Tango attributes, which MCP cannot otherwise reach, offered
+  # through read_attribute / write_attribute (by Tango class).
+  attributes:
+    SCAN: [dwell_time, imsize, scan_region, output_format]
+    CAMERA: [exposure_time, imsize, readout_area, camera_detector, frame_combining, output_format]
+    EDS: [exposure_time]
   role: operator

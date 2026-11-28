@@ -150,6 +150,24 @@ def test_corrections_are_split_to_the_corrector_max_step(tango_ctx, monkeypatch,
     assert _coefficient(limited_twin, "A1") == pytest.approx([a - o for a, o in zip(A1_START, report["offset_m"])], abs=1e-15)
 
 
+def test_c1_climb_stays_inside_the_total_limit_since_the_tableau(tango_ctx, monkeypatch, limited_corrector_proxy):
+    """The limited twin allows 25 nm of C1 corrections in total between tableaus, undoing included."""
+    _reset(limited_corrector_proxy, {"C1": [C1_START]})
+    try:
+        server = _server(tango_ctx, monkeypatch, "asyncroscopy/corrector/limited")
+        request = {"name": "C1", "step_m": 8e-9, "max_offset_m": 30e-9, "max_iterations": 10}
+        step, pauses, log = _run(server, limited_corrector_proxy, lambda pause: True, request)
+        report = step["state"]["report"]
+        assert pauses[0]["plan"]["corrector_max_total_m"] == 25e-9
+        assert report["status"] == "done" and report["errors"] == []  # nothing refused
+        assert "max_total_since_tableau" in (report["stop_reason"] or "")
+        sent = sum(abs(float(c.split()[1])) for c in _corrections(log))
+        assert sent <= 25e-9 * (1 + 1e-9)
+        assert _coefficient(limited_corrector_proxy, "C1")[0] == pytest.approx(C1_START - report["offset_m"][0], abs=1e-15)
+    finally:
+        _reset(limited_corrector_proxy)
+
+
 def test_bad_requests_are_refused_before_any_correction(tango_ctx, monkeypatch, twin):
     server = _server(tango_ctx, monkeypatch, "asyncroscopy/corrector/default")
     step, pauses, log = _run(server, twin, lambda pause: True, {"name": "C3"})

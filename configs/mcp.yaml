@@ -36,3 +36,7 @@ mcp:
   # operator endpoint (role: operator) with the same approvals_db.
   # needs_approval: {"*": [move_stage, acquire_map_grid, correct_aberration, set_column_valves, unblank_beam]}
   # approvals_db: outputs/approvals.sqlite
+  # Settings that are Tango attributes (scan and camera settings), offered through
+  # read_attribute / write_attribute by Tango class. Uncomment to let agents and
+  # workflows set them; see configs/mcp_dt.yaml.
+  # attributes: {SCAN: [dwell_time, imsize, scan_region, output_format], CAMERA: [exposure_time, imsize, readout_area, camera_detector, frame_combining, output_format], EDS: [exposure_time]}

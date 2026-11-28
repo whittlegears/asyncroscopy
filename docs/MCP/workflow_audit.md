@@ -87,15 +87,34 @@ The long-running branch already has graphs built this way under
   scan turn that isn't there. The sample-map workflow works around it by passing
   the identity `scan_linear` for calibrated grids under 25 tiles.
   - A fix is on a local branch of the pyTEMlib fork (`fix/scan-linear-small-grids`,
-    commit `05a7694`, worktree `../pyTEMlib-scan-linear`), not pushed.
-  - It still breaks one existing pyTEMlib test, the drift recovery on sparse
-    texture: its lattice guard refuses good matches there.
-- **Attributes.** Scan and camera settings are Tango attributes that MCP cannot
-  reach, so an operator sets them before a workflow runs. Making them commands,
-  as the long-running branch does, would let workflows set them.
-- **Not run on a microscope.** Everything here is tested on the digital twins
-  and offline only: the Tiled path of `collect_map_run`, the approvals and the
-  workflows.
+    commits `05a7694` and `4fd2ad3`, worktree `../pyTEMlib-scan-linear`), not
+    pushed. Small lattice maps no longer get the false turn.
+  - One existing pyTEMlib test, drift recovery on sparse texture, still misses
+    its limit by 0.04 px (1.53 px against 1.49). Sparse texture can show several
+    near-equal side peaks, so telling it apart from a lattice needs a proper
+    periodicity test.
+- **Not run on a microscope or with Gemma.** Everything here is tested on the
+  digital twins and offline only.
+  - Structured routing has not been tried with the local Gemma model; Ollama is
+    not installed on this machine.
+  - The approvals and the workflows have not run against the real instrument.
 - **Recursion limit.** `WorkflowRunner` has a limit of 100 graph steps. The
   workflows cap their rounds to stay under it (correction 15, climbs 60, tilt
   series 90).
+
+## Closed in the last round
+
+- **Corrector total limit.** The aberration climb checks
+  `max_total_since_tableau` before every move: it moves only when the move and
+  the way back to the start both fit. Otherwise it stops normally, and goes back
+  to the start if the best point is out of reach. Test:
+  `test_c1_climb_stays_inside_the_total_limit_since_the_tableau`.
+- **Settings that are attributes.** `read_attribute` and `write_attribute` on
+  the bridge reach Tango attributes listed under `mcp.attributes`, such as scan
+  and camera settings. A write can be held for approval as `write_<attribute>`.
+  On for the twin; commented out in `configs/mcp.yaml`. Test:
+  `tests/test_mcp_attributes.py`.
+- **The Tiled path.** The sample-map workflow runs against a real in-process
+  Tiled server: tiles go into Tiled, `collect_map_run` gathers them, and
+  pyTEMlib stitches from Tiled. Test:
+  `test_full_run_through_tiled_uses_collect_map_run`.

@@ -115,6 +115,10 @@ def plan_request(request: AberrationRequest, limits: Optional[dict] = None, read
     }
 
 
+class OutOfCorrectionBudget(ToolCallError):
+    """The next move would leave too little of max_total_since_tableau to undo the climb."""
+
+
 def correction_text(name: str, values) -> str:
     return " ".join([name, *[f"{float(v):.12g}" for v in values]])
 
@@ -139,12 +143,39 @@ def build_graph(tools, checkpointer=None, prefer: tuple[str, ...] = (), read_ima
             for i, v in enumerate(piece):
                 applied[i] += v
 
+    async def remaining_budget(plan: dict) -> Optional[float]:
+        """How much more correction the corrector accepts before the next tableau, or None if it has no total limit."""
+        if plan.get("corrector_max_total_m") is None or not box.has("get_correction_limits"):
+            return None
+        limits = await box.call("get_correction_limits")
+        used = float(((limits or {}).get("applied_since_tableau") or {}).get(plan["name"], 0.0))
+        return float(plan["corrector_max_total_m"]) - used
+
+    async def check_budget(plan: dict, applied: list, target) -> None:
+        """Refuse a move unless the move and the way back to the start both fit in what is left of the total limit.
+
+        The corrector counts every correction's size towards max_total_since_tableau,
+        undoing included; once it is used up, even the undo is refused until a new
+        tableau. Keeping the way back in reserve means a failure can always be undone.
+        """
+        left = await remaining_budget(plan)
+        if left is None:
+            return
+        cost = math.hypot(*[t - a for t, a in zip(target, applied)]) + math.hypot(*target)
+        if cost > left * (1 - 1e-9) + 1e-15:
+            raise OutOfCorrectionBudget(
+                "aberration_climb",
+                f"{plan['name']}: the move and the way back need {cost:.3g} m but only {left:.3g} m of "
+                "max_total_since_tableau is left; acquire a tableau to continue",
+            )
+
     def check_limit(plan: dict, target) -> None:
         if math.hypot(*target) > plan["max_offset_m"] * (1 + LIMIT_TOLERANCE):
             raise ToolCallError("aberration_climb", f"{plan['name']} offset {list(target)} m is beyond max_offset_m {plan['max_offset_m']:.6g} m")
 
     async def measure(plan: dict, applied: list, score, target, trial: str) -> dict:
         check_limit(plan, target)
+        await check_budget(plan, applied, target)
         await apply(plan, applied, [t - a for t, a in zip(target, applied)])
         key = await box.call("acquire_scanned_image", detector_list=plan["detectors"])
         return {"trial": trial, "offset_m": [float(v) for v in applied], "score": await score(key), "key": key}
@@ -186,6 +217,11 @@ def build_graph(tools, checkpointer=None, prefer: tuple[str, ...] = (), read_ima
             history.append(await measure(p, applied, score, [0.0] * p["components"], "baseline"))
             for index, point in enumerate(maths.initial_offsets(p["step_m"], p["components"])):
                 history.append(await measure(p, applied, score, point, f"initial {index}"))
+        except OutOfCorrectionBudget as exc:
+            if len(history) < 2:
+                return failed(exc, history=history, applied_m=applied)
+            return {"history": history, "applied_m": applied, "trust_radius_m": p["step_m"], "iteration": 0,
+                    "status": "converged", "stop_reason": str(exc)}
         except ToolCallError as exc:
             return failed(exc, history=history, applied_m=applied)
         return {"history": history, "applied_m": applied, "trust_radius_m": p["step_m"], "iteration": 0, "status": "explored"}
@@ -202,6 +238,8 @@ def build_graph(tools, checkpointer=None, prefer: tuple[str, ...] = (), read_ima
             return {"status": "converged", "stop_reason": "no unmeasured offset inside the trust radius and limit"}
         try:
             entry = await measure(p, applied, scorer(p), [float(v) for v in proposal], f"model {iteration}")
+        except OutOfCorrectionBudget as exc:
+            return {"status": "converged", "stop_reason": str(exc)}
         except ToolCallError as exc:
             return failed(exc, history=history, applied_m=applied)
         history.append(entry)
@@ -218,6 +256,14 @@ def build_graph(tools, checkpointer=None, prefer: tuple[str, ...] = (), read_ima
         best = max(state["history"], key=lambda h: h["score"])
         try:
             check_limit(p, best["offset_m"])
+            left = await remaining_budget(p)
+            to_best = math.hypot(*[b - a for b, a in zip(best["offset_m"], applied)])
+            if left is not None and to_best > left * (1 - 1e-9) + 1e-15:
+                # Not enough left to reach the best point: go back to the start, which was kept in reserve.
+                await apply(p, applied, [-a for a in applied])
+                return {"applied_m": applied, "status": "done",
+                        "stop_reason": f"{state.get('stop_reason') or ''}; too little max_total_since_tableau left "
+                                       "to move to the best point, so the start was restored".lstrip("; ")}
             await apply(p, applied, [b - a for b, a in zip(best["offset_m"], applied)])
         except ToolCallError as exc:
             return failed(exc, applied_m=applied)

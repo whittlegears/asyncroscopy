@@ -88,6 +88,7 @@ class MCPServer:
         needs_approval: dict[str, list[str]] | None = None,
         approvals_db: str | None = None,
         role: str = "agent",
+        attributes: dict[str, list[str]] | None = None,
     ):
         """
         Args:
@@ -108,6 +109,10 @@ class MCPServer:
                 Required when needs_approval is set.
             role: "agent" (held commands wait) or "operator" (a person's endpoint: commands run,
                 and list_pending / approve_call / deny_call are offered).
+            attributes: Tango attributes, keyed by Tango class, that read_attribute and
+                write_attribute may touch (for example SCAN: [dwell_time, imsize]). Settings
+                such as these are attributes, which are otherwise not reachable over MCP.
+                A write is held for approval when needs_approval lists "write_<attribute>".
         """
         self.database = Database(tango_host, tango_port)
         self.mcp = FastMCP(name)
@@ -132,6 +137,9 @@ class MCPServer:
         self.approvals = ApprovalStore(approvals_db) if approvals_db else None
         # tool name -> run(arguments) for the raw command, used when an operator approves a held call
         self._runners: dict[str, Callable[[dict], Any]] = {}
+        self.attributes = {key: list(value) for key, value in (attributes or {}).items()}
+        self._devices_by_class: dict[str, list[str]] = {}
+        self._runners["write_attribute"] = lambda arguments: self._write_attribute(**arguments)
 
     def _is_blocked_class(self, class_name: str) -> bool:
         """Return True when a Tango class should be filtered out."""
@@ -669,6 +677,7 @@ class MCPServer:
 
             if self._is_blocked_class(dev_class):
                 continue
+            self._devices_by_class.setdefault(dev_class, []).append(device_name)
 
             try:
                 commands = dev.command_list_query()
@@ -704,6 +713,54 @@ class MCPServer:
                     tools[dev_class] = {}
                 tools[dev_class][command_name] = (func, cmd)
         return tools
+
+    # ------------------------------------------------------------------ attributes
+
+    def _attribute_device(self, device_class: str, attribute: str, device: str = "") -> str:
+        """The device holding an allowed attribute; refuses anything not listed in ``attributes``."""
+        allowed = self.attributes.get(device_class, [])
+        if attribute not in allowed:
+            offered = {cls: names for cls, names in self.attributes.items() if names}
+            raise ValueError(f"{device_class}.{attribute} is not offered; offered attributes: {offered}")
+        devices = self._devices_by_class.get(device_class, [])
+        if device:
+            if device not in devices:
+                raise ValueError(f"{device!r} is not a {device_class} device; known: {devices}")
+            return device
+        if len(devices) != 1:
+            raise ValueError(f"Name the device: {device_class} has {len(devices)} devices: {devices}")
+        return devices[0]
+
+    def read_attribute(self, device_class: str, attribute: str, device: str = "") -> Any:
+        """Read an instrument setting that is a Tango attribute, e.g. SCAN dwell_time (seconds) or imsize (pixels).
+
+        Only attributes listed for the class in the server's config are offered. ``device`` is needed only
+        when the class has more than one device.
+        """
+        name = self._attribute_device(device_class, attribute, device)
+        proxy = DeviceProxy(name)
+        proxy.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+        return self._numpy_to_python(proxy.read_attribute(attribute).value)
+
+    def write_attribute(self, device_class: str, attribute: str, value: Any, device: str = "") -> Any:
+        """Change an instrument setting that is a Tango attribute, e.g. SCAN dwell_time = 2e-6; returns the value read back.
+
+        Only attributes listed for the class in the server's config are offered. On the agent endpoint a
+        write listed under needs_approval as "write_<attribute>" waits for an operator.
+        """
+        arguments = {"device_class": device_class, "attribute": attribute, "value": self._numpy_to_python(value), "device": device}
+        self._attribute_device(device_class, attribute, device)  # refuse unlisted attributes before holding
+        if self.role == "agent" and self.approvals is not None and needs_approval(self.needs_approval, device_class, f"write_{attribute}"):
+            call_id = self.approvals.hold("write_attribute", arguments)
+            raise RuntimeError(held_message(call_id, f"write_attribute {device_class}.{attribute}"))
+        return self._write_attribute(**arguments)
+
+    def _write_attribute(self, device_class: str, attribute: str, value: Any, device: str = "") -> Any:
+        name = self._attribute_device(device_class, attribute, device)
+        proxy = DeviceProxy(name)
+        proxy.set_timeout_millis(COMMAND_TIMEOUT_MILLIS)
+        proxy.write_attribute(attribute, value)
+        return self._numpy_to_python(proxy.read_attribute(attribute).value)
 
     # ------------------------------------------------------------------ approvals
 
@@ -756,6 +813,8 @@ class MCPServer:
                     print(f"    - {command_name}")
 
         native_tools = [self.get_data_from_key, self.list_devices]
+        if any(self.attributes.values()):
+            native_tools += [self.read_attribute, self.write_attribute]
         if self.approvals is not None:
             native_tools.append(self.call_status)
             if self.role == "operator":
@@ -830,6 +889,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--needs-approval-json", default="{}", help="Command patterns (by class or *) an agent's call waits on.")
     parser.add_argument("--approvals-db", default="", help="SQLite file of held calls, shared with the operator endpoint.")
     parser.add_argument("--role", default="agent", choices=("agent", "operator"))
+    parser.add_argument("--attributes-json", default="{}", help="Tango attributes, by class, that read/write_attribute may touch.")
     return parser.parse_args(argv)
 
 
@@ -878,6 +938,7 @@ def main(argv: list[str] | None = None) -> int:
         needs_approval=json.loads(args.needs_approval_json),
         approvals_db=args.approvals_db or None,
         role=args.role,
+        attributes=json.loads(args.attributes_json),
     )
     if args.transport == "streamable-http":
         print(

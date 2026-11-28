@@ -211,3 +211,65 @@ def test_small_calibrated_grids_get_the_identity_scan_linear():
     assert sample_map.assemble_arguments({}, {"tiles": [{}] * 9}) == {}  # no calibration: let pyTEMlib measure
     assert sample_map.assemble_arguments({"stage_sigma_m": 1e-10, "scan_linear": [[1, 0.01], [0, 1]]}, calibrated) == {
         "stage_sigma_m": 1e-10, "scan_linear": [[1.0, 0.01], [0.0, 1.0]]}
+
+
+class TiledInstrument(FakeInstrument):
+    """The same grid, saved as Tiled arrays instead of local files (what the DATA device does on a microscope)."""
+
+    def __init__(self, folder, client):
+        super().__init__(folder)
+        self.client = client
+
+    def tools(self):
+        tools = super().tools()
+        local_acquire = tools["DigitalTwin_acquire_map_grid"]
+
+        async def DigitalTwin_acquire_map_grid(spec):
+            manifest = json.loads(await local_acquire(spec))
+            for tile in manifest["tiles"]:
+                with h5py.File(tile["key"], "r") as h5:
+                    image = h5["image/HAADF"][()]
+                key = f"haadf_{tile['row']}{tile['col']}"
+                self.client.write_array(image, key=key, metadata={"detector": "HAADF"})
+                tile["key"] = key
+            return json.dumps(manifest)
+
+        tools["DigitalTwin_acquire_map_grid"] = DigitalTwin_acquire_map_grid
+        return tools
+
+
+def test_full_run_through_tiled_uses_collect_map_run(tmp_path):
+    """The production path: tiles in Tiled, collect_map_run gathers them, pyTEMlib stitches from Tiled."""
+    tiled_server = pytest.importorskip("tiled.server")
+    from tiled.client import from_uri
+
+    server = tiled_server.SimpleTiledServer(directory=tmp_path / "tiled", api_key="secret")
+    try:
+        uri = server.uri.split("?")[0]  # the server's uri carries the api key as a query; pass it once
+        client = from_uri(uri, api_key="secret")
+        instrument = TiledInstrument(_mkdir(tmp_path / "acq"), client)
+        mcp, _tools = create_server(tiled_uri=uri, api_key="secret", annotations_path=str(tmp_path / "notes.jsonl"))
+
+        async def run():
+            async with Client(mcp) as mcp_client:
+                names = [t.name for t in await mcp_client.list_tools()]
+                tools = {**_analysis_tools(mcp_client, names), **instrument.tools()}
+                assert sample_map.missing_tools(tools) == []  # collect_map_run is there
+                runner = WorkflowRunner()
+                runner.register("sample_map", lambda cp: sample_map.build_graph(tools, checkpointer=cp))
+                step = await runner.start("sample_map", {"request": {"rows": 3, "cols": 3, "overlap": 0.2, "top_k": 4, "shortlist_size": 2}})
+                answers = _answer_all()
+                while step["waiting_for"] is not None:
+                    step = await runner.resume(step["thread_id"], answers(step["waiting_for"]))
+                return step
+
+        step = asyncio.run(run())
+        report = step["state"]["report"]
+        assert report["status"] == "done", report["errors"]
+        assert not report["run"].endswith(".h5")  # a Tiled key, not a local file
+        stitch = report["stitch"]
+        assert stitch["tiles"] == 9 and stitch["unplaced_tiles"] == []
+        assert stitch["matches_used"] == stitch["matches_found"] >= 12
+        assert stitch["median_residual_px"] < 0.5
+    finally:
+        server.close()

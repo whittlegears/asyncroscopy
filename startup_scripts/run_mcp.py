@@ -39,6 +39,7 @@ SETTINGS = [
     Setting('mcp.needs_approval', 'yaml', {}),  # commands an agent's call waits on, by class or "*"
     Setting('mcp.approvals_db'),  # SQLite file of held calls, shared with the operator endpoint
     Setting('mcp.role', default='agent', choices=('agent', 'operator')),
+    Setting('mcp.attributes', 'yaml', {}),  # Tango attributes, by class, that read/write_attribute may touch
 ]
 
 
@@ -62,6 +63,7 @@ class MCPConfig:
     needs_approval: dict[str, list[str]] = field(default_factory=dict)
     approvals_db: str = ''
     role: str = 'agent'
+    attributes: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,9 @@ def load_config(path: Path) -> Config:
     needs_approval = values['mcp.needs_approval'] or {}
     if not isinstance(needs_approval, dict) or not all(isinstance(names, list) for names in needs_approval.values()):
         raise ConfigError(['mcp.needs_approval must map a class (or "*") to a list of command patterns'])
+    attributes = values['mcp.attributes'] or {}
+    if not isinstance(attributes, dict) or not all(isinstance(names, list) for names in attributes.values()):
+        raise ConfigError(['mcp.attributes must map a Tango class to a list of attribute names'])
     if any(needs_approval.values()) and not values['mcp.approvals_db']:
         raise ConfigError(['mcp.needs_approval needs mcp.approvals_db, the file where held calls wait'])
     return Config(
@@ -107,6 +112,7 @@ def load_config(path: Path) -> Config:
             needs_approval={key: [str(name) for name in names] for key, names in needs_approval.items()},
             approvals_db=values['mcp.approvals_db'] or '',
             role=values['mcp.role'] or 'agent',
+            attributes={key: [str(name) for name in names] for key, names in attributes.items()},
         ),
     )
 
@@ -149,6 +155,8 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--approvals-db', config.mcp.approvals_db])
     if config.mcp.role != 'agent':
         command.extend(['--role', config.mcp.role])
+    if config.mcp.attributes:
+        command.extend(['--attributes-json', json.dumps(config.mcp.attributes)])
     return command
 
 
