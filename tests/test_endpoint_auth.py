@@ -475,3 +475,81 @@ def test_outputs_is_gitignored():
     ignored = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert "outputs/" in ignored
     assert dev_tokens.DEFAULT_DIR.relative_to(ROOT).parts[0] == "outputs"
+
+
+# ---------------------------------------------------------------------- the agent server
+@pytest.fixture(scope="module")
+def agent_stack(keys):
+    """The agent MCP server with agent.auth, its swarm's model replaced so no Ollama call is made."""
+    from unittest.mock import MagicMock
+
+    from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer
+
+    server = AgentMCPServer(name="agent-auth-test", mcp_urls=[], startup_agents=[], verbose=False, auth=keys["auth"])
+    server.swarm._model = MagicMock()
+    server.setup()
+    live = LiveServer(server)
+    try:
+        yield live.url
+    finally:
+        live.stop()
+
+
+def test_the_agent_server_refuses_a_request_without_a_token(agent_stack):
+    assert http_status(agent_stack) == 401
+
+
+def test_a_read_token_lists_agents_but_cannot_run_or_change_them(agent_stack, keys):
+    reader = token(keys, "reader", "instrument:read")
+    assert tools(agent_stack, reader) == {"list_agents", "list_agent_tools"}
+    is_error, _ = call(agent_stack, reader, "list_agents")
+    assert not is_error
+    is_error, text = call(agent_stack, reader, "set_max_steps", {"max_steps": 3})
+    assert is_error and "needs the operate role" in text
+
+
+def test_an_operate_token_reaches_every_agent_tool(agent_stack, keys):
+    operator = token(keys, "operator", "instrument:operate")
+    assert tools(agent_stack, operator) == {"query_agent", "spawn_agent", "list_agents", "list_agent_tools", "complete", "set_max_steps"}
+    is_error, text = call(agent_stack, operator, "set_max_steps", {"max_steps": 3})
+    assert not is_error and text == "3"
+
+
+def test_agent_remote_without_auth_rule(keys):
+    from asyncroscopy.mcp.endpoint_auth import agent_remote_without_auth
+
+    assert agent_remote_without_auth("127.0.0.1", None) is None
+    assert agent_remote_without_auth("localhost", None) is None
+    assert agent_remote_without_auth("0.0.0.0", keys["auth"]) is None
+    assert "no token check" in agent_remote_without_auth("0.0.0.0", None)
+
+
+def test_agent_server_main_refuses_a_remote_bind_without_auth(capsys):
+    from asyncroscopy.mcp import agent_mcp_server
+
+    code = agent_mcp_server.main(["--name", "a", "--transport", "streamable-http", "--http-host", "0.0.0.0", "--http-port", "1"])
+    assert code == 1
+    assert capsys.readouterr().out.startswith("MCP ERROR: the agent MCP endpoint would bind '0.0.0.0'")
+
+
+def test_run_llm_passes_agent_auth_and_refuses_a_remote_bind_without_it(tmp_path, keys, capsys):
+    run_llm = _script("run_llm")
+    base = {"name": "a", "transport": "streamable-http", "http_port": 8002}
+    remote = tmp_path / "remote.yaml"
+    remote.write_text(json.dumps({"agent": {**base, "http_host": "0.0.0.0"}}), encoding="utf-8")
+    assert run_llm.main(["--yaml", str(remote)]) == 1
+    assert "no token check" in capsys.readouterr().err
+
+    with_auth = tmp_path / "auth.yaml"
+    with_auth.write_text(json.dumps({"agent": {**base, "http_host": "0.0.0.0", "auth": keys["auth"]}}), encoding="utf-8")
+    command = run_llm.build_command(run_llm.load_config(with_auth))
+    passed = json.loads(command[command.index("--auth-json") + 1])
+    assert passed["audience"] == "scope-1" and passed["public_key_file"] == keys["auth"]["public_key_file"]
+
+
+@pytest.mark.parametrize("config", ["gemma-llm.yaml", "qwen-llm.yaml"])
+def test_the_shipped_agent_configs_bind_loopback(config):
+    import yaml
+
+    host = yaml.safe_load((ROOT / "configs" / config).read_text(encoding="utf-8"))["agent"]["http_host"]
+    assert host == "127.0.0.1"

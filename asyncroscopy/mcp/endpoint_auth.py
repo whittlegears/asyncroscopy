@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from asyncroscopy.core.net import is_loopback_host
 
@@ -54,6 +54,9 @@ DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
 }
 # Approvals commands whose "who" names the person deciding; with auth it is the token's subject.
 DECIDING_COMMANDS = frozenset({"approve", "deny", "set_mode", "set_auto_allowed"})
+# Agent-server tools that only report; every other agent tool runs the model or the agents, which can
+# drive the instruments, so it needs the operate role.
+AGENT_READ_TOOLS = frozenset({"list_agents", "list_agent_tools"})
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,22 @@ def remote_without_auth(bound_host: str, simulated: bool, auth: AuthSettings | d
     )
 
 
+def agent_remote_without_auth(bound_host: str, auth: AuthSettings | dict | None) -> str | None:
+    """Why the agent server must not start: reachable from other machines with no token check. Its agents
+    reach the instruments through their MCP endpoints, so the stack being simulated does not make it safe."""
+    if auth or is_loopback(bound_host):
+        return None
+    return (
+        f"the agent MCP endpoint would bind {bound_host!r}, reachable from other machines, with no token check, "
+        "and its agents can drive the instruments. Set agent.auth (the same section as mcp.auth; "
+        "docs/Operation/remote_access.md), or keep http_host at 127.0.0.1."
+    )
+
+
+def agent_tool_role(name: str) -> str:
+    return "read" if name in AGENT_READ_TOOLS else "operate"
+
+
 # ---------------------------------------------------------------------- FastMCP wiring
 def _verifier(settings: AuthSettings):
     from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -204,24 +223,37 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
     settings = raw if isinstance(raw, AuthSettings) else AuthSettings.from_config(raw)
     if settings is None:
         return None
+    from asyncroscopy.safety.decide import required_role
+
+    server.may_call = _gate(server.mcp, settings, lambda name: required_role(server.descriptors.get(name)))
+    return settings
+
+
+def attach_agent(mcp: Any, raw: AuthSettings | dict | None) -> AuthSettings | None:
+    """The same token check on the agent server, with each tool's role from ``agent_tool_role``."""
+    settings = raw if isinstance(raw, AuthSettings) else AuthSettings.from_config(raw)
+    if settings is None:
+        return None
+    _gate(mcp, settings, agent_tool_role)
+    return settings
+
+
+def _gate(mcp: Any, settings: AuthSettings, needs: Callable[[str], str]) -> Callable[[str], bool]:
+    """Verify bearer tokens on ``mcp`` and refuse a tool whose role, ``needs(name)``, the token lacks.
+
+    HTTP requests without a valid token never reach the gate (FastMCP answers 401); a call with no token
+    at all (an in-memory client) is refused by it, so the gate fails closed on every transport.
+    Returns ``may_call(name)`` for the current request's token.
+    """
     from fastmcp.exceptions import ToolError
     from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 
-    from asyncroscopy.safety.decide import required_role
-
     class RoleGate(Middleware):
-        """Refuses a tool call whose token lacks the tool's role, and lists only the tools a token may call.
-
-        HTTP requests without a valid token never get here (FastMCP answers 401); a call with no token
-        at all (an in-memory client) is refused here, so the gate fails closed on every transport.
-        """
+        """Refuses a tool call whose token lacks the tool's role, and lists only the tools a token may call."""
 
         def _roles(self) -> tuple[Any, set[str]]:
             token = current_token()
             return token, (settings.roles_of(token.claims) if token is not None else set())
-
-        def _needs(self, name: str) -> str:
-            return required_role(server.descriptors.get(name))
 
         async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> Any:
             token, roles = self._roles()
@@ -232,7 +264,7 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
             if name == "call_tool":  # call_tool runs another tool: the token needs that tool's role too
                 names.append(str((context.message.arguments or {}).get("name", "")))
             for checked in names:
-                need = self._needs(checked)
+                need = needs(checked)
                 if need not in roles:
                     scopes = ", ".join(settings.roles[need]) or "(none configured)"
                     raise ToolError(f"{checked} refused: it needs the {need} role (scope {scopes}); the token of {token_subject()!r} grants {sorted(roles) or 'no role'}")
@@ -241,13 +273,12 @@ def attach(server: MCPServer, raw: AuthSettings | dict | None) -> AuthSettings |
         async def on_list_tools(self, context: MiddlewareContext, call_next: CallNext) -> list:
             tools = await call_next(context)
             _token, roles = self._roles()
-            return [t for t in tools if self._needs(t.name) in roles]
+            return [t for t in tools if needs(t.name) in roles]
 
     def may_call(name: str) -> bool:
         token = current_token()
-        return token is not None and required_role(server.descriptors.get(name)) in settings.roles_of(token.claims)
+        return token is not None and needs(name) in settings.roles_of(token.claims)
 
-    server.mcp.auth = _verifier(settings)
-    server.mcp.add_middleware(RoleGate())
-    server.may_call = may_call
-    return settings
+    mcp.auth = _verifier(settings)
+    mcp.add_middleware(RoleGate())
+    return may_call

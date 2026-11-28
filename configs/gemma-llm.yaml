@@ -3,7 +3,7 @@
 agent:
   name: Asyncroscopy_Agent_MCP
   transport: streamable-http
-  http_host: 0.0.0.0
+  http_host: 127.0.0.1
   http_port: 8002
   model: "gemma4:31b"
   model_provider: "ollama"

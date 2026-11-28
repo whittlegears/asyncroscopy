@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Literal
 from fastmcp import FastMCP
 
 from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
+from asyncroscopy.mcp import endpoint_auth
 
 if TYPE_CHECKING:
     from asyncroscopy.agents.graphs.swarm import Agent
@@ -54,6 +55,7 @@ class AgentMCPServer:
         startup_agents: list[Agent] | None = None,
         use_init_chat_model: bool = False,
         verbose: bool = True,
+        auth: dict | None = None,
     ) -> None:
         """
         Args:
@@ -65,6 +67,7 @@ class AgentMCPServer:
             startup_agents (list[Agent], optional): Agents to preload at startup.
             use_init_chat_model (bool): Use ``init_chat_model`` instead of ChatOllama.
             verbose (bool): If True, print model and MCP connection progress. Defaults to True.
+            auth (dict): the config's ``auth`` section (asyncroscopy.mcp.endpoint_auth); None: no token check.
         """
         from asyncroscopy.agents.graphs.swarm import AgentSwarm
 
@@ -86,6 +89,7 @@ class AgentMCPServer:
             yield {}
 
         self.mcp = FastMCP(name, lifespan=lifespan)
+        self.auth = endpoint_auth.attach_agent(self.mcp, auth)
         self._query_lock = asyncio.Lock()
 
     def setup(self) -> None:
@@ -201,6 +205,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--startup-agents-json", default="[]")
     parser.add_argument("--use-init-chat-model", action="store_true")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--auth-json", default="", help="The config's auth section (bearer-token verification); empty: none.")
     return parser.parse_args(argv)
 
 
@@ -208,7 +213,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     from asyncroscopy.agents.graphs.swarm import Agent
 
+    auth = json.loads(args.auth_json) if args.auth_json else None
     if args.transport == "streamable-http":
+        refused = endpoint_auth.agent_remote_without_auth(args.http_host, auth)
+        if refused:
+            print(f"MCP ERROR: {refused}", flush=True)
+            return 1
         bind_error = check_port_free(args.http_host, args.http_port)
         if bind_error:
             print(
@@ -228,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         startup_agents=[Agent(**agent) for agent in json.loads(args.startup_agents_json)],
         use_init_chat_model=args.use_init_chat_model,
         verbose=not args.quiet,
+        auth=auth,
     )
     if args.transport == "streamable-http":
         print(

@@ -58,6 +58,22 @@ Without `auth`, nothing changes: no token is asked for, and the caller is the se
 
 **Refusal to start.** A stack that is not simulated (its Approvals device says `simulated: false`, or cannot say) whose MCP endpoint would bind beyond 127.0.0.1 (`http_host: 0.0.0.0` with `allow_remote_bind: true`, or a network address) must have `auth`: `run_mcp.py` refuses to start it, and so does the server when started directly. Twins may still bind every interface without tokens. The recommended hardware setup keeps `http_host: 127.0.0.1` and lets the proxy be the only thing on the network.
 
+## The agent server's `auth` section
+
+The agent MCP server (`run_llm.py`, port 8002) takes the same section under `agent:`. Its agents reach the instruments through their MCP endpoints, so it is held to a stricter rule than the instrument server: it refuses to bind anything but a loopback address without `agent.auth`, simulated stack or not. The shipped `gemma-llm.yaml` and `qwen-llm.yaml` bind 127.0.0.1.
+
+```yaml
+agent:
+  # ...
+  http_host: 0.0.0.0
+  auth:
+    jwks_url: https://tokens.example.org/.well-known/jwks.json
+    issuer: https://tokens.example.org
+    audience: agent-1
+```
+
+`list_agents` and `list_agent_tools` need the `read` role; `query_agent`, `spawn_agent`, `complete` and `set_max_steps` run the model or the agents and need `operate`.
+
 ## What an instrument owner configures
 
 1. Ask the facility for the token service's JWKS URL and issuer, and an audience name for this instrument; agree the scopes (`instrument:read`, `instrument:operate`, `instrument:approve` unless the facility names them otherwise; map them with `mcp.auth.roles`).

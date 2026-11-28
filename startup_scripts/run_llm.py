@@ -20,6 +20,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
+from asyncroscopy.mcp.endpoint_auth import AuthSettings, agent_remote_without_auth  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
@@ -69,6 +70,7 @@ class AgentConfig:
     # Kept as plain dicts so this module never imports the agent extras, which
     # keeps --help and config errors working without them installed.
     startup_agents: list[dict] = field(default_factory=list)
+    auth: AuthSettings | None = None
 
 
 @dataclass(frozen=True)
@@ -87,7 +89,7 @@ def load_config(path: Path) -> Config:
     values = read_settings(raw, SETTINGS)
     problems = []
     # Every key lives under agent:, so a typo there would otherwise be silently ignored.
-    known = {setting.path.split('.', 1)[1] for setting in SETTINGS}
+    known = {setting.path.split('.', 1)[1] for setting in SETTINGS} | {'auth'}
     unknown = sorted(set(raw.get('agent') or {}) - known) + sorted(f'(top level) {k}' for k in set(raw) - {'agent'})
     if unknown:
         problems.append(f"unknown key(s) {', '.join(unknown)}; expected agent: with {', '.join(sorted(known))}")
@@ -96,6 +98,11 @@ def load_config(path: Path) -> Config:
     startup_agents = values['agent.startup_agents'] or []
     if not isinstance(startup_agents, list) or not all(isinstance(e, dict) and e.get('name') for e in startup_agents):
         problems.append('agent.startup_agents must be a list of agents, each with a name')
+    try:
+        auth = AuthSettings.from_config((raw.get('agent') or {}).get('auth'), base_dir=PROJECT_DIR)
+    except ValueError as exc:
+        problems.append(str(exc).replace('mcp.auth', 'agent.auth'))
+        auth = None
     if problems:
         raise ConfigError(problems)
     return Config(
@@ -111,6 +118,7 @@ def load_config(path: Path) -> Config:
             max_steps=values['agent.max_steps'],
             use_init_chat_model=values['agent.use_init_chat_model'],
             startup_agents=[dict(entry) for entry in startup_agents],
+            auth=auth,
         ),
     )
 
@@ -145,6 +153,8 @@ def build_command(config: Config) -> list[str]:
     )
     if agent.use_init_chat_model:
         command.append('--use-init-chat-model')
+    if agent.auth is not None:
+        command.extend(['--auth-json', agent.auth.to_json()])
     return command
 
 
@@ -202,6 +212,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.interactive:
         return run_interactive(config)
+
+    refused = agent_remote_without_auth(config.agent.http_host, config.agent.auth)
+    if refused:
+        print(f'Config error: {refused}', file=sys.stderr)
+        return 1
 
     command = build_command(config)
 
