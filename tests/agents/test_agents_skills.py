@@ -115,7 +115,7 @@ def test_the_middleware_writes_skills_into_the_prompt_and_hides_load_skill_unles
 
 def test_tools_that_write_notes_are_offered_only_when_the_request_asks_to_write_one():
     # The default profile is for a small model and holds them back. A capable model's profile does not.
-    middleware = SkillMiddleware("BASE", STEM, STEM, gates=load_profile("default").tool_gates)
+    middleware = SkillMiddleware("BASE", STEM, STEM, gates=load_profile("small").tool_gates)
     capable = SkillMiddleware("BASE", STEM, STEM, gates=load_profile("capable").tool_gates)
     tools = [SimpleNamespace(name=n) for n in ("list_pois", "annotate", "add_poi", "edit_annotation", "view_data")]
     for request, offered in (
@@ -297,7 +297,7 @@ TWIN = {
 
 
 def test_tools_that_park_the_beam_are_offered_only_when_the_request_is_about_a_spectrum():
-    middleware = SkillMiddleware("BASE", TWIN, TWIN, gates=load_profile("default").tool_gates)  # a capable model's profile has none
+    middleware = SkillMiddleware("BASE", TWIN, TWIN, gates=load_profile("small").tool_gates)  # a capable model's profile has none
     tools = [SimpleNamespace(name=n) for n in ("DigitalTwin_place_beam", "DigitalTwin_place_beam_at", "DigitalTwin_acquire_scanned_image")]
     for request, offered in (
         ("Map a 600 nm square, find the most interesting region, then take a higher-magnification image of it.", ["DigitalTwin_acquire_scanned_image"]),
@@ -325,7 +325,7 @@ def test_tools_no_chosen_skill_uses_are_dropped_when_the_prompt_would_not_leave_
 
 
 def test_pixel_conversions_are_not_offered_when_the_request_gives_a_stage_position():
-    middleware = SkillMiddleware("BASE", TWIN, TWIN, gates=load_profile("default").tool_gates)  # a capable model's profile has none
+    middleware = SkillMiddleware("BASE", TWIN, TWIN, gates=load_profile("small").tool_gates)  # a capable model's profile has none
     tools = [SimpleNamespace(name=n) for n in ("to_stage", "to_pixel", "run_job")]
     for request, offered in (
         ("The map m_map has a point of interest at x = -325.4 nm, y = 389.0 nm. Go back to it and take a HAADF image there.", ["run_job"]),

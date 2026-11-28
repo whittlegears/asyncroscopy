@@ -6,8 +6,8 @@ which tools each specialist of the team graph holds), how much skill text and me
 tools are held back unless the request asks for them, and whether the servers' structured replies are shown or
 replaced by sentences.
 
-``default`` is tuned for a small local model (qwen3:8b, 8k context). ``capable`` is for any model that follows
-tool descriptions and longer instructions well: it extends ``default`` and turns the small-model aids off.
+``small`` is tuned for a small local model (qwen3:8b, 8k context). ``capable`` is for any model that follows
+tool descriptions and longer instructions well: it extends ``small`` and turns the small-model aids off.
 Choose one with ASYNCROSCOPY_AGENT_PROFILE (a name in agents/profiles, or a path to a YAML file); without it,
 ``capable`` (gemma4:31b).
 A profile may start from another with ``extends: <name>`` and change only what differs.

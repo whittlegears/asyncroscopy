@@ -5,7 +5,7 @@ The agent MCP server exposes the LLM agent swarm as MCP tools. It is how clients
 `asyncroscopy/agents/graphs/swarm.py` holds the swarm, beside the other agent graphs, and
 `asyncroscopy/mcp/agent_mcp_server.py` wraps it in FastMCP. The server imports the agent layer only
 when it starts, so the `mcp` package itself never depends on `agents`.
-The default model comes from the agent profile (`asyncroscopy/agents/profiles/default.yaml`).
+The default model comes from the agent profile (`asyncroscopy/agents/profiles/capable.yaml`, gemma4:31b).
 `query_agent`'s `graph` argument is an enum of the graphs (`""` for the swarm, `mapping`, `general`,
 `team`), so clients can list them from the tool's input schema.
 

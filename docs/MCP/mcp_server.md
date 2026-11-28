@@ -55,7 +55,7 @@ mcp:
   needs_approval: {}         # {Class or "*": [command, ...]}: held for a person (permissions.md)
   safety:
     risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
-  # agent_profile: asyncroscopy/agents/profiles/default.yaml   # whose tool selection endpoint_info reports
+  # agent_profile: asyncroscopy/agents/profiles/capable.yaml   # whose tool selection endpoint_info reports
 ```
 
 `startup_scripts/run_mcp.py` maps this config directly to:

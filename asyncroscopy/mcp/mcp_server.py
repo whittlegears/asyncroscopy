@@ -148,7 +148,7 @@ class MCPServer:
                 devices declare routine. None: the devices' declarations (an electron microscope's imaging,
                 spectra, stage moves and beam placement; asyncroscopy.utils.commands.command(routine=True)).
             agent_profile: Agent profile YAML whose tool selection endpoint_info.agent_tools reports. None: the
-                packaged default (asyncroscopy/agents/profiles/default.yaml).
+                packaged default (asyncroscopy/agents/profiles/capable.yaml).
             permissions_file: Where people's permission settings are kept, shared with the stack's other endpoints
                 (``asyncroscopy.safety.permissions``). None: ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
                 outputs/permissions/permissions.json.

@@ -1,7 +1,7 @@
 # The default agent profile: everything that depends on the model rather than on the instrument.
-# Not the default any more (capable is, for gemma4:31b): choose it with ASYNCROSCOPY_AGENT_PROFILE=default.
+# The small-model profile (capable is the default, for gemma4:31b): choose it with ASYNCROSCOPY_AGENT_PROFILE=small.
 # Tuned for a small local model and measured on qwen3:8b with an 8192-token context. capable.yaml extends it
-# for models that need none of the small-model aids. Make another with `extends: default` and the keys that
+# for models that need none of the small-model aids. Make another with `extends: small` and the keys that
 # differ (ASYNCROSCOPY_AGENT_PROFILE=<name or path>); the instrument stack never reads it, except that the MCP
 # server reports the tool selection below as endpoint_info.agent_tools.
 

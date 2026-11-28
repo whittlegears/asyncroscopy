@@ -40,7 +40,7 @@ class ToolLists:
 def profile_data(path: str | Path) -> dict:
     """An agent profile file as data, with ``extends`` applied.
 
-    ``extends: default`` (a profile name in agents/profiles, or a path relative to this file) starts from that
+    ``extends: small`` (a profile name in agents/profiles, or a path relative to this file) starts from that
     profile. A mapping in this file is merged into the one it extends, key by key; any other value replaces it.
     """
     return _profile_data(str(Path(path).resolve()), ())

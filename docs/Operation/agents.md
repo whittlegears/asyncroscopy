@@ -4,10 +4,10 @@ asyncroscopy ships three LangGraph agents. All of them reach the instrument only
 
 | Profile | For | What it sets |
 | :-- | :-- | :-- |
-| `default` | A small local model (measured on qwen3:8b through Ollama, 8k context) | Two skills from the request and 7000 characters of skill text; `tool_gates` that hold back the note writers, the beam parkers and the pixel conversions unless the request asks for them; tool replies whose structured fields are replaced by sentences (`replies: notes`) |
-| `capable` (the default) | A larger local model (gemma4:31b through Ollama, 32k context) or a hosted one (`ASYNCROSCOPY_MODEL`, `ASYNCROSCOPY_MODEL_PROVIDER`) | Extends `default`: no tool gates, more skill text and memory, the servers' structured replies kept beside the sentences (`replies: facts_and_notes`). Not yet measured with the workflow benchmark |
+| `small` | A small local model (measured on qwen3:8b through Ollama, 8k context) | Two skills from the request and 7000 characters of skill text; `tool_gates` that hold back the note writers, the beam parkers and the pixel conversions unless the request asks for them; tool replies whose structured fields are replaced by sentences (`replies: notes`) |
+| `capable` (the default) | A larger local model (gemma4:31b through Ollama, 32k context) or a hosted one (`ASYNCROSCOPY_MODEL`, `ASYNCROSCOPY_MODEL_PROVIDER`) | Extends `small`: no tool gates, more skill text and memory, the servers' structured replies kept beside the sentences (`replies: facts_and_notes`). Not yet measured with the workflow benchmark |
 
-A profile can start from another with `extends: default` and set only what differs. Every profile keeps the rules that hold for any model: the tool selection, the claim check, the context guard, a read-only request getting no skill that acts, and one mapping procedure per endpoint (the Mapper job where there is a Mapper, the `map_grid` workflow elsewhere).
+A profile can start from another with `extends: small` and set only what differs. Every profile keeps the rules that hold for any model: the tool selection, the claim check, the context guard, a read-only request getting no skill that acts, and one mapping procedure per endpoint (the Mapper job where there is a Mapper, the `map_grid` workflow elsewhere).
 
 | Graph | Who decides the calls | Use it for |
 | :-- | :-- | :-- |
@@ -55,7 +55,7 @@ A small model loses track with many tools and long instructions, so the `team` g
    - `analyst`: stored data and maps: `list_data`, `view_data`, `assemble_map`, `score_map`, `map_info`, `get_region`, points of interest.
    - both: `wait_for_job`. Operator-only tools are never given to an agent.
 
-   The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/default.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
+   The split is data in the agent profile (`team:` in `asyncroscopy/agents/profiles/small.yaml`: `roles`, `shared`, `hidden`). Whether a tool is a device command, an acquisition or a job's start comes from the endpoint's `endpoint_info` (`tools`, read once per run), never from the tool's name.
 3. Each step sees what earlier steps produced as **facts from the servers' replies** (run keys, map keys, job states), not the previous agent's prose. A failed step is retried once with the error as feedback.
 4. **Reporter**: writes the answer from those facts only.
 

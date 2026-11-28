@@ -98,7 +98,7 @@ tool for each step of a job:
   tool-name globs to give a model (for this endpoint and its analysis server),
   computed by the same rules the general agent uses
   (`asyncroscopy/mcp/agent_tools.py`, with the lists of the agent profile
-  `asyncroscopy/agents/profiles/default.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
+  `asyncroscopy/agents/profiles/capable.yaml`, or `mcp.agent_profile`): the curated STEM set on a STEM, else
   every tool but State/Status; never `endpoint_info`, `list_skills` or `skills_for`. Other
   harnesses (SciAgentGUI) give the model only these.
 - `action_space()`: for agent programs, not given to models: every tool with
