@@ -118,6 +118,9 @@ def build(use: Steps) -> StateGraph:
         keys="{tile.keys}",
         stage_xy_m="{tile.stage_xy_m}",
         fov_m="{tile.fov_m}",
+        spectrum_keys="{eds.keys}",
+        spectrum_tiles="{eds.at}",
+        spectra_at="{inputs.spectra_at}",
         plan={"workflow": "map_sample", "level": "{tile.level}", "size_m": "{inputs.size_m}", "fov_m": "{tile.fov_m}", "overlap": "{inputs.overlap}"},
     ))
     graph.add_node("stitch", use.block("stitch_map", run="{run.run}", stage_sigma_m="{inputs.stage_sigma_m}"))

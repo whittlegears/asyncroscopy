@@ -162,7 +162,7 @@ class TestAutoScriptMicroscope:
                 return [FakeImage()]
 
         acquisition = FakeAcquisition()
-        microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition))
+        microscope = bare_microscope(types.SimpleNamespace(acquisition=acquisition, optics=types.SimpleNamespace(optical_mode="Stem")))
         microscope._detector_proxies = {"data": FakeDataServer()}
 
         def fake_new_path(device, acquisition_type: str, detector: str, data_server=None, extension="h5"):

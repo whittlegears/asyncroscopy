@@ -215,9 +215,13 @@ class ScanningBeamInstrument(Instrument):
         self.info_stream('Disconnected from microscope hardware')
 
     def _connect_detector_proxies(self) -> None:
-        """A DeviceProxy for every configured detector and sub-device (``proxy_addresses``); a blank address is skipped."""
-        for name, prop in self.proxy_addresses.items():
-            address = getattr(self, prop, "")
+        """A DeviceProxy for every configured detector and sub-device: the declared ``proxy_addresses``, then every other
+        ``<name>_device_address`` set for this device in the Tango database. A device a config adds (an EELS, a second
+        camera) so reaches the instrument without a property for it in the code. A blank address is skipped."""
+        addresses = {name: getattr(self, prop, "") for name, prop in self.proxy_addresses.items()}
+        for name, address in self._configured_addresses().items():
+            addresses.setdefault(name, address)
+        for name, address in addresses.items():
             if not address:
                 self.info_stream(f"Skipping {name}: no address configured")
                 continue
@@ -228,6 +232,26 @@ class ScanningBeamInstrument(Instrument):
                 self.info_stream(f"Connected to detector proxy: {name} @ {address}")
             except tango.DevFailed as exc:
                 self.error_stream(f"Failed to connect to {name} proxy at {address}: {exc}")
+
+    def _configured_addresses(self) -> dict[str, str]:
+        """Every ``<name>_device_address`` property the Tango database holds for this device, declared or not, as
+        {name: address}. Empty without a database (tests, no-DB mode)."""
+        suffix = "_device_address"
+        try:
+            db = tango.Util.instance().get_database()
+            listed = db.get_device_property_list(self.get_name(), f"*{suffix}")
+            names = [str(n) for n in getattr(listed, "value_string", listed)]
+            values = db.get_device_property(self.get_name(), names) if names else {}
+        except Exception as exc:
+            self.debug_stream(f"no device addresses read from the database: {exc}")
+            return {}
+        found = {}
+        for prop, value in values.items():
+            address = str(value[0]).strip() if value else ""
+            name = prop[: -len(suffix)]
+            if address and name and name != "instrument" and address.lower() != self.get_name().lower():
+                found[name] = address
+        return found
 
     def _proxy_timeout_ms(self, name: str) -> int:
         """How long a call to sub-device ``name`` may take."""

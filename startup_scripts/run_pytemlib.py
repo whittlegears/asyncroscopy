@@ -21,7 +21,7 @@ if str(PROJECT_DIR) not in sys.path:
 from asyncroscopy.core.names import DEFAULT_ANALYSIS_URL
 from asyncroscopy.core.net import is_loopback_host
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination
-from startup_scripts.config_schema import ConfigError, Setting, read_settings
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers, wait_for_exit
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'pytemlib.yaml'
@@ -93,6 +93,7 @@ def load_config(path: Path) -> Config:
         raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     except yaml.YAMLError as exc:
         raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
+    raw = fill_placeholders(raw)
     if isinstance(raw, dict) and not isinstance(raw.get('pytemlib'), dict):
         raise ConfigError([f'{path.name} has no pytemlib: mapping, so it is not a config for {Path(LAUNCHER).name}'])
     values = read_settings(raw, SETTINGS)

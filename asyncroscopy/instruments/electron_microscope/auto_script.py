@@ -265,6 +265,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
         """
         Call AutoScript scanned image acquisition, save it, and return its DATA/Tiled key.
         """
+        if not self._is_stem():
+            # A scan in TEM mode rasters a parallel beam: the frame is not a STEM image, and the mode reading is wrong if it looks like one.
+            raise ValueError(f"acquire_scanned_image runs in STEM mode only; the microscope reports optical mode "
+                             f"{self._microscope.optics.optical_mode}. Switch to STEM at the console; nothing was acquired")
         detector_list = [d.upper() for d in detector_list]
         offered = [str(d) for d in self._microscope.detectors.scanning_detectors]
         unknown = [d for d in detector_list if d not in offered]
@@ -426,6 +430,10 @@ class AutoScriptMicroscope(ElectronMicroscope):
             spectrum = self._microscope.analysis.eds.acquire_spectrum(settings)
         data_server = self._detector_proxies.get("data")
         return save_acquisition(self, data_server, "spectrum", detector_name, spectrum, dataset_name="spectrum")
+
+    def _acquire_through(self, proxy, command_name: str) -> str:
+        with self._beam_restored():
+            return str(proxy.command_inout(command_name))
 
     def _acquire_spectrum_image(self, points: int, exposure_time: float) -> str:
         """The client's own spectrum image. It comes as a Velox .emd file of X-ray events, kept as it is: its key is the

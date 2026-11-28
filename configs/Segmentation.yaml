@@ -2,7 +2,7 @@
 # This launcher assumes Tango, DATA, and Tiled are already running.
 
 tango:
-  host: 216.96.178.92
+  host: "${ASYNCROSCOPY_SEGMENTATION_HOST}"
   port: 9094
 
 data_device_address: asyncroscopy/data/default
