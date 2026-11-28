@@ -555,6 +555,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                 {
                     "name": "asyncroscopy/mapper/dose",
                     "properties": {
+                        "sample_device_address": "",
                         "microscope_device_address": "asyncroscopy/digitaltwin/dose",
                         "scan_device_address": "asyncroscopy/scan/default",
                         "eds_device_address": "asyncroscopy/eds/default",
@@ -568,6 +569,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     {
                         "name": f"asyncroscopy/mapper/specimen_{source}",
                         "properties": {
+                            "sample_device_address": "",
                             "microscope_device_address": f"asyncroscopy/digitaltwin/specimen_{source}",
                             "scan_device_address": f"asyncroscopy/scan/specimen_{source}",
                             "eds_device_address": "asyncroscopy/eds/default",
@@ -585,6 +587,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     # Maps of the drifting twin below, for the one-time-source tests (test_dry_run_and_clock.py).
                     "name": "asyncroscopy/mapper/drift",
                     "properties": {
+                        "sample_device_address": "",
                         "microscope_device_address": "asyncroscopy/digitaltwin/drift",
                         "scan_device_address": "asyncroscopy/scan/drift",
                         "stage_device_address": "asyncroscopy/stage/drift",
@@ -600,6 +603,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     # Maps of the 5e-11 m/s twin above, with and without live drift tracking (test_live_drift.py).
                     "name": "asyncroscopy/mapper/livedrift",
                     "properties": {
+                        "sample_device_address": "",
                         "microscope_device_address": "asyncroscopy/digitaltwin/livedrift",
                         "scan_device_address": "asyncroscopy/scan/livedrift",
                         "stage_device_address": "asyncroscopy/stage/livedrift",
@@ -650,6 +654,7 @@ def tango_ctx(data_save_dir: Path, job_dir: Path) -> Iterator[MultiDeviceTestCon
                     # The YAML AFM twin below, mapped through its map: section (test_map_profiles.py).
                     "name": "asyncroscopy/mapper/afm",
                     "properties": {
+                        "sample_device_address": "",
                         "instrument_profile": "yaml",
                         "microscope_device_address": "asyncroscopy/afm/default",
                         "stage_device_address": "",

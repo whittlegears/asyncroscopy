@@ -326,7 +326,7 @@ class Mapper(JobDevice):
 
     def _sample_now(self) -> dict:
         """Which sample is loaded (record.current_sample), from the SAMPLE device; nulls and why when it cannot say."""
-        address = self.sample_device_address
+        address = (self.sample_device_address or "").strip()
         try:
             sample = self.proxy(address, timeout_s=3.0) if address else None
         except Exception as exc:
