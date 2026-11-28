@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import json
 import socket
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -398,3 +400,41 @@ def test_a_resumed_node_sends_each_call_once_and_each_approval_is_used_once(stac
                                   (DOSE, json.dumps({"request": '{"x_m":0.0,"y_m":0.0}'}))]), ran
     assert run(operator_call(operator, "list_pending_approvals"))["result"] == []
     assert not journal.exists()
+
+
+operator_process = """
+import asyncio, json, sys
+import tango
+import asyncroscopy.mcp.mcp_server as mcp_server
+from fastmcp import Client
+
+access, permissions_file, request_id = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3]
+mcp_server.DeviceProxy = lambda name: tango.DeviceProxy(access[name])
+database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(access)})()})()
+server = mcp_server.MCPServer("perm-test", "localhost", 1, blocked_classes=[], needs_approval={}, data_device_address="asyncroscopy/data/default",
+                              verbose=False, endpoint_role="operator", database=database, permissions_file=permissions_file)
+server.setup(print_summary=False)
+
+async def main():
+    async with Client(server.mcp) as client:
+        pending = (await client.call_tool("list_pending_approvals", {})).structured_content["result"]
+        approved = (await client.call_tool("approve_call", {"request_id": request_id})).structured_content
+        print(json.dumps({"pending": [p["request_id"] for p in pending], "status": approved["status"]}))
+
+asyncio.run(main())
+"""
+
+
+def test_an_operator_endpoint_in_another_process_approves_a_call_this_one_holds(stack, tango_ctx):
+    agent = stack("agent", SAMPLE, needs_approval={"SAMPLE": ["get_dose"]})
+    held = run(call(agent, DOSE, {"request": "{}"})).structured_content
+    assert held["status"] == "approval_required"
+    access = {name: tango_ctx.get_device_access(name) for name in (SAMPLE,)}
+    done = subprocess.run([sys.executable, "-c", operator_process, json.dumps(access), str(stack.permissions_file), held["request_id"]],
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
+    reply = json.loads(done.stdout.strip().splitlines()[-1])
+    assert reply == {"pending": [held["request_id"]], "status": "approved"}
+    ran = run(call(agent, DOSE, {"request": "{}"}))
+    assert not ran.is_error, ran
+    assert run(call(agent, DOSE, {"request": "{}"})).structured_content["status"] == "approval_required"
