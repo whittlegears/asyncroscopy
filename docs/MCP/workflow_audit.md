@@ -9,14 +9,17 @@ wrong with the graph code that exists.
 - `asyncroscopy/mcp/agent.py` builds the agents.
   - One agent: a single `langchain.agents.create_agent` executor.
   - Two or more agents: a hand-built `StateGraph`. A supervisor node picks the
-    next worker and gets an edge back from each worker. It decides by parsing
-    free-text JSON.
+    next worker and gets an edge back from each worker. It asks for structured
+    output limited to the agent names, and parses free text when the model cannot.
 - `asyncroscopy/mcp/agent_mcp_server.py` serves the agents over MCP:
   `query_agent`, `spawn_agent`, `list_agents`, `list_agent_tools`, `complete`
-  and `set_max_steps`.
+  and `set_max_steps`, plus `list_workflows`, `start_workflow`,
+  `resume_workflow` and `workflow_status` for the graphs in
+  `asyncroscopy/agent_workflows` (listed in `WORKFLOW_MODULES`).
 - Tools come from the instrument MCP bridge through `MultiServerMCPClient`.
   They are named `{Class}_{command}`, and only Tango commands are exposed, not
-  attributes. `blocked_functions` in `configs/mcp*.yaml` hides unsafe ones.
+  attributes. `blocked_functions` in `configs/mcp*.yaml` hides commands, and
+  `needs_approval` holds them for an operator.
 - LangGraph and LangChain are an optional extra (`uv sync --extra agent`). They
   are pinned in `uv.lock`: langgraph 1.2.9, langchain 1.3.12.
 
@@ -28,11 +31,11 @@ wrong with the graph code that exists.
 | Single-agent request | `mcp/agent.py` | yes (`create_agent`) | yes |
 | `complete` (one model step) | `mcp/agent.py` | no | no: the caller drives the loop |
 | Sample map: acquire, stitch, score, review | `agent_workflows/sample_map.py` + pyTEMlib analysis server | **yes** (this branch) | yes. Served by the agent server as `start_workflow("sample_map", ...)`; pauses before the stage moves and for review |
-| CEOS tableau correction loop | notebook 01 | no | yes, first: needs an approval before each correction |
-| Aberration hill climb (C1/A1) | notebooks 12 | no | yes: loop in a plain node |
-| Stage-Z hill climb | notebook 14 | no | yes. It sets `stage.z`, an attribute that MCP cannot reach |
-| MAPED beam-tilt series | notebook 15 | no | yes: long run, needs a checkpointer to resume and must restore the tilt on failure |
-| Alpha-tilt diffraction map with tracking | notebook 16 | no | yes: tilt moves need approval |
+| CEOS tableau correction loop | `agent_workflows/correction.py` (from notebook 01) | **yes** | yes. Pauses before every correction; steps fit the corrector's `max_step` and `max_total_since_tableau`. The corrector has no readback, so a restore undoes the applied corrections and re-measures |
+| Aberration hill climb (C1/A1) | `agent_workflows/aberration_climb.py` + `climb.py` (from notebooks 12) | **yes** | yes. One approval before the climb; undoes every correction on failure. Open: a C1 climb can exceed `max_total_since_tableau`, and then its undo is refused until a new tableau |
+| Stage-Z hill climb | `agent_workflows/stage_z_focus.py` + `climb.py` (from notebook 14) | **yes** | yes. Moves z with `move_stage` (the notebook set the `stage.z` attribute, which MCP cannot reach); returns to the start on failure |
+| MAPED beam-tilt series | `agent_workflows/maped.py` (from notebook 15) | **yes** | yes. One scan per graph step, so a checkpointer resumes without repeating scans; restores the tilt. quantEM analysis is an optional hook |
+| Alpha-tilt diffraction map with tracking | `agent_workflows/tilt_series.py` (from notebook 16) | **yes** | yes. Tracks with `analysis.drift.correlation_shift`; restores stage, image shift and field of view on every path |
 | Drift and speed metric | notebook 07, `analysis.drift` | partly (drift is a tool) | optional. It sets scan attributes MCP cannot reach |
 | Segmentation | `mcp/segment.py`, notebook 06 | no | no: two tool calls |
 | Autofocus | `auto_focus` | no | no: one tool |
@@ -76,3 +79,23 @@ pyTEMlib server.
 The long-running branch already has graphs built this way under
 `asyncroscopy/agents/graphs/` (`mapping`, `general`, `team`, `goal`), and
 `langgraph.json` registers them.
+
+
+## Still open
+
+- **The pyTEMlib scan fit.** On small atomic-resolution grids, pyTEMlib fits a
+  scan turn that isn't there. The sample-map workflow works around it by passing
+  the identity `scan_linear` for calibrated grids under 25 tiles.
+  - A fix is on a local branch of the pyTEMlib fork (`fix/scan-linear-small-grids`,
+    commit `05a7694`, worktree `../pyTEMlib-scan-linear`), not pushed.
+  - It still breaks one existing pyTEMlib test, the drift recovery on sparse
+    texture: its lattice guard refuses good matches there.
+- **Attributes.** Scan and camera settings are Tango attributes that MCP cannot
+  reach, so an operator sets them before a workflow runs. Making them commands,
+  as the long-running branch does, would let workflows set them.
+- **Not run on a microscope.** Everything here is tested on the digital twins
+  and offline only: the Tiled path of `collect_map_run`, the approvals and the
+  workflows.
+- **Recursion limit.** `WorkflowRunner` has a limit of 100 graph steps. The
+  workflows cap their rounds to stay under it (correction 15, climbs 60, tilt
+  series 90).
