@@ -84,8 +84,6 @@ class Estop:
         targets, missing = self.targets()
         report = estop.stop_all(targets, who=f"stop_all ({server.caller() or 'unknown caller'})", missing=missing,
                                 describe=_failed, wait_s=estop.STOP_ALL_WAIT_S)
-        # No call stops a stage move, so it runs to its end.
-        # Say so, so that stopped is not read as covering the stage too.
         not_stopped = [
             f"{prefix}: a stage move already under way is not stopped (AutoScript 1.18 can stop only jogging, with stop_jogging); "
             "stop it at the microscope's stage controls if it must not finish"

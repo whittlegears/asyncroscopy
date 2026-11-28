@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 JOB_WAIT_MAX_S = 25.0  # wait_for_job stays under MCP client timeouts
 RUN_JOB_WAIT_S = 15.0  # run_job waits this long after starting, so a short job needs no wait_for_job
 RUN_JOB_BUDGET_S = 25.0  # the whole of run_job stays under the 30 s client timeout
-# An estimate with any of these fields is a beam job, so the dose limit applies to it.
 DOSE_FIELDS = ("max_dose_e_per_a2", "beam_current_pa", "beam_current_source")
 
 
@@ -209,7 +208,6 @@ class Jobs:
     def _reserve_and_start(self, device: str, plan: dict | None, tools: dict, resume: str | None = None) -> tuple[dict, dict]:
         """(plan summary, start reply or an error reply) for run_job; called under the device's lock."""
         if resume:
-            # An aborted job's reservation already holds the plan, so starting it again resumes it.
             try:
                 reserved = json.loads(self.job_device(device).get_reservation(json.dumps({"reservation_id": resume})))
             except Exception as exc:
@@ -218,7 +216,6 @@ class Jobs:
                 return {}, {k: v for k, v in reserved.items() if k != "schema_version"}
             summary = {"reservation_id": resume, **{k: reserved[k] for k in ("plan_id", "resolved_plan", "estimate") if k in reserved}, "resumed": True}
         else:
-            # The reserve wrapper applies mcp.job_limits and releases a reservation over them.
             reserved = json.loads(tools["reserve"]({"plan": plan}))
             if "error" in reserved:
                 return {}, {k: v for k, v in reserved.items() if k != "schema_version"}
@@ -386,7 +383,6 @@ class JobChecks(_EnvelopeOnly):
                 return refused
         body = _json_object(request)
         if server.endpoint_role != "operator" and body is not None and "continue" in body:
-            # Continuing a paused job is the person's decision, made on the operator endpoint.
             raise ToolError("a person paused this job; only they continue it (from the operator endpoint or the GUI). Call wait_for_job, or abort if the user asked to stop.")
         return None
 

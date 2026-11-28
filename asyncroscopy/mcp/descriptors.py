@@ -30,14 +30,12 @@ from asyncroscopy.core.names import ACTION_HINTS, READ_ROLES, TANGO_ADMIN, TANGO
 from asyncroscopy.mcp.action_roles import role_for
 from asyncroscopy.safety import policy
 
-# Native tools of the MCP server, which have no device behind them.
-# Each gives role, risk, whether it acts and whether it starts a job.
+# (role, risk, acts, starts a job) for each native tool.
 NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "run_job": ("job.run", "high", True, True),
     "wait_for_job": ("job.status", "low", False, False),
     "list_data": ("data.read", "low", False, False),
     "view_data": ("data.read", "low", False, False),
-    # They change what agents are told, not the instrument, and are never given to a model (not_for_models).
     "save_skill": ("other", "low", True, False),
     "delete_skill": ("other", "low", True, False),
     "switch_skill": ("other", "low", True, False),
@@ -50,10 +48,8 @@ NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "preapprove_run": ("other", "high", True, False),
     "end_run_preapproval": ("other", "low", True, False),
 }
-# The operator endpoint's permission tools: the person's console, so a token needs the approve role for each.
 person_only_natives = frozenset({"list_pending_approvals", "approve_call", "deny_call", "get_permissions", "set_permission",
                                  "set_group_permission", "preapprove_run", "end_run_preapproval"})
-# Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})
 
 

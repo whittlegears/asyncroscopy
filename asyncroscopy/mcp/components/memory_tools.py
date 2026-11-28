@@ -16,7 +16,6 @@ from asyncroscopy.core.names import devices_of_kind
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-# The most a caller may ask for, so one call cannot read the whole folder out.
 MAX_BUDGET_CHARS = 4000
 
 
@@ -37,8 +36,6 @@ class MemoryTools:
         from asyncroscopy.agents.memory import Memory
 
         memory = Memory.from_env()
-        # An instrument no agent has run on yet still has notes to give: INSTRUMENT.md seeded from this endpoint's
-        # own tools, as an agent's first run would (never over a person's edits or a team's shared notes).
         if not memory.instrument_file.exists() and memory.shared_instrument_file() is None:
             try:
                 info = self.server.discovery.endpoint_info()

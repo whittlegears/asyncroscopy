@@ -35,8 +35,7 @@ DATA_TOOL_DEADLINE_S = 20.0  # data tools answer within this, so a slow or stuck
 PREVIEW_DEADLINE_S = 10.0
 LIST_DATA_WINDOW = 300  # newest keys list_data looks through. Tiled refuses pages larger than 300.
 LIST_DATA_BUDGET_S = 12.0  # list_data stops looking after this and says how far it got
-# What to do next when a lane is busy or Tiled is slow.
-# A preview never suggests trying again because that could run the acquisition again.
+# A preview never suggests trying again, because that could run the acquisition again.
 NEXT_STEP = {
     "view": "Try again shortly, or ask for less (a region, or format text).",
     "list": "Try again shortly, or narrow it with search or kind.",
@@ -163,7 +162,7 @@ class DataTools:
         """Look at stored data by key (from an acquisition, a job's results, or list_data). png: a picture (images contrast-stretched, spectra plotted against energy) plus a short text summary (statistics, peaks and the elements they point to). text: shape, units, statistics, peaks and a small CSV. dataset: one array or group inside a file (the text lists them). region: an image's [row0, row1, col0, col1] in pixels, or a spectrum's [min, max] in its axis units (eV). index: which frame of a stack or 4-D dataset, or a spectrum image's [row, col] position to show the spectrum there. mark_peaks: label the identified peaks on a spectrum's plot; only when the user asks to see them marked. Never returns raw arrays."""
         options = views.ViewOptions(region=region, index=index, max_side=max_side, mark_peaks=bool(mark_peaks))
         summary, png = self.with_deadline(lambda: views.view(self.tiled_node(key), key, format, dataset, options), lane="view")
-        # Use a TextContent block because FastMCP joins a list of only strings into one JSON array.
+        # A TextContent block, because FastMCP joins a list of only strings into one JSON array.
         content: list[Any] = [TextContent(type="text", text=summary["text"])]
         if png is not None:
             content.append(MCPImage(data=png, format="png"))
@@ -190,7 +189,6 @@ class DataTools:
             return ToolResult(content=[TextContent(type="text", text=result), TextContent(type="text", text=note)], structured_content={"result": result})
         if summary.get("beam_blanked"):
             raise beam_blanked(result, command_name, device, arguments)
-        # The text summary goes with the picture so a model that cannot see images still learns what it acquired.
         described = str(summary.get("text") or "")[:PREVIEW_TEXT_CHARS]
         content = [TextContent(type="text", text=result)] + ([TextContent(type="text", text=described)] if described else []) + [MCPImage(data=png, format="png")]
         return ToolResult(content=content, structured_content={"result": result})

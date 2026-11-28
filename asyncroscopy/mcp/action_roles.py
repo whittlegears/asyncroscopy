@@ -19,7 +19,6 @@ from __future__ import annotations
 from asyncroscopy.core.names import ENVELOPE_VERBS
 from asyncroscopy.safety.policy import OFF_OBJECTS, PROBE_WORDS, RETREAT_VERBS, _word_list, is_read_only, is_safe_stop
 
-# Things whose off switch counts as blanking the beam.
 # A gun, filament, high tension or emission source is left out because it takes hours to come back.
 _BEAM_OFF = OFF_OBJECTS - {"gun", "filament", "hv", "emission", "source"}
 _JOB_ROLES = {"reserve": "job.reserve", "start": "job.start", "job_status": "job.status", "abort": "job.abort",

@@ -17,9 +17,9 @@ class SkillsTools:
         self.server = server
 
     def natives(self) -> list:
+        """No tools when skills are off, because an empty load_skill still attracts models."""
         from asyncroscopy import settings
 
-        # Hide the tools when skills are off because an empty load_skill still attracts models.
         if not settings.get().skills:
             return []
         return [self.list_skills, self.load_skill, self.skills_for, self.skill_text, self.save_skill, self.delete_skill, self.switch_skill]
@@ -98,7 +98,6 @@ class SkillsTools:
     def load_skill_description(self) -> str:
         """load_skill's description with the skill names this endpoint offers."""
         skills = [s for s in self.skills() if s.available]
-        # Say what each skill is for so a model does not pick one by name alone.
         listed = f" Skills here at startup: {'; '.join(f'{s.name} ({_brief(s.description)})' for s in skills)}. list_skills has any learned since." if skills else ""
         return (self.load_skill.__doc__ or "").strip() + listed
 

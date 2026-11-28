@@ -20,9 +20,7 @@ from asyncroscopy.trace import stream as trace_stream
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-# From this many identical failures in a row, tell the model to stop and report.
 REPEAT_FAILURE_WARN_AT = 2
-# Identical failures further apart than this don't count as a loop.
 REPEAT_FAILURE_WINDOW_S = 120.0
 
 
@@ -62,7 +60,6 @@ class Recorder(Interceptor):
 
     def __init__(self, server: MCPServer) -> None:
         self.server = server
-        # For each tool name, the last failure's signature, how many in a row, and when.
         self.failures: dict[str, tuple[str, int, float]] = {}
         self._lock = threading.Lock()
 

@@ -44,8 +44,6 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 ROLES = ("read", "operate", "approve", "preapprove")
-# Scopes a token carries and the roles each grants. A deployment can map its own scope names.
-# A role is granted when the token has any scope listed for it.
 DEFAULT_ROLE_SCOPES: dict[str, list[str]] = {
     "read": ["instrument:read", "instrument:operate", "instrument:approve"],
     "operate": ["instrument:operate"],
@@ -63,7 +61,6 @@ class AuthSettings:
     jwks_url: str = ""
     public_key_file: str = ""
     algorithm: str = "RS256"
-    # Claims whose values are matched against the role scopes. A claim may be a list or a string split on spaces.
     role_claims: tuple[str, ...] = ("scope", "scp")
     roles: dict[str, list[str]] = field(default_factory=lambda: {k: list(v) for k, v in DEFAULT_ROLE_SCOPES.items()})
 

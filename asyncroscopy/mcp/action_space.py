@@ -35,9 +35,7 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer
 
 SCHEMA_VERSION = "1.0.0"
-# Attributes that describe a device to the MCP server and are not instrument state.
 META_ATTRIBUTES = frozenset({"state", "status", "job_kind", "plan_example", "plan_schema", ACTION_HINTS})
-# Maps unit words found in command docs to the unit.
 UNIT_WORDS = {
     "metres": "m", "meters": "m", "metre": "m", "meter": "m", "nanometres": "nm", "nanometers": "nm",
     "degrees": "deg", "radians": "rad", "radian": "rad", "seconds": "s", "picoamperes": "pA",
@@ -142,7 +140,6 @@ def _attributes(device, prefix: str, warnings: list[str]) -> list[dict]:
     return found
 
 
-# Keys of action_hints that the descriptors already carry, so they are not argument hints.
 _DECLARED = ("risk", "operator_only", "stop", "routine", "role")
 
 

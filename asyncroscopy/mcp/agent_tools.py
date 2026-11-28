@@ -18,9 +18,7 @@ from pathlib import Path
 
 import yaml
 
-# The packaged agent profiles.
 PROFILES = Path(__file__).resolve().parents[1] / "agents" / "profiles"
-# The profile used when none is chosen (ASYNCROSCOPY_AGENT_PROFILE): capable, for the lab's gemma4:31b.
 DEFAULT_PROFILE_NAME = "capable"
 DEFAULT_PROFILE = PROFILES / f"{DEFAULT_PROFILE_NAME}.yaml"
 

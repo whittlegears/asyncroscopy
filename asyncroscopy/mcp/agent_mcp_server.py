@@ -50,10 +50,8 @@ def with_images(answer: str, images: list[dict]):
     return ToolResult(content=[answer + note, *blocks])
 
 
-# What query_agent may run. The empty string is the swarm and the rest are the named graphs.
 GraphName = Literal["", *AGENT_GRAPHS]
 ENDPOINT_ROLES = ("agent", "operator")
-# The workflow operator endpoint's tools as action-space entries: (tool, role, risk, effect).
 OPERATOR_ACTIONS = (("review_workflow", "setting.read", "low", "observe"), ("approve_workflow", "other", "high", "act"),
                     ("reject_workflow", "other", "high", "act"))
 workflow_services = {"list": "list_workflows", "get": "get_workflow", "run": "run_workflow", "status": "workflow_status",
@@ -147,7 +145,7 @@ class AgentMCPServer:
             self.workflows = WorkflowServer(Endpoints(self.mcp_urls[0] if self.mcp_urls else None, caller="agent-workflow",
                                                       instruments=workflow_instruments), hardware=workflows_hardware)
 
-        # Swarm must be initialized inside the server's own event loop
+        # The swarm must be built inside the server's own event loop.
         @asynccontextmanager
         async def lifespan(server: FastMCP):
             await self.swarm.start(self.mcp_urls)
@@ -207,7 +205,7 @@ class AgentMCPServer:
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
-        # Printed unconditionally (unlike the verbose lines above), so the count shows even in quiet mode.
+        # Always printed: the startup GUI reads this line.
         print(f"MCP ready: {len(native)} tool(s) registered", flush=True)
         if self.workflows is not None:
             where = "simulated stacks and the real instrument" if self.workflows.hardware else "simulated stacks only"

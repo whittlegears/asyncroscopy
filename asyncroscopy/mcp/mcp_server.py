@@ -45,8 +45,7 @@ from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
-# The Tango client default of 3000 ms is shorter than a real acquisition: the first acquire_camera_image
-# of the digital twin takes over 3 s cold. endpoint_info reports this limit as command_timeout_s.
+# Longer than Tango's 3 s default, which a cold first acquisition on the twin exceeds.
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_LIMITS = ("max_duration_s", "max_dose_e_per_a2")
 
@@ -58,7 +57,6 @@ def _without_param_name(desc: str) -> str:
 
 def _placeholder_doc(text: str) -> bool:
     """True for PyTango's filler for a command without doc_in/doc_out, which must never lead a tool description."""
-    # A plain tango.server.command gives a param line that says not documented and then a type line.
     t = re.sub(r"^(?::param|@param)\s+\w+:\s*", "", text.strip())
     t = "\n".join(line for line in t.splitlines() if not line.strip().startswith(":type")).strip().lower()
     return t in ("", "uninitialised", "uninitialized", "none", "(not documented)") or t.startswith((":return: (not documented)", "no input parameter", "no output parameter"))
@@ -165,10 +163,7 @@ class MCPServer:
             job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
             verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
-        # A given database replaces the Tango database lookup. asyncroscopy.testing passes a device list this way.
         self.database = database if database is not None else Database(tango_host, tango_port)
-        # This says which stack the endpoint serves. Every endpoint of one stack names the same Tango database,
-        # so a client groups the agent, operator and monitor endpoints of an instrument by it.
         self.stack_id = f"tango://{tango_host}:{tango_port}"
         self.mcp = FastMCP(name)
         self.auth = None  # set at the end of __init__
@@ -191,7 +186,6 @@ class MCPServer:
         self.risk_warnings: list[str] = []  # the safety lines that setup printed
         self.risk_fallbacks: dict[str, list[str]] = {}  # tool prefix -> commands whose risk only the name rules decided
         self.discovery_warnings: list[str] = []
-        # Says whether the token of the current caller may call a tool. endpoint_auth.attach replaces it, and find_tools and call_tool ask it.
         self.may_call: Callable[[str], bool] = lambda name: True
         cfg = self.config
         self.data = data_tools.register(self, cfg)
@@ -466,11 +460,9 @@ class MCPServer:
         """A tool function, with a proper signature and description, for one Tango command."""
         prefix = tool_prefix or dev_class
         in_type, in_desc, out_type = cmd_info.in_type, cmd_info.in_type_desc, cmd_info.out_type
-        # Fill in missing command docs from the local source so a model is not left with only a name.
         local_summary, local_in = local_docs.describe(dev_class, command_name)
         if local_in and in_type != CmdArgType.DevVoid and not (in_desc and not _placeholder_doc(in_desc) and _without_param_name(in_desc)):
             named = re.search(r"(?::param|@param)\s+(\w+):", in_desc or "")
-            # Keep the argument name the device gave and only fill in the description.
             in_desc = (f":param {named.group(1)}: " if named else "") + _without_param_name(local_in)
         py_type = self._tango_type_to_python(in_type)
         descriptor = self._describe(prefix, dev_class, command_name, in_type)
@@ -484,7 +476,6 @@ class MCPServer:
         py_return_type = self._tango_type_to_python(out_type)
         doc = self._tool_doc(prefix, dev_class, command_name, cmd_info, in_desc, local_summary)
 
-        # The name of the parameter comes from the param line of the description. Without one it is arg.
         match = re.search(r"(?::param|@param)\s+(\w+):", in_desc or "")
         param_name = match.group(1) if match else "arg"
         if in_desc and not _placeholder_doc(in_desc):
@@ -493,8 +484,6 @@ class MCPServer:
         else:
             clean_desc = ""
             arg_type = py_type
-        # A string parameter documented as JSON also accepts the object itself. Models pass
-        # an object with a job_id field far more reliably than a JSON string of it.
         json_string = py_type is str and clean_desc.upper().startswith("JSON")
         if json_string:
             arg_type = Annotated[str | dict[str, Any] | list[Any], Field(description=clean_desc)]
@@ -520,15 +509,13 @@ class MCPServer:
 
             params = []
         elif py_type is dict:
-            # A command that takes a dictionary accepts any keyword arguments.
             def wrapper(**kwargs):
                 arg_input = kwargs["arg"] if "arg" in kwargs and len(kwargs) == 1 and isinstance(kwargs["arg"], dict) else kwargs
                 return _run({"arg": arg_input}, arg_input)
 
             params = [inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD)]
         elif json_desc is not None:
-            # A command that takes a JSON object accepts the object, its JSON text, or its fields given directly.
-            # The field names come from the example in the description because FastMCP does not allow **kwargs.
+            # FastMCP does not allow **kwargs, so the fields come from the description's example.
             fields = [f for f in dict.fromkeys(re.findall(r'"(\w+)"\s*:', json_desc)) if f != param_name]
 
             def wrapper(*args, **kwargs):
@@ -541,7 +528,6 @@ class MCPServer:
                     except json.JSONDecodeError:
                         pass  # the device reports text that is not JSON
                 if isinstance(arg, (dict, list)):
-                    # Every form of one call becomes the same text, so the trace records one form.
                     arg = json.dumps(arg, sort_keys=True, separators=(",", ":"))
                 return _run({param_name: numpy_to_python(arg)}, arg)
 
@@ -560,7 +546,6 @@ class MCPServer:
         device = self.devices[prefix]
         in_type, out_type, out_desc = cmd_info.in_type, cmd_info.out_type, cmd_info.out_type_desc
         lines = [f"Tango Device Class: {dev_class}", f"Tango Command: {command_name}"]
-        # A DevVoid type line tells a model nothing and small models read every line.
         if in_type != CmdArgType.DevVoid:
             lines.append(f"Input Type: {in_type.name}")
         if in_desc and not _placeholder_doc(in_desc) and _without_param_name(in_desc):
@@ -584,7 +569,6 @@ class MCPServer:
         example = next((t.name for t in devices if not t.name.endswith(("_State", "_Status"))), "Class_command")
         for pattern in self.config.risk_overrides:
             p = pattern.lower()
-            # A command only for the operator is real but not on this endpoint. It is either declared so or an admin command of Tango.
             hidden = any(fnmatchcase(f"{d.dev_class}.{c}".lower(), p) or fnmatchcase(tool_name(d.prefix, c).lower(), p)
                          for d in self.devices.values() for c, h in d.hints.items() if h.get("operator_only") is True)
             hidden = hidden or ("." in pattern and operator_only(*pattern.split(".", 1)))
@@ -653,9 +637,7 @@ class MCPServer:
         self._warn_about_risks()
         self._report_fallbacks()
         self.permissions.publish()
-        # Printed unconditionally, so the count shows even in quiet mode; the startup GUI reads it (run_mcp.STATUS_PATTERNS).
-        # The operator endpoint words it differently: it usually starts beside an agent endpoint in the same
-        # terminal, and the startup window's tool count is what the agent endpoint offers.
+        # Always printed: the startup GUI reads this line (run_mcp.STATUS_PATTERNS).
         ready = "MCP operator endpoint ready" if self.endpoint_role == "operator" else "MCP ready"
         print(f"{ready}: {len(natives) + num_device_tools} tool(s) registered", flush=True)
         if print_summary and self.verbose:

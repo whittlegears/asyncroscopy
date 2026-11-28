@@ -62,7 +62,6 @@ class Discovery:
         return {
             "role": server.endpoint_role,
             "stack_id": server.stack_id,
-            # Draft workflows only run where this is true.
             "simulated": simulated,
             "stack_fingerprint": stack_fingerprint(server.devices, simulated),
             "urls": dict(self.urls),
@@ -72,13 +71,10 @@ class Discovery:
             "job_limits": server.jobs.job_limits,
             "risks": {name: t.risk for name, t in sorted(tools.items())},
             **({"permission_groups": groups} if agent else {}),
-            # What each tool is, so an agent program never guesses from a tool's name.
             "tools": {name: {"device": t.device, "command": t.command, "role": t.action_role, "risk": t.risk, "acts": t.acts,
                              **({"permission": permissions[name]} if name in permissions else {})}
                       for name, t in sorted(tools.items())},
-            # The general agent's own tool selection, so other harnesses can match it.
             "agent_tools": self.agent_tool_globs(),
-            # Devices whose declarations could not be read: only the operator endpoint offers more than State and Status.
             "devices_without_hints": sorted(p for p, d in server.devices.items() if d.hints_unreadable),
             "discovery_warnings": list(server.discovery_warnings),
         }

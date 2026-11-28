@@ -94,8 +94,7 @@ def _label_areas(areas: list[SAM2Mask], shape: tuple[int, int]) -> np.ndarray:
             raise ValueError(
                 f"SAM2 returned mask shape {mask.shape}; expected image shape {shape}"
             )
-        # Areas are ordered largest to smallest, so more-specific small masks win
-        # when SAM2 returns overlapping regions.
+        # Largest first, so small masks win where SAM2 regions overlap.
         labels[mask] = label
     return labels
 
