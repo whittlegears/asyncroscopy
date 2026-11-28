@@ -11,6 +11,8 @@ import re
 
 DEFAULT_MCP_URL = "http://127.0.0.1:8000/mcp"
 DEFAULT_ANALYSIS_URL = "http://127.0.0.1:8003/mcp"
+DEFAULT_TILED_URI = "http://127.0.0.1:9091"
+default_operator_url = "http://127.0.0.1:8001/mcp"
 autoscript_port = 9095
 # Who is calling and which agent run the call belongs to. With mcp.auth the token's subject replaces the caller.
 # Agents send both with every call, and run_job uses them to find a held start again.

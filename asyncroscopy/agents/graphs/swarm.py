@@ -30,19 +30,20 @@ from asyncroscopy import settings
 from asyncroscopy.agents.profile import load_profile
 
 DEFAULT_MAX_STEPS = 10
-DEFAULT_OLLAMA_HOST = "http://localhost:11434"
+ollama_port = 11434
+DEFAULT_OLLAMA_HOST = f"http://localhost:{ollama_port}"
 
 
 def ollama_host() -> str:
-    """The Ollama server: OLLAMA_HOST, the variable the Ollama client behind ChatOllama reads, else localhost:11434.
-    A value without a scheme gets http://, and one without a port gets 11434, as the Ollama client does."""
+    """The Ollama server: OLLAMA_HOST, the variable the Ollama client behind ChatOllama reads, else DEFAULT_OLLAMA_HOST;
+    a missing scheme or port is filled in as the Ollama client does."""
     host = settings.get().ollama_host or DEFAULT_OLLAMA_HOST
     if "://" not in host:
         host = f"http://{host}"
     scheme, _, rest = host.partition("://")
     address = rest.split("/", 1)[0]
     if not address.rsplit("]", 1)[-1].count(":"):
-        rest = rest.replace(address, f"{address}:11434", 1)
+        rest = rest.replace(address, f"{address}:{ollama_port}", 1)
     return f"{scheme}://{rest}".rstrip("/")
 
 
@@ -586,12 +587,7 @@ class AgentSwarm:
         return builder.compile()
 
     async def _run_swarm(self, prompt: str, transcript: list[str] | None = None) -> str:
-        """
-        Run the agent swarm with a given prompt, returning the final response.
-
-        When `transcript` is supplied, it accumulates the run's routing decisions,
-        tool calls, and generated text for the caller to display.
-        """
+        """Run the swarm on ``prompt`` and return its final response; ``transcript`` collects what happened."""
         if not self._agents:
             return "Swarm Error: No agents available. Please use the spawn_agent tool to create at least one worker before querying."
 

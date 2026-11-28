@@ -41,7 +41,7 @@ from asyncroscopy import settings
 from asyncroscopy.data import tiled_client  # imported before tiled because it limits the retries of the Tiled client
 from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
-from asyncroscopy.core.names import REGISTRABLE_SUFFIXES
+from asyncroscopy.core.names import DEFAULT_TILED_URI, REGISTRABLE_SUFFIXES
 from asyncroscopy.core.net import WILDCARD_HOSTS
 from asyncroscopy.data.data_writer import DEFAULT_ACQUISITION_DIR
 
@@ -52,7 +52,6 @@ from tango import AttrWriteType, DevState
 from tango.server import Device, attribute
 from tiled.client.register import identity, register
 
-DEFAULT_TILED_URI = "http://127.0.0.1:9091"
 ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # REGISTRABLE_SUFFIXES are the suffixes Tiled 0.2 registers from a file. They come from tiled.mimetypes plus
 # image/tiff from the stdlib. Tiled skips other files silently.
@@ -338,12 +337,7 @@ class DATA(Device):
         return self._want_tiled and not self._gave_up and supervising and _reconcilable(path, self._save_path)
 
     def _register_one(self, client, path: str, key: str) -> None:
-        """Register ``path`` under ``key`` unless that same file is already there; raise for a different one.
-
-        Holds a lock so the supervisor's reconcile and an acquisition cannot register
-        the same new file at once (Tiled deletes an entry on a colliding registration).
-        Raises TiledUnavailable only when Tiled cannot be reached.
-        """
+        """Register ``path`` under ``key`` unless already there, under a lock: Tiled deletes an entry on a colliding registration."""
         uri = self._uri()
         with self._register_lock:
             existing = _reach(uri, lambda: _lookup(client, key))
@@ -492,8 +486,7 @@ class DATA(Device):
         return f"http://{host}:{self._port}"
 
     def _public_uri(self) -> str:
-        """The Tiled address get_config gives clients (MCP servers, SciAgentGUI): ASYNCROSCOPY_TILED_PUBLIC_URI
-        when set, for a Tiled that binds 0.0.0.0 in a container and is reached by a service name; else _uri()."""
+        """The Tiled address clients are given: ASYNCROSCOPY_TILED_PUBLIC_URI when set, else _uri()."""
         return settings.get().tiled_public_uri or self._uri()
 
     def _tiled_alive(self) -> bool:
@@ -541,14 +534,7 @@ class DATA(Device):
             return f"pid {pid}"
 
     def _replace_leftover_tiled(self) -> tuple[str | None, str]:
-        """Deal with a Tiled already answering on our port: (refusal, note).
-
-        A Tiled orphaned by an earlier run of this stack (``tiled serve`` reading
-        this save path, whose starting process is gone) is stopped, so a supervised
-        one can replace it. Anything else is refused: one serving another
-        directory or with another API key would fail every registration later,
-        and one whose starter still runs belongs to another stack or an operator.
-        """
+        """(refusal, note) for a Tiled already on our port: an orphan of this stack is stopped, anything else refused."""
         pid = self._listener_pid()
         if not isinstance(pid, int):
             return (
@@ -859,12 +845,7 @@ def _is_ours(pid: int, our_pid: int) -> bool:
 
 
 def _live_owner(process) -> str | None:
-    """'<name> pid <N>' of the live process that started this Tiled, or None if it is an orphan.
-
-    Steps over parents that are the same ``tiled serve`` command (a venv's python.exe
-    starts the real interpreter as a child). When this cannot be told, the Tiled is
-    treated as owned, so it is never stopped by mistake.
-    """
+    """'<name> pid <N>' of the live process that started this Tiled, past a venv's python.exe parent; None if orphaned."""
     try:
         current = process
         while True:

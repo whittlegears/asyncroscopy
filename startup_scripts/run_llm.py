@@ -21,11 +21,13 @@ if str(PROJECT_DIR) not in sys.path:
 
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, python_command, stop_on_termination  # noqa: E402
 from asyncroscopy.core.names import endpoint_urls  # noqa: E402
+from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, profile_data  # noqa: E402
 from asyncroscopy.core.net import is_loopback_host  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 DEFAULT_CONFIG_PATH = PROJECT_DIR / 'configs' / 'gemma-llm.yaml'
+default_profile = profile_data(PROFILES / f'{DEFAULT_PROFILE_NAME}.yaml')
 
 # The agent server needs the `agent` and `ollama` extras.
 AGENT_EXTRAS = ('agent', 'ollama')
@@ -48,8 +50,8 @@ SETTINGS = [
     Setting('agent.urls', 'yaml', {}, section='Agent MCP server', label='Endpoint URLs'),
     Setting('agent.allowed_hosts', 'list', [], section='Agent MCP server', label='Allowed hosts',
             help='Names besides the HTTP host and localhost that requests may give as Host or Origin, such as a proxy\'s.'),
-    Setting('agent.model', default='gemma4:31b', section='Model'),
-    Setting('agent.model_provider', default='ollama', section='Model', label='Provider'),
+    Setting('agent.model', default=default_profile['model'], section='Model'),
+    Setting('agent.model_provider', default=default_profile['model_provider'], section='Model', label='Provider'),
     Setting('agent.max_steps', 'int', 10, section='Model', label='Max steps'),
     Setting('agent.use_init_chat_model', 'bool', False, section='Model', label='Use init_chat_model'),
     Setting('agent.startup_agents', 'yaml', [], section='Agents', label='Startup agents'),
@@ -76,8 +78,8 @@ class AgentConfig:
     http_host: str
     http_port: int
     mcp_urls: list[str] = field(default_factory=list)
-    model: str = "gemma4:31b"
-    model_provider: str = "ollama"
+    model: str = default_profile["model"]
+    model_provider: str = default_profile["model_provider"]
     max_steps: int = 10
     use_init_chat_model: bool = False
     # Plain dicts, so --help and config errors work without the agent extras installed.
