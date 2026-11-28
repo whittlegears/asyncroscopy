@@ -135,7 +135,7 @@ def listening_pids(port: int) -> set[int] | None:
                 if conn.pid and conn.status == psutil.CONN_LISTEN and conn.laddr and conn.laddr.port == port
             }
         except (psutil.Error, OSError):
-            pass  # macOS needs root to see the sockets of other processes, so try the CLI tools.
+            pass  # macOS needs root for other processes' sockets: try the CLI tools
     if os.name == "nt":
         out = _run_text(_powershell(
             f"Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue"
@@ -199,12 +199,12 @@ def matches_device_server(tokens: list[str], module_name: str, instance_name: st
 
 @dataclass
 class ManagedProcess:
-    key: str  # Unique identifier
-    label: str  # The human-readable name of the process
-    process: subprocess.Popen  # Actual handle of the process
-    command: list[str] | None = None  # The command that was run
-    stdout_lines: deque = field(default_factory=lambda: deque(maxlen=1000))  # Stdout buffer
-    stderr_lines: deque = field(default_factory=lambda: deque(maxlen=1000))  # Stderr buffer
+    key: str
+    label: str
+    process: subprocess.Popen
+    command: list[str] | None = None
+    stdout_lines: deque = field(default_factory=lambda: deque(maxlen=1000))
+    stderr_lines: deque = field(default_factory=lambda: deque(maxlen=1000))
 
     @property
     def pid(self) -> int:
@@ -405,7 +405,7 @@ class ProcessManager:
     def _force_kill(self, proc: subprocess.Popen):
         """Escalates to a hard kill if the graceful request timed out."""
         if os.name == "nt":
-            pass # taskkill already does forced tree kill on Windows
+            pass # taskkill already kills the tree on Windows
         else:
             try:
                 pgid = os.getpgid(proc.pid)

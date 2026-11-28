@@ -25,19 +25,19 @@ import numpy as np
 from asyncroscopy.routines.dose import EDS_DOSE_SPREAD_M
 
 ANGSTROM2_PER_M2 = 1e20
-CELLS_PER_FIELD = 8  # a frame's dose is kept in cells about an eighth of its field
-MIN_PIXELS_PER_CELL = 4  # cells are at least this many pixels wide, so a small frame's cells are not mostly empty
-KEY_SPAN = 2**31  # packs a cell's row and col into one int64 key. Cell indices stay well inside KEY_HALF
+CELLS_PER_FIELD = 8  # cells about an eighth of a frame's field
+MIN_PIXELS_PER_CELL = 4  # so a small frame's cells are not mostly empty
+KEY_SPAN = 2**31  # packs row and col into one int64 key
 KEY_HALF = 2**30
-COARSEST_LEVEL = -30  # cells up to 2^30 times cell_m, larger than any frame
+COARSEST_LEVEL = -30  # cells up to 2^30 times cell_m
 
 
 @dataclass
 class DoseParams:
     enabled: bool = False
-    cell_m: float = 20e-9  # the reference cell. Finer frames halve it and coarser frames double it, as often as needed
+    cell_m: float = 20e-9  # finer frames halve it, coarser ones double it
     min_cell_m: float = 0.5e-9
-    spot_spread_m: float = EDS_DOSE_SPREAD_M  # a parked beam's dose is counted over a square this wide
+    spot_spread_m: float = EDS_DOSE_SPREAD_M  # a parked beam's dose counts over a square this wide
     contamination_angstrom_max: float = 0.0
     contamination_dose_e_per_a2: float = 1e4
     damage_critical_dose_e_per_a2: float = 0.0
@@ -75,7 +75,7 @@ class DoseMap:
         if not (np.isfinite(electrons_per_pixel) and np.isfinite(pixel_m) and pixel_m > 0):
             return
         xs, ys = np.asarray(xs, dtype=np.float64).ravel(), np.asarray(ys, dtype=np.float64).ravel()
-        finite = np.isfinite(xs) & np.isfinite(ys)  # one NaN would otherwise poison the whole map
+        finite = np.isfinite(xs) & np.isfinite(ys)  # one NaN would poison the whole map
         xs, ys = xs[finite], ys[finite]
         if xs.size == 0:
             return

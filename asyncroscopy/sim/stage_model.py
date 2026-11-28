@@ -21,7 +21,7 @@ import numpy as np
 
 from .rng import EventRng
 
-WALK_STEP_S = 60.0  # the drift's random walk takes one step per simulated minute
+WALK_STEP_S = 60.0  # one random-walk step per simulated minute
 
 
 @dataclass
@@ -60,7 +60,7 @@ class StageTrajectory:
     settle_drift_m_s: float = 0.0
     settle_tau_s: float = 30.0
     walk_first_minute: int = 0
-    walk_m: np.ndarray = field(default_factory=lambda: np.zeros((1, 2)))  # the walk's position from each minute of the window on
+    walk_m: np.ndarray = field(default_factory=lambda: np.zeros((1, 2)))  # walk position from each minute of the window on
 
     def drift_offset_at(self, t: float) -> np.ndarray:
         """Specimen drift (thermal plus settling) relative to the stage, at simulated time t."""
@@ -122,7 +122,7 @@ class StageModel:
         drift_rng = self.rng.for_event("drift_direction")
         angle = drift_rng.uniform(0.0, 2.0 * np.pi)
         self._drift_dir = np.array([np.cos(angle), np.sin(angle)])
-        self._walk = [np.zeros(2)]  # the walk's position from each minute on
+        self._walk = [np.zeros(2)]  # walk position from each minute on
         self.history: list[MoveRecord] = []
 
     def move_seconds(self, target: list[float]) -> float:

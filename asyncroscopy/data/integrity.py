@@ -41,7 +41,7 @@ from asyncroscopy.core.fileio import file_lock, rotate, rotated_paths
 
 LOCK_WAIT_S = 5.0  # well inside a Tango client's timeout
 CHUNK = 1 << 20
-TAIL_BYTES = 64  # the bytes before the end of what was indexed, which an append leaves as they were
+TAIL_BYTES = 64  # bytes before the indexed end, unchanged by an append
 _guard = threading.Lock()
 _index_lock = threading.Lock()
 
@@ -60,7 +60,7 @@ class _Indexed:
 
     entries: dict[str, dict]
     ino: int = 0
-    offset: int = 0  # bytes of the live file read, up to the end of its last complete line
+    offset: int = 0  # bytes read, to the end of the last complete line
     mtime_ns: int = 0
     tail: bytes = b""
 
@@ -167,7 +167,7 @@ def chain_append(log: Path, record: dict, rotate_bytes: int = 0) -> dict:
             parts = _segments(log)
             newest = parts[-1] if parts else log
             last = json.loads(_last_line(newest) or "{}")
-        except ValueError:  # a last line cut short by a crash, which the chain reports and the next entry follows
+        except ValueError:  # a last line cut short by a crash
             last, cut = {}, True
         if not isinstance(last, dict):
             last, cut = {}, True
@@ -342,7 +342,7 @@ def _index() -> dict[str, dict]:
                 seen = _read_all(log)
                 _index_cache[str(log)] = seen
             return seen.entries
-        if seen is not None and seen.ino in (stat.st_ino, 0):  # ino 0 means the manifest did not exist when last read
+        if seen is not None and seen.ino in (stat.st_ino, 0):  # ino 0: the manifest did not exist when last read
             if stat.st_size == seen.offset and stat.st_mtime_ns == seen.mtime_ns:
                 return seen.entries
             if stat.st_size >= seen.offset and _read_new(log, seen, stat):
@@ -384,7 +384,7 @@ def verify(paths: list[str] | None = None, logs: tuple[Path, ...] = ()) -> dict:
         heads[str(log)] = checked["head"]
         if checked.get("unsealed_before_chain"):
             before_chain[str(log)] = checked["unsealed_before_chain"]
-    index = dict(_index())  # a copy, since another thread may add entries while the files are checked
+    index = dict(_index())  # a copy: another thread may add entries
     wanted = index if paths is None else {str(Path(p).resolve()): index.get(str(Path(p).resolve())) for p in paths}
     changed, missing, unsealed = [], [], []
     for resolved, entry in wanted.items():

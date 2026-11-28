@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             print(show(event), flush=True)
     except KeyboardInterrupt:
         pass
-    except BrokenPipeError:  # for example when piped into head
+    except BrokenPipeError:  # e.g. piped into head
         return 0
     return 0
 

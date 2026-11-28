@@ -87,7 +87,7 @@ def command(f: Callable[..., Any] | None = None, *, risk: str | None = None, ope
     declared = _declaration(risk, operator_only, stop, routine, role)
 
     def decorate(func: Callable[..., Any]) -> Any:
-        options = dict(kwargs)  # a decorator reused on several functions must not share their docs
+        options = dict(kwargs)  # a reused decorator must not share docs
         if declared.get("operator_only") is True:
             options["display_level"] = DispLevel.EXPERT
         if not options.get("doc_out"):

@@ -86,7 +86,7 @@ def _nothing_listening(uri: str) -> bool:
         return not any(
             c.status == psutil.CONN_LISTEN and c.laddr and c.laddr.port == port for c in psutil.net_connections(kind="tcp")
         )
-    except Exception:  # psutil is missing or not permitted, so fall back to connecting
+    except Exception:  # psutil missing or not permitted: just connect
         return False
 
 
@@ -174,7 +174,7 @@ def uri_from_data_device(address: str) -> str:
         proxy = DeviceProxy(address)
         proxy.set_timeout_millis(5000)
         uri = json.loads(proxy.get_config()).get("uri")
-    except Exception as exc:  # Tango raises DevFailed, and a busy DATA device times out
+    except Exception as exc:  # DevFailed, or a busy DATA device timed out
         if cached is not None:
             return cached[0]
         fallback = settings.get().tiled_uri

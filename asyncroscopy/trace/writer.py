@@ -127,7 +127,7 @@ class TraceWriter:
             if key == "result" and value is not None:
                 value = (value if isinstance(value, str) else json.dumps(_json_safe(value), default=str))[:RESULT_PREVIEW_CHARS]
             if key == "run" and not value:
-                continue  # no agent run known, so leave it out rather than write null
+                continue  # no agent run known: omit, never null
             event[key] = _json_safe(value)
         if "clock_s" in event:
             event.setdefault("clock", "instrument")
@@ -158,7 +158,7 @@ def read_tool_log(path: str | Path, start: float | None = None, end: float | Non
                 continue
             try:
                 row = json.loads(line)
-            except json.JSONDecodeError:  # a line cut short by a crash or a concurrent write
+            except json.JSONDecodeError:  # cut short by a crash or a concurrent write
                 continue
             if start is not None and row["ts"] < start:
                 continue

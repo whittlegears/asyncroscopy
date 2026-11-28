@@ -44,7 +44,7 @@ def acquisition_filename(
 
 def _write_tiff(source, path: Path, attrs: dict | None = None) -> None:
     """Write one image as TIFF: AutoScript images save themselves; others go through tifffile with ``attrs`` in ImageDescription."""
-    if hasattr(source, "save"): # adorned images from AutoScript have a save method
+    if hasattr(source, "save"): # AutoScript adorned images have save
         source.save(str(path))
     else:
         array = source.data if hasattr(source, "data") and not isinstance(source, np.ndarray) else source
@@ -240,7 +240,7 @@ def save_acquisition_hdf5(path: str | Path, datasets: list[dict], file_attrs: di
                 dset.attrs[key] = value if isinstance(value, (str, int, float, bool, np.number)) else json.dumps(value)
 
             metadata = getattr(source, "metadata", None)
-            metadata_xml = getattr(metadata, "metadata_as_xml", None) # typically called as : AdornedImage.metadata.metadata_as_xml
+            metadata_xml = getattr(metadata, "metadata_as_xml", None)
             if metadata_xml:
                 root = ET.fromstring(metadata_xml)
                 for elem in root.iter():

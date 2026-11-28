@@ -38,7 +38,7 @@ from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote, urlparse
 
 from asyncroscopy import settings
-from asyncroscopy.data import tiled_client  # imported before tiled because it limits the retries of the Tiled client
+from asyncroscopy.data import tiled_client  # before tiled: it limits the Tiled client's retries
 from asyncroscopy.utils.commands import action_hints_attribute, command
 from asyncroscopy.data.tiled_client import CONNECTION_ERRORS, TiledUnavailable
 from asyncroscopy.core.names import DEFAULT_TILED_URI, REGISTRABLE_SUFFIXES
@@ -56,8 +56,8 @@ ONE_NODE_PER_FILE_WALKER = "tiled.client.register:one_node_per_item"
 # Well inside the 12 s the instrument devices give DATA; a slower registration carries on in the background.
 REGISTER_WAIT_SECONDS = 8.0
 REGISTER_TIMEOUT_SECONDS = 20
-RECENT_WRITE_SECONDS = 10.0  # reconcile leaves files this new alone because they may still be being written
-FUTURE_MTIME_SLACK_SECONDS = 60.0  # a file "modified" further in the future than this has a wrong clock, not a writer
+RECENT_WRITE_SECONDS = 10.0  # files this new may still be being written
+FUTURE_MTIME_SLACK_SECONDS = 60.0  # beyond this, a wrong clock, not a writer
 CATALOG_INIT_TIMEOUT_SECONDS = 60
 TILED_LOGS_KEPT = 5
 LOG_TAIL_BYTES = 64 * 1024
@@ -201,7 +201,7 @@ class DATA(Device):
             if self._tiled_process.poll() is None and self._tiled_alive():
                 self._tiled_server = "yes"
                 return self.get_config()
-            self._stop_tiled_processes()  # This is our server and it has exited or hung. Do not treat it as someone else's.
+            self._stop_tiled_processes()  # our server, exited or hung, not someone else's
         note = ""
         if self._tiled_alive():
             refusal, note = self._replace_leftover_tiled()
@@ -811,7 +811,7 @@ def _registered_file(node) -> str | None:
     if parsed.scheme != "file":
         return None
     local = unquote(parsed.path)
-    if len(local) > 2 and local[0] == "/" and local[2] == ":":  # a Windows path that has a slash before the drive letter
+    if len(local) > 2 and local[0] == "/" and local[2] == ":":  # a Windows path with a slash before the drive letter
         local = local[1:]
     return local
 
@@ -834,7 +834,7 @@ def _is_ours(pid: int, our_pid: int) -> bool:
     try:
         return any(parent.pid == our_pid for parent in psutil.Process(pid).parents())
     except psutil.Error:
-        return True  # We cannot tell, so do not restart a Tiled that answers.
+        return True  # cannot tell, so do not restart a Tiled that answers
 
 
 def _live_owner(process) -> str | None:
@@ -842,7 +842,7 @@ def _live_owner(process) -> str | None:
     try:
         current = process
         while True:
-            parent = current.parent()  # psutil returns None when the parent is gone, and it also checks pid reuse
+            parent = current.parent()  # None when the parent is gone; also checks pid reuse
             if parent is None:
                 return None
             command_line = parent.cmdline()

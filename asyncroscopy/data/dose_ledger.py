@@ -118,7 +118,7 @@ def exposure_of(attrs: dict) -> dict | None:
     region = region or [0.0, 0.0, 1.0, 1.0]
     if len(region) != 4 or not (region[2] > 0 and region[3] > 0):
         return None
-    across, down, width, height = region  # left, top, width and height as fractions of the field, with rows along +y
+    across, down, width, height = region  # fractions of the field, rows along +y
     left, bottom = stage[0] - fov / 2, stage[1] - fov / 2
     return {
         "box_m": [left + across * fov, left + (across + width) * fov, bottom + down * fov, bottom + (down + height) * fov],
@@ -136,7 +136,7 @@ def record_frame(attrs: dict, sample_load_id: str | None, key: str, instrument_i
     record = {"at": time.time(), "sample_load_id": sample_load_id, "instrument_id": instrument_id, "key": key, **exposure}
     try:
         chain_append(ledger_path(), record)
-    except (OSError, ValueError) as exc:  # an unreadable integrity key must not lose the dose, so the line is kept unsealed and verify reports it
+    except (OSError, ValueError) as exc:  # keep the dose unsealed; verify reports it
         print(f"[dose ledger] {key} written without a seal: {exc}")
         path = ledger_path()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,7 +209,7 @@ def dose_at(sample_load_id: str | None, x_m: float | None = None, y_m: float | N
     load = "" if sample_load_id is None else str(sample_load_id)
     try:
         exposures, (at_point, dose, unmeasured) = _query(index, path, load, x_m, y_m)
-    except sqlite3.DatabaseError:  # the file is the record, so a damaged index is built again
+    except sqlite3.DatabaseError:  # the file is the record: rebuild a damaged index
         index.unlink(missing_ok=True)
         exposures, (at_point, dose, unmeasured) = _query(index, path, load, x_m, y_m)
     reply = {"sample_load_id": sample_load_id, "exposures": exposures, "not_counted": NOT_COUNTED}

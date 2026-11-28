@@ -52,9 +52,9 @@ MAX_LISTED = 200  # datasets walked inside one container
 MAX_GROUPS = 40  # entries listed per level of a container
 MAX_DEPTH = 3
 MAX_PEAKS = 8
-PEAK_SIGMA = 5.0  # a peak's counts within its FWHM must stand this many sigmas above the background
+PEAK_SIGMA = 5.0  # a peak's counts within its FWHM, in sigmas above background
 MAX_STRINGS = 50
-IMAGE_GROUPS = ("image", "tiles", "channels")  # looked at first, so a run's pictures come before its spectra
+IMAGE_GROUPS = ("image", "tiles", "channels")  # first, so pictures come before spectra
 SPECTRUM_GROUPS = ("spectrum_image", "spectrum", "spectra")
 
 
@@ -102,11 +102,11 @@ class Axis:
 
 @dataclass
 class ViewOptions:
-    region: list[float] | None = None  # row0, row1, col0, col1 in pixels for an image. For 1-D data, min and max in axis units
+    region: list[float] | None = None  # pixels row0, row1, col0, col1; for 1-D data min and max in axis units
     index: list[int] | None = None  # a frame of a stack, or a row and col position in a spectrum image
     max_side: int = PREVIEW_MAX_SIDE
     max_rows: int = 200  # CSV rows in text views
-    mark_peaks: bool = False  # label a spectrum's peaks on its plot; the text always lists and names them
+    mark_peaks: bool = False  # label peaks on the plot; the text always lists them
 
 
 @dataclass
@@ -155,7 +155,7 @@ class _Loaded:
 def as_dataset(node: Any, key: str, path: str = "", parent_attrs: dict | None = None) -> Dataset:
     family = _family(node)
     shape = getattr(node, "shape", None)
-    if family == "array" and shape is None:  # a reader that cannot report its shape, so read it once
+    if family == "array" and shape is None:  # cannot report its shape, so read once
         node = _Loaded(np.asarray(node.read()), dict(getattr(node, "metadata", None) or {}))
         shape = node.shape
     try:
@@ -167,7 +167,7 @@ def as_dataset(node: Any, key: str, path: str = "", parent_attrs: dict | None = 
 
 def _children(node: Any) -> Iterator[tuple[str, Any]]:
     items = getattr(node, "items", None)
-    if callable(items):  # Tiled pages carry each child's structure, so no request per child is needed
+    if callable(items):  # Tiled pages carry each child's structure
         return ((str(k), v) for k, v in items())
     return ((str(k), node[k]) for k in node.keys())
 
@@ -478,7 +478,7 @@ def energy_axis(attrs: dict) -> Axis | None:
 @dataclass(frozen=True)
 class Peak:
     index: int  # channel in the values given
-    net: float  # counts above the background within half a FWHM each side
+    net: float  # counts above background within half a FWHM each side
     significance: float  # net divided by its noise
 
 
@@ -532,7 +532,7 @@ def find_peaks(values: np.ndarray, fwhm_channels: Any = 3.0, limit: int = MAX_PE
         net = summed_residual[hi] - summed_residual[lo]
         channels, under = hi - lo, summed_background[hi] - summed_background[lo]
         spread = 1.0 + channels / max(int(taken[i]), 1)
-        if counts:  # exact Poisson tail as a z-score, since sparse counts have heavier tails than a Gaussian
+        if counts:  # exact Poisson tail as a z-score; sparse counts have heavier tails
             expected = max(under, 0.5)
             z = float(norm.isf(max(poisson.sf(round(expected + net) - 1, expected), 1e-300))) / math.sqrt(spread)
         else:
@@ -583,8 +583,8 @@ def line_peaks(x: np.ndarray, y: np.ndarray, axis: Axis, step: int = 1, domain: 
     return sorted(rows, key=lambda row: row[1], reverse=True)
 
 
-MARK_GAP = 0.06  # labels closer than this share of the x range go on separate rows
-MARK_REACH = 8  # channels either side of a peak searched for its top, where its label sits
+MARK_GAP = 0.06  # share of the x range below which labels go on separate rows
+MARK_REACH = 8  # channels either side searched for the peak's top
 
 
 def _mark_peaks(plot: Any, marks: list[tuple[float, float, str]], span: float) -> None:
@@ -658,7 +658,7 @@ def line_kind(name: str, matches: Callable[[Dataset], bool], axis: Callable[[Dat
         lines, read, x, y, a, _rows = describe(ds, opts)
         unit = f" {a.units}" if a.units else ""
         bins = max(1, math.ceil(y.size / max(1, opts.max_rows)))
-        if bins > 1:  # sum neighbouring channels so counts are kept
+        if bins > 1:  # summing keeps the counts
             usable = (y.size // bins) * bins
             y_binned = np.nansum(np.asarray(y[:usable], dtype=np.float64).reshape(-1, bins), axis=1)
             x_binned = x[:usable].reshape(-1, bins).mean(axis=1)
@@ -980,7 +980,7 @@ def view(node: Any, key: str, fmt: str = "png", dataset: str | None = None, opts
         body, read = kind.text(ds, opts)
     summary["read"] = read
     if ds.attrs.get("beam_current_pa") == 0 or ds.attrs.get("beam_blanked") in (True, np.True_):
-        summary["beam_blanked"] = True  # only detector noise, and the MCP server fails such an acquisition
+        summary["beam_blanked"] = True  # only detector noise: the MCP server fails it
     summary["text"] = _cut_to_text_limit("\n".join(header + [read] + ([body] if body else [])))
     return summary, png
 

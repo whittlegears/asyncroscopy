@@ -150,10 +150,10 @@ def _line_sigma(values: np.ndarray, fwhm_channels: Any, index: int, others: list
     u = (x - index) / reach
     centres = [index] + [j for j in others if lo <= j < hi and j != index]
     columns = [np.ones_like(u), u, u * u] + [np.exp(-0.5 * ((x - j) / (max(float(width[j]), 1.0) / 2.355)) ** 2) for j in centres]
-    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson weights, where the variance equals the counts
+    weight = 1.0 / np.sqrt(np.maximum(y[lo:hi], 1.0))  # Poisson weights: variance equals counts
     design = np.stack(columns, axis=1) * weight[:, None]
     if design.shape[0] <= design.shape[1]:
-        return math.inf  # too few channels to tell, so keep the peak
+        return math.inf  # too few channels to tell: keep the peak
     coefficients, *_ = np.linalg.lstsq(design, y[lo:hi] * weight, rcond=None)
     variance = float(np.linalg.pinv(design.T @ design)[3, 3])
     return float(coefficients[3]) / math.sqrt(max(variance, 1e-300))

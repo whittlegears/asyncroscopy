@@ -36,14 +36,14 @@ from typing import Any, Iterable, Iterator
 
 from asyncroscopy import settings
 
-GRACE_S = 0.5  # a live event is held this long after it was written, so a slower writer's line cannot be overtaken
+GRACE_S = 0.5  # so a slower writer's line cannot be overtaken
 POLL_S = 0.2
-HEAD_BYTES = 64  # a file's first bytes, used as its identity where the file system reports no inode
+HEAD_BYTES = 64  # file identity where there is no inode
 RETIRED_KEPT = 64
 CURSOR_PREFIX = "tc1."
 SIDECAR_SUFFIXES = (".seq", ".lock")
-RESCAN_S = 2.0  # how often a trace_since stream looks for new files
-CACHED_STREAMS = 16  # trace_since streams kept between polls, least recently used dropped first
+RESCAN_S = 2.0  # how often trace_since looks for new files
+CACHED_STREAMS = 16  # kept between polls, least recently used dropped first
 _streams: OrderedDict[tuple, "TraceStream"] = OrderedDict()
 _streams_lock = threading.Lock()
 
@@ -106,12 +106,12 @@ class _File:
     path: Path
     ino: int = 0
     head: bytes = b""
-    read_off: int = 0  # bytes of the file already parsed
-    read_seq: int | None = None  # highest seq parsed. A line at or below it is a repeat
-    last_t: float = float("-inf")  # ordering time of the last line parsed, which never goes down within a file
-    known: bool = False  # ino and head describe a file this follower has read
-    committed: dict[str, Any] = field(default_factory=dict)  # the cursor, where the last event handed out ended
-    pending: deque = field(default_factory=deque)  # parsed but not yet handed out, as key, event and commit
+    read_off: int = 0  # bytes already parsed
+    read_seq: int | None = None  # a line at or below it is a repeat
+    last_t: float = float("-inf")  # never goes down within a file
+    known: bool = False  # ino and head describe a file already read
+    committed: dict[str, Any] = field(default_factory=dict)  # cursor where the last handed-out event ended
+    pending: deque = field(default_factory=deque)  # parsed, not handed out: key, event, commit
 
 
 class TraceStream:
@@ -158,7 +158,7 @@ class TraceStream:
         self.rescan_s = rescan_s
         self._expanded_at = float("-inf")
         self._files: dict[str, _File] = {}
-        self._retired: list[int] = []  # inodes of rotated files already read, never followed again under a new name
+        self._retired: list[int] = []  # rotated inodes already read, never followed again
         if cursor:
             self._restore(cursor)
         elif from_end:
@@ -247,17 +247,17 @@ class TraceStream:
             self._files[str(path)] = _File(path)
 
     def _scan(self) -> None:
-        if time.monotonic() - self._expanded_at >= self.rescan_s:  # checking the known files is cheap but globbing every source is not
+        if time.monotonic() - self._expanded_at >= self.rescan_s:  # globbing every source is not cheap
             self._find_new_files()
         for f in list(self._files.values()):
             self._scan_file(f)
-        if self._expanded_at == float("-inf"):  # a file was rotated, so look for what else rotated since
+        if self._expanded_at == float("-inf"):  # a rotation: look for others since
             self._find_new_files()
             for f in list(self._files.values()):
                 self._scan_file(f)
 
     def _scan_file(self, f: _File) -> None:
-        for _ in range(3):  # a rotation between stat and open is seen at open, and retried
+        for _ in range(3):  # a rotation between stat and open is retried
             st = _stat(f.path)
             if f.known:
                 current_head = self._head(f.path) if st is not None and not (st.st_ino and f.ino) else b""
@@ -268,11 +268,11 @@ class TraceStream:
                     if st.st_ino and st.st_ino in self._tracked_inos(but=f) and _logical(f.path) != f.path.name:
                         # Read already under another name: its owner reads the rest, and this name takes it as read.
                         f.ino, f.head, f.read_off, f.known = st.st_ino, self._head(f.path), st.st_size, True
-                        if not f.pending:  # otherwise the cursor moves on when the old file's last events are handed out
+                        if not f.pending:  # otherwise the cursor moves when the old file drains
                             f.committed = self._commit(f, st.st_size, None, f.last_t)
                         return
                     continue
-                if st.st_size < f.read_off:  # truncated in place, so start again from its first line
+                if st.st_size < f.read_off:  # truncated in place: restart from the first line
                     f.read_off, f.head, f.read_seq = 0, b"", None
             if st is None:
                 return
@@ -281,7 +281,7 @@ class TraceStream:
 
     def _drain_rotated(self, f: _File) -> None:
         """The file was renamed (or removed): read what was left of it, then follow the new one from its start."""
-        self._expanded_at = float("-inf")  # the files rotated since the last poll may not all be known yet
+        self._expanded_at = float("-inf")  # files rotated since the last poll may be unknown
         old = self._find_rotated(f)
         if old is not None:
             self._read(f, old, f.ino, rotated=True)
@@ -317,7 +317,7 @@ class TraceStream:
                 handle.seek(f.read_off)
                 data = handle.read()
         except OSError:
-            return True  # gone or locked for now, so the next poll tries again
+            return True  # gone or locked: the next poll retries
         if not f.known:
             f.ino, f.known = ino, True
         if len(f.head) < len(head):
@@ -331,12 +331,12 @@ class TraceStream:
             try:
                 event = json.loads(raw)
             except ValueError:
-                continue  # a line damaged by a crash is skipped and never retried
+                continue  # crash-damaged line: skipped for good
             if not isinstance(event, dict):
                 continue
             seq = event.get("seq") if isinstance(event.get("seq"), int) and not isinstance(event.get("seq"), bool) else None
             if seq is not None and f.read_seq is not None and seq <= f.read_seq:
-                continue  # already read, after a copy-truncate or a re-read after rotation
+                continue  # already read, after copy-truncate or rotation
             if seq is not None:
                 f.read_seq = seq
             t = event.get("written", event.get("ts"))

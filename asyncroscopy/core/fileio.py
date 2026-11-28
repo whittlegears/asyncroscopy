@@ -18,7 +18,7 @@ from typing import IO, Any, Callable, Iterator
 
 LOCK_TIMEOUT_S = 5.0  # longest one attempt waits for another process's append
 LOCK_ATTEMPTS = 3  # attempts before an append gives up and raises
-_LOCK_BYTE = 1 << 20  # Windows locks this byte of the .seq file. It sits past the data, so the data stays readable
+_LOCK_BYTE = 1 << 20  # Windows locks this byte, past the data, so the data stays readable
 
 
 def seq_path(path: str | Path) -> Path:
@@ -139,7 +139,7 @@ def rotate(path: str | Path, keep: int = 0) -> Path | None:
         for old in rotated[: max(0, len(rotated) + 1 - keep)]:
             try:
                 os.unlink(old)
-            except OSError:  # still open in a reader, so it goes on a later rotation
+            except OSError:  # still open in a reader: a later rotation takes it
                 pass
     return target
 
@@ -224,7 +224,7 @@ class SequencedAppender:
                         stored = counter.read(100).decode("ascii", errors="replace").split()
                         try:
                             last_seq, last_written = int(stored[0]), float(stored[1])
-                        except (IndexError, ValueError):  # a new or damaged sidecar, so continue from the log itself
+                        except (IndexError, ValueError):  # a new or damaged sidecar: continue from the log
                             last_seq, last_written = _last_seq_in(self.path)
                         row["seq"] = last_seq + 1
                         row["written"] = max(time.time(), last_written)
