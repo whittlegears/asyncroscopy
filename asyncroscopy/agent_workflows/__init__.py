@@ -20,4 +20,4 @@ prefixes it, and normalises MCP results to Python values.
 
 # Workflow modules the agent server offers, by module name. Each has build_graph,
 # WORKFLOW (name, what, inputs) and missing_tools.
-WORKFLOW_MODULES = ("sample_map", "correction", "tilt_series", "maped")
+WORKFLOW_MODULES = ("sample_map", "correction", "tilt_series", "maped", "stage_z_focus", "aberration_climb")
