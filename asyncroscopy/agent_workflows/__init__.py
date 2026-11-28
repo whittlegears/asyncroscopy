@@ -17,3 +17,7 @@ prefixes it, and normalises MCP results to Python values.
 ``runner.WorkflowRunner`` keeps graphs and their paused threads so a client
 (or the agent MCP server) can start a run and resume it after an approval.
 """
+
+# Workflow modules the agent server offers, by module name. Each has build_graph,
+# WORKFLOW (name, what, inputs) and missing_tools.
+WORKFLOW_MODULES = ("sample_map", "correction", "tilt_series", "maped")

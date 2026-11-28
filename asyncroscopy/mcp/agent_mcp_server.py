@@ -81,12 +81,18 @@ class AgentMCPServer:
     def _make_workflow_runner(self):
         """Graphs from asyncroscopy.agent_workflows, built from the swarm's MCP tools when first used."""
         try:
-            from asyncroscopy.agent_workflows import sample_map
+            import importlib
+
+            from asyncroscopy.agent_workflows import WORKFLOW_MODULES
             from asyncroscopy.agent_workflows.runner import WorkflowRunner
+
+            modules = {name: importlib.import_module(f"asyncroscopy.agent_workflows.{name}") for name in WORKFLOW_MODULES}
         except ImportError:  # LangGraph is missing (or stubbed in tests)
             return None
+        self._workflow_modules = modules
         runner = WorkflowRunner()
-        runner.register("sample_map", lambda checkpointer: sample_map.build_graph(self.swarm._tools, checkpointer=checkpointer))
+        for name, module in modules.items():
+            runner.register(name, lambda checkpointer, module=module: module.build_graph(self.swarm._tools, checkpointer=checkpointer))
         return runner
 
     def setup(self) -> None:
@@ -164,17 +170,10 @@ class AgentMCPServer:
 
         A workflow runs its own loop; the model only starts it and answers its questions.
         """
-        from asyncroscopy.agent_workflows import sample_map
-
-        missing = sample_map.missing_tools(self.swarm._tools)
-        return json.dumps([{
-            "name": "sample_map",
-            "what": "Grid-scan a sample, stitch it on the pyTEMlib analysis server, score regions, and review the "
-            "candidates with a person. Pauses for approval before the stage moves.",
-            "inputs": {"request": {"name": "str", "rows": "int", "cols": "int", "overlap": "0-0.6", "fov_m": "float",
-                                   "calibration_fov_m": "float", "scorer": "str", "top_k": "int", "shortlist_size": "int"}},
-            "missing_tools": missing,
-        }])
+        return json.dumps([
+            {**module.WORKFLOW, "missing_tools": module.missing_tools(self.swarm._tools)}
+            for module in self._workflow_modules.values()
+        ])
 
     async def start_workflow(self, name: str, inputs_json: str) -> str:
         """Start a workflow. Returns JSON with thread_id, waiting_for (the question it is paused on, or null),

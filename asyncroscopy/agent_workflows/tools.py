@@ -38,6 +38,13 @@ def _name(tool: Any) -> str:
     return getattr(tool, "name", None) or getattr(tool, "__name__", "")
 
 
+def _is_text_block(block: Any) -> bool:
+    """An MCP/LangChain text content block, as opposed to a value that happens to be in a list."""
+    if isinstance(block, dict):
+        return block.get("type") == "text" and "text" in block
+    return getattr(block, "type", None) == "text" and hasattr(block, "text")
+
+
 def normalise_result(result: Any) -> Any:
     """MCP results arrive as JSON text, content blocks, or (content, artifact); return the Python value."""
     if isinstance(result, tuple) and len(result) == 2:
@@ -50,8 +57,8 @@ def normalise_result(result: Any) -> Any:
             return structured.get("result", structured) if isinstance(structured, dict) else structured
         result = content
     content = getattr(result, "content", result)  # ToolMessage
-    if isinstance(content, list):
-        texts = [b.get("text", "") if isinstance(b, dict) else str(getattr(b, "text", b)) for b in content]
+    if isinstance(content, list) and content and all(_is_text_block(b) for b in content):
+        texts = [b.get("text", "") if isinstance(b, dict) else str(b.text) for b in content]
         content = "".join(texts) if len(texts) != 1 else texts[0]
     if isinstance(content, str):
         try:

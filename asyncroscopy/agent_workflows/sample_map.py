@@ -330,6 +330,15 @@ def build_graph(tools, checkpointer=None, prefer: tuple[str, ...] = (), run_dir:
     return graph.compile(checkpointer=checkpointer)
 
 
+WORKFLOW = {
+    "name": "sample_map",
+    "what": ("Grid-scan a sample, stitch it on the pyTEMlib analysis server, score regions, and review the "
+             "candidates with a person. Pauses for approval before the stage moves."),
+    "inputs": {"request": {"name": "str", "rows": "int", "cols": "int", "overlap": "0-0.6", "fov_m": "float",
+                           "calibration_fov_m": "float", "scorer": "str", "top_k": "int", "shortlist_size": "int",
+                           "stage_sigma_m": "float", "scan_linear": "2 x 2 list or 'measure'"}},
+}
+
 REQUIRED_TOOLS = ("acquire_map_grid", "assemble_map", "analysis_job_status", "analysis_job_results", "score_map", "list_pois", "annotate", "map_info")
 
 
