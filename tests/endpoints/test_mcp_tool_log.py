@@ -26,7 +26,7 @@ def _wrapper(monkeypatch, tmp_path, func, log=True):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer(
         "test", "localhost", 1234,
-        blocked_classes=[], blocked_functions={}, data_device_address="",
+        blocked_classes=[], needs_approval={}, data_device_address="",
         tool_log_path=str(tmp_path / "calls.jsonl") if log else None,
     )
     return server, server._create_wrapper(func, CMD_INFO, "move", "Stage")

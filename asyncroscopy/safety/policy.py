@@ -236,3 +236,9 @@ def is_envelope_device(command_names: Iterable[str]) -> bool:
 def operator_only(dev_class: str, command: str) -> bool:
     key = _key(dev_class, command)
     return any(fnmatchcase(key, pattern) for pattern in OPERATOR_ONLY)
+
+
+def hard_blocked(dev_class: str, command: str) -> bool:
+    """Never run, whatever a person sets: Tango's admin commands (OPERATOR_ONLY) and Disconnect, after which even the
+    e-stop cannot blank the beam."""
+    return operator_only(dev_class, command) or _key(dev_class, command).endswith(".disconnect")

@@ -19,7 +19,9 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+from asyncroscopy.core.names import endpoint_urls  # noqa: E402
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth  # noqa: E402
+from asyncroscopy.safety.permissions import default_approval_ttl_s  # noqa: E402
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination  # noqa: E402
 from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
@@ -60,11 +62,10 @@ SETTINGS = [
     Setting('mcp.data_device_address', required=True, section='Data access', label='DATA device'),
     Setting('mcp.blocked_classes', 'list', [], section='Access control'),
     Setting('mcp.include_only_functions', 'list', [], section='Access control', help='Blank: every non-blocked command.'),
-    Setting('mcp.blocked_functions', 'yaml', {}, section='Access control', label='Blocked functions'),
+    Setting('mcp.needs_approval', 'yaml', {}, section='Access control', label='Needs approval'),
 ]
 # Lines mcp_server.py prints once tools are registered, or when it cannot start.
 OPERATOR_HOST = '127.0.0.1'
-OPERATOR_BLOCKED = ('Init', 'Kill', 'RestartServer')
 STATUS_PATTERNS = [
     (re.compile(r'MCP ready: (\d+) tool'), '{0} tools', False),
     (re.compile(r'MCP ERROR: .*in use'), 'port in use', True),
@@ -86,7 +87,7 @@ class MCPConfig:
     data_device_address: str
     quiet: bool
     blocked_classes: list[str]
-    blocked_functions: dict[str, list[str]]
+    needs_approval: dict[str, list[str]]
     include_only_functions: list[str] = field(default_factory=list)
     tool_log: str = ''
     endpoint_role: str = 'agent'
@@ -98,7 +99,9 @@ class MCPConfig:
     clock_device: str = ''  # instrument whose clock_s stamps trace events. Empty means this computer's time.
     trace_follow: list[str] = field(default_factory=list)  # what the operator endpoint's trace_since reads. Empty means trace's directory.
     data_views: list[str] = field(default_factory=list)
-    analysis_url: str = ''
+    urls: dict[str, str | None] = field(default_factory=endpoint_urls)
+    permissions_file: str = ''
+    approval_ttl_s: float = default_approval_ttl_s
     job_limits: dict[str, float] = field(default_factory=dict)
     # http_host 0.0.0.0 on a stack that is not simulated binds 127.0.0.1 unless this is true. The devices' simulated property says which it is.
     allow_remote_bind: bool = False
@@ -167,9 +170,13 @@ def load_config(path: Path) -> Config:
     except yaml.YAMLError as exc:
         raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
     values = read_settings(raw, SETTINGS)
-    blocked_functions = values['mcp.blocked_functions'] or {}
-    if not all(isinstance(names, list) for names in blocked_functions.values()):
-        raise ConfigError(['mcp.blocked_functions must map a class (or "*") to a list of command names'])
+    if 'blocked_functions' in raw['mcp']:
+        raise ConfigError([f'{path.name}: mcp.blocked_functions is now mcp.needs_approval: what it lists is held for a person, not hidden'])
+    if 'analysis_url' in raw['mcp']:
+        raise ConfigError([f'{path.name}: mcp.analysis_url is now mcp.urls.analysis'])
+    needs_approval = values['mcp.needs_approval'] or {}
+    if not all(isinstance(names, list) for names in needs_approval.values()):
+        raise ConfigError(['mcp.needs_approval must map a class (or "*") to a list of command names'])
     # Settings the GUI has no widget for, such as safety, trace and auth, are read straight from the YAML.
     mcp = raw['mcp']
     return Config(
@@ -184,7 +191,7 @@ def load_config(path: Path) -> Config:
             data_device_address=values['mcp.data_device_address'],
             quiet=values['mcp.quiet'],
             blocked_classes=values['mcp.blocked_classes'],
-            blocked_functions={key: [str(name) for name in names] for key, names in blocked_functions.items()},
+            needs_approval={key: [str(name) for name in names] for key, names in needs_approval.items()},
             include_only_functions=values['mcp.include_only_functions'],
             tool_log=values['mcp.tool_log'] or '',
             endpoint_role=str(mcp.get('endpoint_role', 'agent')),
@@ -195,7 +202,9 @@ def load_config(path: Path) -> Config:
             clock_device=str(mcp.get('clock_device') or ''),
             trace_follow=_module_list(mcp.get('trace_follow'), 'mcp.trace_follow'),
             data_views=_module_list(mcp.get('data_views'), 'mcp.data_views'),
-            analysis_url=str(mcp.get('analysis_url') or ''),
+            urls=endpoint_urls(mcp.get('urls'), f'{path}: mcp.urls'),
+            permissions_file=str(mcp.get('permissions_file') or ''),
+            approval_ttl_s=float(mcp.get('approval_ttl_s') or default_approval_ttl_s),
             job_limits={str(k): float(v) for k, v in (mcp.get('job_limits') or {}).items() if v not in (None, '')},
             allow_remote_bind=mcp.get('allow_remote_bind') is True,
             # A relative public_key_file is read from the project directory. Dev tokens live under outputs/dev_tokens.
@@ -238,7 +247,7 @@ def operator_config(config: Config) -> Config | None:
         http_host=OPERATOR_HOST,
         http_port=mcp.operator_port,
         endpoint_role='operator',
-        blocked_functions={'*': list(OPERATOR_BLOCKED)},
+        needs_approval={},
         include_only_functions=[],
         tool_log='',
         agent_profile='',
@@ -271,8 +280,8 @@ def build_command(config: Config) -> list[str]:
         config.mcp.data_device_address,
         '--blocked-classes-json',
         json.dumps(config.mcp.blocked_classes),
-        '--blocked-functions-json',
-        json.dumps(config.mcp.blocked_functions),
+        '--needs-approval-json',
+        json.dumps(config.mcp.needs_approval),
         '--include-only-functions-json',
         json.dumps(config.mcp.include_only_functions),
     )
@@ -295,8 +304,12 @@ def build_command(config: Config) -> list[str]:
         command.extend(['--trace-follow-json', json.dumps(config.mcp.trace_follow)])
     if config.mcp.data_views:
         command.extend(['--data-views-json', json.dumps(config.mcp.data_views)])
-    if config.mcp.analysis_url:
-        command.extend(['--analysis-url', config.mcp.analysis_url])
+    if any(config.mcp.urls.values()):
+        command.extend(['--urls-json', json.dumps(config.mcp.urls)])
+    if config.mcp.permissions_file:
+        command.extend(['--permissions-file', config.mcp.permissions_file])
+    if config.mcp.approval_ttl_s != default_approval_ttl_s:
+        command.extend(['--approval-ttl-s', str(config.mcp.approval_ttl_s)])
     if config.mcp.job_limits:
         command.extend(['--job-limits-json', json.dumps(config.mcp.job_limits)])
     if config.mcp.allow_remote_bind:

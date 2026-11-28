@@ -34,14 +34,14 @@ def test_the_reference_is_an_agent_configuration():
 
 
 @pytest.mark.parametrize("path", _agent_configs(), ids=lambda p: p.name)
-def test_agent_configuration_blocks_at_least_what_the_twin_blocks(path):
+def test_agent_configuration_holds_at_least_what_the_twin_holds(path):
     reference, mcp = _mcp(REFERENCE), _mcp(path)
     missing_classes = set(reference.get("blocked_classes") or []) - set(mcp.get("blocked_classes") or [])
     assert not missing_classes, f"{path.name} offers agents the classes {sorted(missing_classes)}"
-    blocked = mcp.get("blocked_functions") or {}
-    for device_class, commands in (reference.get("blocked_functions") or {}).items():
-        missing = set(commands) - set(blocked.get(device_class) or [])
-        assert not missing, f"{path.name} offers agents {device_class} commands {sorted(missing)}"
+    held = mcp.get("needs_approval") or {}
+    for device_class, commands in (reference.get("needs_approval") or {}).items():
+        missing = set(commands) - set(held.get(device_class) or [])
+        assert not missing, f"{path.name} runs {device_class} commands {sorted(missing)} without a person's approval"
 
 
 @pytest.mark.parametrize("path", _agent_configs(), ids=lambda p: p.name)

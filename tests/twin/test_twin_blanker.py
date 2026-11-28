@@ -75,7 +75,7 @@ def test_stop_all_blanks_an_atomistic_twin(tango_ctx):
         def get_device_exported(self, pattern):
             return self
 
-    server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", database=Exported(), verbose=False)
+    server = MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="", database=Exported(), verbose=False)
     server.setup(print_summary=False)
     proxy = tango.DeviceProxy(tango_ctx.get_device_access("asyncroscopy/digitaltwintilt/default"))
     try:

@@ -126,7 +126,7 @@ def mcp_server_for(
         "localhost",
         0,
         blocked_classes=["DataBase", "DServer"],
-        blocked_functions={"*": ["Init", "Kill", "RestartServer"]},
+        needs_approval={},
         data_device_address="asyncroscopy/data/default",
         verbose=False,
         endpoint_role=endpoint_role,

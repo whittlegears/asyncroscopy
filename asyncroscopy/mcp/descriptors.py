@@ -41,6 +41,12 @@ NATIVE: dict[str, tuple[str, str, bool, bool]] = {
     "save_skill": ("other", "low", True, False),
     "delete_skill": ("other", "low", True, False),
     "switch_skill": ("other", "low", True, False),
+    "list_pending_approvals": ("setting.read", "low", False, False),
+    "approve_call": ("other", "high", True, False),
+    "deny_call": ("other", "low", True, False),
+    "get_permissions": ("setting.read", "low", False, False),
+    "set_permission": ("setting.set", "high", True, False),
+    "set_group_permission": ("setting.set", "high", True, False),
 }
 # Envelope verbs that only read a job.
 JOB_READS = frozenset({"job_status", "results"})

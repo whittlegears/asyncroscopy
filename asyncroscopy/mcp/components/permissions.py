@@ -1,0 +1,161 @@
+"""Permissions: the agent endpoint holds calls a person must approve; the operator endpoint lists and decides them.
+
+On the agent endpoint a middleware checks every tool call (and the tool ``call_tool`` runs) against the tool's
+effective permission (``asyncroscopy.safety.permissions``) before it runs. On the operator endpoint the person's
+tools: list_pending_approvals, approve_call, deny_call, get_permissions, set_permission, set_group_permission.
+``docs/MCP/permissions.md`` is the contract.
+"""
+
+from __future__ import annotations
+
+from fnmatch import fnmatchcase
+from typing import TYPE_CHECKING, Any
+
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools import ToolResult, tool
+from mcp.types import TextContent
+
+from asyncroscopy.core.names import STOP_ROLES
+from asyncroscopy.safety.permissions import PermissionStore, effective_permission
+from asyncroscopy.safety.policy import hard_blocked
+
+if TYPE_CHECKING:
+    from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
+
+always_run = frozenset({"endpoint_info", "action_space", "find_tools", "call_tool", "stop_all"})
+
+
+def listed_in(rules: dict[str, list[str]], dev_class: str, command: str) -> bool:
+    """Whether a {class or "*": [command or "Class.command"]} mapping (``mcp.needs_approval``) names this command."""
+    qualified = f"{dev_class}.{command}"
+    entries = [*rules.get("*", []), *rules.get(dev_class, [])]
+    return any(fnmatchcase(command, e) or fnmatchcase(qualified, e) for e in entries)
+
+
+def refusal(text: str, structured: dict[str, Any]) -> ToolResult:
+    return ToolResult(content=[TextContent(type="text", text=text)], structured_content=structured, is_error=True)
+
+
+class Gate(Middleware):
+    def __init__(self, owner: Permissions) -> None:
+        self.owner = owner
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next: CallNext) -> Any:
+        name = context.message.name
+        arguments = dict(context.message.arguments or {})
+        if name == "call_tool":
+            name, arguments = str(arguments.get("name", "")), dict(arguments.get("arguments") or {})
+        held = self.owner.check(name, arguments)
+        if held is not None:
+            return held
+        return await call_next(context)
+
+
+class Permissions:
+    def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
+        self.server = server
+        self.needs_approval = cfg.needs_approval
+        self.store = PermissionStore(cfg.permissions_file, server.stack_id, cfg.approval_ttl_s)
+
+    def attach(self) -> None:
+        """Put the gate on the agent endpoint, inside the token check so a refused caller holds nothing."""
+        if self.server.endpoint_role == "agent":
+            self.server.mcp.add_middleware(Gate(self))
+
+    def natives(self) -> list:
+        if self.server.endpoint_role != "operator":
+            return []
+        return [self.list_pending_approvals, self.approve_call, self.deny_call, self.get_permissions, self.set_permission,
+                self.set_group_permission]
+
+    def entry(self, name: str) -> dict[str, Any]:
+        t = self.server.descriptors[name]
+        registered = self.server.registered.get(name)
+        description = ((registered.description if registered is not None else "") or "").strip()
+        device_command = not t.native and t.dev_class is not None and t.command is not None
+        return {"acts": t.acts, "risk": t.risk, "description": description.splitlines()[0][:300] if description else "",
+                "needs_approval": device_command and listed_in(self.needs_approval, t.dev_class, t.command),
+                "never": device_command and hard_blocked(t.dev_class, t.command),
+                "fixed": name in always_run or t.stop or t.action_role in STOP_ROLES}
+
+    def catalog(self) -> dict[str, dict[str, Any]]:
+        return {name: self.entry(name) for name in sorted(self.server.descriptors) if name in self.server.registered}
+
+    def publish(self) -> None:
+        if self.server.endpoint_role == "agent":
+            self.store.publish(self.catalog())
+
+    def effective(self) -> tuple[dict[str, str], dict[str, str]]:
+        """(each tool's effective permission, the group defaults), for endpoint_info."""
+        settings = self.store.settings()
+        return {name: effective_permission(name, entry, settings) for name, entry in self.catalog().items()}, settings["groups"]
+
+    def check(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
+        """None when the call may run now, else the refusal or the held call to return in its place."""
+        if name not in self.server.descriptors or name not in self.server.registered:
+            return None
+        entry = self.entry(name)
+        permission = effective_permission(name, entry, self.store.settings())
+        if permission == "allow":
+            return None
+        if permission == "never":
+            return refusal(f"{name} is never run from this endpoint.", {"status": "never", "tool": name})
+        record = self.store.request(name, arguments, entry["acts"], entry["risk"], self.server.caller())
+        if record["status"] == "approved":
+            return None
+        if record["status"] == "denied":
+            reason = record.get("reason") or ""
+            return refusal(f"{name} was denied by a person: {reason}" if reason else f"{name} was denied by a person.",
+                           {"status": "denied", "request_id": record["request_id"], "reason": reason})
+        held = {k: record[k] for k in ("request_id", "tool", "arguments", "arguments_sha256", "acts", "risk", "expires_at", "requested_by")}
+        return refusal(f"{name} is waiting for a person to approve it (request {record['request_id']}). "
+                       "Send the same call again once it is approved.", {"status": "approval_required", **held})
+
+    @tool()
+    def list_pending_approvals(self) -> list[dict[str, Any]]:
+        """The agent endpoint's calls waiting for a person to approve or deny them, oldest first."""
+        return self.store.pending()
+
+    @tool()
+    def approve_call(self, request_id: str) -> dict[str, Any]:
+        """Approve one held call. The agent's next identical call runs, once."""
+        try:
+            return self.store.approve(request_id)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+
+    @tool()
+    def deny_call(self, request_id: str, reason: str) -> dict[str, Any]:
+        """Deny one held call, with the reason the agent is told."""
+        try:
+            return self.store.deny(request_id, reason)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+
+    @tool()
+    def get_permissions(self) -> dict[str, Any]:
+        """The group defaults (reads, acts) and each agent-endpoint tool's permission: allow, approve or never."""
+        return self.store.permissions()
+
+    @tool()
+    def set_permission(self, tool: str, permission: str) -> dict[str, Any]:
+        """Set one agent-endpoint tool to allow or approve, or to default to clear the setting."""
+        try:
+            self.store.set_tool(tool, permission)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return self.store.permissions()
+
+    @tool()
+    def set_group_permission(self, group: str, permission: str) -> dict[str, Any]:
+        """Set the default of a group (reads or acts) to allow or approve."""
+        try:
+            self.store.set_group(group, permission)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return self.store.permissions()
+
+
+def register(server: MCPServer, cfg: ServerConfig) -> Permissions:
+    return Permissions(server, cfg)

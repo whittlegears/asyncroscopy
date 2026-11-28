@@ -63,7 +63,7 @@ tools:
   stem: ["*_get_stage", "*_get_sample", "*_move_stage", "*_get_parameters", "*_acquire_scanned_image", "*_acquire_spectrum",
          "*_set_fov", "*_get_fov", "*_aim_image_shift", "*_set_image_shift", "*_get_image_shift", "*_set_defocus", "*_place_beam",
          "*_place_beam_at", "*_blank_beam", "*_unblank_beam", "Mapper*_abort"]
-  # Only when the instrument endpoint has no mcp.analysis_url does an agent need the analysis server's own waits.
+  # Only when the instrument endpoint has no mcp.urls.analysis does an agent need the analysis server's own waits.
   analysis_waits: [analysis_job_status, analysis_job_results]
   # For agent programs, not models: action_space is far too long for a small model's context.
   not_for_models: [list_skills, skills_for, notes_for, skill_text, save_skill, delete_skill, switch_skill, endpoint_info, action_space]

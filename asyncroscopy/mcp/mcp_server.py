@@ -26,25 +26,27 @@ from typing import Annotated, Any, Callable
 from fastmcp import FastMCP
 from fastmcp.server.server import Transport
 from fastmcp.tools import Tool, tool
+from mcp.types import ToolAnnotations
 from pydantic import Field
 from tango import CmdArgType, CommandInfo, Database, DeviceProxy, DispLevel
 from tango.utils import TO_TANGO_TYPE, is_array_type, is_bool_type, is_float_type, is_int_type, is_scalar_type, is_str_type
 
-from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, tool_name
+from asyncroscopy import settings
+from asyncroscopy.core.names import CALLER_HEADER, ENVELOPE_VERBS, RUN_HEADER, TANGO_READS, endpoint_urls, tool_name
 from asyncroscopy.core.net import bind_host, is_remote_host
 from asyncroscopy.data.data_reader import numpy_to_python
 from asyncroscopy.mcp import endpoint_auth, host_guard, local_docs
-from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, skills_tools, trace_tools, turns
+from asyncroscopy.mcp.components import data_tools, discovery, estop, jobs, memory_tools, permissions, skills_tools, trace_tools, turns
 from asyncroscopy.mcp.descriptors import DeviceInfo, ToolDescriptor, describe_command, describe_native, read_hints, rule_risk
 from asyncroscopy.mcp.interceptors import Call, Interceptor, run_call
-from asyncroscopy.safety.policy import check_overrides, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
+from asyncroscopy.safety.permissions import default_approval_ttl_s
+from asyncroscopy.safety.policy import check_overrides, hard_blocked, is_envelope_device, is_probe_device, is_read_only, is_stem_device, operator_only
 from asyncroscopy.trace.clock import InstrumentClock
 from asyncroscopy.trace.writer import ToolCallLog, TraceWriter
 
 ENDPOINT_ROLES = ("agent", "operator", "monitor")
-# The Tango client default of 3000 ms is shorter than a real acquisition. The first acquire_camera_image
-# of the digital twin takes over 3 s cold. SciAgentGUI allows 60 s per MCP HTTP request, so 30 s lets
-# slow commands finish while still failing inside the window of the client with a readable Tango error.
+# The Tango client default of 3000 ms is shorter than a real acquisition: the first acquire_camera_image
+# of the digital twin takes over 3 s cold. endpoint_info reports this limit as command_timeout_s.
 COMMAND_TIMEOUT_MILLIS = 30_000
 JOB_LIMITS = ("max_duration_s", "max_dose_e_per_a2")
 
@@ -75,7 +77,10 @@ class ServerConfig:
     data_device_address: str
     risk_overrides: dict[str, str] = field(default_factory=dict)
     auto_routine: dict[str, list[str]] | None = None  # from mcp.safety.auto_routine. None means the routine declarations of the devices apply.
-    analysis_url: str | None = None
+    urls: dict[str, str | None] = field(default_factory=endpoint_urls)
+    needs_approval: dict[str, list[str]] = field(default_factory=dict)
+    permissions_file: str = ""
+    approval_ttl_s: float = default_approval_ttl_s
     job_limits: dict[str, float] = field(default_factory=dict)
     trace_follow: list[str] = field(default_factory=list)
     verbose: bool = True
@@ -93,7 +98,7 @@ class MCPServer:
         name: str,
         tango_host: str,
         tango_port: int,
-        blocked_functions: dict[str, list[str]],
+        needs_approval: dict[str, list[str]],
         blocked_classes: list[str],
         data_device_address: str,
         include_only_functions: list[str] | None = None,
@@ -103,19 +108,22 @@ class MCPServer:
         risk_overrides: dict[str, str] | None = None,
         trace_path: str | None = None,
         database: Any = None,
-        analysis_url: str | None = None,
+        urls: dict[str, str | None] | None = None,
         job_limits: dict[str, float] | None = None,
         auth: dict | None = None,
         clock_device: str | None = None,
         trace_follow: list[str] | None = None,
         auto_routine: dict[str, list[str]] | None = None,
         agent_profile: str | None = None,
+        permissions_file: str | None = None,
+        approval_ttl_s: float = default_approval_ttl_s,
     ) -> None:
         """
         Args:
             name: Display name for the MCP server instance.
             tango_host, tango_port: The Tango database server (e.g. "localhost", 9094).
-            blocked_functions: Command names to exclude, keyed by Tango class name. Use "*" for global blocks.
+            needs_approval: Commands the agent endpoint holds for a person's approval unless a person set them otherwise,
+                keyed by Tango class name ("*" for every class); entries are command names, "Class.command" or globs.
             blocked_classes: Tango device class names to skip entirely.
             data_device_address: Tango DATA device whose Tiled server list_data and view_data read.
             include_only_functions: Command names/patterns to allow exclusively.
@@ -128,7 +136,8 @@ class MCPServer:
             trace_path: Instrument Trace JSONL file. Off when empty.
             database: Stands in for the Tango database (anything with get_device_exported);
                 asyncroscopy.testing uses it to serve the devices of a test context.
-            analysis_url: MCP URL of the analysis server, so wait_for_job also waits on its jobs.
+            urls: The other endpoints endpoint_info reports (``asyncroscopy.core.names.endpoint_url_names``), from the
+                config; with ``analysis``, wait_for_job also waits on the analysis server's jobs.
             job_limits: {"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses a plan whose estimate is over either.
             auth: the MCP config's ``auth`` section (asyncroscopy.mcp.endpoint_auth); None: no token check.
             clock_device: Instrument whose clock_s stamps this server's trace events. Empty: this computer's time.
@@ -140,6 +149,10 @@ class MCPServer:
                 spectra, stage moves and beam placement; asyncroscopy.utils.commands.command(routine=True)).
             agent_profile: Agent profile YAML whose tool selection endpoint_info.agent_tools reports. None: the
                 packaged default (asyncroscopy/agents/profiles/default.yaml).
+            permissions_file: Where people's permission settings are kept, shared with the stack's other endpoints
+                (``asyncroscopy.safety.permissions``). None: ``$ASYNCROSCOPY_PERMISSIONS_FILE``, else
+                outputs/permissions/permissions.json.
+            approval_ttl_s: How long a held call waits for a person, and an approval waits for its call.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
@@ -150,7 +163,9 @@ class MCPServer:
         self.config = ServerConfig(
             name=name, endpoint_role=endpoint_role, data_device_address=data_device_address,
             risk_overrides=check_overrides(risk_overrides),
-            auto_routine=None if auto_routine is None else dict(auto_routine), analysis_url=analysis_url or None,
+            auto_routine=None if auto_routine is None else dict(auto_routine), urls=endpoint_urls(urls),
+            needs_approval={key: list(value) for key, value in needs_approval.items()},
+            permissions_file=permissions_file or str(settings.get().permissions_file), approval_ttl_s=float(approval_ttl_s),
             job_limits=limits, trace_follow=list(trace_follow or ([str(Path(trace_path).parent)] if trace_path else [])),
             verbose=verbose, auth=auth, agent_profile=agent_profile or None,
         )
@@ -161,7 +176,6 @@ class MCPServer:
         self.stack_id = f"tango://{tango_host}:{tango_port}"
         self.mcp = FastMCP(name)
         self.auth = None  # set at the end of __init__
-        self.blocked_functions = {key: list(value) for key, value in blocked_functions.items()}
         self.blocked_classes = list(blocked_classes)
         self._blocked_classes_normalized = {cls_name.lower() for cls_name in self.blocked_classes}
         self.include_only_functions = list(include_only_functions) if include_only_functions else []
@@ -192,9 +206,11 @@ class MCPServer:
         self.jobs = jobs.register(self, cfg)
         self.traces = trace_tools.register(self, cfg)
         self.turns = turns.register(self, cfg)
-        self.components = [self.data, self.skills, self.memory, self.discovery, self.estop, self.jobs, self.traces, self.turns]
+        self.permissions = permissions.register(self, cfg)
+        self.components = [self.data, self.skills, self.memory, self.discovery, self.estop, self.jobs, self.traces, self.turns, self.permissions]
         self._simulated: bool | None = None
         self.auth = endpoint_auth.attach(self, auth)  # None without mcp.auth
+        self.permissions.attach()
 
     def add_interceptor(self, interceptor: Interceptor) -> None:
         """Add a step every applicable tool call passes through; the list stays sorted by ``order``."""
@@ -216,6 +232,10 @@ class MCPServer:
             devices = [d for prefix, d in self.devices.items() if prefix in acting]
             self._simulated = bool(devices) and all(_says_simulated(d.proxy) for d in devices)
         return bool(self._simulated)
+
+    @property
+    def command_timeout_s(self) -> float:
+        return COMMAND_TIMEOUT_MILLIS / 1000
 
     @property
     def tool_risks(self) -> dict[str, str]:
@@ -355,7 +375,8 @@ class MCPServer:
         return f"{dev_class}_{suffix}".replace("/", "_").replace("-", "_")
 
     def _offers_command(self, prefix: str, dev_class: str, command_name: str, hints: dict | None, disp_level: Any = None) -> bool:
-        """Whether this endpoint's role and its block and allow lists let it serve the command.
+        """Whether this endpoint's role and its allow list let it serve the command. The operator endpoint never serves
+        a hard-blocked command (``policy.hard_blocked``); the agent endpoint lists Disconnect and refuses it.
 
         ``hints``: the device's action_hints, None when they could not be read; then only the operator endpoint
         serves more than State and Status. ``disp_level``: the command's Tango display level; EXPERT is
@@ -375,10 +396,9 @@ class MCPServer:
             marked_high = any(level == "high" and fnmatchcase(name, pattern.lower()) for pattern, level in self.config.risk_overrides.items())
             if marked_high or not (is_read_only(dev_class, command_name, self.config.risk_overrides) or command_name in ("job_status", "results")):
                 return False
-        qualified = f"{dev_class}.{command_name}"
-        global_blocks = self.blocked_functions.get("*", [])
-        if command_name in global_blocks or qualified in global_blocks or command_name in self.blocked_functions.get(dev_class, []):
+        if self.endpoint_role == "operator" and hard_blocked(dev_class, command_name):
             return False
+        qualified = f"{dev_class}.{command_name}"
         allowed = self.include_only_functions
         return not allowed or command_name in allowed or qualified in allowed or any(item.endswith(f".{command_name}") for item in allowed)
 
@@ -641,17 +661,17 @@ class MCPServer:
         for component, native_tool in natives:
             name = getattr(native_tool, "__name__", getattr(native_tool, "name", ""))
             description = getattr(component, "description_of", lambda _n: None)(name)
-            added = self.mcp.add_tool(Tool.from_function(native_tool, description=description) if description else native_tool)
+            self.descriptors[name] = describe_native(name)
+            added = self.mcp.add_tool(Tool.from_function(native_tool, description=description, annotations=_annotations(self.descriptors[name].acts)))
             if isinstance(added, Tool):
                 self.registered[added.name] = added
-            self.descriptors[name] = describe_native(name)
             if self.verbose:
                 print(f"Registered native tool: {name}")
         num_device_tools = 0
         for prefix, commands in self.tools.items():
             for command_name, wrapped in commands.items():
                 try:
-                    tool_obj = Tool.from_function(wrapped)
+                    tool_obj = Tool.from_function(wrapped, annotations=_annotations(self.descriptors[wrapped.__name__].acts))
                     self.mcp.add_tool(tool_obj)
                     self.registered[tool_obj.name] = tool_obj
                     num_device_tools += 1
@@ -661,7 +681,8 @@ class MCPServer:
                         traceback.print_exc()
         self._warn_about_risks()
         self._report_fallbacks()
-        # Printed unconditionally so GUIs can parse the final count from stdout even when quiet mode is on.
+        self.permissions.publish()
+        # Printed unconditionally, so the count shows even in quiet mode; the startup GUI reads it (run_mcp.STATUS_PATTERNS).
         # The operator endpoint words it differently: it usually starts beside an agent endpoint in the same
         # terminal, and the startup window's tool count is what the agent endpoint offers.
         ready = "MCP operator endpoint ready" if self.endpoint_role == "operator" else "MCP ready"
@@ -699,7 +720,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--http-host", required=True)
     parser.add_argument("--http-port", type=int, required=True)
     parser.add_argument("--blocked-classes-json", required=True)
-    parser.add_argument("--blocked-functions-json", required=True)
+    parser.add_argument("--needs-approval-json", default="{}", help='{"Class" or "*": [command, ...]}: what the agent endpoint holds for a person by default.')
+    parser.add_argument("--permissions-file", default="", help="People's permission settings, shared by the stack's endpoints; empty: $ASYNCROSCOPY_PERMISSIONS_FILE, else outputs/permissions/permissions.json.")
+    parser.add_argument("--approval-ttl-s", type=float, default=default_approval_ttl_s, help="How long a held call waits for a person.")
     parser.add_argument("--include-only-functions-json", default="[]")
     parser.add_argument("--data-device-address", required=True)
     parser.add_argument("--quiet", action="store_true")
@@ -713,7 +736,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clock-device", default="", help="Instrument whose clock_s stamps trace events; empty: this computer's time.")
     parser.add_argument("--trace-follow-json", default="[]", help="Trace files, directories or globs trace_since reads (operator); default: the --trace file's directory.")
     parser.add_argument("--data-views-json", default="[]", help="Modules to import first; each registers data kinds with asyncroscopy.data.views.")
-    parser.add_argument("--analysis-url", default="", help="MCP URL of the analysis server, so wait_for_job also waits on its jobs.")
+    parser.add_argument("--urls-json", default="{}", help='{"operator", "agent_server", "workflow_operator", "tiled", "analysis": URL}: the endpoints endpoint_info reports.')
     parser.add_argument("--job-limits-json", default="{}", help='{"max_duration_s": ..., "max_dose_e_per_a2": ...}: run_job refuses plans over these.')
     parser.add_argument("--allow-remote-bind", action="store_true", help="Bind 0.0.0.0 even when the stack is not simulated; otherwise such a stack binds 127.0.0.1.")
     parser.add_argument("--auth-json", default="", help="The MCP config's auth section (bearer-token verification); empty: none.")
@@ -731,6 +754,10 @@ def check_port_free(host: str, port: int) -> str | None:
     finally:
         probe.close()
     return None
+
+
+def _annotations(acts: bool) -> ToolAnnotations:
+    return ToolAnnotations(read_only_hint=not acts, destructive_hint=acts)
 
 
 def _says_simulated(proxy: Any) -> bool:
@@ -789,13 +816,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     server = MCPServer(
         name=args.name, tango_host=args.tango_host, tango_port=args.tango_port,
-        blocked_classes=json.loads(args.blocked_classes_json), blocked_functions=json.loads(args.blocked_functions_json),
+        blocked_classes=json.loads(args.blocked_classes_json), needs_approval=json.loads(args.needs_approval_json),
         include_only_functions=json.loads(args.include_only_functions_json), data_device_address=args.data_device_address,
         verbose=not args.quiet, tool_log_path=args.tool_log or None, endpoint_role=args.endpoint_role,
         risk_overrides=json.loads(args.risk_json),
-        trace_path=args.trace or None, analysis_url=args.analysis_url or None, job_limits=json.loads(args.job_limits_json),
+        trace_path=args.trace or None, urls=json.loads(args.urls_json), job_limits=json.loads(args.job_limits_json),
         auth=auth, clock_device=args.clock_device or None, trace_follow=json.loads(args.trace_follow_json) or None,
         auto_routine=json.loads(args.auto_routine_json) if args.auto_routine_json else None, agent_profile=args.agent_profile or None,
+        permissions_file=args.permissions_file or None, approval_ttl_s=args.approval_ttl_s,
     )
     if args.transport == "streamable-http":
         print(f"Starting {args.name} at http://{args.http_host}:{args.http_port}/mcp for Tango DB {args.tango_host}:{args.tango_port}", flush=True)

@@ -56,7 +56,7 @@ def _json_object(text: Any) -> dict | None:
 class Jobs:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
-        self.analysis_url = cfg.analysis_url
+        self.analysis = cfg.urls["analysis"]
         self.job_limits = dict(cfg.job_limits)
         self._device_locks: dict[str, threading.RLock] = {}
         self._device_locks_lock = threading.Lock()
@@ -250,7 +250,7 @@ class Jobs:
         devices = self.devices()
         if device and device not in devices:
             raise ToolError(f"no job device {device!r}; job devices here: {devices}"
-                            + ("; leave device out for analysis jobs" if self.analysis_url else ""))
+                            + ("; leave device out for analysis jobs" if self.analysis else ""))
         unreachable = []
         for candidate in [device] if device else devices:
             proxy = self.job_device(candidate)
@@ -263,13 +263,13 @@ class Jobs:
                 continue
             if status.get("error", {}).get("code") != "unknown_job":
                 return self._wait_on_device(proxy, job_id, status, time.monotonic() + budget)
-        if self.analysis_url:
+        if self.analysis:
             return self._wait_on_analysis(job_id, budget)
         raise ToolError(
             f"no job {job_id!r} on {device or 'any job device here'}"
             + (f" (not answering: {unreachable})" if unreachable else "")
             + ". Jobs started by assemble_map or score_map run on the analysis server; this endpoint can wait on them "
-            "only when its MCP config sets mcp.analysis_url."
+            "only when its MCP config sets mcp.urls.analysis."
         )
 
     def _wait_on_device(self, proxy: DeviceProxy, job_id: str, status: dict, deadline: float) -> dict[str, Any]:
@@ -296,7 +296,7 @@ class Jobs:
             return "".join(getattr(b, "text", "") for b in getattr(reply, "content", []) or [])
 
         async def call() -> dict[str, Any]:
-            async with Client(self.analysis_url, timeout=budget + 15) as client:
+            async with Client(self.analysis, timeout=budget + 15) as client:
                 reply = await client.call_tool("analysis_job_status", {"job_id": job_id, "wait_s": budget}, raise_on_error=False)
                 if reply.is_error and "wait_s" in text(reply):  # this analysis server cannot wait on its side, so poll it
                     deadline = time.monotonic() + budget
@@ -323,7 +323,7 @@ class Jobs:
             # Sync tools run in FastMCP's worker threads, which have no event loop of their own.
             status = asyncio.run(call())
         except Exception as exc:
-            raise ToolError(f"the analysis server at {self.analysis_url} did not answer ({type(exc).__name__}: {exc}); call wait_for_job again shortly") from exc
+            raise ToolError(f"the analysis server at {self.analysis} did not answer ({type(exc).__name__}: {exc}); call wait_for_job again shortly") from exc
         if status.get("error", {}).get("code") == "unknown_job":
             raise ToolError(f"no job {job_id!r} on any job device here or on the analysis server")
         if status.get("state") in {"queued", "running"}:

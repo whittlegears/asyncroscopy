@@ -24,19 +24,17 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
-  # Optional Tango command allowlist. Leave empty to include all non-blocked
-  # commands. Entries may be "command" or "Class.command".
+  permissions_file: outputs/permissions/permissions.json
+  approval_ttl_s: 600
+  # Optional Tango command allowlist. Leave empty to include every command. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
   # Operator endpoint: bound to 127.0.0.1 so only this machine (the GUI) reaches
-  # it. It offers export_ground_truth.
+  # it. It offers export_ground_truth, and approves or denies the calls the agent endpoint holds
+  # (list_pending_approvals, approve_call, deny_call) and sets permissions (get_permissions, set_permission,
+  # set_group_permission) in the same permissions_file as configs/mcp_dt.yaml. Run it from the same directory.
   endpoint_role: operator
   safety:
     # Optional {"Class.command" or tool-name ("Class_command") glob: low|high}, first match wins, checked before the defaults in

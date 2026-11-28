@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 class Discovery:
     def __init__(self, server: MCPServer, cfg: ServerConfig) -> None:
         self.server = server
-        self.analysis_url = cfg.analysis_url
+        self.urls = cfg.urls
         self.agent_profile = cfg.agent_profile  # the profile whose tool selection endpoint_info reports. None means the default profile.
 
     def natives(self) -> list:
@@ -29,30 +29,49 @@ class Discovery:
         from asyncroscopy.mcp.agent_tools import agent_tool_patterns, tool_lists
 
         devices = self.server.devices.values()
-        return agent_tool_patterns(self.server.tool_names(), bool(self.analysis_url), lists=tool_lists(self.agent_profile),
+        return agent_tool_patterns(self.server.tool_names(), bool(self.urls["analysis"]), lists=tool_lists(self.agent_profile),
                                    stem=any(d.stem for d in devices), maps=any(d.envelope and d.dev_class == "Mapper" for d in devices))
+
+    def device_kinds(self) -> dict[str, list[str]]:
+        """Each device's kinds, as discovery found them: stem, probe, envelope (runs jobs), map (a Mapper), stage (moves one)."""
+        server = self.server
+        moves = {t.device for t in server.descriptors.values() if not t.native and t.action_role == "stage.move"}
+        found = {}
+        for prefix, device in sorted(server.devices.items()):
+            kinds = device.kinds()
+            if device.envelope and device.dev_class == "Mapper":
+                kinds.add("map")
+            if prefix in moves:
+                kinds.add("stage")
+            found[prefix] = sorted(kinds)
+        return found
 
     @tool()
     def endpoint_info(self) -> dict[str, Any]:
         """For agent programs, not models: each tool's risk and what it is (tools: its
-        device, command, canonical role, risk and whether it acts), the job devices, the
-        analysis server, and agent_tools: globs of the tools (here and on the analysis server) to give a model."""
+        device, command, canonical role, risk, whether it acts and, on the agent endpoint, its permission), the job
+        devices, each device's kinds, the other endpoints (urls), and agent_tools: globs of the tools (here and on the
+        analysis server) to give a model."""
         server = self.server
         tools = server.descriptors
         simulated = server.stack_simulated()
+        agent = server.endpoint_role == "agent"
+        permissions, groups = server.permissions.effective() if agent else ({}, {})
         return {
             "role": server.endpoint_role,
             "stack_id": server.stack_id,
             # Draft workflows only run where this is true.
             "simulated": simulated,
-            "analysis_url": self.analysis_url,
+            "urls": dict(self.urls),
+            "command_timeout_s": server.command_timeout_s,
             "job_devices": server.jobs.devices(),
-            "stem_devices": sorted(p for p, d in server.devices.items() if d.stem),
-            "map_devices": sorted(p for p, d in server.devices.items() if d.envelope and d.dev_class == "Mapper"),
+            "device_kinds": self.device_kinds(),
             "job_limits": server.jobs.job_limits,
             "risks": {name: t.risk for name, t in sorted(tools.items())},
+            **({"permission_groups": groups} if agent else {}),
             # What each tool is, so an agent program never guesses from a tool's name.
-            "tools": {name: {"device": t.device, "command": t.command, "role": t.action_role, "risk": t.risk, "acts": t.acts}
+            "tools": {name: {"device": t.device, "command": t.command, "role": t.action_role, "risk": t.risk, "acts": t.acts,
+                             **({"permission": permissions[name]} if name in permissions else {})}
                       for name, t in sorted(tools.items())},
             # The general agent's own tool selection, so other harnesses can match it.
             "agent_tools": self.agent_tool_globs(),

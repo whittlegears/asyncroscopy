@@ -26,7 +26,7 @@ class BusyProxy:
 
 
 def _server(role: str, names: list[str] | None = None) -> MCPServer:
-    return MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="",
+    return MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="",
                      endpoint_role=role, database=_Exported(names or []), verbose=False)
 
 

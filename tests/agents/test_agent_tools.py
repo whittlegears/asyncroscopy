@@ -8,6 +8,7 @@ import pytest
 
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs import general
+from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.mcp.agent_tools import for_model
 from asyncroscopy.mcp.mcp_server import MCPServer
 from asyncroscopy.safety.policy import is_envelope_device, is_probe_device, is_stem_device
@@ -27,7 +28,7 @@ class EndpointConfig(AgentConfig):
     """An AgentConfig whose endpoint and analysis server offer fixed tool names."""
 
     def __init__(self, own, info):
-        super().__init__(analysis_url=info["analysis_url"] or "")
+        super().__init__(analysis_url=info["urls"]["analysis"] or "")
         self.own, self.endpoint = sorted(own), info
 
     async def info(self):
@@ -46,8 +47,8 @@ def endpoint(monkeypatch):
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
     def make(devices, analysis_url):
-        server = MCPServer("t", "localhost", 1, blocked_classes=[], blocked_functions={}, data_device_address="d",
-                           verbose=False, analysis_url=analysis_url)
+        server = MCPServer("t", "localhost", 1, blocked_classes=[], needs_approval={}, data_device_address="d",
+                           verbose=False, urls={"analysis": analysis_url})
         server.tools = {prefix: dict.fromkeys(commands) for prefix, commands in devices.items()}
         for prefix, commands in devices.items():  # this mirrors what discovery finds for each device
             server.add_device(prefix, None, prefix, stem=is_stem_device(commands), probe=is_probe_device(commands), envelope=is_envelope_device(commands))
@@ -109,7 +110,7 @@ AFM_MAPPED = {
 def test_a_mapper_on_another_instrument_keeps_its_own_tools_and_gets_the_map_tools(endpoint, monkeypatch, tmp_path):
     server = endpoint(AFM_MAPPED, "http://127.0.0.1:8003/mcp")
     info = server.discovery.endpoint_info()
-    assert info["stem_devices"] == [] and info["map_devices"] == ["Mapper"]
+    assert devices_of_kind(info, "stem") == [] and devices_of_kind(info, "map") == ["Mapper"]
     picked, _ = general_agent_tools(server, monkeypatch, tmp_path)
     for tool in ("AFMTwin_retract_tip", "AFMTwin_approach_tip", "AFMTwin_move_xy", "AFMTwinJob_abort", "Mapper_abort"):
         assert tool in picked, tool
@@ -123,7 +124,7 @@ def test_the_stem_twins_curated_set_is_unchanged(endpoint):
     from asyncroscopy.agents.profile import load_profile
 
     server = endpoint(TWIN, "http://127.0.0.1:8003/mcp")
-    assert server.discovery.endpoint_info()["stem_devices"] == ["DigitalTwin"]
+    assert devices_of_kind(server.discovery.endpoint_info(), "stem") == ["DigitalTwin"]
     tools = load_profile("default").tools  # the curated lists are the default agent profile's data
     assert server.discovery.endpoint_info()["agent_tools"] == [*tools.stem, *tools.generic, "load_skill"]
     assert "*_move_stage" in tools.stem and "run_job" in tools.generic

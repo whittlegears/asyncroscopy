@@ -31,6 +31,7 @@ os.environ["ASYNCROSCOPY_SKILLS"] = "1"  # skills are off by default but the tes
 os.environ["ASYNCROSCOPY_LAB_SKILLS"] = tempfile.mkdtemp(prefix="asyncroscopy-lab-skills-")
 # The dose ledger gets the same care. The session's frames go to a fresh file and not to a developer's outputs/dose.
 os.environ["ASYNCROSCOPY_DOSE_LEDGER"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-dose-"), "ledger.jsonl")
+os.environ["ASYNCROSCOPY_PERMISSIONS_FILE"] = os.path.join(tempfile.mkdtemp(prefix="asyncroscopy-permissions-"), "permissions.json")
 # Seals of test data go to a throwaway manifest and key, never outputs/integrity.
 _integrity_dir = tempfile.mkdtemp(prefix="asyncroscopy-integrity-")
 os.environ["ASYNCROSCOPY_INTEGRITY_LOG"] = os.path.join(_integrity_dir, "manifest.jsonl")

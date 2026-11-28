@@ -19,13 +19,7 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
-  # Optional Tango command allowlist. Leave empty to include all non-blocked
-  # commands. Entries may be "command" or "Class.command".
+  # Optional Tango command allowlist. Leave empty to include every command. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.

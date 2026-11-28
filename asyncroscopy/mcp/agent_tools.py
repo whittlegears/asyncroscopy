@@ -94,7 +94,7 @@ def agent_tool_patterns(names: Iterable[str], has_analysis_url: bool, chosen: li
     """Tool-name globs a model is given, for an instrument endpoint offering ``names``.
 
     ``names``: the instrument endpoint's own tools (not the analysis server's). ``stem``: the endpoint has
-    an electron microscope, ``maps``: a Mapper (endpoint_info's stem_devices and map_devices, as discovery
+    an electron microscope, ``maps``: a Mapper (the stem and map kinds of endpoint_info's device_kinds, as discovery
     found them). ``chosen``: globs a caller picked (ASYNCROSCOPY_AGENT_TOOLS); otherwise the profile's STEM
     set on a STEM (a Mapper alone does not make one: it maps an AFM or a YAML twin too, and the STEM set
     would hide that instrument's own tools; with the analysis server's waits when the endpoint has no

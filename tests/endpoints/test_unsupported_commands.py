@@ -34,7 +34,7 @@ def test_an_unsupported_command_is_not_offered_to_agents(tango_ctx):
     assert json.loads(proxy.action_hints)["acquire_camera_image"]["unsupported"] is True
     offered, spaces = {}, {}
     for role in ("agent", "operator"):
-        server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", endpoint_role=role,
+        server = MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="", endpoint_role=role,
                            database=_Exported([tango_ctx.get_device_access(PARTICLES)]), verbose=False)
         server.setup(print_summary=False)
         offered[role] = set(server.descriptors)

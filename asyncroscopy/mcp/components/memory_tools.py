@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastmcp.tools import tool
 
+from asyncroscopy.core.names import devices_of_kind
+
 if TYPE_CHECKING:
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
@@ -40,7 +42,7 @@ class MemoryTools:
         if not memory.instrument_file.exists() and memory.shared_instrument_file() is None:
             try:
                 info = self.server.discovery.endpoint_info()
-                memory.seed_instrument(ToolCatalog.from_info(info), stem=bool(info.get("stem_devices")))
+                memory.seed_instrument(ToolCatalog.from_info(info), stem=bool(devices_of_kind(info, "stem")))
             except Exception:  # noqa: BLE001 - notes are a help; a seeding fault must not fail the call
                 pass
         found = memory.notes(request, max(0, min(int(budget), MAX_BUDGET_CHARS)))
