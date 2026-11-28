@@ -1,71 +1,63 @@
-# Sample mapping (zoomable montages)
+# Sample mapping
 
-`asyncroscopy.mapping` turns a grid of overlapping acquisitions - optionally
-plus lower-magnification "zoom out" images - into a "google-maps" style
-zoomable map of the sample, viewable by humans and navigable by agents.
+A sample map is a grid of overlapping images stitched into one zoomable map,
+with regions worth a closer look marked on it. Three pieces make one:
 
-## Two MCP servers
+| Piece | Where | What it does |
+|---|---|---|
+| Grid scan | `ElectronMicroscope.acquire_map_grid` (instrument MCP bridge) | Measures which way the stage moves the image, steps the stage, saves every tile |
+| Stitching and analysis | pyTEMlib analysis MCP server (`python -m pyTEMlib.analysis_server`) | Stitches, scores regions, keeps points of interest and notes |
+| Workflow | `asyncroscopy.agent_workflows.sample_map` (a LangGraph graph) | Joins the two, pauses for a person, reports |
 
-Stitching and export are deliberately **not** on the instrument MCP bridge
-(`asyncroscopy.mcp.mcp_server`). That server auto-reflects every Tango
-command and carries the one real safety boundary in the stack (the
-`blocked_classes`/`blocked_functions` YAML) - it should not also carry
-opencv-heavy image processing or depend on it staying responsive.
+asyncroscopy has no stitcher and no mapping server of its own.
 
-```
-Instrument server (Tango-backed)          Mapping server (no Tango dependency)
-  move_stage, acquire_scanned_image,        start_map, add_tiles, preview_map,
-  set_fov, get_data_from_key,               register_overview, get_map_status,
-  acquire_map_grid                          finalize_map, list_maps, discard_map
+## Start the servers
+
+```bash
+uv run startup_scripts/run_servers.py --yaml configs/DigitalTwin.yaml
 ```
 
-`asyncroscopy.mcp.mapping_mcp_server` (module `MappingServer`) can run on a
-different, more powerful machine than the one driving the microscope - it
-only needs numpy/opencv/pillow/h5py/tifffile/fastmcp, none of pytango. Start
-it with `startup_scripts/run_mapping_mcp.py --yaml configs/mapping_mcp.yaml`
-(default `http://127.0.0.1:8001/mcp`) and connect it in the GUI as a second
-MCP server alongside the instrument bridge.
+```bash
+uv run python -m pyTEMlib.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
+```
 
-## Workflow — agent-driven loop
+```bash
+uv run startup_scripts/run_llm.py --yaml configs/gemma-llm.yaml
+```
 
-The agent orchestrates the loop itself, tile by tile or in small batches,
-using tools it already has:
+The pyTEMlib server comes from the fork pinned in `pyproject.toml` until it
+is merged into pycroscopy/pyTEMlib. `configs/gemma-llm.yaml` connects the
+agents to the instrument bridge (port 8000) and to pyTEMlib (port 8003). The
+agent server (port 8002) offers `list_workflows`, `start_workflow`,
+`resume_workflow` and `workflow_status`.
 
-1. `start_map(name, overlap, pixel_size_nm)` on the mapping server → `map_id`.
-2. Repeat: `move_stage` → `acquire_scanned_image` → resolve the returned DATA
-   key to a path via `get_data_from_key` → `add_tiles(map_id, [{row, col,
-   image_path, stage_xy_m}, ...])` on the mapping server. `add_tiles`
-   accumulates across calls and re-registers the whole grid each time, so
-   later batches correct and extend earlier ones - the response's
-   `edges_measured`/`edges_total` and `mean_edge_residual_px` can be checked
-   after every batch, not just at the end.
-3. `preview_map(map_id)` any time for a small PNG of progress so far.
-4. Optionally "zoom out": increase FOV, acquire one wider image, and call
-   `register_overview(map_id, image_path)`. Unlike tile-to-tile registration
-   (pure-translation phase correlation, appropriate because same-magnification
-   neighbours cannot differ in scale), overview registration uses
-   scale-invariant ORB feature matching plus a RANSAC similarity transform,
-   since an overview differs from the fine mosaic in scale and possibly
-   rotation. Returns `matched: false` instead of raising if there isn't
-   enough shared texture to match confidently.
-5. `finalize_map(map_id, name)` stitches everything and writes the bundle.
-
-A convenience command still exists on the instrument for the "just acquire a
-simple grid" case:
+## Run the workflow
 
 ```python
-spec = {"rows": 3, "cols": 3, "overlap": 0.15, "eds": False}
-manifest = microscope.acquire_map_grid(json.dumps(spec))
+start_workflow("sample_map", '{"request": {"name": "grid1", "rows": 3, "cols": 3, "overlap": 0.25, "fov_m": 1e-8, "calibration_fov_m": 2e-8}}')
 ```
 
-It reads the current FOV, steps the stage over an N x M serpentine grid,
-acquires per tile with current SCAN settings, optionally takes an EDS point
-spectrum at each tile centre, and restores the stage - but it only drives
-stage/camera, exactly like the granular tools; it does not stitch. Pass its
-`tiles` list to the mapping server's `add_tiles` in one call, then
-`finalize_map`. Spec keys: `rows`, `cols`, `overlap` (0-0.5), `detectors`
-(default `["haadf"]`), `eds`, `settle_s`, `snake`, `flip_x`/`flip_y`,
-`return_to_start`.
+1. **Plan.** The request is checked, and the spec and time estimate are
+   worked out. A bad request (for example overlap 0.9) fails here.
+2. **Approve.** The run pauses with the plan, because the scan moves the
+   stage. Answer with `resume_workflow(thread_id, '{"approved": true}')`, or
+   `false`, or `{"changes": {...}}` to plan again.
+3. **Acquire.** One `acquire_map_grid` call. The stage loop runs on the
+   instrument, not in the model.
+4. **Collect.** The tiles become a pyTEMlib map run (`collect_map_run`, or
+   a run file written directly when the workflow is given `run_dir`).
+5. **Assemble.** `assemble_map` stitches, and the workflow waits for the job.
+6. **Score.** `score_map` ranks regions and adds the best as candidates.
+7. **Review.** The run pauses with a varied shortlist: the best candidate,
+   then each next one as far as possible from those already picked. Answer
+   with `{"actor": "human:<name>", "decisions": [{"id": ..., "status":
+   "accepted"|"rejected", "note": ...}], "more": false}`. Each decision is
+   saved as a note on the map (`annotate`), with its author and history.
+8. **Report.** The stitch quality, calibration, candidates, decisions and
+   any errors.
+
+A failure at any step ends in the report, with the instrument's or the
+server's own message.
 
 ## Which way the stage moves the image
 
@@ -83,80 +75,32 @@ The scan stops before the grid, with the numbers, when:
 - the two stage axes do not look roughly perpendicular in the image.
 
 At atomic resolution a crystal lattice can fool the correlation by one lattice
-period. Then do the test moves at a lower magnification with
-`calibration_fov_m`. The matrix is scaled to the mapping field of view, which
-assumes the scan rotation is the same at both. To skip the test moves, pass
-`stage_to_image_px_per_m` from an earlier manifest. `calibrate: false` keeps the
-old assumption (stage x moves the view right), adjusted with `flip_x` /
-`flip_y`.
+period; then do the test moves at a lower magnification with
+`calibration_fov_m` (this assumes the scan rotation is the same at both). To
+skip the test moves, pass `stage_to_image_px_per_m` from an earlier manifest.
+`calibrate: false` keeps the old assumption (stage x moves the view right),
+adjusted with `flip_x` / `flip_y`. Each tile records `stage_xy_m` (read back
+after the move) and `commanded_xy_m`.
 
-Each tile records `stage_xy_m` (the position read back after the move) and
-`commanded_xy_m`.
+pyTEMlib assumes image columns run along +x and rows along +y.
+`asyncroscopy.mapping.run_file` converts every tile centre into that frame
+using only the direction of the measured matrix; the scale comes from the
+pixel size, which is better known than the length of a test move.
 
-## Seams the stitcher does not trust
+## Measured
 
-After the global solve, the stitcher drops the seam that disagrees most with
-the solved positions and solves again, until every remaining seam agrees to
-within `max_residual_px` (1 px by default). Dropped seams stay in
-`result.flagged_edges` with `reason` `"inconsistent"`. A seam whose correlation
-was too weak, or too far from the planned position, gets `reason` `"weak"`.
-A flagged seam falls back to the planned grid step.
+`tests/test_agent_workflows.py` and `tests/test_mapping.py`:
 
-Measured on the digital twin (`tests/test_mapping.py`), with 10 nm tiles of
-256 px and 30 pm of random stage error:
+| Case | Result |
+|---|---|
+| 3 x 3 synthetic grid, stage axes swapped, with the conversion | 20 / 20 matches used, median residual 0.014 px |
+| The same grid, raw stage axes | 7 / 14 matches used, one tile placed from the stage alone |
+| 3 x 3 twin grid (10 nm tiles, 256 px), pyTEMlib fits its own `scan_linear` | tiles up to 9 px from the true stage |
+| The same, identity `scan_linear` | every tile within 0.9 px (39 pm) over 9 runs |
 
-- Most runs: every tile within 1 px (39 pm) of its true position.
-- Some runs: the lattice fools several seams, and a tile lands up to about
-  8 px off. The planned step a flagged seam falls back on carries the
-  calibration's few-percent scale error.
-
-Fitting the matrix again from the trusted seams, and using it for the
-flagged ones, is the next fix. With tiles of 128 px or less, too few pixels
-overlap for a reliable correlation.
-
-## The map bundle
-
-```
-maps/<name>/
-    map.json          machine-readable manifest (format "sciagent-map/1.1")
-    index.html        self-contained pan/zoom viewer - open in any browser
-    preview.png       small overview
-    tiles/{z}/{x}/{y}.png
-    overviews/        registered zoom-out images, one per register_overview call
-```
-
-Zoom levels follow the web-map convention: `z = 0` is the whole sample in a
-single tile, `z = max_zoom` is native resolution, each level doubles linear
-resolution.
-
-`map.json` is designed to be read by agents: it contains the level table, the
-tile URL template, `pixel_size_nm`, the stage origin, every source tile's
-canvas position, EDS annotations anchored to canvas pixels, and an
-`agent_instructions` string that explains the coordinate conventions to a
-model that encounters a bundle cold. `overviews` entries carry a 2x3
-`matrix` mapping overview pixel coordinates onto the fine canvas's native
-pixel coordinates (plus `scale`, `rotation_deg`, `offset_px`, `inliers`) so
-an agent can place a lower-magnification image in the same coordinate system
-without re-registering it. An agent can survey the sample from the `z=0`
-tile and drill down only into regions of interest, which keeps token cost
-independent of map size.
-
-The stitcher can also be used offline, without either MCP server:
-
-```python
-from asyncroscopy.mapping.grid_stitcher import GridStitcher
-from asyncroscopy.mapping.map_export import export_map
-from asyncroscopy.mapping.overview import register_overview
-
-result = GridStitcher(overlap=0.2).stitch({(r, c): img, ...})
-export_map(result.canvas, "maps/demo", name="demo", pixel_size_nm=0.05)
-```
-
-Only :func:`asyncroscopy.mapping.plan_grid` and
-:func:`asyncroscopy.mapping.parse_map_grid_result` are re-exported at package
-level (no opencv dependency, safe to import from instrument-side code);
-everything else - `GridStitcher`, `export_map`, `register_overview`,
-`build_sample_map`, `load_acquisition_image` - must be imported from its
-submodule.
-
-Tests: `tests/test_mapping.py`.
+On 9 atomic-resolution tiles pyTEMlib fitted a 0.2-0.9 degree scan turn that
+the twin does not have, from matches one lattice period off. The workflow
+therefore passes the identity `scan_linear` for calibrated grids under 25
+tiles (`assemble_arguments`); a request can pass `"scan_linear": "measure"`
+or its own matrix, and `stage_sigma_m` for how well the stage repeats. Tiles of
+128 px or less leave too few overlap pixels for reliable matching.

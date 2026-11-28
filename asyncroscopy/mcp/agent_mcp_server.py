@@ -76,6 +76,18 @@ class AgentMCPServer:
 
         self.mcp = FastMCP(name, lifespan=lifespan)
         self._query_lock = asyncio.Lock()
+        self._workflows = self._make_workflow_runner()
+
+    def _make_workflow_runner(self):
+        """Graphs from asyncroscopy.agent_workflows, built from the swarm's MCP tools when first used."""
+        try:
+            from asyncroscopy.agent_workflows import sample_map
+            from asyncroscopy.agent_workflows.runner import WorkflowRunner
+        except ImportError:  # LangGraph is missing (or stubbed in tests)
+            return None
+        runner = WorkflowRunner()
+        runner.register("sample_map", lambda checkpointer: sample_map.build_graph(self.swarm._tools, checkpointer=checkpointer))
+        return runner
 
     def setup(self) -> None:
         """Register the swarm tools on the FastMCP instance."""
@@ -86,6 +98,11 @@ class AgentMCPServer:
             self.list_agent_tools,
             self.complete,
             self.set_max_steps,
+            *(
+                (self.list_workflows, self.start_workflow, self.resume_workflow, self.workflow_status)
+                if self._workflows is not None
+                else ()
+            ),
         ):
             self.mcp.add_tool(tool_func)
             if self.verbose:
@@ -93,7 +110,8 @@ class AgentMCPServer:
 
         # Printed unconditionally (unlike the verbose lines above) so startup GUIs
         # can parse the count from stdout even when quiet mode is on.
-        print("MCP ready: 6 tool(s) registered", flush=True)
+        count = 6 + (4 if self._workflows is not None else 0)
+        print(f"MCP ready: {count} tool(s) registered", flush=True)
 
         if self.verbose:
             print("\nAvailable agent tools:")
@@ -140,6 +158,36 @@ class AgentMCPServer:
         the model's raw decision so the caller can drive the conversation itself.
         """
         return await self.swarm.complete(request_json)
+
+    def list_workflows(self) -> str:
+        """Workflows (LangGraph graphs) this server can run, with the tools each still lacks, as JSON.
+
+        A workflow runs its own loop; the model only starts it and answers its questions.
+        """
+        from asyncroscopy.agent_workflows import sample_map
+
+        missing = sample_map.missing_tools(self.swarm._tools)
+        return json.dumps([{
+            "name": "sample_map",
+            "what": "Grid-scan a sample, stitch it on the pyTEMlib analysis server, score regions, and review the "
+            "candidates with a person. Pauses for approval before the stage moves.",
+            "inputs": {"request": {"name": "str", "rows": "int", "cols": "int", "overlap": "0-0.6", "fov_m": "float",
+                                   "calibration_fov_m": "float", "scorer": "str", "top_k": "int", "shortlist_size": "int"}},
+            "missing_tools": missing,
+        }])
+
+    async def start_workflow(self, name: str, inputs_json: str) -> str:
+        """Start a workflow. Returns JSON with thread_id, waiting_for (the question it is paused on, or null),
+        finished and state. Answer a pause with resume_workflow."""
+        return json.dumps(await self._workflows.start(name, json.loads(inputs_json)), default=str)
+
+    async def resume_workflow(self, thread_id: str, answer_json: str) -> str:
+        """Answer the question a paused workflow is waiting on, e.g. {"approved": true}; returns the same JSON as start_workflow."""
+        return json.dumps(await self._workflows.resume(thread_id, json.loads(answer_json)), default=str)
+
+    async def workflow_status(self, thread_id: str) -> str:
+        """Where a workflow run is: what it waits for, whether it finished, and its state, as JSON."""
+        return json.dumps(await self._workflows.status(thread_id), default=str)
 
     def set_max_steps(self, max_steps: int) -> int:
         """Set the LangGraph recursion limit used per query, returning the new value."""

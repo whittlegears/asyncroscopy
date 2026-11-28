@@ -94,3 +94,18 @@ def test_supervisor_routes_to_a_worker_and_finishes():
     answer = asyncio.run(swarm.query("where is the stage?", include_transcript=True))
     assert "reader" in answer
     assert "origin" in answer
+
+
+def test_agent_server_runs_the_sample_map_workflow_to_its_first_pause():
+    from asyncroscopy.mcp.agent_mcp_server import AgentMCPServer
+
+    server = AgentMCPServer(name="t", mcp_urls=[], verbose=False)
+    server.swarm._tools = []
+    listed = json.loads(server.list_workflows())
+    assert listed[0]["name"] == "sample_map" and "acquire_map_grid" in listed[0]["missing_tools"]
+
+    started = json.loads(asyncio.run(server.start_workflow("sample_map", json.dumps({"request": {"rows": 2, "cols": 2}}))))
+    assert started["waiting_for"]["kind"] == "approve_scan"
+    assert started["waiting_for"]["plan"]["tiles"] == 4
+    done = json.loads(asyncio.run(server.resume_workflow(started["thread_id"], json.dumps({"approved": False}))))
+    assert done["finished"] and done["state"]["status"] == "declined"

@@ -176,7 +176,7 @@ def test_load_agent_config():
     assert config.agent.transport == "streamable-http"
     assert config.agent.http_port == 8002
     assert config.agent.model == "gemma4:31b"
-    assert config.agent.mcp_urls == ["http://127.0.0.1:8000/mcp"]
+    assert config.agent.mcp_urls == ["http://127.0.0.1:8000/mcp", "http://127.0.0.1:8003/mcp"]  # instrument, pyTEMlib
     assert [entry["name"] for entry in config.agent.startup_agents] == ["base", "image"]
     assert config.agent.startup_agents[0]["tools"] == ["list_devices"]
 

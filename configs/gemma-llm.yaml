@@ -15,6 +15,11 @@ agent:
 
   mcp_urls:
     - "http://127.0.0.1:8000/mcp"
+    # The pyTEMlib analysis server, for the sample_map workflow (stitching, scoring,
+    # points of interest, notes). Start it with
+    #   uv run python -m pyTEMlib.analysis_server --tiled http://localhost:9091 --api-key secret --port 8003
+    # If it is not running the agents start without it and list_workflows names the missing tools.
+    - "http://127.0.0.1:8003/mcp"
 
   startup_agents:
     - name: "base"

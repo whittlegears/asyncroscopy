@@ -498,7 +498,8 @@ class TestAgentMCPServerTools:
         server.mcp.add_tool = registered.append
         server.setup()
 
-        assert [tool.__name__ for tool in registered] == [
+        names = [tool.__name__ for tool in registered]
+        assert names[:6] == [
             "query_agent",
             "spawn_agent",
             "list_agents",
@@ -506,6 +507,9 @@ class TestAgentMCPServerTools:
             "complete",
             "set_max_steps",
         ]
+        # The workflow tools come with a real LangGraph; the stubs have none.
+        workflows = ["list_workflows", "start_workflow", "resume_workflow", "workflow_status"]
+        assert names[6:] == (workflows if server._workflows is not None else [])
 
     def test_spawn_agent_tool_delegates_to_swarm(self) -> None:
         server = self._server()

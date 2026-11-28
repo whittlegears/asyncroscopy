@@ -27,7 +27,7 @@ wrong with the graph code that exists.
 | Free-form request (supervisor + workers) | `mcp/agent.py` | yes | yes |
 | Single-agent request | `mcp/agent.py` | yes (`create_agent`) | yes |
 | `complete` (one model step) | `mcp/agent.py` | no | no: the caller drives the loop |
-| Sample map: acquire, stitch, find, review | `acquire_map_grid`; graph on the long-running branch | not on `main` | yes (see below) |
+| Sample map: acquire, stitch, score, review | `agent_workflows/sample_map.py` + pyTEMlib analysis server | **yes** (this branch) | yes. Served by the agent server as `start_workflow("sample_map", ...)`; pauses before the stage moves and for review |
 | CEOS tableau correction loop | notebook 01 | no | yes, first: needs an approval before each correction |
 | Aberration hill climb (C1/A1) | notebooks 12 | no | yes: loop in a plain node |
 | Stage-Z hill climb | notebook 14 | no | yes. It sets `stage.z`, an attribute that MCP cannot reach |
@@ -66,6 +66,12 @@ wrong with the graph code that exists.
   through the model.
 - Test offline: fake tools as async functions over a synthetic response, and
   resume through `Command(resume=...)`.
+
+`asyncroscopy/agent_workflows/` follows this pattern: `tools.ToolBox` finds a
+tool by command name whatever its instrument prefix, `runner.WorkflowRunner`
+keeps paused runs so an MCP client can resume them, and `sample_map.py` is the
+first graph. `tests/test_agent_workflows.py` runs it offline against the real
+pyTEMlib server.
 
 The long-running branch already has graphs built this way under
 `asyncroscopy/agents/graphs/` (`mapping`, `general`, `team`, `goal`), and
