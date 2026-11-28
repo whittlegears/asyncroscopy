@@ -2,7 +2,8 @@ import pytest
 import yaml
 
 from asyncroscopy.utils import process_manager
-from startup_scripts import run_pytemlib, run_mcp, run_servers, run_llm
+from startup_scripts import run_llm, run_mcp, run_pytemlib, run_servers
+from startup_scripts.config_schema import fill_placeholders
 
 FAKE_UV = "/opt/uv/bin/uv"
 
@@ -71,18 +72,18 @@ def test_load_spectra300_config_starts_servers_only():
     aperture = next(device for device in config.support_devices if device.key == "aperture")
     stage = next(device for device in config.support_devices if device.key == "stage")
 
-    assert config.tango_host == "10.46.217.241"
+    assert config.tango_host == "192.0.2.10"
     assert config.tiled.host == "127.0.0.1"
     assert config.tiled.register_on_startup is False
     assert config.instrument.class_name == "AutoScriptMicroscope"
     assert config.instrument.module_name == "asyncroscopy.instruments.electron_microscope.auto_script"
     assert aperture.class_name == "AutoScriptAPERTURE"
     assert aperture.module_name == "asyncroscopy.instruments.electron_microscope.hardware.aperture_autoscript"
-    assert aperture.properties["hardware_host"] == ["10.46.217.241"]
+    assert aperture.properties["hardware_host"] == ["192.0.2.10"]
     assert aperture.properties["hardware_port"] == ["9095"]
     assert stage.class_name == "AutoScriptSTAGE"
     assert stage.module_name == "asyncroscopy.instruments.electron_microscope.hardware.stage_autoscript"
-    assert stage.properties["hardware_host"] == ["10.46.217.241"]
+    assert stage.properties["hardware_host"] == ["192.0.2.10"]
     assert stage.properties["hardware_port"] == ["9095"]
     assert config.reset_database_file is False
     assert not hasattr(config, "mcp")
@@ -543,4 +544,4 @@ def test_the_launchers_need_a_yaml_and_never_pick_the_instrument_themselves(caps
     assert "--yaml is required" in capsys.readouterr().out
     assert run_servers.DEFAULT_CONFIG_PATH.name == "DigitalTwin.yaml"  # only what the GUI opens first
     spectra = yaml.safe_load((run_mcp.PROJECT_DIR / "configs" / "Spectra300.yaml").read_text(encoding="utf-8"))
-    assert run_mcp.HOST_PRESETS == {"Digital twin": "localhost", "Spectra300": spectra["tango"]["host"]}
+    assert run_mcp.HOST_PRESETS == {"Digital twin": "localhost", "Spectra300": fill_placeholders(spectra)["tango"]["host"]}

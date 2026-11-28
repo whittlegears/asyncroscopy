@@ -23,7 +23,7 @@ from asyncroscopy.core.names import endpoint_urls  # noqa: E402
 from asyncroscopy.mcp.endpoint_auth import AuthSettings, is_loopback, remote_without_auth  # noqa: E402
 from asyncroscopy.safety.permissions import default_approval_ttl_s  # noqa: E402
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command, stop_on_termination  # noqa: E402
-from startup_scripts.config_schema import ConfigError, Setting, read_settings  # noqa: E402
+from startup_scripts.config_schema import ConfigError, Setting, fill_placeholders, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 # The config the GUI opens first. The launcher itself needs --yaml: it never picks an instrument for you.
@@ -38,8 +38,9 @@ def host_presets() -> dict[str, str]:
     written; without that file there is no such preset."""
     presets = {'Digital twin': 'localhost'}
     try:
-        host = (yaml.safe_load((PROJECT_DIR / 'configs' / 'Spectra300.yaml').read_text(encoding='utf-8')) or {})['tango']['host']
-    except (OSError, yaml.YAMLError, KeyError, TypeError):
+        raw = yaml.safe_load((PROJECT_DIR / 'configs' / 'Spectra300.yaml').read_text(encoding='utf-8')) or {}
+        host = fill_placeholders(raw)['tango']['host']
+    except (OSError, yaml.YAMLError, KeyError, TypeError, ConfigError):  # ConfigError: no site value for the address
         return presets
     if host:
         presets['Spectra300'] = str(host)
@@ -169,6 +170,7 @@ def load_config(path: Path) -> Config:
         raw = yaml.safe_load(path.read_text(encoding='utf-8')) or {}
     except yaml.YAMLError as exc:
         raise ConfigError([f'{path.name} is not valid YAML: {exc}']) from exc
+    raw = fill_placeholders(raw)
     values = read_settings(raw, SETTINGS)
     if 'blocked_functions' in raw['mcp']:
         raise ConfigError([f'{path.name}: mcp.blocked_functions is now mcp.needs_approval: what it lists is held for a person, not hidden'])

@@ -34,7 +34,7 @@ if str(PROJECT_DIR) not in sys.path:
 
 from asyncroscopy import settings
 from asyncroscopy.utils.process_manager import ManagedProcess, ProcessManager, listening_pids, python_command  # noqa: E402
-from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, read_settings  # noqa: E402
+from startup_scripts.config_schema import ConfigError, DeviceTable, Setting, coerce, fill_placeholders, read_settings  # noqa: E402
 from startup_scripts.lifecycle import add_lifecycle_args, install_shutdown_handlers  # noqa: E402
 
 # The launcher needs --yaml: it never picks an instrument for you. The GUI opens on the digital twin, so a fresh
@@ -433,7 +433,7 @@ def read_config(path: Path, _seen: tuple[Path, ...] = ()) -> dict:
 
 
 def load_config(path: Path) -> Config:
-    raw = read_config(path)
+    raw = fill_placeholders(read_config(path))  # here, not in read_config: generated configs keep ${NAME}
     values = read_settings(raw, SETTINGS)
     problems: list[str] = []
     instrument = None
