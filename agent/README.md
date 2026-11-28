@@ -63,7 +63,7 @@ graph.add_node("tile", use.block("acquire_tile", tiles="{plan.tiles}"))       # 
 graph.add_conditional_edges("tile", use.when("tile.remaining > 0", then="tile", otherwise="home", max_visits=400))
 ```
 
-Write the nodes first, then the edges, and give a call with many inputs one input per line. Every `*.py` here is loaded by its file path, so a workflow imports what it needs from `asyncroscopy.workflows`, never from a sibling file. Check and run it with:
+In a block's inputs, `"{node.output}"` is an earlier node's output and `"{inputs.name}"` a run input. Write the nodes first, then the edges, and give a call with many inputs one input per line. Every `*.py` here is loaded by its file path, so a workflow imports what it needs from `asyncroscopy.workflows`, never from a sibling file. Check and run it with:
 
 ```bash
 uv run python -m asyncroscopy.workflows lint <name>

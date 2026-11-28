@@ -25,7 +25,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("regions", use.block("best_regions", map="{inputs.map}", top_k="{inputs.top_k}"))
     graph.add_node("move", use.block("move_to", x_m="{regions.x_m}", y_m="{regions.y_m}"))
     graph.add_node("zoom", use.block("zoom", fov_m="{inputs.fov_m}"))

@@ -23,7 +23,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("zoom", use.block("zoom", fov_m="{inputs.fov_m}"))
     graph.add_node("survey", use.block("image", detectors=["haadf"]))
     graph.add_node("feature", use.block("find_feature", image="{survey.key}"))

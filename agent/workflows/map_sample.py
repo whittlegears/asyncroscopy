@@ -66,7 +66,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("plan", use.block(
         "plan_survey",
         size_m="{inputs.size_m}",
@@ -132,15 +131,12 @@ def build(use: Steps) -> StateGraph:
         move_stage="{plan.moves_stage}",
     ))
 
-    # Ask a person about a large plan
     graph.add_edge(START, "plan")
     graph.add_conditional_edges("plan", use.when("plan.count > inputs.ask_over", then="ok", otherwise="tile"))
     graph.add_conditional_edges("ok", use.when('ok.answer == "yes"', then="tile", otherwise=END))
-    # the tiles of one level, with spectra at the tiles due for them
     graph.add_edge("tile", "eds")
     graph.add_edge("eds", "eels")
     graph.add_conditional_edges("eels", use.when("tile.remaining > 0", then="tile", otherwise="run", max_visits=VISITS))
-    # stitch the level, then go on to the next level or home
     graph.add_edge("run", "stitch")
     graph.add_edge("stitch", "maps")
     graph.add_conditional_edges("maps", use.when("tile.left > 0", then="tile", otherwise="home", max_visits=VISITS))

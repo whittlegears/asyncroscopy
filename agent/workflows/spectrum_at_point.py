@@ -22,7 +22,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("move", use.block("move_to", x_m="{inputs.x_m}", y_m="{inputs.y_m}"))
     graph.add_node("spectrum", use.block(
         "spectrum_at",

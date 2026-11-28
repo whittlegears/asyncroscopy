@@ -24,7 +24,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("fov", use.block("run_tool", tool="*_get_fov"))
     graph.add_node("plan", use.block("plan_survey", size_m="{fov.result}", fov_m="{fov.result}", per_side=4, overlap="{inputs.overlap}"))
     graph.add_node("tile", use.block(

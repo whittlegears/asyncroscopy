@@ -40,7 +40,6 @@ INPUTS = {
 def build(use: Steps) -> StateGraph:
     graph = StateGraph(WorkflowState)
 
-    # Nodes. "{node.output}" is an earlier node's output, "{inputs.name}" a run input.
     graph.add_node("plan", use.block(
         "plan_grid",
         size_m="{inputs.size_m}",
