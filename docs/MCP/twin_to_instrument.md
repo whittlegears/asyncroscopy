@@ -5,10 +5,11 @@ real instrument the twin is paired with. This page is the contract an app builds
 SciAgentGUI's `docs/internal/TWIN-TO-INSTRUMENT-PLAN.md`. [Workflow approval](workflow_approval.md) and
 [Permissions](permissions.md) still hold; this page adds to them.
 
-What the sign-off means: **it covers the calls exactly as rehearsed, for one run.** When an approved workflow runs on
-a real instrument, every instrument call its passing rehearsal made counts as approved for that one hardware run. A
-call of the same tool with the same canonical, validated arguments runs without a hold. Any other call is held for a
-person as usual. A `never` tool stays refused. Physical range checks (stage limits, job limits, dose checks, the turn
+What the sign-off means: **it covers the calls exactly as rehearsed, for one run.** The person signs off one
+rehearsal, which the approval keeps a copy of. When the approved workflow runs on a real instrument with that
+rehearsal's inputs, every instrument call the rehearsal made counts as approved for that one hardware run, as many
+times as the rehearsal made it. A call of the instrument tool the rehearsed tool matches, with the same canonical,
+validated arguments, runs without a hold. Any other call is held for a person as usual. A `never` tool stays refused. Physical range checks (stage limits, job limits, dose checks, the turn
 guard) are not permissions and still apply to every call.
 
 ## Changes after review (2026-11-28)
@@ -102,6 +103,7 @@ All are optional. Left out, a tool behaves as before, on the first instrument en
 | `run_workflow` (agent server) | `instrument_url: str \| null` | Run on this instrument endpoint. It must be one of `workflow_instruments`; any other value is refused before anything is opened: `{"state": "refused", "workflow": name, "problems": ["<url> is not an instrument endpoint this workflow server acts on; it acts on [...] (agent.mcp_urls and agent.workflow_instruments in its config)"]}`. A resumed run (`resume_workflow`, `answer_workflow`) stays on the endpoint it started on. |
 | `review_workflow` (workflow operator) | `instrument_url: str \| null` | Review for approval on this instrument endpoint: its `stack_fingerprint` is what a rehearsal must match. Refused (`ok: false`, the same sentence as `error`) for a URL outside the list. |
 | `approve_workflow` (workflow operator) | `instrument_url: str \| null` | The same as for `review_workflow`. Pass the same value as to the review. `instrument` still names the `stack_id` the approval is limited to. |
+| `approve_workflow` (workflow operator) | `rehearsal_run_id: str` (**required**) | `review_workflow`'s `rehearsal.run_id`. Refused unless it is still the rehearsal that review shows. |
 | `propose_workflow` (agent server) | `context: str \| null` | What the conversation established, for example a summary of the chat. It is stored with the draft as sent, shown in the review as `context_as_reported_by_agent`, and never checked or run. |
 
 The agent is never handed a URL it may use freely: the server accepts only the configured ones, whoever sends them.
@@ -114,6 +116,9 @@ When a run on a simulated stack ends (`done`, `failed` or `stopped`), the rehear
 - `calls_made`: every distinct call that succeeded, first made first:
   `[{"server": "instrument" | "analysis", "tool": str, "arguments": {...}, "count": int}]`. `arguments` is the
   canonical JSON the workflow sent (keys sorted). These, with `server: "instrument"`, are what a sign-off covers.
+- `actions`: what the twin's `endpoint_info` said each instrument tool of `calls_made` is,
+  `{tool: {"role", "command", "kinds"} | null}` (`kinds` is `null` for a native tool). A rehearsed call is matched to
+  an instrument tool by it.
 - `results`:
 
 ```json
@@ -203,7 +208,10 @@ documented in [Workflow approval](workflow_approval.md), with these keys added:
     "stack_id": "tango://twin-a:9094",
     "stack_fingerprint": {"software": {...}, "simulated": {"value": true, "established_by": "..."}, "digest": "ff322ffd..."},
     "results": {"...": "the rehearsal results above"},
-    "calls_made": [{"server": "instrument", "tool": "Twin_move_stage", "arguments": {"position": [1e-06, 2e-06, 0.0, 0.0, 0.0]}, "count": 1}]
+    "calls_made": [{"server": "instrument", "tool": "DigitalTwin_move_stage", "arguments": {"position": [1e-06, 2e-06, 0.0, 0.0, 0.0]}, "count": 1,
+                    "instrument_tool": "AutoScriptMicroscope_move_stage", "held_because": null},
+                   {"server": "instrument", "tool": "SAMPLE_get_dose", "arguments": {"request": "{}"}, "count": 2,
+                    "instrument_tool": null, "held_because": "no match: will be held (2 instrument tools match: SAMPLE_a_get_dose, SAMPLE_b_get_dose)"}]
   },
   "rehearsals": [{"run_id": "...", "results": {"...": "as above"}, "...": "the keys documented in workflow_approval.md"}],
   "can_approve": true,
@@ -221,9 +229,13 @@ documented in [Workflow approval](workflow_approval.md), with these keys added:
 - `stack_fingerprint`: the fingerprint of the endpoint at `instrument_url` now (`null` when it cannot be reached).
 - `rehearsal`: the latest rehearsal of this exact code that passed on a stack that counts for `instrument_url`:
   the same fingerprint digest for a twin, or a simulated stack with the same `software` for a real instrument. It is
-  `null` when there is none, and then `can_approve` is false. It is the rehearsal `approve_workflow` records in
-  `approval.rehearsed`, so its `calls_made` are the calls the approval will pre-approve. `stack_fingerprint` here is
-  the full fingerprint the rehearsal ran on.
+  `null` when there is none, and then `can_approve` is false. When a stopped rehearsal was resumed, the entry that
+  passed is the one. Its `run_id` is what `approve_workflow` takes as `rehearsal_run_id`, and the approval keeps a copy
+  of it in `approval.rehearsed`. `stack_fingerprint` here is the full fingerprint the rehearsal ran on.
+- `rehearsal.calls_made[]`: each instrument call has `instrument_tool`, the tool of the endpoint at `instrument_url`
+  it matches (the one tool there with the same `role` and `command` on a device with the same `device_kinds`, or the
+  same native tool), or `null`, and `held_because`, `null` or a sentence starting `"no match: will be held"`. The
+  calls with an `instrument_tool` are exactly what the approval will pre-approve, under that tool, `count` times each.
 - `rehearsals[]` items gain `results`.
 
 ## The run on the instrument
@@ -231,12 +243,16 @@ documented in [Workflow approval](workflow_approval.md), with these keys added:
 After `approve_workflow`, the app sends `run_workflow(name, inputs, instrument_url=<the paired instrument>)`. The
 agent server, for an `approved` workflow on a stack that is not simulated:
 
-1. finds the rehearsal the approval was given on (`approval.rehearsed.run_id`);
-2. makes a run id and a secret run key, and calls the instrument's operator endpoint
-   `preapprove_run(run_id, run_key_sha256, calls, approved_by, approver, workflow, hash, rehearsal_run_id)` with the
-   rehearsal's instrument calls;
-3. runs the workflow. Every call carries `X-Asyncroscopy-Run: <run_id>` (as every workflow call always has) and
-   `X-Asyncroscopy-Run-Key: <run_key>`. The key appears in no reply, so a caller who knows the run id cannot use the
+1. refuses the run, before anything is opened, unless its inputs with the defaults filled in equal
+   `approval.rehearsed.inputs` (when the approval carries a rehearsal):
+   `{"state": "refused", "workflow": name, "problems": ["<name> was signed off for the inputs its rehearsal ran with (...); these are (...). Other inputs need a new rehearsal on the twin and a new sign-off."]}`;
+2. takes the rehearsal the approval keeps (`approval.rehearsed`), matches its calls to the instrument's tools again,
+   makes a run id and a secret run key, and calls the instrument's operator endpoint
+   `preapprove_run(run_id, run_key_sha256, calls, approved_by, approver, workflow, hash, rehearsal_run_id)` with each
+   instrument call whose match is still the `instrument_tool` the approval recorded:
+   `{"tool": <instrument_tool>, "arguments", "count"}`;
+3. runs the workflow. Every call carries `X-Asyncroscopy-Run: <run_id>` (as every workflow call always has), and
+   every instrument call `X-Asyncroscopy-Run-Key: <run_key>` (the analysis server never gets it). The key appears in no reply, so a caller who knows the run id cannot use the
    pre-approvals;
 4. when the run ends (`done`, `failed`, `stopped`, or an error), calls `end_run_preapproval(run_id)`. A run that is
    `waiting` for a person keeps its pre-approval until it expires. `resume_workflow` and `answer_workflow` grant it
@@ -246,18 +262,20 @@ The gate on the instrument's agent endpoint, for a call of an `approve` tool:
 
 - a `never` tool is refused first, as always;
 - the arguments are validated (defaults filled in, values in their declared types) and the rehearsal's arguments for
-  that tool are validated the same way; when the call's run id has a live pre-approval, the run key matches, and the
-  call equals one of the rehearsal's, it runs. Its Instrument Trace event carries
+  that tool are validated the same way; when the call's run id has a live pre-approval, the run key matches, the
+  call equals one of the rehearsal's, and the run has not yet used up that call's `count`, it runs and uses one. Its Instrument Trace event carries
   `approved_by: "workflow_signoff:<workflow>@<hash>"` and `approver: "<the approver's name>"`;
 - otherwise it is held as usual, and the held reply and the pending entry carry `signoff` (below).
 
-A pre-approval expires after the instrument's `mcp.approval_ttl_s` (600 s in the shipped configs), when the run ends,
-or when it is stopped. A second run of the same workflow gets its own run id and key, and never uses the first run's
+A pre-approval expires `mcp.approval_ttl_s` (600 s in the shipped configs) after the run's last call with its key
+(each such call moves the expiry on), at most 12 hours after it was granted (`max_run_preapproval_s`), when the run
+ends, or when it is stopped. What a run used of its counts is kept when it is granted again on resume. A second run of the same workflow gets its own run id and key, and never uses the first run's
 pre-approvals. Grants and removals are written to the operator endpoint's trace as actions `preapprove_run` and
 `end_run_preapproval`, with `run`, `approved_by`, `approver`, `workflow`, `workflow_hash`, `calls` and `expires_at`.
 
-A workflow approved on the command line without a rehearsal, a stack without an operator endpoint, or an operator
-endpoint that refuses, gives no pre-approval: the run still starts and every `approve` call is held as usual. The
+A workflow approved on the command line (which keeps no rehearsal), a stack without an operator endpoint, a workflow
+server with `ASYNCROSCOPY_MCP_TOKEN` and no `ASYNCROSCOPY_OPERATOR_TOKEN`, or an operator endpoint that refuses, gives
+no pre-approval: the run still starts and every `approve` call is held as usual. The
 record's `preapproval` says why.
 
 ### `preapproval` in the run record
@@ -276,8 +294,8 @@ approved workflow:
  "rehearsal_inputs": {"where": "{\"x_m\":0.0,\"y_m\":0.0}"}}
 ```
 
-or `{"granted": false, "why": "<sentence>"}`. `calls` is how many calls are pre-approved. `rehearsal_inputs` are the
-inputs the rehearsal ran with: other inputs usually mean other arguments, and those calls are held. The reply of
+or `{"granted": false, "why": "<sentence>"}`. `calls` is how many calls are pre-approved, counts included.
+`rehearsal_inputs` are the inputs the rehearsal ran with, which are the run's own. The reply of
 every run that started also has `instrument_url`, the endpoint it acts on.
 
 ### A held call of a signed-off run
@@ -293,10 +311,13 @@ The held reply from the instrument (and so a waiting run's `approvals[]` entry) 
              "why_held": "the rehearsal called this tool with other arguments"}}
 ```
 
-`why_held` is `"the rehearsal called this tool with other arguments"` or `"the rehearsal never called this tool"`.
+`why_held` is `"the rehearsal called this tool with other arguments"`, `"the rehearsal never called this tool"` (also
+for an instrument tool no rehearsed call matched), or `"the rehearsal made this call fewer times"`.
 `list_pending_approvals` on the instrument's operator endpoint shows the same `signoff` on that entry; entries of
 calls outside any signed-off run have no `signoff` key. A person approves it with `approve_call` as any other, and
-`resume_workflow(run_id)` sends it again. The approval is used once, as always.
+`resume_workflow(run_id)` sends it again. The approval is used once, as always, and only by that run: the request
+keeps the run id and its key's digest, so the same call from another client or another run makes a request of its
+own. The resumed run's new key takes it over.
 
 ## Data-dependent arguments
 
@@ -322,9 +343,9 @@ as on the twin.
    `request_as_reported_by_agent` and `context_as_reported_by_agent`. `can_approve` and `why_not` say whether
    Approve will work.
 4. **Approve.** The person presses Approve: `approve_workflow(name, approver, expected_hash=<review.hash>,
-   instrument_url=<paired instrument>)`. Refused unless this exact code passed a rehearsal on a twin with the
-   instrument's `software`.
-5. **Run on the instrument.** The app: `run_workflow(name, <same inputs>, instrument_url=<paired instrument>)`. The
+   rehearsal_run_id=<review.rehearsal.run_id>, instrument_url=<paired instrument>)`. Refused unless this exact code
+   passed a rehearsal on a twin with the instrument's `software`, and that rehearsal is still the one the review showed.
+5. **Run on the instrument.** The app: `run_workflow(name, inputs=<review.rehearsal.inputs>, instrument_url=<paired instrument>)`. The
    reply's `preapproval.granted` is true. The rehearsed calls run; a different call stops the run as `waiting` with
    `approvals[].signoff`. The person approves it on the instrument's operator endpoint (`approve_call`) and the app
    calls `resume_workflow(run_id)`, or `stop_workflow(run_id)`.
@@ -337,7 +358,11 @@ as on the twin.
 
 `tests/endpoints/test_signoff.py` drives this contract over real MCP endpoints on the session's Tango devices:
 a rehearsed call runs without a hold, a different argument is held, an unrehearsed tool is held, a `never` tool is
-refused, a pre-approval expires, a second run (or the run id without its key) gets nothing, and the whole sequence
-from `propose_workflow` to a held changed call on a second endpoint that is not simulated.
+refused, a call passes only as many times as rehearsed, a pre-approval expires and is kept alive by the run's calls up
+to its maximum, a second run (or the run id without its key) gets nothing, a person's approval of a held call is used
+only by that run, and the whole sequence from `propose_workflow` to the run on an endpoint that is not simulated and
+whose microscope is another device class (a `DigitalTwin` rehearsal, a `DigitalTwinParticles` instrument): the call
+mapping in the review, an ambiguous match, a stale `rehearsal_run_id`, other inputs refused, and a call whose match
+changed held.
 `tests/scoring/test_twin_score.py` checks the twin score, and `tests/agents/test_workflows.py` the review's
 results, calls and diff and the instrument allow-list.

@@ -16,7 +16,9 @@ Both write the same records in the same library (`outputs/workflows/library`: `a
   names the stacks it did pass on. When the endpoint is a real instrument (its fingerprint is not simulated), a
   twin and the instrument can never share a fingerprint, so a rehearsal counts when it passed on a simulated stack
   whose `software` (package version and commit) is the instrument's. The command line shows the rehearsals and warns when there is none, but does not
-  refuse;
+  refuse, and keeps none with the approval, so its hardware runs get no pre-approved calls;
+- `approve_workflow` takes the `rehearsal_run_id` the review showed and refuses unless it is still that rehearsal; the
+  approval keeps a copy of it, and a hardware run must use its inputs ([Twin to instrument](twin_to_instrument.md));
 - `approve_workflow` and `reject_workflow` take the `expected_hash` that `review_workflow` returned for the code the
   person read, and refuse when the workflow is not that code any more. An agent can call `propose_workflow` again
   with the same name while the person is reading; without this check the person would approve code they never saw.
@@ -137,10 +139,11 @@ latest passing rehearsal with its results and every call it made) and `results` 
   does that before every run.
 - Times (`at`) are Unix seconds.
 
-### `approve_workflow(name: str, approver: str, expected_hash: str, instrument: str | null = null, days: float | null = null, instrument_url: str | null = null)`
+### `approve_workflow(name: str, approver: str, expected_hash: str, rehearsal_run_id: str, instrument: str | null = null, days: float | null = null, instrument_url: str | null = null)`
 
 This tool approves the workflow the person reviewed. `expected_hash` is the `hash` from the `review_workflow` reply
-they read; the approval record keeps it as `hash`. `approver` is the person's name. `instrument` is the `stack_id` that
+they read; the approval record keeps it as `hash`. `rehearsal_run_id` (changed 2026-11-28, required) is the review's
+`rehearsal.run_id`: the rehearsal the person saw. `approver` is the person's name. `instrument` is the `stack_id` that
 the approval is for; `null` or `"any"` means every instrument. `days` is how long the approval holds; `null` means
 until it is revoked. `instrument_url` is as for `review_workflow`; pass the value the review used.
 
@@ -150,6 +153,8 @@ The tool refuses (`ok: false`) when:
 - `review_workflow` would report `can_approve: false` (shipped, approved and not expired, failing its checks, or
   never rehearsed), with its `why_not` as the error;
 - the workflow's hash is not `expected_hash` (it changed since it was reviewed: review it again);
+- `rehearsal_run_id` is not the rehearsal the review shows now (a newer one passed, or the instrument changed:
+  review it again);
 - `approver` is empty;
 - `days` is not above 0;
 - the login is not in `approvers.json`;
@@ -162,14 +167,21 @@ The reply when it succeeds:
 {"ok": true, "status": "approved",
  "approval": {"name": "tiles_only", "hash": "...", "by": "Sam Reed", "login": "sam", "at": 1795817500.0,
               "acts": true, "tools": ["..."], "instrument": "tango://scope-a:9094", "expires": 1798409500.0,
-              "rehearsed": {"run_id": "3f2a...", "at": 1795817470.1, "calls": 14, "inputs": {"size_m": 5e-07}},
+              "rehearsed": {"run_id": "3f2a...", "at": 1795817470.1, "calls": 14, "inputs": {"size_m": 5e-07},
+                            "stack_id": "tango://twin-a:9094", "stack_fingerprint": "ff322ffd...",
+                            "actions": {"DigitalTwin_set_fov": {"role": "optics.fov", "command": "set_fov", "kinds": ["stage", "stem"]}},
+                            "calls_made": [{"server": "instrument", "tool": "DigitalTwin_set_fov", "arguments": {"fov": 5e-07}, "count": 4,
+                                            "instrument_tool": "AutoScriptMicroscope_set_fov", "held_because": null}]},
               "request": "what the proposing agent said the user asked", "via": "Workflow_Operator_MCP"}}
 ```
 
 `request` is the proposing agent's account of the user's request (`request_as_reported_by_agent` in the review),
-kept with the approval; it is not the person's own record. `rehearsed` is the last run of this code on a twin that
-reached `done` on a stack that counts for `instrument_url` (the review's `rehearsal`), with the inputs it ran with. Its
-calls are the ones a hardware run of the workflow gets pre-approved ([Twin to instrument](twin_to_instrument.md)). `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
+kept with the approval; it is not the person's own record. `rehearsed` is a copy of the rehearsal `rehearsal_run_id`
+names (the review's `rehearsal`), with the inputs it ran with and its calls matched to the tools of the instrument at
+`instrument_url`, as the review showed them. Later rehearsals, and the library keeping only the last 10, do not change
+it. A hardware run of the workflow must use those inputs, and gets those calls pre-approved
+([Twin to instrument](twin_to_instrument.md)). An approval on the command line keeps no rehearsal (`rehearsed: null`),
+so no call of its hardware runs is pre-approved. `via` is the endpoint's name, or `"cli"` when the approval came from the command line. An approval replaces any
 earlier rejection.
 
 ### `reject_workflow(name: str, reason: str, expected_hash: str)`
