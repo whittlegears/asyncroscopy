@@ -29,6 +29,13 @@ def _flag(text: str | None, default: bool) -> bool:
     return text.strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def shipped_agent_dir() -> Path:
+    """The ``agent`` folder of skills and workflows: inside the installed package when built into a wheel, else the checkout's."""
+    package = Path(__file__).resolve().parent
+    built = package / "agent"
+    return built if built.is_dir() else package.parent / "agent"
+
+
 def _number(env: Mapping[str, str], name: str, default, kind):
     """``env[name]`` as ``kind``; a missing or blank value is ``default``. A value that is not a number names the variable."""
     text = env.get(name, "")
@@ -87,6 +94,7 @@ class Settings:
 
     # Extensions
     plugins: str
+    agent_dir: Path
     skills_path: tuple[Path, ...]
     lab_skills: Path  # the lab's own skills, written from a client (asyncroscopy.skills.lab)
     skills: bool  # agent skills on or off
@@ -141,6 +149,7 @@ class Settings:
             auto_promote_after=_number(env, "ASYNCROSCOPY_AUTO_PROMOTE_AFTER", 0, int),
             learn_skills=_flag(env.get("ASYNCROSCOPY_LEARN_SKILLS"), False),
             plugins=env.get("ASYNCROSCOPY_PLUGINS", ""),
+            agent_dir=Path(env.get("ASYNCROSCOPY_AGENT_DIR") or shipped_agent_dir()),
             skills_path=tuple(Path(p) for p in env.get("ASYNCROSCOPY_SKILLS_PATH", "").split(os.pathsep) if p),
             lab_skills=Path(env.get("ASYNCROSCOPY_LAB_SKILLS") or outputs / "lab_skills"),
             skills=_flag(env.get("ASYNCROSCOPY_SKILLS"), False),

@@ -41,10 +41,11 @@ Every `ASYNCROSCOPY_*` variable is read in one place, `asyncroscopy/settings.py`
 | `ASYNCROSCOPY_LEARN_SKILLS` | `1`, `true`, `yes` or `on`: a goal run that met its goal drafts a learned skill from its calls (a draft until promoted). Off, goal runs still write their experiment page and lessons | off |
 | `ASYNCROSCOPY_AUTO_PROMOTE_AFTER` | Successful uses after which a learned skill promotes itself; `0` never | `0` |
 | `ASYNCROSCOPY_PLUGINS` | Plug-in modules or files, comma- or `os.pathsep`-separated | none |
+| `ASYNCROSCOPY_AGENT_DIR` | The folder of what people edit: `skills/` and `workflows/` (see `agent/README.md`) | the repository's `agent/`, or the copy inside an installed wheel |
 | `ASYNCROSCOPY_SKILLS_PATH` | Extra skill folders, `os.pathsep`-separated | none |
 | `ASYNCROSCOPY_LAB_SKILLS` | The lab's own skills, written from a client such as SciAgentGUI's Skills page (`save_skill`), and `off.txt`, the skills switched off here | `outputs/lab_skills` |
 | `ASYNCROSCOPY_SKILLS` | `1`, `true`, `yes` or `on` turns agent skills on (matching, prompts and the `load_skill`, `list_skills`, `skills_for` tools). | off |
-| `ASYNCROSCOPY_SKILLS_OFF` | Skills no agent or MCP client is offered: comma-separated names or globs (e.g. `mapping,multiscale_region`) | none |
+| `ASYNCROSCOPY_SKILLS_OFF` | Skills no agent or MCP client is offered: comma-separated names or globs (e.g. `mapping,multiscale_region`). Beats a skill's own `enabled: true` | none |
 | `ASYNCROSCOPY_QT_API` | `pyqt5` selects PyQt5 for the desktop GUIs | PyQt6 |
 | `ASYNCROSCOPY_WRITE_GOLDEN` | Tests only: `1` rewrites golden files | off |
 | `ASYNCROSCOPY_WRITE_BENCHMARKS` | Tests only: `1` writes benchmark results | off |

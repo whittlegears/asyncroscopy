@@ -61,7 +61,7 @@ A small model loses track with many tools and long instructions, so the `team` g
 
 ## Skills, found automatically
 
-Skills are short procedures in `asyncroscopy/skills/<name>/SKILL.md`. Agents never have to look for them: before every model call `SkillMiddleware` (`asyncroscopy/agents/skill_middleware.py`) decides, by fixed rules and without a model call, which skills apply and writes them into the prompt.
+Skills are short procedures in `agent/skills/<name>/SKILL.md` (see `agent/README.md`). Agents never have to look for them: before every model call `SkillMiddleware` (`asyncroscopy/agents/skill_middleware.py`) decides, by fixed rules and without a model call, which skills apply and writes them into the prompt.
 
 - From the request: the best one or two by `keywords`, name and description; a request for a new map always gets `mapping` first. Negated words ("without EDS spectra") do not count.
 - As the task develops, once each:
@@ -142,9 +142,9 @@ Nothing an agent writes here is reviewed before another run reads it, so it is k
 
 ## Skills are manuals; fixed procedures are workflows
 
-A skill (`asyncroscopy/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
+A skill (`agent/skills/<name>/SKILL.md`) is an instruction manual: how to do one kind of task on this kind of instrument, which tool or workflow to use, what the replies mean, what to report. The agent graphs retrieve the one or two that match a request and put them in the prompt as background, then retrieve passages of any skill for each step as the task goes on: retrieval-augmented generation over a small library. A skill never runs anything.
 
-A procedure whose calls are the same every time is a LangGraph workflow (`asyncroscopy/workflows/graphs/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
+A procedure whose calls are the same every time is a LangGraph workflow (`agent/workflows/`), and its skill says when to run it and where its answer is in the outputs. The measurements that used to be skill run lists are shipped workflows:
 
 | Workflow | What it does | Manual |
 | :-- | :-- | :-- |
@@ -184,7 +184,7 @@ A learned skill file that cannot be read is reported by `list` (exit code 1), no
 ## For a hackathon team
 
 1. Copy `docs/Operation/templates/INSTRUMENT.md` into your repository (for example `configs/instrument_notes/<instrument>.md`) and set `ASYNCROSCOPY_INSTRUMENT_NOTES` to it, so the notes are versioned with your code (or start the stack and run one agent request: it seeds `outputs/agent_memory/INSTRUMENT.md` from your tool list). Fill in your limits, units and samples, in the words your requests will use.
-2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `asyncroscopy/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires`, `tools` and `acts`, list the steps, and check it with `python -m asyncroscopy.agents.skills lint <path>`. Agents get it as soon as a request matches.
+2. Write a skill for your instrument's main procedure: copy `docs/Operation/templates/SKILL.md` into `agent/skills/<name>/` (or a folder in `ASYNCROSCOPY_SKILLS_PATH`), set `keywords`, `requires`, `tools` and `acts`, list the steps, and check it with `python -m asyncroscopy.agents.skills lint <path>`. Agents get it as soon as a request matches.
 3. Run your workflow as a goal on the twin (`--goal`); look at the experiment page, the lesson or the learned draft it leaves, and promote drafts you agree with.
 
 ## Testing without a model

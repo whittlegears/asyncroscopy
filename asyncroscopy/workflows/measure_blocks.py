@@ -1,7 +1,7 @@
 """Blocks for measuring at one place: go there, image, find a feature, take a spectrum on a stage position, read it.
 
-The measurement workflows (``graphs/spectrum_at_point.py``, ``graphs/spectrum_on_feature.py``,
-``graphs/spectrum_at_best_region.py``) are built from these. Every block that unblanks the beam blanks it again
+The measurement workflows (``agent/workflows/spectrum_at_point.py``, ``spectrum_on_feature.py``,
+``spectrum_at_best_region.py``) are built from these. Every block that unblanks the beam blanks it again
 before it returns, even when the acquisition fails, and declares ``*_blank_beam`` as an ``always`` tool so the
 runner blanks it at the end of any run.
 """

@@ -21,7 +21,7 @@ An agent maps a sample from one sentence, then stitches it into a zoomable map, 
 | Job envelope | `asyncroscopy/contracts/` | `reserve` → `start` → `job_status` → `results` → `release`, plus `abort`. Shared with the analysis server's jobs. `reserve` refuses steps outside the instrument's limits, and `suspenders` pause a job while a condition such as beam current is bad (see `asyncroscopy/contracts/README.md`). |
 | Map tools | pyTEMlib's `pyTEMlib/analysis_server/` (algorithms: pyTEMlib `image_tools`) | Stitch by stage position refined by image matching; pyramid in Tiled; view regions; score with plug-in scorers; points of interest. |
 | Graphs | `asyncroscopy/agents/graphs/` | `mapping`: the model only writes the plan. `general`: the model makes every call, using the `mapping` skill. |
-| Skill | `asyncroscopy/skills/mapping/SKILL.md` | The procedure agents load before mapping. |
+| Skill | `agent/skills/mapping/SKILL.md` | The procedure agents load before mapping. |
 
 ## Map plans
 

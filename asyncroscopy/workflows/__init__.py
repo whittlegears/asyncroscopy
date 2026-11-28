@@ -1,8 +1,8 @@
 """Workflows are fixed procedures written as LangGraph graphs built from blocks.
 
 A block is code we ship in ``blocks.py`` and ``shipped_blocks.py``. It does one thing and declares its inputs,
-outputs and tools. A workflow is a module under ``graphs/`` that builds a ``StateGraph`` whose nodes are blocks.
-``graphs/map_grid.py`` is an example. ``runner.py`` checks the graph against the live endpoint and then runs it with
+outputs and tools. A workflow is a module in ``agent/workflows/`` (``settings.agent_dir``) that builds a ``StateGraph`` whose nodes are blocks.
+``agent/workflows/map_grid.py`` is an example. ``runner.py`` checks the graph against the live endpoint and then runs it with
 checkpoints, a stop switch and a cleanup that always runs. Blocks reach the instrument only through MCP tools, so
 the endpoint's risk policy, limits and trace apply to every call.
 

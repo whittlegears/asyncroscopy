@@ -141,6 +141,8 @@ def lint_skill(path: Path, offered: set[str] | None = None) -> list[str]:
     problems += lint(text, tools, offered, learned=learned, max_chars=MAX_LEARNED_CHARS if learned else PROMPT_BUDGET_CHARS)
     if "acts" in meta and not isinstance(meta["acts"], bool):
         problems.append("'acts' must be true or false")
+    if "enabled" in meta and not isinstance(meta["enabled"], bool):
+        problems.append("'enabled' must be true or false")
     return problems
 
 

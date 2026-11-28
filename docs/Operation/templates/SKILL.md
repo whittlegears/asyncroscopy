@@ -2,13 +2,14 @@
 name: quick_diffractogram
 description: Take a diffractogram over a 2theta range and read its peaks.
 version: 1.0.0
+enabled: true   # false switches the skill off: no agent is given it, and lists show it as disabled
 keywords: [diffractogram, xrd, 2theta, powder pattern, peaks]
 requires: [XRDTwin_acquire_diffractogram]
 tools: [XRDTwin_get_status, XRDTwin_xray_on, XRDTwin_set_start_deg, XRDTwin_set_stop_deg, XRDTwin_acquire_diffractogram, view_data]
 acts: true   # following it moves or exposes the instrument; false for a skill that only reads data
 ---
 
-<!-- Template: copy this file to asyncroscopy/skills/<name>/SKILL.md (or to <dir>/<name>/SKILL.md
+<!-- Template: copy this file to agent/skills/<name>/SKILL.md (or to <dir>/<name>/SKILL.md
      with <dir> listed in ASYNCROSCOPY_SKILLS_PATH), rename it, and replace the steps with your
      instrument's. Check it with: uv run python -m asyncroscopy.agents.skills lint <path>
      Agents get it automatically when a request contains its keywords. Agents never see

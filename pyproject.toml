@@ -118,8 +118,9 @@ where = ["."]
 include = ["asyncroscopy", "asyncroscopy.*"]
 
 [tool.setuptools.package-data]
-# Schemas and agent skills ship with the package so an installed copy can use them.
-asyncroscopy = ["contracts/*.json", "contracts/*.md", "agents/profiles/*.yaml", "skills/*/SKILL.md", "skills/README.md", "instruments/yaml_sim/examples/*.yaml"]
+# Schemas ship with the package so an installed copy can use them. The agent/ folder (skills and workflows) is
+# copied in as asyncroscopy/agent by setup.py.
+asyncroscopy = ["contracts/*.json", "contracts/*.md", "agents/profiles/*.yaml", "instruments/yaml_sim/examples/*.yaml"]
 
 [tool.uv.sources]
 autoscript-core = { path = "stubs/AutoScript_v_1.18/autoscript_core-1.4.0-py3-none-any.whl" }
