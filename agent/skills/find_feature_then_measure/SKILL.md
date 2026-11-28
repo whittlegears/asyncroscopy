@@ -2,6 +2,7 @@
 name: find_feature_then_measure
 description: Find a feature (a particle, a grain, a bright spot) in an image, then take a spectrum or a closer image on it and report where it is.
 version: 3.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [find a particle, find a feature, find a grain, on it, on the particle, at the particle, locate, spot, cluster]
 requires: ["*_acquire_scanned_image", view_data]

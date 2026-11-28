@@ -40,7 +40,7 @@ class SkillsTools:
         """Skills: multi-step procedures (a map of an area, a survey, a zoom series). One action (one image, one
         spectrum, a move, a setting) needs none: call that instrument tool directly."""
         return [{"name": s.name, "description": s.description, "version": s.version, "available": s.available,
-                 "source": s.source, "off": s.off, "acts": s.acts, **({"problem": s.problem} if s.problem else {})}
+                 "source": s.source, "enabled": s.enabled, "off": s.off, "acts": s.acts, **({"problem": s.problem} if s.problem else {})}
                 for s in self.skills()]
 
     def _named(self, name: str):
@@ -52,12 +52,12 @@ class SkillsTools:
     @tool()
     def skill_text(self, name: str) -> dict[str, Any]:
         """For a client's Skills page, not models: one skill as written, whether or not it can be used here.
-        Returns name, source (shipped, path, lab or learned), off, problem, body (the manual) and text (the whole
+        Returns name, source (shipped, path, lab or learned), enabled (its front matter), off, problem, body (the manual) and text (the whole
         SKILL.md, front matter included, to edit and save_skill again)."""
         from asyncroscopy.skills.registry import read_front_matter
 
         skill = self._named(name)
-        return {"name": skill.name, "source": skill.source, "off": skill.off, "problem": skill.problem,
+        return {"name": skill.name, "source": skill.source, "enabled": skill.enabled, "off": skill.off, "problem": skill.problem,
                 "body": read_front_matter(skill.path)[1], "text": skill.path.read_text(encoding="utf-8")}
 
     @tool()

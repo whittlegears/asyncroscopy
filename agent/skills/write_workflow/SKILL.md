@@ -2,6 +2,7 @@
 name: write_workflow
 description: Write a new deterministic LangGraph workflow for a multi-step task the user gave when no workflow fits, and propose it for a scientist to approve. The workflow is Python that wires blocks into a StateGraph; it then runs the steps exactly, far faster than calling tools one by one.
 version: 1.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [workflow, langgraph, graph, automate, procedure, series, repeat, loop, every, each, survey, sequence, propose]
 requires: [propose_workflow]

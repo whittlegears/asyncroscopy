@@ -2,6 +2,7 @@
 name: multiscale_region
 description: Zoom into one region of an image tier by tier, down to atomic columns, placing each finer image on the coarser one by matching (never by the stage), as one Mapper job. Not for one closer image (a plain zoom in), which only needs a smaller field of view set and one image taken.
 version: 2.2.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [magnification steps, step by step, tiers, tier by tier, atomic resolution, atomic columns, multiscale, finer image, closer and closer]
 requires: [run_job, wait_for_job, find_features, place_image]

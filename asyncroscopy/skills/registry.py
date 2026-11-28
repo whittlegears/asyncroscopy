@@ -7,8 +7,10 @@ A fixed procedure (the same calls every time) is a LangGraph workflow (``asyncro
 the skill for it says when to run that workflow and how to read what comes back.
 
 A skill is a folder holding ``SKILL.md``: YAML front matter (name,
-description, version, min_asyncroscopy, envelope_schema, tools, requires,
-keywords, acts) followed by the manual in Markdown. ``acts`` says whether
+description, version, enabled, min_asyncroscopy, envelope_schema, tools, requires,
+keywords, acts) followed by the manual in Markdown. ``enabled: false`` switches it off: it is listed as
+unavailable and given to no agent. ``$ASYNCROSCOPY_SKILLS`` (every skill) and ``$ASYNCROSCOPY_SKILLS_OFF``
+(names or globs, which are not listed at all) come before it. ``acts`` says whether
 following the skill moves or exposes the instrument; when it is left out it
 is true if any of its ``tools`` is high risk by the safety policy. A request
 that only asks about data (``read_only_request``) never gets a skill that acts.
@@ -83,6 +85,7 @@ class Skill:
     new_map: bool = False  # the procedure a request for a new map gets first
     source: str = "shipped"  # shipped, path ($ASYNCROSCOPY_SKILLS_PATH), lab (written from a client) or learned
     off: bool = False  # switched off on this endpoint (asyncroscopy.skills.lab.switch)
+    enabled: bool = True
 
     @property
     def available(self) -> bool:
@@ -178,6 +181,7 @@ def _parse(path: Path) -> Skill:
         status=meta.get("status"),
         matched=bool(meta.get("matched", True)),
         new_map=bool(meta.get("new_map", False)),
+        enabled=bool(meta.get("enabled", True)),
     )
     # The skill says whether following it acts on the instrument.
     # One that does not say counts as acting, just as an unknown command counts as high risk.
@@ -215,8 +219,9 @@ def learned_dir() -> Path:
 
 
 def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
-    """Every skill found except those named in ``$ASYNCROSCOPY_SKILLS_OFF``. With ``tool_names``, skills whose
-    ``requires`` are not all offered, or that offers one of their ``unless``, are marked unavailable."""
+    """Every skill found except those named in ``$ASYNCROSCOPY_SKILLS_OFF``. A skill whose front matter says
+    ``enabled: false`` is listed as unavailable. With ``tool_names``, skills whose ``requires`` are not all offered,
+    or that offers one of their ``unless``, are marked unavailable too. ``$ASYNCROSCOPY_SKILLS`` off lists none."""
     skills: dict[str, Skill] = {}
     if not settings.get().skills:  # skills are switched off by $ASYNCROSCOPY_SKILLS
         return []
@@ -243,6 +248,9 @@ def list_skills(tool_names: set[str] | None = None) -> list[Skill]:
                 skills[skill.name] = skill
     off = settings.get().skills_off
     skills = {name: skill for name, skill in skills.items() if not any(fnmatch.fnmatchcase(name, p) for p in off)}
+    for skill in skills.values():
+        if not skill.enabled:
+            skill.problem = "disabled: enabled is false in its SKILL.md"
     from asyncroscopy.skills.lab import switched_off
 
     for name in switched_off() & skills.keys():  # still listed, so a client can switch it on again

@@ -2,6 +2,7 @@
 name: eds_survey
 description: Survey composition with EDS, one spectrum per tile of a map or at chosen points, then read the spectra for elements.
 version: 1.3.0
+enabled: true
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [spectrum with each, spectrum at each, spectra across, spectrum per tile, each tile, every tile, eds map, edx map, composition map, elemental map, chemistry map]

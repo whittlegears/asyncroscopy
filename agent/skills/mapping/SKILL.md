@@ -2,6 +2,7 @@
 name: mapping
 description: Map a sample or an area as a grid of images (optionally with an EDS spectrum at each tile), stitch it into a zoomable map, find interesting regions and go back to them.
 version: 1.6.3
+enabled: true
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [mapping, overview, stitch, grid, tiles, survey, mosaic, montage, large area]

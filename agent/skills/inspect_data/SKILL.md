@@ -2,6 +2,7 @@
 name: inspect_data
 description: Find stored images, spectra and maps and read them as text or pictures; judge peaks, noise and what the data do and do not show.
 version: 1.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [look at the data, look at the spectrum, look at the image, inspect, show me, what is in, analyse, analyze, peaks, elements, composition, latest image, latest spectrum, data]
 requires: [view_data]

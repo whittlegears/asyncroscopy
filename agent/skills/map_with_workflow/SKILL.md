@@ -2,6 +2,7 @@
 name: map_with_workflow
 description: Map an area as a grid of images and stitch it into one map with the map_grid workflow, on an instrument that has no Mapper device. One run_workflow call, never a loop of moves and images.
 version: 1.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [map, mapping, grid, tiles, stitch, mosaic, montage, overview]
 requires: [run_workflow]

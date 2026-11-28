@@ -29,6 +29,7 @@ The front matter:
 name: tilt-series
 description: One line saying when to use it; matched against requests.
 version: 1.0.0
+enabled: true                 # false switches it off
 keywords: [tilt series, tomography, tilt]  # phrases a request would contain; the strongest match signal
 min_asyncroscopy: 0.1.0      # optional: refuse to load on older installs
 envelope_schema: 1.0.0       # optional: the job envelope major version it was written for
@@ -42,6 +43,16 @@ matched: true                 # optional: false keeps it out of request matching
 ```
 
 Keep it short and concrete: the decision rules (what to do when the request says X), the order of tool calls, and when to stop and ask a person. Write it so each `##` section reads on its own, with a heading that says what it is about and the words an error or a reply would contain: before every model call the agent searches every skill as passages (`asyncroscopy/skills/index.py`) with the request and the latest tool replies. Long experiments go through `run_job` and `wait_for_job`.
+
+## Switch a skill off
+
+Set `enabled: false` in its `SKILL.md`. The agent is no longer given it, and `list_skills` and `python -m asyncroscopy.agents.skills list` show it as disabled. Set it back to `true` to switch it on. The order in which switches apply:
+
+1. `ASYNCROSCOPY_SKILLS` turns every skill on or off (off by default). Off, no skill is read at all.
+2. `ASYNCROSCOPY_SKILLS_OFF` hides the skills it names (comma-separated names or globs) for a run, whatever their `enabled` says.
+3. Each skill's own `enabled`.
+
+A client's Skills page can also switch a skill off on one endpoint without editing it (`switch_skill`, below).
 
 ## Add or edit a workflow
 

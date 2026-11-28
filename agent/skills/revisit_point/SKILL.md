@@ -2,6 +2,7 @@
 name: revisit_point
 description: Go back to a point already known by its stage position (a point of interest on a map, or coordinates the user gives) and image or measure it there.
 version: 2.4.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [go back, return to, revisit, back to it, point of interest, go to the point, image it again]
 requires: [run_job]

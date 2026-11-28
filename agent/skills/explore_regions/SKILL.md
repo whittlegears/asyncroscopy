@@ -2,6 +2,7 @@
 name: explore_regions
 description: Find the most interesting regions of a map and image them at higher magnification, with each image linked to its region.
 version: 1.6.0
+enabled: true
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [interesting, regions, features, explore, closer look, higher magnification]

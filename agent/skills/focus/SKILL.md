@@ -2,6 +2,7 @@
 name: focus
 description: Autofocus and correct astigmatism (stigmation) with one Tuner job instead of stepping the defocus yourself.
 version: 1.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [focus, autofocus, defocus, refocus, out of focus, blurry, blurred, astigmatism, stigmation, stigmate, stigmator, optistem, sharpen]

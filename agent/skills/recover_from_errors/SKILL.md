@@ -2,6 +2,7 @@
 name: recover_from_errors
 description: Read a refused or failed call, fix its arguments and try once more; never repeat an identical failing call, never change a value the user stated.
 version: 1.2.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [error, failed, refused, retry, wrong, fix, broken, not working, timeout, timed out]
 acts: false

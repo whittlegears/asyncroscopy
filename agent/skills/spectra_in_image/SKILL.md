@@ -2,6 +2,7 @@
 name: spectra_in_image
 description: Take EDS spectra at points chosen in the current image (a bright area, a dark area, an interface, a particle) by parking the beam with place_beam, and say which elements each point shows.
 version: 1.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 keywords: [eds, spectrum, spectra, interface, phase, bright, dark, area, point, place beam, element, elements, composition, where is]
 requires: ["*_acquire_spectrum", "*_place_beam", "*_acquire_scanned_image", view_data]

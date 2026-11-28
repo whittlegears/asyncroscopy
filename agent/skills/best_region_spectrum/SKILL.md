@@ -2,6 +2,7 @@
 name: best_region_spectrum
 description: Map an area, find its most interesting regions, then take an EDS spectrum at the best region and read which elements it shows.
 version: 2.0.0
+enabled: true
 min_asyncroscopy: 0.1.0
 envelope_schema: 1.0.0
 keywords: [most interesting, interesting regions, best region, best one, best spot]

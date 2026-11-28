@@ -2,6 +2,7 @@
 name: quick_diffractogram
 description: Take a diffractogram over a 2theta range and read its peaks.
 version: 1.0.0
+enabled: true   # false switches the skill off: no agent is given it, and lists show it as disabled
 keywords: [diffractogram, xrd, 2theta, powder pattern, peaks]
 requires: [XRDTwin_acquire_diffractogram]
 tools: [XRDTwin_get_status, XRDTwin_xray_on, XRDTwin_set_start_deg, XRDTwin_set_stop_deg, XRDTwin_acquire_diffractogram, view_data]
