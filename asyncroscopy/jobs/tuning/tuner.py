@@ -165,9 +165,7 @@ class VendorAutofocus(Strategy):
         return 1
 
     def check(self, plan: dict, capabilities: set) -> None:
-        # The vendor autofocus changes the stigmator whatever the plan asks for.
-        # If the Tuner cannot read and write the stigmator it could not put it back after an abort or a failure.
-        # So the run is refused.
+        # Vendor autofocus changes the stigmator, so without reading and writing it the Tuner could not put it back.
         if "stigmator" not in capabilities:
             raise ValueError(
                 "strategy vendor_autofocus changes the stigmator, and this microscope offers no "
@@ -516,8 +514,6 @@ class Tuner(JobDevice):
 
     JOB_KIND = "autofocus and astigmatism correction (strategies: vendor_autofocus, image_metric, corrector), bounded and restored on abort"
     PLAN_EXAMPLE = {"corrections": ["focus"], "strategy": "image_metric", "dose_budget_e_per_a2": 3000.0}
-    # No dry runs. Every measurement reads an image or a corrector reply, which a dry run does not produce.
-    # Rehearse a tune on a simulated stack instead.
     SUPPORTS_DRY_RUN = False
 
     microscope_device_address = device_property(dtype=str, default_value="asyncroscopy/instrument/default", doc="Microscope to tune.")
@@ -566,14 +562,9 @@ class Tuner(JobDevice):
         if not p.get("detector"):
             p["detector"] = self._default_detector(microscope)
 
-        # The budget is only as good as the beam current, so on hardware a default or stale current is refused.
-        # The microscope reports its current, either measured or its own assumed default.
         beam = usable_beam_current(parameters, simulated, float(self.max_beam_current_age_s))
         current = beam.pa
         frames_per = {"image": 1, "autofocus": int(self.autofocus_frames), "corrector_measure": int(self.corrector_measure_frames)}
-        # Images are taken at the plan's own settings, so their dose is known.
-        # The vendor autofocus and the corrector scan at settings the Tuner cannot read.
-        # Each such run is counted as a fixed number of frames at the plan's settings, and the estimate says so.
         vendor = sorted(set(strategy.needs) & {"autofocus", "corrector"})
         calibrated = bool(self.vendor_dose_calibrated)
         _check_vendor_dose_counted(strategy, vendor, frames_per, simulated, calibrated)
@@ -694,8 +685,7 @@ class Tuner(JobDevice):
         microscope = self.proxy(self.microscope_device_address)
         scan = self.proxy(self.scan_device_address)
         microscope.blank_beam()  # the sample is exposed only while a measurement is taken
-        # On a resume, changes an earlier attempt left in place are undone first using the earlier snapshot.
-        # A fresh snapshot taken over them would make those changes the new baseline.
+        # On a resume, undo what an earlier attempt left first; a fresh snapshot over it would become the baseline.
         previous = job.get("tune") or {}
         unrestored = self._left_unrestored(previous)
         if unrestored:
@@ -809,7 +799,6 @@ class Tuner(JobDevice):
         if sent:
             corrector = self.proxy(self.corrector_device_address)
             for name, totals in list(sent.items()):
-                # Undo what was sent by sending the negated total in bounded pieces.
                 try:
                     remaining = [-float(v) for v in totals]
                     while max(abs(v) for v in remaining) > 1e-15:

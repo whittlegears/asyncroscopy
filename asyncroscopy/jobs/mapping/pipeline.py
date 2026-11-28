@@ -40,7 +40,6 @@ ZOOM_FEATURE_SIZE = (0.25, 2.0)  # a tier aims at a feature between these multip
 ZOOM_WINDOW_SHARE = 1 / 16  # place_image searches this share of the parent's field of view around the aimed point
 ZOOM_CANDIDATES = 8  # features asked for at each tier. The first whose finer image fits inside the parent is used.
 REGION_FIELDS = ("id", "x_m", "y_m", "score", "reason", "scorer_version", "window_m")
-# What a dry run reports in place of every image and spectrum.
 DRY_RUN_SKIPPED = "skipped (dry run): nothing was acquired and the sample was not exposed; the commands are in the trace with dry_run: true"
 
 
@@ -141,7 +140,6 @@ class Pipeline:
         if "regions" in pipeline:
             return {"phase": "score", "ok": True, "regions": len(pipeline["regions"])}  # already scored before a resume
         n = int(job["resolved_plan"]["find_regions"])
-        # The job's tag lets a retry replace the regions it added before.
         map_key, tag = pipeline["map"], job["reservation_id"]
         try:
             scored = asyncio.run(score_map(self._analyse, map_key, n, tag, **self._wait_options(job, "score_job")))
@@ -162,8 +160,6 @@ class Pipeline:
         revisit = job["resolved_plan"]["revisit"]
         reply = self.service().call("list_pois", {"map": revisit["map"], "kind": "candidate", "limit": 500})
         candidates = sorted((p for p in reply.get("pois", []) if p.get("score") is not None), key=lambda p: p["score"], reverse=True)
-        # Scoring a map twice stores the same regions again under new ids.
-        # Regions closer than half a field of view share one image, so only the best of them is kept.
         apart = float(revisit["fov_m"]) / 2.0
         top: list[dict] = []
         for c in candidates:
@@ -215,20 +211,16 @@ class Pipeline:
         revisit = plan["revisit"]
         fov = float(revisit["fov_m"])
         if visit is None:
-            # The map places content at the stage reading plus the drift.
-            # To put the region under the probe the stage goes to its map position minus the drift so far.
+            # The map places content at the stage reading plus the drift, so the stage goes to the map position minus it.
             now = profile.clock_s()
             dx, dy = drift_at(pipeline.get("drift_fit"), now - float(job.get("first_tile_s", now)))
-            # With live tracking the stitch fitted only the drift that tracking left.
-            # The tracker's own estimate is the rest.
+            # With live tracking the stitch fitted only what tracking left; the tracker's estimate is the rest.
             tx, ty = live_drift.estimate_at(job, now)
             dx, dy = dx + tx, dy + ty
             x, y = float(region["x_m"]) - dx, float(region["y_m"]) - dy
             x_min, x_max, y_min, y_max = plan["box_m"]
             half = fov / 2.0
-            # The image must stay inside the reserved plan's box. A region near the edge is still imaged
-            # with the image moved inward, as long as the region keeps a margin inside it.
-            # A plan of points only has a box as wide as the image, give or take rounding.
+            # Keep the image inside the reserved box, moved inward for a region near the edge.
             cx = min(max(x, x_min + half), x_max - half) if x_max - x_min >= fov - EDGE_TOLERANCE_M else None
             cy = min(max(y, y_min + half), y_max - half) if y_max - y_min >= fov - EDGE_TOLERANCE_M else None
             if cx is None or cy is None or abs(cx - x) > REVISIT_EDGE_SHIFT * half or abs(cy - y) > REVISIT_EDGE_SHIFT * half:
@@ -239,7 +231,6 @@ class Pipeline:
             if not move(job, x, y):
                 return None
             image_key = profile.acquire_revisit(job, revisit)
-            # clock_s is the instrument time the drift correction was worked out for.
             visit = {"region": region["id"], "image": image_key, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
             if job.get("dry_run"):
                 visit = {"region": region["id"], "acquisition": DRY_RUN_SKIPPED, "fov_m": fov, "stage_xy_m": [x, y], "clock_s": now, "drift_xy_m": [dx, dy]}
@@ -291,7 +282,6 @@ class Pipeline:
             return {**record, "stopped": f"find_features refused {parent}: {found['error'].get('message', found['error'])}"}
         if not found.get("features"):
             return {**record, "stopped": f"{parent} shows no distinct feature {low * fov:.2g} to {high * fov:.2g} m across to zoom in on"}
-        # The finer image must lie inside its parent to be placed on it, so skip features near the parent's edge.
         half = fov / 2.0 / float(found["pixel_size_m"])
         rows, cols = (int(v) for v in found["shape"][:2])
         inside = [f for f in found["features"] if half <= f["row"] <= rows - 1 - half and half <= f["col"] <= cols - 1 - half]

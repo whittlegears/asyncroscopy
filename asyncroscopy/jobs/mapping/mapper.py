@@ -55,7 +55,6 @@ class Mapper(JobDevice):
     JOB_KIND = "map acquisition: a grid of images over a stage box, stitched into a zoomable map when it finishes"
     PLAN_EXAMPLE = {"size_m": [6e-7, 6e-7], "fov_m": 1.6e-7}  # a 600 nm square around the current stage position
     PLAN_SCHEMA = "map_plan"  # resolve_plan validates every plan against it
-    # A dry run rehearses the moves and skips every acquisition and its analysis.
     SUPPORTS_DRY_RUN = True
 
     instrument_profile = device_property(
@@ -300,8 +299,7 @@ class Mapper(JobDevice):
         profile.check_start(job)  # checked before anything is set so a refusal changes nothing
         sample = self._sample_now()
         self._refuse_another_load(job, sample)  # also before anything is set
-        # Apply the plan's settings and end safe. The instrument stays safe between tiles
-        # and is made unsafe only while a tile is acquired.
+        # The instrument stays safe between tiles and is made unsafe only while a tile is acquired.
         profile.setup(job)
         live_drift.start(job, profile)  # remembers the image shift so it can be put back at the end
         if plan.get("zoom_only") and "zoom_shift_before" not in job:
@@ -339,7 +337,6 @@ class Mapper(JobDevice):
         profile = self.profile()
         live_drift.finish(job, profile)  # the tiles are done so the image shift goes back before any revisit move
         if job.get("dry_run") and not (step["phase"] == "revisit" and job["resolved_plan"].get("regions")):
-            # Stitch and score need images and a dry run took none. Given revisit points still rehearse their moves.
             return {"phase": step["phase"], "skipped": DRY_RUN_SKIPPED}
         self._close_run_file(job)  # stitching reads the finished run file
         pipeline = self.pipeline()
@@ -364,10 +361,8 @@ class Mapper(JobDevice):
         if not self._move(job, tile["x"], tile["y"]):
             return None  # aborted during a long move, and a resume moves again
         reported = [float(v) for v in profile.stage_reported(job)]
-        # A bounded image shift cancels the drift predicted for this tile.
         correction = live_drift.correct(job, profile, tile, self._trace_drift_correction)
-        # The profile makes the instrument unsafe only for this tile's acquisitions
-        # and makes it safe again before returning, even on an error.
+        # Unsafe only for this tile's acquisitions, and safe again before returning, even on an error.
         acquired_tile = profile.acquire_tile(job, tile)
         if acquired_tile is None:
             return None  # aborted part way through the tile, and a resume redoes it
@@ -376,7 +371,6 @@ class Mapper(JobDevice):
         job.setdefault("first_tile_s", acquired)
         record = {"index": index, "row": tile["row"], "col": tile["col"], "commanded_xy_m": [tile["x"], tile["y"]], "stage_reported_m": reported, "clock_s": acquired}
         if job.get("dry_run"):
-            # The commands above were recorded and not sent, so there is no image to read or store.
             live_drift.measure(job, tile, None, acquired, None, float(self.max_drift_m_per_s))
             record["acquisition"] = DRY_RUN_SKIPPED
             if correction is not None:

@@ -38,9 +38,7 @@ if TYPE_CHECKING:
     import tango
 
 DRY_RUN_PLACEHOLDER = "dry_run:not_performed"
-# Reads of the job envelope. The safety policy lists the other read commands.
 READ_COMMANDS = frozenset({"job_status", "results", "request_status"})
-# DeviceProxy methods that only read or set up the local proxy. A dry run passes them through.
 PROXY_READS = frozenset({
     "read_attribute", "read_attributes", "get_attribute_config", "get_attribute_config_ex", "attribute_query",
     "attribute_list_query", "attribute_list_query_ex", "get_attribute_list", "command_query", "command_list_query",
@@ -48,7 +46,6 @@ PROXY_READS = frozenset({
     "set_timeout_millis", "get_timeout_millis", "get_property", "get_device_db", "import_info", "get_pipe_list",
     "is_attribute_polled", "get_attribute_poll_period", "get_command_poll_period", "polling_status", "black_box",
 })
-# DeviceProxy methods that write to the device. A dry run records them and never performs them.
 PROXY_WRITES = frozenset({
     "write_attribute", "write_attributes", "write_read_attribute", "write_read_attributes", "write_attribute_asynch",
     "write_attributes_asynch", "write_attribute_reply", "write_attributes_reply", "set_attribute_config",
@@ -190,5 +187,4 @@ class RecordingProxy:
         )
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # Setting an attribute on the proxy writes a Tango attribute, so it is recorded and not performed.
         self._recorder(self._address, "write_attribute", "write", {"attribute": name, "value": value}, False)

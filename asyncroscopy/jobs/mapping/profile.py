@@ -55,7 +55,6 @@ import tango
 from asyncroscopy.data.data_reader import read_acquisition, read_rows
 from asyncroscopy.registry import Registry
 
-# Plan fields every profile takes.
 GENERIC_PLAN_FIELDS = frozenset({
     "dry_run", "box_m", "size_m", "centre_m", "fov_m", "overlap", "order", "label", "stitch", "find_regions", "revisit", "zoom", "budgets", "drift",
 })
@@ -209,21 +208,14 @@ class InstrumentProfile:
 
     name = ""
     doc = ""
-    # What the Mapper's job_kind and plan_example say with this profile. Empty means the Mapper's own.
     job_kind = ""
     plan_example: dict | None = None
-    # Plan fields this profile takes beyond GENERIC_PLAN_FIELDS, and their defaults.
     plan_fields: frozenset = frozenset()
     plan_defaults: dict = {}
-    # Plan fields that set how one image is taken, like imsize. A zoom plan and each of its tiers take them too.
     image_fields: frozenset = frozenset()
-    # Plan fields that act on tiles only. They are refused in a plan without tiles.
     tile_fields: frozenset = frozenset()
-    # Plan fields that are a budget under another name, mapped to the budget's name.
     budget_fields: dict = {}
-    # The profile's own Mapper device properties, by name.
     settings: dict[str, Setting] = {}
-    # Maps a setting that names a device to the commands that device must offer. Checked at reserve.
     needs: dict = {}
 
     def __init__(self, ctx: MapContext) -> None:
@@ -348,9 +340,6 @@ class InstrumentProfile:
         """One image at ``revisit["fov_m"]`` at the current position; restore the tile settings; end safe. Returns its data key."""
         raise NotImplementedError
 
-    # live drift tracking
-    # A profile that can move the image without moving the stage says how far and with which commands.
-    # One that cannot leaves image_shift_limit_m as None, and a plan asking for tracking is refused at reserve.
     image_shift_limit_m: float | None = None
     image_shift_commands: tuple = ()
 
@@ -363,7 +352,6 @@ class InstrumentProfile:
         raise NotImplementedError
 
 
-# Every registered profile.
 PROFILES: Registry[type[InstrumentProfile]] = Registry("asyncroscopy.map_profiles", kind="instrument profile")
 register_profile = PROFILES.register
 get_profile = PROFILES.get

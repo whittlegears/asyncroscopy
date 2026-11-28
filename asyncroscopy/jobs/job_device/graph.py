@@ -60,7 +60,6 @@ def job_graph(device: Any, job: dict, job_id: str, abort: threading.Event, gener
         held = device._hold_while_paused(job, job_id, abort)
         if held == "aborted":
             return {"index": index, "more": False}
-        # A condition that went bad during the pause holds the job before its next step
         if held == "continued" and device._suspenders and not device._hold_while_suspended(job, job_id, abort):
             return {"index": index, "more": False}
         return {"index": index, "more": True}
@@ -79,7 +78,6 @@ def job_graph(device: Any, job: dict, job_id: str, abort: threading.Event, gener
             results = job["step_results"]
             results[str(index)] = record
             if len(results) > KEPT_STEP_RESULTS:
-                # The oldest record goes. It stays in .steps.jsonl
                 del results[next(iter(results))]
             if generation == device._generation:
                 device._append_step(job, index, record)
@@ -89,7 +87,6 @@ def job_graph(device: Any, job: dict, job_id: str, abort: threading.Event, gener
             f"{name}.step", True, started, duration_s=time.time() - started, job_id=job_id, plan_id=job["plan_id"],
             run_id=job["reservation_id"], step=index, caller=job.get("caller"),
             result=record, result_key=told.get("key"), stage_reported_m=told.get("stage_reported_m"),
-            # The instrument's own clock when the step reports it. On a twin this is simulated time.
             **({"clock_s": told["clock_s"]} if "clock_s" in told else {}),
             **device._trace_fields(job),
         )

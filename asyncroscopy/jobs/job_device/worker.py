@@ -19,8 +19,6 @@ def lease_seconds(device: object) -> float:
     return float(getattr(device, "lease_s", 0.0) or 0.0)
 
 
-# The job and step the current worker thread runs, so proxy knows a dry run.
-# Each worker thread runs one job, so one object serves every device.
 WORKER = threading.local()
 
 

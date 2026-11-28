@@ -30,7 +30,6 @@ from .profile import GENERIC_PLAN_DEFAULTS, GENERIC_PLAN_FIELDS, TIME_BUDGET, Co
 from .stitch_service import StitchService
 
 # pyTEMlib's stitcher searches each overlap only up to this share of its width.
-# Neighbours the stage puts further apart than that are left unplaced.
 STITCH_SEARCH_SHARE = 0.6
 REVISIT_FOV_MIN_FRACTION = 1 / 20  # a revisit image may zoom in at most 20x on a tile
 ZOOM_MIN_FOV_M = 5e-9  # no zoom tier is narrower than this because the dose climbs fast as the field of view shrinks
@@ -86,7 +85,6 @@ def check_plan_fields(plan: dict) -> None:
         return
     revisit_keys = [k for k in unknown if k in REVISIT_ONLY_KEYS]
     if revisit_keys:
-        # These fields belong inside revisit, so show the caller the plan with its own values moved there.
         nested = {**(plan.get("revisit") if isinstance(plan.get("revisit"), dict) else {}), **{k: plan[k] for k in revisit_keys}}
         nested.setdefault("fov_m", plan.get("fov_m", "<a few times smaller than the map's tiles>"))
         raise ValueError(f"{', '.join(map(repr, revisit_keys))} belong inside revisit. Nothing was run; send the plan as {json.dumps({'revisit': nested}, default=str)}")
@@ -170,7 +168,6 @@ def _resolve_tiles(plan: dict, profile: InstrumentProfile, env: PlanEnvironment)
     if "fov_m" not in p:
         raise ValueError("fov_m (the field of view of each tile, metres) is required: add \"fov_m\": 2e-7 (200 nm tiles) unless the request gives a tile size")
     if "size_m" in p:
-        # The device does the arithmetic because callers often get it wrong.
         width, height = (float(v) for v in p["size_m"])
         cx, cy = (float(v) for v in (p.get("centre_m") or profile.current_xy()))
         p["box_m"] = [cx - width / 2, cx + width / 2, cy - height / 2, cy + height / 2]
@@ -197,7 +194,6 @@ def _resolve_tiles(plan: dict, profile: InstrumentProfile, env: PlanEnvironment)
     tiles = grid["rows"] * grid["cols"]
     live_drift.resolve(p, profile, (tile_w, tile_h), tiles)
     if tiles == 1:
-        # One tile is an image and not a map. It usually means the area's size was put in fov_m.
         raise ValueError(f"fov_m {fov:.3g} m covers the whole area, so the map would be one tile; fov_m is the field of view of each tile (2e-7 when the request gives no tile size). To image given places, use a revisit plan: {{\"revisit\": {{\"fov_m\": ..., \"points\": [[x, y], ...]}}}}")
 
     stitch = bool(p["stitch"] and env.analysis)
@@ -243,7 +239,6 @@ def _resolve_revisit_only(plan: dict, profile: InstrumentProfile, env: PlanEnvir
         raise ValueError("live drift tracking (drift.track) corrects tiles of a map, and a revisit-only plan has none: leave out drift")
     profile.resolve(p)
     if "fov_m" not in revisit:
-        # Read the field of view from the instrument when the plan gives none.
         revisit["fov_m"] = profile.current_fov_m()
         if revisit["fov_m"] is None:
             raise ValueError(f"give revisit fov_m: the {profile.name!r} instrument profile has no field of view to read")
@@ -269,7 +264,6 @@ def _resolve_revisit_only(plan: dict, profile: InstrumentProfile, env: PlanEnvir
     duration = count * (float(env.estimate_move_s) + profile.revisit_seconds(revisit))
     budgeted = check_budgets(budgets, costs, duration, profile)
     for r in regions:
-        # The tolerance is needed because rounding can put a point a hair outside its own box.
         tol = EDGE_TOLERANCE_M
         if not (x_min + half - tol <= r["x_m"] <= x_max - half + tol and y_min + half - tol <= r["y_m"] <= y_max - half + tol):
             raise ValueError(f"revisit point ({r['x_m']:.3e}, {r['y_m']:.3e}) m is outside the planned area {[x_min, x_max, y_min, y_max]} for a {fov:.2e} m image")
@@ -321,7 +315,6 @@ def _resolve_zoom_only(plan: dict, profile: InstrumentProfile, env: PlanEnvironm
     profile.resolve(p)
     tiers = [profile.resolve_revisit(p, {"fov_m": f, **{k: v for k, v in zoom.items() if k in profile.image_fields}}) for f in fovs]
     budgets = plan_budgets(p, profile)
-    # The finest image lies inside every coarser one, so its spot gets the cost of every tier. The sum is the most any spot gets.
     tier_costs = [profile.revisit_only_costs(p, tier, 1, budgets) for tier in tiers]
     costs = {
         name: Cost(sum(c[name].value for c, _ in tier_costs), cost.units, why=f"{len(tiers)} zoom images, all on the finest image's spot", advice="zoom less far (a larger last fovs_m)")

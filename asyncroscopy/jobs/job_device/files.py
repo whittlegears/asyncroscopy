@@ -11,10 +11,7 @@ from asyncroscopy.core.names import RUNNING_JOB_STATES
 from .progress import done_ranges_from, read_last_steps
 
 FINISHED_STATES = {"done", "released"}  # left on disk at Init and opened when asked for by id
-# What reserve or revise fixes. It is written once to the plan file and never with the progress.
 PLAN_KEYS = frozenset({"plan_id", "device", "plan", "resolved_plan", "steps", "step_count", "estimate", "limits", "dry_run", "risk_overrides", "created", "trace_offset"})
-# How many of the newest step records stay in memory. All of them stay in the job's steps file.
-# A device whose summary needs every record must keep its jobs below this.
 KEPT_STEP_RESULTS = 10_000
 
 
@@ -50,7 +47,6 @@ class JobFiles:
                 job["state"] = "failed"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted while this job was running; start it again to resume."}
             elif job.get("state") == "reserved":
-                # It never started and whoever reserved it is gone. Keeping it would leave the device busy.
                 job["state"] = "released"
                 job["last_error"] = {"code": "device_restarted", "message": "The device restarted before this reservation was started; reserve again."}
             self._jobs[reservation_id] = job

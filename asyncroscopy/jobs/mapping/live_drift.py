@@ -222,7 +222,6 @@ def measure(job: dict, tile: dict, images: dict | None, acquired: float, run: Ru
     rate = tracker.rate_m_per_s()
     if rate is not None:
         state["rate_m_per_s"] = list(rate)
-    # Later tiles register against these. A row of tiles plus one is enough to keep.
     chained = measured if measured is not None else np.asarray(tracker.predict(acquired) if tracker.observations else (0.0, 0.0))
     tiles[str(index)] = {"t": float(acquired), "p": planned.tolist(), "s": shift.tolist(), "e": [float(v) for v in chained], "measured": measured is not None}
     for key in list(tiles)[: max(0, len(tiles) - (int(plan["grid"]["cols"]) + 2))]:
