@@ -146,8 +146,7 @@ class GoalGraph:
             answer, calls = f"stopped: the time budget of {self.goal.budget.max_seconds:.0f} s ran out", []
         except Exception as exc:
             answer, calls = f"the agent failed: {type(exc).__name__}: {str(exc)[:300]}", []
-        # The ledger has every call whose reply arrived, in order, even from a step that was stopped part way.
-        # A team's state only grows when a step ends, so only the ledger knows every job started.
+        # Only the ledger knows every job started, even by a step stopped part way.
         recorded = [Call.from_dict(c) for c in self.config.ledger[ledger_start:]]
         if len(recorded) > len(calls):
             calls = recorded
@@ -182,8 +181,6 @@ class GoalGraph:
             stopped = await (await self.checker()).stop_jobs(facts)
             lines.append("Stopped jobs this goal had left running: " + "; ".join(f"{c.name} {c.args.get('request', '')}{' (FAILED: ' + c.result[:120] + ')' if c.error else ''}" for c in stopped))
         lines += [f"{'met' if r['met'] else 'NOT met'}: {r['why']}" for r in verdict["results"]]
-        # Which skills were applied stays in the state as skills_applied for traces and benchmarks, not in the answer.
-        # Skills are background for the model, not something to report.
         learned = await self.remember(state, facts) if self.learn else ""
         if learned:
             lines.append(learned)

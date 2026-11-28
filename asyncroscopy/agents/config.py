@@ -27,8 +27,17 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AgentConfig:
-    # The agent profile holds what is tuned to one model.
-    # model, model_provider, num_ctx and middleware take its values when left as None.
+    """How an agent reaches the endpoints, and what one run carries with every call.
+
+    ``model``, ``model_provider``, ``num_ctx`` and ``middleware`` left as None take the agent profile's values.
+    ``analysis_url`` None means the analysis server the instrument endpoint reports (``ASYNCROSCOPY_ANALYSIS_URL``
+    overrides it). ``token`` is a bearer token sent to both endpoints; with ``mcp.auth`` the endpoint takes the caller
+    from it. ``run_id`` lets the server spot a retried run_job, since agents open a new MCP session per call.
+    ``run_key`` is the secret a signed-off workflow's hardware run sends, so only its calls use its pre-approvals
+    (docs/MCP/twin_to_instrument.md). ``ledger`` holds every instrument call as its reply arrives, so a run stopped
+    part way still knows its jobs. ``deadline`` is the time.monotonic value after which it stops waiting on jobs.
+    """
+
     profile: str = DEFAULT_PROFILE_NAME
     model: str | None = None
     model_provider: str | None = None
@@ -36,25 +45,13 @@ class AgentConfig:
     middleware: list[str] | None = None
     temperature: float = 0.0
     mcp_url: str = DEFAULT_MCP_URL
-    # None means use the analysis server the instrument endpoint reports, so it is set in one place.
-    # ASYNCROSCOPY_ANALYSIS_URL overrides it.
     analysis_url: str | None = None
     caller: str = "agent"
-    # A bearer token from the facility's token service or startup_scripts/dev_tokens.py, sent to both endpoints.
-    # With mcp.auth the endpoint takes the caller from the token and ignores the caller header.
-    # None means no token, for an endpoint without mcp.auth.
     token: str | None = field(default=None, repr=False)
     tool_allow: list[str] = field(default_factory=lambda: ["*"])
-    # One id per agent run, sent with every call. Agents open a new MCP session per call,
-    # so the server uses the caller and run id to spot a retried run_job.
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    # A hardware run of a signed-off workflow sends this secret with every call, so only that run's calls use the
-    # run's pre-approvals (``docs/MCP/twin_to_instrument.md``); the run id alone is in replies an agent reads.
     run_key: str | None = field(default=None, repr=False)
-    # Every instrument call of this run, added as its reply arrives.
-    # A run stopped part way still knows which jobs it started.
     ledger: list = field(default_factory=list, repr=False, compare=False)
-    # The time.monotonic value after which an agent stops waiting on jobs. None means no limit.
     deadline: float | None = None
     _info: dict | None = field(default=None, repr=False, compare=False)
 
@@ -133,7 +130,6 @@ class AgentConfig:
                 log.warning("endpoint_info from %s failed; going on without it", self.mcp_url, exc_info=True)
                 return {}
             if self.analysis_url is None and "urls" in self._info:
-                # An empty mcp.urls.analysis means this instrument has no analysis server.
                 self.analysis_url = (self._info["urls"] or {}).get("analysis") or ""
         return self._info
 

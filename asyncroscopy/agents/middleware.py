@@ -28,14 +28,11 @@ def build_middleware(names: Iterable[str], *, prompt: str, tool_names: set[str],
         def notes(request: str) -> str:
             return memory(request, limits.notes_chars)
     makers: dict[str, Callable[[], Any]] = {
-        # Puts matching skills and memory notes in the system prompt.
         "skills": lambda: SkillMiddleware(prompt, tool_names, offered, memory=notes, num_ctx=num_ctx, limits=limits, gates=gates),
-        # Holds a run_job map plan to the user's words: no dose limit they never stated, the whole sample when asked.
         "user_words": lambda: UserWordsMiddleware(tools),
-        # Makes a job of any length cost one tool round.
         "job_wait": lambda: JobWaitMiddleware(tools, deadline=deadline),
         "empty_reply": EmptyReplyMiddleware,
-        # Last by default, so it wraps the model call itself and checks the final answer against the run's tool calls.
+        # Last, so it wraps the model call itself.
         "claim_check": lambda: ClaimCheckMiddleware(tool_names, enabled=claim_check, catalog=catalog),
     }
     unknown = [n for n in names if n not in makers]

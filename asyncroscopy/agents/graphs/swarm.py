@@ -234,7 +234,6 @@ class AgentSwarm:
             self._error("[SYSTEM]: Serving MCP anyway; query_agent reports this error unless a caller names a model.")
             started = False
 
-        # The tools are inherited even without a model: a caller may name its own model (use_model) per query.
         for url in mcp_urls or [DEFAULT_MCP_URL]:
             if not await self.connect_mcp(url):
                 print(f"[SYSTEM]: Failed to connect to MCP Server at {url}.")
@@ -504,7 +503,6 @@ class AgentSwarm:
         agent = self._agents[0]
         agent_executor = self._build_agent_executor(agent)
         print(f"\n[{agent.name}] is working...")
-        # max_steps limits a lone agent too.
         return await self._stream_agent(
             agent_executor, [HumanMessage(content=prompt)], agent_label=agent.name, transcript=transcript,
             recursion_limit=self.max_steps,
@@ -539,11 +537,9 @@ class AgentSwarm:
         async def supervisor_node(state: AgentState):
             print("\n[Supervisor] Evaluating routing...")
 
-            # More than one message means an agent has already replied.
             has_delegated = len(state["messages"]) > 1
 
             if not has_delegated:
-                # The first turn must go to an agent, so FINISH is not allowed yet.
                 valid_options, fallback = agent_names, agent_names[0]
             else:
                 valid_options, fallback = options, "FINISH"
@@ -591,7 +587,6 @@ class AgentSwarm:
         if not self._agents:
             return "Swarm Error: No agents available. Please use the spawn_agent tool to create at least one worker before querying."
 
-        # A single agent needs no supervisor or routing.
         if len(self._agents) == 1:
             return await self._run_single_agent(prompt, transcript)
 

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 
-# What the model is told when a wait ends before the job does, for each job state.
 WAIT_NOTES = {
     "queued": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
     "running": "Still working, which is normal for a long job: call wait_for_job again. Abort only if the user asked to stop.",
@@ -25,17 +24,13 @@ WAIT_NOTES = {
     "paused_suspended": "Paused by a safety condition ({reason}); it resumes by itself when the condition clears. Call wait_for_job again, or abort if the user asked to stop.",
     "paused": "Paused by a person, with the instrument waiting safely; it goes on when they continue it. Call wait_for_job again; do not start it yourself or start another job.",
 }
-# The note for a finished job. Without it a small model may stitch a finished map again or run it again.
 DONE_NOTE = ("Done: every phase of the plan ran (a map is already stitched, and scored when the plan asked). Answer from this "
              "reply and its result_keys; nothing needs running or stitching again.")
-# A finished map whose stitch failed: told "a map is already stitched", qwen3:8b answered "the stitched map is available".
 STITCH_FAILED_NOTE = ("Done: every tile was taken, but the stitch failed, so there is no map key: {error} "
                       "Tell the user the map is not stitched, and name the run file that result_keys gives as run.")
-# Tiles with no image match to any neighbour sit where the stage reported them (2633 of 2704 angstrom tiles on empty film).
 STAGE_PLACED_NOTE = ("{fallback} of {tiles} tiles matched no neighbour, so they sit where the stage reported them: seams between "
                      "them can be off by the stage's error. Tell the user the map is a rough layout there.")
 STRUCTURED = ("next_actions", "resume_with", "warnings")
-# Notes for analysis server replies whose next step is on the instrument endpoint.
 UNKNOWN_ANALYSIS_JOB_NOTE = ("not a stitching or scoring job: a job id from Mapper_start belongs to the instrument, "
                              "so use wait_for_job or Mapper_job_status there")
 BUSY_ANALYSIS_JOB_NOTE = "wait for job {job_id} (analysis_job_status) instead of starting another"
@@ -136,7 +131,7 @@ def _blanked_prose(body: dict) -> str:
     unblank = actions[0] if actions else "the beam unblank command"
     retake = actions[1] if len(actions) > 1 else "the acquisition"
     key = next((w.get("key") for w in body.get("warnings") or [] if isinstance(w, dict) and w.get("code") == "noise_only_file"), "")
-    # The retake comes first and the key last, because a model given the key first views and reports the noise.
+    # The retake first and the key last: given the key first, a model views and reports the noise.
     return (f"Not acquired: the beam is blanked. Next call {unblank}, then {retake} again with the same arguments, and use the key "
             f"that call returns. (The noise-only file {key} was saved; do not view or report it.)")
 

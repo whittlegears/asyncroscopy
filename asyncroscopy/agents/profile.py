@@ -24,8 +24,7 @@ from pathlib import Path
 from asyncroscopy.mcp.agent_tools import DEFAULT_PROFILE_NAME, PROFILES, ToolLists, profile_data, tool_lists
 
 MIDDLEWARE = ("skills", "user_words", "job_wait", "empty_reply", "claim_check")
-# How a tool reply with structured fields such as next_actions and warnings reaches the model. See asyncroscopy.agents.guidance.
-# "notes" replaces the fields with sentences saying what to do. "facts_and_notes" keeps the fields and adds the sentences.
+# notes replaces a reply's structured fields with sentences; facts_and_notes keeps both.
 REPLIES = ("notes", "facts_and_notes")
 
 
@@ -111,8 +110,6 @@ class AgentProfile:
     skills: SkillLimits = field(default_factory=SkillLimits)
     tool_gates: tuple[ToolGate, ...] = ()
     replies: str = "notes"
-    # Whether the model is shown the images tools return (a segmentation, atoms found). Only for a model that reads
-    # images; for any other the image is kept on the tool message for the chat to show, and the model is told so.
     images: bool = False
 
 

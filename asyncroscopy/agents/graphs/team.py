@@ -163,12 +163,10 @@ class TeamGraph:
         """A tool-using agent for one step: its role's tools and rules, the notes so far, and (each model call) the skills and memory that apply."""
         names = {t.name for t in tools}
         known = ("\n\nWhat earlier steps produced:\n" + "\n".join(notes[-4:])) if notes else ""
-        # The map sentence names how this endpoint maps, so it agrees with the mapping skill the step gets.
         maps = map_rule(self._has_mapper, self._all_names or names).strip() or "Never move the stage or acquire in a loop for a map."
         if self._has_mapper:
             maps += " A Mapper job is run_job, then wait_for_job until done (its reply has the keys)."
         prompt = ROLE_PROMPTS[role].replace("{map_rule}", maps) + known
-        # The claim check matters here too, because the step's answer becomes the next step's notes.
         middleware = build_middleware(self.config.middleware, prompt=prompt, tool_names=names, offered=self._all_names or names, tools=tools,
                                       memory=self.memory.notes_for, num_ctx=self.config.num_ctx, deadline=self.config.deadline,
                                       catalog=self.catalog, profile=self.config.agent_profile())
@@ -201,8 +199,7 @@ class TeamGraph:
                 task += "\nStill running from the first try: " + ", ".join(f"{j} on {v['device']} ({v['state']})" for j, v in running.items()) + \
                         ". Wait for it with wait_for_job (its reply has the results); do not start another job."
         agent = self.specialist(step["agent"], tools, task, notes)
-        # A recursion limit, a timeout or a model crash keeps the calls made so far.
-        # A job started before the failure is still on the instrument, and the retry must know about it.
+        # A failed step keeps its calls, so the retry knows about any job it started.
         result, failed = await run_keeping_partial(agent, {"messages": [HumanMessage(task)]}, {"recursion_limit": STEP_RECURSION})
         messages, applied = result.get("messages", []), result.get("skills_applied") or []
         calls = trace_from_messages(messages)

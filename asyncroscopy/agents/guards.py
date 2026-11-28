@@ -109,7 +109,7 @@ def fit_messages(messages: list, budget_chars: int) -> list:
             out.append(AIMessage(_text(m)[:OLD_TEXT_CHARS] + " ...", tool_calls=list(getattr(m, "tool_calls", None) or [])))
         else:
             out.append(m)
-    # If still over, drop the oldest finished tool rounds. Never drop a request.
+    # Then drop the oldest finished tool rounds, never a request.
     while sum(_size(m) for m in out) > budget_chars:
         drop = None
         for i, m in enumerate(out):
@@ -172,7 +172,6 @@ def cycles(messages: list) -> int:
     over the same few calls loops as surely as one repeating a single call. Going back to a place
     once is normal, so callers allow more of these than of repeats in a row."""
     rounds = tool_rounds(_this_request(messages))
-    # Normal protocols repeat an action that takes no arguments, such as blanking the beam.
     if not rounds or rounds[-1][1] == "{}":
         return 0
     return rounds[:-1].count(rounds[-1])
@@ -355,8 +354,6 @@ def stop_message(messages: list) -> AIMessage:
     return AIMessage(STOP_TEXT.format(name=name, reply=" ".join(reply.split())[:400]))
 
 
-# An empty reply is often a tool call that Ollama dropped.
-# The call named something that is not a tool, or its arguments were not JSON.
 ASK_AGAIN = ("Your last reply was empty. The latest tool reply ({name}) is above: make the next tool call the "
              "request needs, or give your final answer from what the tools returned. A call to a name that is not one "
              "of your tools (the instructions you follow are not tools) or with arguments that are not plain JSON is "
@@ -405,11 +402,9 @@ class EmptyReplyMiddleware(AgentMiddleware):
         return self._settle(request, ask, await handler(again))
 
 
-# ---------------------------------------------------------------------- a map plan held to the user's words
 USER_LIMITS = ("dose_budget_e_per_a2",)
 NUMBER = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 DROPPED = "{field} {value} left out of the plan: the user set no such limit (their words hold no {value}). Give a limit only when the user states one."
-# per_tile measurements by kind, and the words that ask for them (mapping skill: "nothing about EDS ... no per_tile").
 PER_TILE_WORDS = {"eds": re.compile(r"\beds\b|spectr|\belement|composition|chemi|x-?ray", re.IGNORECASE)}
 UNASKED = 'per_tile "{kind}" left out of the plan: the user asked for no spectra. Add per-tile measurements only when the user asks for them.'
 STAGE_CENTRE = re.compile(r"\bcent(?:re|er)(?:d)?\s+(?:of|on)\s+(?:the|its)\s+stage\b|\bstage(?:'s)?\s+cent(?:re|er)\b", re.IGNORECASE)

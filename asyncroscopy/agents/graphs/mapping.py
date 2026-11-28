@@ -113,7 +113,6 @@ def _length(metres: float) -> str:
             return f"{metres / scale:.3g} {unit}"
     return f"{metres * 1e9:.0f} nm"
 
-# Only a plain request for the whole area counts. A patch near the edge of the sample does not.
 WHOLE_SAMPLE = re.compile(r"\b(?:whole|entire|full)\s+(?:sample|specimen|grid)\b|\ball of the sample\b|^\s*map\s+the\s+sample\s*[.!]?\s*$", re.I)
 
 
@@ -151,8 +150,6 @@ class MappingGraph:
             if f"{configured}_move_stage" not in self._tool_names:
                 raise RuntimeError(f"ASYNCROSCOPY_MICROSCOPE={configured!r} has no {configured}_move_stage tool on {self.config.mcp_url}")
             return configured
-        # A microscope here is a device that both moves a stage and acquires scanned images.
-        # An SPM or indenter with move_stage alone does not count.
         candidates = sorted(
             name[: -len("_move_stage")]
             for name in self._tool_names
@@ -167,7 +164,6 @@ class MappingGraph:
     async def gather_context(self, state: MapState) -> MapState:
         microscope = await self._microscope()
         await self._mapper()  # a missing Mapper, or more than one, ends the run here before the model is asked
-        # get_parameters keys differ by vendor, so fall back to plain commands.
         params = await self.instrument.call_json(f"{microscope}_get_parameters")
         stage = params.get("stage_position")
         if stage is None:
@@ -175,7 +171,6 @@ class MappingGraph:
         fov = params.get("fov_m")
         if fov is None and f"{microscope}_get_fov" in (self._tool_names or set()):
             fov = float(await self.instrument.call_text(f"{microscope}_get_fov"))
-        # EDS per tile needs the microscope to take spectra. The prompt offers it only then.
         eds = all(f"{microscope}_{c}" in (self._tool_names or set()) for c in ("acquire_spectrum", "place_beam"))
         context = {"stage_position_m": stage, "fov_m": fov, "microscope": microscope, "eds": eds}
         bounds = params.get("world_bounds_angstrom")
@@ -194,8 +189,6 @@ class MappingGraph:
             try:
                 plan = _parse_json(reply.content if isinstance(reply.content, str) else str(reply.content))
             except (ValueError, json.JSONDecodeError):
-                # Small models often answer in prose. The request text then decides the area.
-                # If it gives none, _complete_plan refuses.
                 plan = {}
         score = bool(plan.pop("score", state.get("score", False)))
         try:
@@ -230,9 +223,7 @@ class MappingGraph:
             box = [min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)]
         else:
             box = None
-        # Read a size stated in the request here, because small models often fall back to the whole sample.
-        # The stated size is always the size mapped: gemma4 wrote a 492 x 592 nm box for "a 600 nm square".
-        # The model's centre is kept when its box is close to that size, otherwise the stage is the centre.
+        # The stated size is always the size mapped, because small models fall back to the whole sample.
         size = MappingGraph._requested_size(request) if from_model else None
         if size is not None:
             width, height = size
@@ -249,7 +240,6 @@ class MappingGraph:
             if box is None:
                 raise ValueError("the request asks for the whole sample, but the instrument reports no sample bounds; give box_m or size_m")
             box = list(box)
-        # An area that fits in one tile is an image, not a map. A side shorter than a tile becomes one tile.
         if box[1] - box[0] <= fov and box[3] - box[2] <= fov:
             raise ValueError(f"the area fits in one {_length(fov)} field of view: that is one image, not a map; give a larger area or a smaller fov_m")
         for lo, hi in ((0, 1), (2, 3)):
@@ -257,8 +247,7 @@ class MappingGraph:
                 mid = (box[lo] + box[hi]) / 2
                 box[lo], box[hi] = mid - fov / 2, mid + fov / 2
         plan["box_m"] = box
-        # A dose limit the user states is always in the plan, so the Mapper refuses a plan above it: gemma4 left it
-        # out of a plan for "at most 1 electron per square angstrom" and the map ran at the default dose.
+        # A dose limit the user states always goes in the plan, so the Mapper refuses a plan above it.
         stated = DOSE.search(request) if from_model else None
         if stated:
             limit = float(stated.group(1))
@@ -322,7 +311,6 @@ class MappingGraph:
         return {"job_id": reply["job_id"]}
 
     async def wait(self, state: MapState) -> MapState:
-        # Give the job three times its estimate plus 5 minutes, then abort it rather than wait forever.
         deadline = time.time() + 3.0 * float(state.get("estimate", {}).get("duration_s", 600)) + 300.0
         misses = 0
         while True:
@@ -347,19 +335,15 @@ class MappingGraph:
             return {"error": f"map run {status['state']}: {(status.get('last_error') or {}).get('message', '')}", "released": True}
         keys = results.get("result_keys", {})
         summary = results.get("summary", {})
-        # A failed stitch in the job leaves no map key, so the points node stitches the run.
         return {"run_key": keys.get("run") or keys.get("run_file"), "map_key": keys.get("map") or summary.get("map"), "released": True}
 
     async def points(self, state: MapState) -> MapState:
-        # The Mapper job stitches its own run and links every EDS spectrum as a point of interest.
-        # Its run is stitched here only when the job left no map (no analysis endpoint, or a failed stitch).
         map_key = state.get("map_key")
         if not map_key:
             try:
                 map_key = (await stitch_map(self.analysis.call_json, state["run_key"]))["map"]
             except AnalysisFailed as exc:
                 return {"error": f"stitching {state['run_key']} failed: {exc}"}
-        # Ask only for the count of EDS points, because a large map has thousands of them.
         eds = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "eds_point", "limit": 0})
         candidates = await self.analysis.call_json("list_pois", {"map": map_key, "kind": "candidate"})
         if "total" not in eds or "pois" not in candidates:
@@ -375,7 +359,7 @@ class MappingGraph:
 
     async def report(self, state: MapState) -> MapState:
         if state.get("error"):
-            # Every failed path ends here. Free the instrument so the next reserve does not find it busy.
+            # Free the instrument so the next reserve does not find it busy.
             await self._release(state)
             return {"report": f"Map not completed: {state['error']}"}
         plan = state["plan"]

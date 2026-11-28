@@ -68,17 +68,12 @@ if TYPE_CHECKING:
     from asyncroscopy.agents.mcp_tools import McpServer
 
 KINDS = ("job_done", "map", "data", "no_unrequested", "grounded_answer")
-# A stitched map key is a run id followed by _map, so tool names such as assemble_map do not match.
-# A map version or a re-stitch also ends in a timestamp and four hex digits.
 MAP_KEY = re.compile(r"\b(?=[A-Za-z0-9_\-.]*\d)[A-Za-z0-9][A-Za-z0-9_\-.]*?_map(?:_\d{8}T\d{6}(?:\d{3}Z)?_[0-9a-f]{4})?\b")
 HEX_ID = re.compile(r"\b[0-9a-f]{12}\b")  # job, reservation and request ids
-# The kinds of instrument action a goal may take. They come from tool roles, so they fit any instrument.
 CATEGORIES = ("job", "acquire", "move", "settings", "beam", "probe")
-# Used when a goal file's no_unrequested has neither allow nor categories. It allows running and stopping the job.
 DEFAULT_CATEGORIES = ["job"]
 
-# Take from a sentence only what its words say plainly. When unsure use fewer criteria,
-# because a wrong one makes the retry push actions nobody wanted.
+# Only what a sentence says plainly: a wrong criterion makes the retry push actions nobody wanted.
 NEW_MAP = re.compile(
     r"\b(?:map|survey)\s+(?:a|an|the\s+(?:area|sample|region|square|whole|surface|flake)|this\s+(?:area|sample|region)|around|here|\d)"
     r"|\b(?:make|take|acquire|record|do|perform|run|start|get)\s+(?:a|an|another|one|new)\s+(?:[\w-]+\s+){0,3}?(?:map|survey)\b"
@@ -162,8 +157,6 @@ class Goal:
                 categories |= {"acquire", "settings", "beam"}
             acquire_any = ACQUIRE_ANY.search(statement)
             if acquire_any and "acquire" not in categories and not new_map:
-                # Some other acquisition such as a diffractogram or a force curve.
-                # Ask for data of any kind, as many as a number says.
                 number = re.search(r"\b(\d+)\b", acquire_any.group(0))
                 criteria.append({"kind": "data", "count": int(number.group(1)) if number else 1})
                 categories |= {"acquire", "settings", "beam"}
@@ -277,7 +270,6 @@ def trace_from_messages(messages: Sequence[BaseMessage]) -> list[Call]:
             text = content_text(content)
             error = reply is None or getattr(reply, "status", "") == "error" or text.startswith("Error")
             calls.append(Call(call["name"], dict(call.get("args") or {}), text, error))
-            # A workflow run made its calls for the agent in the background, so they count as the agent's own.
             calls += workflow_calls(text)
     return calls
 
@@ -536,7 +528,6 @@ class GoalChecker:
 
     async def _check_map(self, c: dict, facts: Facts, answer: str):
         if self.analysis is None and not c.get("min_pois"):
-            # With no analysis server nothing stitches, so the map is the job's own result.
             done = [j for j, v in facts.jobs.items() if v["device"] not in ("analysis", "unknown") and v["state"] == "done"]
             if done:
                 return True, f"job {done[-1]} finished (this instrument has no analysis server, so its map is the job's result)"

@@ -135,7 +135,6 @@ class Memory:
         if not content_words(request):
             return []
         sections = self._sections()
-        # Ranked with the skills' BM25, so a word few notes share counts more than one in every lesson.
         ranked = [sections[i] for i in rank_texts([text for _source, text in sections], [(request, 1.0)])]
         out: list[tuple[str, str]] = []
         used = 0

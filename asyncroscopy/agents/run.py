@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     from .goals import Goal
 
 GRAPHS = AGENT_GRAPHS
-# The graph a query names. An empty string means the agent swarm.
 GraphName = Literal["", *GRAPHS]
 GENERAL_TOOL_ROUNDS = 25  # tool calls a general run may make
 

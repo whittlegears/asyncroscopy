@@ -21,7 +21,6 @@ from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs import map_rule
 from asyncroscopy.agents.memory import Memory
 from asyncroscopy.agents.middleware import build_middleware
-# One rule set decides which tools the model sees. The endpoint's endpoint_info.agent_tools uses it too.
 from asyncroscopy.mcp.agent_tools import agent_tool_patterns, for_model
 
 try:  # import the model client here because an import inside the async factory blocks the event loop
@@ -40,8 +39,7 @@ Rules:
 - Do every step the user asked for, in order, before answering; never say a step was done unless a tool call did it.
 - When done, answer briefly: what you did, the keys of what you produced, and anything refused or left undone.{extra}"""
 
-# Keep this rule short. Small models do not search either way,
-# and naming every other tool here leaves them no room to answer.
+# Kept short: naming every other tool leaves a small model no room to answer.
 SEARCH_RULE = """
 - Your tools are a selection. If none fits the request, call find_tools with one or two words (e.g. "holder", "dose", "jobs") and then call_tool with the name it gives; never say the instrument cannot do something before searching."""
 
@@ -63,20 +61,17 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     (True/False), else ASYNCROSCOPY_CLAIM_CHECK, turns it on or off (on by default).
     """
     configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
-    # A caller such as the goal graph may pass its own AgentConfig, so this agent's calls join its run ledger.
     agent_config = configurable.get("agent_config") or AgentConfig.from_env(
         model=configurable.get("model"),
         caller=configurable.get("caller") or settings.get().caller or "general-agent",
     )
     env_tools = list(settings.get().agent_tools)
     chosen = configurable.get("tools") or env_tools
-    # Whether this is a STEM and which skills apply depend on the whole endpoint, not on the chosen tools.
     every = await agent_config.tools(allow=["*"])
     offered = {t.name for t in every}
     own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
     info = await agent_config.info()  # what discovery found, such as the microscopes, the Mappers and each tool's role
     stem = bool(devices_of_kind(info, "stem"))
-    # load_skill stays in, so the middleware can show it while a matched skill does not fit.
     lists = agent_config.tool_lists()
     patterns = agent_tool_patterns(own, bool((info.get("urls") or {}).get("analysis")), chosen, lists, stem=stem, maps=bool(devices_of_kind(info, "map")))
     tools = [t for t in every if for_model(t.name, patterns, lists)]
@@ -92,7 +87,6 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)
     catalog = await agent_config.catalog()
-    # The first run on an instrument writes INSTRUMENT.md from its tools (never over a person's edits), as the team does.
     await asyncio.to_thread(memory.seed_instrument, catalog, stem)
     middleware = build_middleware(agent_config.middleware, prompt=prompt, tool_names=names, offered=offered, tools=tools, memory=memory.notes_for,
                                   num_ctx=agent_config.num_ctx, deadline=agent_config.deadline, claim_check=configurable.get("claim_check"),

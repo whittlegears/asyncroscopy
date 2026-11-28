@@ -85,7 +85,6 @@ FINAL_STATE =r"(?:(?:set|put|returned|reset|restored|brought|changed|moved)\s+ba
 SETTING_ALIASES = {"fov": ("fov", "field of view"), "defocus": ("defocus", "focus")}
 
 ACQUIRED = re.compile(
-    # Only matches the agent saying it did something. A phrase like the latest acquired image claims nothing.
     r"(?:\b(?:I|we)\s+(?:then\s+|also\s+|first\s+|have\s+|successfully\s+|just\s+)*|\b(?:and|then)\s+)(?:took|acquired|captured|recorded|collected)\s+(?:(?:an?|the|one|two|three|four|five|some|several|new|\d+)\s+)?(?:[\w-]+\s+){0,3}?"
     r"(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?|data|frames?)\b"
     r"|\b(?:images?|pictures?|micrographs?|spectr(?:um|a)|scans?|diffractograms?)\s+(?:was|were|has\s+been|have\s+been)\s+(?:taken|acquired|captured|recorded|collected)\b"
@@ -112,10 +111,8 @@ DEFERS = re.compile(
     re.I,
 )
 
-# Finds the unit that a table header or a phrase like in nm gives to bare numbers.
 HEADER_UNIT = re.compile(r"\((?P<header>nm|pm|µm|μm|um|mm|m)\)|\bin\s+(?P<phrase>nanomet(?:er|re)s|micromet(?:er|re)s|met(?:er|re)s|nm|µm|μm|um|m)\b", re.I)
 
-# Only a plural, position of, or where something is asks for positions. The phrase at the current position does not.
 POSITION_QUESTION = re.compile(r"\b(?:coordinates?|positions|locations|position\s+of|where\s+(?:it\s+|they\s+)?(?:is|are|was|were|lies|lie))\b", re.I)
 
 FIELD_UNIT = re.compile(r"_(nm|um|pm|mm|m)(?:_per_s)?$")
@@ -144,10 +141,8 @@ NO_DRIFT = re.compile(
 )
 DRIFT_UNKNOWN = re.compile(r"\b(?:unknown|unmeasured|could\s*n[o']t\s+be\s+measured|not\s+measured|too\s+few|not\s+enough)\b", re.I)
 
-# "placed where the stage reported them" is a map's tiles laid out by stage position, not a place_image result.
 PLACED = re.compile(r"\b(?:was|were|been|is|are|got|successfully|I|we)\s+(?:\w+\s+)?placed\b(?!\s+(?:where|by|at|from)\s+(?:the\s+)?stage)|\bplaced\s+(?:it|them|the\s+\w+(?:\s+\w+)?)\s+(?:on|in)\b|\bplacement\s+(?:succeeded|worked)\b", re.I)
 
-# Matches an answer that ends by saying what it will do next instead of reporting what it did.
 ANNOUNCES = re.compile(
     r"\b(?:I(?:'ll| will| am going to|'m going to)|let's|let\s+(?:us|me)|next,?\s+I(?:'ll| will))\s+(?:now\s+|then\s+|first\s+|go\s+ahead\s+and\s+)?"
     r"(?:do|take|acquire|record|collect|measure|find|locate|move|place|image|map|run|start|proceed|go|zoom|focus|scan|check|identify|select|prepare"
@@ -323,7 +318,7 @@ def _final_setting_claim(m, name: str, phrase: str, settings: _Settings) -> Clai
     actual, source = settings.last[name]
     if _matches(stated, scale, actual) is not False:
         return None
-    # Name the exact call that would make the claim true. A vague correction gets the same answer back.
+    # A vague correction gets the same answer back, so name the exact call.
     setter = f"{source.split('_')[0]}_set_{name}"
     target = json.dumps({name: stated * scale if scale else stated})
     return Claim("setting", said, f"the last {phrase} set or read in this run was {_show(actual, scale, unit)} ({source}); "
@@ -413,8 +408,7 @@ def _failed_acquisition_claims(answer: str, calls, catalog: ToolCatalog) -> list
     for sentence in _sentences(answer):
         for key in dict.fromkeys(DATA_KEY_IN_TEXT.findall(sentence)):
             if key in failed and not NEGATION.search(sentence):
-                # Give only the first sentence of the reason and do not tell the model to acquire again.
-                # Told that, it takes one more image and still lists this key.
+                # Only the first sentence: told to acquire again, the model takes one more image and still lists this key.
                 why = failed[key].split("ToolError:", 1)[-1].strip().split(". ")[0][:120]
                 claims.append(Claim("failed_acquisition", key, f"that acquisition failed ({why}), so this file is not a result: leave this key "
                                                                 "out and report the key of the successful acquisition that replaced it; "
@@ -430,7 +424,6 @@ def _action_claims(answer: str, calls, catalog: ToolCatalog) -> list[Claim]:
     jobs = any(catalog.category(c.name) == "job" for c in ok)
     acquired = jobs or any(catalog.category(c.name) == "acquire" for c in ok)
     moved = jobs or any(catalog.category(c.name) == "move" or c.name.endswith("_aim_image_shift") for c in ok)
-    # A job zooms only if its plan images finer than its tiles. A plain map changes nothing.
     magnified = any(catalog.role(c.name) == "optics.fov" or (catalog.category(c.name) == "job" and re.search(r"revisit|zoom|images", json.dumps(c.args, default=str) + str(c.result))) for c in ok)
     claims = []
     for sentence in _sentences(answer):
@@ -601,17 +594,16 @@ def _missing_positions_claims(answer: str, request: str, calls) -> list[Claim]:
     if not values:
         return []
     text = MAP_KEY.sub(" ", DATA_KEY_IN_TEXT.sub(" ", answer))
-    # Numbers under a table header that names a unit have no unit of their own, so read them in the header's unit.
-    # Only headers count, because words like x_m and spectrum end in unit letters.
+    # Only a header's unit counts, because names like x_m and spectrum end in unit letters.
     headed = {_scale(m["header"] or m["phrase"]) for m in HEADER_UNIT.finditer(text)} - {None}
     for m in re.finditer(NUMBER + UNIT, text):
         stated = abs(float(m["num"].replace("−", "-")))
         scales = [_scale(m["unit"])] if m["unit"] else [1.0, *headed]
-        # Allow 2% and 1 nm for rounding. A looser match lets a tile number read in µm match every point.
+        # 2% and 1 nm for rounding; looser lets a tile number read in µm match every point.
         if stated and any(abs(stated * scale - value) <= 0.02 * value + 1e-9 for scale in scales if scale for value in values):
             return []
     tool, points = list(found.items())[-1]
-    # Do not say to make the missing call. A second list_pois reply can fill a small context.
+    # Not told to make the call: a second list_pois reply can fill a small context.
     return [Claim("missing_positions", "the positions asked for",
                   f"the request asks where, and the {tool} reply above gave x_m, y_m for {len(points)} point(s), but the "
                   f"answer states none of them; do not call {tool} again: answer now, listing each point's id with its "
@@ -630,7 +622,6 @@ def check_answer(messages: list, answer: str, tool_names: Iterable[str] = (), co
     calls = trace_from_messages(messages)
     facts = Facts.from_calls(calls, catalog)
     claims: list[Claim] = []
-    # The answer may name any key that a reply, a request or the prompt gave the model, even from an error reply.
     given = " ".join(_text(m) for m in messages if getattr(m, "type", "") in ("tool", "human")) + " " + context
     known = facts.seen_keys | set(DATA_KEY_IN_TEXT.findall(given)) | set(MAP_KEY.findall(given))
     named = list(dict.fromkeys(DATA_KEY_IN_TEXT.findall(answer) + MAP_KEY.findall(answer)))

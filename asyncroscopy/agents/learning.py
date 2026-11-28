@@ -108,7 +108,6 @@ def lint(text: str, tools: list[str], offered: set[str] | None = None, learned: 
     if len(text) > max_chars:
         problems.append(f"longer than {max_chars} characters")
     for pattern, why in UNSAFE:
-        # A match that is forbidden in its own clause is fine, as in never bypass the safety limits.
         if any(not _negated(text, m.start()) for m in pattern.finditer(text)):
             problems.append(why)
     body = text.split("---", 2)[2] if text.startswith("---") else text
@@ -133,7 +132,6 @@ def lint_skill(path: Path, offered: set[str] | None = None) -> list[str]:
     tools = [str(t) for t in meta.get("tools") or []]
     text = body + "\n" + str(meta.get("description", "")) + "\n" + " ".join(str(k) for k in meta.get("keywords") or [])
     learned = "learned" in meta or "status" in meta
-    # A hand-written skill may be as long as fits an agent's prompt. One learned from a run is kept short.
     problems += lint(text, tools, offered, learned=learned, max_chars=MAX_LEARNED_CHARS if learned else PROMPT_BUDGET_CHARS)
     if "acts" in meta and not isinstance(meta["acts"], bool):
         problems.append("'acts' must be true or false")

@@ -65,25 +65,19 @@ from asyncroscopy.skills import select_skills, skills_text
 from asyncroscopy.skills.index import Passage, passages_text, search
 from asyncroscopy.skills.registry import Skill, list_skills, read_only_request, usable_by
 
-# Requests that bring a skill for reading data. The skills they add never act on the instrument.
 ASKS_ABOUT_DATA = re.compile(r"\b(?:what is in|look at|inspect|show me|analy[sz]e|peaks?|elements?|composition|latest (?:image|spectrum|data))\b", re.I)
 ASKS_FOR_REGIONS = re.compile(r"\b(?:\d+|three|two|five|the) (?:most )?(?:interesting|notable|unusual) (?:regions?|areas?|features?|spots?)\b|\bregions? of interest\b|\bwhere to look\b", re.I)
-# The least room the conversation keeps, for the request and the latest reply.
-# When the prompt and tool schemas leave less, unused tools are dropped, largest first.
-# Otherwise Ollama cuts the start of the prompt to fit.
+# Below this, unused tools are dropped, largest first, before Ollama cuts the start of the prompt.
 MIN_MESSAGES_CHARS = 6000
 ALWAYS_OFFERED = ("view_data", "wait_for_job", "load_skill")
-# Skills an event brings for advice: their passages that answer this step go in, not the whole manual.
 PASSAGE_SKILLS = frozenset({"recover_from_errors", "inspect_data"})
 ADVICE_HEADING = ("Advice that may help with this step, from this instrument's skills (use what applies; "
                   "the request and the tool replies come first):\n")
 EVENT_BOOST = 3.0  # what an event adds to its skill's passages in the search
-# How much of a tool reply goes into the search, and how much it counts beside the request.
 REPLY_CHARS = 800
 REPLY_WEIGHT = 0.6
 MAX_APPLIED = SkillLimits().at_most  # the default profile's limit
-# The middleware adds a node before every model call, so one tool round is three graph steps.
-# Graphs size their recursion limits with recursion_limit.
+# The middleware adds a node before every model call, so a tool round is three graph steps.
 STEPS_PER_TOOL_ROUND = 3
 
 
@@ -232,8 +226,6 @@ class SkillMiddleware(AgentMiddleware):
 
     def _update(self, state) -> dict[str, Any] | None:
         applied = self.skills_for(state["messages"])
-        # Record which skills reach the prompt: a procedure in full (a cut one is listed by its description only),
-        # an advice skill when one of its passages does.
         _text, cut, _passages, fitted = self.guidance(state["messages"], applied)
         shown = {p.skill for p in fitted}
         applied = [{**a, "in_prompt": a["skill"] in shown if a["skill"] in PASSAGE_SKILLS else a["skill"] not in cut} for a in applied]
@@ -246,25 +238,20 @@ class SkillMiddleware(AgentMiddleware):
         return self._update(state)
 
     async def abefore_model(self, state: SkillState, runtime: Runtime) -> dict[str, Any] | None:
-        # Skill and memory files are read from disk, so keep that off the event loop.
         return await asyncio.to_thread(self._update, state)
 
     def _prompted(self, request):
         state = request.state
         applied = state.get("skills_applied") or self.skills_for(state["messages"])
         notes = self._notes_for(_request(state["messages"]))
-        # Skills and notes share one budget, because the prompt, tools and history share a small context.
         text, cut, passages, _fitted = self.guidance(state["messages"], applied)
         prompt = self.base_prompt
         if text:
-            # Given as background on how to do the task, so the model uses it without naming it in its answer.
             prompt += "\n\nHow to do this on this instrument:\n" + text
         if notes:
             prompt += "\n\nNotes from earlier work on this instrument (keys in them are from earlier runs, not this one):\n" + notes
-        # load_skill is offered only to read a chosen skill that did not fit, so the model does not go looking for skills.
         asked = _request(state["messages"])
         hidden = set() if cut else {"load_skill"}
-        # The profile's gates hold back tools the request does not ask for. A profile for a capable model has no gates.
         hidden |= held_back(self.gates, asked, [getattr(t, "name", "") for t in request.tools])
         tools = [t for t in request.tools if getattr(t, "name", None) not in hidden]
         messages = request.messages
@@ -273,13 +260,10 @@ class SkillMiddleware(AgentMiddleware):
             prompt += REPEAT_NOTE.format(name=name)
         advice = ADVICE_HEADING + passages if passages else ""
         tools = self._fit_tools(tools, prompt + advice, applied, messages)
-        # The messages get what the prompt, the advice and the tool schemas leave of the context.
         room = context_chars(self.num_ctx) - len(prompt) - len(advice) - tools_chars(tools)
         fitted = fit_messages(messages, max(2000, room))
         if advice:
-            # The advice for this step follows the conversation instead of changing the system prompt, so the
-            # prompt's start stays the same from call to call and a server that caches it (Ollama) reads only
-            # what is new. It is not kept in the state: the next call gets the advice for its own step.
+            # After the conversation, so the prompt's start stays the same and Ollama's cache reads only what is new.
             fitted = with_advice(fitted, advice)
         return request.override(system_message=SystemMessage(prompt), tools=tools, messages=fitted)
 

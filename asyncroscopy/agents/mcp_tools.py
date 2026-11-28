@@ -60,7 +60,6 @@ def result_images(result: CallToolResult) -> list[dict]:
 
 IMAGE_NOTE = ("The reply has {count} image(s), which go to the user with your answer. You cannot see them: say what the numbers "
               "show, and that the user can check the picture.")
-# The images tools returned during one request, for the answer to carry (collect_images). None outside one.
 _COLLECTED: ContextVar[list | None] = ContextVar("collected_tool_images", default=None)
 MAX_COLLECTED = 8  # an answer carries at most the latest this many
 
@@ -132,10 +131,7 @@ class McpServer:
     def __init__(self, url: str, headers: dict[str, str] | None = None, timeout_s: float = 120.0, ledger: list | None = None,
                  replies: str = "notes", images: bool = False) -> None:
         self.url = url
-        # Whether langchain_tools shows a tool's images to the model (the profile's images); the chat gets them anyway.
         self.images = images
-        # How structured replies reach a model through langchain_tools. It is the replies setting of the profile.
-        # See asyncroscopy.agents.guidance.
         self.replies = replies
         self.headers = dict(headers or {})
         if not any(k.lower() == "authorization" for k in self.headers):  # a caller such as the swarm builds its own headers
@@ -189,7 +185,6 @@ class McpServer:
         server, name = self, spec.name
 
         async def run(**kwargs) -> tuple[Any, dict | None]:
-            # The server replies with facts. render adds sentences saying what to do, or puts them in place of the facts.
             result = await server.call(name, kwargs)
             held = held_for_approval(result)
             if held is not None:
