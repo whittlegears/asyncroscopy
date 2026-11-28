@@ -57,6 +57,10 @@ def fingerprint_of(entry: dict) -> str | None:
     return (entry.get("stack_fingerprint") or {}).get("digest")
 
 
+def simulated(fingerprint: dict | None) -> bool:
+    return bool(((fingerprint or {}).get("simulated") or {}).get("value"))
+
+
 def needs_approval(name: str) -> str:
     return (f"{name} is a draft: nobody has approved it, so it runs on a digital twin only. A person approves it once with "
             f"`python -m asyncroscopy.workflows approve {name}`, after reading it (`python -m asyncroscopy.workflows view` "
@@ -119,17 +123,23 @@ class Library:
         runs = self.rehearsals(name, hash_)
         passed = [r for r in runs if rehearsal_passed(r)]
         wanted = (stack_fingerprint or {}).get("digest")
-        here = [r for r in passed if wanted and fingerprint_of(r) == wanted]
-        if here:
-            return here, None
         if not passed:
             return [], (f"this exact code has never run to the end on a digital twin with every cleanup call succeeding "
                         f"({len(runs)} rehearsal(s) of it, none in 'done' with its cleanup done)")
         if not wanted:
             return [], "the instrument endpoint reports no stack_fingerprint, so no rehearsal can be matched to the stack it is approved on"
+        if simulated(stack_fingerprint):
+            here = [r for r in passed if fingerprint_of(r) == wanted]
+            mismatch = f"this stack's fingerprint is {wanted}. Rehearse it on this stack"
+        else:
+            software = stack_fingerprint.get("software")
+            here = [r for r in passed if simulated(r.get("stack_fingerprint")) and (r.get("stack_fingerprint") or {}).get("software") == software]
+            mismatch = (f"this instrument is not simulated, so a rehearsal counts when it ran on a digital twin with the same "
+                        f"software ({software}). Rehearse it on a twin running this software")
+        if here:
+            return here, None
         elsewhere = sorted({f"{r.get('stack_id') or 'an unnamed stack'} ({fingerprint_of(r) or 'no fingerprint'})" for r in passed})
-        return [], (f"this exact code passed only on another stack or another version of it: {', '.join(elsewhere)}; this stack's "
-                    f"fingerprint is {wanted}. Rehearse it on this stack")
+        return [], f"this exact code passed only on another stack or another version of it: {', '.join(elsewhere)}; {mismatch}"
 
     def approvers(self) -> list[str] | None:
         """The logins in ``approvers.json`` that may approve, or None when there is no such file."""

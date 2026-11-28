@@ -461,13 +461,14 @@ def test_the_hash_covers_the_helpers_a_block_works_through(monkeypatch):
 
 # The MCP server an agent uses
 class FakeEndpoints:
-    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1"):
+    def __init__(self, instrument, analysis, simulated=True, stack_id="tango://twin:1", fingerprint="twin-1", software="v1"):
         self.instrument, self.analysis, self.simulated, self.stack_id = instrument, analysis, simulated, stack_id
-        self.fingerprint = fingerprint
+        self.fingerprint, self.software = fingerprint, software
 
     async def open(self, run_id=None):
         return self.instrument, self.analysis, {"simulated": self.simulated, "stack_id": self.stack_id,
-                                                "stack_fingerprint": {"digest": self.fingerprint}}
+                                                "stack_fingerprint": {"digest": self.fingerprint, "software": {"commit": self.software},
+                                                                      "simulated": {"value": self.simulated}}}
 
 
 def served(tmp_path, simulated=True, **kwargs):
@@ -748,7 +749,7 @@ def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_onl
 
     assert run(rehearse("twin-a"))["state"] == "done"
     (kept,) = library.rehearsals("tiles_only", code)
-    assert kept["stack_id"] == "tango://twin:1" and kept["stack_fingerprint"] == {"digest": "twin-a"} and kept["cleanup_failed"] == []
+    assert kept["stack_id"] == "tango://twin:1" and kept["stack_fingerprint"]["digest"] == "twin-a" and kept["cleanup_failed"] == []
 
     elsewhere = run(approve_on("twin-b"))
     assert not elsewhere["ok"] and "passed only on another stack" in elsewhere["error"] and "twin-a" in elsewhere["error"] and "twin-b" in elsewhere["error"]
@@ -767,6 +768,19 @@ def test_a_rehearsal_counts_for_approval_only_on_this_stacks_fingerprint_and_onl
     assert run(rehearse("twin-b"))["state"] == "done"
     approved = run(approve_on("twin-b"))
     assert approved["ok"] and approved["approval"]["rehearsed"]["stack_fingerprint"] == "twin-b"
+
+    async def approve_on_hardware(software):
+        instrument, analysis, _ = twin()
+        endpoints = FakeEndpoints(instrument, analysis, False, stack_id="tango://column:1", fingerprint="column-1", software=software)
+        server = WorkflowServer(endpoints, state_dir=tmp_path / "hardware", library=library)
+        _, approve, _ = server.operator_tools()
+        return await approve(name="tiles_only", approver="sam", expected_hash=code)
+
+    library.revoke("tiles_only")
+    other = run(approve_on_hardware("v2"))
+    assert not other["ok"] and "same software" in other["error"] and "v2" in other["error"]
+    on_column = run(approve_on_hardware("v1"))
+    assert on_column["ok"] and on_column["approval"]["rehearsed"]["stack_fingerprint"] in ("twin-a", "twin-b")
 
 
 def test_rehearsals_are_kept_for_the_person_approving_and_an_approvers_list_is_honoured(tmp_path):

@@ -13,7 +13,9 @@ Both write the same records in the same library (`outputs/workflows/library`: `a
   to: the run reached `done` (no block failed), every cleanup call of its blocks succeeded, and the rehearsal's
   `stack_fingerprint` digest is the instrument endpoint's now (`docs/MCP/permissions.md`). A rehearsal on another
   stack, or on this one before its software, device code or properties changed, does not count, and the refusal
-  names the stacks it did pass on. The command line shows the rehearsals and warns when there is none, but does not
+  names the stacks it did pass on. When the endpoint is a real instrument (its fingerprint is not simulated), a
+  twin and the instrument can never share a fingerprint, so a rehearsal counts when it passed on a simulated stack
+  whose `software` (package version and commit) is the instrument's. The command line shows the rehearsals and warns when there is none, but does not
   refuse;
 - `approve_workflow` and `reject_workflow` take the `expected_hash` that `review_workflow` returned for the code the
   person read, and refuse when the workflow is not that code any more. An agent can call `propose_workflow` again
