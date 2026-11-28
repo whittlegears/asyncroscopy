@@ -167,7 +167,7 @@ def stack(keys, tango_ctx, tmp_path_factory):
         mp.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: twin)
         servers = {}
         for role in ("agent", "operator"):
-            server = MCPServer("auth-test", "localhost", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False,
+            server = MCPServer("auth-test", "localhost", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False,
                                endpoint_role=role, trace_path=str(trace_dir / f"{role}.jsonl"),
                                database=database, auth=keys["auth"])
             server.setup(print_summary=False)
@@ -336,7 +336,7 @@ def test_without_auth_nothing_changes(monkeypatch):
     from fastmcp import Client
 
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-    server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+    server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
     assert server.auth is None and server.mcp.auth is None
     server.mcp.add_tool(server.discovery.endpoint_info)
 
@@ -404,7 +404,7 @@ def test_mcp_server_main_refuses_too(monkeypatch, capsys):
     monkeypatch.setattr(mcp_server, "stack_simulated", lambda *a: False)
     monkeypatch.setattr(mcp_server, "MCPServer", lambda **kw: pytest.fail("the server must not be built"))
     argv = ["--name", "x", "--tango-host", "h", "--tango-port", "1", "--transport", "streamable-http", "--http-host", "0.0.0.0",
-            "--http-port", "1", "--blocked-classes-json", "[]", "--blocked-functions-json", "{}", "--data-device-address", "d", "--allow-remote-bind"]
+            "--http-port", "1", "--blocked-classes-json", "[]", "--data-device-address", "d", "--allow-remote-bind"]
     assert mcp_server.main(argv) == 1
     assert "MCP ERROR" in capsys.readouterr().out
 

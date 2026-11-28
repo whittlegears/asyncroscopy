@@ -84,7 +84,7 @@ def test_the_twin_stack_declares_every_command(tango_ctx, mcp_config):
     assert _stack_classes(CONFIGS / "digital_twin_mapping.yaml") == set(TWIN_STACK)
     config = run_mcp.load_config(CONFIGS / mcp_config).mcp
     server = MCPServer(
-        "twin", "localhost", 0, blocked_functions=config.blocked_functions, blocked_classes=config.blocked_classes,
+        "twin", "localhost", 0, needs_approval=config.needs_approval, blocked_classes=config.blocked_classes,
         data_device_address=config.data_device_address, verbose=False, endpoint_role=config.endpoint_role,
         risk_overrides=config.risk,
         auto_routine=config.auto_routine, database=_Exported(list(TWIN_STACK.values())),

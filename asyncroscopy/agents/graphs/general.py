@@ -16,6 +16,7 @@ from langchain.agents import create_agent
 from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy import settings
+from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.graphs import map_rule
 from asyncroscopy.agents.memory import Memory
@@ -74,10 +75,10 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     offered = {t.name for t in every}
     own = {t.name for t in await agent_config.tools(include_analysis=False, allow=["*"])}
     info = await agent_config.info()  # what discovery found, such as the microscopes, the Mappers and each tool's role
-    stem = bool(info.get("stem_devices"))
+    stem = bool(devices_of_kind(info, "stem"))
     # load_skill stays in, so the middleware can show it while a matched skill does not fit.
     lists = agent_config.tool_lists()
-    patterns = agent_tool_patterns(own, bool(info.get("analysis_url")), chosen, lists, stem=stem, maps=bool(info.get("map_devices")))
+    patterns = agent_tool_patterns(own, bool((info.get("urls") or {}).get("analysis")), chosen, lists, stem=stem, maps=bool(devices_of_kind(info, "map")))
     tools = [t for t in every if for_model(t.name, patterns, lists)]
     if not chosen and not stem:
         print(f"[agents] no STEM on {agent_config.mcp_url}; giving the agent every tool. "
@@ -86,7 +87,7 @@ async def make_graph(config: dict | None = None) -> CompiledStateGraph:
     template = settings.get().agent_prompt or SYSTEM
     names = {t.name for t in tools}
     readers = " or ".join(r for r in ("view_data", "get_region") if r in names) or "the instrument's own read tools"
-    stem_rules = STEM_RULES.replace("{map_rule}", map_rule(bool(info.get("map_devices")), names))
+    stem_rules = STEM_RULES.replace("{map_rule}", map_rule(bool(devices_of_kind(info, "map")), names))
     extra = (SEARCH_RULE if {"find_tools", "call_tool"} <= names else "") + (stem_rules if stem else "")
     prompt = template.replace("{skills}", "").replace("{extra}", extra).replace("{readers}", readers)
     memory = await asyncio.to_thread(Memory.from_env)

@@ -20,7 +20,7 @@ class _Proxy:
 
 
 def _server(devices: dict) -> MCPServer:
-    server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", database=_Exported(), verbose=False)
+    server = MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="", database=_Exported(), verbose=False)
     for prefix, (simulated, acts) in devices.items():
         server.add_device(prefix, _Proxy(simulated))
         server.descriptors[f"{prefix}_go"] = ToolDescriptor(name=f"{prefix}_go", device=prefix, command="go", native=False,

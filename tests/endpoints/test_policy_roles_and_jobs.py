@@ -31,7 +31,7 @@ def server_factory(monkeypatch, tmp_path):
             "localhost",
             1234,
             blocked_classes=[],
-            blocked_functions={},
+            needs_approval={},
             data_device_address="asyncroscopy/data/default",
             verbose=False,
             endpoint_role=role,
@@ -239,7 +239,7 @@ class TestEndpointRoles:
     def test_operator_only_commands(self, monkeypatch, role, hidden):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: self.FakeDb())
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", self.FakeProxy)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, endpoint_role=role)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False, endpoint_role=role)
         twin = set(server._find_tools()["DigitalTwin"])
         assert ("export_ground_truth" not in twin) is hidden
         assert {"move_stage", "get_stage"} <= twin
@@ -247,13 +247,13 @@ class TestEndpointRoles:
     def test_the_monitor_role_offers_only_reads(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: self.FakeDb())
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", self.FakeProxy)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, endpoint_role="monitor")
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False, endpoint_role="monitor")
         assert set(server._find_tools()["DigitalTwin"]) == {"get_stage"}
 
     def test_unknown_role_rejected(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         with pytest.raises(ValueError, match="endpoint_role"):
-            MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", endpoint_role="admin")
+            MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", endpoint_role="admin")
 
 
 class TestJsonArguments:
@@ -267,7 +267,7 @@ class TestJsonArguments:
         from fastmcp.tools import Tool
 
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
         info = type("CommandInfo", (), {"in_type": tango.CmdArgType.DevString, "out_type": tango.CmdArgType.DevString, "in_type_desc": ':param request: JSON {"plan": {...}, "caller": "name"}.', "out_type_desc": ""})()
         wrapper = server._create_wrapper(lambda text: seen.append(json.loads(text)) or "ok", info, "reserve", "Mapper")
         app = FastMCP("t")
@@ -324,7 +324,7 @@ class TestDevicePrefixes:
 
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: FakeDb())
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", FakeProxy)
-        return MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        return MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
     def test_same_family_devices_get_member_prefixes(self, monkeypatch):
         tools = self.server_for(monkeypatch, ["lab/mapper/1", "lab/mapper/2"])._find_tools()
@@ -342,7 +342,7 @@ class TestDevicePrefixes:
 class TestWaitForJob:
     def test_waits_until_the_job_finishes_and_refuses_unknown_devices(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Job:
             polls = 0
@@ -364,7 +364,7 @@ class TestWaitForJob:
 
     def test_the_device_can_be_left_out(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Other:
             def job_status(self, request):
@@ -394,7 +394,7 @@ class TestWaitForJob:
         def analysis_job_results(job_id: str) -> dict:
             return {"job_id": job_id, "state": "done", "result_keys": {"map": "map_r1_map"}, "summary": {"tiles": 9}}
 
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, analysis_url=analysis)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False, urls={"analysis": analysis})
 
         class Mapper:
             def job_status(self, request):
@@ -408,7 +408,7 @@ class TestWaitForJob:
 
     def test_one_dead_job_device_does_not_stop_waiting_on_the_others(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Dead:
             def job_status(self, request):
@@ -445,7 +445,7 @@ class TestWaitForJob:
         def analysis_job_results(job_id: str) -> dict:
             return {"result_keys": {"map": "map_r2_map"}}
 
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False, analysis_url=old)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False, urls={"analysis": old})
         server.devices.clear()
         done = server.jobs.wait_for_job("a1", max_wait_s=5)
         assert done["state"] == "done" and done["result_keys"] == {"map": "map_r2_map"} and len(polls) == 2
@@ -454,7 +454,7 @@ class TestWaitForJob:
 
     def test_a_job_still_running_at_the_deadline_says_to_wait_again(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Job:
             def job_status(self, request):
@@ -472,7 +472,7 @@ class TestWaitForJob:
 
         assert set(WAIT_NOTES) == RUNNING_JOB_STATES
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Job:
             def job_status(self, request):
@@ -486,14 +486,14 @@ class TestWaitForJob:
 
     def test_an_analysis_job_id_is_pointed_at_the_analysis_server(self, monkeypatch):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-        server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+        server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
 
         class Job:
             def job_status(self, request):
                 return json.dumps({"error": {"code": "unknown_job", "message": "no job"}})
 
         server.add_device("Mapper", Job(), envelope=True)
-        with pytest.raises(ToolError, match="mcp.analysis_url"):
+        with pytest.raises(ToolError, match="mcp.urls.analysis"):
             server.jobs.wait_for_job("assemble-job-1", device="Mapper")
 
 
@@ -735,7 +735,7 @@ class TestEndpointGuards:
 
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: TestEndpointRoles.FakeDb())
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", Faulty)
-        MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)._find_tools()
+        MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)._find_tools()
         lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("[safety]")]
         assert len(lines) == 1 and "asyncroscopy/instrument/default is in FAULT" in lines[0] and "stage_x_m.max" in lines[0]
 

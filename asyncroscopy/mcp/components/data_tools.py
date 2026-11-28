@@ -1,6 +1,6 @@
 """Stored data: list_data, view_data, and the picture an acquisition returns with its key.
 
-acquire* commands whose result is a data key (a file name such as "spectrum_eds_20261028T101500.h5")
+Commands with an acquire.* action role whose result is a data key (a file name such as "spectrum_eds_20261028T101500.h5")
 get a PNG of what they saved, drawn by asyncroscopy.data.views, so clients that render MCP image blocks
 (SciAgentGUI) show the capture without another call. A preview never fails the acquisition, except
 when it shows the beam was blanked (the file is noise). Reads of Tiled run in lanes: small thread pools
@@ -30,7 +30,6 @@ if TYPE_CHECKING:
     from asyncroscopy.mcp.descriptors import ToolDescriptor
     from asyncroscopy.mcp.mcp_server import MCPServer, ServerConfig
 
-PREVIEW_COMMANDS = {"acquire_camera_image", "acquire_scanned_image", "acquire_spectrum"}  # for these a failed preview is reported to the caller
 PREVIEW_TEXT_CHARS = 1500  # longest summary sent with a preview, enough for a spectrum's peak table
 DATA_TOOL_DEADLINE_S = 20.0  # data tools answer within this, so a slow or stuck Tiled cannot hang the agent
 PREVIEW_DEADLINE_S = 10.0
@@ -171,16 +170,15 @@ class DataTools:
             content.append(MCPImage(data=png, format="png"))
         return ToolResult(content=content, structured_content=numpy_to_python(summary))
 
-    def augment_with_preview(self, command_name: str, result: Any, device: str = "", arguments: dict | None = None) -> Any:
-        """Attach a PNG of what an acquire command saved; fails the acquisition only when it was taken with the beam
-        blanked (``beam_blanked``).
+    def augment_with_preview(self, role: str, command_name: str, result: Any, device: str = "", arguments: dict | None = None) -> Any:
+        """Attach a PNG of what a command with an acquire.* ``role`` saved; fails the acquisition only when it was taken
+        with the beam blanked (``beam_blanked``).
 
         Returns a ToolResult with the Tiled key as text and the image, plus structured_content matching the
         tool's {"result": str} output schema; a bare (text, Image) tuple would fail client-side output-schema
-        validation. For PREVIEW_COMMANDS a failed preview is reported in a text block, so a Tiled outage is
-        visible, not silent.
+        validation. A failed preview is reported in a text block, so a Tiled outage is visible, not silent.
         """
-        if not isinstance(result, str) or not command_name.startswith("acquire") or not is_data_key(result):
+        if not isinstance(result, str) or not role.startswith("acquire.") or not is_data_key(result):
             return result
         try:
             summary, png = self.with_deadline(
@@ -189,8 +187,6 @@ class DataTools:
         except Exception as exc:  # the hardware already acquired, so report this and do not raise
             if self.verbose:
                 print(f"[preview] could not build a preview for {result!r}: {exc}")
-            if command_name not in PREVIEW_COMMANDS:
-                return result
             note = f"image preview unavailable ({exc}). The data were saved; look at them later with view_data(key={result!r}) instead of acquiring again."
             return ToolResult(content=[TextContent(type="text", text=result), TextContent(type="text", text=note)], structured_content={"result": result})
         if summary.get("beam_blanked"):
@@ -215,7 +211,7 @@ def beam_blanked(key: str, command_name: str, device: str, arguments: dict | Non
 
 
 class PreviewInterceptor(Interceptor):
-    """Adds the picture to an acquisition's reply (acquire* commands only). Outermost: it runs after the call is logged."""
+    """Adds the picture to an acquisition's reply (acquire.* roles only). Outermost: it runs after the call is logged."""
 
     order = 10
 
@@ -223,10 +219,10 @@ class PreviewInterceptor(Interceptor):
         self.data = data
 
     def applies(self, tool: ToolDescriptor) -> bool:
-        return bool(tool.command and tool.command.startswith("acquire"))
+        return tool.action_role.startswith("acquire.")
 
     def after_call(self, call: Call, result: Any) -> Any:
-        return self.data.augment_with_preview(call.tool.command or "", result, call.tool.device or "", call.arguments)
+        return self.data.augment_with_preview(call.tool.action_role, call.tool.command or "", result, call.tool.device or "", call.arguments)
 
 
 def register(server: MCPServer, cfg: ServerConfig) -> DataTools:

@@ -480,7 +480,7 @@ class TestAgentMCPServerTools:
         return server
 
     def test_setup_registers_all_tools(self) -> None:
-        native = ["query_agent", "spawn_agent", "list_agents", "list_agent_tools", "complete", "set_max_steps"]
+        native = ["endpoint_info", "query_agent", "spawn_agent", "list_agents", "list_agent_tools", "complete", "set_max_steps"]
         server = self._server(workflows=False)
         registered = []
         server.mcp.add_tool = registered.append

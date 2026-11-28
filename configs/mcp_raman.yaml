@@ -20,31 +20,18 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
+  # Held on the agent endpoint until a person approves the exact call (docs/MCP/permissions.md), unless a person
+  # sets a tool otherwise. Init, Kill, RestartServer and Disconnect are never run, whatever is set.
+  needs_approval:
+    # Every agent configuration holds at least what configs/mcp_dt.yaml holds (tests/agents/test_agent_configs.py).
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    Mapper: [get_reservation]
-    Tuner: [get_reservation]
-    # Every agent configuration blocks at least what configs/mcp_dt.yaml blocks (tests/agents/test_agent_configs.py).
-    # Until first light's sign test settles the CEOS correction's sign and units, the corrector is written only by the
-    # Tuner (allow_corrector_writes) or a person.
     CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    # After Disconnect even the e-stop cannot blank the beam.
-    AutoScriptMicroscope: [Disconnect]
-    JeolMicroscope: [Disconnect]
-    DigitalTwin: [Disconnect]
-    DigitalTwinParticles: [Disconnect]
-    DigitalTwinTilt: [Disconnect]
-    DigitalTwinDiffraction: [Disconnect]
-    PolycrystallineGoldDigitalTwin: [Disconnect]
+  permissions_file: outputs/permissions/permissions.json
+  approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""
-  # No map analysis for a Raman microscope: wait_for_job waits on this stack's job devices only.
-  analysis_url: ""
+  # No map analysis for a Raman microscope (no urls.analysis): wait_for_job waits on this stack's job devices only.
   endpoint_role: agent
   safety:
     risk: {}

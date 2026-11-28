@@ -45,7 +45,7 @@ from .library import APPROVED, SHIPPED, Library, needs_approval
 
 MIN_REQUEST_CHARS = 12  # shorter than this is a placeholder and not a real request
 MAX_WAIT_S = 100.0  # below the 120 s our MCP client allows for one call
-RECORD_KEYS = ("run_id", "workflow", "state", "queue", "problems", "error", "questions", "inputs", "outputs", "at_node", "cleanup", "unrestored",
+RECORD_KEYS = ("run_id", "workflow", "state", "queue", "problems", "error", "questions", "approvals", "inputs", "outputs", "at_node", "cleanup", "unrestored",
                "calls", "tools_called", "started", "ended")
 OUTPUT_CHARS = 1500
 GOING = ("running", "queued")  # a run in one of these has a process driving it, or waiting to
@@ -108,6 +108,9 @@ def _reply(record: dict, state_dir: Path | None = None) -> dict:
     elif state == "queued":
         out["next"] = (f"another run holds the instrument ('queue' says which); this one starts by itself when its turn comes. Call "
                        f"workflow_status with run_id {record['run_id']} and wait_s {MAX_WAIT_S:.0f} again, or stop_workflow to leave the queue")
+    elif state == "waiting" and record.get("approvals") and not record.get("questions"):
+        out["next"] = ("a call is held until a person approves it (approvals lists it, with its request_id). Tell the user and end "
+                       f"your turn. Once it is approved, call resume_workflow with run_id {record['run_id']}: the call is sent again and runs.")
     elif state == "waiting":
         out["next"] = ("the workflow asks the user a question and does nothing until it is answered. Put each question to the user in "
                        "its own words (with its options; if it has 'show', show them that first, a data key with view_data) and end your "

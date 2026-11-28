@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Literal
 
 from fastmcp import FastMCP
 
-from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL
+from asyncroscopy.core.names import AGENT_GRAPHS, DEFAULT_MCP_URL, endpoint_urls
 from asyncroscopy.core.net import is_loopback_host
 from asyncroscopy.mcp import host_guard
 
@@ -56,6 +56,9 @@ ENDPOINT_ROLES = ("agent", "operator")
 # The workflow operator endpoint's tools as action-space entries: (tool, role, risk, effect).
 OPERATOR_ACTIONS = (("review_workflow", "setting.read", "low", "observe"), ("approve_workflow", "other", "high", "act"),
                     ("reject_workflow", "other", "high", "act"))
+workflow_services = {"list": "list_workflows", "get": "get_workflow", "run": "run_workflow", "status": "workflow_status",
+                     "stop": "stop_workflow", "resume": "resume_workflow", "answer": "answer_workflow", "list_runs": "list_runs",
+                     "list_blocks": "list_blocks", "propose": "propose_workflow"}
 
 
 def check_port_free(host: str, port: int) -> str | None:
@@ -86,6 +89,7 @@ class AgentMCPServer:
         workflows: bool = True,
         workflows_hardware: bool = False,
         endpoint_role: str = "agent",
+        urls: dict[str, str | None] | None = None,
     ) -> None:
         """
         Args:
@@ -103,10 +107,12 @@ class AgentMCPServer:
             workflows_hardware (bool): Also allow workflows on a stack that is not simulated.
             endpoint_role (str): "agent" (default) serves the swarm and the workflow tools. "operator" serves only
                 the workflow review, approve and reject tools, for a person; no swarm and no model.
+            urls (dict): The other endpoints endpoint_info reports (``asyncroscopy.core.names.endpoint_url_names``), from the config.
         """
         if endpoint_role not in ENDPOINT_ROLES:
             raise ValueError(f"endpoint_role must be one of {ENDPOINT_ROLES}, got {endpoint_role!r}")
         self.verbose = verbose
+        self.urls = endpoint_urls(urls)
         self.mcp_urls = list(mcp_urls)
         self.endpoint_role = endpoint_role
         if endpoint_role == "operator":
@@ -154,10 +160,16 @@ class AgentMCPServer:
         return [StructuredTool.from_function(coroutine=fn, name=fn.__name__, description=fn.__doc__) for fn in self.workflows.tools()]
 
     def endpoint_info(self) -> dict:
-        """For apps, not models: this is the workflow operator endpoint. role 'operator'; serves 'workflow_approvals';
-        the library and run folder it reads; the tools it offers."""
-        return {"role": self.endpoint_role, "serves": "workflow_approvals", "library": str(self.workflows.library.root.resolve()),
-                "state_dir": str(self.workflows.state_dir.resolve()), "tools": [fn.__name__ for fn in self.workflows.operator_tools()]}
+        """For apps, not models. On the agent server: role 'agent_server', the services it offers (services.workflows: key -> tool name)
+        and the other endpoints (urls). On the workflow operator endpoint: role 'operator', serves 'workflow_approvals',
+        the library and run folder it reads, the tools it offers."""
+        if self.endpoint_role == "agent":
+            offered = {fn.__name__ for fn in self.workflows.tools()} if self.workflows is not None else set()
+            workflows = {verb: name for verb, name in workflow_services.items() if name in offered}
+            return {"role": "agent_server", "urls": dict(self.urls), "services": {"workflows": workflows} if workflows else {}}
+        return {"role": self.endpoint_role, "serves": "workflow_approvals", "urls": dict(self.urls),
+                "library": str(self.workflows.library.root.resolve()), "state_dir": str(self.workflows.state_dir.resolve()),
+                "tools": [fn.__name__ for fn in self.workflows.operator_tools()]}
 
     def action_space(self) -> dict:
         """For apps, not models: the workflow operator controls, in the instrument endpoints' action-space shape."""
@@ -179,7 +191,7 @@ class AgentMCPServer:
                 self.mcp.add_tool(tool_func)
             print(f"MCP workflow operator endpoint ready: {len(native)} tool(s) registered", flush=True)
             return
-        native = [self.query_agent, self.spawn_agent, self.list_agents, self.list_agent_tools, self.complete, self.set_max_steps]
+        native = [self.endpoint_info, self.query_agent, self.spawn_agent, self.list_agents, self.list_agent_tools, self.complete, self.set_max_steps]
         if self.workflows is not None:  # lets a client run a workflow without a model
             native += self.workflows.tools()
         for tool_func in native:
@@ -187,8 +199,7 @@ class AgentMCPServer:
             if self.verbose:
                 print(f"Registered native tool: {tool_func.__name__}")
 
-        # Printed unconditionally (unlike the verbose lines above) so startup GUIs
-        # can parse the count from stdout even when quiet mode is on.
+        # Printed unconditionally (unlike the verbose lines above), so the count shows even in quiet mode.
         print(f"MCP ready: {len(native)} tool(s) registered", flush=True)
         if self.workflows is not None:
             where = "simulated stacks and the real instrument" if self.workflows.hardware else "simulated stacks only"
@@ -222,15 +233,16 @@ class AgentMCPServer:
         If `include_transcript` is true (default), the routing decisions,
         tool calls, and generated text will also be included above the final answer.
         Images the tools returned on the way (a segmentation, the atoms found) come after the answer as image blocks,
-        the latest few, so the chat shows them.
+        the latest few, so the chat shows them. A call the instrument held for a person's approval stops there: the
+        reply starts with what is waiting (tool, arguments, request id).
         """
-        from asyncroscopy.agents.mcp_tools import collect_images
+        from asyncroscopy.agents.mcp_tools import collect_held, collect_images, held_summary
         from asyncroscopy.agents.run import run_goal_text, run_named_graph
 
         async with self._query_lock:
             if model.strip():
                 self.swarm.use_model(model.strip())
-            with collect_images() as images:
+            with collect_images() as images, collect_held() as held:
                 if goal:
                     stripped = prompt.strip()
                     spec = json.loads(stripped) if stripped.startswith("{") else stripped
@@ -239,6 +251,8 @@ class AgentMCPServer:
                     answer = await run_named_graph(graph, prompt, model=self.swarm.model)
                 else:
                     answer = await self.swarm.query(prompt, include_transcript=include_transcript)
+        if held:
+            answer = f"{held_summary(held)}\n\n{answer}"
         return with_images(answer, images)
 
     def spawn_agent(self, config: str) -> str:
@@ -312,6 +326,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="agent (default): the swarm and the workflow tools. operator: only the workflow review, approve and reject "
                              "tools, for a person; needs a loopback --http-host.")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--urls-json", default="{}", help='{"operator", "agent_server", "workflow_operator", "tiled", "analysis": URL}: the endpoints endpoint_info reports.')
     parser.add_argument("--allowed-hosts-json", default="[]", help="Hosts besides the bind host and this computer that requests may name in Host or Origin.")
     return parser.parse_args(argv)
 
@@ -351,6 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         workflows=args.workflows,
         workflows_hardware=args.workflows_hardware,
         endpoint_role=args.endpoint_role,
+        urls=json.loads(args.urls_json),
     )
     if args.transport == "streamable-http":
         print(

@@ -36,6 +36,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from asyncroscopy import settings
+from asyncroscopy.core.names import devices_of_kind
 from asyncroscopy.agents.catalog import ToolCatalog
 from asyncroscopy.agents.config import AgentConfig
 from asyncroscopy.agents.goals import Call, Facts, trace_from_messages
@@ -106,7 +107,7 @@ def role_of(name: str, team: TeamTools, catalog: ToolCatalog, stem: bool = True,
     ``team``: the profile's split. On a STEM endpoint the operator gets a curated set (a small model loses
     track with ~80 microscope tools); on any other instrument it also gets every device command (``catalog``:
     what the endpoint's tools are), as ``general`` does. ``analysis_waits``: wait_for_job also waits on
-    analysis jobs (the endpoint has mcp.analysis_url); when it does not, the analyst gets
+    analysis jobs (the endpoint has mcp.urls.analysis); when it does not, the analyst gets
     analysis_job_status and analysis_job_results instead.
     """
     if not analysis_waits and name in ("analysis_job_status", "analysis_job_results"):
@@ -151,11 +152,11 @@ class TeamGraph:
             tools = await self.config.tools(allow=["*"])
             self._all_names = {t.name for t in tools}
             info = await self.config.info()
-            self._has_mapper = bool(info.get("map_devices"))
+            self._has_mapper = bool(devices_of_kind(info, "map"))
             self.catalog = ToolCatalog.from_info(info)
-            stem = bool(info.get("stem_devices"))
+            stem = bool(devices_of_kind(info, "stem"))
             self.memory.seed_instrument(self.catalog, stem=stem)
-            waits = bool(info.get("analysis_url"))  # without it the analyst needs the analysis_job tools
+            waits = bool((info.get("urls") or {}).get("analysis"))  # without it the analyst needs the analysis_job tools
             role = lambda name: role_of(name, self.team, self.catalog, stem, waits)  # noqa: E731
             self._tools = {r: [t for t in tools if role(t.name) in (r, "shared")] for r in self.team.roles}
             self._tools = {r: ts for r, ts in self._tools.items() if any(role(t.name) == r for t in ts)}

@@ -8,6 +8,7 @@ import numpy as np
 import tifffile
 
 from asyncroscopy.data.data_writer import save_acquisition, save_acquisition_hdf5
+from asyncroscopy.data.record import acting
 
 
 class FakeDataServer:
@@ -56,7 +57,8 @@ def test_dict_dataset_attrs_are_written_as_attrs(tmp_path):
     }
     image = np.arange(4, dtype=np.uint16).reshape(2, 2)
 
-    path = save_acquisition(object(), data_server, "stem_image", ["HAADF"], [image], dataset_attrs=[metadata])
+    with acting("acquire.image"):
+        path = save_acquisition(object(), data_server, "stem_image", ["HAADF"], [image], dataset_attrs=[metadata])
 
     with h5py.File(path, "r") as h5:
         dset = h5["image/HAADF"]
@@ -66,8 +68,12 @@ def test_dict_dataset_attrs_are_written_as_attrs(tmp_path):
         # nested dict values are json-encoded, like other non-scalar attrs
         assert json.loads(dset.attrs["ImagingArea"]) == metadata["ImagingArea"]
         # the standard attrs are still written alongside the detector metadata
-        assert dset.attrs["acquisition_type"] == "stem_image"
+        assert dset.attrs["acquisition_type"] == "acquire.image"
         assert dset.attrs["detector"] == "HAADF"
+        assert h5.attrs["acquisition_type"] == "acquire.image" and h5.attrs["primary_array"] == "image/HAADF"
+    plain = save_acquisition(object(), data_server, "stem_image", ["HAADF"], [image])
+    with h5py.File(plain, "r") as h5:
+        assert "acquisition_type" not in h5.attrs and "acquisition_type" not in h5["image/HAADF"].attrs
 
 
 def test_save_acquisition_writes_scanned_images_as_ordered_image_detector_datasets(tmp_path):

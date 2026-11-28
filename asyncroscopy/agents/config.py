@@ -127,9 +127,9 @@ class AgentConfig:
             except Exception:  # not cached, so one passing failure does not hide the risks for the whole run
                 log.warning("endpoint_info from %s failed; going on without it", self.mcp_url, exc_info=True)
                 return {}
-            if self.analysis_url is None and "analysis_url" in self._info:
-                # An empty mcp.analysis_url means this instrument has no analysis server.
-                self.analysis_url = self._info["analysis_url"] or ""
+            if self.analysis_url is None and "urls" in self._info:
+                # An empty mcp.urls.analysis means this instrument has no analysis server.
+                self.analysis_url = (self._info["urls"] or {}).get("analysis") or ""
         return self._info
 
     async def catalog(self) -> ToolCatalog:

@@ -144,9 +144,10 @@ def test_load_mcp_config():
     assert config.mcp.allow_remote_bind is False
     assert config.mcp.http_port == 8000
     assert config.mcp.blocked_classes == ["DataBase", "DServer"]
-    assert config.mcp.blocked_functions["*"] == ["Init", "Kill", "RestartServer"]  # agents may read State/Status
-    assert config.mcp.operator_port is None  # one endpoint: the GUI's Stop and job controls use this one
-    assert "start_tiled_server" in config.mcp.blocked_functions["DATA"]  # what the twin's agent endpoint hides
+    assert "*" not in config.mcp.needs_approval
+    assert config.mcp.operator_port is None
+    assert "start_tiled_server" in config.mcp.needs_approval["DATA"]
+    assert config.mcp.urls["analysis"] == "http://127.0.0.1:8003/mcp" and config.mcp.urls["operator"] is None
     assert config.mcp.endpoint_role == "agent" and config.mcp.trace == "outputs/trace/mcp_agent.jsonl"
 
 
@@ -163,7 +164,7 @@ def test_run_mcp_builds_server_command(fake_uv):
             data_device_address="asyncroscopy/data/default",
             quiet=True,
             blocked_classes=["DataBase"],
-            blocked_functions={"*": ["Init"], "DATA": ["stop_tiled_server"]},
+            needs_approval={"DATA": ["stop_tiled_server"]},
         ),
     )
 
@@ -176,8 +177,8 @@ def test_run_mcp_builds_server_command(fake_uv):
     assert command[command.index("--http-port") + 1] == "8123"
     assert "--quiet" in command
     assert command[command.index("--blocked-classes-json") + 1] == '["DataBase"]'
-    assert command[command.index("--blocked-functions-json") + 1] == (
-        '{"*": ["Init"], "DATA": ["stop_tiled_server"]}'
+    assert command[command.index("--needs-approval-json") + 1] == (
+        '{"DATA": ["stop_tiled_server"]}'
     )
     assert "--search-packages-json" not in command
 

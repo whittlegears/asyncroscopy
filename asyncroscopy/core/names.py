@@ -18,6 +18,23 @@ CALLER_HEADER = "X-Asyncroscopy-Caller"
 RUN_HEADER = "X-Asyncroscopy-Run"
 
 
+endpoint_url_names = ("operator", "agent_server", "workflow_operator", "tiled", "analysis")
+
+
+def endpoint_urls(raw: dict | None = None, where: str = "urls") -> dict[str, str | None]:
+    """Every name in ``endpoint_url_names`` with its URL from ``raw`` (empty is null); any other name is refused."""
+    raw = dict(raw or {})
+    unknown = sorted(set(raw) - set(endpoint_url_names))
+    if unknown:
+        raise ValueError(f"{where}: unknown {unknown}; the names are {', '.join(endpoint_url_names)}")
+    return {name: raw.get(name) or None for name in endpoint_url_names}
+
+
+def devices_of_kind(endpoint_info: dict, kind: str) -> list[str]:
+    """The tool prefixes endpoint_info's device_kinds gives ``kind`` (stem, probe, envelope, map, stage)."""
+    return sorted(prefix for prefix, kinds in (endpoint_info.get("device_kinds") or {}).items() if kind in (kinds or []))
+
+
 # The agent graphs one request can name, besides the swarm the agent MCP server runs by default.
 AGENT_GRAPHS = ("mapping", "general", "team")
 

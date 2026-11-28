@@ -46,7 +46,7 @@ def _serve(start) -> str:
 
 
 def _instrument_endpoint(role: str, extra: list[str]) -> str:
-    server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="",
+    server = MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="",
                        endpoint_role=role, database=_Exported(), verbose=False)
     return _serve(lambda port: server.start(transport="streamable-http", host="127.0.0.1", port=port, allowed_hosts=extra, show_banner=False))
 

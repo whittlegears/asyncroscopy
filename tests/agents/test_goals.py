@@ -472,7 +472,7 @@ def test_an_endpoint_without_an_analysis_server_means_none(monkeypatch):
     from asyncroscopy.agents.mcp_tools import McpServer
 
     async def endpoint_info(self, name, arguments=None):
-        return SimpleNamespace(is_error=False, structured_content={"analysis_url": None, "risks": {}}, content=[])
+        return SimpleNamespace(is_error=False, structured_content={"urls": {"analysis": None}, "risks": {}}, content=[])
 
     monkeypatch.setattr(McpServer, "call", endpoint_info)
     config = AgentConfig()

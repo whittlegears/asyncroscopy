@@ -56,6 +56,7 @@ class Settings:
     integrity_key_file: Path
     integrity_key: str | None = field(repr=False)
     dose_ledger: Path
+    permissions_file: Path
 
     # Addresses and credentials
     mcp_url: str | None
@@ -115,6 +116,7 @@ class Settings:
             integrity_key_file=Path(env.get("ASYNCROSCOPY_INTEGRITY_KEY_FILE") or outputs / "integrity" / "key"),
             integrity_key=env.get("ASYNCROSCOPY_INTEGRITY_KEY") or None,
             dose_ledger=Path(env.get("ASYNCROSCOPY_DOSE_LEDGER") or outputs / "dose" / "ledger.jsonl"),
+            permissions_file=Path(env.get("ASYNCROSCOPY_PERMISSIONS_FILE") or outputs / "permissions" / "permissions.json"),
             mcp_url=env.get("ASYNCROSCOPY_MCP_URL") or None,
             operator_url=env.get("ASYNCROSCOPY_OPERATOR_URL") or None,
             analysis_url=env.get("ASYNCROSCOPY_ANALYSIS_URL") or None,

@@ -59,7 +59,7 @@ mcp:
   data_device_address: asyncroscopy/data/default
   quiet: true
   blocked_classes: []
-  blocked_functions: {}
+  needs_approval: {}
 """
 
 
@@ -76,13 +76,14 @@ def test_a_minimal_agent_or_operator_endpoint_config_loads(tmp_path):
 def test_an_agent_endpoint_starts_its_operator_endpoint_on_loopback(tmp_path):
     run_mcp = _launcher("run_mcp")
     path = tmp_path / "agent.yaml"
-    blocked = "blocked_functions: {'*': [Init, State], Mapper: [abort_all]}"
+    held = "needs_approval: {Mapper: [abort_all]}"
     extra = "  operator_port: 8001\n  trace: outputs/trace/mcp_agent.jsonl\n"
-    path.write_text(MINIMAL_MCP.replace("blocked_functions: {}", blocked) + extra, encoding="utf-8")
+    path.write_text(MINIMAL_MCP.replace("needs_approval: {}", held) + extra, encoding="utf-8")
     agent = run_mcp.load_config(path)
     operator = run_mcp.operator_config(agent).mcp
     assert (operator.endpoint_role, operator.http_host, operator.http_port) == ("operator", "127.0.0.1", 8001)
-    assert operator.blocked_functions == {"*": ["Init", "Kill", "RestartServer"]}
+    assert operator.needs_approval == {} and agent.mcp.needs_approval == {"Mapper": ["abort_all"]}
+    assert operator.permissions_file == agent.mcp.permissions_file
     assert (operator.trace, operator.trace_follow) == ("outputs/trace/mcp_operator.jsonl", ["outputs/trace"])
     assert operator.auth is None and operator.name != agent.mcp.name
     assert run_mcp.operator_config(run_mcp.operator_config(agent)) is None

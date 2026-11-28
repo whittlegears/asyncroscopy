@@ -40,7 +40,8 @@ with instrument_context(devices):
     except tango.DevFailed as exc:
         outcome["attribute_out_of_range"] = exc.args[0].desc
     xrd["set_step_count"](301)
-    key = xrd["acquire_diffractogram"]()
+    reply = xrd["acquire_diffractogram"]()
+    key = reply.content[0].text if hasattr(reply, "content") else reply
     with h5py.File(key, "r") as h5:
         attrs = dict(h5["spectrum"].attrs)
         outcome["spectrum"] = {"shape": list(h5["spectrum"].shape), **{k: (v.item() if hasattr(v, "item") else v) for k, v in attrs.items() if k.startswith("axis_")}}

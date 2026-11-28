@@ -21,11 +21,8 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
+  permissions_file: outputs/permissions/permissions.json
+  approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""
   endpoint_role: operator

@@ -53,7 +53,7 @@ def test_mcp_skill_tools(monkeypatch):
     from asyncroscopy.mcp.mcp_server import MCPServer
 
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
-    server = MCPServer("t", "h", 1, blocked_classes=[], blocked_functions={}, data_device_address="d", verbose=False)
+    server = MCPServer("t", "h", 1, blocked_classes=[], needs_approval={}, data_device_address="d", verbose=False)
     with pytest.raises(ToolError, match=r"Mapper\*_reserve"):
         server.skills.load_skill("mapping")  # this endpoint has no Mapper
     server.tools = {"Mapper": {"reserve": None}}

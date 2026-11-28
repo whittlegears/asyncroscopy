@@ -57,7 +57,7 @@ def serve(monkeypatch, tango_ctx, data_save_dir, job_dir):
     def make(*names, role="agent"):
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.DeviceProxy", lambda name: tango.DeviceProxy(tango_ctx.get_device_access(name)))
         database = type("Db", (), {"get_device_exported": lambda self, p: type("E", (), {"value_string": list(names)})()})()
-        server = MCPServer("as-test", "localhost", 1, blocked_classes=[], blocked_functions={"*": ["Init", "Kill", "RestartServer"]},
+        server = MCPServer("as-test", "localhost", 1, blocked_classes=[], needs_approval={},
                            data_device_address="asyncroscopy/data/default", verbose=False, endpoint_role=role, database=database)
         server.setup(print_summary=False)
         monkeypatch.setattr(server.data, "tiled_node", node)

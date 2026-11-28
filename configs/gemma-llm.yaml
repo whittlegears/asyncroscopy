@@ -13,6 +13,10 @@ agent:
   mcp_urls:
     - "http://127.0.0.1:8000/mcp"
 
+  # The other endpoints endpoint_info reports (docs/MCP/permissions.md); leave one out when it does not run.
+  urls:
+    workflow_operator: http://127.0.0.1:8004/mcp
+
   # Workflows run in this process (on by default; the one place they run), on a twin and on the real instrument. The real instrument needs http_host 127.0.0.1
   # because this server has no login.
   workflows: true

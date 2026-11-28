@@ -366,7 +366,7 @@ def test_run_job_runs_a_tune_through_the_mcp_server(fresh, tuner_proxy, monkeypa
     setup_error(twin, device, 8, 90e-9)
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     server = MCPServer(
-        "test", "localhost", 1234, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
+        "test", "localhost", 1234, blocked_classes=[], needs_approval={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role="agent", trace_path=str(tmp_path / "trace.jsonl"),
     )
     server.add_device("Tuner", tuner_proxy, envelope=True)

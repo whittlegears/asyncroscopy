@@ -36,7 +36,7 @@ from asyncroscopy.mcp.mcp_server import COMMAND_TIMEOUT_MILLIS, MCPServer
 def mcp_kwargs(**overrides):
     config = {
         "blocked_classes": ["DataBase", "DServer"],
-        "blocked_functions": {"*": ["Init"]},
+        "needs_approval": {},
         "data_device_address": "asyncroscopy/data/default",
     }
     config.update(overrides)
@@ -613,7 +613,7 @@ class TestMCPRegistration:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
         monkeypatch.setenv("ASYNCROSCOPY_AGENT_MEMORY", str(tmp_path / "memory"))
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
-        info = {"stem_devices": ["Scope"], "tools": {
+        info = {"device_kinds": {"Scope": ["stem"]}, "tools": {
             "Mapper_start": {"device": "Mapper", "command": "start", "role": "job.start"},
             "Scope_get_stage": {"device": "Scope", "command": "get_stage", "role": "read"},
             "run_job": {}}}
@@ -706,7 +706,7 @@ class TestMCPSpectrumPreview:
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
         monkeypatch.setattr(server.data, "tiled_node", lambda key, hints=True: {"spectrum_eds.h5": node}[key])
-        result = server.data.augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
+        result = server.data.augment_with_preview("acquire.spectrum", "acquire_spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"result": "spectrum_eds.h5"}
@@ -724,7 +724,7 @@ class TestMCPSpectrumPreview:
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
         monkeypatch.setattr(server.data, "tiled_node", lambda key, hints=True: {"spectrum_eds.h5": FakeContainer()}[key])
-        result = server.data.augment_with_preview("acquire_spectrum", "spectrum_eds.h5")
+        result = server.data.augment_with_preview("acquire.spectrum", "acquire_spectrum", "spectrum_eds.h5")
 
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"result": "spectrum_eds.h5"}
@@ -737,11 +737,11 @@ class TestMCPSpectrumPreview:
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
 
-        assert server.data.augment_with_preview("get_stage", "[0.0,0.0]") == "[0.0,0.0]"
-        assert server.data.augment_with_preview("acquire_spectrum", "") == ""
-        assert server.data.augment_with_preview("acquire_spectrum", 42) == 42
+        assert server.data.augment_with_preview("stage.read", "get_stage", "[0.0,0.0]") == "[0.0,0.0]"
+        assert server.data.augment_with_preview("acquire.spectrum", "acquire_spectrum", "") == ""
+        assert server.data.augment_with_preview("acquire.spectrum", "acquire_spectrum", 42) == 42
 
-    def test_other_acquire_commands_get_a_preview_but_no_failure_note(self, monkeypatch) -> None:
+    def test_every_acquire_role_gets_a_preview_and_a_failure_note(self, monkeypatch) -> None:
         monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
 
         class FakeArray:
@@ -752,7 +752,7 @@ class TestMCPSpectrumPreview:
 
         server = MCPServer("test", "localhost", 1234, **mcp_kwargs(), verbose=False)
         monkeypatch.setattr(server.data, "tiled_node", lambda key, hints=True: {"xrd_scan.h5": FakeArray()}[key])
-        result = server.data.augment_with_preview("acquire_diffractogram", "xrd_scan.h5")
+        result = server.data.augment_with_preview("acquire.spectrum", "acquire_diffractogram", "xrd_scan.h5")
         assert isinstance(result, ToolResult)
         assert [getattr(b, "type", "") for b in result.content] == ["text", "text", "image"]
         assert result.content[0].text == "xrd_scan.h5" and "peak" in result.content[1].text.lower()  # the summary a text-only model reads
@@ -761,7 +761,9 @@ class TestMCPSpectrumPreview:
             raise data_tools.tiled_client.DataKeyNotFound("no such key")
 
         monkeypatch.setattr(server.data, "tiled_node", missing)
-        assert server.data.augment_with_preview("acquire_diffractogram", "ok") == "ok"
+        assert server.data.augment_with_preview("acquire.spectrum", "acquire_diffractogram", "ok") == "ok"
+        failed = server.data.augment_with_preview("acquire.spectrum", "acquire_diffractogram", "xrd_scan.h5")
+        assert any("image preview unavailable" in getattr(b, "text", "") for b in failed.content)
 
 
 class TestDataToolRobustness:
@@ -775,7 +777,7 @@ class TestDataToolRobustness:
             raise RuntimeError("401 Unauthorized: wrong Tiled API key")
 
         monkeypatch.setattr(server.data, "tiled_node", broken)
-        result = server.data.augment_with_preview("acquire_scanned_image", "scan_20261028.h5")
+        result = server.data.augment_with_preview("acquire.image", "acquire_scanned_image", "scan_20261028.h5")
         assert isinstance(result, ToolResult) and result.structured_content == {"result": "scan_20261028.h5"}
         assert any("401 Unauthorized" in getattr(block, "text", "") for block in result.content)
         assert any("instead of acquiring again" in getattr(block, "text", "") for block in result.content)
@@ -786,7 +788,7 @@ class TestDataToolRobustness:
         blanked = {"text": "taken with the beam blanked", "beam_blanked": True}
         monkeypatch.setattr("asyncroscopy.mcp.components.data_tools.views.view", lambda node, key, fmt: (blanked, b"png"))
         with pytest.raises(ToolError) as raised:
-            server.data.augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin", {"fov_m": 1e-6})
+            server.data.augment_with_preview("acquire.image", "acquire_scanned_image", "scan_20261101.h5", "DigitalTwin", {"fov_m": 1e-6})
         error = json.loads(str(raised.value))
         assert error["error"]["code"] == "beam_blanked" and error["warnings"] == [{"code": "noise_only_file", "key": "scan_20261101.h5"}]
         assert error["next_actions"] == [{"tool": "DigitalTwin_unblank_beam", "args": {}}, {"tool": "DigitalTwin_acquire_scanned_image", "args": {"fov_m": 1e-6}}]
@@ -798,7 +800,7 @@ class TestDataToolRobustness:
         assert prose.startswith("Error calling tool 'DigitalTwin_acquire_scanned_image': ToolError: Not acquired: the beam is blanked. Next call "
                                 "DigitalTwin_unblank_beam, then DigitalTwin_acquire_scanned_image again")
         monkeypatch.setattr("asyncroscopy.mcp.components.data_tools.views.view", lambda node, key, fmt: ({"text": "512 x 512 pixels"}, b"png"))
-        assert server.data.augment_with_preview("acquire_scanned_image", "scan_20261101.h5", "DigitalTwin").structured_content == {"result": "scan_20261101.h5"}
+        assert server.data.augment_with_preview("acquire.image", "acquire_scanned_image", "scan_20261101.h5", "DigitalTwin").structured_content == {"result": "scan_20261101.h5"}
 
     def test_view_data_turns_unexpected_errors_into_tool_errors(self, server, monkeypatch) -> None:
         def broken(key, hints=True):
@@ -812,8 +814,8 @@ class TestDataToolRobustness:
         looked_up = []
         monkeypatch.setattr(server.data, "tiled_node", lambda key, hints=True: looked_up.append(key))
         tableau = json.dumps({"C1": 1e-9, "A1": [2e-9, 0.1]})
-        assert server.data.augment_with_preview("acquire_tableau", tableau) == tableau
-        assert server.data.augment_with_preview("acquire_spectrum", "no such thing") == "no such thing"
+        assert server.data.augment_with_preview("acquire.other", "acquire_tableau", tableau) == tableau
+        assert server.data.augment_with_preview("acquire.spectrum", "acquire_spectrum", "no such thing") == "no such thing"
         assert looked_up == []
 
     def test_a_full_lane_answers_busy_and_other_lanes_still_work(self, server) -> None:
@@ -903,14 +905,13 @@ class TestDataViewsHook:
             config = run_mcp.load_config(path)
             assert config.mcp.data_views == expected
             assert "--data-views-json" in run_mcp.build_command(config)
-        # The agent endpoint's config names the analysis server, so wait_for_job covers its jobs too.
         command = run_mcp.build_command(run_mcp.load_config(Path(__file__).resolve().parents[2] / "configs" / "mcp_dt.yaml"))
-        assert command[command.index("--analysis-url") + 1] == "http://127.0.0.1:8003/mcp"
+        assert json.loads(command[command.index("--urls-json") + 1])["analysis"] == "http://127.0.0.1:8003/mcp"
 
     def test_a_data_views_module_that_does_not_import_stops_the_server_with_its_name(self, capsys) -> None:
         code = mcp_server.main([
             "--name", "t", "--tango-host", "h", "--tango-port", "1", "--transport", "stdio", "--http-host", "h", "--http-port", "1",
-            "--blocked-classes-json", "[]", "--blocked-functions-json", "{}", "--data-device-address", "d",
+            "--blocked-classes-json", "[]", "--data-device-address", "d",
             "--data-views-json", '["no_such_views_module_xyz"]',
         ])
         assert code == 1

@@ -27,42 +27,30 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
-    # Not for agents (none ever called them).
-    # The devices call each other directly; operators have the GUI and mcp_operator.yaml.
-    # DATA.get_config stays: SciAgentGUI reads the Tiled address with it.
+  # Held on the agent endpoint until a person approves the exact call (docs/MCP/permissions.md), unless a person
+  # sets a tool otherwise. Init, Kill, RestartServer and Disconnect are never run, whatever is set.
+  needs_approval:
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    # run_job and the Mapper_* replies carry the plan.
-    Mapper: [get_reservation]
-    Tuner: [get_reservation]
-    # The same commands as configs/mcp.yaml keeps from agents on hardware, on the twin's classes too, so an agent rehearsing
-    # here has the tools it will have there. Until first light's sign test settles the CEOS correction's sign and units,
-    # the corrector is written only by the Tuner (allow_corrector_writes) or a person.
+    # The same as configs/mcp.yaml on hardware, on the twin's classes too, so an agent rehearsing here meets what it will
+    # meet there. Until first light's sign test settles the CEOS correction's sign and units, a person approves each write.
     CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    # After Disconnect even the e-stop cannot blank the beam.
-    AutoScriptMicroscope: [Disconnect]
-    JeolMicroscope: [Disconnect]
-    DigitalTwin: [Disconnect]
-    DigitalTwinParticles: [Disconnect]
-    DigitalTwinTilt: [Disconnect]
-    DigitalTwinDiffraction: [Disconnect]
-    PolycrystallineGoldDigitalTwin: [Disconnect]
-  # Optional Tango command allowlist. Leave empty to include all non-blocked
-  # commands. Entries may be "command" or "Class.command".
+  permissions_file: outputs/permissions/permissions.json
+  approval_ttl_s: 600
+  # Optional Tango command allowlist. Leave empty to include every command. Entries may be "command" or "Class.command".
   # list_devices, list_data and view_data are always included.
   include_only_functions: []
   # Optional JSONL log of tool calls. Empty disables it.
   tool_log: ""
-  # The analysis server (pyTEMlib.analysis_server: stitching, scoring). With it, wait_for_job also
-  # waits on assemble_map and score_map jobs and returns their results, so an
-  # agent needs one wait tool for every job. Empty: wait_for_job is for this
-  # server's job devices only.
-  analysis_url: http://127.0.0.1:8003/mcp
+  # The other endpoints of this stack, as endpoint_info reports them; leave one out when it does not run.
+  # With analysis (pyTEMlib.analysis_server: stitching, scoring), wait_for_job also waits on assemble_map and
+  # score_map jobs and returns their results, so an agent needs one wait tool for every job.
+  urls:
+    operator: http://127.0.0.1:8001/mcp
+    agent_server: http://127.0.0.1:8002/mcp
+    workflow_operator: http://127.0.0.1:8004/mcp
+    tiled: http://localhost:9091
+    analysis: http://127.0.0.1:8003/mcp
   # run_job refuses a plan whose estimate is over these (the agent tells the user the
   # estimate and asks); raise them here for long runs. Empty: no limit beyond the job
   # device's own. 

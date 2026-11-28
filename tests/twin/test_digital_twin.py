@@ -54,8 +54,10 @@ class TestDigitalTwin:
         with h5py.File(saved_path, "r") as h5:
             image = h5["image/HAADF"][()]
             assert image.shape == (32, 32)
-            assert h5["image/HAADF"].attrs["acquisition_type"] == "stem_image"
+            assert h5["image/HAADF"].attrs["acquisition_type"] == "acquire.image"
             assert h5["image/HAADF"].attrs["detector"] == "HAADF"
+            assert h5.attrs["acquisition_type"] == "acquire.image" and h5.attrs["primary_array"] == "image/HAADF"
+            assert h5.attrs["kind"] == "stem_image"
 
     def test_stage_navigation_changes_and_restores_view(
         self,

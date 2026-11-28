@@ -26,35 +26,25 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
-    # The same agent-hidden commands as the twin's endpoint (configs/mcp_dt.yaml); tests/agents/test_agent_configs.py
-    # checks that every agent configuration blocks at least these.
+  # Held on the agent endpoint until a person approves the exact call (docs/MCP/permissions.md), unless a person
+  # sets a tool otherwise. Init, Kill, RestartServer and Disconnect are never run, whatever is set.
+  needs_approval:
+    # tests/agents/test_agent_configs.py checks that every agent configuration holds at least what configs/mcp_dt.yaml holds.
     DATA: [configure, copy_and_register_remote_file, reconcile, register_path, start_tiled_server, stop_tiled_server]
-    Mapper: [get_reservation]
-    Tuner: [get_reservation]
-    # The twin's classes as well as the hardware's, as in configs/mcp_dt.yaml, so an agent rehearsing
-    # here has the tools it will have there. Until first light's sign test settles the CEOS correction's sign and units,
-    # the corrector is written only by the Tuner (allow_corrector_writes) or a person.
+    # Until first light's sign test settles the CEOS correction's sign and units, a person approves each write. The
+    # hardware's allow_corrector_writes still decides whether the corrector takes one at all.
     CEOSCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
     DigitalTwinCorrector: [correct_aberration, measure_c1a1, acquire_tableau]
-    # After Disconnect even the e-stop cannot blank the beam.
-    AutoScriptMicroscope: [Disconnect]
-    JeolMicroscope: [Disconnect]
-    DigitalTwin: [Disconnect]
-    DigitalTwinParticles: [Disconnect]
-    DigitalTwinTilt: [Disconnect]
-    DigitalTwinDiffraction: [Disconnect]
-    PolycrystallineGoldDigitalTwin: [Disconnect]
+  permissions_file: outputs/permissions/permissions.json
+  approval_ttl_s: 600
   include_only_functions: []
   tool_log: ""
-  # The analysis server (pyTEMlib.analysis_server: stitching, scoring) on the MCP host, so
-  # wait_for_job also waits on assemble_map and score_map jobs; agents read this
-  # address from the endpoint (endpoint_info). Empty: no analysis server.
-  analysis_url: http://127.0.0.1:8003/mcp
+  # The other endpoints of this stack, as endpoint_info reports them; leave one out when it does not run. With analysis
+  # (pyTEMlib.analysis_server: stitching, scoring) on the MCP host, wait_for_job also waits on assemble_map and
+  # score_map jobs; agents read the address from endpoint_info.
+  urls:
+    tiled: http://127.0.0.1:9091
+    analysis: http://127.0.0.1:8003/mcp
   # Risk overrides: {"Class.command" or tool-name glob: low|high}.
   safety:
     risk: {}

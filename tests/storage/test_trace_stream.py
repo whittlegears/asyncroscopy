@@ -109,7 +109,7 @@ def test_a_live_subscriber_gets_exactly_the_runs_events_in_order_within_2_s(tang
     monkeypatch.setattr("asyncroscopy.mcp.mcp_server.Database", lambda host, port: None)
     mcp_trace = tmp_path / "mcp_agent.jsonl"
     server = MCPServer(
-        "test", "localhost", 1234, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
+        "test", "localhost", 1234, blocked_classes=[], needs_approval={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role="agent", trace_path=str(mcp_trace), clock_device=tango_ctx.get_device_access("asyncroscopy/digitaltwin/mapping"),
     )
     server.add_device("Mapper", mapper_proxy, envelope=True)
@@ -286,7 +286,7 @@ class _NoDevices:
 
 def endpoint(role: str, trace_dir: Path) -> MCPServer:
     server = MCPServer(
-        "test", "localhost", 0, blocked_classes=[], blocked_functions={}, data_device_address="asyncroscopy/data/default",
+        "test", "localhost", 0, blocked_classes=[], needs_approval={}, data_device_address="asyncroscopy/data/default",
         verbose=False, endpoint_role=role, trace_path=str(trace_dir / f"mcp_{role}.jsonl"), database=_NoDevices(),
     )
     server.setup(print_summary=False)

@@ -328,7 +328,7 @@ class TestAutoScriptMicroscope:
         assert settings.frame_combining == 6
         with h5py.File(result, "r") as h5:
             assert h5["image"][()].tolist() == [[9, 8], [7, 6]]
-            assert h5["image"].attrs["acquisition_type"] == "camera_image"
+            assert h5.attrs["kind"] == "camera_image" and h5.attrs["primary_array"] == "image"
             assert h5["image"].attrs["detector"] == "BM-Ceta"
 
     def test_camera_image_helper_honors_tiff_output(self, tmp_path) -> None:
@@ -419,7 +419,7 @@ class TestAutoScriptMicroscope:
         assert result.endswith(".h5")
         with h5py.File(result, "r") as h5:
             assert h5["spectrum"][()].tolist() == [1, 2, 3]
-            assert h5["spectrum"].attrs["acquisition_type"] == "spectrum"
+            assert h5.attrs["kind"] == "spectrum" and h5.attrs["primary_array"] == "spectrum"
         assert eds.settings.eds_detector == EdsDetectorType.SUPER_X
         assert eds.settings.exposure_time == pytest.approx(0.25)
         assert eds.settings.exposure_time_type == ExposureTimeType.LIVE_TIME
@@ -586,7 +586,7 @@ def test_stop_all_on_a_testing_mode_microscope_reports_the_beam_not_blanked(tang
         def get_device_exported(self, pattern):
             return self
 
-    server = MCPServer("t", "localhost", 0, blocked_functions={}, blocked_classes=[], data_device_address="", database=Exported(), verbose=False)
+    server = MCPServer("t", "localhost", 0, needs_approval={}, blocked_classes=[], data_device_address="", database=Exported(), verbose=False)
     server.setup(print_summary=False)
     report = server.estop.stop_all()
     assert report["stopped"] is False

@@ -52,11 +52,7 @@ mcp:
   blocked_classes:
     - DataBase
     - DServer
-  blocked_functions:
-    "*":
-      - Init
-      - Kill
-      - RestartServer
+  needs_approval: {}         # {Class or "*": [command, ...]}: held for a person (permissions.md)
   safety:
     risk: {}                 # {"Class.command" or tool-name glob: low | high}, before what devices declare
   # agent_profile: asyncroscopy/agents/profiles/default.yaml   # whose tool selection endpoint_info reports
@@ -102,19 +98,19 @@ drawing is in `asyncroscopy/data/views.py`; modules listed under
 `mcp.data_views` in the MCP YAML are imported first, so an instrument can add its
 own data kinds there.
 
-## Blacklisting
+## Blocked classes and held commands
 
-Use `blocked_classes` to hide whole Tango classes and `blocked_functions` to hide
-commands. `blocked_functions` accepts global command names, fully qualified
-`Class.command` entries, or class-specific lists:
+Use `blocked_classes` to hide whole Tango classes. Commands are not hidden: `needs_approval` lists those the
+agent endpoint holds until a person approves the exact call, as global entries, `Class.command` entries or
+class-specific lists ([permissions.md](permissions.md)). `Init`, `Kill`, `RestartServer` and `Disconnect` are
+never run, whatever is listed:
 
 ```yaml
-blocked_functions:
+needs_approval:
   "*":
-    - Init
     - DATA.stop_tiled_server
-  AutoScriptMicroscope:
-    - Disconnect
+  CEOSCorrector:
+    - correct_aberration
 ```
 
 ## Manual MCP Only
